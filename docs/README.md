@@ -2,7 +2,7 @@
 
 | Directory | Contents |
 |---|---|
-| `architecture/` | The authoritative architecture master for this service. Subordinate to the ELIOT normative pair. |
+| `architecture/` | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md) — the standalone authoritative architecture and implementation master for this service. |
 | `adr/` | Architecture Decision Records. Required for any load-bearing default, new owner, provider selection or contract change. |
 | `contracts/` | Hand-written contract notes not yet generated. |
 | `generated/` | Generated projections: schemas, reason codes, resource manifests, capacity reports. Never hand-edited. |

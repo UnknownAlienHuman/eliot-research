@@ -2,10 +2,10 @@
 
 **Pluggable external research federation for ELIOT Memory OS.**
 
-> **Status: structure scaffold.** This repository currently contains the directory layout, ownership
-> notes and boundary description only. No implementation, no architecture master, no contracts, no
-> deployed resources. Continuous integration is deliberately disabled until there is something
-> meaningful to verify.
+> **Status: architecture master published; implementation scaffold.** The authoritative standalone
+> contract is [Eliot Research Cloud 29.1](docs/architecture/ELIOT_RESEARCH.md). No implementation or
+> deployed resources exist; live Cloudflare and Google Drive write/readback remain required gates.
+> Continuous integration remains disabled until implementation begins.
 
 ---
 
