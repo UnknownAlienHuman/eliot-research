@@ -30,7 +30,7 @@
     "cf:provision:gateways": "node scripts/provision-ai-gateways.mjs",
     "cf:provision:access": "node scripts/provision-cloudflare-access.mjs",
     "cf:deploy": "node scripts/deploy-cloudflare.mjs",
-    "test:provisioners": "node scripts/test-cloudflare-provisioners.mjs",
+    "test:provisioners": "node scripts/test-access-runtime-config.mjs && node scripts/run-provisioner-tests.mjs",
     "check:implementation-status": "node scripts/check-implementation-status.mjs"
   },
   "devDependencies": {
