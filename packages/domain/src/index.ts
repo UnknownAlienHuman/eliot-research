@@ -4,6 +4,7 @@ export * from "./source-ownership.js";
 export * from "./owner-cutover.js";
 export * from "./residency.js";
 export * from "./scope.js";
+export * from "./scope/deterministic-resolver.js";
 export * from "./readiness.js";
 export * from "./evidence.js";
 export * from "./evidence-grade.js";

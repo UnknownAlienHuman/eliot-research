@@ -1,0 +1,160 @@
+{
+  "protocol": "eliotr.implementation-status.v1",
+  "baseline_commit": "554641f6507c55ab16fcdc7a3967d46584e2d28f",
+  "states": [
+    "SCAFFOLD_FAIL_CLOSED",
+    "IN_PROGRESS",
+    "IMPLEMENTED_NOT_LIVE",
+    "LIVE_QUALIFIED"
+  ],
+  "rules": {
+    "missing_registration": "fail",
+    "stale_registration": "fail",
+    "live_without_receipt": "fail",
+    "placeholder_success_response": "fail"
+  },
+  "entries": [
+    {
+      "id": "pending-001",
+      "path": "apps/eliotr-core/src/composition-root.ts",
+      "sentinel": "must compose implemented ports",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "composition root cannot start an incomplete application",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-002",
+      "path": "apps/eliotr-core/src/erasure-coordinator.ts",
+      "sentinel": "implementation required",
+      "owner_packets": [
+        "ER-28"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "operation throws and cannot return a success receipt",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-003",
+      "path": "apps/eliotr-core/src/federation-service.ts",
+      "sentinel": "not implemented",
+      "owner_packets": [
+        "ER-22"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "explicit incomplete implementation",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-004",
+      "path": "apps/eliotr-core/src/http.ts",
+      "sentinel": "IMPLEMENTATION_SLICE_PENDING",
+      "owner_packets": [
+        "ER-21",
+        "ER-22",
+        "ER-24"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "route returns explicit 501 until its work packet is complete",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-005",
+      "path": "apps/eliotr-core/src/http.ts",
+      "sentinel": "not implemented",
+      "owner_packets": [
+        "ER-21",
+        "ER-22",
+        "ER-24"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "explicit incomplete implementation",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-006",
+      "path": "apps/eliotr-core/src/ingest-service.ts",
+      "sentinel": "implementation required",
+      "owner_packets": [
+        "ER-13",
+        "ER-14",
+        "ER-21",
+        "ER-29"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "operation throws and cannot return a success receipt",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-007",
+      "path": "apps/eliotr-core/src/navigation-service.ts",
+      "sentinel": "implementation required",
+      "owner_packets": [
+        "ER-31"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "operation throws and cannot return a success receipt",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-008",
+      "path": "apps/eliotr-core/src/scope-service.ts",
+      "sentinel": "implementation required",
+      "owner_packets": [
+        "ER-30"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "operation throws and cannot return a success receipt",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    },
+    {
+      "id": "pending-009",
+      "path": "apps/eliotr-core/src/source-admission-service.ts",
+      "sentinel": "implementation required",
+      "owner_packets": [
+        "ER-29"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "operation throws and cannot return a success receipt",
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
+    }
+  ]
+}
