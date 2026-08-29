@@ -12,8 +12,11 @@ outside the paths below.
 ## Owned paths
 
 - `packages/platform-cloudflare/src/access.ts`
+- `packages/platform-cloudflare/src/access.test.ts`
 - `packages/platform-cloudflare/src/observability.ts`
+- `packages/platform-cloudflare/src/observability.test.ts`
 - `packages/platform-cloudflare/src/runtime-limits.ts`
+- `packages/platform-cloudflare/src/runtime-limits.test.ts`
 
 ## Read only
 
@@ -27,19 +30,24 @@ outside the paths below.
 
 ## Required implementation
 
-- Verify Access JWT/service principal and produce bounded authenticated context.
+- Verify the `Cf-Access-Jwt-Assertion` application token cryptographically against bounded, refreshed
+  Cloudflare Access JWKS; validate issuer, audience, time and signed human/service identity claims.
+- Treat raw service-token client headers as upstream Access credentials, never as origin proof.
 - Emit required high-cardinality metrics without content; persist actionable health snapshots/incidents.
-- Enforce request/response/R2/DO/Workflow/bundle/startup budgets.
+- Enforce request/response/R2/DO/Workflow/bundle/startup budgets before allocation or publication.
 
 ## Acceptance
 
 - Security, erasure and DEEP/AUDIT/REPORT failures are sampled 100%.
 - No source/prompt/evidence content enters telemetry.
-- Health exposes connector/provider degradation independently.
+- Health exposes connector/provider degradation independently and detects missing required connectors.
+- Oversized JWT/JWKS/body data is rejected before unbounded parsing or buffering.
 
 ## Mandatory negative boundary
 
-Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.
+Attempt to log an evidence excerpt or credential-shaped field and prove the point is dropped before the
+raw metrics sink. Present raw `CF-Access-Client-Id`/`CF-Access-Client-Secret` without a verified Access
+JWT and prove the origin rejects it.
 
 ## Handoff contract
 
