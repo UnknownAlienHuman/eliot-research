@@ -1,0 +1,111 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "eliotr-core",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-28",
+  "workers_dev": true,
+  "preview_urls": false,
+  "minify": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "assets": {
+    "directory": "../eliotr-pwa/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": [
+      "/healthz",
+      "/api/*",
+      "/federation/*",
+      "/oauth/*"
+    ]
+  },
+  "vars": {
+    "ENVIRONMENT": "development",
+    "DEPLOYMENT_GENERATION": "local-unset",
+    "AI_GATEWAY_REASONING_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-reasoning",
+    "AI_GATEWAY_RETRIEVAL_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-retrieval"
+  },
+  "d1_databases": [
+    {
+      "binding": "CORE_DB",
+      "database_name": "eliotr-core",
+      "migrations_dir": "../../infra/d1/core/migrations"
+    },
+    {
+      "binding": "SEARCH_DB",
+      "database_name": "eliotr-search",
+      "migrations_dir": "../../infra/d1/search/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE_BUCKET",
+      "bucket_name": "eliotr-evidence"
+    },
+    {
+      "binding": "WORK_BUCKET",
+      "bucket_name": "eliotr-work"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOB_QUEUE",
+        "queue": "eliotr-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "eliotr-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5,
+        "dead_letter_queue": "eliotr-dlq",
+        "max_concurrency": 10,
+        "retry_delay": 30
+      }
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RESEARCH_SESSION",
+        "class_name": "ResearchSession"
+      }
+    ]
+  },
+  "exports": {
+    "ResearchSession": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "workflows": [
+    {
+      "binding": "RESEARCH_WORKFLOW",
+      "name": "eliotr-research-workflow",
+      "class_name": "ResearchWorkflow"
+    }
+  ],
+  "ai_search_namespaces": [
+    {
+      "binding": "AI_SEARCH",
+      "namespace": "eliotr",
+      "remote": true
+    }
+  ],
+  "analytics_engine_datasets": [
+    {
+      "binding": "METRICS",
+      "dataset": "eliotr_metrics"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *",
+      "17 3 * * *"
+    ]
+  }
+}

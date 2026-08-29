@@ -1,0 +1,24 @@
+{
+  "protocol": "eliotr.ai-gateways.v1",
+  "verified_against_cloudflare_api": "2026-08-28",
+  "gateways": [
+    {
+      "id": "eliotr-retrieval",
+      "cache_invalidate_on_update": true,
+      "cache_ttl": 0,
+      "collect_logs": true,
+      "rate_limiting_interval": 0,
+      "rate_limiting_limit": 0,
+      "authentication": true
+    },
+    {
+      "id": "eliotr-reasoning",
+      "cache_invalidate_on_update": true,
+      "cache_ttl": 0,
+      "collect_logs": true,
+      "rate_limiting_interval": 60,
+      "rate_limiting_limit": 120,
+      "authentication": true
+    }
+  ]
+}

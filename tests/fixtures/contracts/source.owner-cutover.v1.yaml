@@ -1,0 +1,33 @@
+protocol: source.owner-cutover.v1
+
+cutover:
+  cutover_id:
+  source_namespace_id:
+  identity_mapping_digest:
+  prepared_at:
+  effective_at:
+
+old_owner:
+  owner_system_id:
+  source_owner_generation_before_fence:
+  fence_revision:
+  final_source_view_ref:
+  final_revision_set_digest:
+  terminal_status: FENCED | RETIRED
+
+new_owner:
+  owner_system_id:
+  source_owner_generation_after_activation:
+  activation_revision:
+  admitted_revision_set_digest:
+  status: ACTIVE
+
+validation:
+  compatibility_receipt_refs: []
+  integrity_receipt_refs: []
+  unresolved_sources_and_reasons: []
+
+authorization:
+  old_owner_authorization_ref:
+  new_owner_authorization_ref:
+  issued_at:

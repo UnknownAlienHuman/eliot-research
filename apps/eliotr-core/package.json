@@ -1,0 +1,31 @@
+{
+  "name": "@eliotr/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --minify --outdir dist",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "dev": "wrangler dev",
+    "cf:types": "wrangler types --env-interface CloudflareEnv src/worker-configuration.d.ts",
+    "deploy:dry-run": "wrangler deploy --dry-run --minify --outdir dist",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
+    "@eliotr/policy": "workspace:*",
+    "@eliotr/retrieval": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/google-drive-exchange": "workspace:*",
+    "@eliotr/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "4.127.1",
+    "@cloudflare/workers-types": "5.20260827.1",
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "vitest": "4.1.10"
+  }
+}

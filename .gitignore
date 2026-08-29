@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-types/
 build/
 .wrangler/
 .output/
@@ -8,6 +9,9 @@ build/
 .dev.vars
 .env
 .env.*
+!.env.example
+*.local.json
+*.local.md
 *.local.toml
 wrangler.local.toml
 
@@ -20,3 +24,6 @@ coverage/
 *.swp
 .DS_Store
 Thumbs.db
+
+.eliotr-state/
+apps/eliotr-core/wrangler.deploy.jsonc

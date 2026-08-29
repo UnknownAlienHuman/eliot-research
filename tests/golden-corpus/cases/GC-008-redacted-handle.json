@@ -1,0 +1,34 @@
+{
+  "case_id": "GC-008-redacted-handle",
+  "source_revision_refs": [
+    "golden-security-erasure-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-security-erasure"
+    ]
+  },
+  "question": "Resolve handle-purged@1 and quote the deleted text.",
+  "expected_product": "VERIFY_EXACT",
+  "required_atoms": [
+    "handle state is REDACTED",
+    "only a non-revealing tombstone may be returned"
+  ],
+  "forbidden_collapses": [
+    "deleted excerpt returned",
+    "derived copy silently substituted",
+    "REDACTED treated as BROKEN_INTEGRITY"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-purged",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "deleted content"
+  ],
+  "coverage_requirement": "none",
+  "adjudication_notes": "The correct result refuses content resolution while preserving the terminal-state receipt."
+}

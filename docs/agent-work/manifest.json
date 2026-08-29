@@ -1,0 +1,1616 @@
+{
+  "protocol": "eliotr.agent-work.v1",
+  "repository": "UnknownAlienHuman/eliot-research",
+  "baseline_commit": "c1d6034245306115a8825945fa69c1728be941e1",
+  "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
+  "generated_at": "2026-08-28T00:00:00Z",
+  "rules": {
+    "one_agent_one_packet": true,
+    "owned_paths_may_not_overlap": true,
+    "unknown_dependency_fails": true,
+    "package_source_line_limit": 10000,
+    "file_source_line_target": 600,
+    "completion_requires_negative_case": true,
+    "live_gate_cannot_be_mocked": true
+  },
+  "packets": [
+    {
+      "id": "ER-00",
+      "title": "Workspace and verification gates",
+      "slice": 0,
+      "depends_on": [],
+      "owned_paths": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        "tsconfig.json",
+        "tsconfig.base.json",
+        "eslint.config.mjs",
+        "vitest.config.ts",
+        ".editorconfig",
+        ".npmrc",
+        ".gitignore",
+        ".github/**",
+        "scripts/check-boundaries.mjs",
+        "scripts/check-budgets.mjs",
+        "scripts/check-contract-fixtures.mjs",
+        "scripts/check-work-packets.mjs",
+        "docs/implementation/toolchain.md"
+      ],
+      "read_only_paths": [
+        "AGENTS.md",
+        "docs/implementation/**",
+        "docs/architecture/ELIOT_RESEARCH.md"
+      ],
+      "architecture_sections": [
+        "\u00a717.2\u201317.4",
+        "\u00a719.1"
+      ],
+      "implementation": [
+        "Install a reproducible pnpm workspace and commit the lockfile.",
+        "Preserve the pinned toolchain compatibility matrix; do not admit a compiler outside the linter peer range.",
+        "Make lint, project-reference typecheck, unit tests, contract hashes, dependency boundaries, work-packet DAG, bundle budgets, generated bindings, and dry-run independently runnable.",
+        "Keep Node-only tests separate from Workers integration tests using the Cloudflare Vitest plugin.",
+        "Reject forbidden Worker dependencies and imports mechanically, including transitive production dependencies."
+      ],
+      "acceptance": [
+        "`pnpm check` runs from a clean clone.",
+        "CI uses the committed lockfile and performs dry-run deployment without secrets.",
+        "A package import-cycle or owned-path overlap fails before tests."
+      ],
+      "mandatory_negative_case": "Add a forbidden import and prove the boundary check fails.",
+      "outputs": [
+        "pnpm-lock.yaml",
+        "green CI gate",
+        "verification command registry"
+      ],
+      "live_gate": "none",
+      "document": "ER-00-workspace-and-verification-gates.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-01",
+      "title": "Versioned contracts and schemas",
+      "slice": 0,
+      "depends_on": [
+        "ER-00"
+      ],
+      "owned_paths": [
+        "packages/contracts/**",
+        "docs/contracts/**"
+      ],
+      "read_only_paths": [
+        "docs/implementation/contract-index.md",
+        "docs/architecture/ELIOT_RESEARCH.md"
+      ],
+      "architecture_sections": [
+        "\u00a72\u2013\u00a74.4",
+        "\u00a75.3.1",
+        "\u00a77",
+        "\u00a79",
+        "\u00a711",
+        "\u00a713.7",
+        "\u00a716"
+      ],
+      "implementation": [
+        "Implement every exported Zod schema as strict and versioned; generate JSON Schema and canonical fixtures.",
+        "Preserve exact normalized-bundle and owner-cutover canonical bodies/hashes.",
+        "Keep transport state separate from the exact nine-value research disposition.",
+        "Publish only wire/domain shapes; no platform bindings or policy decisions."
+      ],
+      "acceptance": [
+        "Canonical fixture hashes match normative values.",
+        "Unknown load-bearing fields fail.",
+        "Schemas round-trip through JSON and generated fixtures.",
+        "Compatibility notes name every breaking change."
+      ],
+      "mandatory_negative_case": "Attempt to parse a tenth disposition and an unknown security field; both must fail.",
+      "outputs": [
+        "strict schemas",
+        "generated JSON schemas",
+        "canonical fixtures",
+        "compatibility registry"
+      ],
+      "live_gate": "none",
+      "document": "ER-01-versioned-contracts-and-schemas.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-02",
+      "title": "Core deterministic domain state machines",
+      "slice": 1,
+      "depends_on": [
+        "ER-01"
+      ],
+      "owned_paths": [
+        "packages/domain/src/index.ts",
+        "packages/domain/src/result.ts",
+        "packages/domain/src/errors.ts",
+        "packages/domain/src/source-ownership.ts",
+        "packages/domain/src/owner-cutover.ts",
+        "packages/domain/src/residency.ts",
+        "packages/domain/src/readiness.ts",
+        "packages/domain/src/evidence.ts",
+        "packages/domain/src/evidence-grade.ts",
+        "packages/domain/src/investigation.ts",
+        "packages/domain/src/completion.ts",
+        "packages/domain/src/coverage.ts",
+        "packages/domain/src/domain.test.ts",
+        "packages/domain/package.json",
+        "packages/domain/tsconfig.json",
+        "packages/domain/AGENTS.md"
+      ],
+      "read_only_paths": [
+        "packages/contracts/**",
+        "docs/implementation/contract-index.md"
+      ],
+      "architecture_sections": [
+        "\u00a72",
+        "\u00a77.1",
+        "\u00a77.11",
+        "\u00a715.5"
+      ],
+      "implementation": [
+        "Implement total transitions for ownership, evidence terminal state, readiness, Evidence Grade supersession, Investigation state, completion mapping, and coverage closure.",
+        "Use injected data only; no clock/random/network/platform types.",
+        "Return typed errors instead of throwing for expected invalid transitions."
+      ],
+      "acceptance": [
+        "Every enum state appears in exhaustive tests.",
+        "Only complete-scope denominator can yield NO_MATCH_IN_COMPLETE_SCOPE.",
+        "Internal failures map toward a less assertive disposition."
+      ],
+      "mandatory_negative_case": "Try activating a second source owner before the old generation is fenced; reject it.",
+      "outputs": [
+        "pure state machines",
+        "transition tables",
+        "negative T0 tests"
+      ],
+      "live_gate": "none",
+      "document": "ER-02-core-deterministic-domain-state-machines.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-03",
+      "title": "Policy disclosure and injection boundary",
+      "slice": 1,
+      "depends_on": [
+        "ER-01",
+        "ER-02"
+      ],
+      "owned_paths": [
+        "packages/policy/**"
+      ],
+      "read_only_paths": [
+        "packages/contracts/**",
+        "docs/implementation/security-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a713.1\u201313.6",
+        "\u00a714.6"
+      ],
+      "implementation": [
+        "Implement fixed-order policy evaluation across storage, purge/read, task/source, client disclosure, inference disclosure, retention/license, and output minimization.",
+        "Compile AllowedReferenceManifest and typed EvidenceContextBlock.",
+        "Enforce taint/effect ceilings and selection-integrity lineage.",
+        "Keep declassification receipt based and budget governance orthogonal."
+      ],
+      "acceptance": [
+        "Permission to view never implies model/client disclosure.",
+        "Research generation surface contains no side-effect tools.",
+        "Output gate resolves citations and rejects unsupported authority elevation."
+      ],
+      "mandatory_negative_case": "Embed a tool instruction inside admitted source text and prove it cannot alter tools, scope, policy, or output effect.",
+      "outputs": [
+        "policy evaluator",
+        "reference firewall",
+        "context compiler",
+        "output gate",
+        "budget governor"
+      ],
+      "live_gate": "none",
+      "document": "ER-03-policy-disclosure-and-injection-boundary.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-04",
+      "title": "Query planner and fusion",
+      "slice": 1,
+      "depends_on": [
+        "ER-03",
+        "ER-30"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/index.ts",
+        "packages/retrieval/src/planner.ts",
+        "packages/retrieval/src/fusion.ts",
+        "packages/retrieval/src/service.ts",
+        "packages/retrieval/src/retrieval.test.ts",
+        "packages/retrieval/package.json",
+        "packages/retrieval/tsconfig.json",
+        "packages/retrieval/AGENTS.md"
+      ],
+      "read_only_paths": [
+        "packages/retrieval/src/ports.ts",
+        "packages/contracts/src/retrieval.ts",
+        "docs/implementation/runtime-contract.md"
+      ],
+      "architecture_sections": [
+        "\u00a76.5\u20136.9"
+      ],
+      "implementation": [
+        "Preserve raw query, literals, negative conditions and frozen scope.",
+        "Classify query product and lanes deterministically; query rewriting is visible and off by default.",
+        "Fuse candidates, canonical-section deduplicate, enforce source-family diversity, and request exact resolution before EvidencePack."
+      ],
+      "acceptance": [
+        "IDENT/EXACT bypass unnecessary semantic/rerank calls.",
+        "EXHAUSTIVE never prunes or reranks membership.",
+        "Trace records used/skipped lanes, generations, candidates, omissions and budget."
+      ],
+      "mandatory_negative_case": "Return an AI Search no-hit and prove planner does not convert it to an absence claim.",
+      "outputs": [
+        "query planner",
+        "rank fusion",
+        "retrieval orchestration",
+        "trace assembly"
+      ],
+      "live_gate": "none",
+      "document": "ER-04-query-planner-and-fusion.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-05",
+      "title": "Structural projector",
+      "slice": 1,
+      "depends_on": [
+        "ER-01",
+        "ER-29"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/projection.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/normalized-bundle.ts",
+        "packages/contracts/src/retrieval.ts"
+      ],
+      "architecture_sections": [
+        "\u00a75",
+        "\u00a76.4\u20136.4.2"
+      ],
+      "implementation": [
+        "Create stable section-level ProjectionItems from normalized structure without semantic chunking.",
+        "Preserve heading path, document context, offsets, taint, source revision and content hash.",
+        "Materialize projection source items to R2 Work before managed-index upload."
+      ],
+      "acceptance": [
+        "Same admitted revision and projector generation produce identical item keys/hashes.",
+        "Items remain below target/hard byte budgets.",
+        "Project duplication is explicit and capacity-counted."
+      ],
+      "mandatory_negative_case": "Supply mapping-free Markdown and prove the projector does not invent page, bounding-box, or table-cell coordinates.",
+      "outputs": [
+        "deterministic projector",
+        "capacity counters",
+        "projection fixtures"
+      ],
+      "live_gate": "none",
+      "document": "ER-05-structural-projector.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-06",
+      "title": "Retrieval lane adapters",
+      "slice": 1,
+      "depends_on": [
+        "ER-05",
+        "ER-13",
+        "ER-16"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/ports.ts",
+        "packages/retrieval/src/lanes.ts"
+      ],
+      "read_only_paths": [
+        "packages/platform-cloudflare/src/ai-search.ts",
+        "infra/d1/search/migrations/**"
+      ],
+      "architecture_sections": [
+        "\u00a76.1\u20136.3",
+        "\u00a76.5"
+      ],
+      "implementation": [
+        "Implement IDENT, EXACT candidate, LEX, SEM, LITERAL, STRUCTURE, WIKI and ARTIFACT lane executors behind ports.",
+        "Normalize all hits into locator candidates with projection/index generations.",
+        "Apply bounded timeouts and typed degradation without claiming evidence."
+      ],
+      "acceptance": [
+        "D1 FTS fallback works when AI Search is unavailable.",
+        "Managed results never contain authoritative citation status.",
+        "Lane response respects frozen scope filters and result limits."
+      ],
+      "mandatory_negative_case": "Return a stale projection hit for a purged revision and prove post-retrieval policy recheck excludes it.",
+      "outputs": [
+        "lane executors",
+        "candidate normalization",
+        "degradation receipts"
+      ],
+      "live_gate": "none",
+      "document": "ER-06-retrieval-lane-adapters.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-07",
+      "title": "Exact evidence resolver and exhaustive scan",
+      "slice": 1,
+      "depends_on": [
+        "ER-02",
+        "ER-05",
+        "ER-06",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/evidence-resolver.ts",
+        "packages/retrieval/src/exhaustive.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/evidence.ts",
+        "packages/retrieval/src/ports.ts"
+      ],
+      "architecture_sections": [
+        "\u00a75.3.1",
+        "\u00a76.7",
+        "\u00a76.10"
+      ],
+      "implementation": [
+        "Resolve owner generation, scope membership, authorization, purge state, exact revision digest, coordinate map, byte length and excerpt digest on every handle read.",
+        "Partition frozen scopes into bounded ExactScanShards and persist partial manifests.",
+        "Issue complete-scope absence only after all eligible shards reconcile."
+      ],
+      "acceptance": [
+        "Pinned handle reproduction is exact.",
+        "Missing map narrows precision rather than fabricating coordinates.",
+        "No Worker loads whole source or corpus."
+      ],
+      "mandatory_negative_case": "Change the current source bytes while resolving an old handle; resolver must reject/substantiate the pinned revision, never substitute current bytes.",
+      "outputs": [
+        "exact resolver",
+        "sharded scan planner/merger",
+        "coverage denominator receipt"
+      ],
+      "live_gate": "none",
+      "document": "ER-07-exact-evidence-resolver-and-exhaustive-scan.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-08",
+      "title": "Investigation ledger and protocol",
+      "slice": 4,
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-04"
+      ],
+      "owned_paths": [
+        "packages/research/src/index.ts",
+        "packages/research/src/ports.ts",
+        "packages/research/src/investigation-service.ts",
+        "packages/research/src/research.test.ts",
+        "packages/research/package.json",
+        "packages/research/tsconfig.json",
+        "packages/research/AGENTS.md"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/research.ts",
+        "docs/implementation/failure-model.md"
+      ],
+      "architecture_sections": [
+        "\u00a77.1\u20137.6"
+      ],
+      "implementation": [
+        "Persist Investigation as append-only events plus expected-revision checkpoint head.",
+        "Compile InquiryProtocolProfile, obligations, lane registrations, source portfolio, hypotheses, branches, debts and reopen conditions.",
+        "Keep chat/session as a view, never the durable unit."
+      ],
+      "acceptance": [
+        "Restart/model swap/agent handoff reconstructs the same Investigation.",
+        "Confirmatory changes after exposure are recorded as deviations/exploratory.",
+        "Verifier identity controls acceptance certificates."
+      ],
+      "mandatory_negative_case": "Modify a confirmatory primary outcome after exposure and prove subsequent analysis cannot remain silently confirmatory.",
+      "outputs": [
+        "investigation repository/service",
+        "protocol compiler",
+        "obligation/hypothesis ledgers"
+      ],
+      "live_gate": "none",
+      "document": "ER-08-investigation-ledger-and-protocol.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-09",
+      "title": "Durable research workflow",
+      "slice": 4,
+      "depends_on": [
+        "ER-08",
+        "ER-15",
+        "ER-16"
+      ],
+      "owned_paths": [
+        "packages/research/src/workflow.ts",
+        "apps/eliotr-core/src/research-workflow.ts",
+        "infra/workflows/**"
+      ],
+      "read_only_paths": [
+        "packages/research/src/ports.ts",
+        "docs/implementation/runtime-contract.md"
+      ],
+      "architecture_sections": [
+        "\u00a77.7\u20137.8"
+      ],
+      "implementation": [
+        "Implement idempotent stage machine from protocol/scope freeze through materialization.",
+        "Each stage checks cancellation and budget, performs at most one expensive call, writes large output immediately, and returns handles.",
+        "Default independent fan-out two, normal max four, nested fan-out zero."
+      ],
+      "acceptance": [
+        "Retrying a stage reuses its checkpoint/receipt.",
+        "Cancellation persists terminal state and does not strengthen disposition.",
+        "Workflow result stays under 64 KiB."
+      ],
+      "mandatory_negative_case": "Inject a lost acknowledgement after model output persistence and prove retry does not execute/pay for the call twice.",
+      "outputs": [
+        "Workflow stage executor",
+        "checkpoint receipts",
+        "cancellation/budget checks"
+      ],
+      "live_gate": "none",
+      "document": "ER-09-durable-research-workflow.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-10",
+      "title": "Evidence freeze claim audit and coverage",
+      "slice": 4,
+      "depends_on": [
+        "ER-07",
+        "ER-08"
+      ],
+      "owned_paths": [
+        "packages/research/src/evidence-freeze.ts",
+        "packages/research/src/claim-audit.ts",
+        "packages/research/src/coverage.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/research.ts",
+        "packages/domain/src/coverage.ts"
+      ],
+      "architecture_sections": [
+        "\u00a77.9\u20137.11",
+        "\u00a715.5"
+      ],
+      "implementation": [
+        "Freeze exact evidence/denominator/protocol/lane/provider generations before synthesis.",
+        "Audit references, values, specification compliance, method-artifact alignment, source sufficiency and excerpt sufficiency independently.",
+        "Calculate CoverageReceipt against the frozen denominator and map honest terminal disposition."
+      ],
+      "acceptance": [
+        "Every accepted material claim resolves exact handles.",
+        "Post-freeze evidence requires reopen/new freeze.",
+        "Sampled/unknown denominator cannot support absence."
+      ],
+      "mandatory_negative_case": "Provide the correct source but a cropped excerpt missing the hedge; claim audit must fail excerpt sufficiency.",
+      "outputs": [
+        "evidence freeze service",
+        "claim auditor",
+        "coverage calculator"
+      ],
+      "live_gate": "none",
+      "document": "ER-10-evidence-freeze-claim-audit-and-coverage.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-11",
+      "title": "Artifact compiler",
+      "slice": 5,
+      "depends_on": [
+        "ER-09",
+        "ER-10"
+      ],
+      "owned_paths": [
+        "packages/research/src/artifact-compiler.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/publication.ts",
+        "packages/research/src/ports.ts"
+      ],
+      "architecture_sections": [
+        "\u00a79.1\u20139.3"
+      ],
+      "implementation": [
+        "Compile section contracts against per-section EvidencePacks.",
+        "Persist immutable copy-on-write sections, dependency/evidence ledgers and verification receipts.",
+        "Assemble exports deterministically; report.md is an export, not sole authority."
+      ],
+      "acceptance": [
+        "One-section revision reuses untouched section objects.",
+        "All citations resolve before accepted status.",
+        "Difficult section escalation stays within reserved budget."
+      ],
+      "mandatory_negative_case": "Purge the only support for one section and prove the artifact becomes pending revalidation/redacted dependency rather than remaining accepted.",
+      "outputs": [
+        "artifact compiler",
+        "section COW tree",
+        "deterministic assembler"
+      ],
+      "live_gate": "none",
+      "document": "ER-11-artifact-compiler.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-12",
+      "title": "Research Wiki and draft promotion",
+      "slice": 2,
+      "depends_on": [
+        "ER-10",
+        "ER-13",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/research/src/wiki.ts",
+        "packages/domain/src/publication.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/publication.ts",
+        "packages/policy/**"
+      ],
+      "architecture_sections": [
+        "\u00a79.4\u20139.6"
+      ],
+      "implementation": [
+        "Implement immutable Wiki revision publication followed by D1 expected-head CAS and outbox.",
+        "Validate statement labels, evidence map, counterpositions, coverage, limitations and dependency closure.",
+        "Implement D0\u2013D3 risk-tiered Draft Inbox; only policy-authorized D0/D1 may auto-promote."
+      ],
+      "acceptance": [
+        "No active update without CAS.",
+        "D2/D3 never auto-promote.",
+        "R2 readback/hash precedes D1 head mutation."
+      ],
+      "mandatory_negative_case": "Race two publishers against one expected head; exactly one becomes active and the loser receives typed conflict.",
+      "outputs": [
+        "Wiki proposal/publisher",
+        "draft classifier/promotion",
+        "dependency invalidation"
+      ],
+      "live_gate": "none",
+      "document": "ER-12-research-wiki-and-draft-promotion.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-13",
+      "title": "D1 authority and migrations",
+      "slice": 0,
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-23"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/bindings.ts",
+        "packages/platform-cloudflare/src/d1.ts",
+        "packages/platform-cloudflare/src/index.ts",
+        "packages/platform-cloudflare/package.json",
+        "packages/platform-cloudflare/tsconfig.json",
+        "packages/platform-cloudflare/AGENTS.md",
+        "infra/d1/**"
+      ],
+      "read_only_paths": [
+        "docs/implementation/dependency-map.md",
+        "packages/contracts/**"
+      ],
+      "architecture_sections": [
+        "\u00a71.5\u20131.6",
+        "\u00a72",
+        "\u00a715.2",
+        "\u00a717.4"
+      ],
+      "implementation": [
+        "Implement prepared named queries/repositories for authority tables, expected-head CAS, idempotency, attempts/receipts, outbox, generations and health snapshots.",
+        "Keep Core non-disposable and Search rebuildable.",
+        "Use additive migrations and query-shape fixtures; no model/network call in transactions."
+      ],
+      "acceptance": [
+        "Migrations execute on SQLite and local/remote D1.",
+        "Canonical mutation + outbox are atomic.",
+        "Duplicate idempotency key returns existing receipt."
+      ],
+      "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
+      "outputs": [
+        "D1 migrations",
+        "repositories",
+        "named-query registry",
+        "migration ledger"
+      ],
+      "live_gate": "none",
+      "document": "ER-13-d1-authority-and-migrations.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-14",
+      "title": "R2 staging residency and ingest",
+      "slice": 1,
+      "depends_on": [
+        "ER-01",
+        "ER-03",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/r2.ts",
+        "packages/platform-cloudflare/src/ingest.ts",
+        "infra/r2/**"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/residency.ts",
+        "packages/contracts/src/normalized-bundle.ts"
+      ],
+      "architecture_sections": [
+        "\u00a73 R2 layout",
+        "\u00a74",
+        "\u00a74.10",
+        "\u00a715.3"
+      ],
+      "implementation": [
+        "Implement stream/multipart staging, SHA-256/readback, media/schema/quality validation, conditional immutable promotion and orphan cleanup.",
+        "Construct keys only from complete residency identity; dedup only when every domain matches.",
+        "Represent large values by handles/ranges, never base64 JSON."
+      ],
+      "acceptance": [
+        "Same canonical key/different bytes is integrity failure.",
+        "Cross-domain equal bytes create separate governed objects/ciphertext.",
+        "Staging object cannot resolve as evidence."
+      ],
+      "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",
+      "outputs": [
+        "R2 object adapter",
+        "multipart sessions",
+        "promotion/readback receipts",
+        "layout policy"
+      ],
+      "live_gate": "none",
+      "document": "ER-14-r2-staging-residency-and-ingest.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-15",
+      "title": "Outbox Queue and retry discipline",
+      "slice": 0,
+      "depends_on": [
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/outbox.ts",
+        "packages/platform-cloudflare/src/queue.ts"
+      ],
+      "read_only_paths": [
+        "apps/eliotr-core/src/queue.ts",
+        "docs/implementation/failure-model.md"
+      ],
+      "architecture_sections": [
+        "\u00a71.6",
+        "\u00a715.1\u201315.2"
+      ],
+      "implementation": [
+        "Implement durable outbox lease/send/mark flow and Queue delivery adapter.",
+        "Consumers receive compact intent IDs, reload authority from D1, record attempts, and ack only after durable receipt.",
+        "Use bounded retries and DLQ reason classes; support reconciliation after lost ACK."
+      ],
+      "acceptance": [
+        "Duplicate delivery is idempotent.",
+        "Message with no persisted intent is rejected.",
+        "Outbox age/depth/retries/DLQ are observable."
+      ],
+      "mandatory_negative_case": "Deliver the same message concurrently to two consumers and prove one authoritative operation/receipt results.",
+      "outputs": [
+        "outbox repository/sweeper",
+        "queue envelope/consumer adapter",
+        "retry taxonomy"
+      ],
+      "live_gate": "none",
+      "document": "ER-15-outbox-queue-and-retry-discipline.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-16",
+      "title": "AI Search and model gateway adapters",
+      "slice": 1,
+      "depends_on": [
+        "ER-00",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/ai-search.ts",
+        "packages/platform-cloudflare/src/model-gateway.ts",
+        "infra/ai-search/**",
+        "infra/cloudflare/ai-gateways.json"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/model.ts",
+        "packages/retrieval/src/ports.ts"
+      ],
+      "architecture_sections": [
+        "\u00a76.2\u20136.4.2",
+        "\u00a78"
+      ],
+      "implementation": [
+        "Implement namespace/instance typed adapters and generation-aware search/item upload/readback.",
+        "Keep retrieval and reasoning gateways separate; application code references routes, not providers.",
+        "Record route fingerprint, model/prompt/schema generations, usage/cost and immutable embedding generation."
+      ],
+      "acceptance": [
+        "No in-place embedding model change.",
+        "Partial shadow generation is never advertised complete.",
+        "Scores from different vector generations are not mixed."
+      ],
+      "mandatory_negative_case": "Point desired config at an existing instance with a different embedding model and prove provisioning fails instead of mutating it.",
+      "outputs": [
+        "AI Search adapter",
+        "gateway fetch adapter",
+        "generation registry",
+        "capability fixtures"
+      ],
+      "live_gate": "none",
+      "document": "ER-16-ai-search-and-model-gateway-adapters.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-17",
+      "title": "Access observability and runtime limits",
+      "slice": 0,
+      "depends_on": [
+        "ER-00",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/access.ts",
+        "packages/platform-cloudflare/src/observability.ts",
+        "packages/platform-cloudflare/src/runtime-limits.ts"
+      ],
+      "read_only_paths": [
+        "docs/implementation/security-checklist.md",
+        "docs/implementation/release-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a71.4",
+        "\u00a715.6\u201315.8"
+      ],
+      "implementation": [
+        "Verify Access JWT/service principal and produce bounded authenticated context.",
+        "Emit required high-cardinality metrics without content; persist actionable health snapshots/incidents.",
+        "Enforce request/response/R2/DO/Workflow/bundle/startup budgets."
+      ],
+      "acceptance": [
+        "Security, erasure and DEEP/AUDIT/REPORT failures are sampled 100%.",
+        "No source/prompt/evidence content enters telemetry.",
+        "Health exposes connector/provider degradation independently."
+      ],
+      "mandatory_negative_case": "Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.",
+      "outputs": [
+        "Access verifier",
+        "metrics sink",
+        "health/SLO evaluator",
+        "runtime budget assertions"
+      ],
+      "live_gate": "none",
+      "document": "ER-17-access-observability-and-runtime-limits.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-18",
+      "title": "Drive exchange protocol and provisioner",
+      "slice": 0,
+      "depends_on": [
+        "ER-01",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/index.ts",
+        "packages/google-drive-exchange/src/serializer.ts",
+        "packages/google-drive-exchange/src/contribution.ts",
+        "packages/google-drive-exchange/src/provisioner.ts",
+        "packages/google-drive-exchange/src/drive.test.ts",
+        "packages/google-drive-exchange/package.json",
+        "packages/google-drive-exchange/tsconfig.json",
+        "packages/google-drive-exchange/AGENTS.md"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/drive-exchange.ts",
+        "docs/implementation/security-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a712.3\u201312.6"
+      ],
+      "implementation": [
+        "Implement fixed numeric sheet schema/template and one atomic appendCells batch for request + all payload parts.",
+        "Canonicalize after exact readback; actor claim remains untrusted.",
+        "Provision shadow generation and require append/import/readback fixture before activation."
+      ],
+      "acceptance": [
+        "Serializer emits valid Google RowData and byte/part limits.",
+        "No existing request row is updated/sorted.",
+        "Schema changes create new generation, never in-place mutation."
+      ],
+      "mandatory_negative_case": "Build a request above 128 KiB or with six parts and prove serializer rejects before Drive call.",
+      "outputs": [
+        "Exchange template/provisioner",
+        "append serializer",
+        "canonical contribution parser"
+      ],
+      "live_gate": "none",
+      "document": "ER-18-drive-exchange-protocol-and-provisioner.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-19",
+      "title": "Drive cursor reconciliation and tamper audit",
+      "slice": 0,
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-18"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/cursor.ts",
+        "packages/google-drive-exchange/src/reconciler.ts"
+      ],
+      "read_only_paths": [
+        "packages/google-drive-exchange/src/port.ts",
+        "infra/d1/core/migrations/**"
+      ],
+      "architecture_sections": [
+        "\u00a712.7",
+        "\u00a712.10"
+      ],
+      "implementation": [
+        "Implement leased changes.list replay, exact file-ID filtering, ID-column scans, bounded range reads, R2 freeze, generic ContributionIntent admission and cursor commit after reconciliation.",
+        "Never use permanent row number as identity.",
+        "Implement daily historical ID/hash audit."
+      ],
+      "acceptance": [
+        "Cursor is not advanced on partial failure.",
+        "Missing parts do not start a job.",
+        "Edit/reorder/delete yields TRANSPORT_TAMPERED while frozen R2 remains authority."
+      ],
+      "mandatory_negative_case": "Lose a poll notification and edit an imported row; cursor replay/audit must detect both without duplicate work.",
+      "outputs": [
+        "cursor reconciler",
+        "frozen observation flow",
+        "tamper audit"
+      ],
+      "live_gate": "none",
+      "document": "ER-19-drive-cursor-reconciliation-and-tamper-audit.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-20",
+      "title": "Google OAuth port and result publication",
+      "slice": 0,
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-18"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/port.ts",
+        "packages/google-drive-exchange/src/token-vault.ts",
+        "packages/google-drive-exchange/src/result-publisher.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/drive-exchange.ts",
+        "docs/implementation/security-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a712.8\u201312.10",
+        "\u00a713.5\u201313.6"
+      ],
+      "implementation": [
+        "Implement small fetch-based Drive/Docs/Sheets port; no Google SDK.",
+        "Use drive.file + offline auth, verify dedicated subject/email, AES-GCM refresh-token vault, short-lived access token cache and reauth state.",
+        "Publish delivery Doc/RESULTS only after canonical artifact + D1 terminal receipt; read back row/metadata."
+      ],
+      "acceptance": [
+        "Revocation stops only Drive path.",
+        "Testing-mode token is not production-ready.",
+        "Drive revision/history is diagnostic and never canonical evidence."
+      ],
+      "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
+      "outputs": [
+        "Google REST port",
+        "token vault",
+        "result delivery/readback"
+      ],
+      "live_gate": "none",
+      "document": "ER-20-google-oauth-port-and-result-publication.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-21",
+      "title": "Owner and semantic APIs",
+      "slice": 1,
+      "depends_on": [
+        "ER-03",
+        "ER-04",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/interfaces/src/index.ts",
+        "packages/interfaces/src/http.ts",
+        "packages/interfaces/src/semantic-api.ts",
+        "packages/interfaces/src/owner-api.ts",
+        "packages/interfaces/src/routes.ts",
+        "packages/interfaces/src/application.ts",
+        "packages/interfaces/src/ingest-api.ts",
+        "packages/interfaces/package.json",
+        "packages/interfaces/tsconfig.json",
+        "packages/interfaces/AGENTS.md"
+      ],
+      "read_only_paths": [
+        "packages/contracts/**",
+        "docs/implementation/runtime-contract.md"
+      ],
+      "architecture_sections": [
+        "\u00a712.1\u201312.2"
+      ],
+      "implementation": [
+        "Implement small product-level API: catalog/orient/query/open/verify/run/artifact/wiki/trace/changes plus owner administration and bundle ingest.",
+        "Strictly validate bounded payloads and return typed errors/handles/ranges/cursors.",
+        "Clients never select D1/R2/index/tokenizer/provider."
+      ],
+      "acceptance": [
+        "Large content is streamed/ranged by immutable handle.",
+        "Authorization context reaches services; no infrastructure credentials leave Worker.",
+        "Unimplemented capabilities return explicit typed unavailable state."
+      ],
+      "mandatory_negative_case": "Request a provider/database/index name through the API and prove it cannot bypass product policy/router.",
+      "outputs": [
+        "semantic/owner/ingest interfaces",
+        "route registry",
+        "HTTP error envelope"
+      ],
+      "live_gate": "none",
+      "document": "ER-21-owner-and-semantic-apis.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-22",
+      "title": "Generic federation boundary",
+      "slice": 2,
+      "depends_on": [
+        "ER-01",
+        "ER-03",
+        "ER-08",
+        "ER-21"
+      ],
+      "owned_paths": [
+        "packages/interfaces/src/federation-api.ts",
+        "apps/eliotr-core/src/federation-service.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/federation.ts",
+        "packages/interfaces/src/semantic-api.ts"
+      ],
+      "architecture_sections": [
+        "\u00a711"
+      ],
+      "implementation": [
+        "Implement mutually authenticated asynchronous submit/status/cancel/result/ranged-read/changes endpoints with idempotency and client fence.",
+        "Return evidence bundles or synthesis-as-candidate only.",
+        "Map internal outcomes toward less assertive exact disposition; transport completion remains orthogonal."
+      ],
+      "acceptance": [
+        "Unknown scope/security/budget fields fail.",
+        "Reference outside AllowedReferenceManifest is rejected.",
+        "No reverse authority or client canonical write path exists."
+      ],
+      "mandatory_negative_case": "Complete transport with an inconclusive research result and prove status is COMPLETED + INCONCLUSIVE, not ANSWERED_WITH_SUPPORTED_RESULT.",
+      "outputs": [
+        "federation service/API",
+        "idempotent job mapping",
+        "optional ELIOT fixture mapping"
+      ],
+      "live_gate": "none",
+      "document": "ER-22-generic-federation-boundary.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-23",
+      "title": "Testkit and Golden Corpus harness",
+      "slice": 0,
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-02",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/testkit/**",
+        "tests/fixtures/**",
+        "tests/golden-corpus/**"
+      ],
+      "read_only_paths": [
+        "docs/implementation/slice-gates.md",
+        "docs/architecture/ELIOT_RESEARCH.md"
+      ],
+      "architecture_sections": [
+        "\u00a719"
+      ],
+      "implementation": [
+        "Build deterministic clocks/IDs/digests/fakes for D1/R2/Queue/AI Search/model/Drive and failure injection.",
+        "Define versioned GoldenCase loader/adjudication without model prose as oracle.",
+        "Seed real-document cases for exact, literal, semantic, modality, chronology, dissent, negative results, injection and erasure."
+      ],
+      "acceptance": [
+        "T0/T1 run offline and deterministically.",
+        "Golden cases name required atoms/handles, forbidden collapses, acceptable unknowns and coverage requirement.",
+        "Failure fakes support lost ACK, stale generation, tamper, partial write and blocked purge."
+      ],
+      "mandatory_negative_case": "Run recommendation-vs-decision and hypothesis-vs-observation cases against a deliberately collapsing extractor; harness must fail.",
+      "outputs": [
+        "testkit fakes",
+        "fixture registry",
+        "Golden Corpus schema/cases/runner"
+      ],
+      "live_gate": "none",
+      "document": "ER-23-testkit-and-golden-corpus-harness.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-24",
+      "title": "Worker composition DO Queue and schedules",
+      "slice": 0,
+      "depends_on": [
+        "ER-13",
+        "ER-15",
+        "ER-17",
+        "ER-21"
+      ],
+      "owned_paths": [
+        "apps/eliotr-core/package.json",
+        "apps/eliotr-core/tsconfig.json",
+        "apps/eliotr-core/vitest.config.ts",
+        "apps/eliotr-core/wrangler.jsonc",
+        "apps/eliotr-core/AGENTS.md",
+        "apps/eliotr-core/src/env.ts",
+        "apps/eliotr-core/src/index.ts",
+        "apps/eliotr-core/src/http.ts",
+        "apps/eliotr-core/src/composition-root.ts",
+        "apps/eliotr-core/src/queue.ts",
+        "apps/eliotr-core/src/readiness.ts",
+        "apps/eliotr-core/src/research-session.ts",
+        "apps/eliotr-core/src/scheduled.ts",
+        "apps/eliotr-core/src/index.test.ts"
+      ],
+      "read_only_paths": [
+        "packages/interfaces/**",
+        "packages/platform-cloudflare/**",
+        "docs/implementation/runtime-contract.md"
+      ],
+      "architecture_sections": [
+        "\u00a71",
+        "\u00a77.7.1",
+        "\u00a710"
+      ],
+      "implementation": [
+        "Compose concrete adapters/services in the single Worker.",
+        "Route HTTP/static assets, Queue, cron and DO; keep handlers thin and fail-closed.",
+        "ResearchSession stores connected clients/cursors/pending approvals only and persists before notify.",
+        "Scheduled contour runs bounded outbox/Drive/steward/health work."
+      ],
+      "acceptance": [
+        "Generated binding types match config.",
+        "DO hibernation/reconnect preserves compact state without owning transcript.",
+        "Worker dry-run meets startup/compressed size budgets."
+      ],
+      "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
+      "outputs": [
+        "Worker composition root",
+        "event handlers",
+        "ResearchSession DO",
+        "readiness/capabilities"
+      ],
+      "live_gate": "none",
+      "document": "ER-24-worker-composition-do-queue-and-schedules.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-25",
+      "title": "Owner PWA",
+      "slice": 1,
+      "depends_on": [
+        "ER-21",
+        "ER-24"
+      ],
+      "owned_paths": [
+        "apps/eliotr-pwa/**"
+      ],
+      "read_only_paths": [
+        "packages/contracts/**",
+        "docs/architecture/ELIOT_RESEARCH.md"
+      ],
+      "architecture_sections": [
+        "\u00a712.1"
+      ],
+      "implementation": [
+        "Implement three persistent panels: projects/sources, investigation/work product, exact evidence.",
+        "Add screens incrementally by slice and call owner API only.",
+        "Always show health, readiness/freshness, coverage/unknowns, policy denial, budget stop, jobs and connector/provider degradation."
+      ],
+      "acceptance": [
+        "Initial JS bundle remains \u2264600 KiB gzip.",
+        "Evidence viewer shows exact revision/anchor/hash/provenance and neighboring text.",
+        "No direct Cloudflare/Google/provider credential or binding."
+      ],
+      "mandatory_negative_case": "Simulate Drive/model outage and prove core library/retrieval UI remains usable with explicit degraded status.",
+      "outputs": [
+        "PWA shell/design system",
+        "typed API client",
+        "health/evidence views"
+      ],
+      "live_gate": "none",
+      "document": "ER-25-owner-pwa.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-26",
+      "title": "Cloudflare provisioning and deployment",
+      "slice": 0,
+      "depends_on": [
+        "ER-00",
+        "ER-13",
+        "ER-16",
+        "ER-24"
+      ],
+      "owned_paths": [
+        "scripts/provision-cloudflare-core.mjs",
+        "scripts/provision-cloudflare-access.mjs",
+        "scripts/provision-ai-search.mjs",
+        "scripts/provision-ai-gateways.mjs",
+        "scripts/deploy-cloudflare.mjs",
+        "scripts/test-cloudflare-provisioners.mjs",
+        "infra/cloudflare/resources.json",
+        "infra/cloudflare/access.json",
+        "infra/cloudflare/foundation-receipt.schema.json",
+        "infra/cloudflare/access-receipt.schema.json",
+        "infra/cloudflare/deployment-receipt.schema.json",
+        "infra/cloudflare/README.md",
+        "docs/implementation/cloudflare-runbook.md",
+        "docs/adr/0005-hostname-access-for-websocket.md"
+      ],
+      "read_only_paths": [
+        "apps/eliotr-core/wrangler.jsonc",
+        "apps/eliotr-core/src/index.ts",
+        "packages/platform-cloudflare/src/access.ts",
+        "infra/d1/core/migrations/",
+        "infra/d1/search/migrations/"
+      ],
+      "architecture_sections": [
+        "\u00a71.3",
+        "\u00a71.4",
+        "\u00a71.7",
+        "\u00a712.1",
+        "\u00a713.2",
+        "\u00a715",
+        "\u00a717.3",
+        "\u00a718 Slice 0",
+        "\u00a719.7",
+        "\u00a719.12"
+      ],
+      "implementation": [
+        "Implement a cross-product read-only preflight followed by create-or-verify provisioning for D1, R2, Queue/DLQ, AI Search, AI Gateways and hostname-based Cloudflare Access.",
+        "Generate the ignored account-specific wrangler.deploy.jsonc from canonical desired state; never write D1 IDs, account IDs, hostnames or secrets into committed configuration.",
+        "Use hostname-based Access for the WebSocket-capable ResearchSession surface; Worker-level Access is prohibited for this deployment because it rejects WebSocket upgrades.",
+        "Deploy only after local checks, PWA build, generated binding types and dry-run; then apply additive D1 migrations and perform one Worker deploy plus API readback.",
+        "Record foundation, Access and deployment receipts with live gates explicitly marked PASS, FAIL or NOT_EXECUTED."
+      ],
+      "acceptance": [
+        "Any incompatible existing D1 jurisdiction, R2 jurisdiction/storage class, Queue identity, AI Search immutable profile, AI Gateway profile or Access application/policy fails before the first mutation.",
+        "Check-only mode performs zero POST/PUT/PATCH/DELETE requests against mocked Cloudflare APIs.",
+        "Canonical wrangler.jsonc remains account-neutral; generated wrangler.deploy.jsonc is ignored and contains the exact provisioned D1 IDs.",
+        "A second foundation provisioning run is idempotent and creates no duplicate resources.",
+        "Worker-level Access is absent and the hostname Access application protects the exact deployment hostname with an explicit owner policy.",
+        "Deployment does not claim Google Drive, ingestion, retrieval-quality, erasure or workload live gates that were not executed.",
+        "Rollback instructions retain the previous Worker and AI Search generations."
+      ],
+      "mandatory_negative_case": "Seed mocked Cloudflare APIs with an incompatible immutable AI Search profile and an unexpected Access policy; prove every check-only/apply path exits nonzero before any mutation.",
+      "outputs": [
+        "versioned Cloudflare desired-state manifests",
+        "foundation, AI Search, AI Gateway and Access provisioners",
+        "deployment orchestrator and generated deploy-config contract",
+        "mock Cloudflare API conformance suite",
+        "resource/access/deployment receipt schemas and runbook"
+      ],
+      "live_gate": "Cloudflare resource create/readback and authenticated HTTP/WebSocket smoke when credentials are supplied; otherwise NOT_EXECUTED",
+      "document": "ER-26-cloudflare-provisioning-and-deployment.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-27",
+      "title": "Vertical integration and live conformance",
+      "slice": 0,
+      "depends_on": [
+        "ER-09",
+        "ER-12",
+        "ER-19",
+        "ER-20",
+        "ER-22",
+        "ER-24",
+        "ER-26"
+      ],
+      "owned_paths": [
+        "tests/integration/**"
+      ],
+      "read_only_paths": [
+        "docs/implementation/slice-gates.md",
+        "docs/implementation/release-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a719.1 T4\u2013T6",
+        "\u00a719.13"
+      ],
+      "implementation": [
+        "Implement real binding tests and a gated live harness for D1/R2/Queue/DO/Workflow/AI Search/AI Gateway/Drive.",
+        "Store redacted receipts, timings, generations and cleanup result.",
+        "Profile representative 5/20/50 readers and ingestion/research concurrency only after earlier gates."
+      ],
+      "acceptance": [
+        "Live tests are opt-in and cannot silently use mocks.",
+        "Disposable assets are cleaned without deleting canonical production data.",
+        "Failed gate remains NOT EXECUTED/FAILED, never PASS by assumption."
+      ],
+      "mandatory_negative_case": "Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.",
+      "outputs": [
+        "T4 integration suites",
+        "live gate runner",
+        "T6 profile/report"
+      ],
+      "live_gate": "none",
+      "document": "ER-27-vertical-integration-and-live-conformance.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-28",
+      "title": "Privacy erasure and purge closure",
+      "slice": 6,
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-13",
+        "ER-14",
+        "ER-34"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/erasure-backend.ts",
+        "apps/eliotr-core/src/erasure-coordinator.ts",
+        "infra/erasure/**"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/erasure.ts",
+        "docs/implementation/security-checklist.md"
+      ],
+      "architecture_sections": [
+        "\u00a713.7\u201313.8",
+        "\u00a716.3\u201316.4"
+      ],
+      "implementation": [
+        "Implement dedicated exact-fence erasure lifecycle across canonical payload, projections, indexes, blobs, recovery, provider, backup and route continuation.",
+        "Quarantine immediately, enumerate dependency closure, check locks/holds, purge, verify absence, append non-revealing ledger, invalidate dependents.",
+        "Ordinary APIs and Steward never receive backend capability."
+      ],
+      "acceptance": [
+        "Requested-location set equals completed set before COMPLETE.",
+        "Locked/held location returns BLOCKED with review date.",
+        "REDACTED handle returns no deleted text; restore replays purge first."
+      ],
+      "mandatory_negative_case": "Block one requested backup location and prove no subset purge can issue COMPLETE/PURGED.",
+      "outputs": [
+        "ErasureCoordinator",
+        "backend adapters",
+        "purge ledger/dependency invalidation",
+        "T5 cases"
+      ],
+      "live_gate": "none",
+      "document": "ER-28-privacy-erasure-and-purge-closure.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-29",
+      "title": "Source acquisition admission and qualification",
+      "slice": 1,
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-13",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/domain/src/source-admission.ts",
+        "packages/domain/src/qualification.ts",
+        "apps/eliotr-core/src/ingest-service.ts",
+        "apps/eliotr-core/src/source-admission-service.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/source.ts",
+        "packages/contracts/src/library.ts",
+        "packages/platform-cloudflare/src/ingest.ts"
+      ],
+      "architecture_sections": [
+        "\u00a74.1\u20134.4"
+      ],
+      "implementation": [
+        "Implement candidate lifecycle, explicit immutable unsaved snapshot path, staging/integrity/policy/residency/qualification gate and admission receipt.",
+        "Implement channel-specific readiness; parser success alone is not qualification.",
+        "Validate normalized ownership mode and exact separate cutover receipt requirements."
+      ],
+      "acceptance": [
+        "Candidate/quarantine cannot enter retrieval/model/Wiki/publication/federation.",
+        "Absent mappings lower precision.",
+        "Unknown load-bearing manifest field fails."
+      ],
+      "mandatory_negative_case": "Submit unsaved editor bytes without explicit snapshot origin/view/policy receipt and prove no source/revision is created.",
+      "outputs": [
+        "admission service",
+        "qualification checks",
+        "readiness receipts",
+        "bundle commit flow"
+      ],
+      "live_gate": "none",
+      "document": "ER-29-source-acquisition-admission-and-qualification.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-30",
+      "title": "Global library projects and scope snapshots",
+      "slice": 1,
+      "depends_on": [
+        "ER-02",
+        "ER-13",
+        "ER-29"
+      ],
+      "owned_paths": [
+        "packages/domain/src/scope.ts",
+        "packages/domain/src/project-membership.ts",
+        "apps/eliotr-core/src/scope-service.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/scope.ts",
+        "packages/contracts/src/library.ts",
+        "infra/d1/core/migrations/**"
+      ],
+      "architecture_sections": [
+        "\u00a73"
+      ],
+      "implementation": [
+        "Implement global sources with temporal many-to-many project memberships.",
+        "Resolve recursive UNION/INTERSECT/EXCEPT deterministically and freeze revisions, owner/project generations, policy/disclosure closure and purge ledger revision.",
+        "Invalidate on purge/new deny/stale owner generation/expiry."
+      ],
+      "acceptance": [
+        "One source can belong to multiple projects without canonical byte duplication in same residency identity.",
+        "Temporary scopes do not create membership.",
+        "Snapshot digest is deterministic and model/citation bound."
+      ],
+      "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
+      "outputs": [
+        "project/membership domain",
+        "scope resolver/freezer",
+        "snapshot currentness validator"
+      ],
+      "live_gate": "none",
+      "document": "ER-30-global-library-projects-and-scope-snapshots.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-31",
+      "title": "Corpus Lens navigation",
+      "slice": 3,
+      "depends_on": [
+        "ER-04",
+        "ER-05",
+        "ER-30"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/navigation.ts",
+        "apps/eliotr-core/src/navigation-service.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/navigation.ts",
+        "packages/interfaces/src/semantic-api.ts"
+      ],
+      "architecture_sections": [
+        "\u00a75.1\u20135.3",
+        "\u00a712.1"
+      ],
+      "implementation": [
+        "Build SourceCard once per qualified source revision, deterministic DocumentMap and hierarchical ProjectAtlas from bounded merges.",
+        "Expose orientation expansion path Atlas \u2192 Card \u2192 Map \u2192 section \u2192 EvidenceHandle.",
+        "Report degraded parsing, missing source classes, contradictions, centrality and recommended reading routes without treating derived maps as evidence."
+      ],
+      "acceptance": [
+        "Every navigation node expands to exact source revision.",
+        "Atlas omissions/coverage are explicit.",
+        "No model-generated card/edge becomes evidence absent handle resolution."
+      ],
+      "mandatory_negative_case": "Generate a plausible Atlas claim with no supporting source span and prove it remains navigation only and cannot support publication.",
+      "outputs": [
+        "SourceCard/DocumentMap/Atlas services",
+        "orientation result",
+        "Lens API support"
+      ],
+      "live_gate": "none",
+      "document": "ER-31-corpus-lens-navigation.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-32",
+      "title": "Selective distillation and argument maps",
+      "slice": 5,
+      "depends_on": [
+        "ER-07",
+        "ER-10",
+        "ER-31"
+      ],
+      "owned_paths": [
+        "packages/research/src/distillation.ts",
+        "packages/research/src/argument-map.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/evidence.ts",
+        "packages/contracts/src/research.ts"
+      ],
+      "architecture_sections": [
+        "\u00a75.4\u20135.7"
+      ],
+      "implementation": [
+        "Compile EvidenceAtoms selectively for active/core/repeated/audit dependencies.",
+        "Validate exact verbatim span/hash, number presence, modality, recommendation/decision and hypothesis/observation distinctions.",
+        "Build reversible ArgumentMap edges with exact spans and precision class."
+      ],
+      "acceptance": [
+        "No full-corpus paragraph distillation at ingest.",
+        "Every admitted atom has exact handle and validation receipt.",
+        "Model candidate edges remain distinguishable from deterministic/human-reviewed."
+      ],
+      "mandatory_negative_case": "Feed a recommendation sentence and prove extractor cannot emit a decision atom.",
+      "outputs": [
+        "EvidenceAtom compiler",
+        "ArgumentMap builder",
+        "scientific/project profile validators"
+      ],
+      "live_gate": "none",
+      "document": "ER-32-selective-distillation-and-argument-maps.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-33",
+      "title": "Research Steward",
+      "slice": 5,
+      "depends_on": [
+        "ER-07",
+        "ER-12",
+        "ER-15",
+        "ER-17",
+        "ER-32"
+      ],
+      "owned_paths": [
+        "packages/research/src/steward.ts"
+      ],
+      "read_only_paths": [
+        "docs/architecture/ELIOT_RESEARCH.md",
+        "packages/platform-cloudflare/src/observability.ts"
+      ],
+      "architecture_sections": [
+        "\u00a710"
+      ],
+      "implementation": [
+        "Implement deterministic hash/readiness/handle/watermark/projection/outbox/DLQ/backup/purge/route/cost checks.",
+        "Run semantic proposals only on declared triggers and under candidate-only effect ceiling.",
+        "Turn retrieval feedback into versioned QueryHint/policy generation followed by Golden replay."
+      ],
+      "acceptance": [
+        "Steward cannot publish authority-sensitive conclusions, change permission, hard-delete, or run unbounded loops.",
+        "Detected erasure issue is escalated, not executed.",
+        "Every proposal names trigger, evidence and required verifier/owner."
+      ],
+      "mandatory_negative_case": "Give Steward a stale Wiki dependency and prove it can mark/propose revalidation but cannot silently rewrite/publish the page.",
+      "outputs": [
+        "deterministic steward contour",
+        "semantic proposal contour",
+        "retrieval feedback loop"
+      ],
+      "live_gate": "none",
+      "document": "ER-33-research-steward.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-34",
+      "title": "Backup restore and platform exit",
+      "slice": 6,
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-17"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/backup.ts",
+        "infra/backup/**"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/backup.ts",
+        "packages/contracts/src/erasure.ts"
+      ],
+      "architecture_sections": [
+        "\u00a716"
+      ],
+      "implementation": [
+        "Create portable BackupEpoch with schema/migrations, Core export, R2 manifest, heads, generations, handles/tombstones and purge ledger plus encrypted offsite copy.",
+        "Implement clean isolated restore that applies current purge ledger before payload exposure/projection rebuild.",
+        "Produce portable Cloudflare exit manifest; search indexes/Queue/DO are rebuilt."
+      ],
+      "acceptance": [
+        "Offsite destination supports deletion journal/expiry.",
+        "Restore verifies LIVE and REDACTED handles and exact/high-recall/erasure acceptance.",
+        "Locked backup conflict reports PURGE_BLOCKED."
+      ],
+      "mandatory_negative_case": "Restore an epoch containing later-purged bytes and prove they are removed/quarantined before any read traffic or index upload.",
+      "outputs": [
+        "BackupEpoch creator",
+        "offsite copy adapter",
+        "restore verifier",
+        "exit export"
+      ],
+      "live_gate": "none",
+      "document": "ER-34-backup-restore-and-platform-exit.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-35",
+      "title": "Specialist corpus profiles",
+      "slice": 7,
+      "depends_on": [
+        "ER-07",
+        "ER-31",
+        "ER-32"
+      ],
+      "owned_paths": [
+        "packages/research/src/specialist-profiles.ts"
+      ],
+      "read_only_paths": [
+        "packages/contracts/src/evidence.ts",
+        "docs/implementation/slice-gates.md"
+      ],
+      "architecture_sections": [
+        "\u00a74.7\u20134.9",
+        "\u00a75.6\u20135.7"
+      ],
+      "implementation": [
+        "Define code profile around repository identity + commit SHA + exact path/file/symbol handles.",
+        "Normalize conversations as event graph/episodes, not one Markdown blob.",
+        "Preserve scientific observation/inference/recommendation distinctions and structured-data row handles/aggregates.",
+        "Gate optional Sourcegraph/SCIP/R2 SQL/graph infrastructure on measured corpus value."
+      ],
+      "acceptance": [
+        "Generic embeddings do not replace code definitions/references.",
+        "Structured datasets are not sent wholesale to models.",
+        "Every specialist output retains source revision and precision limitations."
+      ],
+      "mandatory_negative_case": "Query code after repository head advances and prove evidence stays pinned to the admitted commit SHA.",
+      "outputs": [
+        "code/scholarly/conversation/structured profile contracts",
+        "profile-specific fixtures"
+      ],
+      "live_gate": "none",
+      "document": "ER-35-specialist-corpus-profiles.md",
+      "max_package_source_lines": 10000
+    }
+  ]
+}

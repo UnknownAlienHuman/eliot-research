@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:eliotr:schema:cloudflare-foundation-receipt:v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "desired_generation",
+    "deployment_generation",
+    "environment",
+    "generated_config",
+    "account_ref",
+    "d1_databases",
+    "r2_buckets",
+    "queues",
+    "access_hostname",
+    "access_provisioning",
+    "created_at"
+  ],
+  "properties": {
+    "protocol": { "const": "eliotr.cloudflare-foundation-receipt.v1" },
+    "desired_generation": { "type": "string", "minLength": 1 },
+    "deployment_generation": { "type": "string", "minLength": 1 },
+    "environment": { "enum": ["development", "staging", "production"] },
+    "generated_config": { "type": "string", "minLength": 1 },
+    "account_ref": { "type": "string", "minLength": 1 },
+    "d1_databases": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
+    "r2_buckets": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
+    "queues": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
+    "access_hostname": { "type": ["string", "null"] },
+    "access_provisioning": { "const": "SEPARATE_REQUIRED_GATE" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "required": ["name", "disposition"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "disposition": { "enum": ["CREATED", "VERIFIED"] }
+      }
+    }
+  }
+}

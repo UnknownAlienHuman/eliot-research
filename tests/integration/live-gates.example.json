@@ -1,0 +1,16 @@
+{
+  "protocol": "eliotr.live-gates.v1",
+  "environment": "development",
+  "gates": [
+    { "gate_id": "T4-d1-write-readback", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-r2-immutable-put-readback", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-queue-duplicate-delivery", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-durable-object-hibernation", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-workflow-retry-resume", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-ai-search-evidence-resolution", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-ai-gateway-route", "state": "NOT_EXECUTED" },
+    { "gate_id": "T4-drive-append-import-result-readback", "state": "NOT_EXECUTED" },
+    { "gate_id": "T5-erasure-restore", "state": "NOT_EXECUTED" },
+    { "gate_id": "T6-representative-load", "state": "NOT_EXECUTED" }
+  ]
+}

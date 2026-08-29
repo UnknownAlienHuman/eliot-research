@@ -1,0 +1,33 @@
+{
+  "case_id": "GC-003-number-with-conditions",
+  "source_revision_refs": [
+    "golden-versioned-limits-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-versioned-limits"
+    ]
+  },
+  "question": "What are the active request-size limits and what do they apply to?",
+  "expected_product": "VERIFY_EXACT",
+  "required_atoms": [
+    "ordinary JSON hard limit is 256 KiB in active generation",
+    "Drive contribution hard limit is 128 KiB"
+  ],
+  "forbidden_collapses": [
+    "superseded 128 KiB JSON target presented as current",
+    "internal gate presented as platform ceiling"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc003-active-limits",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "external provider maximums"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "Numbers require units, generation status, and surface."
+}

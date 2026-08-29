@@ -1,0 +1,30 @@
+{
+  "case_id": "GC-004-current-vs-superseded",
+  "source_revision_refs": [
+    "golden-versioned-limits-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-versioned-limits"
+    ]
+  },
+  "question": "Did the ordinary JSON limit remain 128 KiB?",
+  "expected_product": "FAST_SEARCH",
+  "required_atoms": [
+    "128 KiB was superseded",
+    "active hard limit is 256 KiB"
+  ],
+  "forbidden_collapses": [
+    "both revisions treated as simultaneously active"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc004-version-history",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "Chronology and active-generation wording determine correctness."
+}

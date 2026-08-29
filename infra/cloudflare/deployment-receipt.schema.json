@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eliot-research.invalid/schemas/cloudflare/deployment-receipt.schema.json",
+  "title": "Eliot Research Cloudflare deployment receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "deployment_generation",
+    "environment",
+    "worker",
+    "generated_config_sha256",
+    "remote_http_smoke",
+    "live_conformance",
+    "note",
+    "created_at"
+  ],
+  "properties": {
+    "protocol": { "const": "eliotr.cloudflare-deployment-receipt.v1" },
+    "deployment_generation": { "type": "string", "minLength": 1 },
+    "environment": { "enum": ["staging", "production"] },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "compatibility_date", "modified_on", "last_deployed_from", "has_assets", "durable_object_export"],
+      "properties": {
+        "id": { "const": "eliotr-core" },
+        "compatibility_date": { "type": ["string", "null"] },
+        "modified_on": { "type": ["string", "null"] },
+        "last_deployed_from": { "type": ["string", "null"] },
+        "has_assets": { "type": ["boolean", "null"] },
+        "durable_object_export": { "const": "durable-object" }
+      }
+    },
+    "generated_config_sha256": { "$ref": "#/$defs/sha256" },
+    "remote_http_smoke": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "reason"],
+          "properties": {
+            "state": { "const": "NOT_EXECUTED" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "results"],
+          "properties": {
+            "state": { "const": "PASS" },
+            "results": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "status"],
+                "properties": {
+                  "path": { "type": "string", "minLength": 1 },
+                  "status": { "type": "integer", "minimum": 200, "maximum": 299 }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "live_conformance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "d1_write_readback",
+        "r2_immutable_put_readback",
+        "queue_duplicate_delivery",
+        "durable_object_hibernation",
+        "workflow_retry_resume",
+        "ai_search_exact_resolution",
+        "google_drive_exchange"
+      ],
+      "properties": {
+        "d1_write_readback": { "$ref": "#/$defs/gateState" },
+        "r2_immutable_put_readback": { "$ref": "#/$defs/gateState" },
+        "queue_duplicate_delivery": { "$ref": "#/$defs/gateState" },
+        "durable_object_hibernation": { "$ref": "#/$defs/gateState" },
+        "workflow_retry_resume": { "$ref": "#/$defs/gateState" },
+        "ai_search_exact_resolution": { "$ref": "#/$defs/gateState" },
+        "google_drive_exchange": { "$ref": "#/$defs/gateState" }
+      }
+    },
+    "note": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "gateState": { "enum": ["PASS", "FAIL", "NOT_EXECUTED"] }
+  }
+}

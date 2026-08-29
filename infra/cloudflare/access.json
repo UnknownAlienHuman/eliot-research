@@ -1,0 +1,22 @@
+{
+  "protocol": "eliotr.cloudflare-access.v1",
+  "verified_against_cloudflare_docs": "2026-08-28",
+  "application": {
+    "name_prefix": "Eliot Research",
+    "type": "self_hosted",
+    "session_duration": "24h",
+    "app_launcher_visible": false,
+    "destination_type": "public"
+  },
+  "policy": {
+    "name": "Eliot Research owners",
+    "decision": "allow",
+    "selector": "email"
+  },
+  "requirements": {
+    "hostname_based": true,
+    "reason": "ResearchSession uses WebSockets; Worker-level Access currently rejects WebSocket upgrades.",
+    "environment_hostname": "ELIOTR_ACCESS_HOSTNAME",
+    "environment_owner_emails": "ELIOTR_OWNER_EMAILS"
+  }
+}

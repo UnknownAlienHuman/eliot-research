@@ -1,0 +1,47 @@
+{
+  "name": "eliot-research",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.23.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "build:pwa": "pnpm --filter @eliotr/pwa build",
+    "build:worker": "pnpm --filter @eliotr/core build",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "test": "pnpm test:provisioners && vitest run && pnpm --filter @eliotr/core test",
+    "test:watch": "vitest",
+    "contracts:check": "node scripts/check-contract-fixtures.mjs",
+    "boundaries:check": "node scripts/check-boundaries.mjs",
+    "budgets:check": "node scripts/check-budgets.mjs",
+    "check": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm lint && pnpm typecheck && pnpm test",
+    "check:affected": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm lint && pnpm typecheck && pnpm test",
+    "work-packets:check": "node scripts/check-work-packets.mjs",
+    "cf:types": "pnpm --filter @eliotr/core cf:types",
+    "cf:dev": "pnpm --filter @eliotr/core dev",
+    "cf:dry-run": "pnpm build:pwa && pnpm --filter @eliotr/core deploy:dry-run",
+    "cf:preflight:remote": "node scripts/provision-cloudflare-core.mjs --check-only && node scripts/provision-ai-search.mjs --check-only && node scripts/provision-ai-gateways.mjs --check-only && node scripts/provision-cloudflare-access.mjs --check-only",
+    "cf:provision:core": "node scripts/provision-cloudflare-core.mjs",
+    "cf:provision:search": "node scripts/provision-ai-search.mjs",
+    "cf:provision:gateways": "node scripts/provision-ai-gateways.mjs",
+    "cf:provision:access": "node scripts/provision-cloudflare-access.mjs",
+    "cf:deploy": "node scripts/deploy-cloudflare.mjs",
+    "test:provisioners": "node scripts/test-cloudflare-provisioners.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "@cloudflare/workers-types": "5.20260827.1",
+    "@eslint/js": "10.9.1",
+    "@types/node": "26.4.0",
+    "eslint": "10.9.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.68.0",
+    "vite": "8.2.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.127.1"
+  }
+}

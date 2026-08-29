@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "eliotr.agent-work.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "repository",
+    "baseline_commit",
+    "architecture_contract",
+    "rules",
+    "packets"
+  ],
+  "properties": {
+    "protocol": {
+      "const": "eliotr.agent-work.v1"
+    },
+    "repository": {
+      "type": "string"
+    },
+    "baseline_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "architecture_contract": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "object"
+    },
+    "packets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "slice",
+          "depends_on",
+          "owned_paths",
+          "read_only_paths",
+          "architecture_sections",
+          "implementation",
+          "acceptance",
+          "mandatory_negative_case",
+          "outputs",
+          "live_gate",
+          "document",
+          "max_package_source_lines"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ER-[0-9]{2}$"
+          },
+          "title": {
+            "type": "string"
+          },
+          "slice": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 7
+          },
+          "depends_on": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "owned_paths": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "read_only_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "architecture_sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "implementation": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "acceptance": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "mandatory_negative_case": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "live_gate": {
+            "type": "string"
+          },
+          "document": {
+            "type": "string"
+          },
+          "max_package_source_lines": {
+            "type": "integer",
+            "maximum": 10000
+          }
+        }
+      }
+    }
+  }
+}
