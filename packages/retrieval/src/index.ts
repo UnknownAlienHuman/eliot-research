@@ -7,3 +7,4 @@ export * from "./exhaustive.js";
 export * from "./service.js";
 export * from "./navigation.js";
 export * from "./lanes.js";
+export * from "./locator/strict-decoder.js";

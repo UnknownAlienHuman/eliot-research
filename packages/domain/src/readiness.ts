@@ -18,7 +18,8 @@ const TRANSITIONS: Readonly<Record<ReadinessState, readonly ReadinessState[]>> =
 };
 
 export function validateReadinessTransition(current: ReadinessState, next: ReadinessState): Result<ReadinessState, DomainError> {
-  return TRANSITIONS[current].includes(next)
+  const allowed = TRANSITIONS[current] ?? [];
+  return allowed.includes(next)
     ? ok(next)
     : err(domainError("INVALID_TRANSITION", `${current} cannot transition to ${next}`));
 }

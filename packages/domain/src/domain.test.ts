@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mapInternalOutcomeToDisposition, resolveScopeExpression, serializeObjectResidencyKey } from "./index.js";
+import {
+  mapInternalOutcomeToDisposition,
+  resolveScopeExpression,
+  serializeObjectResidencyKey,
+  validateReadinessTransition,
+} from "./index.js";
 
 describe("domain invariants", () => {
   it("maps internal failures toward a less assertive wire disposition", () => {
@@ -28,5 +33,10 @@ describe("domain invariants", () => {
       content_digest: { algorithm: "sha256", digest: "0".repeat(64) },
     });
     expect(serialized).toContain("object-residency-key.v1/s/a/c/k/r/e/sha256");
+  });
+
+  it("keeps redacted readiness terminal and permits explicit queueing", () => {
+    expect(validateReadinessTransition("not_requested", "queued")).toEqual({ ok: true, value: "queued" });
+    expect(validateReadinessTransition("redacted", "queued")).toEqual(expect.objectContaining({ ok: false }));
   });
 });

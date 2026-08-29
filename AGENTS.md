@@ -62,3 +62,10 @@ apps/eliotr-pwa        → contracts + HTTPS API only
 ```
 
 The automated boundary check is authoritative for allowed package imports.
+
+## Implementation-state gate
+
+Before claiming a packet, inspect `docs/implementation/implementation-status.json` and
+`docs/implementation/gap-register.md`. A compiling port or final-shaped DTO is not an implemented
+feature. Remove a fail-closed sentinel only together with its negative acceptance case and required
+live receipt; update the status registry in the same commit.

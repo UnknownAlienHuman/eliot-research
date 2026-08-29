@@ -12,7 +12,7 @@ export default {
   queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     return handleQueue(batch, env);
   },
-  scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+  scheduled(event: ScheduledController, env: Env): Promise<void> {
     return handleScheduled(event, env);
   },
 } satisfies ExportedHandler<Env>;

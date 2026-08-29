@@ -57,3 +57,9 @@ Contract conflicts return to ER-01/ER-00; do not create a leaf-local alternate s
 | [ER-33](ER-33-research-steward.md) | 5 | Research Steward | ER-07, ER-12, ER-15, ER-17, ER-32 |
 | [ER-34](ER-34-backup-restore-and-platform-exit.md) | 6 | Backup restore and platform exit | ER-13, ER-14, ER-17 |
 | [ER-35](ER-35-specialist-corpus-profiles.md) | 7 | Specialist corpus profiles | ER-07, ER-31, ER-32 |
+
+## Before starting a packet
+
+Read the machine-readable `../implementation/implementation-status.json` inventory and the prioritized
+`../implementation/gap-register.md`. They identify intentional fail-closed contours and the exact
+evidence required to move them from scaffold to implemented and then to live-qualified.
