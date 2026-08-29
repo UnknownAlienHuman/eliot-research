@@ -3,6 +3,10 @@ ENVIRONMENT=development
 DEPLOYMENT_GENERATION=local-unqualified
 AI_GATEWAY_REASONING_URL=
 AI_GATEWAY_RETRIEVAL_URL=
+ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
+ACCESS_AUDIENCE=replace-me
+# Comma-separated signed service-token common_name values. Empty denies all service routes.
+ACCESS_SERVICE_PRINCIPALS=
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_TOKEN_ENCRYPTION_KEY=

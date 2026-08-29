@@ -6,8 +6,8 @@
 
 ## Objective
 
-Implement this capability without redesigning neighboring contracts. The packet owns no authority
-outside the paths below.
+Expose a small product-level interface. Clients choose research operations and scopes; they never select
+D1, R2, AI Search, a tokenizer, an embedding model, or a provider directly.
 
 ## Owned paths
 
@@ -27,33 +27,41 @@ outside the paths below.
 - `packages/contracts/**`
 - `docs/implementation/runtime-contract.md`
 
-## Architecture extracts
+## Implemented contour
 
-- §12.1–12.2
+The route registry now distinguishes public, owner, service, and owner-or-service operations. It exposes
+one executable semantic read:
 
-## Required implementation
+```text
+GET /api/v1/research/catalog
+```
 
-- Implement small product-level API: catalog/orient/query/open/verify/run/artifact/wiki/trace/changes plus owner administration and bundle ingest.
-- Strictly validate bounded payloads and return typed errors/handles/ranges/cursors.
-- Clients never select D1/R2/index/tokenizer/provider.
+The endpoint accepts only `project_id`, `cursor`, and `limit`; it returns bounded project/source rows and
+an opaque cursor. All remaining product routes retain explicit typed unavailable behavior until their
+own work packets complete. Large content remains handle/range based.
 
 ## Acceptance
 
-- Large content is streamed/ranged by immutable handle.
-- Authorization context reaches services; no infrastructure credentials leave Worker.
-- Unimplemented capabilities return explicit typed unavailable state.
+- Unknown query fields and duplicate parameters fail closed.
+- A service principal cannot call owner-only catalog operations.
+- Provider/database/index names are not accepted as routing input.
+- API 404/405 responses cannot fall through to static assets.
+- Unsupported products return a typed unavailable problem rather than placeholder success.
 
 ## Mandatory negative boundary
 
 Request a provider/database/index name through the API and prove it cannot bypass product policy/router.
 
-## Handoff contract
+## Verification
 
-Produce:
-- semantic/owner/ingest interfaces
-- route registry
-- HTTP error envelope
+```text
+pnpm --filter @eliotr/interfaces typecheck
+pnpm --filter @eliotr/core typecheck
+pnpm --filter @eliotr/core test
+pnpm check:boundaries
+pnpm check:budgets
+pnpm check:implementation
+```
 
-The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
-result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
-with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+The direct Cloudflare Access/D1 round trip is not a packet-local gate and remains `NOT EXECUTED` until
+ER-24/ER-26 deployment qualification.

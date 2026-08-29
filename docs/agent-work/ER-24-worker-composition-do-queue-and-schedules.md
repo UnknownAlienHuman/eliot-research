@@ -6,8 +6,8 @@
 
 ## Objective
 
-Implement this capability without redesigning neighboring contracts. The packet owns no authority
-outside the paths below.
+Compose implemented ports in the single Worker while keeping unsupported capabilities mechanically
+fail-closed. The Worker is a composition and transport boundary, not a second domain layer.
 
 ## Owned paths
 
@@ -32,37 +32,56 @@ outside the paths below.
 - `packages/platform-cloudflare/**`
 - `docs/implementation/runtime-contract.md`
 
-## Architecture extracts
+## Implemented contour
 
-- §1
-- §7.7.1
-- §10
+```text
+request
+→ exact route/method match
+→ route byte/query contract
+→ signed Cloudflare Access JWT verification
+→ owner/service principal-class authorization
+→ typed AuthenticatedRequestContext
+→ bounded application dispatch
+→ bounded JSON response or typed problem
+```
 
-## Required implementation
+`createApplication()` now composes health, capabilities, a D1-backed owner catalog, readiness, and
+outbox inspection. It does not manufacture success for ingest, retrieval, research, federation, Wiki,
+Drive, or erasure. Those routes remain typed unavailable after schema-readiness checks.
 
-- Compose concrete adapters/services in the single Worker.
-- Route HTTP/static assets, Queue, cron and DO; keep handlers thin and fail-closed.
-- ResearchSession stores connected clients/cursors/pending approvals only and persists before notify.
-- Scheduled contour runs bounded outbox/Drive/steward/health work.
+The catalog reads only a source whose current `source.head_rev` resolves to the same source's
+`source_revision` with `purge_state = LIVE`. Project membership is active-row filtered. Cursor state is
+canonical base64url, bounded, versioned, and bound to the original project scope.
+
+`/healthz` is minimal and does not reveal schema failures. Protected health/capabilities require Access.
+Unknown API paths return 404 and method mismatch returns 405 with `Allow`; neither reaches static assets.
 
 ## Acceptance
 
-- Generated binding types match config.
-- DO hibernation/reconnect preserves compact state without owning transcript.
-- Worker dry-run meets startup/compressed size budgets.
+- Missing/forged Access identity is rejected before application service execution.
+- Service principals cannot cross owner-only boundaries.
+- Unknown service principals are denied when the allowlist is empty or does not contain them.
+- Catalog limit/cursor/authority rows are bounded and malformed data fails closed.
+- Existing R2, ingest, Queue, and research implementations remain behind their owned application ports.
+- Worker handlers retain explicit readiness and typed-unavailable behavior.
 
 ## Mandatory negative boundary
 
-Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.
+Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost. For this
+increment, additionally reuse a catalog cursor under another project and prove the request is rejected.
 
-## Handoff contract
+## Verification
 
-Produce:
-- Worker composition root
-- event handlers
-- ResearchSession DO
-- readiness/capabilities
+```text
+pnpm --filter @eliotr/core typecheck
+pnpm --filter @eliotr/core test
+pnpm cf:types
+pnpm cf:dry-run
+pnpm check:boundaries
+pnpm check:budgets
+pnpm check:implementation
+```
 
-The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
-result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
-with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+Deterministic TypeScript and runtime negative fixtures are implemented. Live owner JWT, service-token,
+remote D1 catalog, and deployed Worker receipts remain `NOT EXECUTED`; status is
+`IMPLEMENTED_NOT_LIVE`, not `LIVE_QUALIFIED`.
