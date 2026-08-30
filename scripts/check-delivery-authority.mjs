@@ -26,6 +26,7 @@ const inboxColumns = new Set(db.prepare("PRAGMA table_info(delivery_inbox)").all
 assert(inboxColumns.has("payload_sha256"));
 
 const digest = "a".repeat(64);
+const invalidDigest = `${"a".repeat(63)}z`;
 const createdAt = "2026-08-30T00:00:00.000Z";
 db.prepare(
   "INSERT INTO operation_intent(intent_id,revision,operation_kind,principal_ref,idempotency_key,payload_ref,policy_decision_ref,created_at) " +
@@ -35,6 +36,11 @@ db.prepare(
   "INSERT INTO outbox(outbox_id,intent_id,intent_revision,topic,payload_ref,payload_sha256,state,attempts,next_attempt_at,lease_generation,created_at,updated_at) " +
   "VALUES (?,?,?,?,?,?,'PENDING',0,0,0,?,?)",
 ).run("outbox-1", "intent-1", 1, "source.revision.admitted", "source-revision-1", digest, createdAt, createdAt);
+
+assert.throws(() => db.prepare(
+  "INSERT INTO outbox(outbox_id,intent_id,intent_revision,topic,payload_ref,payload_sha256,state,attempts,next_attempt_at,lease_generation,created_at,updated_at) " +
+  "VALUES (?,?,?,?,?,?,'PENDING',0,0,0,?,?)",
+).run("outbox-invalid", "intent-1", 1, "source.revision.admitted", "source-revision-1", invalidDigest, createdAt, createdAt));
 
 const first = db.prepare(
   "UPDATE outbox SET state='LEASED', attempts=attempts+1, lease_owner=?, lease_generation=lease_generation+1, lease_until=? " +
@@ -55,6 +61,9 @@ const messageInsert = db.prepare(
   "VALUES (?,?,?,?,?,'PROCESSING',1,?,1,?,?,?)",
 );
 messageInsert.run("outbox-1:1", "projection-1", "source.revision.admitted", "source-revision-1", digest, "consumer-a", 20_000, 10_000, 10_000);
+assert.throws(() => messageInsert.run(
+  "outbox-invalid-digest", "projection-invalid", "source.revision.admitted", "source-revision-1", invalidDigest, "consumer-a", 20_000, 10_000, 10_000,
+));
 assert.throws(() => messageInsert.run(
   "outbox-1:2", "projection-1", "source.revision.admitted", "source-revision-1", "b".repeat(64), "consumer-b", 30_000, 20_000, 20_000,
 ));
@@ -78,7 +87,7 @@ assert.throws(() => {
     db.prepare(
       "INSERT INTO outbox(outbox_id,intent_id,intent_revision,topic,payload_ref,payload_sha256,state,attempts,next_attempt_at,lease_generation,created_at,updated_at) " +
       "VALUES (?,?,?,?,?,?,'PENDING',0,0,0,?,?)",
-    ).run("outbox-rollback", "intent-rollback", 1, "source.revision.admitted", "source-revision-2", "not-a-digest", createdAt, createdAt);
+    ).run("outbox-rollback", "intent-rollback", 1, "source.revision.admitted", "source-revision-2", invalidDigest, createdAt, createdAt);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");

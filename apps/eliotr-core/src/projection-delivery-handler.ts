@@ -141,6 +141,7 @@ async function requireActiveRevision(
 async function findAcknowledgingReceipt(database: D1Database, intentRef: VersionedRef): Promise<VersionedRef | null> {
   const row = await database.prepare(
     "SELECT receipt_id, revision, outcome FROM operation_receipt WHERE intent_id = ?1 AND intent_revision = ?2 " +
+    "AND outcome IN ('ACCEPTED','DUPLICATE','SUCCEEDED','PARTIAL') " +
     "ORDER BY created_at DESC, revision DESC LIMIT 1",
   ).bind(intentRef.id, intentRef.revision).first<ReceiptRow>();
   if (row === null) return null;
@@ -186,6 +187,7 @@ async function failLeaseQuietly(
   try { await store.fail(fence, "PROJECTION_ACCEPTANCE_FAILED", nowMs); } catch { /* retain original failure */ }
 }
 
+// IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.
 export function createProjectionDeliveryHandler(
   database: D1Database,
   clock: () => number = Date.now,
