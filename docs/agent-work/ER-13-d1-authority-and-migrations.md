@@ -2,59 +2,76 @@
 
 **Slice:** 0
 **Depends on:** ER-00, ER-01, ER-23
-**Live gate:** none
+**Live gate:** remote D1 migration/readback when credentials are supplied; otherwise NOT EXECUTED
 
 ## Objective
 
-Implement this capability without redesigning neighboring contracts. The packet owns no authority
-outside the paths below.
+Own non-disposable D1 Core authority, additive migrations, named repositories, expected-head/fence
+semantics and atomic canonical mutation plus outbox. Model/provider/network calls never occur inside a
+D1 authority transaction.
 
 ## Owned paths
 
 - `packages/platform-cloudflare/src/bindings.ts`
 - `packages/platform-cloudflare/src/d1.ts`
+- `packages/platform-cloudflare/src/d1-outbox-authority.ts`
+- `packages/platform-cloudflare/src/d1-outbox-authority.test.ts`
+- `packages/platform-cloudflare/src/d1-outbox-store.ts`
+- `packages/platform-cloudflare/src/d1-outbox-store.test.ts`
+- `packages/platform-cloudflare/src/d1-inbox-store.ts`
+- `packages/platform-cloudflare/src/d1-inbox-store.test.ts`
+- `packages/platform-cloudflare/src/execution-lease.ts`
+- `packages/platform-cloudflare/src/execution-lease.test.ts`
 - `packages/platform-cloudflare/src/index.ts`
-- `packages/platform-cloudflare/package.json`
-- `packages/platform-cloudflare/tsconfig.json`
-- `packages/platform-cloudflare/AGENTS.md`
 - `infra/d1/**`
+- `scripts/check-delivery-authority.mjs`
 
-## Read only
+## Implemented contour
 
-- `docs/implementation/dependency-map.md`
-- `packages/contracts/**`
+```text
+OperationIntent strict decode
+→ atomic operation_intent + digest-bound outbox batch
+→ exact idempotency readback
+→ generation-fenced producer lease
+→ delivered / retry / dead-letter settlement
+→ durable consumer inbox identity
+→ generation-fenced operation execution lease
+```
 
-## Architecture extracts
+Core migrations now advance through:
 
-- §1.5–1.6
-- §2
-- §15.2
-- §17.4
+```text
+core-v1
+0002 execution coordination
+0003 inbox payload digest
+0004 outbox delivery fence
+core-v4-delivery-fenced
+```
 
-## Required implementation
-
-- Implement prepared named queries/repositories for authority tables, expected-head CAS, idempotency, attempts/receipts, outbox, generations and health snapshots.
-- Keep Core non-disposable and Search rebuildable.
-- Use additive migrations and query-shape fixtures; no model/network call in transactions.
+Worker readiness requires the exact current Core and Search generations. An older non-null schema is
+blocked rather than treated as ready.
 
 ## Acceptance
 
-- Migrations execute on SQLite and local/remote D1.
-- Canonical mutation + outbox are atomic.
-- Duplicate idempotency key returns existing receipt.
+- canonical intent and outbox insertion are atomic;
+- idempotency key reuse with different intent/payload bytes fails;
+- stale producer, inbox and execution fences cannot settle newer work;
+- lost acknowledgement reconciles only against an exact terminal row;
+- malformed 64-character non-hex digests fail at the D1 boundary;
+- Queue consumers reload durable authority and never synthesize work from message payload alone.
 
 ## Mandatory negative boundary
 
-Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.
+Crash or lose the response after the authority batch/Queue send, then replay. Readback must return the
+same intent/receipt and must not create a second authority mutation or projection job.
 
-## Handoff contract
+## Verification
 
-Produce:
-- D1 migrations
-- repositories
-- named-query registry
-- migration ledger
+```text
+pnpm delivery:check
+pnpm --filter @eliotr/platform-cloudflare test
+pnpm check:boundaries
+pnpm check:budgets
+```
 
-The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
-result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
-with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE_QUALIFIED`.

@@ -2,51 +2,69 @@
 
 **Slice:** 0
 **Depends on:** ER-13
-**Live gate:** none
+**Live gate:** remote Queue duplicate-delivery/lost-ACK/DLQ round trip; otherwise NOT EXECUTED
 
 ## Objective
 
-Implement this capability without redesigning neighboring contracts. The packet owns no authority
-outside the paths below.
+Use Queue only as accelerated delivery. D1 intent, outbox, inbox, attempts and receipts remain durable
+authority. A Queue acknowledgement is emitted only after durable consumer settlement.
 
 ## Owned paths
 
-- `packages/platform-cloudflare/src/outbox.ts`
-- `packages/platform-cloudflare/src/queue.ts`
+- `packages/platform-cloudflare/src/delivery-types.ts`
+- `packages/platform-cloudflare/src/delivery-runtime.ts`
+- `packages/platform-cloudflare/src/outbox-dispatcher.ts`
+- `packages/platform-cloudflare/src/outbox-dispatcher.test.ts`
+- `packages/platform-cloudflare/src/queue-consumer.ts`
+- `packages/platform-cloudflare/src/queue-consumer.test.ts`
+- `packages/platform-cloudflare/src/d1-outbox-store.ts`
+- `packages/platform-cloudflare/src/d1-outbox-store.test.ts`
+- `packages/platform-cloudflare/src/d1-inbox-store.ts`
+- `packages/platform-cloudflare/src/d1-inbox-store.test.ts`
 
-## Read only
+## Implemented contour
 
-- `apps/eliotr-core/src/queue.ts`
-- `docs/implementation/failure-model.md`
+```text
+D1 outbox claim with lease generation
+→ stable eliotr.delivery.message.v1 envelope
+→ Queue send
+→ exact producer settlement or retry/dead-letter
+→ strict consumer decode
+→ D1 inbox acquire by topic + idempotency + payload digest
+→ authority reload
+→ handler receipt
+→ inbox completion
+→ Queue ACK
+```
 
-## Architecture extracts
+Failure rules:
 
-- §1.6
-- §15.1–15.2
-
-## Required implementation
-
-- Implement durable outbox lease/send/mark flow and Queue delivery adapter.
-- Consumers receive compact intent IDs, reload authority from D1, record attempts, and ack only after durable receipt.
-- Use bounded retries and DLQ reason classes; support reconciliation after lost ACK.
+- send success followed by lost settlement does not create a new idempotency identity;
+- duplicate deliveries return the prior acknowledging receipt;
+- `FAILED`, `BLOCKED` and `CANCELLED` operation receipts never acknowledge successful delivery;
+- malformed/poison messages remain unacknowledged for Cloudflare DLQ handling;
+- settlement uncertainty never triggers a compensating side effect;
+- retries are bounded by explicit backoff and the configured platform `max_retries`/DLQ policy.
 
 ## Acceptance
 
-- Duplicate delivery is idempotent.
-- Message with no persisted intent is rejected.
-- Outbox age/depth/retries/DLQ are observable.
+- concurrent consumers cannot both own the same inbox identity;
+- payload substitution under one idempotency key is rejected;
+- stale lease generation cannot complete/retry/dead-letter another worker's record;
+- outbox depth, age, retries, dead letters and uncertain settlements are observable;
+- consumer handler executes from D1 authority, not untrusted Queue fields.
 
 ## Mandatory negative boundary
 
-Deliver the same message concurrently to two consumers and prove one authoritative operation/receipt results.
+Deliver one message concurrently, lose the first consumer settlement acknowledgement and redeliver it.
+Exactly one authoritative receipt/job may exist, and the second delivery may only reconcile it.
 
-## Handoff contract
+## Verification
 
-Produce:
-- outbox repository/sweeper
-- queue envelope/consumer adapter
-- retry taxonomy
+```text
+pnpm delivery:check
+pnpm --filter @eliotr/platform-cloudflare test
+pnpm --filter @eliotr/core test
+```
 
-The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
-result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
-with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+Remote Queue, restart and DLQ receipts remain `NOT EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.

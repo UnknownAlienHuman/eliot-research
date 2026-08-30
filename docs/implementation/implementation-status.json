@@ -1,6 +1,6 @@
 {
   "protocol": "eliotr.implementation-status.v1",
-  "baseline_commit": "da1406095d564da817c46492af8bb2b3d06503e6",
+  "baseline_commit": "8b4fe019f862ae49ed2ad937734a711ea086d315",
   "states": [
     "SCAFFOLD_FAIL_CLOSED",
     "IN_PROGRESS",
@@ -41,6 +41,45 @@
       ]
     },
     {
+      "id": "implemented-003",
+      "path": "apps/eliotr-core/src/queue.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch",
+      "owner_packets": ["ER-15", "ER-24"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable handler execution and ACK only after receipt settlement",
+      "completion_evidence": [
+        "duplicate-delivery and stale-fence negative tests",
+        "failed receipt cannot acknowledge delivery",
+        "remote Queue duplicate-delivery and DLQ receipts"
+      ]
+    },
+    {
+      "id": "implemented-004",
+      "path": "apps/eliotr-core/src/scheduled.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation",
+      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "scheduled handler leases a bounded D1 outbox batch, sends stable Queue envelopes and records exact delivered/retry/dead-letter settlement",
+      "completion_evidence": [
+        "lost producer ACK reconciliation tests",
+        "D1 generation-fenced claim fixture",
+        "remote Queue send/readback receipt"
+      ]
+    },
+    {
+      "id": "implemented-005",
+      "path": "apps/eliotr-core/src/projection-delivery-handler.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance",
+      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "admitted LIVE source revisions can create one fenced PROJECTION job acceptance and an ACCEPTED receipt; actual projection success is not claimed",
+      "completion_evidence": [
+        "active owner, purge state and content digest checks",
+        "negative receipt-outcome deduplication test",
+        "remote D1/Queue replay receipt"
+      ]
+    },
+    {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
       "sentinel": "implementation required",
@@ -64,8 +103,8 @@
       "sentinel": "implementation required",
       "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-29"],
       "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "operation throws and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "behavior": "HTTP prepare/commit and source-admission composition still throw and cannot return a success receipt",
+      "completion_evidence": ["implementation tests", "negative acceptance case", "real R2/D1 admission receipt"]
     },
     {
       "id": "pending-007",
@@ -91,8 +130,8 @@
       "sentinel": "implementation required",
       "owner_packets": ["ER-29"],
       "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "operation throws and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "behavior": "qualification and SourceAdmissionDecision composition still throw and cannot create a SourceRevision",
+      "completion_evidence": ["implementation tests", "negative acceptance case", "real R2/D1 admission receipt"]
     }
   ]
 }
