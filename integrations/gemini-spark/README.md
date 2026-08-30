@@ -1,0 +1,102 @@
+# Gemini Spark / Gemini CLI integration
+
+This integration gives Gemini Spark, Gemini CLI, or Gemini Code Assist a bounded ELIOT Research MCP
+surface and installs the official Google Workspace and gcloud extensions for Google-side actions.
+
+The authority split is deliberate:
+
+```text
+ELIOT MCP                    status, catalog, plan, receipt validation
+Google Workspace extension  Drive, Docs, Sheets, Slides, Gmail, Calendar effects
+Gcloud extension            Google Cloud inspection and effects
+ELIOT admission path         any later canonical ELIOT mutation
+```
+
+ELIOT MCP never receives Google OAuth tokens, ADC credentials, service-account keys, or Google content
+as authority. A Google tool result remains a candidate observation until exact readback and a separate
+ELIOT admission/reconciliation receipt.
+
+## Cloudflare Access prerequisite
+
+Create a Cloudflare Access service token whose signed `common_name` is exactly:
+
+```text
+gemini-spark
+```
+
+Add `gemini-spark` to `ELIOTR_ACCESS_SERVICE_PRINCIPALS` before generating the Worker deployment config.
+The Gemini client sends the service token through environment references:
+
+```text
+ELIOTR_CF_ACCESS_CLIENT_ID
+ELIOTR_CF_ACCESS_CLIENT_SECRET
+```
+
+Do not place their values in this repository or in Gemini settings JSON.
+
+## Setup
+
+Dry run:
+
+```bash
+node integrations/gemini-spark/setup.mjs \
+  --endpoint https://research.example.com/mcp \
+  --install-extensions \
+  --consent \
+  --dry-run
+```
+
+Apply user-level Gemini settings and install the ELIOT extension plus pinned official Google
+extensions:
+
+```bash
+node integrations/gemini-spark/setup.mjs \
+  --endpoint https://research.example.com/mcp \
+  --install-extensions \
+  --consent
+```
+
+PowerShell:
+
+```powershell
+$env:ELIOTR_CF_ACCESS_CLIENT_ID = "<service-token client id>"
+$env:ELIOTR_CF_ACCESS_CLIENT_SECRET = "<service-token client secret>"
+node integrations/gemini-spark/setup.mjs `
+  --endpoint https://research.example.com/mcp `
+  --install-extensions `
+  --consent
+```
+
+The script preserves unrelated Gemini settings, writes only environment references for secrets, uses
+an atomic settings-file replacement, and pins the external extension source refs. Re-run with newer
+reviewed refs explicitly when updating them.
+
+## Verify
+
+```text
+gemini mcp list
+```
+
+Expected MCP servers include:
+
+```text
+eliot-research
+google-workspace
+gcloud
+```
+
+Then ask Gemini to call `eliotr_system_status`. Google mutations must follow the plan → confirmation →
+official Google tool → exact readback → receipt-validation sequence in the extension context file.
+
+## Transport exclusivity
+
+Set Worker `GOOGLE_EXTERNAL_TRANSPORT` to exactly one of:
+
+```text
+disabled
+gemini-mcp
+drive-exchange
+```
+
+When `drive-exchange` owns the external transport, ELIOT rejects Gemini Google sync plans. The two
+transports must never be active for the same state family.

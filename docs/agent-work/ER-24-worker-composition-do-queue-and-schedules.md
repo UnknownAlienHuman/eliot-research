@@ -1,8 +1,8 @@
-# ER-24: Worker composition DO Queue and schedules
+# ER-24: Worker composition DO Queue schedules and MCP transport
 
 **Slice:** 0
 **Depends on:** ER-13, ER-15, ER-17, ER-21
-**Live gate:** deployed Access/HTTP/Queue/D1/DO smoke; otherwise NOT EXECUTED
+**Live gate:** deployed Access/HTTP/MCP/Queue/D1/DO smoke; otherwise NOT EXECUTED
 
 ## Objective
 
@@ -25,6 +25,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-workflow.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 
+ER-36 owns the `gemini-mcp*.ts` implementation files. ER-24 owns only their routing/composition changes
+in `index.ts`, `env.ts`, and `wrangler.jsonc`.
+
 ## Implemented HTTP contour
 
 ```text
@@ -38,6 +41,22 @@ request
 → bounded application dispatch
 → bounded JSON response or typed problem
 ```
+
+## Implemented Gemini MCP contour
+
+```text
+POST /mcp
+→ hostname Cloudflare Access
+→ signed Access JWT verification
+→ exact service-token common_name = gemini-spark
+→ MCP protocol/header/body validation
+→ four-tool product allow-list
+→ bounded JSON-RPC response
+```
+
+ELIOT MCP is plan/readback-validation only. Google-side effects remain in the official Google Workspace
+or gcloud extensions, require ordinary user confirmation, and must be exactly read back. A Google
+receipt never promotes itself into canonical ELIOT state.
 
 ## Implemented delivery contour
 
@@ -68,6 +87,8 @@ typed unavailable or fail-closed.
 - missing/forged Access identity is rejected before application execution;
 - stale Core/Search schema generations block protected product routes;
 - service principals cannot cross owner-only boundaries;
+- only `gemini-spark` can enter MCP dispatch;
+- browser-originated MCP calls are rejected;
 - Queue messages without matching D1 authority are never executed;
 - duplicate/failed receipts cannot fabricate success;
 - transient Queue/DO deletion cannot remove durable job, Investigation or artifact authority;
@@ -77,7 +98,8 @@ typed unavailable or fail-closed.
 
 Delete or redeliver transient Queue state after the durable projection acceptance receipt. The Worker
 must reconstruct from D1, return the same receipt and never create a second job. Separately, reuse a
-catalog cursor under another project and reject it.
+catalog cursor under another project and reject it, then submit `dry_run=false` through MCP and prove no
+Google or ELIOT effect occurs.
 
 ## Verification
 
@@ -85,10 +107,11 @@ catalog cursor under another project and reject it.
 pnpm --filter @eliotr/core typecheck
 pnpm --filter @eliotr/core test
 pnpm delivery:check
+pnpm gemini:check
 pnpm cf:types
 pnpm cf:dry-run
 pnpm check:implementation-status
 ```
 
-Live owner JWT, service token, remote D1, Queue duplicate/DLQ, deployed Worker and WebSocket receipts
-remain `NOT EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
+Live owner JWT, Gemini service token, remote D1, Queue duplicate/DLQ, deployed Worker, Google readback and
+WebSocket receipts remain `NOT EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.

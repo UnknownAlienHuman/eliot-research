@@ -1,0 +1,42 @@
+{
+  "name": "eliot-research",
+  "version": "0.1.0",
+  "description": "Bounded ELIOT Research MCP planning and catalog tools for Gemini Spark / Gemini CLI.",
+  "contextFileName": "GEMINI.md",
+  "settings": [
+    {
+      "name": "ELIOT Research MCP URL",
+      "description": "The exact Cloudflare Access protected HTTPS endpoint ending in /mcp.",
+      "envVar": "ELIOTR_MCP_HTTP_URL",
+      "sensitive": false
+    },
+    {
+      "name": "Cloudflare Access service-token client ID",
+      "description": "Client ID for the gemini-spark Cloudflare Access service token.",
+      "envVar": "ELIOTR_CF_ACCESS_CLIENT_ID",
+      "sensitive": true
+    },
+    {
+      "name": "Cloudflare Access service-token client secret",
+      "description": "Client secret for the gemini-spark Cloudflare Access service token.",
+      "envVar": "ELIOTR_CF_ACCESS_CLIENT_SECRET",
+      "sensitive": true
+    }
+  ],
+  "mcpServers": {
+    "eliot-research": {
+      "httpUrl": "$ELIOTR_MCP_HTTP_URL",
+      "headers": {
+        "CF-Access-Client-Id": "$ELIOTR_CF_ACCESS_CLIENT_ID",
+        "CF-Access-Client-Secret": "$ELIOTR_CF_ACCESS_CLIENT_SECRET"
+      },
+      "timeout": 600000,
+      "includeTools": [
+        "eliotr_system_status",
+        "eliotr_catalog",
+        "eliotr_create_google_sync_plan",
+        "eliotr_validate_google_sync_receipt"
+      ]
+    }
+  }
+}
