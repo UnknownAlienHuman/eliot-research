@@ -11,16 +11,30 @@ authority. A Queue acknowledgement is emitted only after durable consumer settle
 
 ## Owned paths
 
+- `packages/platform-cloudflare/src/outbox.ts`
+- `packages/platform-cloudflare/src/queue.ts`
 - `packages/platform-cloudflare/src/delivery-types.ts`
 - `packages/platform-cloudflare/src/delivery-runtime.ts`
 - `packages/platform-cloudflare/src/outbox-dispatcher.ts`
 - `packages/platform-cloudflare/src/outbox-dispatcher.test.ts`
 - `packages/platform-cloudflare/src/queue-consumer.ts`
 - `packages/platform-cloudflare/src/queue-consumer.test.ts`
+
+## Read only
+
+ER-13 owns the D1 implementations consumed by this packet:
+
 - `packages/platform-cloudflare/src/d1-outbox-store.ts`
-- `packages/platform-cloudflare/src/d1-outbox-store.test.ts`
+- `packages/platform-cloudflare/src/d1-outbox-authority.ts`
 - `packages/platform-cloudflare/src/d1-inbox-store.ts`
-- `packages/platform-cloudflare/src/d1-inbox-store.test.ts`
+- `packages/platform-cloudflare/src/execution-lease.ts`
+- `infra/d1/**`
+
+ER-24 owns Worker composition:
+
+- `apps/eliotr-core/src/queue.ts`
+- `apps/eliotr-core/src/scheduled.ts`
+- `apps/eliotr-core/src/projection-delivery-handler.ts`
 
 ## Implemented contour
 
@@ -40,7 +54,7 @@ D1 outbox claim with lease generation
 Failure rules:
 
 - send success followed by lost settlement does not create a new idempotency identity;
-- duplicate deliveries return the prior acknowledging receipt;
+- duplicate deliveries return only a receipt bound to the deterministic job and attempt;
 - `FAILED`, `BLOCKED` and `CANCELLED` operation receipts never acknowledge successful delivery;
 - malformed/poison messages remain unacknowledged for Cloudflare DLQ handling;
 - settlement uncertainty never triggers a compensating side effect;
@@ -51,7 +65,7 @@ Failure rules:
 - concurrent consumers cannot both own the same inbox identity;
 - payload substitution under one idempotency key is rejected;
 - stale lease generation cannot complete/retry/dead-letter another worker's record;
-- outbox depth, age, retries, dead letters and uncertain settlements are observable;
+- outbox depth, age, retries, dead letters, invalid identities and uncertain settlements are observable;
 - consumer handler executes from D1 authority, not untrusted Queue fields.
 
 ## Mandatory negative boundary
