@@ -14,6 +14,11 @@
     "r2_buckets",
     "queues",
     "access_hostname",
+    "access_team_domain",
+    "access_audience_configured",
+    "access_service_principal_count",
+    "public_route_mode",
+    "alternative_public_routes",
     "access_provisioning",
     "created_at"
   ],
@@ -27,7 +32,15 @@
     "d1_databases": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
     "r2_buckets": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
     "queues": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/resource" } },
-    "access_hostname": { "type": ["string", "null"] },
+    "access_hostname": { "type": "string", "minLength": 1 },
+    "access_team_domain": {
+      "type": "string",
+      "pattern": "^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\.cloudflareaccess\\.com$"
+    },
+    "access_audience_configured": { "const": true },
+    "access_service_principal_count": { "type": "integer", "minimum": 0, "maximum": 64 },
+    "public_route_mode": { "enum": ["CUSTOM_DOMAIN_ONLY", "WORKERS_DEV_ONLY"] },
+    "alternative_public_routes": { "const": "PROHIBITED" },
     "access_provisioning": { "const": "SEPARATE_REQUIRED_GATE" },
     "created_at": { "type": "string", "format": "date-time" }
   },

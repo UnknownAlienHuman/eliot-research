@@ -50,8 +50,9 @@ retrieval, authentication semantics, or database schemas.
    hostname-based Access. Do not create one product while another already has incompatible state.
 3. Create only absent compatible resources. Exact-name duplicates, immutable-profile drift, unexpected
    Access policies, missing stable resource IDs, or ambiguous API responses fail closed.
-4. Generate `apps/eliotr-core/wrangler.deploy.jsonc` locally from canonical `wrangler.jsonc` and the
-   read-back resource IDs. The generated file is ignored and must never become source authority.
+4. Generate `apps/eliotr-core/wrangler.deploy.jsonc` locally from canonical `wrangler.jsonc`, the
+   read-back resource IDs, and validated Access JWT inputs (`team_domain`, application `aud`, and the
+   service-principal allow-list). The generated file is ignored and must never become source authority.
 5. Use **hostname-based Cloudflare Access** for the deployment hostname. Do not enable Worker-level
    Access because `ResearchSession` requires WebSocket upgrades.
 6. Before deployment run repository checks, PWA build, generated binding types, and a minified Wrangler
@@ -66,8 +67,10 @@ retrieval, authentication semantics, or database schemas.
 - Any incompatible existing D1 jurisdiction, R2 jurisdiction/storage class, Queue identity, AI Search
   immutable profile, AI Gateway profile, or Access application/policy fails before the first mutation.
 - `--check-only` performs zero mutating HTTP methods against mocked Cloudflare APIs.
+- Invalid Access issuer origins, AUD tags, duplicate/oversized service principals, or missing required
+  live values fail before the first Cloudflare read or mutation.
 - Canonical `wrangler.jsonc` remains account-neutral; generated `wrangler.deploy.jsonc` contains the
-  exact provisioned D1 IDs and is ignored.
+  exact provisioned D1 IDs and validated Access team-domain/AUD/principal values and is ignored.
 - A second foundation provisioning run is idempotent and creates no duplicate resources.
 - Worker-level Access is absent; hostname Access protects the exact hostname with an explicit owner
   policy and rejects undeclared extra policies.

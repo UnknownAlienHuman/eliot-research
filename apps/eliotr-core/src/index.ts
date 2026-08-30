@@ -6,8 +6,8 @@ export { ResearchSession } from "./research-session.js";
 export { ResearchWorkflow } from "./research-workflow.js";
 
 export default {
-  fetch(request: Request, env: Env): Promise<Response> {
-    return handleHttp(request, env);
+  fetch(request: Request, env: Env, executionContext: ExecutionContext): Promise<Response> {
+    return handleHttp(request, env, executionContext);
   },
   queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
     return handleQueue(batch, env);

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { applyAccessRuntimeVars, validateAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -201,7 +202,7 @@ function validatePublicRouteConfiguration() {
   return { accessHostname, customDomainMode };
 }
 
-function buildGeneratedConfig(d1Results, publicRoute) {
+function buildGeneratedConfig(d1Results, publicRoute, accessRuntime) {
   const generated = structuredClone(canonicalConfig);
   const ids = new Map(d1Results.map((item) => [item.spec.binding, item.existing.uuid]));
   generated.d1_databases = generated.d1_databases.map((item) => {
@@ -213,13 +214,13 @@ function buildGeneratedConfig(d1Results, publicRoute) {
   const environment = process.env.ELIOTR_ENVIRONMENT ?? "production";
   if (!["development", "staging", "production"].includes(environment)) throw new Error(`invalid ELIOTR_ENVIRONMENT ${environment}`);
   const deploymentGeneration = assertNonEmptyString(process.env.ELIOTR_DEPLOYMENT_GENERATION, "ELIOTR_DEPLOYMENT_GENERATION");
-  generated.vars = {
+  generated.vars = applyAccessRuntimeVars({
     ...generated.vars,
     ENVIRONMENT: environment,
     DEPLOYMENT_GENERATION: deploymentGeneration,
     AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning`,
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
-  };
+  }, accessRuntime);
 
   if (publicRoute.customDomainMode === "1") {
     generated.routes = [{ pattern: publicRoute.accessHostname, custom_domain: true }];
@@ -241,6 +242,7 @@ function validateHostname(hostname, label) {
 assertManifest();
 assertCanonicalBindingAlignment();
 const publicRoute = validatePublicRouteConfiguration();
+const accessRuntime = validateAccessRuntimeConfiguration(process.env);
 
 // Inspect every existing resource before creating any missing resource. An immutable-profile drift in
 // a later resource therefore cannot leave a partially-created environment.
@@ -253,6 +255,11 @@ if (checkOnly) {
     protocol: "eliotr.cloudflare-foundation-plan.v1",
     desired_generation: desired.generation,
     mode: "CHECK_ONLY_NO_MUTATION",
+    access_runtime: {
+      team_domain: accessRuntime.teamDomain,
+      audience_configured: true,
+      service_principal_count: accessRuntime.servicePrincipalCount,
+    },
     d1_databases: d1Plans.map((item) => ({ binding: item.spec.binding, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
     r2_buckets: r2Plans.map((item) => ({ binding: item.spec.binding, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
     queues: queuePlans.map((item) => ({ binding: item.spec.binding ?? null, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
@@ -267,7 +274,7 @@ for (const plan of r2Plans) r2Results.push(await createR2(plan));
 const queueResults = [];
 for (const plan of queuePlans) queueResults.push(await createQueue(plan));
 
-const generatedConfig = buildGeneratedConfig(d1Results, publicRoute);
+const generatedConfig = buildGeneratedConfig(d1Results, publicRoute, accessRuntime);
 await mkdir(dirname(generatedPath), { recursive: true });
 await writeFile(generatedPath, `${JSON.stringify(generatedConfig, null, 2)}\n`, { mode: 0o600 });
 
@@ -282,6 +289,9 @@ const receipt = {
   r2_buckets: r2Results.map((item) => ({ binding: item.spec.binding, name: item.spec.name, jurisdiction: item.spec.jurisdiction ?? "default", storage_class: item.spec.storage_class, disposition: item.disposition })),
   queues: queueResults.map((item) => ({ binding: item.spec.binding ?? null, name: item.spec.name, queue_id: item.existing.queue_id, role: item.spec.role, disposition: item.disposition })),
   access_hostname: publicRoute.accessHostname,
+  access_team_domain: generatedConfig.vars.ACCESS_TEAM_DOMAIN,
+  access_audience_configured: generatedConfig.vars.ACCESS_AUDIENCE.length > 0,
+  access_service_principal_count: accessRuntime.servicePrincipalCount,
   public_route_mode: publicRoute.customDomainMode === "1" ? "CUSTOM_DOMAIN_ONLY" : "WORKERS_DEV_ONLY",
   alternative_public_routes: "PROHIBITED",
   access_provisioning: "SEPARATE_REQUIRED_GATE",

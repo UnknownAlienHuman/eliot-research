@@ -25,7 +25,10 @@
     "ENVIRONMENT": "development",
     "DEPLOYMENT_GENERATION": "local-unset",
     "AI_GATEWAY_REASONING_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-reasoning",
-    "AI_GATEWAY_RETRIEVAL_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-retrieval"
+    "AI_GATEWAY_RETRIEVAL_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-retrieval",
+    "ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
+    "ACCESS_AUDIENCE": "replace-me",
+    "ACCESS_SERVICE_PRINCIPALS": ""
   },
   "d1_databases": [
     {
