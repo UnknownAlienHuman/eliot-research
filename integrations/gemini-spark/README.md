@@ -18,14 +18,25 @@ ELIOT admission/reconciliation receipt.
 
 ## Cloudflare Access prerequisite
 
-Create a Cloudflare Access service token whose signed `common_name` is exactly:
+Create a dedicated MCP hostname and a separate Cloudflare Access application for it. Its service token
+must have signed `common_name` exactly:
 
 ```text
 gemini-spark
 ```
 
-Add `gemini-spark` to `ELIOTR_ACCESS_SERVICE_PRINCIPALS` before generating the Worker deployment config.
-The Gemini client sends the service token through environment references:
+Set these deployment inputs:
+
+```text
+ELIOTR_MCP_HOSTNAME
+ELIOTR_MCP_ACCESS_TEAM_DOMAIN
+ELIOTR_MCP_ACCESS_AUDIENCE
+```
+
+`ELIOTR_MCP_HOSTNAME` must differ from `ELIOTR_ACCESS_HOSTNAME`. Do not add `gemini-spark` to the
+ordinary `ELIOTR_ACCESS_SERVICE_PRINCIPALS` list.
+
+The Gemini client sends the dedicated service token through environment references:
 
 ```text
 ELIOTR_CF_ACCESS_CLIENT_ID
@@ -40,7 +51,7 @@ Dry run:
 
 ```bash
 node integrations/gemini-spark/setup.mjs \
-  --endpoint https://research.example.com/mcp \
+  --endpoint https://mcp.example.com/mcp \
   --install-extensions \
   --consent \
   --dry-run
@@ -51,7 +62,7 @@ extensions:
 
 ```bash
 node integrations/gemini-spark/setup.mjs \
-  --endpoint https://research.example.com/mcp \
+  --endpoint https://mcp.example.com/mcp \
   --install-extensions \
   --consent
 ```
@@ -62,7 +73,7 @@ PowerShell:
 $env:ELIOTR_CF_ACCESS_CLIENT_ID = "<service-token client id>"
 $env:ELIOTR_CF_ACCESS_CLIENT_SECRET = "<service-token client secret>"
 node integrations/gemini-spark/setup.mjs `
-  --endpoint https://research.example.com/mcp `
+  --endpoint https://mcp.example.com/mcp `
   --install-extensions `
   --consent
 ```

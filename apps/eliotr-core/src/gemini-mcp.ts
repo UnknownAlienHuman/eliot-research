@@ -21,6 +21,7 @@ import { readReadiness } from "./readiness.js";
 
 const REQUIRED_MCP_SERVICE_PRINCIPAL = "gemini-spark";
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const SAFE_HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const ALLOWED_TRANSPORTS = new Set<GoogleExternalTransport>([
   "disabled",
   "gemini-mcp",
@@ -60,53 +61,44 @@ function jsonError(status: number, code: string, trace: string, retryable = fals
   });
 }
 
-function servicePrincipals(raw: string | undefined): readonly string[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  const values = raw.split(",").map((value) => value.trim());
+function requiredHostname(raw: string | undefined): string {
   if (
-    values.length > 64 ||
-    values.some((value) =>
-      value.length === 0 ||
-      new TextEncoder().encode(value).byteLength > 256 ||
-      /[\u0000-\u001f\u007f,]/u.test(value)
-    ) ||
-    new Set(values).size !== values.length
+    raw === undefined ||
+    raw.length === 0 ||
+    raw !== raw.trim() ||
+    raw !== raw.toLowerCase() ||
+    raw.includes("://") ||
+    raw.includes("/") ||
+    raw.startsWith("*") ||
+    !SAFE_HOSTNAME.test(raw)
   ) {
     throw new AccessVerificationError(
       "ACCESS_CONFIG_INVALID",
-      "ACCESS_SERVICE_PRINCIPALS is invalid",
+      "MCP_HOSTNAME must be one exact lowercase hostname",
       true,
     );
   }
-  return values;
+  return raw;
 }
 
 function configuredVerifier(env: Env): AccessVerifier {
-  if (env.ACCESS_TEAM_DOMAIN === undefined || env.ACCESS_AUDIENCE === undefined) {
+  if (env.MCP_ACCESS_TEAM_DOMAIN === undefined || env.MCP_ACCESS_AUDIENCE === undefined) {
     throw new AccessVerificationError(
       "ACCESS_CONFIG_INVALID",
-      "Cloudflare Access runtime configuration is missing",
-      true,
-    );
-  }
-  const principals = servicePrincipals(env.ACCESS_SERVICE_PRINCIPALS);
-  if (!principals.includes(REQUIRED_MCP_SERVICE_PRINCIPAL)) {
-    throw new AccessVerificationError(
-      "ACCESS_CONFIG_INVALID",
-      `ACCESS_SERVICE_PRINCIPALS must include ${REQUIRED_MCP_SERVICE_PRINCIPAL}`,
+      "Dedicated MCP Cloudflare Access runtime configuration is missing",
       true,
     );
   }
   const key = JSON.stringify([
-    env.ACCESS_TEAM_DOMAIN,
-    env.ACCESS_AUDIENCE,
-    principals,
+    env.MCP_ACCESS_TEAM_DOMAIN,
+    env.MCP_ACCESS_AUDIENCE,
+    REQUIRED_MCP_SERVICE_PRINCIPAL,
   ]);
   if (verifierCache?.key === key) return verifierCache.verifier;
   const verifier = createCloudflareAccessVerifier({
-    team_domain: env.ACCESS_TEAM_DOMAIN,
-    audience: env.ACCESS_AUDIENCE,
-    allowed_service_principal_common_names: principals,
+    team_domain: env.MCP_ACCESS_TEAM_DOMAIN,
+    audience: env.MCP_ACCESS_AUDIENCE,
+    allowed_service_principal_common_names: [REQUIRED_MCP_SERVICE_PRINCIPAL],
   });
   verifierCache = { key, verifier };
   return verifier;
@@ -119,7 +111,6 @@ function googleTransport(env: Env): GoogleExternalTransport {
 }
 
 function authenticatedContext(
-  request: Request,
   env: Env,
   identity: AccessIdentity,
   trace: string,
@@ -181,7 +172,20 @@ export async function handleGeminiMcp(
 ): Promise<Response> {
   const trace = traceId(request);
   const url = new URL(request.url);
-  if (url.pathname !== "/mcp" || url.search !== "" || url.hash !== "") {
+  let hostname: string;
+  try {
+    hostname = requiredHostname(env.MCP_HOSTNAME);
+  } catch {
+    return jsonError(503, "MCP_CONFIGURATION_UNAVAILABLE", trace, true);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== hostname ||
+    url.port !== "" ||
+    url.pathname !== "/mcp" ||
+    url.search !== "" ||
+    url.hash !== ""
+  ) {
     return jsonError(404, "MCP_ROUTE_NOT_FOUND", trace);
   }
   if (request.headers.has("origin")) {
@@ -206,7 +210,7 @@ export async function handleGeminiMcp(
     return jsonError(503, "MCP_AUTHENTICATION_UNAVAILABLE", trace, true);
   }
 
-  const context = authenticatedContext(request, env, identity, trace);
+  const context = authenticatedContext(env, identity, trace);
   if (context instanceof Response) return context;
   return handleGeminiMcpProtocol(
     request,

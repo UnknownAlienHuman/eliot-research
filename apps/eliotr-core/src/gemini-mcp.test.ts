@@ -20,10 +20,14 @@ const context: McpToolCallContext = {
   deployment_generation: "generation-1",
 };
 
-function request(body: unknown, protocolVersion?: string): Request {
+function request(
+  body: unknown,
+  protocolVersion?: string,
+  url = "https://mcp.example/mcp",
+): Request {
   const headers = new Headers({ "content-type": "application/json" });
   if (protocolVersion !== undefined) headers.set("mcp-protocol-version", protocolVersion);
-  return new Request("https://research.example/mcp", {
+  return new Request(url, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -205,8 +209,32 @@ describe("Gemini Spark MCP HTTP boundary", () => {
     DEPLOYMENT_GENERATION: "generation-1",
     ENVIRONMENT: "development",
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+    MCP_HOSTNAME: "mcp.example",
   } as unknown as Env;
   const executionContext = {} as ExecutionContext;
+
+  it("is reachable only on the dedicated MCP hostname", async () => {
+    let verificationCalled = false;
+    const verifier: AccessVerifier = {
+      async verify() {
+        verificationCalled = true;
+        throw new Error("must not verify a wrong-host request");
+      },
+    };
+    const response = await handleGeminiMcp(
+      request(
+        { jsonrpc: "2.0", id: 1, method: "ping" },
+        "2025-06-18",
+        "https://research.example/mcp",
+      ),
+      environment,
+      executionContext,
+      { accessVerifier: verifier },
+    );
+    expect(response.status).toBe(404);
+    expect(verificationCalled).toBe(false);
+    expect(await body(response)).toMatchObject({ code: "MCP_ROUTE_NOT_FOUND" });
+  });
 
   it("requires the exact signed Gemini service principal", async () => {
     const ownerVerifier: AccessVerifier = {

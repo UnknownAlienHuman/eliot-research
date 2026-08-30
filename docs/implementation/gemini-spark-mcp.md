@@ -3,20 +3,26 @@
 ## Status
 
 `IMPLEMENTED_NOT_LIVE` after deterministic protocol, authorization, setup, and negative fixtures pass.
-Live qualification requires a deployed Cloudflare Access service-token round trip plus real Google
-Workspace and gcloud action/readback receipts.
+Live qualification requires a deployed dedicated Cloudflare Access service-token round trip plus real
+Google Workspace and gcloud action/readback receipts.
 
 ## Runtime contour
 
 ```text
-Gemini CLI Streamable HTTP POST /mcp
-→ hostname Cloudflare Access policy
+Gemini CLI Streamable HTTP POST https://<MCP_HOSTNAME>/mcp
+→ dedicated hostname Cloudflare Access application
+→ dedicated MCP Access audience
 → signed Access JWT verification
 → exact service-token common_name = gemini-spark
 → MCP protocol/version/body validation
 → four-tool allow-list
 → bounded result
 ```
+
+The MCP hostname and Access audience are separate from the owner/API hostname and audience. The ordinary
+API `ACCESS_SERVICE_PRINCIPALS` must not contain `gemini-spark`; the dedicated MCP verifier has an exact
+one-principal allow-list. A service token that reaches one Access application therefore cannot be
+reinterpreted as an ordinary trusted-agent credential by application routing.
 
 Supported protocol revisions:
 
@@ -57,6 +63,7 @@ or Workspace permissions; those remain independent live preconditions.
 
 ## Mandatory negative cases
 
+- a request on the ordinary owner/API hostname cannot reach MCP;
 - owner Access identity cannot use MCP;
 - service principal other than `gemini-spark` cannot use MCP;
 - browser `Origin` is rejected;

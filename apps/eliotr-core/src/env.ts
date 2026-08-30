@@ -18,6 +18,9 @@ export interface Env {
   readonly ACCESS_TEAM_DOMAIN?: string;
   readonly ACCESS_AUDIENCE?: string;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;
+  readonly MCP_HOSTNAME?: string;
+  readonly MCP_ACCESS_TEAM_DOMAIN?: string;
+  readonly MCP_ACCESS_AUDIENCE?: string;
   readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange";
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;

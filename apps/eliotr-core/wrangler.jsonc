@@ -30,6 +30,9 @@
     "ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
     "ACCESS_AUDIENCE": "replace-me",
     "ACCESS_SERVICE_PRINCIPALS": "",
+    "MCP_HOSTNAME": "mcp.replace-me.example",
+    "MCP_ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
+    "MCP_ACCESS_AUDIENCE": "replace-me",
     "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
   },
   "d1_databases": [
