@@ -31,7 +31,7 @@ export interface OutboxDispatchSummary {
   readonly failed_outbox_ids: readonly string[];
 }
 
-export interface OutboxDispatcher {
+export interface OutboxDispatcherRuntime {
   dispatch(): Promise<OutboxDispatchSummary>;
 }
 
@@ -93,7 +93,7 @@ export function createOutboxDispatcher(
   store: OutboxStore,
   producer: DeliveryProducer,
   inputOptions: OutboxDispatcherOptions,
-): OutboxDispatcher {
+): OutboxDispatcherRuntime {
   assertDeliveryIdentifier(inputOptions.worker_id, "worker_id");
   assertPositiveInteger(inputOptions.lease_ms, "lease_ms", 24 * 60 * 60 * 1000);
   assertPositiveInteger(inputOptions.batch_limit, "batch_limit", 1000);
