@@ -4,6 +4,8 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MAX_PAYLOAD_REF_BYTES = 1024;
 const MAX_ERROR_CODE_BYTES = 128;
+const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
+const MAX_OUTBOX_ID_FOR_MESSAGE = 250;
 
 export type DeliveryRuntimeErrorCode =
   | "DELIVERY_INPUT_INVALID"
@@ -158,8 +160,13 @@ export function assertDeliveryIdentifier(value: unknown, label: string): asserts
 }
 
 export function assertDeliveryTimestamp(value: unknown, label: string): asserts value is number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", `${label} is not a non-negative safe integer`);
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_TIMESTAMP_MS
+  ) {
+    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", `${label} is outside the supported timestamp range`);
   }
 }
 
@@ -204,6 +211,12 @@ export function assertErrorCode(value: unknown): asserts value is string {
 
 export function validateOutboxLease(value: OutboxLease, nowMs: number): OutboxLease {
   assertDeliveryIdentifier(value.outbox_id, "outbox_id");
+  if (value.outbox_id.length > MAX_OUTBOX_ID_FOR_MESSAGE) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "outbox_id leaves no room for the attempt suffix in message_id",
+    );
+  }
   assertDeliveryIdentifier(value.topic, "topic");
   assertPayloadRef(value.payload_ref);
   if (!SHA256.test(value.payload_sha256)) {
@@ -215,6 +228,7 @@ export function validateOutboxLease(value: OutboxLease, nowMs: number): OutboxLe
   assertPositiveInteger(value.lease_generation, "lease_generation");
   assertDeliveryTimestamp(value.lease_until_ms, "lease_until_ms");
   assertDeliveryTimestamp(value.created_at_ms, "created_at_ms");
+  assertDeliveryTimestamp(nowMs, "now_ms");
   if (value.lease_until_ms <= nowMs) {
     throw new DeliveryRuntimeError("DELIVERY_LEASE_LOST", "outbox lease is already expired", true);
   }
@@ -254,7 +268,8 @@ export function decodeDeliveryMessage(value: unknown): DeliveryMessage {
 }
 
 export function messageFromLease(lease: OutboxLease): DeliveryMessage {
-  return {
+  validateOutboxLease(lease, lease.lease_until_ms - 1);
+  const message: DeliveryMessage = {
     protocol: DELIVERY_MESSAGE_PROTOCOL,
     message_id: `${lease.outbox_id}:${lease.attempt}`,
     topic: lease.topic,
@@ -265,6 +280,7 @@ export function messageFromLease(lease: OutboxLease): DeliveryMessage {
     outbox_attempt: lease.attempt,
     created_at_ms: lease.created_at_ms,
   };
+  return decodeDeliveryMessage(message);
 }
 
 export function retryDelayMs(attempt: number, baseMs: number, maximumMs: number): number {

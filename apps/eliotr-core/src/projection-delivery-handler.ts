@@ -33,10 +33,25 @@ interface SourceRow {
   readonly source_revision_ref: unknown;
   readonly content_sha256: unknown;
 }
-interface ReceiptRow {
+interface AcknowledgingReceiptRow {
   readonly receipt_id: unknown;
   readonly revision: unknown;
   readonly outcome: unknown;
+  readonly attempt_id: unknown;
+  readonly output_refs_json: unknown;
+  readonly job_id: unknown;
+  readonly job_state: unknown;
+  readonly attempt_state: unknown;
+}
+interface StoredAcceptanceRow {
+  readonly receipt_id: unknown;
+  readonly revision: unknown;
+  readonly outcome: unknown;
+  readonly attempt_id: unknown;
+  readonly output_refs_json: unknown;
+  readonly readback_receipt_refs_json: unknown;
+  readonly reconciliation_required: unknown;
+  readonly reason_codes_json: unknown;
 }
 interface JobRow {
   readonly job_id: unknown;
@@ -55,6 +70,10 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const PROJECTION_TOPIC = "source.revision.admitted";
 const EXECUTION_LEASE_MS = 60_000;
+const MAX_RECEIPT_REFS = 256;
+const ACKNOWLEDGING_OUTCOMES = new Set(["ACCEPTED", "DUPLICATE", "SUCCEEDED", "PARTIAL"]);
+const JOB_STATES = new Set(["ACCEPTED", "RUNNING", "PARTIAL", "BLOCKED", "CANCELLED", "COMPLETED", "FAILED"]);
+const ATTEMPT_STATES = new Set(["STARTED", "CHECKPOINTED", "SUCCEEDED", "FAILED", "CANCELLED"]);
 
 function retryable(
   code: "DELIVERY_SETTLEMENT_UNCERTAIN" | "DELIVERY_LEASE_LOST",
@@ -69,34 +88,89 @@ function receiptString(ref: VersionedRef): string {
 }
 
 async function stableId(prefix: string, identity: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${prefix}\u0000${identity}`));
-  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(`${prefix}\u0000${identity}`),
+  );
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
   return `${prefix}-${hex.slice(0, 48)}`;
 }
 
-function decodeIntent(row: AuthorityRow): OperationIntent {
-  return OperationIntentSchema.parse({
-    intent_ref: { id: row.intent_id, revision: row.revision },
-    operation_kind: row.operation_kind,
-    principal_ref: row.principal_ref,
-    idempotency_key: row.idempotency_key,
-    payload_ref: row.payload_ref,
-    policy_decision_ref: row.policy_decision_ref,
-    ...(row.budget_reservation_ref === null ? {} : { budget_reservation_ref: row.budget_reservation_ref }),
-    ...(row.cancellation_ref === null ? {} : { cancellation_ref: row.cancellation_ref }),
-    created_at: row.created_at,
-  });
+function decodeIdentifierArray(value: unknown, label: string): readonly string[] {
+  if (typeof value !== "string") {
+    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", `${label} is not JSON text`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (cause) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      `${label} is not valid JSON`,
+      false,
+      cause,
+    );
+  }
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length > MAX_RECEIPT_REFS ||
+    parsed.some((entry) => typeof entry !== "string" || !IDENTIFIER.test(entry))
+  ) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      `${label} is not a bounded identifier array`,
+    );
+  }
+  return parsed as readonly string[];
 }
 
-async function loadAuthority(database: D1Database, message: DeliveryMessage): Promise<OperationIntent> {
+function decodeIntent(row: AuthorityRow): OperationIntent {
+  try {
+    return OperationIntentSchema.parse({
+      intent_ref: { id: row.intent_id, revision: row.revision },
+      operation_kind: row.operation_kind,
+      principal_ref: row.principal_ref,
+      idempotency_key: row.idempotency_key,
+      payload_ref: row.payload_ref,
+      policy_decision_ref: row.policy_decision_ref,
+      ...(row.budget_reservation_ref === null
+        ? {}
+        : { budget_reservation_ref: row.budget_reservation_ref }),
+      ...(row.cancellation_ref === null
+        ? {}
+        : { cancellation_ref: row.cancellation_ref }),
+      created_at: row.created_at,
+    });
+  } catch (cause) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "operation intent authority is malformed",
+      false,
+      cause,
+    );
+  }
+}
+
+async function loadAuthority(
+  database: D1Database,
+  message: DeliveryMessage,
+): Promise<OperationIntent> {
   const row = await database.prepare(
     "SELECT o.outbox_id, o.topic, o.payload_ref, o.payload_sha256, o.attempts, " +
     "i.intent_id, i.revision, i.operation_kind, i.principal_ref, i.idempotency_key, " +
     "i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, i.created_at " +
-    "FROM outbox o JOIN operation_intent i ON i.intent_id = o.intent_id AND i.revision = o.intent_revision " +
+    "FROM outbox o JOIN operation_intent i " +
+    "ON i.intent_id = o.intent_id AND i.revision = o.intent_revision " +
     "WHERE o.outbox_id = ?1 LIMIT 1",
   ).bind(message.outbox_id).first<AuthorityRow>();
-  if (row === null) retryable("DELIVERY_SETTLEMENT_UNCERTAIN", "Queue message has no durable outbox authority");
+  if (row === null) {
+    retryable(
+      "DELIVERY_SETTLEMENT_UNCERTAIN",
+      "Queue message has no durable outbox authority",
+    );
+  }
   const intent = decodeIntent(row);
   const exact = row.outbox_id === message.outbox_id &&
     row.topic === message.topic &&
@@ -107,10 +181,16 @@ async function loadAuthority(database: D1Database, message: DeliveryMessage): Pr
     Number.isSafeInteger(row.attempts) &&
     row.attempts >= message.outbox_attempt;
   if (!exact) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "Queue message does not match durable outbox authority");
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "Queue message does not match durable outbox authority",
+    );
   }
   if (intent.operation_kind !== "PROJECTION" || message.topic !== PROJECTION_TOPIC) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "Queue topic and operation kind are not a supported projection handoff");
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "Queue topic and operation kind are not a supported projection handoff",
+    );
   }
   return intent;
 }
@@ -123,8 +203,10 @@ async function requireActiveRevision(
   const row = await database.prepare(
     "SELECT sr.source_revision_ref, sr.content_sha256 FROM source_revision sr " +
     "JOIN source s ON s.source_id = sr.source_id " +
-    "JOIN source_namespace_ownership o ON o.source_namespace_id = s.source_namespace_id " +
-    "AND o.source_owner_generation = sr.source_owner_generation AND o.status = 'ACTIVE' " +
+    "JOIN source_namespace_ownership o " +
+    "ON o.source_namespace_id = s.source_namespace_id " +
+    "AND o.source_owner_generation = sr.source_owner_generation " +
+    "AND o.status = 'ACTIVE' " +
     "WHERE sr.source_revision_ref = ?1 AND sr.purge_state = 'LIVE' LIMIT 1",
   ).bind(sourceRevisionRef).first<SourceRow>();
   if (row === null) {
@@ -133,22 +215,64 @@ async function requireActiveRevision(
       "projection handoff references a missing, purged, quarantined, or fenced source revision",
     );
   }
-  if (row.source_revision_ref !== sourceRevisionRef || row.content_sha256 !== payloadSha256 || !SHA256.test(payloadSha256)) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "projection payload digest does not match the admitted source revision");
+  if (
+    row.source_revision_ref !== sourceRevisionRef ||
+    row.content_sha256 !== payloadSha256 ||
+    !SHA256.test(payloadSha256)
+  ) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "projection payload digest does not match the admitted source revision",
+    );
   }
 }
 
-async function findAcknowledgingReceipt(database: D1Database, intentRef: VersionedRef): Promise<VersionedRef | null> {
+async function findAcknowledgingReceipt(
+  database: D1Database,
+  intentRef: VersionedRef,
+  jobId: string,
+): Promise<VersionedRef | null> {
   const row = await database.prepare(
-    "SELECT receipt_id, revision, outcome FROM operation_receipt WHERE intent_id = ?1 AND intent_revision = ?2 " +
-    "AND outcome IN ('ACCEPTED','DUPLICATE','SUCCEEDED','PARTIAL') " +
-    "ORDER BY created_at DESC, revision DESC LIMIT 1",
-  ).bind(intentRef.id, intentRef.revision).first<ReceiptRow>();
+    "SELECT r.receipt_id, r.revision, r.outcome, r.attempt_id, r.output_refs_json, " +
+    "j.job_id, j.state AS job_state, a.state AS attempt_state " +
+    "FROM operation_receipt r " +
+    "JOIN job j ON j.job_id = ?3 AND j.intent_id = r.intent_id " +
+    "AND j.intent_revision = r.intent_revision " +
+    "JOIN operation_attempt a ON a.attempt_id = r.attempt_id " +
+    "AND a.intent_id = r.intent_id AND a.intent_revision = r.intent_revision " +
+    "WHERE r.intent_id = ?1 AND r.intent_revision = ?2 " +
+    "AND r.outcome IN ('ACCEPTED','DUPLICATE','SUCCEEDED','PARTIAL') " +
+    "AND EXISTS (SELECT 1 FROM json_each(r.output_refs_json) WHERE value = ?3) " +
+    "ORDER BY r.created_at DESC, r.revision DESC LIMIT 1",
+  ).bind(intentRef.id, intentRef.revision, jobId).first<AcknowledgingReceiptRow>();
   if (row === null) return null;
-  if (typeof row.receipt_id !== "string" || !IDENTIFIER.test(row.receipt_id) ||
-      typeof row.revision !== "number" || !Number.isSafeInteger(row.revision) || row.revision < 1 ||
-      typeof row.outcome !== "string") {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "operation receipt authority is malformed");
+  if (
+    typeof row.receipt_id !== "string" ||
+    !IDENTIFIER.test(row.receipt_id) ||
+    typeof row.revision !== "number" ||
+    !Number.isSafeInteger(row.revision) ||
+    row.revision < 1 ||
+    typeof row.outcome !== "string" ||
+    !ACKNOWLEDGING_OUTCOMES.has(row.outcome) ||
+    typeof row.attempt_id !== "string" ||
+    !IDENTIFIER.test(row.attempt_id) ||
+    row.job_id !== jobId ||
+    typeof row.job_state !== "string" ||
+    !JOB_STATES.has(row.job_state) ||
+    typeof row.attempt_state !== "string" ||
+    !ATTEMPT_STATES.has(row.attempt_state)
+  ) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "acknowledging operation receipt authority is malformed",
+    );
+  }
+  const outputRefs = decodeIdentifierArray(row.output_refs_json, "receipt output_refs_json");
+  if (!outputRefs.includes(jobId)) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "acknowledging receipt is not bound to the deterministic projection job",
+    );
   }
   return { id: row.receipt_id, revision: row.revision };
 }
@@ -162,21 +286,55 @@ async function verifyAcceptedState(
 ): Promise<void> {
   const [job, attempt, storedReceipt] = await Promise.all([
     database.prepare(
-      "SELECT job_id, intent_id, intent_revision, state, current_stage, terminal_receipt_ref FROM job WHERE job_id = ?1 LIMIT 1",
+      "SELECT job_id, intent_id, intent_revision, state, current_stage, " +
+      "terminal_receipt_ref FROM job WHERE job_id = ?1 LIMIT 1",
     ).bind(jobId).first<JobRow>(),
-    database.prepare("SELECT attempt_id, state FROM operation_attempt WHERE attempt_id = ?1 LIMIT 1")
-      .bind(attemptId).first<AttemptRow>(),
     database.prepare(
-      "SELECT receipt_id, revision, outcome FROM operation_receipt WHERE receipt_id = ?1 AND revision = ?2 LIMIT 1",
-    ).bind(receipt.receipt_ref.id, receipt.receipt_ref.revision).first<ReceiptRow>(),
+      "SELECT attempt_id, state FROM operation_attempt WHERE attempt_id = ?1 LIMIT 1",
+    ).bind(attemptId).first<AttemptRow>(),
+    database.prepare(
+      "SELECT receipt_id, revision, outcome, attempt_id, output_refs_json, " +
+      "readback_receipt_refs_json, reconciliation_required, reason_codes_json " +
+      "FROM operation_receipt WHERE receipt_id = ?1 AND revision = ?2 LIMIT 1",
+    ).bind(
+      receipt.receipt_ref.id,
+      receipt.receipt_ref.revision,
+    ).first<StoredAcceptanceRow>(),
   ]);
-  const validJob = job !== null && job.job_id === jobId && job.intent_id === intent.intent_ref.id &&
-    job.intent_revision === intent.intent_ref.revision && job.state === "ACCEPTED" &&
-    job.current_stage === "PROJECTION_QUEUED" && job.terminal_receipt_ref === null;
-  const validAttempt = attempt !== null && attempt.attempt_id === attemptId && attempt.state === "CHECKPOINTED";
-  const validReceipt = storedReceipt !== null && storedReceipt.receipt_id === receipt.receipt_ref.id &&
-    storedReceipt.revision === receipt.receipt_ref.revision && storedReceipt.outcome === "ACCEPTED";
-  if (!validJob || !validAttempt || !validReceipt) retryable("DELIVERY_SETTLEMENT_UNCERTAIN", "projection acceptance readback is incomplete");
+  const validJob = job !== null &&
+    job.job_id === jobId &&
+    job.intent_id === intent.intent_ref.id &&
+    job.intent_revision === intent.intent_ref.revision &&
+    job.state === "ACCEPTED" &&
+    job.current_stage === "PROJECTION_QUEUED" &&
+    job.terminal_receipt_ref === null;
+  const validAttempt = attempt !== null &&
+    attempt.attempt_id === attemptId &&
+    attempt.state === "CHECKPOINTED";
+  const validReceipt = storedReceipt !== null &&
+    storedReceipt.receipt_id === receipt.receipt_ref.id &&
+    storedReceipt.revision === receipt.receipt_ref.revision &&
+    storedReceipt.outcome === "ACCEPTED" &&
+    storedReceipt.attempt_id === attemptId &&
+    storedReceipt.reconciliation_required === 1 &&
+    JSON.stringify(decodeIdentifierArray(
+      storedReceipt.output_refs_json,
+      "stored receipt output_refs_json",
+    )) === JSON.stringify(receipt.output_refs) &&
+    JSON.stringify(decodeIdentifierArray(
+      storedReceipt.readback_receipt_refs_json,
+      "stored receipt readback_receipt_refs_json",
+    )) === JSON.stringify(receipt.readback_receipt_refs) &&
+    JSON.stringify(decodeIdentifierArray(
+      storedReceipt.reason_codes_json,
+      "stored receipt reason_codes_json",
+    )) === JSON.stringify(receipt.reason_codes);
+  if (!validJob || !validAttempt || !validReceipt) {
+    retryable(
+      "DELIVERY_SETTLEMENT_UNCERTAIN",
+      "projection acceptance readback is incomplete",
+    );
+  }
 }
 
 async function failLeaseQuietly(
@@ -184,7 +342,11 @@ async function failLeaseQuietly(
   fence: ExecutionFence,
   nowMs: number,
 ): Promise<void> {
-  try { await store.fail(fence, "PROJECTION_ACCEPTANCE_FAILED", nowMs); } catch { /* retain original failure */ }
+  try {
+    await store.fail(fence, "PROJECTION_ACCEPTANCE_FAILED", nowMs);
+  } catch {
+    // Retain the original failure; the expired generation fence prevents stale settlement.
+  }
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.
@@ -196,10 +358,11 @@ export function createProjectionDeliveryHandler(
   return async (message) => {
     const intent = await loadAuthority(database, message);
     await requireActiveRevision(database, intent.payload_ref, message.payload_sha256);
-    const prior = await findAcknowledgingReceipt(database, intent.intent_ref);
+    const identity = `${intent.intent_ref.id}:${intent.intent_ref.revision}`;
+    const jobId = await stableId("job-projection", identity);
+    const prior = await findAcknowledgingReceipt(database, intent.intent_ref, jobId);
     if (prior !== null) return { receipt_ref: receiptString(prior) };
 
-    const identity = `${intent.intent_ref.id}:${intent.intent_ref.revision}`;
     const operationId = await stableId("projection-accept", identity);
     const workerId = "eliotr-projection-acceptor";
     const acquiredAt = clock();
@@ -212,10 +375,24 @@ export function createProjectionDeliveryHandler(
     });
     if (lease === null) {
       const current = await leaseStore.read(operationId);
-      if (current?.state === "COMPLETED" && current.terminal_receipt_ref !== undefined) {
-        return { receipt_ref: current.terminal_receipt_ref };
+      if (current?.state === "COMPLETED") {
+        const reconciled = await findAcknowledgingReceipt(
+          database,
+          intent.intent_ref,
+          jobId,
+        );
+        if (reconciled !== null) {
+          return { receipt_ref: receiptString(reconciled) };
+        }
+        retryable(
+          "DELIVERY_SETTLEMENT_UNCERTAIN",
+          "completed projection acceptance fence has no matching durable receipt/job",
+        );
       }
-      retryable("DELIVERY_LEASE_LOST", "another worker owns the projection acceptance fence");
+      retryable(
+        "DELIVERY_LEASE_LOST",
+        "another worker owns or terminated the projection acceptance fence",
+      );
     }
     const fence: ExecutionFence = {
       operation_id: lease.operation_id,
@@ -223,9 +400,14 @@ export function createProjectionDeliveryHandler(
       lease_generation: lease.lease_generation,
     };
     const createdAt = new Date(acquiredAt).toISOString();
-    const jobId = await stableId("job-projection", identity);
-    const attemptId = await stableId("attempt-projection", `${identity}:${lease.lease_generation}`);
-    const receiptRef: VersionedRef = { id: await stableId("receipt-projection-accepted", identity), revision: 1 };
+    const attemptId = await stableId(
+      "attempt-projection",
+      `${identity}:${lease.lease_generation}`,
+    );
+    const receiptRef: VersionedRef = {
+      id: await stableId("receipt-projection-accepted", identity),
+      revision: 1,
+    };
     const attempt: OperationAttempt = {
       attempt_id: attemptId,
       intent_ref: intent.intent_ref,
@@ -247,21 +429,30 @@ export function createProjectionDeliveryHandler(
     try {
       await database.batch([
         database.prepare(
-          "INSERT INTO operation_attempt(attempt_id, intent_id, intent_revision, attempt_number, state, started_at) " +
-          "VALUES (?1,?2,?3,?4,'STARTED',?5)",
-        ).bind(attemptId, intent.intent_ref.id, intent.intent_ref.revision, attempt.attempt_number, createdAt),
+          "INSERT INTO operation_attempt(attempt_id, intent_id, intent_revision, " +
+          "attempt_number, state, started_at) VALUES (?1,?2,?3,?4,'STARTED',?5)",
+        ).bind(
+          attemptId,
+          intent.intent_ref.id,
+          intent.intent_ref.revision,
+          attempt.attempt_number,
+          createdAt,
+        ),
         database.prepare(
-          "INSERT INTO job(job_id, intent_id, intent_revision, state, current_stage, created_at, updated_at) " +
-          "VALUES (?1,?2,?3,'ACCEPTED','PROJECTION_QUEUED',?4,?4) ON CONFLICT(job_id) DO NOTHING",
+          "INSERT INTO job(job_id, intent_id, intent_revision, state, current_stage, " +
+          "created_at, updated_at) VALUES (?1,?2,?3,'ACCEPTED'," +
+          "'PROJECTION_QUEUED',?4,?4) ON CONFLICT(job_id) DO NOTHING",
         ).bind(jobId, intent.intent_ref.id, intent.intent_ref.revision, createdAt),
         database.prepare(
           "UPDATE operation_attempt SET state = 'CHECKPOINTED', checkpoint_ref = ?1 " +
           "WHERE attempt_id = ?2 AND state = 'STARTED'",
         ).bind(`job:${jobId}`, attemptId),
         database.prepare(
-          "INSERT INTO operation_receipt(receipt_id, revision, intent_id, intent_revision, attempt_id, outcome, " +
-          "output_refs_json, readback_receipt_refs_json, reconciliation_required, reason_codes_json, created_at) " +
-          "VALUES (?1,?2,?3,?4,?5,'ACCEPTED',?6,?7,1,?8,?9) ON CONFLICT(receipt_id, revision) DO NOTHING",
+          "INSERT INTO operation_receipt(receipt_id, revision, intent_id, intent_revision, " +
+          "attempt_id, outcome, output_refs_json, readback_receipt_refs_json, " +
+          "reconciliation_required, reason_codes_json, created_at) " +
+          "VALUES (?1,?2,?3,?4,?5,'ACCEPTED',?6,?7,1,?8,?9) " +
+          "ON CONFLICT(receipt_id, revision) DO NOTHING",
         ).bind(
           receiptRef.id,
           receiptRef.revision,
@@ -276,13 +467,21 @@ export function createProjectionDeliveryHandler(
       ]);
       await verifyAcceptedState(database, intent, jobId, attemptId, receipt);
     } catch (error) {
-      const raced = await findAcknowledgingReceipt(database, intent.intent_ref);
+      const raced = await findAcknowledgingReceipt(database, intent.intent_ref, jobId);
       if (raced !== null) return { receipt_ref: receiptString(raced) };
       await failLeaseQuietly(leaseStore, fence, clock());
-      retryable("DELIVERY_SETTLEMENT_UNCERTAIN", "projection acceptance transaction failed", error);
+      retryable(
+        "DELIVERY_SETTLEMENT_UNCERTAIN",
+        "projection acceptance transaction failed",
+        error,
+      );
     }
     const durableReceipt = receiptString(receiptRef);
-    try { await leaseStore.complete(fence, durableReceipt, clock()); } catch { /* receipt readback is authority */ }
+    try {
+      await leaseStore.complete(fence, durableReceipt, clock());
+    } catch {
+      // The exact job/attempt/receipt readback is authority; the lease is coordination only.
+    }
     return { receipt_ref: durableReceipt };
   };
 }

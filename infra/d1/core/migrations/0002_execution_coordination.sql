@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS operation_execution_lease (
   last_error_code TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
-);
+) STRICT;
 
 CREATE INDEX IF NOT EXISTS operation_execution_lease_due
 ON operation_execution_lease(state, lease_until, operation_kind);
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS delivery_inbox (
   first_seen_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   UNIQUE(topic, idempotency_key)
-);
+) STRICT;
 
 CREATE INDEX IF NOT EXISTS delivery_inbox_due
 ON delivery_inbox(state, lease_until, topic);

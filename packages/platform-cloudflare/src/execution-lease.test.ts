@@ -83,7 +83,8 @@ describe("D1 execution lease store", () => {
     expect(fixture.calls).toHaveLength(1);
     expect(fixture.calls[0]?.sql).toContain("lease_generation = operation_execution_lease.lease_generation + 1");
     expect(fixture.calls[0]?.sql).toContain("operation_execution_lease.lease_until <= excluded.updated_at");
-    expect(fixture.calls[0]?.sql).not.toContain("state = 'COMPLETED'");
+    expect(fixture.calls[0]?.sql).toContain("operation_execution_lease.operation_kind = excluded.operation_kind");
+    expect(fixture.calls[0]?.sql).not.toContain("state = 'CANCELLED'");
     expect(fixture.calls[0]?.values).toEqual([
       "operation-1",
       "projection.refresh",
@@ -94,7 +95,7 @@ describe("D1 execution lease store", () => {
   });
 
   it("returns null while another unexpired lease or completed operation owns the identity", async () => {
-    const fixture = databaseFixture([null]);
+    const fixture = databaseFixture([null, row({ state: "COMPLETED" })]);
     const acquired = await createD1ExecutionLeaseStore(fixture.database).acquire({
       operation_id: "operation-1",
       operation_kind: "projection.refresh",
@@ -103,6 +104,33 @@ describe("D1 execution lease store", () => {
       lease_ms: 10_000,
     });
     expect(acquired).toBeNull();
+  });
+
+  it("never reacquires a cancelled operation identity", async () => {
+    const fixture = databaseFixture([null, row({ state: "CANCELLED" })]);
+    const acquired = await createD1ExecutionLeaseStore(fixture.database).acquire({
+      operation_id: "operation-1",
+      operation_kind: "projection.refresh",
+      lease_owner: "worker-2",
+      now_ms: 30_000,
+      lease_ms: 10_000,
+    });
+    expect(acquired).toBeNull();
+    expect(fixture.calls[0]?.sql).not.toContain("state = 'CANCELLED'");
+  });
+
+  it("rejects rebinding one operation_id to another operation kind", async () => {
+    const fixture = databaseFixture([
+      null,
+      row({ operation_kind: "research.run", state: "FAILED" }),
+    ]);
+    await expect(createD1ExecutionLeaseStore(fixture.database).acquire({
+      operation_id: "operation-1",
+      operation_kind: "projection.refresh",
+      lease_owner: "worker-2",
+      now_ms: 30_000,
+      lease_ms: 10_000,
+    })).rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID", retryable: false });
   });
 
   it("rejects a stale generation when checkpointing", async () => {
@@ -137,9 +165,19 @@ describe("D1 execution lease store", () => {
     expect(fixture.calls[0]?.sql).toContain("lease_until > ?5");
   });
 
-  it("fails closed on malformed authority rows", async () => {
-    const fixture = databaseFixture([row({ lease_generation: 0 })]);
-    await expect(createD1ExecutionLeaseStore(fixture.database).read("operation-1"))
+  it("fails closed on malformed authority rows and unsupported timestamps", async () => {
+    const malformed = databaseFixture([row({ lease_generation: 0 })]);
+    await expect(createD1ExecutionLeaseStore(malformed.database).read("operation-1"))
       .rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID" });
+
+    const timestamp = databaseFixture([]);
+    await expect(createD1ExecutionLeaseStore(timestamp.database).acquire({
+      operation_id: "operation-1",
+      operation_kind: "projection.refresh",
+      lease_owner: "worker-1",
+      now_ms: 8_640_000_000_000_000,
+      lease_ms: 1,
+    })).rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID" });
+    expect(timestamp.calls).toHaveLength(0);
   });
 });
