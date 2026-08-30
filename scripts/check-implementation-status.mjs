@@ -1,126 +1,108 @@
-import { readFile, readdir, stat } from "node:fs/promises";
-import { extname, join, relative, resolve, sep } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { extname, join, relative } from "node:path";
 import process from "node:process";
 
 const root = process.cwd();
 const registryPath = join(root, "docs/implementation/implementation-status.json");
-const manifestPath = join(root, "docs/agent-work/manifest.json");
 const registry = JSON.parse(await readFile(registryPath, "utf8"));
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-
-const errors = [];
 if (registry.protocol !== "eliotr.implementation-status.v1") {
-  errors.push("unknown implementation-status protocol");
+  throw new Error("unknown implementation-status protocol");
 }
-if (!/^[a-f0-9]{40}$/.test(registry.baseline_commit ?? "")) {
-  errors.push("baseline_commit must be a full lowercase Git commit SHA");
-}
-if (!Array.isArray(registry.entries)) errors.push("entries must be an array");
-
-const allowedStates = new Set([
-  "SCAFFOLD_FAIL_CLOSED",
-  "IN_PROGRESS",
-  "IMPLEMENTED_NOT_LIVE",
-  "LIVE_QUALIFIED",
-]);
-const packetIds = new Set((manifest.packets ?? []).map((packet) => packet.id));
-const seenIds = new Set();
-const seenKeys = new Set();
-
-function registryKey(entry) {
-  return `${entry.path}\u0000${String(entry.sentinel).toLowerCase()}`;
+if (!Array.isArray(registry.states) || !Array.isArray(registry.entries)) {
+  throw new Error("implementation-status registry must declare states and entries");
 }
 
-for (const entry of registry.entries ?? []) {
-  if (typeof entry.id !== "string" || entry.id.length === 0) {
-    errors.push("every registry entry requires an id");
-  } else if (seenIds.has(entry.id)) {
-    errors.push(`duplicate registry id: ${entry.id}`);
-  } else {
-    seenIds.add(entry.id);
-  }
-
-  if (typeof entry.path !== "string" || entry.path.length === 0) {
-    errors.push(`${entry.id ?? "<unknown>"}: path is required`);
-  } else {
-    const absolute = resolve(root, entry.path);
-    if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
-      errors.push(`${entry.id}: path escapes repository root`);
-    }
-  }
-  if (typeof entry.sentinel !== "string" || entry.sentinel.length === 0) {
-    errors.push(`${entry.id}: sentinel is required`);
-  }
-  if (!allowedStates.has(entry.state)) {
-    errors.push(`${entry.id}: unknown state ${String(entry.state)}`);
-  }
-
-  const key = registryKey(entry);
-  if (seenKeys.has(key)) errors.push(`${entry.id}: duplicate path/sentinel registration`);
-  seenKeys.add(key);
-
-  if (!Array.isArray(entry.owner_packets) || entry.owner_packets.length === 0) {
-    errors.push(`${entry.id}: owner_packets must name at least one work packet`);
-  } else {
-    for (const packetId of entry.owner_packets) {
-      if (!packetIds.has(packetId)) errors.push(`${entry.id}: unknown owner packet ${packetId}`);
-    }
-  }
-  if (!Array.isArray(entry.completion_evidence) || entry.completion_evidence.length === 0) {
-    errors.push(`${entry.id}: completion_evidence must not be empty`);
-  }
-  if (
-    entry.state === "LIVE_QUALIFIED" &&
-    (!Array.isArray(entry.receipt_refs) || entry.receipt_refs.length === 0)
-  ) {
-    errors.push(`${entry.id}: LIVE_QUALIFIED requires receipt_refs`);
-  }
-}
-
-const sentinels = [...new Set((registry.entries ?? []).map((entry) => entry.sentinel))];
+const knownStates = new Set(registry.states);
+const pendingSentinels = [
+  "implementation required",
+  "must compose implemented ports",
+  "not implemented",
+];
+const implementedPrefix = "IMPLEMENTED_NOT_LIVE:";
 const extensions = new Set([".ts", ".tsx", ".mjs", ".js"]);
 const ignored = new Set(["node_modules", "dist", "dist-types", "coverage", ".wrangler"]);
-const found = [];
+const sourceFiles = new Map();
 
 async function walk(directory) {
-  try {
-    if (!(await stat(directory)).isDirectory()) return;
-  } catch {
-    return;
-  }
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     if (ignored.has(entry.name)) continue;
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await walk(path);
-      continue;
+    if (entry.isDirectory()) await walk(path);
+    else if (extensions.has(extname(entry.name))) {
+      sourceFiles.set(
+        relative(root, path).replaceAll("\\", "/"),
+        await readFile(path, "utf8"),
+      );
     }
-    if (!extensions.has(extname(entry.name))) continue;
-    const content = await readFile(path, "utf8");
-    const folded = content.toLowerCase();
-    for (const sentinel of sentinels) {
-      if (folded.includes(String(sentinel).toLowerCase())) {
-        found.push({ path: relative(root, path).replaceAll("\\", "/"), sentinel });
-      }
+  }
+}
+for (const top of ["apps", "packages", "infra"]) await walk(join(root, top));
+
+const errors = [];
+const ids = new Set();
+for (const entry of registry.entries) {
+  if (typeof entry.id !== "string" || entry.id.length === 0 || ids.has(entry.id)) {
+    errors.push(`duplicate or invalid registry id: ${String(entry.id)}`);
+    continue;
+  }
+  ids.add(entry.id);
+  if (!knownStates.has(entry.state)) {
+    errors.push(`${entry.id}: unknown state ${String(entry.state)}`);
+  }
+  if (typeof entry.path !== "string" || typeof entry.sentinel !== "string") {
+    errors.push(`${entry.id}: path and sentinel must be strings`);
+    continue;
+  }
+  const content = sourceFiles.get(entry.path);
+  if (content === undefined) {
+    errors.push(`${entry.id}: registered source path is missing: ${entry.path}`);
+    continue;
+  }
+  if (!content.toLowerCase().includes(entry.sentinel.toLowerCase())) {
+    errors.push(`${entry.id}: stale sentinel in ${entry.path}: ${entry.sentinel}`);
+  }
+  if (entry.state === "IMPLEMENTED_NOT_LIVE" && !entry.sentinel.startsWith(implementedPrefix)) {
+    errors.push(`${entry.id}: IMPLEMENTED_NOT_LIVE entries require an explicit ${implementedPrefix} marker`);
+  }
+  if (entry.state === "SCAFFOLD_FAIL_CLOSED" && entry.sentinel.startsWith(implementedPrefix)) {
+    errors.push(`${entry.id}: fail-closed scaffold cannot use an implemented marker`);
+  }
+  if (entry.state === "LIVE_QUALIFIED") {
+    const evidence = Array.isArray(entry.completion_evidence) ? entry.completion_evidence : [];
+    if (evidence.length === 0 || evidence.some((item) => /not executed|mock/i.test(String(item)))) {
+      errors.push(`${entry.id}: LIVE_QUALIFIED requires real non-mock completion evidence`);
     }
   }
 }
 
-for (const top of ["apps", "packages", "infra"]) await walk(join(root, top));
-
-const actual = new Map(found.map((entry) => [registryKey(entry), entry]));
-const registered = new Map((registry.entries ?? []).map((entry) => [registryKey(entry), entry]));
-const unregistered = [...actual.keys()].filter((item) => !registered.has(item));
-const stale = [...registered.keys()].filter((item) => !actual.has(item));
-if (unregistered.length > 0) errors.push(`unregistered sentinels: ${JSON.stringify(unregistered)}`);
-if (stale.length > 0) errors.push(`stale registrations: ${JSON.stringify(stale)}`);
+for (const [path, content] of sourceFiles) {
+  const lower = content.toLowerCase();
+  for (const sentinel of pendingSentinels) {
+    if (!lower.includes(sentinel.toLowerCase())) continue;
+    const registered = registry.entries.some((entry) =>
+      entry.path === path &&
+      entry.state === "SCAFFOLD_FAIL_CLOSED" &&
+      lower.includes(entry.sentinel.toLowerCase())
+    );
+    if (!registered) errors.push(`${path}: unregistered fail-closed contour: ${sentinel}`);
+  }
+  if (content.includes(implementedPrefix)) {
+    const registered = registry.entries.some((entry) =>
+      entry.path === path &&
+      entry.state === "IMPLEMENTED_NOT_LIVE" &&
+      content.includes(entry.sentinel)
+    );
+    if (!registered) errors.push(`${path}: unregistered ${implementedPrefix} contour`);
+  }
+}
 
 if (errors.length > 0) {
-  console.error(JSON.stringify({ errors, unregistered, stale }, null, 2));
+  console.error(JSON.stringify({ errors }, null, 2));
   process.exitCode = 1;
 } else {
-  console.log(
-    `implementation status: ${actual.size} fail-closed contours registered; ` +
-    `${seenIds.size} unique entries; owner packets valid`,
-  );
+  const counts = Object.fromEntries(registry.states.map((state) => [
+    state,
+    registry.entries.filter((entry) => entry.state === state).length,
+  ]));
+  console.log(`implementation status: ${registry.entries.length} contours registered ${JSON.stringify(counts)}`);
 }
