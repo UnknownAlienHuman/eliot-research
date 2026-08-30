@@ -11,6 +11,8 @@ hand to a deployment agent; no step requires reading the architecture master doc
   Access applications/policies.
 - `ELIOTR_ACCESS_HOSTNAME` names the **only** production URL: either the intended Custom Domain or the
   exact `eliotr-core.<account-subdomain>.workers.dev` hostname.
+- `ELIOTR_ACCESS_TEAM_DOMAIN` is the exact `https://<team>.cloudflareaccess.com` issuer origin.
+- `ELIOTR_ACCESS_AUDIENCE` is the exact Access application AUD tag used by Worker JWT verification.
 - `ELIOTR_OWNER_EMAILS` contains comma-separated exact owner emails. Never use `everyone` or a generic
   valid-email selector.
 
@@ -20,6 +22,10 @@ hand to a deployment agent; no step requires reading the architecture master doc
 CLOUDFLARE_ACCOUNT_ID              required
 CLOUDFLARE_API_TOKEN               required
 ELIOTR_ACCESS_HOSTNAME             required, hostname only; no scheme/path/wildcard
+ELIOTR_ACCESS_TEAM_DOMAIN          required, exact HTTPS cloudflareaccess.com origin
+ELIOTR_ACCESS_AUDIENCE             required, exact Access application AUD tag
+ELIOTR_ACCESS_SERVICE_PRINCIPALS   optional comma-separated signed service-token common_name allow-list;
+                                    empty denies every service principal
 ELIOTR_OWNER_EMAILS                required, comma-separated exact emails
 ELIOTR_ENVIRONMENT                 optional: staging|production; live default is production
 ELIOTR_DEPLOYMENT_GENERATION       optional; defaults to git-<short-sha>
@@ -82,8 +88,10 @@ Worker-level Access is prohibited because `ResearchSession` uses WebSockets. Ext
 unless their IDs are explicitly allow-listed. Hostname Access protects only the exact URL, so the
 foundation provisioner enforces one of two exclusive contours: a Custom Domain with `workers.dev`
 disabled, or the exact `eliotr-core.<account-subdomain>.workers.dev` hostname with no Custom Domain.
-Application roles and service-principal authorization remain ER-17 responsibilities and must verify the
-Access assertion; they are not inferred merely from the request reaching the Worker.
+The foundation generator writes the exact team domain, AUD tag, and bounded service-principal allow-list
+into the ignored deploy config. Invalid values fail before the first Cloudflare request. ER-17 verifies
+issuer, audience, signature, time, token class, and service principal; none is inferred merely from the
+request reaching the Worker.
 
 ## D1 migration discipline
 
