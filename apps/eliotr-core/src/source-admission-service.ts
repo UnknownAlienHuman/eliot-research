@@ -10,6 +10,7 @@ export interface SourceAdmissionService {
   decide(candidateId: string, prerequisites: SourceAdmissionPrerequisites): Promise<SourceAdmissionDecision>;
 }
 
+// SCAFFOLD_FAIL_CLOSED: ER-29 source admission composition
 export function createSourceAdmissionService(_repository: SourceAdmissionRepository): SourceAdmissionService {
   return {
     async decide(): Promise<never> {

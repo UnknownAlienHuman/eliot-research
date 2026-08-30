@@ -17,72 +17,52 @@
     {
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
       "owner_packets": ["ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "bounded application lifecycle, health, capabilities and owner catalog are composed; unsupported products remain typed unavailable",
-      "completion_evidence": [
-        "strict TypeScript check",
-        "owner/service authorization negative tests",
-        "live Access and remote D1 receipts"
-      ]
+      "completion_evidence": ["strict TypeScript check", "owner/service authorization negative tests", "live Access and remote D1 receipts"]
     },
     {
       "id": "implemented-002",
       "path": "apps/eliotr-core/src/http.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.",
       "owner_packets": ["ER-21", "ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "route registry, bounded responses, Cloudflare Access verification and owner/service authorization are executable",
-      "completion_evidence": [
-        "HTTP negative tests",
-        "runtime prototype tests",
-        "live owner and service-principal Access receipts"
-      ]
+      "completion_evidence": ["HTTP negative tests", "runtime prototype tests", "live owner and service-principal Access receipts"]
     },
     {
       "id": "implemented-003",
       "path": "apps/eliotr-core/src/queue.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.",
       "owner_packets": ["ER-15", "ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable handler execution and ACK only after receipt settlement",
-      "completion_evidence": [
-        "duplicate-delivery and stale-fence negative tests",
-        "failed receipt cannot acknowledge delivery",
-        "remote Queue duplicate-delivery and DLQ receipts"
-      ]
+      "completion_evidence": ["duplicate-delivery and stale-fence negative tests", "failed receipt cannot acknowledge delivery", "remote Queue duplicate-delivery and DLQ receipts"]
     },
     {
       "id": "implemented-004",
       "path": "apps/eliotr-core/src/scheduled.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation requires remote Queue send/readback receipts.",
       "owner_packets": ["ER-13", "ER-15", "ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "scheduled handler leases a bounded D1 outbox batch, sends stable Queue envelopes and records exact delivered/retry/dead-letter settlement",
-      "completion_evidence": [
-        "lost producer ACK reconciliation tests",
-        "D1 generation-fenced claim fixture",
-        "remote Queue send/readback receipt"
-      ]
+      "completion_evidence": ["lost producer ACK reconciliation tests", "D1 generation-fenced claim fixture", "remote Queue send/readback receipt"]
     },
     {
       "id": "implemented-005",
       "path": "apps/eliotr-core/src/projection-delivery-handler.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.",
       "owner_packets": ["ER-13", "ER-15", "ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "admitted LIVE source revisions can create one fenced PROJECTION job acceptance and an ACCEPTED receipt; actual projection success is not claimed",
-      "completion_evidence": [
-        "active owner, purge state and content digest checks",
-        "negative receipt-outcome deduplication test",
-        "remote D1/Queue replay receipt"
-      ]
+      "completion_evidence": ["active owner, purge state and content digest checks", "negative receipt-outcome deduplication test", "remote D1/Queue replay receipt"]
     },
     {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
-      "sentinel": "implementation required",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator",
       "owner_packets": ["ER-28"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
@@ -91,7 +71,7 @@
     {
       "id": "pending-003",
       "path": "apps/eliotr-core/src/federation-service.ts",
-      "sentinel": "not implemented",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-22 generic federation boundary",
       "owner_packets": ["ER-22"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "explicit incomplete implementation",
@@ -100,7 +80,7 @@
     {
       "id": "pending-006",
       "path": "apps/eliotr-core/src/ingest-service.ts",
-      "sentinel": "implementation required",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-14/ER-21/ER-29 ingest API composition",
       "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-29"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "HTTP prepare/commit and source-admission composition still throw and cannot return a success receipt",
@@ -109,7 +89,7 @@
     {
       "id": "pending-007",
       "path": "apps/eliotr-core/src/navigation-service.ts",
-      "sentinel": "implementation required",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-31 Corpus Lens navigation",
       "owner_packets": ["ER-31"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
@@ -118,7 +98,7 @@
     {
       "id": "pending-008",
       "path": "apps/eliotr-core/src/scope-service.ts",
-      "sentinel": "implementation required",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-30 scope snapshot persistence",
       "owner_packets": ["ER-30"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
@@ -127,7 +107,7 @@
     {
       "id": "pending-009",
       "path": "apps/eliotr-core/src/source-admission-service.ts",
-      "sentinel": "implementation required",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-29 source admission composition",
       "owner_packets": ["ER-29"],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "qualification and SourceAdmissionDecision composition still throw and cannot create a SourceRevision",
