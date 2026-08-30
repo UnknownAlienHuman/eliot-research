@@ -2,4 +2,7 @@ packages:
   - "apps/*"
   - "packages/*"
 
-onlyBuiltDependencies: []
+# pnpm 11 fails closed when required lifecycle builds are not explicitly reviewed.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
