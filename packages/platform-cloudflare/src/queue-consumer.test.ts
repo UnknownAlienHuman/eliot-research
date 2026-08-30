@@ -167,9 +167,12 @@ describe("queue consumer runtime", () => {
   it("records terminal failure and acknowledges after the attempt ceiling", async () => {
     const fixture = inboxFixture({
       disposition: "ACQUIRED",
-      lease: inboxLease({ attempt: 3 }),
+      lease: inboxLease({
+        message_id: "outbox-1:3",
+        attempt: 3,
+      }),
     });
-    const queued = delivery(message({ outbox_attempt: 3 }));
+    const queued = delivery(message({ message_id: "outbox-1:3", outbox_attempt: 3 }));
     const result = await runtime(fixture.store).consume(queued.value, async () => {
       throw new Error("permanent failure");
     });
@@ -196,6 +199,38 @@ describe("queue consumer runtime", () => {
     let beginCalls = 0;
     const fixture = inboxFixture({ disposition: "DUPLICATE_PROCESSING" });
     const queued = delivery({ ...message(), effect_ceiling: "WRITE_ANYTHING" });
+    await expect(runtime({
+      ...fixture.store,
+      async begin(input) {
+        beginCalls += 1;
+        return fixture.store.begin(input);
+      },
+    }).consume(queued.value, async () => ({ receipt_ref: "unexpected" })))
+      .rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID" });
+    expect(beginCalls).toBe(0);
+    expect(queued.events).toEqual([]);
+  });
+
+  it("rejects a message ID that is not bound to its outbox attempt", async () => {
+    let beginCalls = 0;
+    const fixture = inboxFixture({ disposition: "DUPLICATE_PROCESSING" });
+    const queued = delivery(message({ message_id: "outbox-1:9", outbox_attempt: 2 }));
+    await expect(runtime({
+      ...fixture.store,
+      async begin(input) {
+        beginCalls += 1;
+        return fixture.store.begin(input);
+      },
+    }).consume(queued.value, async () => ({ receipt_ref: "unexpected" })))
+      .rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID" });
+    expect(beginCalls).toBe(0);
+    expect(queued.events).toEqual([]);
+  });
+
+  it("rejects timestamps outside the canonical four-digit-year range", async () => {
+    let beginCalls = 0;
+    const fixture = inboxFixture({ disposition: "DUPLICATE_PROCESSING" });
+    const queued = delivery(message({ created_at_ms: 253_402_300_800_000 }));
     await expect(runtime({
       ...fixture.store,
       async begin(input) {
