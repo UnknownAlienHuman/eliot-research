@@ -1,6 +1,12 @@
 import js from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+const typedFiles = ["**/*.ts", "**/*.tsx"];
+const typedConfigs = tseslint.configs.recommendedTypeChecked.map((config) => ({
+  ...config,
+  files: typedFiles,
+}));
+
 export default tseslint.config(
   {
     ignores: [
@@ -11,9 +17,9 @@ export default tseslint.config(
     ],
   },
   js.configs.recommended,
-  ...tseslint.configs.recommendedTypeChecked,
+  ...typedConfigs,
   {
-    files: ["**/*.ts"],
+    files: typedFiles,
     languageOptions: {
       parserOptions: {
         projectService: true,
