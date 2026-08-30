@@ -28,6 +28,7 @@ function metric(
         health?.leased ?? 0,
         health?.failed ?? 0,
         health?.dead_lettered ?? 0,
+        health?.invalid_payload_identity ?? 0,
         health?.oldest_unsent_age_ms ?? 0,
       ],
       indexes: [event.cron],
@@ -38,7 +39,10 @@ function metric(
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation requires remote Queue send/readback receipts.
-export async function handleScheduled(event: ScheduledController, env: Env): Promise<void> {
+export async function handleScheduled(
+  event: ScheduledController,
+  env: Env,
+): Promise<void> {
   const store = createD1OutboxStore(env.CORE_DB);
   const dispatcher = createOutboxDispatcher(
     store,
@@ -68,8 +72,8 @@ export async function handleScheduled(event: ScheduledController, env: Env): Pro
     summary = await dispatcher.dispatch();
     const health = await readD1OutboxHealth(env.CORE_DB);
     metric(env, event, summary, health, "PASS");
-    if (summary.uncertain_settlements > 0) {
-      throw new Error("one or more Queue sends have uncertain durable settlement");
+    if (summary.uncertain_settlements > 0 || health.invalid_payload_identity > 0) {
+      throw new Error("outbox contains uncertain settlement or invalid payload identity");
     }
   } catch (error) {
     metric(env, event, summary, null, "FAILED");

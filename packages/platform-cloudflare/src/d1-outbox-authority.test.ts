@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { OperationIntent } from "@eliotr/contracts";
+import { describe, expect, it } from "vitest";
 import { appendIntentWithOutbox } from "./d1-outbox-authority.js";
 
 interface Call { readonly sql: string; readonly values: readonly unknown[]; readonly method: string }
@@ -73,9 +73,9 @@ function fixture(steps: readonly Step[]): { readonly database: D1Database; reado
 
 describe("D1 intent/outbox authority", () => {
   it("commits intent and exact digest-bound outbox in one batch then requires readback", async () => {
-    const existingProbe = { method: "first", value: null } as const;
     const { database, calls } = fixture([
-      existingProbe,
+      { method: "first", value: null },
+      { method: "first", value: null },
       { method: "batch", value: [
         { success: true, meta: { changes: 1 } },
         { success: true, meta: { changes: 1 } },
@@ -83,37 +83,60 @@ describe("D1 intent/outbox authority", () => {
       { method: "first", value: authorityRow() },
     ]);
     const result = await appendIntentWithOutbox(database, {
-      intent: intent(), topic: "source.revision.admitted", payload_sha256: "a".repeat(64),
+      intent: intent(),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
     });
     expect(result.disposition).toBe("CREATED");
-    expect(calls.some((call) => call.method === "batch")).toBe(true);
     expect(calls.find((call) => call.sql.startsWith("batch:"))?.sql).toBe("batch:2");
   });
 
   it("returns an exact idempotent replay without another mutation", async () => {
     const { database, calls } = fixture([{ method: "first", value: authorityRow() }]);
     const result = await appendIntentWithOutbox(database, {
-      intent: intent(), topic: "source.revision.admitted", payload_sha256: "a".repeat(64),
+      intent: intent(),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
     });
     expect(result.disposition).toBe("EXISTING");
     expect(calls.some((call) => call.method === "batch")).toBe(false);
   });
 
   it("rejects payload substitution under the same idempotency identity", async () => {
-    const { database } = fixture([{ method: "first", value: authorityRow({ payload_sha256: "b".repeat(64) }) }]);
+    const { database } = fixture([
+      { method: "first", value: authorityRow({ payload_sha256: "b".repeat(64) }) },
+    ]);
     await expect(appendIntentWithOutbox(database, {
-      intent: intent(), topic: "source.revision.admitted", payload_sha256: "a".repeat(64),
+      intent: intent(),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
     })).rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID", retryable: false });
+  });
+
+  it("rejects reusing one intent_ref under another idempotency key", async () => {
+    const { database, calls } = fixture([
+      { method: "first", value: null },
+      { method: "first", value: authorityRow() },
+    ]);
+    await expect(appendIntentWithOutbox(database, {
+      intent: intent({ idempotency_key: "projection-other" }),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
+    })).rejects.toMatchObject({ code: "DELIVERY_INPUT_INVALID", retryable: false });
+    expect(calls.some((call) => call.method === "batch")).toBe(false);
   });
 
   it("reconciles an ambiguous batch failure only through exact durable readback", async () => {
     const { database } = fixture([
       { method: "first", value: null },
+      { method: "first", value: null },
       { method: "batch", error: new Error("lost acknowledgement") },
       { method: "first", value: authorityRow() },
     ]);
     await expect(appendIntentWithOutbox(database, {
-      intent: intent(), topic: "source.revision.admitted", payload_sha256: "a".repeat(64),
+      intent: intent(),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
     })).resolves.toMatchObject({ disposition: "EXISTING" });
   });
 });
