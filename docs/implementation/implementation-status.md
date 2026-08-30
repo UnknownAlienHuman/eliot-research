@@ -16,3 +16,28 @@ States:
 `pnpm check:implementation-status` fails when a sentinel is unregistered or a registry entry no longer
 matches the file. Removing a sentinel is therefore an explicit implementation event, not cosmetic
 cleanup. The committer must update the entry and attach the completion evidence in the same change.
+
+## Current executable contours
+
+```text
+Cloudflare Access protected HTTP dispatch          IMPLEMENTED_NOT_LIVE
+owner catalog over authoritative LIVE heads        IMPLEMENTED_NOT_LIVE
+D1 intent + digest-bound outbox authority           IMPLEMENTED_NOT_LIVE
+scheduled outbox lease/send/settlement              IMPLEMENTED_NOT_LIVE
+Queue inbox deduplication and ACK discipline        IMPLEMENTED_NOT_LIVE
+projection job acceptance (not projection success) IMPLEMENTED_NOT_LIVE
+HTTP bundle prepare/commit                          SCAFFOLD_FAIL_CLOSED
+source qualification/admission                      SCAFFOLD_FAIL_CLOSED
+```
+
+The delivery contour intentionally distinguishes three states:
+
+```text
+Queue send accepted by the binding
+≠ durable consumer receipt
+≠ projection completed successfully
+```
+
+Only a retained receipt and exact readback may advance the relevant state. Live Cloudflare Queue, DLQ,
+remote D1 and deployed Worker receipts remain mandatory before any delivery contour becomes
+`LIVE_QUALIFIED`.

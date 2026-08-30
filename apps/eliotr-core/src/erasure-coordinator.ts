@@ -5,6 +5,7 @@ export interface ErasureCoordinator {
   execute(request: ErasureRequest): Promise<ErasureReceipt>;
 }
 
+// SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator
 /**
  * Fail-closed composition boundary. ER-28 must supply exact requested-location equality,
  * policy/hold checks, absence verification, purge-ledger append and dependent invalidation.

@@ -7,6 +7,7 @@ export class FederationImplementationPendingError extends Error {
   }
 }
 
+// SCAFFOLD_FAIL_CLOSED: ER-22 generic federation boundary
 export function createFederationService(): FederationApiV1 {
   throw new FederationImplementationPendingError();
 }

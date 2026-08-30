@@ -1,6 +1,8 @@
 export * from "./runtime-limits.js";
 export * from "./bindings.js";
 export * from "./d1.js";
+export * from "./d1-outbox-authority.js";
+export * from "./d1-outbox-store.js";
 export * from "./r2.js";
 export * from "./outbox.js";
 export * from "./ai-search.js";
@@ -11,3 +13,4 @@ export * from "./ingest.js";
 export * from "./erasure-backend.js";
 export * from "./backup.js";
 export * from "./queue.js";
+export * from "./delivery-runtime.js";

@@ -6,6 +6,7 @@ export interface IngestServiceDependencies {
   readonly stagedBundles: StagedBundlePort;
 }
 
+// SCAFFOLD_FAIL_CLOSED: ER-14/ER-21/ER-29 ingest API composition
 export function createIngestService(_dependencies: IngestServiceDependencies): IngestApi {
   return {
     async prepareBundle(_request: PrepareBundleRequest): Promise<PrepareBundleResponse> {

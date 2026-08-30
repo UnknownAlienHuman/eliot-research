@@ -22,7 +22,7 @@ function databaseFixture(input: {
         bind() { return statement; },
         async first<T>() {
           if (sql.includes("schema_state")) {
-            return { value: input.schemaGeneration ?? "core-v1" } as T;
+            return { value: input.schemaGeneration ?? "core-v4-delivery-fenced" } as T;
           }
           if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;
           return null;
@@ -42,7 +42,10 @@ function databaseFixture(input: {
   return { database, statements };
 }
 
-function environment(core: D1Database, search: D1Database = core): Env {
+function environment(
+  core: D1Database,
+  search: D1Database = databaseFixture({ schemaGeneration: "search-v1" }).database,
+): Env {
   return {
     CORE_DB: core,
     SEARCH_DB: search,
@@ -124,6 +127,30 @@ describe("HTTP authority boundary", () => {
     );
     expect(response.status).toBe(403);
     expect(await body(response)).toMatchObject({ code: "PRINCIPAL_CLASS_DENIED" });
+  });
+
+  it("blocks protected application routes on a stale Core schema generation", async () => {
+    const fixture = databaseFixture({ schemaGeneration: "core-v1" });
+    const health = await handleHttp(
+      new Request("https://research.example/api/v1/system/health"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: verifier("cloudflare_access") },
+    );
+    expect(health.status).toBe(200);
+    const healthDocument = await body(health);
+    const healthData = healthDocument.data as Record<string, unknown>;
+    expect(healthData.ready).toBe(false);
+    expect(healthData.blocking_reason_codes).toEqual(["CORE_SCHEMA_GENERATION_MISMATCH"]);
+
+    const catalog = await handleHttp(
+      new Request("https://research.example/api/v1/research/catalog"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: verifier("cloudflare_access") },
+    );
+    expect(catalog.status).toBe(503);
+    expect(await body(catalog)).toMatchObject({ code: "SCHEMA_NOT_READY" });
   });
 
   it("returns a bounded D1 catalog and only queries authoritative LIVE heads", async () => {
