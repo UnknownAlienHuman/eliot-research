@@ -77,6 +77,9 @@ export async function handleScheduled(
     }
   } catch (error) {
     metric(env, event, summary, null, "FAILED");
-    throw error;
+    if (error instanceof Error) throw error;
+    throw new Error("scheduled outbox reconciliation failed with a non-Error cause", {
+      cause: error,
+    });
   }
 }
