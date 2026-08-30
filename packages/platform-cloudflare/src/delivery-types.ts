@@ -4,7 +4,7 @@ const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MAX_PAYLOAD_REF_BYTES = 1024;
 const MAX_ERROR_CODE_BYTES = 128;
-const MAX_TIMESTAMP_MS = 8_640_000_000_000_000;
+const MAX_TIMESTAMP_MS = 253_402_300_799_999;
 const MAX_OUTBOX_ID_FOR_MESSAGE = 250;
 
 export type DeliveryRuntimeErrorCode =
@@ -166,7 +166,10 @@ export function assertDeliveryTimestamp(value: unknown, label: string): asserts 
     value < 0 ||
     value > MAX_TIMESTAMP_MS
   ) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", `${label} is outside the supported timestamp range`);
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      `${label} is outside the supported timestamp range`,
+    );
   }
 }
 
@@ -251,8 +254,14 @@ export function decodeDeliveryMessage(value: unknown): DeliveryMessage {
     "outbox_attempt",
     "created_at_ms",
   ]);
-  if (Object.keys(record).some((key) => !allowed.has(key)) || record.protocol !== DELIVERY_MESSAGE_PROTOCOL) {
-    throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "delivery message protocol or fields are invalid");
+  if (
+    Object.keys(record).some((key) => !allowed.has(key)) ||
+    record.protocol !== DELIVERY_MESSAGE_PROTOCOL
+  ) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "delivery message protocol or fields are invalid",
+    );
   }
   assertDeliveryIdentifier(record.message_id, "message_id");
   assertDeliveryIdentifier(record.topic, "topic");
@@ -264,12 +273,29 @@ export function decodeDeliveryMessage(value: unknown): DeliveryMessage {
   assertDeliveryIdentifier(record.outbox_id, "outbox_id");
   assertPositiveInteger(record.outbox_attempt, "outbox_attempt", 10_000);
   assertDeliveryTimestamp(record.created_at_ms, "created_at_ms");
-  return record as unknown as DeliveryMessage;
+  const message: DeliveryMessage = {
+    protocol: DELIVERY_MESSAGE_PROTOCOL,
+    message_id: record.message_id,
+    topic: record.topic,
+    payload_ref: record.payload_ref,
+    payload_sha256: record.payload_sha256,
+    idempotency_key: record.idempotency_key,
+    outbox_id: record.outbox_id,
+    outbox_attempt: record.outbox_attempt,
+    created_at_ms: record.created_at_ms,
+  };
+  if (message.message_id !== `${message.outbox_id}:${message.outbox_attempt}`) {
+    throw new DeliveryRuntimeError(
+      "DELIVERY_INPUT_INVALID",
+      "message_id is not bound to outbox_id and outbox_attempt",
+    );
+  }
+  return message;
 }
 
 export function messageFromLease(lease: OutboxLease): DeliveryMessage {
   validateOutboxLease(lease, lease.lease_until_ms - 1);
-  const message: DeliveryMessage = {
+  return decodeDeliveryMessage({
     protocol: DELIVERY_MESSAGE_PROTOCOL,
     message_id: `${lease.outbox_id}:${lease.attempt}`,
     topic: lease.topic,
@@ -279,8 +305,7 @@ export function messageFromLease(lease: OutboxLease): DeliveryMessage {
     outbox_id: lease.outbox_id,
     outbox_attempt: lease.attempt,
     created_at_ms: lease.created_at_ms,
-  };
-  return decodeDeliveryMessage(message);
+  });
 }
 
 export function retryDelayMs(attempt: number, baseMs: number, maximumMs: number): number {
