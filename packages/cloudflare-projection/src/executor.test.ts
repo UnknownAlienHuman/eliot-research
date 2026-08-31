@@ -19,7 +19,7 @@ import type {
   ProjectionTerminalReceipt,
 } from "./types.js";
 
-const A = "a".repeat(64);
+const A = "3f468ef0dde323a1504435da3aa02d387fc1e9f4f1475b5b3323112017806714";
 const B = "b".repeat(64);
 const message: DeliveryMessage = {
   protocol: "eliotr.delivery.message.v1",
@@ -179,7 +179,7 @@ function fixture(input: {
               markdown: "# Heading\n\nText.\n",
               normalized_object_ref: "normalized/content.md",
               readback_sha256: A,
-              size_bytes: 18,
+              size_bytes: 17,
             };
       }),
     },
