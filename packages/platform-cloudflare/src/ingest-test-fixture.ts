@@ -96,7 +96,6 @@ export function fakeBucket(behavior: { readonly throw_after_put_prefix?: string 
       uploaded: new Date(0),
       httpMetadata: object.httpMetadata,
       customMetadata: object.customMetadata,
-      range: undefined,
       checksums: {} as R2Checksums,
       storageClass: "Standard",
       writeHttpMetadata() {},
