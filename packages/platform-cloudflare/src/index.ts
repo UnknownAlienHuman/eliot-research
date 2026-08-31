@@ -3,6 +3,8 @@ export * from "./bindings.js";
 export * from "./d1.js";
 export * from "./d1-outbox-authority.js";
 export * from "./d1-outbox-store.js";
+export * from "./d1-ingest-types.js";
+export * from "./d1-ingest-authority.js";
 export * from "./r2.js";
 export * from "./outbox.js";
 export * from "./ai-search.js";
