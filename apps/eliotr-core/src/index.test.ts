@@ -22,7 +22,7 @@ function databaseFixture(input: {
         bind() { return statement; },
         async first<T>() {
           if (sql.includes("schema_state")) {
-            return { value: input.schemaGeneration ?? "core-v4-delivery-fenced" } as T;
+            return { value: input.schemaGeneration ?? "core-v5-ingest-admission" } as T;
           }
           if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;
           return null;
