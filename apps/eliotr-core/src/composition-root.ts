@@ -8,6 +8,9 @@ import { ROUTES } from "@eliotr/interfaces";
 import {
   createD1IngestAdmissionAuthority,
   createR2StagedBundlePort,
+  IngestAuthorityError,
+  type BundlePromotionAuthorization,
+  type PreparedIngestOperation,
 } from "@eliotr/platform-cloudflare";
 import { readCatalog } from "./catalog-service.js";
 export { CatalogInputError } from "./catalog-service.js";
@@ -74,18 +77,69 @@ function federationApi(): FederationApi {
   };
 }
 
+interface OwnerFenceIdentity {
+  readonly source_namespace_id: string;
+  readonly owner_system_id: string;
+  readonly source_owner_generation: string;
+  readonly policy_revision?: number;
+}
+
+async function requireCurrentOwner(database: D1Database, identity: OwnerFenceIdentity): Promise<void> {
+  const row = await database.prepare(
+    "SELECT source_admission_policy_revision FROM source_namespace_ownership " +
+    "WHERE source_namespace_id = ?1 AND owner_system_id = ?2 " +
+    "AND source_owner_generation = ?3 AND status = 'ACTIVE' LIMIT 1",
+  ).bind(
+    identity.source_namespace_id,
+    identity.owner_system_id,
+    identity.source_owner_generation,
+  ).first<{ source_admission_policy_revision: unknown }>();
+  const revision = row?.source_admission_policy_revision;
+  if (
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    (identity.policy_revision !== undefined && revision !== identity.policy_revision)
+  ) {
+    throw new IngestAuthorityError(
+      "INGEST_OWNER_NOT_ACTIVE",
+      "source owner generation or admission policy changed during ingest",
+    );
+  }
+}
+
 function ownerApi(env: Env): OwnerApi {
   const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
   const stagedBundles = createR2StagedBundlePort({
     work_bucket: env.WORK_BUCKET,
     evidence_bucket: env.EVIDENCE_BUCKET,
-    authorize_promotion: (input, admissionReceiptRef) =>
-      authority.authorizePromotion(input, admissionReceiptRef),
+    authorize_promotion: async (input: BundlePromotionAuthorization, admissionReceiptRef) => {
+      await requireCurrentOwner(env.CORE_DB, input);
+      return authority.authorizePromotion(input, admissionReceiptRef);
+    },
   });
+  const deterministicAdmission = createSourceAdmissionService();
   const ingest = createIngestService({
     authority,
     stagedBundles,
-    admission: createSourceAdmissionService(),
+    admission: {
+      async evaluate(operation: PreparedIngestOperation, verification) {
+        const expiresAt = Date.parse(operation.expires_at);
+        if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
+          throw new IngestAuthorityError(
+            "INGEST_STATE_CONFLICT",
+            "ingest operation expired before source-admission decision",
+          );
+        }
+        await requireCurrentOwner(env.CORE_DB, {
+          source_namespace_id: operation.source_namespace_id,
+          owner_system_id: operation.owner_system_id,
+          source_owner_generation: operation.source_owner_generation,
+          policy_revision: operation.policy.revision,
+        });
+        return deterministicAdmission.evaluate(operation, verification);
+      },
+    },
   });
   return {
     ...ingest,
