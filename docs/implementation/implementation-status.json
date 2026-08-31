@@ -18,100 +18,199 @@
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
-      "owner_packets": ["ER-24"],
+      "owner_packets": [
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable",
-      "completion_evidence": ["strict TypeScript check", "owner/service authorization negative tests", "live Access and remote D1 receipts"]
+      "completion_evidence": [
+        "strict TypeScript check",
+        "owner/service authorization negative tests",
+        "live Access and remote D1 receipts"
+      ]
     },
     {
       "id": "implemented-002",
       "path": "apps/eliotr-core/src/http.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.",
-      "owner_packets": ["ER-21", "ER-24"],
+      "owner_packets": [
+        "ER-21",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable",
-      "completion_evidence": ["HTTP and multipart negative tests", "runtime prototype tests", "live owner and service-principal Access receipts"]
+      "completion_evidence": [
+        "HTTP and multipart negative tests",
+        "runtime prototype tests",
+        "live owner and service-principal Access receipts"
+      ]
     },
     {
       "id": "implemented-003",
       "path": "apps/eliotr-core/src/queue.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.",
-      "owner_packets": ["ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable handler execution and ACK only after receipt settlement",
-      "completion_evidence": ["duplicate-delivery and stale-fence negative tests", "failed receipt cannot acknowledge delivery", "remote Queue duplicate-delivery and DLQ receipts"]
+      "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable projection acceptance/execution and ACK only after terminal receipt settlement",
+      "completion_evidence": [
+        "duplicate-delivery and stale-fence negative tests",
+        "failed or uncertain projection cannot acknowledge delivery",
+        "remote Queue duplicate-delivery and DLQ receipts"
+      ]
     },
     {
       "id": "implemented-004",
       "path": "apps/eliotr-core/src/scheduled.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation requires remote Queue send/readback receipts.",
-      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "scheduled handler leases a bounded D1 outbox batch, sends stable Queue envelopes and records exact delivered/retry/dead-letter settlement",
-      "completion_evidence": ["lost producer ACK reconciliation tests", "D1 generation-fenced claim fixture", "remote Queue send/readback receipt"]
+      "completion_evidence": [
+        "lost producer ACK reconciliation tests",
+        "D1 generation-fenced claim fixture",
+        "remote Queue send/readback receipt"
+      ]
     },
     {
       "id": "implemented-005",
       "path": "apps/eliotr-core/src/projection-delivery-handler.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.",
-      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "admitted LIVE source revisions can create one fenced PROJECTION job acceptance and an ACCEPTED receipt; actual projection success is not claimed",
-      "completion_evidence": ["active owner, purge state and content digest checks", "negative receipt-outcome deduplication test", "remote D1/Queue replay receipt"]
+      "behavior": "admitted LIVE source revisions create one fenced PROJECTION job acceptance and an ACCEPTED receipt before ER-38 execution",
+      "completion_evidence": [
+        "active owner, purge state and content digest checks",
+        "negative receipt-outcome deduplication test",
+        "remote D1/Queue replay receipt"
+      ]
     },
     {
       "id": "implemented-006",
       "path": "apps/eliotr-core/src/gemini-mcp.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
-      "owner_packets": ["ER-17", "ER-24", "ER-36"],
+      "owner_packets": [
+        "ER-17",
+        "ER-24",
+        "ER-36"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "signed gemini-spark service identity reaches a stateless four-tool MCP boundary for status, catalog, Google planning and candidate-only receipt validation",
-      "completion_evidence": ["MCP version/body/principal negative tests", "secret-free idempotent setup fixture", "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"]
+      "completion_evidence": [
+        "MCP version/body/principal negative tests",
+        "secret-free idempotent setup fixture",
+        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"
+      ]
     },
     {
       "id": "implemented-007",
       "path": "apps/eliotr-core/src/ingest-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
-      "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-24", "ER-29", "ER-37"],
+      "owner_packets": [
+        "ER-13",
+        "ER-14",
+        "ER-21",
+        "ER-24",
+        "ER-29",
+        "ER-37"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority",
-      "completion_evidence": ["idempotency, unsafe-path, missing-mapping and partial-transaction negative tests", "SQLite migration and commit-guard fixture", "live Access, R2 multipart/promotion, remote D1 and Queue receipts"]
+      "completion_evidence": [
+        "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
+        "SQLite migration and commit-guard fixture",
+        "live Access, R2 multipart/promotion, remote D1 and Queue receipts"
+      ]
+    },
+    {
+      "id": "implemented-008",
+      "path": "apps/eliotr-core/src/projection-execution-handler.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-38 projection execution requires remote R2/D1 Search/AI Search receipts.",
+      "owner_packets": [
+        "ER-05",
+        "ER-06",
+        "ER-15",
+        "ER-16",
+        "ER-24",
+        "ER-38"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "pinned LIVE SourceRevision bytes are deterministically projected, immutably materialized, activated in guarded D1 Search generations and uploaded to managed AI Search; semantic readiness requires exact item readback and an explicitly promoted managed generation",
+      "completion_evidence": [
+        "UTF-8, item-limit, shadow-activation and provider-readback negative tests",
+        "SQLite projection activation and terminal guard fixture",
+        "remote R2, D1 Search, AI Search and Queue replay receipts"
+      ]
     },
     {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator",
-      "owner_packets": ["ER-28"],
+      "owner_packets": [
+        "ER-28"
+      ],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
     },
     {
       "id": "pending-003",
       "path": "apps/eliotr-core/src/federation-service.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-22 generic federation boundary",
-      "owner_packets": ["ER-22"],
+      "owner_packets": [
+        "ER-22"
+      ],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "explicit incomplete implementation",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
     },
     {
       "id": "pending-007",
       "path": "apps/eliotr-core/src/navigation-service.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-31 Corpus Lens navigation",
-      "owner_packets": ["ER-31"],
+      "owner_packets": [
+        "ER-31"
+      ],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
     },
     {
       "id": "pending-008",
       "path": "apps/eliotr-core/src/scope-service.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-30 scope snapshot persistence",
-      "owner_packets": ["ER-30"],
+      "owner_packets": [
+        "ER-30"
+      ],
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
+      "completion_evidence": [
+        "implementation tests",
+        "negative acceptance case",
+        "real boundary receipt when applicable"
+      ]
     }
   ]
 }

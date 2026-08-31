@@ -1,10 +1,12 @@
 import {
   createD1InboxStore,
   createQueueConsumerRuntime,
+  type DeliveryHandler,
   type QueueConsumptionResult,
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "./projection-delivery-handler.js";
+import { createProjectionExecutionDeliveryHandler } from "./projection-execution-handler.js";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
@@ -27,6 +29,15 @@ function metric(env: Env, result: QueueConsumptionResult | null, reason: string)
   }
 }
 
+function projectionHandler(env: Env): DeliveryHandler {
+  const accept = createProjectionDeliveryHandler(env.CORE_DB);
+  const execute = createProjectionExecutionDeliveryHandler(env);
+  return async (message, context) => {
+    await accept(message, context);
+    return execute(message, context);
+  };
+}
+
 // IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.
 export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
   const runtime = createQueueConsumerRuntime(
@@ -41,7 +52,7 @@ export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promi
       retry_maximum_ms: 5 * 60_000,
     },
   );
-  const handler = createProjectionDeliveryHandler(env.CORE_DB);
+  const handler = projectionHandler(env);
 
   for (const message of batch.messages) {
     try {

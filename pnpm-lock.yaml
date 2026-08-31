@@ -41,6 +41,9 @@ importers:
 
   apps/eliotr-core:
     dependencies:
+      '@eliotr/cloudflare-projection':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-projection
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -91,6 +94,18 @@ importers:
       vite:
         specifier: 8.2.2
         version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.1)
+
+  packages/cloudflare-projection:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
 
   packages/contracts:
     dependencies:

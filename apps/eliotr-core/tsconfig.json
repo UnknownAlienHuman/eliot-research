@@ -34,6 +34,9 @@
       "path": "../../packages/platform-cloudflare"
     },
     {
+      "path": "../../packages/cloudflare-projection"
+    },
+    {
       "path": "../../packages/google-drive-exchange"
     },
     {

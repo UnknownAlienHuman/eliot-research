@@ -1,7 +1,7 @@
 import type { Env } from "./env.js";
 
-export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v5-ingest-admission" as const;
-export const REQUIRED_SEARCH_SCHEMA_GENERATION = "search-v1" as const;
+export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v6-projection-execution" as const;
+export const REQUIRED_SEARCH_SCHEMA_GENERATION = "search-v2-projection-generations" as const;
 
 export interface ReadinessReport {
   readonly ready: boolean;

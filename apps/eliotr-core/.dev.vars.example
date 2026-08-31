@@ -3,6 +3,8 @@ ENVIRONMENT=development
 DEPLOYMENT_GENERATION=local-unqualified
 AI_GATEWAY_REASONING_URL=
 AI_GATEWAY_RETRIEVAL_URL=
+# Keep UNQUALIFIED until T2/T3 plus item-count/readback promotion receipts exist.
+AI_SEARCH_ACTIVE_GENERATION=UNQUALIFIED
 ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
 ACCESS_AUDIENCE=replace-me
 # Ordinary API service principals only. Do not add gemini-spark.

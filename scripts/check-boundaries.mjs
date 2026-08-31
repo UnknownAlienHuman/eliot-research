@@ -29,11 +29,17 @@ const PACKAGE_RULES = new Map([
   ["packages/retrieval", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/platform-cloudflare", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
+  ["packages/cloudflare-projection", new Set([
+    "@eliotr/contracts",
+    "@eliotr/platform-cloudflare",
+    "@eliotr/retrieval",
+  ])],
   ["packages/google-drive-exchange", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/interfaces", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange"])],
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["apps/eliotr-pwa", new Set(["@eliotr/contracts"])],
   ["apps/eliotr-core", new Set([
+    "@eliotr/cloudflare-projection",
     "@eliotr/contracts",
     "@eliotr/domain",
     "@eliotr/policy",
