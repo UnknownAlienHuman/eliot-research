@@ -6,7 +6,6 @@ import type { DeliveryMessage } from "@eliotr/platform-cloudflare";
 import {
   assertProjectionIdentifier,
   assertProjectionInteger,
-  assertProjectionSha256,
   projectionFail,
   projectionReceiptRef,
 } from "./canonical.js";

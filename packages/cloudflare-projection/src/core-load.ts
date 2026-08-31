@@ -73,11 +73,6 @@ const TAINT_STATES = new Set([
   "COMMAND_LIKE",
 ] as const);
 
-function optionalIdentifier(value: unknown, label: string): string | undefined {
-  if (value === null || value === undefined) return undefined;
-  return assertProjectionIdentifier(value, label);
-}
-
 function sourceRevision(row: ContextRow): SourceRevision {
   try {
     return SourceRevisionSchema.parse({

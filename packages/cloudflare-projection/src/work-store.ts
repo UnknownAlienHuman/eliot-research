@@ -14,7 +14,6 @@ import type {
   MaterializedProjectionItem,
   ProjectionSourceContext,
   ProjectionWorkPort,
-  ProjectionWorkReceipt,
 } from "./types.js";
 
 export interface R2ProjectionWorkDependencies {
