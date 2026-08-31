@@ -44,8 +44,12 @@ jobs:
         run: pnpm typecheck
       - name: Test Cloudflare provisioners
         run: pnpm test:provisioners
-      - name: Test contracts, domain and policy
-        run: timeout 180s pnpm exec vitest run packages/contracts packages/domain packages/policy --reporter=verbose
+      - name: Test contracts
+        run: timeout 90s pnpm exec vitest run packages/contracts --reporter=verbose
+      - name: Test domain
+        run: timeout 90s pnpm exec vitest run packages/domain --reporter=verbose
+      - name: Test policy
+        run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
       - name: Test retrieval, research and Drive exchange
         run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
       - name: Test Cloudflare platform package
