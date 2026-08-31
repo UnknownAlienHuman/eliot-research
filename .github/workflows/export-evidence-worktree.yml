@@ -1,0 +1,36 @@
+name: export-evidence-worktree
+
+on:
+  push:
+    branches:
+      - agent/p0-evidence-resolution-20260831
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p0-evidence-resolution-20260831
+          fetch-depth: 1
+      - name: Create deterministic repository snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar --exclude=.git --exclude=.github/workflows/export-evidence-worktree.yml \
+              --sort=name --mtime='UTC 2026-08-31' --owner=0 --group=0 --numeric-owner \
+              -czf /tmp/eliot-research-evidence-base.tgz .
+          sha256sum /tmp/eliot-research-evidence-base.tgz > /tmp/eliot-research-evidence-base.tgz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eliot-research-evidence-base
+          path: |
+            /tmp/eliot-research-evidence-base.tgz
+            /tmp/eliot-research-evidence-base.tgz.sha256
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
