@@ -36,6 +36,8 @@ jobs:
         run: pnpm work-packets:check
       - name: Verify delivery authority fixture
         run: pnpm delivery:check
+      - name: Verify ingest admission authority fixture
+        run: pnpm ingest:check
       - name: Verify Gemini MCP integration fixtures
         run: pnpm gemini:check
       - name: Lint
