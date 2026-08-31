@@ -22,13 +22,45 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: corepack prepare pnpm@11.23.0 --activate
-      - name: Verify and extract audited overlay
+      - name: Repair, verify and extract audited overlay
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from hashlib import sha256
+          from pathlib import Path
+
+          path = Path('.eliotr-projection-overlay.part02.b64')
+          expected = '958810172d12151fcb7d1341e59af74475afb82e0fd069e3692deb95866b38ce'
+          data = path.read_text(encoding='ascii')
+          if sha256(data.encode('ascii')).hexdigest() != expected:
+              if len(data) != 9221:
+                  raise SystemExit(f'unexpected damaged fragment length: {len(data)}')
+              alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
+              for index in range(len(data) + 1):
+                  for character in alphabet:
+                      candidate = data[:index] + character + data[index:]
+                      if sha256(candidate.encode('ascii')).hexdigest() == expected:
+                          path.write_text(candidate, encoding='ascii')
+                          print(f'repaired part02 at offset {index}')
+                          raise SystemExit(0)
+              raise SystemExit('unable to reconstruct the single missing base64 character')
+          print('part02 already exact')
+          PY
+          cat > /tmp/projection-overlay-parts.sha256 <<'EOF'
+          3fae4abc40efd2968cb4d7e7ca4718882bd49da95baffca557c70ba20743ee43  .eliotr-projection-overlay.part00.b64
+          404f163042a639c0fab4be7e0505e5cc97f075274b0a620bf37d3aca885533f4  .eliotr-projection-overlay.part01.b64
+          958810172d12151fcb7d1341e59af74475afb82e0fd069e3692deb95866b38ce  .eliotr-projection-overlay.part02.b64
+          cb26d8713e50c13720a52db8d4af08c0a98e5d8349882b26972fd8d14f556a59  .eliotr-projection-overlay.part03.b64
+          548322a2da66d191654ab4b037318dfa1129e04bd6c713134e1ff40b5871a853  .eliotr-projection-overlay.part04.b64
+          02e184f99deef9bb3376de4b114b17c93899e7a084fbce334f56e3878a835319  .eliotr-projection-overlay.part05.b64
+          EOF
+          sha256sum --check --strict /tmp/projection-overlay-parts.sha256
           cat .eliotr-projection-overlay.part*.b64 | base64 --decode > /tmp/projection-overlay.tgz
           echo '9ff4b8f1f60bcaf5e618bf61d0176093a357f77eedf4717adb5875b80b22a8d8  /tmp/projection-overlay.tgz' | sha256sum --check --strict
           tar --extract --gzip --file /tmp/projection-overlay.tgz
+          rm -f .eliotr-projection-overlay.part*.b64
+          rm -f .github/workflows/materialize-projection-overlay.yml
       - name: Regenerate workspace-only lockfile metadata
         run: pnpm install --lockfile-only --no-frozen-lockfile
       - name: Commit materialized implementation
