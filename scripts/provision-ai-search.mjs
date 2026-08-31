@@ -52,7 +52,7 @@ function stable(value) {
 function equal(left, right) { return JSON.stringify(stable(left)) === JSON.stringify(stable(right)); }
 
 const namespacePath = `/accounts/${enc(accountId)}/ai-search/namespaces/${enc(desired.namespace)}`;
-let namespace = await request("GET", namespacePath, undefined, true);
+const namespace = await request("GET", namespacePath, undefined, true);
 if (namespace === null && checkOnly) {
   console.log(JSON.stringify({
     protocol: "eliotr.ai-search-provision-plan.v1",
@@ -64,7 +64,7 @@ if (namespace === null && checkOnly) {
   process.exit(0);
 }
 if (namespace === null) {
-  namespace = await request("POST", `/accounts/${enc(accountId)}/ai-search/namespaces`, {
+  await request("POST", `/accounts/${enc(accountId)}/ai-search/namespaces`, {
     name: desired.namespace,
     description: "Eliot Research private managed retrieval namespace",
   });
@@ -86,7 +86,7 @@ for (const spec of desired.instances) {
       receipts.push({ id: spec.id, disposition: "CREATE" });
       continue;
     }
-    existing = await request("POST", `${namespacePath}/instances`, spec.create);
+    await request("POST", `${namespacePath}/instances`, spec.create);
     console.log(`created AI Search instance ${spec.id}`);
     receipts.push({ id: spec.id, disposition: "CREATED" });
     continue;

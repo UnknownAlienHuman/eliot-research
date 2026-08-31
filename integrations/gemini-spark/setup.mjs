@@ -67,7 +67,7 @@ async function readSettings(path) {
   try {
     value = JSON.parse(text);
   } catch (error) {
-    throw new Error(`${path} is not valid JSON: ${error.message}`);
+    throw new Error(`${path} is not valid JSON: ${error.message}`, { cause: error });
   }
   if (!isRecord(value)) throw new Error(`${path} must contain one JSON object`);
   return value;

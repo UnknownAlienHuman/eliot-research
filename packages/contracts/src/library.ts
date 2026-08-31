@@ -3,7 +3,6 @@ import {
   IdentifierSchema,
   IsoDateTimeSchema,
   JsonObjectSchema,
-  PositiveIntegerSchema,
   Sha256Schema,
   VersionedRefSchema,
 } from "./common.js";

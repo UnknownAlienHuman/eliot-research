@@ -13,7 +13,6 @@ import {
   decodeCatalogInput,
   strictRecord,
   type GeminiMcpToolDependencies,
-  type GoogleExternalTransport,
 } from "./gemini-mcp-tool-common.js";
 import { createPlan, validateReceipt } from "./gemini-mcp-google-sync.js";
 

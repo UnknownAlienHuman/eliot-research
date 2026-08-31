@@ -9,7 +9,6 @@ import {
   type OutboxClaimRequest,
   type OutboxLease,
   type OutboxStore,
-  type QueueSendReceipt,
 } from "./delivery-types.js";
 
 interface CandidateRow { readonly outbox_id: unknown }

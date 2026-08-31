@@ -12,7 +12,7 @@ if (manifest.protocol !== "eliotr.agent-work.v1") errors.push("unexpected manife
 if (!/^[a-f0-9]{40}$/.test(manifest.baseline_commit ?? "")) errors.push("baseline_commit must be a full SHA");
 
 async function loadFragments() {
-  let names = [];
+  let names;
   try {
     names = (await readdir(fragmentsDirectory)).filter((name) => name.endsWith(".json")).sort();
   } catch (error) {
