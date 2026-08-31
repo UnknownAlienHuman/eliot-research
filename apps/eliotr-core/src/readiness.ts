@@ -1,6 +1,6 @@
 import type { Env } from "./env.js";
 
-export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v4-delivery-fenced" as const;
+export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v5-ingest-admission" as const;
 export const REQUIRED_SEARCH_SCHEMA_GENERATION = "search-v1" as const;
 
 export interface ReadinessReport {

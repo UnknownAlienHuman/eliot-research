@@ -5,10 +5,22 @@ import type {
   SemanticApi,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
+import {
+  createD1IngestAdmissionAuthority,
+  createR2StagedBundlePort,
+  IngestAuthorityError,
+  type PreparedIngestOperation,
+} from "@eliotr/platform-cloudflare";
 import { readCatalog } from "./catalog-service.js";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
+import {
+  authorizeIngestPromotion,
+  requireCurrentIngestOwner,
+} from "./ingest-promotion-authorization.js";
+import { createIngestService } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
+import { createSourceAdmissionService } from "./source-admission-service.js";
 
 export interface CompositionRootInput {
   readonly env: Env;
@@ -35,11 +47,12 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    enabled_slices: ["HEALTH", "ACCESS", "CATALOG"],
-    disabled_slices: ["INGEST", "RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
+    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST"],
+    disabled_slices: ["RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
     routes: ROUTES,
     exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false,
+    ingest_live_qualified: false,
   };
 }
 
@@ -68,9 +81,38 @@ function federationApi(): FederationApi {
 }
 
 function ownerApi(env: Env): OwnerApi {
+  const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
+  const stagedBundles = createR2StagedBundlePort({
+    work_bucket: env.WORK_BUCKET,
+    evidence_bucket: env.EVIDENCE_BUCKET,
+    authorize_promotion: (input, admissionReceiptRef) =>
+      authorizeIngestPromotion(env.CORE_DB, authority, input, admissionReceiptRef),
+  });
+  const deterministicAdmission = createSourceAdmissionService();
+  const ingest = createIngestService({
+    authority,
+    stagedBundles,
+    admission: {
+      async evaluate(operation: PreparedIngestOperation, verification) {
+        const expiresAt = Date.parse(operation.expires_at);
+        if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
+          throw new IngestAuthorityError(
+            "INGEST_STATE_CONFLICT",
+            "ingest operation expired before source-admission decision",
+          );
+        }
+        await requireCurrentIngestOwner(env.CORE_DB, {
+          source_namespace_id: operation.source_namespace_id,
+          owner_system_id: operation.owner_system_id,
+          source_owner_generation: operation.source_owner_generation,
+          policy_revision: operation.policy.revision,
+        });
+        return deterministicAdmission.evaluate(operation, verification);
+      },
+    },
+  });
   return {
-    prepareBundle: () => unavailable("ingest.bundle.prepare"),
-    commitBundle: () => unavailable("ingest.bundle.commit"),
+    ...ingest,
     async systemHealth(): Promise<Record<string, unknown>> {
       return { ...await readReadiness(env) };
     },

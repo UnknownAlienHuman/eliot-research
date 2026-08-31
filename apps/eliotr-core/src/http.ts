@@ -9,6 +9,8 @@ import { ROUTES } from "@eliotr/interfaces";
 import {
   AccessVerificationError,
   createCloudflareAccessVerifier,
+  IngestAuthorityError,
+  IngestStorageError,
   RUNTIME_LIMITS,
   RuntimeLimitError,
   serializeJsonWithinBytes,
@@ -22,6 +24,11 @@ import {
   type CompositionRootInput,
 } from "./composition-root.js";
 import type { Env } from "./env.js";
+import {
+  dispatchIngestOperation,
+  IngestHttpInputError,
+} from "./ingest-http.js";
+import { IngestServiceError } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
 
 export interface HttpDependencies {
@@ -124,11 +131,8 @@ function matchPattern(pattern: string, pathname: string): Readonly<Record<string
       continue;
     }
     let decoded: string;
-    try {
-      decoded = decodeURIComponent(actualSegment);
-    } catch {
-      return null;
-    }
+    try { decoded = decodeURIComponent(actualSegment); }
+    catch { return null; }
     if (
       decoded.length === 0 ||
       decoded.includes("/") ||
@@ -183,11 +187,7 @@ function configuredAccessVerifier(env: Env): AccessVerifier {
     );
   }
   const servicePrincipals = parseServicePrincipals(env.ACCESS_SERVICE_PRINCIPALS);
-  const key = JSON.stringify([
-    env.ACCESS_TEAM_DOMAIN,
-    env.ACCESS_AUDIENCE,
-    servicePrincipals,
-  ]);
+  const key = JSON.stringify([env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUDIENCE, servicePrincipals]);
   if (accessVerifierCache?.key === key) return accessVerifierCache.verifier;
   const verifier = createCloudflareAccessVerifier({
     team_domain: env.ACCESS_TEAM_DOMAIN,
@@ -203,9 +203,7 @@ function authorize(
   route: RouteDefinition,
   identity: AccessIdentity,
 ): AuthenticatedRequestContext {
-  if (route.auth === "public") {
-    throw new Error("public route entered protected authorization");
-  }
+  if (route.auth === "public") throw new Error("public route entered protected authorization");
   const service = identity.authentication_method === "service_token";
   if ((route.auth === "owner" && service) || (route.auth === "service" && !service)) {
     throw new HttpRequestError(
@@ -287,6 +285,21 @@ function parseCatalogRequest(url: URL): CatalogRequest {
   };
 }
 
+async function requireApplicationReady(
+  request: Request,
+  application: ApplicationLifecycle,
+): Promise<Response | null> {
+  const readiness = await application.readiness();
+  if (readiness.ready) return null;
+  return problem(
+    request,
+    503,
+    "SCHEMA_NOT_READY",
+    "Required D1 migrations are not applied",
+    true,
+  );
+}
+
 async function dispatch(
   request: Request,
   env: Env,
@@ -303,36 +316,75 @@ async function dispatch(
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "research.catalog": {
-      const readiness = await application.readiness();
-      if (!readiness.ready) {
-        return problem(
-          request,
-          503,
-          "SCHEMA_NOT_READY",
-          "Required D1 migrations are not applied",
-          true,
-        );
-      }
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
       return apiResult(
         request,
         env,
         await application.services.semantic.catalog(context, parseCatalogRequest(url)),
       );
     }
-    default: {
-      const readiness = await application.readiness();
-      if (!readiness.ready) {
-        return problem(
+    default:
+      if (match.route.operation.startsWith("ingest.")) {
+        const blocked = await requireApplicationReady(request, application);
+        if (blocked !== null) return blocked;
+        return apiResult(
           request,
-          503,
-          "SCHEMA_NOT_READY",
-          "Required D1 migrations are not applied",
-          true,
+          env,
+          await dispatchIngestOperation(
+            match.route.operation,
+            request,
+            url,
+            match.params,
+            match.route.maximum_request_bytes,
+            context,
+            application.services.owner,
+          ),
         );
       }
-      throw new CapabilityUnavailableError(match.route.operation);
-    }
+      {
+        const blocked = await requireApplicationReady(request, application);
+        if (blocked !== null) return blocked;
+        throw new CapabilityUnavailableError(match.route.operation);
+      }
   }
+}
+
+function mapIngestAuthorityError(request: Request, error: IngestAuthorityError): Response {
+  if (error.code === "INGEST_SETTLEMENT_UNCERTAIN") {
+    return problem(request, 503, error.code, "Ingest authority settlement is uncertain", true);
+  }
+  if (error.code === "INGEST_AUTHORITY_MISSING") {
+    return problem(request, 404, error.code, "Ingest authority does not exist", false);
+  }
+  if (error.code === "INGEST_OWNER_NOT_ACTIVE" || error.code === "INGEST_POLICY_DENIED") {
+    return problem(request, 403, error.code, "Ingest admission is not authorized", false);
+  }
+  if (error.code === "INGEST_AUTHORITY_INPUT_INVALID") {
+    return problem(request, 400, error.code, "Ingest authority input is invalid", false);
+  }
+  return problem(request, 409, error.code, "Ingest authority conflicts with durable state", false);
+}
+
+function mapIngestStorageError(request: Request, error: IngestStorageError): Response {
+  if (error.retryable) {
+    return problem(request, 503, error.code, "Ingest storage is temporarily unavailable", true);
+  }
+  if (error.code === "STAGING_SESSION_NOT_FOUND") {
+    return problem(request, 404, error.code, "Staging session does not exist", false);
+  }
+  if (
+    error.code === "BUNDLE_INPUT_INVALID" ||
+    error.code === "BUNDLE_RESIDENCY_MISMATCH" ||
+    error.code === "BUNDLE_FILE_SET_INVALID" ||
+    error.code === "BUNDLE_HASH_MANIFEST_INVALID" ||
+    error.code === "BUNDLE_TOTAL_SIZE_MISMATCH" ||
+    error.code === "STAGING_FILE_UNKNOWN" ||
+    error.code === "STAGING_PART_INVALID"
+  ) {
+    return problem(request, 400, error.code, "Ingest storage input is invalid", false);
+  }
+  return problem(request, 409, error.code, "Ingest storage state or integrity conflict", false);
 }
 
 function mapError(request: Request, error: unknown): Response {
@@ -355,9 +407,14 @@ function mapError(request: Request, error: unknown): Response {
       { "www-authenticate": "Bearer realm=\"Cloudflare Access\"" },
     );
   }
-  if (error instanceof HttpRequestError) {
+  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
   }
+  if (error instanceof IngestServiceError) {
+    return problem(request, error.status, error.code, error.message, error.retryable);
+  }
+  if (error instanceof IngestAuthorityError) return mapIngestAuthorityError(request, error);
+  if (error instanceof IngestStorageError) return mapIngestStorageError(request, error);
   if (error instanceof CatalogInputError) {
     return problem(request, 400, error.code, error.message, false);
   }
