@@ -20,7 +20,7 @@
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
       "owner_packets": ["ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities and owner catalog are composed; unsupported products remain typed unavailable",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable",
       "completion_evidence": ["strict TypeScript check", "owner/service authorization negative tests", "live Access and remote D1 receipts"]
     },
     {
@@ -29,8 +29,8 @@
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.",
       "owner_packets": ["ER-21", "ER-24"],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "route registry, bounded responses, Cloudflare Access verification and owner/service authorization are executable",
-      "completion_evidence": ["HTTP negative tests", "runtime prototype tests", "live owner and service-principal Access receipts"]
+      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable",
+      "completion_evidence": ["HTTP and multipart negative tests", "runtime prototype tests", "live owner and service-principal Access receipts"]
     },
     {
       "id": "implemented-003",
@@ -69,6 +69,15 @@
       "completion_evidence": ["MCP version/body/principal negative tests", "secret-free idempotent setup fixture", "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"]
     },
     {
+      "id": "implemented-007",
+      "path": "apps/eliotr-core/src/ingest-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
+      "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-24", "ER-29", "ER-37"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority",
+      "completion_evidence": ["idempotency, unsafe-path, missing-mapping and partial-transaction negative tests", "SQLite migration and commit-guard fixture", "live Access, R2 multipart/promotion, remote D1 and Queue receipts"]
+    },
+    {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator",
@@ -87,15 +96,6 @@
       "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
     },
     {
-      "id": "pending-006",
-      "path": "apps/eliotr-core/src/ingest-service.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-14/ER-21/ER-29 ingest API composition",
-      "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-29"],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "HTTP prepare/commit and source-admission composition still throw and cannot return a success receipt",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real R2/D1 admission receipt"]
-    },
-    {
       "id": "pending-007",
       "path": "apps/eliotr-core/src/navigation-service.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-31 Corpus Lens navigation",
@@ -112,15 +112,6 @@
       "state": "SCAFFOLD_FAIL_CLOSED",
       "behavior": "operation throws and cannot return a success receipt",
       "completion_evidence": ["implementation tests", "negative acceptance case", "real boundary receipt when applicable"]
-    },
-    {
-      "id": "pending-009",
-      "path": "apps/eliotr-core/src/source-admission-service.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-29 source admission composition",
-      "owner_packets": ["ER-29"],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "qualification and SourceAdmissionDecision composition still throw and cannot create a SourceRevision",
-      "completion_evidence": ["implementation tests", "negative acceptance case", "real R2/D1 admission receipt"]
     }
   ]
 }
