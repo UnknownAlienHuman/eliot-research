@@ -5,10 +5,16 @@ import type {
   SemanticApi,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
+import {
+  createD1IngestAdmissionAuthority,
+  createR2StagedBundlePort,
+} from "@eliotr/platform-cloudflare";
 import { readCatalog } from "./catalog-service.js";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
+import { createIngestService } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
+import { createSourceAdmissionService } from "./source-admission-service.js";
 
 export interface CompositionRootInput {
   readonly env: Env;
@@ -35,11 +41,12 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    enabled_slices: ["HEALTH", "ACCESS", "CATALOG"],
-    disabled_slices: ["INGEST", "RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
+    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST"],
+    disabled_slices: ["RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
     routes: ROUTES,
     exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false,
+    ingest_live_qualified: false,
   };
 }
 
@@ -68,9 +75,20 @@ function federationApi(): FederationApi {
 }
 
 function ownerApi(env: Env): OwnerApi {
+  const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
+  const stagedBundles = createR2StagedBundlePort({
+    work_bucket: env.WORK_BUCKET,
+    evidence_bucket: env.EVIDENCE_BUCKET,
+    authorize_promotion: (input, admissionReceiptRef) =>
+      authority.authorizePromotion(input, admissionReceiptRef),
+  });
+  const ingest = createIngestService({
+    authority,
+    stagedBundles,
+    admission: createSourceAdmissionService(),
+  });
   return {
-    prepareBundle: () => unavailable("ingest.bundle.prepare"),
-    commitBundle: () => unavailable("ingest.bundle.commit"),
+    ...ingest,
     async systemHealth(): Promise<Record<string, unknown>> {
       return { ...await readReadiness(env) };
     },
