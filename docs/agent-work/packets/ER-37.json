@@ -1,0 +1,21 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-37",
+    "depends_on": ["ER-13", "ER-14", "ER-21", "ER-24", "ER-29"],
+    "owned_paths": [
+      "packages/platform-cloudflare/src/d1-ingest-types.ts",
+      "packages/platform-cloudflare/src/d1-ingest-validation.ts",
+      "packages/platform-cloudflare/src/d1-ingest-authority.ts",
+      "packages/platform-cloudflare/src/d1-ingest-commit.ts",
+      "packages/platform-cloudflare/src/d1-ingest-authority.test.ts",
+      "apps/eliotr-core/src/ingest-http.ts",
+      "apps/eliotr-core/src/ingest-service.test.ts",
+      "apps/eliotr-core/src/source-admission-service.test.ts",
+      "scripts/check-ingest-admission.mjs"
+    ],
+    "mandatory_negative_case": "Reuse one idempotency identity with changed bytes or policy and omit projection outbox from the commit; both must fail without admitted state.",
+    "document": "ER-37-governed-ingest-admission-composition.md",
+    "max_package_source_lines": 10000
+  }
+}
