@@ -1,0 +1,38 @@
+name: branch-repair
+
+on:
+  push:
+    branches:
+      - agent/gemini-spark-mcp-20260830
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/gemini-spark-mcp-20260830
+      - name: Remove absent optional range property
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("packages/platform-cloudflare/src/ingest-test-fixture.ts")
+          text = path.read_text(encoding="utf-8")
+          old = "      range: undefined,\n"
+          if text.count(old) != 1:
+              raise SystemExit(f"expected one range field, found {text.count(old)}")
+          path.write_text(text.replace(old, "", 1), encoding="utf-8")
+          PY
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/platform-cloudflare/src/ingest-test-fixture.ts
+          git commit -m "fix: omit absent R2 range metadata"
+          git push origin HEAD:agent/gemini-spark-mcp-20260830
