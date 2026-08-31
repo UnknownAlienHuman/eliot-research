@@ -82,11 +82,27 @@ export const BundleAdmissionReceiptSchema = z.object({
   operation_id: IdentifierSchema,
   manifest_sha256: Sha256Schema,
   source_revision_ref: IdentifierSchema,
-  normalized_artifact_ref: IdentifierSchema,
+  normalized_artifact_ref: IdentifierSchema.optional(),
   object_residency_key_digest: Sha256Schema,
   decision: z.enum(["ADMITTED", "DUPLICATE", "QUARANTINED", "REJECTED"]),
   reason_codes: z.array(IdentifierSchema),
   readback_sha256: Sha256Schema,
   committed_at: IsoDateTimeSchema,
-}).strict();
+}).strict().superRefine((value, context) => {
+  const requiresArtifact = value.decision === "ADMITTED" || value.decision === "DUPLICATE";
+  if (requiresArtifact && value.normalized_artifact_ref === undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["normalized_artifact_ref"],
+      message: "required for admitted or duplicate bundle receipts",
+    });
+  }
+  if (!requiresArtifact && value.normalized_artifact_ref !== undefined) {
+    context.addIssue({
+      code: "custom",
+      path: ["normalized_artifact_ref"],
+      message: "must be absent when no canonical artifact was admitted",
+    });
+  }
+});
 export type BundleAdmissionReceipt = z.infer<typeof BundleAdmissionReceiptSchema>;
