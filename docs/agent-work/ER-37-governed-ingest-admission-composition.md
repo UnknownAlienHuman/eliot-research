@@ -19,6 +19,8 @@ the packets it depends on.
 - `packages/platform-cloudflare/src/d1-ingest-commit.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.test.ts`
 - `apps/eliotr-core/src/ingest-http.ts`
+- `apps/eliotr-core/src/ingest-promotion-authorization.ts`
+- `apps/eliotr-core/src/ingest-promotion-authorization.test.ts`
 - `apps/eliotr-core/src/ingest-service.test.ts`
 - `apps/eliotr-core/src/source-admission-service.test.ts`
 - `scripts/check-ingest-admission.mjs`
@@ -48,6 +50,24 @@ authenticated prepare
 → guarded SourceRevision/head/readiness/intent/outbox/receipt transaction
 ```
 
+## Fingerprint separation
+
+The R2 staging session fingerprint and D1 authority fingerprint intentionally prove different things:
+
+```text
+R2 staging fingerprint
+  manifest + complete residency key + sorted file hashes + total bytes
+
+D1 authority fingerprint
+  staging inputs + principal + credential generation + idempotency key
+  + active policy snapshot + expected source head
+```
+
+Promotion first verifies the exact R2 fingerprint, then passes the D1 fingerprint to the internal
+authority verifier. Either fingerprint supplied in the other role is rejected. This prevents both a
+policy/principal rebind and an impossible promotion caused by comparing two intentionally different
+identities.
+
 ## Acceptance
 
 - D1 prepare authority exists before a staging session is returned.
@@ -57,14 +77,17 @@ authenticated prepare
 - Missing mappings lower precision and never manufacture page, box or table-cell coordinates.
 - `QUARANTINED` and `REJECTED` decisions create no SourceRevision, source head or projection outbox.
 - `ADMITTED` promotion requires the exact persisted decision and active owner generation.
+- R2 and D1 fingerprints remain separate and are each checked against the correct authority surface.
 - The commit guard makes a partial source/revision/head/receipt/outbox transaction fail atomically.
 - Ambiguous writes reconcile only through exact canonical readback.
 
 ## Mandatory negative boundary
 
 Submit the same idempotency key with changed normalized bytes or policy/residency identity and prove the
-second request cannot obtain or reuse a staging session. Then omit the projection outbox from the guarded
-commit fixture and prove no SourceRevision or source head survives the rollback.
+second request cannot obtain or reuse a staging session. Attempt to use the D1 authority fingerprint as
+the R2 staging fingerprint and prove promotion stops before the internal authority call. Then omit the
+projection outbox from the guarded commit fixture and prove no SourceRevision or source head survives the
+rollback.
 
 ## Verification
 
