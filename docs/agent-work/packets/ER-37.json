@@ -10,11 +10,13 @@
       "packages/platform-cloudflare/src/d1-ingest-commit.ts",
       "packages/platform-cloudflare/src/d1-ingest-authority.test.ts",
       "apps/eliotr-core/src/ingest-http.ts",
+      "apps/eliotr-core/src/ingest-promotion-authorization.ts",
+      "apps/eliotr-core/src/ingest-promotion-authorization.test.ts",
       "apps/eliotr-core/src/ingest-service.test.ts",
       "apps/eliotr-core/src/source-admission-service.test.ts",
       "scripts/check-ingest-admission.mjs"
     ],
-    "mandatory_negative_case": "Reuse one idempotency identity with changed bytes or policy and omit projection outbox from the commit; both must fail without admitted state.",
+    "mandatory_negative_case": "Reuse one idempotency identity with changed bytes or policy, collapse the R2 and D1 fingerprints, or omit projection outbox from the commit; every case must fail without admitted state.",
     "document": "ER-37-governed-ingest-admission-composition.md",
     "max_package_source_lines": 10000
   }
