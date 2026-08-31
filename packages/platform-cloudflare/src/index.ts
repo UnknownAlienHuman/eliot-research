@@ -5,6 +5,11 @@ export * from "./d1-outbox-authority.js";
 export * from "./d1-outbox-store.js";
 export * from "./d1-ingest-types.js";
 export * from "./d1-ingest-authority.js";
+export {
+  canonicalDigest,
+  residencyKeyForManifest,
+  stableIngestId,
+} from "./d1-ingest-validation.js";
 export * from "./r2.js";
 export * from "./outbox.js";
 export * from "./ai-search.js";
