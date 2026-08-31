@@ -90,7 +90,7 @@ describe("D1 delivery inbox", () => {
       lease_ms: 10_000,
     });
     expect(result).toEqual({ disposition: "ACQUIRED", lease: acquiredLease() });
-    expect(fixture.calls[0]?.sql).toContain("UNIQUE(topic, idempotency_key)");
+    expect(fixture.calls[0]?.sql).toContain("ON CONFLICT(topic, idempotency_key)");
     expect(fixture.calls[0]?.sql).toContain("delivery_inbox.payload_sha256 = excluded.payload_sha256");
     expect(fixture.calls[0]?.values).toEqual([
       "outbox-1:1",

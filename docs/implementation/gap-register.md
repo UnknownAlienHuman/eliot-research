@@ -11,6 +11,7 @@ It supplements the per-agent packets; it does not create a second ownership syst
 | P0 | Erasure coordinator intentionally throws | ER-28 | exact closure, blocked-retention case, provider/index/backup absence verification |
 | P0 | Federation service intentionally throws | ER-22 | idempotent async job, cursor/range read, less-assertive disposition mapping |
 | P1 | Worker composition and Access dispatch are implemented but not live-qualified | ER-17, ER-21, ER-24, ER-26 | deployed owner JWT, service-token class denial/allow fixtures and remote D1 catalog readback |
+| P1 | Gemini Spark MCP and Google orchestration are implemented but not live-qualified | ER-17, ER-18, ER-20, ER-24, ER-26, ER-36 | deployed `gemini-spark` Access token initialize/tools/list/tools/call plus disposable Workspace and gcloud action/readback receipts |
 | P1 | D1 outbox, Queue inbox and projection acceptance are implemented but not live-qualified | ER-13, ER-15, ER-24 | remote Queue lost-ACK, duplicate delivery, poison message, DLQ and restart receipts |
 | P1 | Research Workflow has contract stages but not governed execution | ER-09, ER-20, ER-24 | cancellation/budget at every checkpoint; evidence freeze and claim audit |
 | P1 | Managed search response needs strict locator decoding before canonical resolution | ER-06, ER-07, ER-16 | oversized/malformed/fake-handle fixtures; exact resolver required |
@@ -29,3 +30,4 @@ Rules:
 4. Update this table and `implementation-status.json` in the same change that removes or adds a scaffold.
 5. `IMPLEMENTED_NOT_LIVE` means code and deterministic negative tests exist; it does not mean a platform round trip occurred.
 6. `ACCEPTED`, Queue `ack()`, Workflow completion and research completion are independent states.
+7. Google Workspace/gcloud success remains an untrusted transport observation until exact readback and ELIOT authority reconciliation.

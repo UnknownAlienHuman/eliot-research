@@ -17,7 +17,7 @@ export function precisionAtLeast(
 
 export function readinessAllowedByQualification(report: QualificationReport, channel: ReadinessChannel): boolean {
   if (report.overall === "REJECTED") return false;
-  if (channel === "semantic_ready") return report.overall !== "REJECTED";
+  if (channel === "semantic_ready") return true;
   if (channel === "exact_ready") return precisionAtLeast(report.exact_precision_ceiling, "byte");
   if (channel === "structure_qualified") return report.overall === "QUALIFIED";
   return true;

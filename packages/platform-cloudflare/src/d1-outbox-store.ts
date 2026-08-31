@@ -9,7 +9,6 @@ import {
   type OutboxClaimRequest,
   type OutboxLease,
   type OutboxStore,
-  type QueueSendReceipt,
 } from "./delivery-types.js";
 
 interface CandidateRow { readonly outbox_id: unknown }
@@ -168,7 +167,6 @@ export function createD1OutboxStore(database: D1Database): OutboxStore {
         `SELECT outbox_id FROM outbox WHERE payload_sha256 IS NOT NULL AND ${CLAIMABLE} ` +
         "ORDER BY next_attempt_at, created_at, outbox_id LIMIT ?2",
       ).bind(request.now_ms, request.limit).all<CandidateRow>();
-      if (candidates.success === false) fail("outbox candidate read failed", true);
       const leases: OutboxLease[] = [];
       for (const candidate of candidates.results ?? []) {
         assertDeliveryIdentifier(candidate.outbox_id, "candidate outbox_id");

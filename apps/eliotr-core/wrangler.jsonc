@@ -16,6 +16,7 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": [
       "/healthz",
+      "/mcp",
       "/api/*",
       "/federation/*",
       "/oauth/*"
@@ -28,7 +29,28 @@
     "AI_GATEWAY_RETRIEVAL_URL": "https://gateway.ai.cloudflare.com/v1/ACCOUNT_ID/eliotr-retrieval",
     "ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
     "ACCESS_AUDIENCE": "replace-me",
-    "ACCESS_SERVICE_PRINCIPALS": ""
+    "ACCESS_SERVICE_PRINCIPALS": "",
+    "MCP_HOSTNAME": "mcp.replace-me.example",
+    "MCP_ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
+    "MCP_ACCESS_AUDIENCE": "replace-me",
+    "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
+  },
+  "env": {
+    "test": {
+      "vars": {
+        "ENVIRONMENT": "development",
+        "DEPLOYMENT_GENERATION": "test-generation",
+        "AI_GATEWAY_REASONING_URL": "https://example.invalid/reasoning",
+        "AI_GATEWAY_RETRIEVAL_URL": "https://example.invalid/retrieval",
+        "ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
+        "ACCESS_AUDIENCE": "replace-me",
+        "ACCESS_SERVICE_PRINCIPALS": "",
+        "MCP_HOSTNAME": "mcp.replace-me.example",
+        "MCP_ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
+        "MCP_ACCESS_AUDIENCE": "replace-me",
+        "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
+      }
+    }
   },
   "d1_databases": [
     {

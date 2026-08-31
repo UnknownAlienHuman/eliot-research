@@ -27,7 +27,7 @@ function parseStrictJsonCompatibleJsonc(text, label) {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${label} must remain strict-JSON-compatible JSONC so the audited deploy generator can parse it without executing code: ${error.message}`);
+    throw new Error(`${label} must remain strict-JSON-compatible JSONC so the audited deploy generator can parse it without executing code: ${error.message}`, { cause: error });
   }
 }
 
@@ -42,18 +42,6 @@ function assertUnique(values, label) {
     if (seen.has(value)) throw new Error(`duplicate ${label}: ${value}`);
     seen.add(value);
   }
-}
-
-function stable(value) {
-  if (Array.isArray(value)) return value.map(stable);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, stable(child)]));
-  }
-  return value;
-}
-
-function equal(left, right) {
-  return JSON.stringify(stable(left)) === JSON.stringify(stable(right));
 }
 
 async function request(method, path, { body, extraHeaders, allow404 = false } = {}) {

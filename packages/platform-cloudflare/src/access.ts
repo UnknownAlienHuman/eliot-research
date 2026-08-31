@@ -87,6 +87,11 @@ const DEFAULTS = {
 function fail(code: AccessVerificationErrorCode, message: string, retryable = false, cause?: unknown): never {
   throw new AccessVerificationError(code, message, retryable, cause);
 }
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
 function integer(value: number, label: string, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max) {
     fail("ACCESS_CONFIG_INVALID", `${label} is outside its allowed integer range`);
@@ -337,8 +342,12 @@ export function createCloudflareAccessVerifier(
       const key = await keyFor(parsed.kid);
       let valid: boolean;
       try {
-        valid = await subtle.verify({ name: "RSASSA-PKCS1-v1_5" }, key,
-          parsed.signature, parsed.signingInput);
+        valid = await subtle.verify(
+          { name: "RSASSA-PKCS1-v1_5" },
+          key,
+          ownedArrayBuffer(parsed.signature),
+          ownedArrayBuffer(parsed.signingInput),
+        );
       } catch (error) {
         fail("ACCESS_JWT_SIGNATURE_INVALID", "Access JWT signature verification failed", false, error);
       }

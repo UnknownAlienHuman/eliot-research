@@ -60,6 +60,15 @@
       "completion_evidence": ["active owner, purge state and content digest checks", "negative receipt-outcome deduplication test", "remote D1/Queue replay receipt"]
     },
     {
+      "id": "implemented-006",
+      "path": "apps/eliotr-core/src/gemini-mcp.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
+      "owner_packets": ["ER-17", "ER-24", "ER-36"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "signed gemini-spark service identity reaches a stateless four-tool MCP boundary for status, catalog, Google planning and candidate-only receipt validation",
+      "completion_evidence": ["MCP version/body/principal negative tests", "secret-free idempotent setup fixture", "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"]
+    },
+    {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
       "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator",

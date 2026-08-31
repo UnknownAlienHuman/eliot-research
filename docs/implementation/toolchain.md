@@ -13,6 +13,7 @@ lockfile plus all repository gates.
 | TypeScript | `6.0.3` | Latest compiler line accepted by the pinned `typescript-eslint` peer range. |
 | typescript-eslint | `8.68.0` | Flat-config TypeScript lint integration. |
 | ESLint | `10.9.1` | Repository lint engine. |
+| @eslint/js | `10.0.1` | Published flat JavaScript config package. It has an independent published-version line from the ESLint CLI package. |
 | Wrangler | `4.127.1` | Worker build, generated binding types, dry-run, migrations and deploy. |
 | @cloudflare/vitest-plugin | `1.1.0` | Workers runtime integration tests. Do not restore the retired pool package. |
 | @cloudflare/workers-types | `5.20260827.1` | Compile-time Worker API declarations. Generated binding types remain authoritative for `Env`. |
@@ -37,8 +38,8 @@ pnpm cf:dry-run
 git add pnpm-lock.yaml apps/eliotr-core/src/worker-configuration.d.ts
 ```
 
-The repository scaffold deliberately does not claim a reproducible install until **ER-00** creates and
-commits `pnpm-lock.yaml`. After that first bootstrap, CI and every other agent must use:
+The repository scaffold does not claim a reproducible install until **ER-00** creates and commits
+`pnpm-lock.yaml`. After that first bootstrap, CI and every other agent must use:
 
 ```bash
 pnpm install --frozen-lockfile

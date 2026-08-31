@@ -38,6 +38,6 @@ export function compileQueryPlan(request: RetrievalRequest): QueryPlan {
   };
 }
 
-export function rerankingMayAffectCoverage(plan: QueryPlan): false {
+export function rerankingMayAffectCoverage(_plan: QueryPlan): false {
   return false;
 }

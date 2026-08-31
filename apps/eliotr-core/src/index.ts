@@ -1,4 +1,5 @@
 import type { Env } from "./env.js";
+import { handleGeminiMcp } from "./gemini-mcp.js";
 import { handleHttp } from "./http.js";
 import { handleQueue } from "./queue.js";
 import { handleScheduled } from "./scheduled.js";
@@ -7,6 +8,9 @@ export { ResearchWorkflow } from "./research-workflow.js";
 
 export default {
   fetch(request: Request, env: Env, executionContext: ExecutionContext): Promise<Response> {
+    if (new URL(request.url).pathname === "/mcp") {
+      return handleGeminiMcp(request, env, executionContext);
+    }
     return handleHttp(request, env, executionContext);
   },
   queue(batch: MessageBatch<unknown>, env: Env): Promise<void> {

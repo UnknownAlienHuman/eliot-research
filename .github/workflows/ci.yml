@@ -14,7 +14,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,15 +22,47 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: corepack prepare pnpm@11.23.0 --activate
-      - name: Install dependencies
+      - name: Install frozen dependencies
         run: |
-          if [ -f pnpm-lock.yaml ]; then
-            pnpm install --frozen-lockfile
-          else
-            echo "Bootstrap mode: ER-00 must commit pnpm-lock.yaml"
-            pnpm install --no-frozen-lockfile
-          fi
-      - run: pnpm check
-      - run: pnpm build:pwa
-      - run: pnpm cf:types
-      - run: pnpm cf:dry-run
+          test -f pnpm-lock.yaml
+          pnpm install --frozen-lockfile
+      - name: Verify normative contract fixtures
+        run: pnpm contracts:check
+      - name: Verify package boundaries
+        run: pnpm boundaries:check
+      - name: Verify source budgets
+        run: pnpm budgets:check
+      - name: Verify swarm work packets
+        run: pnpm work-packets:check
+      - name: Verify delivery authority fixture
+        run: pnpm delivery:check
+      - name: Verify Gemini MCP integration fixtures
+        run: pnpm gemini:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Test Cloudflare provisioners
+        run: pnpm test:provisioners
+      - name: Test contracts
+        run: timeout 90s pnpm exec vitest run packages/contracts --reporter=verbose
+      - name: Test domain
+        run: timeout 90s pnpm exec vitest run packages/domain --reporter=verbose
+      - name: Test policy
+        run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
+      - name: Test retrieval, research and Drive exchange
+        run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
+      - name: Test Cloudflare platform package
+        run: timeout 180s pnpm exec vitest run packages/platform-cloudflare --reporter=verbose
+      - name: Test testkit, integration harness and PWA
+        run: timeout 180s pnpm exec vitest run packages/testkit tests apps/eliotr-pwa --reporter=verbose
+      - name: Test Worker runtime
+        run: pnpm --filter @eliotr/core test
+      - name: Verify implementation-status registry
+        run: pnpm check:implementation-status
+      - name: Build PWA
+        run: pnpm build:pwa
+      - name: Generate Cloudflare binding types
+        run: pnpm cf:types
+      - name: Dry-run Worker deployment
+        run: pnpm cf:dry-run

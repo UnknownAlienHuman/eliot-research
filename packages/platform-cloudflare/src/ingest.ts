@@ -11,7 +11,6 @@ import {
   assertActive,
   loadSession,
   parseSession,
-  promotionKey,
   publicSession,
   readImmutableJson,
   readPromotionReceipt,

@@ -30,7 +30,7 @@ function authorityRow(overrides: Record<string, unknown> = {}): Record<string, u
     budget_reservation_ref: null,
     cancellation_ref: null,
     created_at: "2026-08-30T00:00:00.000Z",
-    outbox_id: "outbox-3f52c36308030f76d789c1fa5968c3fde63f1dfe0700f8c0",
+    outbox_id: "outbox-23d12e73332ae7fd29cbd4152e476c1a3eda8dc0ee9a7f12",
     topic: "source.revision.admitted",
     payload_sha256: "a".repeat(64),
     ...overrides,

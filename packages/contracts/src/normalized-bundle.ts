@@ -5,17 +5,6 @@ import { OwnershipModeSchema } from "./source.js";
 export const NORMALIZED_BUNDLE_PROTOCOL = "eliotr.normalized.v1" as const;
 export const NORMALIZED_BUNDLE_CANONICAL_BODY_SHA256 = "3a5f9fd2b254eebe574b2c4a28f9804df0da9df359e59ceee125fa7da90fef22" as const;
 
-interface NormalizedBundleRefinementValue {
-  readonly origin: {
-    readonly ownership_mode: "federated_reference" | "immutable_import" | "ownership_cutover";
-    readonly ownership_cutover_receipt_ref?: string;
-  };
-}
-
-interface SchemaRefinementContext {
-  addIssue(issue: { readonly code: "custom"; readonly path: readonly (string | number)[]; readonly message: string }): void;
-}
-
 export const NormalizedBundleManifestSchema = z.object({
   protocol: z.literal(NORMALIZED_BUNDLE_PROTOCOL),
   origin: z.object({
@@ -78,7 +67,7 @@ export const NormalizedBundleManifestSchema = z.object({
     purpose: z.string().min(1),
     receipt_ref: IdentifierSchema,
   }).strict(),
-}).strict().superRefine((value: NormalizedBundleRefinementValue, context: SchemaRefinementContext) => {
+}).strict().superRefine((value, context) => {
   const hasReceipt = value.origin.ownership_cutover_receipt_ref !== undefined;
   if (value.origin.ownership_mode === "ownership_cutover" && !hasReceipt) {
     context.addIssue({ code: "custom", path: ["origin", "ownership_cutover_receipt_ref"], message: "required for ownership_cutover" });

@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.js";
 
 export class ResearchSession extends DurableObject<Env> {
-  public async fetch(request: Request): Promise<Response> {
+  public override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/status") {
       return Response.json({

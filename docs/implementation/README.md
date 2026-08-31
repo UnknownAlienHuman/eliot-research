@@ -20,3 +20,4 @@ implementation continues.
 | `slice-gates.md` | vertical delivery order and real completion evidence |
 | `release-checklist.md` | promotion and production release gate |
 | `cloudflare-runbook.md` | provision, migrate, dry-run, deploy, verify, roll back |
+| `gemini-spark-mcp.md` | Gemini MCP protocol, Google extension orchestration, and live gates |
