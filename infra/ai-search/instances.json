@@ -29,7 +29,29 @@
         },
         "max_num_results": 50,
         "reranking": true,
-        "reranking_model": "@cf/baai/bge-reranker-base"
+        "reranking_model": "@cf/baai/bge-reranker-base",
+        "custom_metadata": [
+          {
+            "field_name": "source_token",
+            "data_type": "text"
+          },
+          {
+            "field_name": "item_key",
+            "data_type": "text"
+          },
+          {
+            "field_name": "projection_generation",
+            "data_type": "text"
+          },
+          {
+            "field_name": "instruction_taint",
+            "data_type": "text"
+          },
+          {
+            "field_name": "content_sha256",
+            "data_type": "text"
+          }
+        ]
       }
     },
     {

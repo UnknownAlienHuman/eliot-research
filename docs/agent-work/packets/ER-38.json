@@ -1,0 +1,26 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-38",
+    "depends_on": [
+      "ER-05",
+      "ER-06",
+      "ER-13",
+      "ER-15",
+      "ER-16",
+      "ER-24",
+      "ER-29",
+      "ER-37"
+    ],
+    "owned_paths": [
+      "packages/retrieval/src/structural-projector.ts",
+      "packages/retrieval/src/structural-projector.test.ts",
+      "packages/cloudflare-projection/**",
+      "apps/eliotr-core/src/projection-execution-handler.ts",
+      "scripts/check-projection-execution.mjs"
+    ],
+    "mandatory_negative_case": "Fail D1 Search item-count activation and managed-index exact readback; neither path may publish ready state.",
+    "document": "ER-38-governed-projection-generation-execution.md",
+    "max_package_source_lines": 10000
+  }
+}

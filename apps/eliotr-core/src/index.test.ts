@@ -22,7 +22,9 @@ function databaseFixture(input: {
         bind() { return statement; },
         async first<T>() {
           if (sql.includes("schema_state")) {
-            return { value: input.schemaGeneration ?? "core-v5-ingest-admission" } as T;
+            return {
+              value: input.schemaGeneration ?? "core-v6-projection-execution",
+            } as T;
           }
           if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;
           return null;
@@ -44,7 +46,9 @@ function databaseFixture(input: {
 
 function environment(
   core: D1Database,
-  search: D1Database = databaseFixture({ schemaGeneration: "search-v1" }).database,
+  search: D1Database = databaseFixture({
+    schemaGeneration: "search-v2-projection-generations",
+  }).database,
 ): Env {
   return {
     CORE_DB: core,
@@ -130,7 +134,7 @@ describe("HTTP authority boundary", () => {
   });
 
   it("blocks protected application routes on a stale Core schema generation", async () => {
-    const fixture = databaseFixture({ schemaGeneration: "core-v1" });
+    const fixture = databaseFixture({ schemaGeneration: "core-v5-ingest-admission" });
     const health = await handleHttp(
       new Request("https://research.example/api/v1/system/health"),
       environment(fixture.database),
@@ -141,7 +145,9 @@ describe("HTTP authority boundary", () => {
     const healthDocument = await body(health);
     const healthData = healthDocument.data as Record<string, unknown>;
     expect(healthData.ready).toBe(false);
-    expect(healthData.blocking_reason_codes).toEqual(["CORE_SCHEMA_GENERATION_MISMATCH"]);
+    expect(healthData.blocking_reason_codes).toEqual([
+      "CORE_SCHEMA_GENERATION_MISMATCH",
+    ]);
 
     const catalog = await handleHttp(
       new Request("https://research.example/api/v1/research/catalog"),
@@ -173,14 +179,18 @@ describe("HTTP authority boundary", () => {
     expect(response.status).toBe(200);
     const document = await body(response);
     const data = document.data as Record<string, unknown>;
-    expect(data.projects).toEqual([{ id: "project-a", title: "Project A", generation: "1" }]);
+    expect(data.projects).toEqual([
+      { id: "project-a", title: "Project A", generation: "1" },
+    ]);
     expect(data.sources).toEqual([{
       id: "source-a",
       title: "Source A",
       readiness_ref: "readiness:source-a:revision-a",
     }]);
     expect(data.next_cursor).toMatch(/^[A-Za-z0-9_-]+$/u);
-    const sourceSql = fixture.statements.find((statement) => statement.includes("FROM source s"));
+    const sourceSql = fixture.statements.find(
+      (statement) => statement.includes("FROM source s"),
+    );
     expect(sourceSql).toContain("r.source_revision_ref = s.head_rev");
     expect(sourceSql).toContain("r.purge_state = 'LIVE'");
   });
@@ -193,7 +203,9 @@ describe("HTTP authority boundary", () => {
       ],
     });
     const first = await handleHttp(
-      new Request("https://research.example/api/v1/research/catalog?project_id=project-a&limit=1"),
+      new Request(
+        "https://research.example/api/v1/research/catalog?project_id=project-a&limit=1",
+      ),
       environment(fixture.database),
       executionContext(),
       { accessVerifier: verifier("cloudflare_access") },
@@ -202,13 +214,17 @@ describe("HTTP authority boundary", () => {
     const cursor = (firstDocument.data as Record<string, unknown>).next_cursor;
     expect(typeof cursor).toBe("string");
     const second = await handleHttp(
-      new Request(`https://research.example/api/v1/research/catalog?project_id=project-b&limit=1&cursor=${String(cursor)}`),
+      new Request(
+        `https://research.example/api/v1/research/catalog?project_id=project-b&limit=1&cursor=${String(cursor)}`,
+      ),
       environment(fixture.database),
       executionContext(),
       { accessVerifier: verifier("cloudflare_access") },
     );
     expect(second.status).toBe(400);
-    expect(await body(second)).toMatchObject({ code: "CATALOG_CURSOR_SCOPE_MISMATCH" });
+    expect(await body(second)).toMatchObject({
+      code: "CATALOG_CURSOR_SCOPE_MISMATCH",
+    });
   });
 
   it("returns typed 404 and 405 responses instead of falling through to static assets", async () => {
@@ -220,7 +236,9 @@ describe("HTTP authority boundary", () => {
     );
     expect(missing.status).toBe(404);
     const wrongMethod = await handleHttp(
-      new Request("https://research.example/api/v1/system/health", { method: "POST" }),
+      new Request("https://research.example/api/v1/system/health", {
+        method: "POST",
+      }),
       environment(fixture.database),
       executionContext(),
     );

@@ -13,6 +13,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@eliotr/cloudflare-projection": "workspace:*",
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
     "@eliotr/policy": "workspace:*",
