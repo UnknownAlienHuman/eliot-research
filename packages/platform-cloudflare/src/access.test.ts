@@ -181,6 +181,7 @@ describe("Cloudflare Access verifier", () => {
       aud: [AUDIENCE],
       sub: "attacker",
       exp: NOW_SECONDS + 600,
+      iat: NOW_SECONDS - 10,
       type: "app",
     });
     await expect(verifier.verify(requestWith(`${segments[0]}.${payload}.${segments[2]}`)))
