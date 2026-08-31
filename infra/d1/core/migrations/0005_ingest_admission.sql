@@ -23,6 +23,7 @@ CREATE TABLE source_admission_policy (
 CREATE TABLE bundle_ingest_operation (
   operation_id TEXT PRIMARY KEY,
   principal_ref TEXT NOT NULL,
+  origin_authentication_receipt_ref TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   input_fingerprint TEXT NOT NULL CHECK (
     length(input_fingerprint) = 64 AND input_fingerprint NOT GLOB '*[^0-9a-f]*'
@@ -36,9 +37,10 @@ CREATE TABLE bundle_ingest_operation (
   source_namespace_id TEXT NOT NULL,
   owner_system_id TEXT NOT NULL,
   source_owner_generation TEXT NOT NULL,
-  source_revision_ref TEXT NOT NULL,
+  source_revision_ref TEXT NOT NULL UNIQUE,
   source_id TEXT NOT NULL,
   expected_head_revision_ref TEXT,
+  residency_key_json TEXT NOT NULL CHECK (json_valid(residency_key_json)),
   residency_key_digest TEXT NOT NULL CHECK (
     length(residency_key_digest) = 64 AND residency_key_digest NOT GLOB '*[^0-9a-f]*'
   ),
@@ -53,7 +55,8 @@ CREATE TABLE bundle_ingest_operation (
   decision_receipt_ref TEXT,
   promotion_receipt_ref TEXT,
   state TEXT NOT NULL CHECK (state IN (
-    'PREPARING','UPLOAD_REQUIRED','VERIFIED','AUTHORIZED','PROMOTED','COMMITTED','REJECTED'
+    'PREPARING','UPLOAD_REQUIRED','VERIFIED','AUTHORIZED','PROMOTED',
+    'COMMITTED','QUARANTINED','REJECTED'
   )),
   bundle_receipt_json TEXT CHECK (bundle_receipt_json IS NULL OR json_valid(bundle_receipt_json)),
   bundle_receipt_sha256 TEXT CHECK (
@@ -64,7 +67,11 @@ CREATE TABLE bundle_ingest_operation (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  UNIQUE (principal_ref, idempotency_key)
+  UNIQUE (principal_ref, idempotency_key),
+  CHECK (
+    (bundle_receipt_json IS NULL AND bundle_receipt_sha256 IS NULL)
+    OR (bundle_receipt_json IS NOT NULL AND bundle_receipt_sha256 IS NOT NULL)
+  )
 ) STRICT;
 CREATE INDEX bundle_ingest_state_idx
   ON bundle_ingest_operation(state, expires_at, updated_at);
@@ -145,6 +152,22 @@ CREATE TABLE source_admission_decision (
 ) STRICT;
 CREATE INDEX source_admission_revision_idx
   ON source_admission_decision(source_revision_ref, decision);
+
+CREATE TABLE bundle_ingest_commit_guard (
+  operation_id TEXT PRIMARY KEY REFERENCES bundle_ingest_operation(operation_id),
+  source_revision_ref TEXT NOT NULL REFERENCES source_revision(source_revision_ref),
+  ingest_receipt_id TEXT NOT NULL,
+  ingest_receipt_revision INTEGER NOT NULL CHECK (ingest_receipt_revision > 0),
+  projection_intent_id TEXT NOT NULL,
+  projection_intent_revision INTEGER NOT NULL CHECK (projection_intent_revision > 0),
+  outbox_id TEXT NOT NULL REFERENCES outbox(outbox_id),
+  verified INTEGER NOT NULL CHECK (verified = 1),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (ingest_receipt_id, ingest_receipt_revision)
+    REFERENCES operation_receipt(receipt_id, revision),
+  FOREIGN KEY (projection_intent_id, projection_intent_revision)
+    REFERENCES operation_intent(intent_id, revision)
+) STRICT;
 
 UPDATE schema_state
 SET value = 'core-v5-ingest-admission', updated_at = '2026-08-31T00:00:00Z'
