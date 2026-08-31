@@ -15,9 +15,14 @@ transport completion, managed-index acceptance, projection readiness, or Evidenc
 - `packages/retrieval/src/structural-projector.test.ts`
 - `packages/cloudflare-projection/**`
 - `apps/eliotr-core/src/projection-execution-handler.ts`
-- `infra/d1/core/migrations/0006_projection_execution.sql`
-- `infra/d1/search/migrations/0002_projection_generations.sql`
 - `scripts/check-projection-execution.mjs`
+
+## Coordinated paths owned by dependencies
+
+- ER-13 owns `infra/d1/core/migrations/0006_projection_execution.sql`.
+- ER-13 owns `infra/d1/search/migrations/0002_projection_generations.sql`.
+- ER-16 owns the managed-index profile in `infra/ai-search/instances.json`.
+- ER-24 owns Queue composition and Worker environment wiring.
 
 ## Read only
 
@@ -28,7 +33,6 @@ transport completion, managed-index acceptance, projection readiness, or Evidenc
 - `packages/platform-cloudflare/src/execution-lease.ts`
 - `apps/eliotr-core/src/projection-delivery-handler.ts`
 - `apps/eliotr-core/src/queue.ts`
-- `infra/ai-search/instances.json`
 
 ## Authority path
 
