@@ -1,5 +1,6 @@
 import type { BundleAdmissionReceipt, NormalizedBundleManifest, ObjectResidencyKey, QualificationReport, SourceAdmissionDecision } from "@eliotr/contracts";
 import type { BundlePromotionAuthorization, BundlePromotionReceipt } from "./ingest-types.js";
+export type { BundlePromotionReceipt } from "./ingest-types.js";
 
 export type IngestOperationState = "PREPARING" | "UPLOAD_REQUIRED" | "VERIFIED" | "AUTHORIZED" | "PROMOTED" | "COMMITTED" | "QUARANTINED" | "REJECTED";
 
