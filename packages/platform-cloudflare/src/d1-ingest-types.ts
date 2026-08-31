@@ -1,24 +1,7 @@
-import type {
-  BundleAdmissionReceipt,
-  NormalizedBundleManifest,
-  ObjectResidencyKey,
-  QualificationReport,
-  SourceAdmissionDecision,
-} from "@eliotr/contracts";
-import type {
-  BundlePromotionAuthorization,
-  BundlePromotionReceipt,
-} from "./ingest-types.js";
+import type { BundleAdmissionReceipt, NormalizedBundleManifest, ObjectResidencyKey, QualificationReport, SourceAdmissionDecision } from "@eliotr/contracts";
+import type { BundlePromotionAuthorization, BundlePromotionReceipt } from "./ingest-types.js";
 
-export type IngestOperationState =
-  | "PREPARING"
-  | "UPLOAD_REQUIRED"
-  | "VERIFIED"
-  | "AUTHORIZED"
-  | "PROMOTED"
-  | "COMMITTED"
-  | "QUARANTINED"
-  | "REJECTED";
+export type IngestOperationState = "PREPARING" | "UPLOAD_REQUIRED" | "VERIFIED" | "AUTHORIZED" | "PROMOTED" | "COMMITTED" | "QUARANTINED" | "REJECTED";
 
 export interface IngestAdmissionPolicySnapshot {
   readonly source_namespace_id: string;
@@ -38,7 +21,6 @@ export interface IngestAdmissionPolicySnapshot {
   readonly minimum_quality_state: NormalizedBundleManifest["quality"]["state"];
   readonly created_at: string;
 }
-
 export interface PreparedIngestOperation {
   readonly operation_id: string;
   readonly principal_ref: string;
@@ -70,7 +52,6 @@ export interface PreparedIngestOperation {
   readonly updated_at: string;
   readonly expires_at: string;
 }
-
 export interface PrepareIngestAuthorityInput {
   readonly principal_ref: string;
   readonly origin_authentication_receipt_ref: string;
@@ -80,26 +61,22 @@ export interface PrepareIngestAuthorityInput {
   readonly total_bytes: number;
   readonly residency_key: ObjectResidencyKey;
 }
-
 export interface PrepareIngestAuthorityResult {
   readonly disposition: "CREATED" | "EXISTING";
   readonly operation: PreparedIngestOperation;
 }
-
 export interface RecordQualificationDecisionInput {
   readonly operation_id: string;
   readonly staging_session_ref: string;
   readonly qualification: QualificationReport;
   readonly decision: SourceAdmissionDecision;
 }
-
 export interface CommitAdmittedBundleInput {
   readonly operation_id: string;
   readonly staging_session_ref: string;
   readonly promotion_receipt: BundlePromotionReceipt;
   readonly bundle_receipt: BundleAdmissionReceipt;
 }
-
 export interface IngestAdmissionAuthority {
   prepare(input: PrepareIngestAuthorityInput): Promise<PrepareIngestAuthorityResult>;
   bindStagingSession(operationId: string, stagingSessionRef: string): Promise<PreparedIngestOperation>;
@@ -107,9 +84,6 @@ export interface IngestAdmissionAuthority {
   loadForPrincipal(operationId: string, principalRef: string): Promise<PreparedIngestOperation | null>;
   recordQualificationDecision(input: RecordQualificationDecisionInput): Promise<PreparedIngestOperation>;
   finalizeNonAdmitted(operationId: string, receipt: BundleAdmissionReceipt): Promise<BundleAdmissionReceipt>;
-  authorizePromotion(
-    input: BundlePromotionAuthorization,
-    admissionReceiptRef: string,
-  ): Promise<boolean>;
+  authorizePromotion(input: BundlePromotionAuthorization, admissionReceiptRef: string): Promise<boolean>;
   commitAdmitted(input: CommitAdmittedBundleInput): Promise<BundleAdmissionReceipt>;
 }
