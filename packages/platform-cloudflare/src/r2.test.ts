@@ -18,8 +18,14 @@ function stream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({ start(controller) { controller.enqueue(bytes.slice()); controller.close(); } });
 }
 
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function digest(bytes: Uint8Array): Promise<string> {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", ownedArrayBuffer(bytes)))]
     .map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
@@ -36,7 +42,7 @@ function testDigestSink(): Sha256DigestSink {
         const body = new Uint8Array(total);
         let offset = 0;
         for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
-        try { resolveDigest(await crypto.subtle.digest("SHA-256", body)); }
+        try { resolveDigest(await crypto.subtle.digest("SHA-256", ownedArrayBuffer(body))); }
         catch (error) { rejectDigest(error); }
       },
       abort(reason) { rejectDigest(reason); },

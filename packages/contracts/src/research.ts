@@ -4,15 +4,6 @@ import { EvidenceHandleSchema } from "./evidence.js";
 import { ScopeSnapshotSchema } from "./scope.js";
 
 
-interface CoverageReceiptRefinementValue {
-  readonly terminal_disposition: string;
-  readonly denominator_kind: "complete_scope" | "sampled_with_method" | "unknown";
-}
-
-interface CoverageReceiptRefinementContext {
-  addIssue(issue: { readonly code: "custom"; readonly path: readonly (string | number)[]; readonly message: string }): void;
-}
-
 export const EvidenceGradeSchema = z.enum(["E0", "E1", "E2", "E3"]);
 export type EvidenceGrade = z.infer<typeof EvidenceGradeSchema>;
 
@@ -161,7 +152,7 @@ export const CoverageReceiptSchema = z.object({
   counter_search_status: z.enum(["NOT_REQUIRED", "NOT_RUN", "PARTIAL", "COMPLETE"]),
   budget_limitations: z.array(z.string()),
   terminal_disposition: CompletionDispositionSchema,
-}).strict().superRefine((value: CoverageReceiptRefinementValue, context: CoverageReceiptRefinementContext) => {
+}).strict().superRefine((value, context) => {
   if (value.terminal_disposition === "NO_MATCH_IN_COMPLETE_SCOPE" && value.denominator_kind !== "complete_scope") {
     context.addIssue({ code: "custom", path: ["terminal_disposition"], message: "absence requires complete_scope denominator" });
   }

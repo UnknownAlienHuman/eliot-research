@@ -18,6 +18,16 @@ interface PendingUpload {
   aborted: boolean;
 }
 
+function ownedBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  return ownedBytes(bytes).buffer;
+}
+
 export function bytesStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
   return new ReadableStream({
     start(controller) {
@@ -33,7 +43,7 @@ async function readBytes(value: ReadableStream<Uint8Array> | string): Promise<Ui
 }
 
 async function digest(bytes: Uint8Array): Promise<string> {
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))]
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", ownedArrayBuffer(bytes)))]
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("");
 }
@@ -57,7 +67,7 @@ export function testDigestSink(): Sha256DigestSink {
           body.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        try { resolveDigest(await crypto.subtle.digest("SHA-256", body)); }
+        try { resolveDigest(await crypto.subtle.digest("SHA-256", ownedArrayBuffer(body))); }
         catch (error) { rejectDigest(error); }
       },
       abort(reason) { rejectDigest(reason); },
@@ -92,10 +102,11 @@ export function fakeBucket(behavior: { readonly throw_after_put_prefix?: string 
       writeHttpMetadata() {},
       body: bytesStream(object.bytes),
       bodyUsed: false,
-      arrayBuffer: async () => object.bytes.slice().buffer,
+      arrayBuffer: async () => ownedArrayBuffer(object.bytes),
+      bytes: async () => ownedBytes(object.bytes),
       text: async () => new TextDecoder().decode(object.bytes),
       json: async <T>() => JSON.parse(new TextDecoder().decode(object.bytes)) as T,
-      blob: async () => new Blob([object.bytes]),
+      blob: async () => new Blob([ownedArrayBuffer(object.bytes)]),
     };
   }
 

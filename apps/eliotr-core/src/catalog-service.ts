@@ -223,9 +223,6 @@ export async function readCatalog(database: D1Database, request: CatalogRequest)
     projectStatement.all<ProjectRow>(),
     sourceStatement.all<SourceRow>(),
   ]);
-  if (projectResult.success === false || sourceResult.success === false) {
-    throw new Error("catalog D1 query returned an unsuccessful result");
-  }
   const allProjects = decodeProjects(projectResult.results ?? []);
   const allSources = decodeSources(sourceResult.results ?? []);
   const hasMoreProjects = allProjects.length > validated.limit;

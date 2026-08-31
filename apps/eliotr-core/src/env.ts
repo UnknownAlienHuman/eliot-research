@@ -6,7 +6,7 @@ export interface Env {
   readonly EVIDENCE_BUCKET: R2Bucket;
   readonly WORK_BUCKET: R2Bucket;
   readonly JOB_QUEUE: Queue<unknown>;
-  readonly RESEARCH_SESSION: DurableObjectNamespace<ResearchSession>;
+  readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
   readonly METRICS: AnalyticsEngineDataset;
@@ -28,6 +28,3 @@ export interface Env {
   readonly OWNER_NOTIFICATION_WEBHOOK?: string;
 }
 
-export interface ResearchSession {
-  fetch(request: Request): Promise<Response>;
-}
