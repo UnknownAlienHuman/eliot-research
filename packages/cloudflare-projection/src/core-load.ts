@@ -171,13 +171,6 @@ async function membershipIds(
     "WHERE source_id = ?1 AND valid_to IS NULL " +
     "ORDER BY project_id, membership_generation",
   ).bind(sourceId).all<MembershipRow>();
-  if (result.success === false) {
-    projectionFail(
-      "PROJECTION_SETTLEMENT_UNCERTAIN",
-      "active project membership readback failed",
-      true,
-    );
-  }
   return (result.results ?? []).map((row) => {
     const projectId = assertProjectionIdentifier(row.project_id, "membership project_id");
     const generation = assertProjectionInteger(

@@ -393,9 +393,6 @@ async function verifyShadow(
     context.source_revision.source_revision_ref,
     projectionGeneration,
   ).all<ReadbackRow>();
-  if (result.success === false) {
-    projectionFail("PROJECTION_SETTLEMENT_UNCERTAIN", "D1 Search shadow readback failed", true);
-  }
   const rows = (result.results ?? []).map(decodeReadbackRow);
   const expected = exactProjectionOrder(projection).map(({ item, span }) => ({
     item_key: item.item_key,

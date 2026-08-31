@@ -113,7 +113,9 @@ function hex(input: ArrayBuffer): string {
 }
 
 export async function projectionSha256Bytes(value: Uint8Array): Promise<string> {
-  return hex(await crypto.subtle.digest("SHA-256", value));
+  const buffer = new ArrayBuffer(value.byteLength);
+  new Uint8Array(buffer).set(value);
+  return hex(await crypto.subtle.digest("SHA-256", buffer));
 }
 
 export async function projectionSha256Utf8(value: string): Promise<string> {
