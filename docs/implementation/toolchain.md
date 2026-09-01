@@ -31,7 +31,8 @@ product code runs.
 
 | Tool | Version | Gate |
 |---|---:|---|
-| Rust | `1.98.0` | Workspace MSRV and CI compiler. |
+| Rust | `1.98.0` | Workspace MSRV, build, format, lint and native-test compiler. |
+| Verification nightly | `nightly-2026-08-31` | Branch-aware coverage plus scheduled Miri and fuzz verification. |
 | Cargo resolver | `3` | Edition-2024 workspace feature resolution. |
 | target | `wasm32-unknown-unknown` | Portable embedded kernel target. |
 | cargo-nextest | `0.9.143` | Native workspace test runner. |
@@ -40,10 +41,14 @@ product code runs.
 | cargo-fuzz | `0.13.2` | Scheduled fuzz harness. |
 | libfuzzer-sys | `0.4.13` | Exact fuzz target runtime dependency. |
 | cargo-mutants | `27.1.0` | Scheduled mutation gate. |
-| Miri nightly | `nightly-2026-08-31` | Scheduled pure-crate interpreter gate. |
 
 The stable workspace has no third-party runtime dependencies in M1. `fuzz/` is an excluded, separately
-locked harness so `libfuzzer-sys` cannot enter the product dependency graph.
+locked harness so `libfuzzer-sys` cannot enter the product dependency graph. Internal path dependencies
+carry exact `=0.1.0` requirements; the dependency policy continues to deny wildcard requirements.
+
+Stable Rust remains authoritative for product compilation. The pinned nightly is invoked explicitly only
+where the requested verification feature is nightly-only; it does not change the workspace MSRV or release
+compiler.
 
 Merge CI installs the three stable Cargo utilities from their pinned GitHub releases through
 `taiki-e/install-action` pinned to commit `1ed6d7be6168f6c9046541087ff549b6bc581fdf`, with checksum
@@ -86,6 +91,10 @@ rustup toolchain install 1.98.0 \
   --target wasm32-unknown-unknown
 rustup default 1.98.0
 
+rustup toolchain install nightly-2026-08-31 \
+  --profile minimal \
+  --component llvm-tools-preview
+
 cargo install cargo-nextest --version 0.9.143 --locked
 cargo install cargo-deny --version 0.20.2 --locked
 cargo install cargo-llvm-cov --version 0.9.0 --locked
@@ -112,7 +121,7 @@ No bootstrap or dry-run command authorizes a live deployment.
 | `pnpm rust:test` | Run native tests with nextest plus Rust documentation tests. |
 | `pnpm rust:deny` | Enforce advisory, license, duplicate and source policy. |
 | `pnpm rust:wasm` | Inspect the default artifact, then execute and inspect the feature-gated self-test artifact. |
-| `pnpm rust:coverage` | Enforce at least 90% line coverage with branch instrumentation and `--locked`. |
+| `pnpm rust:coverage` | Use the pinned nightly to enforce at least 90% line coverage with branch instrumentation and `--locked`. |
 | `pnpm rust:check` | Run every M1 Rust merge gate. |
 | `pnpm check` | Run TypeScript/Cloudflare gates and `pnpm rust:check`. |
 
