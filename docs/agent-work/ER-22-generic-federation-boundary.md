@@ -13,6 +13,7 @@ outside the paths below.
 
 - `packages/interfaces/src/federation-api.ts`
 - `apps/eliotr-core/src/federation-service.ts`
+- `apps/eliotr-core/src/federation-service.test.ts`
 
 ## Read only
 
@@ -49,3 +50,25 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## Implemented boundary
+
+The service now requires an authenticated federation context bound to the exact client principal,
+client credential generation, server principal, server credential generation, bridge generation,
+client fence and `AllowedReferenceManifest` revision. Every operation is checked against the manifest
+`allowed_use` set and generation map before reaching an injected durable authority port.
+
+Submission computes a bounded deterministic request digest and requires the authority to return one
+of `CREATED`, `REPLAY` or `CONFLICT`; a reused idempotency identity with another digest fails closed.
+Status, cancellation and result reads retain the same client fence and idempotency selector. Bundle
+reads are authorized before streaming, ranges are capped at 8 MiB, and change replay accepts only the
+manifest's exact frozen scope.
+
+Terminal output is reconciled to `observed_completion_disposition`. Transport `COMPLETED` therefore
+remains orthogonal to research success: the mandatory fixture proves that a transport-complete job
+with an inconclusive observation returns `COMPLETED + INCONCLUSIVE`, even when an internal status or
+bundle attempted to claim `ANSWERED_WITH_SUPPORTED_RESULT`. Synthesis remains candidate-only and the
+API exposes no reverse canonical-write operation.
+
+Live receipts: `NOT EXECUTED`. ER-24 still owns Worker composition and route exposure for these durable
+job, manifest, bundle and change-authority ports.

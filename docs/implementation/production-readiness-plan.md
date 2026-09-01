@@ -72,7 +72,6 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 
 ### Still fail-closed or unavailable
 
-- ER-22 generic federation service;
 - ER-30 persisted ScopeSnapshot service;
 - ER-31 Corpus Lens navigation/orientation service;
 - `research.query`;

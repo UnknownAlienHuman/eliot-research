@@ -25,7 +25,6 @@ registry, gap register and completion evidence in the same change.
 ### `SCAFFOLD_FAIL_CLOSED`
 
 ```text
-ER-22 generic federation boundary
 ER-30 ScopeSnapshot persistence
 ER-31 Corpus Lens navigation/orientation
 ```
@@ -33,6 +32,7 @@ ER-31 Corpus Lens navigation/orientation
 ### `IMPLEMENTED_NOT_LIVE`
 
 ```text
+generic federation boundary with strict auth/fence/reference and conservative disposition mapping
 Cloudflare Access-protected HTTP dispatch and owner catalog
 governed normalized-bundle ingest and SourceAdmissionDecision
 D1 intent/outbox and scheduled Queue dispatch

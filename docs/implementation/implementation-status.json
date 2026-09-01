@@ -171,16 +171,16 @@
     {
       "id": "pending-003",
       "path": "apps/eliotr-core/src/federation-service.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-22 generic federation boundary",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary requires ER-24 composition and retained boundary receipts.",
       "owner_packets": [
         "ER-22"
       ],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "explicit incomplete implementation",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "authenticated and manifest-fenced federation service validates strict requests, maps durable idempotent job reservations, exposes bounded bundle/range/change reads, and reconciles public completion dispositions to the observed internal result without client canonical-write authority",
       "completion_evidence": [
-        "implementation tests",
-        "negative acceptance case",
-        "real boundary receipt when applicable"
+        "apps/eliotr-core/src/federation-service.test.ts strict schema, identity/fence, manifest, idempotency, range and reverse-authority cases",
+        "mandatory COMPLETED + INCONCLUSIVE disposition downgrade case",
+        "ER-24 composition wiring and retained mutually authenticated boundary receipt NOT EXECUTED"
       ]
     },
     {
