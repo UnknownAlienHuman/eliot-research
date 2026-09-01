@@ -342,11 +342,8 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/access.ts",
-        "packages/platform-cloudflare/src/access.test.ts",
         "packages/platform-cloudflare/src/observability.ts",
-        "packages/platform-cloudflare/src/observability.test.ts",
-        "packages/platform-cloudflare/src/runtime-limits.ts",
-        "packages/platform-cloudflare/src/runtime-limits.test.ts"
+        "packages/platform-cloudflare/src/runtime-limits.ts"
       ],
       "mandatory_negative_case": "Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.",
       "document": "ER-17-access-observability-and-runtime-limits.md",

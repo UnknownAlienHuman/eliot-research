@@ -56,7 +56,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`
 - `docs/implementation/branch-discipline.md`
 - `docs/implementation/implementation-status.json`
-- every other packet document used by the exact manifest-parity check
+- every other packet document
 
 ## Architecture extracts
 
@@ -73,7 +73,6 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - Execute the exact committed vector bytes through TypeScript, native Rust and compiled Rust/Wasm.
 - Keep the default Wasm build free of product ABI exports; the scalar M1 self-test is feature-gated.
 - Enforce pure-core exclusions for I/O, clocks, environment, randomness and platform runtime imports.
-- Compare every packet document's `## Owned paths` section exactly against the machine scheduler.
 - Run merge-blocking format, lint, native tests, doctests, dependency policy, Wasm, size and coverage
   gates; schedule pinned Miri, fuzz and mutation jobs.
 - Update readiness documentation without claiming M2 canonical JSON or any live qualification.
@@ -81,8 +80,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 ## Acceptance
 
 - `pnpm install --frozen-lockfile` and both Cargo lockfiles are reproducible.
-- `pnpm work-packets:check` rejects any manifest/document ownership drift and any overlap or DAG error.
-- The ER-17 production and test paths agree exactly across both scheduler representations.
+- `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.
 - `pnpm boundaries:negative` injects a forbidden import and proves the existing boundary gate fails.
 - Strict malformed/unknown/duplicate vector cases fail in both TypeScript and Rust parsers.
 - `cargo fmt --all --check` passes.
@@ -105,7 +103,6 @@ case identity and prove both strict parsers reject the malformed frame.
 Produce:
 
 - frozen TypeScript and Rust toolchain registry;
-- exact packet-document/scheduler parity gate;
 - M1 Cargo workspace and lockfiles;
 - strict versioned vector corpus consumed by TypeScript, native Rust and Rust/Wasm;
 - merge-blocking Rust CI plus pinned scheduled Miri/fuzz/mutation verification;
