@@ -1,7 +1,7 @@
-//! Pure, deterministic validation for bytes crossing the Eliot Research kernel boundary.
+//! Pure deterministic primitives for bytes crossing the Eliot Research kernel boundary.
 //!
-//! Migration phase M1 deliberately stops at bounded UTF-8 transport validation. Canonical JSON,
-//! digests, stable identifiers, and domain authority remain owned by the later M2+ packets.
+//! M1 established bounded UTF-8 transport validation. M2 adds bounded canonical JSON, SHA-256,
+//! fixed-width generation tokens, and stable-ID shadow primitives without moving product authority.
 
 #![forbid(unsafe_code)]
 
@@ -9,11 +9,13 @@ mod canonical_json;
 mod canonical_json_error;
 mod generation;
 mod sha256;
+mod stable_id;
 
 pub use canonical_json::*;
 pub use canonical_json_error::*;
 pub use generation::*;
 pub use sha256::sha256;
+pub use stable_id::*;
 
 use core::fmt;
 
