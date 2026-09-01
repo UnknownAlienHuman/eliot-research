@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-eliotr-canonical = { path = "../eliotr-canonical" }
+eliotr-canonical = { path = "../eliotr-canonical", version = "=0.1.0" }
 
 [lints]
 workspace = true
