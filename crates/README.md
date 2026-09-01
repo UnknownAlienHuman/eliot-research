@@ -55,6 +55,21 @@ The independent JavaScript reference, native Rust and Rust/Wasm execute the same
 not validate Zod shape, authorization, owner fencing, generation collision, time ordering, or revision-set
 closure; those remain with TypeScript and the later M3 contract/domain migration.
 
+## M2 `object-residency-key.v1` serialization shadow slice
+
+The first existing deterministic domain serializer is ported exactly: six non-empty identifiers, fixed
+`sha256`, and a 64-byte lowercase digest are emitted as nine `/`-separated segments. Identifier components
+use JavaScript `encodeURIComponent` semantics, including its unescaped `-_.!~*'()` alphabet, uppercase
+percent triplets, UTF-8 Unicode encoding, and literal-percent double escaping.
+
+The Rust boundary preserves `IdentifierSchema`'s 256 JavaScript UTF-16-unit ceiling and rejects invalid
+UTF-8, empty fields, oversized fields, and malformed digests before serialization. The committed corpus
+checks exact maximum output size, BMP/astral Unicode, reserved characters, domain-position separation and
+all typed negative paths through JavaScript, native Rust and Rust/Wasm.
+
+This slice does not move `residencyDomainsEqual`, `validateDeduplication`, storage placement, encryption,
+retention, erasure or transition authority. Those remain TypeScript/M3+ responsibilities.
+
 The default Wasm build exposes no product ABI and is inspected before the feature build can replace its
 artifact. CI-only scalar verifiers exist under `m1-self-test-export`; they are not M5 product exports.
 
