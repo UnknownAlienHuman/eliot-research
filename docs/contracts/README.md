@@ -10,14 +10,15 @@ derived from that tooling boundary.
 - `schema-corpus.v1.json` — one Draft 2020-12 document for every public Zod schema;
 - `schema-index.v1.json` — stable schema identity, family, version, generation, structural class and
   SHA-256 of each compact canonical JSON Schema document;
-- `compatibility-registry.v1.json` — append-only compatibility history;
+- `compatibility-registry.v1.json` — append-only linear compatibility history;
 - `canonical-fixtures.v1.json` — exact committed normative fixture paths and byte digests;
 - `compatibility.md` — the change and migration policy.
 
 Every generated object schema with declared properties must be closed with
 `additionalProperties: false`. Explicit record/map schemas remain open only through a declared
 `additionalProperties` value schema. Registry identities fail closed when the URN disagrees with the
-entry's family, export name, version or generation.
+entry's family, export name, version or generation. Registry ordinals are bounded to positive `u32`
+values, and the current index must match each history chain's unique active terminal generation.
 
 ## Authority boundary
 
@@ -25,6 +26,10 @@ Generated JSON Schema is a structural interchange artifact. It does not replace 
 `packages/contracts/src/validation/cross-field.ts`, or any domain invariant. Cutover agreement,
 coverage closure, research disposition, erasure closure and similar semantic rules must still pass the
 runtime validators.
+
+The registry serializer is tooling-only. It uses deterministic code-unit ordering, preserves hostile
+property names such as `__proto__` without prototype mutation, rejects cyclic/non-finite/non-plain values,
+and does not define the future M2 product canonical-JSON authority.
 
 No artifact in this directory moves canonical serialization or domain authority into Rust. M2 starts
 only after this registry is merged and its fixture identities are available for differential tests.
