@@ -115,7 +115,10 @@ function compareCodeUnits(left: string, right: string): number {
   return 0;
 }
 
-function canonicalizeJson(value: unknown): ContractJsonValue {
+function canonicalizeJson(
+  value: unknown,
+  ancestors = new Set<object>(),
+): ContractJsonValue {
   if (
     value === null ||
     typeof value === "string" ||
@@ -132,7 +135,15 @@ function canonicalizeJson(value: unknown): ContractJsonValue {
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeJson(item));
+    if (ancestors.has(value)) {
+      throw new TypeError("contract JSON cannot contain a cyclic value");
+    }
+    ancestors.add(value);
+    try {
+      return value.map((item) => canonicalizeJson(item, ancestors));
+    } finally {
+      ancestors.delete(value);
+    }
   }
 
   if (typeof value === "object") {
@@ -142,14 +153,24 @@ function canonicalizeJson(value: unknown): ContractJsonValue {
         "contract JSON objects must have a plain or null prototype",
       );
     }
-
-    const output: ContractJsonObject = {};
-    for (const [key, child] of Object.entries(value).sort(([left], [right]) =>
-      compareCodeUnits(left, right),
-    )) {
-      if (child !== undefined) output[key] = canonicalizeJson(child);
+    if (ancestors.has(value)) {
+      throw new TypeError("contract JSON cannot contain a cyclic value");
     }
-    return output;
+
+    ancestors.add(value);
+    try {
+      const output = Object.create(null) as ContractJsonObject;
+      for (const [key, child] of Object.entries(value).sort(
+        ([left], [right]) => compareCodeUnits(left, right),
+      )) {
+        if (child !== undefined) {
+          output[key] = canonicalizeJson(child, ancestors);
+        }
+      }
+      return output;
+    } finally {
+      ancestors.delete(value);
+    }
   }
 
   throw new TypeError(`contract JSON contains unsupported ${typeof value}`);
