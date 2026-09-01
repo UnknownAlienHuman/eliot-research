@@ -1,0 +1,149 @@
+name: er00-record-m1-evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/er00-record-m1-evidence.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  record:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/ER-00-rust-m1-foundation-20260901'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Record exact M1 completion evidence
+        run: |
+          python <<'PY'
+          from pathlib import Path
+          import re
+
+          evidence_sha = "9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296"
+          run_id = "33522427515"
+
+          plan_path = Path("docs/implementation/production-readiness-plan.md")
+          plan = plan_path.read_text()
+
+          old_language = (
+              "`eliotr.language-runtime.v1` M0 is complete. M1–M7 are not complete. The current TypeScript domain code\n"
+              "is a transitional executable specification; it is not the final production owner of deterministic domain\n"
+              "authority."
+          )
+          new_language = (
+              "`eliotr.language-runtime.v1` M0 and M1 are complete. M2–M7 are not complete. The current TypeScript\n"
+              "domain code remains the active transitional executable specification; no product authority moved to Rust\n"
+              "during M1."
+          )
+          if plan.count(old_language) != 1:
+              raise SystemExit("unexpected language-migration state in production readiness plan")
+          plan = plan.replace(old_language, new_language, 1)
+
+          start = plan.index("## 4. Phase 2 — establish the Rust verification foundation (M1)")
+          end = plan.index("## 5. Phase 3 — migrate canonical identity and serialization (M2)")
+          phase = plan[start:end]
+          owner_line = "**Owners:** ER-00, ER-01, Rust migration owner.\n"
+          if phase.count(owner_line) != 1:
+              raise SystemExit("unexpected Phase 2 owner line")
+          status = f'''**Status:** COMPLETE on 2026-09-01. Implementation evidence commit `{evidence_sha}` passed CI run
+`{run_id}` with both the legacy TypeScript/Cloudflare job and the Rust M1 job successful. This closes only
+the verification foundation: M2–M7 and every live platform/provider receipt remain open.
+'''
+          phase = phase.replace(owner_line, f"{owner_line}\n{status}", 1)
+          phase = phase.replace("- [ ]", "- [x]")
+
+          old_exit = '''```text
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo nextest run --workspace --all-features
+cargo test --doc --workspace
+cargo deny check
+cargo build --workspace --target wasm32-unknown-unknown --release
+```'''
+          new_exit = '''```text
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo nextest run --workspace --all-features --locked
+cargo test --doc --workspace --all-features --locked
+cargo deny check
+cargo build --workspace --target wasm32-unknown-unknown --release --locked
+cargo +nightly-2026-08-31 llvm-cov --package eliotr-canonical --package eliotr-test-vectors \\
+  --all-features --locked --branch --fail-under-lines 90 --text
+```'''
+          if phase.count(old_exit) != 1:
+              raise SystemExit("unexpected Phase 2 exit-evidence block")
+          phase = phase.replace(old_exit, new_exit, 1)
+
+          metrics_anchor = "The existing TypeScript Worker must still pass all current CI and Wrangler dry-run gates.\n"
+          metrics = f'''
+
+Retained deterministic evidence on `{evidence_sha}`:
+
+- 28/28 native Rust tests passed; formatting, Clippy, doctests and `cargo deny` passed;
+- default Wasm: 363 raw / 258 gzip bytes, zero imports, no product ABI;
+- feature-gated self-test Wasm: 8,790 raw / 4,142 gzip bytes, zero imports;
+- coverage: 99.60% lines, 96.75% branches, 100% functions and 97.38% regions;
+- the separately excluded fuzz dependency graph is frozen in `fuzz/Cargo.lock`;
+- Cloudflare, Google, provider, recovery and workload receipts: `NOT EXECUTED`.
+'''
+          if phase.count(metrics_anchor) != 1:
+              raise SystemExit("unexpected Phase 2 TypeScript exit statement")
+          phase = phase.replace(metrics_anchor, metrics_anchor + metrics, 1)
+          plan = plan[:start] + phase + plan[end:]
+          plan_path.write_text(plan)
+
+          gap_path = Path("docs/implementation/gap-register.md")
+          gap = gap_path.read_text()
+          old_gap = "| P1 | Rust deterministic-kernel migration M1–M7 required by `eliotr.language-runtime.v1` has not started | ER-00, ER-01, ER-02, ER-03 and capability owners | Cargo workspace and gates; shared TS/native-Rust/Wasm fixtures; shadow receipts; promoted Rust authority; superseded TS domain removal |"
+          new_gap = "| P1 | Rust deterministic-kernel M1 verification foundation is complete; M2–M7 authority migration remains open | ER-00, ER-01, ER-02, ER-03 and capability owners | M2 canonical identity/serialization parity; M3–M4 deterministic-domain migration; M5–M7 ABI promotion, shadow receipts, promoted Rust authority and superseded TypeScript removal |"
+          if gap.count(old_gap) != 1:
+              raise SystemExit("unexpected Rust migration gap row")
+          gap_path.write_text(gap.replace(old_gap, new_gap, 1))
+
+          packet_path = Path("docs/agent-work/ER-00-workspace-and-verification-gates.md")
+          packet = packet_path.read_text()
+          if "## Completion evidence — 2026-09-01" in packet:
+              raise SystemExit("ER-00 completion evidence already exists")
+          completion = f'''
+
+## Completion evidence — 2026-09-01
+
+Implementation commit `{evidence_sha}` passed exact-head CI run `{run_id}`:
+
+- legacy TypeScript/Cloudflare verification, PWA build, binding generation and Worker dry-run passed;
+- Rust format, Clippy, 28/28 native tests, doctests and dependency/source policy passed;
+- the default Wasm artifact was 363 raw / 258 gzip bytes with zero imports and no product ABI;
+- the feature-gated self-test artifact was 8,790 raw / 4,142 gzip bytes with zero imports;
+- coverage was 99.60% lines, 96.75% branches, 100% functions and 97.38% regions;
+- `Cargo.lock` and the excluded `fuzz/Cargo.lock` were consumed with `--locked`;
+- Cloudflare, Google, provider, recovery and workload receipts were `NOT EXECUTED`.
+
+M1 is complete. M2 canonical JSON/identity, M3–M4 domain authority, M5 ABI promotion and M6–M7
+shadow/cutover/removal remain open. TypeScript/Cloudflare remains the active product authority.
+'''
+          packet_path.write_text(packet.rstrip() + completion + "\n")
+
+          for path in (plan_path, gap_path, packet_path):
+              if "\r" in path.read_text():
+                  raise SystemExit(f"unexpected CRLF in {path}")
+          PY
+          git diff --check
+      - name: Commit the readiness record
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            docs/implementation/production-readiness-plan.md \
+            docs/implementation/gap-register.md \
+            docs/agent-work/ER-00-workspace-and-verification-gates.md
+          git commit -m "docs(readiness): record verified Rust M1 completion"
+          git push origin "HEAD:${HEAD_REF}"
