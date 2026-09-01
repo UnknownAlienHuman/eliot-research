@@ -5,11 +5,19 @@ remains authoritative for product intent; the files below are authoritative for 
 
 1. Claim one packet from [`docs/agent-work/`](docs/agent-work/README.md).
 2. Read its owned paths, input contracts, acceptance cases, and named architecture sections only.
-3. Implement behind existing ports. Do not redesign cross-package contracts inside a leaf packet.
-4. Run `pnpm check:affected`; integration and live gates remain explicit rather than simulated.
+3. Read the language owner for the capability in
+   [`LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md).
+4. Implement behind existing ports. Do not redesign cross-package contracts inside a leaf packet.
+5. Follow [`branch-discipline.md`](docs/implementation/branch-discipline.md): one task/branch/worktree,
+   maximum five non-default branches, and 24-hour TTL without an open PR.
+6. Run `pnpm check:affected`; after the Cargo workspace lands, run the Rust gates required by the
+   language/runtime contract. Integration and live gates remain explicit rather than simulated.
 
 Primary maps:
 
+- [`docs/architecture/ELIOT_RESEARCH.md`](docs/architecture/ELIOT_RESEARCH.md)
+- [`docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md)
+- [`docs/implementation/branch-discipline.md`](docs/implementation/branch-discipline.md)
 - [`docs/implementation/toolchain.md`](docs/implementation/toolchain.md)
 - [`docs/implementation/dependency-map.md`](docs/implementation/dependency-map.md)
 - [`docs/implementation/contract-index.md`](docs/implementation/contract-index.md)
