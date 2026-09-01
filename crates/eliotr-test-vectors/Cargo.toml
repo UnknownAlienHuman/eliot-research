@@ -1,0 +1,15 @@
+[package]
+name = "eliotr-test-vectors"
+description = "Strict shared deterministic fixtures for TypeScript, native Rust, and Rust/Wasm conformance."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+eliotr-canonical = { path = "../eliotr-canonical", version = "=0.1.0" }
+
+[lints]
+workspace = true

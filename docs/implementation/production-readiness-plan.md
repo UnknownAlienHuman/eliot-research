@@ -96,9 +96,9 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 
 ### Language migration state
 
-`eliotr.language-runtime.v1` M0 is complete. M1–M7 are not complete. The current TypeScript domain code
-is a transitional executable specification; it is not the final production owner of deterministic domain
-authority.
+`eliotr.language-runtime.v1` M0 and M1 are complete. M2–M7 are not complete. The current TypeScript
+domain code remains the active transitional executable specification; no product authority moved to Rust
+during M1.
 
 ## 2. Ordered critical path
 
@@ -129,6 +129,10 @@ in an immutable named release receipt.
 
 **Owners:** ER-00, ER-01, Rust migration owner.
 
+**Status:** COMPLETE on 2026-09-01. Implementation evidence commit `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296` passed CI run
+`33522427515` with both the legacy TypeScript/Cloudflare job and the Rust M1 job successful. This closes only
+the verification foundation: M2–M7 and every live platform/provider receipt remain open.
+
 Create the initial workspace without changing the active TypeScript Worker entrypoint:
 
 ```text
@@ -141,30 +145,40 @@ crates/eliotr-canonical
 crates/eliotr-kernel-wasm
 ```
 
-- [ ] Pin the Rust toolchain and `wasm32-unknown-unknown` target.
-- [ ] Add `cargo fmt --check`.
-- [ ] Add Clippy for all targets/features with warnings denied.
-- [ ] Add `cargo nextest`, documentation tests and `cargo deny`.
-- [ ] Add release Wasm build and compressed-size reporting.
-- [ ] Add branch-aware coverage for deterministic core crates.
-- [ ] Add scheduled Miri, fuzz and mutation-test jobs for critical pure crates.
-- [ ] Create one versioned fixture format consumed by TypeScript, native Rust and Rust/Wasm.
-- [ ] Enforce `#![forbid(unsafe_code)]` in pure crates.
-- [ ] Enforce that pure crates cannot import Cloudflare, network, filesystem, process, hidden clock or
+- [x] Pin the Rust toolchain and `wasm32-unknown-unknown` target.
+- [x] Add `cargo fmt --check`.
+- [x] Add Clippy for all targets/features with warnings denied.
+- [x] Add `cargo nextest`, documentation tests and `cargo deny`.
+- [x] Add release Wasm build and compressed-size reporting.
+- [x] Add branch-aware coverage for deterministic core crates.
+- [x] Add scheduled Miri, fuzz and mutation-test jobs for critical pure crates.
+- [x] Create one versioned fixture format consumed by TypeScript, native Rust and Rust/Wasm.
+- [x] Enforce `#![forbid(unsafe_code)]` in pure crates.
+- [x] Enforce that pure crates cannot import Cloudflare, network, filesystem, process, hidden clock or
       random-state dependencies.
 
 **Exit evidence**
 
 ```text
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo nextest run --workspace --all-features
-cargo test --doc --workspace
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo nextest run --workspace --all-features --locked
+cargo test --doc --workspace --all-features --locked
 cargo deny check
-cargo build --workspace --target wasm32-unknown-unknown --release
+cargo build --workspace --target wasm32-unknown-unknown --release --locked
+cargo +nightly-2026-08-31 llvm-cov --package eliotr-canonical --package eliotr-test-vectors --all-features --locked --branch --fail-under-lines 90 --text
 ```
 
 The existing TypeScript Worker must still pass all current CI and Wrangler dry-run gates.
+
+Retained deterministic evidence on `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296`:
+
+- 28/28 native Rust tests passed; formatting, Clippy, doctests and `cargo deny` passed;
+- default Wasm: 363 raw / 258 gzip bytes, zero imports, no product ABI;
+- feature-gated self-test Wasm: 8,790 raw / 4,142 gzip bytes, zero imports;
+- coverage: 99.60% lines, 96.75% branches, 100% functions and 97.38% regions;
+- the separately excluded fuzz dependency graph is frozen in `fuzz/Cargo.lock`;
+- Cloudflare, Google, provider, recovery and workload receipts: `NOT EXECUTED`.
 
 ## 5. Phase 3 — migrate canonical identity and serialization (M2)
 
