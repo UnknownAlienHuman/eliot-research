@@ -12,6 +12,7 @@ import {
   type PreparedIngestOperation,
 } from "@eliotr/platform-cloudflare";
 import { readCatalog } from "./catalog-service.js";
+import { createEvidenceService } from "./evidence-service.js";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import {
@@ -47,7 +48,7 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST"],
+    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE"],
     disabled_slices: ["RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
     routes: ROUTES,
     exact_evidence_resolution_required: true,
@@ -57,12 +58,13 @@ function capabilities(env: Env): Record<string, unknown> {
 }
 
 function semanticApi(env: Env): SemanticApi {
+  const evidence = createEvidenceService(env);
   return {
     catalog: (_context, request) => readCatalog(env.CORE_DB, request),
     orient: () => unavailable("research.orient"),
     query: () => unavailable("research.query"),
-    open: () => unavailable("research.open"),
-    verify: () => unavailable("research.verify"),
+    open: (context, ref, range) => evidence.open(context, ref, range),
+    verify: (context, request) => evidence.verify(context, request),
     run: () => unavailable("research.run"),
     artifact: () => unavailable("research.artifact"),
     proposeWiki: () => unavailable("research.wiki.propose"),

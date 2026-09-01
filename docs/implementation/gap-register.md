@@ -5,10 +5,10 @@ It supplements the per-agent packets; it does not create a second ownership syst
 
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
-| P0 | EvidenceHandle resolution is not connected to every citation/output path | ER-07, ER-11, ER-19, ER-22 | index-only citation impossible; stale/purged/digest-mismatch negatives |
 | P0 | Erasure coordinator intentionally throws | ER-28 | exact closure, blocked-retention case, provider/index/backup absence verification |
 | P0 | Federation service intentionally throws | ER-22 | idempotent async job, cursor/range read, less-assertive disposition mapping |
 | P1 | Projection generations and readiness execution are implemented but not live-qualified | ER-05, ER-06, ER-15, ER-16, ER-24, ER-38 | remote pinned-R2 readback, D1 Search shadow activation/rollback, AI Search item readback, promoted managed generation and Queue replay receipts |
+| P1 | Exact EvidenceHandle resolution and citation/output gating are implemented but not live-qualified | ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-39 | deployed Access grant, remote D1 Core/Search guard, checksum-bound R2 range readback, purge invalidation and end-to-end citation receipt |
 | P1 | Governed bundle ingest and SourceAdmissionDecision are implemented but not live-qualified | ER-13, ER-14, ER-21, ER-24, ER-29, ER-37 | deployed owner/service prepare, real multipart R2 readback/promotion, remote guarded D1 commit, duplicate/lost-ACK and Queue projection receipts |
 | P1 | Worker composition and Access dispatch are implemented but not live-qualified | ER-17, ER-21, ER-24, ER-26 | deployed owner JWT, service-token class denial/allow fixtures and remote D1 catalog readback |
 | P1 | Gemini Spark MCP and Google orchestration are implemented but not live-qualified | ER-17, ER-18, ER-20, ER-24, ER-26, ER-36 | deployed `gemini-spark` Access token initialize/tools/list/tools/call plus disposable Workspace and gcloud action/readback receipts |
@@ -32,4 +32,5 @@ Rules:
 6. `ACCEPTED`, Queue `ack()`, Workflow completion and research completion are independent states.
 7. Google Workspace/gcloud success remains an untrusted transport observation until exact readback and ELIOT authority reconciliation.
 8. Ingest `ADMITTED` requires a durable SourceRevision, exact promotion readback and projection outbox in the same guarded authority path.
+9. An index hit or provider citation remains a locator until exact authorized R2 bytes produce a durable EvidenceHandle and resolution receipt.
 9. AI Search `uploadAndPoll` completion remains shadow state until item readback and managed-generation promotion both succeed.

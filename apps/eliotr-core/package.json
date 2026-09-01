@@ -21,7 +21,8 @@
     "@eliotr/research": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*",
     "@eliotr/google-drive-exchange": "workspace:*",
-    "@eliotr/interfaces": "workspace:*"
+    "@eliotr/interfaces": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

@@ -40,6 +40,8 @@ jobs:
         run: pnpm ingest:check
       - name: Verify projection execution authority fixture
         run: pnpm projection:check
+      - name: Verify exact evidence resolution authority fixture
+        run: pnpm evidence:check
       - name: Verify Gemini MCP integration fixtures
         run: pnpm gemini:check
       - name: Lint
@@ -56,8 +58,8 @@ jobs:
         run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
       - name: Test retrieval, research and Drive exchange
         run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
-      - name: Test Cloudflare platform and projection packages
-        run: timeout 180s pnpm exec vitest run packages/platform-cloudflare packages/cloudflare-projection --reporter=verbose
+      - name: Test Cloudflare platform, projection and evidence packages
+        run: timeout 180s pnpm exec vitest run packages/platform-cloudflare packages/cloudflare-projection packages/cloudflare-evidence --reporter=verbose
       - name: Test testkit, integration harness and PWA
         run: timeout 180s pnpm exec vitest run packages/testkit tests apps/eliotr-pwa --reporter=verbose
       - name: Test Worker runtime

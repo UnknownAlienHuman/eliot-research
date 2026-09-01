@@ -1,6 +1,9 @@
 import type {
   FederationEvidenceBundle,
   FederationJobStatus,
+  EvidenceHandle,
+  LocatorCandidate,
+  ResolvedEvidence,
   FederationRequest,
   RetrievalTrace,
   ScopeExpression,
@@ -51,12 +54,21 @@ export interface QueryResult {
   readonly coverage_receipt_ref?: VersionedRef;
 }
 
+export type VerifyEvidenceRequest =
+  | { readonly scope_snapshot_ref: VersionedRef; readonly locator_candidate: LocatorCandidate }
+  | { readonly scope_snapshot_ref: VersionedRef; readonly handle_ref: VersionedRef };
+
+export interface VerifyEvidenceResult {
+  readonly resolved_evidence: ResolvedEvidence;
+  readonly handle: EvidenceHandle;
+}
+
 export interface SemanticApi {
   catalog(context: AuthenticatedRequestContext, request: CatalogRequest): Promise<CatalogResult>;
   orient(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
   query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
-  open(context: AuthenticatedRequestContext, ref: string, range?: { start: number; end: number }): Promise<Response>;
-  verify(context: AuthenticatedRequestContext, handleRef: VersionedRef, scopeSnapshotRef: VersionedRef): Promise<QueryResult>;
+  open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
+  verify(context: AuthenticatedRequestContext, request: VerifyEvidenceRequest): Promise<VerifyEvidenceResult>;
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ResearchRunResult>;
   proposeWiki(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<VersionedRef>;

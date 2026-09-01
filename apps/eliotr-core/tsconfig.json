@@ -19,6 +19,9 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/cloudflare-evidence"
+    },
+    {
       "path": "../../packages/domain"
     },
     {
