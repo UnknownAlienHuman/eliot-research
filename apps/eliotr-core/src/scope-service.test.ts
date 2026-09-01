@@ -143,7 +143,7 @@ describe("ER-30 scope snapshot service", () => {
     ));
     expect(first.snapshot_id).toMatch(/^scope-[a-f0-9]{48}$/u);
     expect(first.digest).toMatch(/^[a-f0-9]{64}$/u);
-    expect(repository.snapshots).toHaveLength(1);
+    expect(repository.snapshots.size).toBe(1);
     expect(await service.validateCurrent(first)).toEqual({
       current: true,
       invalidation_reason_codes: [],
@@ -171,7 +171,6 @@ describe("ER-30 scope snapshot service", () => {
     repository.authority = {
       ...repository.authority,
       purge_ledger_revision: 2,
-      denied_source_revision_refs: ["source-revision-2"],
     };
     repository.atoms.set(scopeExpressionIdentity(project("alpha")), {
       atom_generation_ref: "project-alpha-generation-2",
@@ -181,7 +180,6 @@ describe("ER-30 scope snapshot service", () => {
     const currentness = await service.validateCurrent(snapshot);
     expect(currentness.current).toBe(false);
     expect(currentness.invalidation_reason_codes).toEqual(expect.arrayContaining([
-      "NEW_DENY_APPLIES",
       "PARTICIPANT_GENERATION_STALE",
       "PURGE_LEDGER_ADVANCED",
       "SCOPE_MEMBERSHIP_CHANGED",
@@ -190,7 +188,7 @@ describe("ER-30 scope snapshot service", () => {
     expect(error.reason_codes).toEqual(currentness.invalidation_reason_codes);
   });
 
-  it("invalidates stale owner, disclosure, policy and client-fence generations", async () => {
+  it("invalidates stale owner, disclosure, policy, deny and client-fence generations", async () => {
     const repository = new MemoryScopeRepository();
     const service = createScopeService(repository, { now: () => NOW });
     const snapshot = await service.freeze(project("alpha"), "client-fence-1");
@@ -207,11 +205,13 @@ describe("ER-30 scope snapshot service", () => {
       policy_authority_ref: "policy-authority-2",
       disclosure_closure_digest: "b".repeat(64),
       client_fence_valid: false,
+      denied_source_revision_refs: ["source-revision-1"],
     };
 
     expect((await service.validateCurrent(snapshot)).invalidation_reason_codes).toEqual(expect.arrayContaining([
       "CLIENT_FENCE_STALE",
       "DISCLOSURE_CLOSURE_STALE",
+      "NEW_DENY_APPLIES",
       "POLICY_AUTHORITY_STALE",
       "SOURCE_OWNER_GENERATION_STALE",
     ]));
