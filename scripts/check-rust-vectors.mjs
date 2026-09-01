@@ -252,6 +252,13 @@ await verifyCanonicalBodyReference(
     import.meta.url,
   ),
 );
+await verifyCanonicalBodyReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/owner-cutover-canonical.v1.txt",
+    import.meta.url,
+  ),
+  "Owner-cutover canonical",
+);
 await verifyStableIdReference(
   new URL(
     "../crates/eliotr-test-vectors/fixtures/stable-id.v1.txt",

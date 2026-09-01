@@ -505,10 +505,19 @@ function assertRejected(name, source, expectedMessage) {
   fail(`${name}: malformed frame was accepted`);
 }
 
-export async function verifyCanonicalBodyReference(fixtureUrl) {
+export async function verifyCanonicalBodyReference(
+  fixtureUrl,
+  label = "Canonical body",
+) {
   const source = await readFile(fixtureUrl, "utf8");
   const cases = parseFrame(source);
   verifyCases(cases);
+
+  const firstRow = source
+    .split("\n")
+    .slice(3)
+    .find((line) => line.length > 0 && !line.startsWith("#"));
+  if (firstRow === undefined) fail(`${label}: fixture contains no reusable case row`);
 
   assertRejected(
     "unknown protocol",
@@ -517,19 +526,26 @@ export async function verifyCanonicalBodyReference(fixtureUrl) {
   );
   assertRejected(
     "duplicate identity",
-    `${source}json_null|canonicalize_json|6e756c6c|ok|6e756c6c|-\n`,
+    `${source.endsWith("\n") ? source : `${source}\n`}${firstRow}\n`,
     "duplicate case_id",
   );
   assertRejected(
     "unknown operation",
-    source.replace("canonicalize_json", "unknown_operation"),
+    source.replace(
+      /\|(canonicalize_json|sha256|validate_generation)\|/u,
+      "|unknown_operation|",
+    ),
     "invalid operation",
   );
-  assertRejected(
-    "unknown error",
-    source.replace(CODES.jsonSyntax, "ELIOTR_UNKNOWN"),
-    "unknown error code",
-  );
 
-  globalThis.console.log(`Canonical body vectors: PASS (${cases.length} bounded cross-runtime cases).`);
+  const unknownError = source.replace(
+    /(\|error\|-\|)ELIOTR_[A-Z0-9_]+/u,
+    "$1ELIOTR_UNKNOWN",
+  );
+  if (unknownError === source) fail(`${label}: fixture must contain one negative case`);
+  assertRejected("unknown error", unknownError, "unknown error code");
+
+  globalThis.console.log(
+    `${label} vectors: PASS (${cases.length} bounded cross-runtime cases).`,
+  );
 }

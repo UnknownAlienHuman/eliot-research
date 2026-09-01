@@ -19,5 +19,30 @@ pub use parser::{
     CanonicalBodyParseError, CanonicalBodyParseErrorKind, parse_canonical_body_vector_set,
 };
 
-/// Exact committed M2 fixture bytes embedded into native Rust and Rust/Wasm builds.
+/// Exact committed product-neutral M2 fixture bytes.
 pub const EMBEDDED_CANONICAL_BODY_VECTORS: &str = include_str!("../fixtures/canonical-body.v1.txt");
+
+/// Exact committed `source.owner-cutover.v1` canonical-body and digest fixture bytes.
+pub const EMBEDDED_OWNER_CUTOVER_CANONICAL_VECTORS: &str =
+    include_str!("../fixtures/owner-cutover-canonical.v1.txt");
+
+/// Parses and executes the owner-cutover canonical-body corpus with the generic M2 kernel.
+///
+/// # Errors
+///
+/// Returns the first strict parse or byte-for-byte semantic mismatch.
+pub fn verify_embedded_owner_cutover_canonical_vectors()
+-> Result<(), CanonicalBodyVerificationError> {
+    let vectors = parse_canonical_body_vector_set(EMBEDDED_OWNER_CUTOVER_CANONICAL_VECTORS)?;
+    verify_canonical_body_vector_set(&vectors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_embedded_owner_cutover_canonical_vectors;
+
+    #[test]
+    fn owner_cutover_canonical_vectors_pass_natively() {
+        assert_eq!(verify_embedded_owner_cutover_canonical_vectors(), Ok(()));
+    }
+}
