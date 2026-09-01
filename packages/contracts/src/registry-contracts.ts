@@ -112,7 +112,7 @@ function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
 }
 
 const schemaIdentityRefinement = {
-  path: ["schema_id"] as const,
+  path: ["schema_id"],
   message:
     "schema_id must encode the exact family, export name, version and generation",
 };
