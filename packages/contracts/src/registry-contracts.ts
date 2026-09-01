@@ -265,6 +265,10 @@ export const ContractCompatibilityRegistrySchema = z
   .superRefine((value, context) => {
     const schemaIds = new Set<string>();
     const generationKeys = new Set<string>();
+    const entriesById = new Map(
+      value.entries.map((entry) => [entry.schema_id, entry]),
+    );
+
     for (const [index, entry] of value.entries.entries()) {
       if (schemaIds.has(entry.schema_id)) {
         context.addIssue({
@@ -285,6 +289,90 @@ export const ContractCompatibilityRegistrySchema = z
       }
       generationKeys.add(generationKey);
     }
+
+    for (const [index, entry] of value.entries.entries()) {
+      const predecessorId = entry.supersedes_schema_id;
+      if (predecessorId === undefined) continue;
+      if (predecessorId === entry.schema_id) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "supersedes_schema_id"],
+          message: "a compatibility entry cannot supersede itself",
+        });
+        continue;
+      }
+
+      const predecessor = entriesById.get(predecessorId);
+      if (predecessor === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "supersedes_schema_id"],
+          message: "superseded schema_id is absent from compatibility history",
+        });
+        continue;
+      }
+      if (
+        predecessor.export_name !== entry.export_name ||
+        predecessor.family !== entry.family
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "supersedes_schema_id"],
+          message: "a compatibility chain cannot cross export names or families",
+        });
+      }
+
+      if (entry.compatibility === "BACKWARD_COMPATIBLE") {
+        if (
+          entry.schema_version !== predecessor.schema_version ||
+          entry.schema_generation <= predecessor.schema_generation
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["entries", index],
+            message:
+              "BACKWARD_COMPATIBLE requires the same version and a higher generation",
+          });
+        }
+      } else if (entry.compatibility === "BREAKING") {
+        if (entry.schema_version <= predecessor.schema_version) {
+          context.addIssue({
+            code: "custom",
+            path: ["entries", index, "schema_version"],
+            message: "BREAKING requires a higher schema version",
+          });
+        }
+      } else if (entry.compatibility === "RETIRED") {
+        if (
+          entry.schema_version !== predecessor.schema_version ||
+          entry.schema_generation <= predecessor.schema_generation
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["entries", index],
+            message: "RETIRED requires the same version and a higher generation",
+          });
+        }
+      }
+
+      const visited = new Set<string>([entry.schema_id]);
+      let cursor: typeof entry | undefined = predecessor;
+      while (cursor !== undefined) {
+        if (visited.has(cursor.schema_id)) {
+          context.addIssue({
+            code: "custom",
+            path: ["entries", index, "supersedes_schema_id"],
+            message: "compatibility history contains a cycle",
+          });
+          break;
+        }
+        visited.add(cursor.schema_id);
+        cursor =
+          cursor.supersedes_schema_id === undefined
+            ? undefined
+            : entriesById.get(cursor.supersedes_schema_id);
+      }
+    }
   });
 export type ContractCompatibilityRegistry = z.infer<
   typeof ContractCompatibilityRegistrySchema
@@ -295,7 +383,16 @@ export const CanonicalFixtureDescriptorSchema = z
     fixture_id: IdentifierSchema,
     protocol: IdentifierSchema,
     schema_export: ContractSchemaExportNameSchema,
-    fixture_path: z.string().min(1).max(512),
+    fixture_path: z
+      .string()
+      .min(1)
+      .max(512)
+      .regex(
+        /^(?:tests\/fixtures\/contracts|docs\/contracts)\/[A-Za-z0-9._/-]+$/u,
+      )
+      .refine((value) => !value.split("/").includes(".."), {
+        message: "fixture_path cannot traverse parent directories",
+      }),
     media_type: z.enum(["application/json", "application/yaml", "text/plain"]),
     canonical_body_sha256: Sha256Schema,
   })
