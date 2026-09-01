@@ -16,7 +16,7 @@ default = []
 m1-self-test-export = []
 
 [dependencies]
-eliotr-test-vectors = { path = "../eliotr-test-vectors" }
+eliotr-test-vectors = { path = "../eliotr-test-vectors", version = "=0.1.0" }
 
 [lints]
 workspace = true
