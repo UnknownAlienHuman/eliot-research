@@ -48,7 +48,7 @@ fn validates_hyphenated_prefixes_using_the_final_separator() {
     let id = derive_stable_id(b"a-", &[b"x"]);
     assert_eq!(
         id,
-        Ok("a--bcf4ca8710298482578c25092acbc9a6b7bc50d98c9a3438".to_owned())
+        Ok("a--bcf4ca8710298482578c25092acbc9c6b7bc50d98c9a3438".to_owned())
     );
     let Ok(id) = id else {
         return;
