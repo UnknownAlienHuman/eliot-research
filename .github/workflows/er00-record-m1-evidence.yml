@@ -1,7 +1,9 @@
 name: er00-record-m1-evidence
 
 on:
-  pull_request:
+  push:
+    branches:
+      - "agent/ER-00-rust-m1-foundation-20260901"
     paths:
       - ".github/workflows/er00-record-m1-evidence.yml"
 
@@ -10,21 +12,18 @@ permissions:
 
 jobs:
   record:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'agent/ER-00-rust-m1-foundation-20260901'
+    if: github.ref_name == 'agent/ER-00-rust-m1-foundation-20260901'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.ref_name }}
           fetch-depth: 0
       - name: Record exact M1 completion evidence
         run: |
           python <<'PY'
           from pathlib import Path
-          import re
 
           evidence_sha = "9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296"
           run_id = "33522427515"
@@ -137,7 +136,7 @@ shadow/cutover/removal remain open. TypeScript/Cloudflare remains the active pro
           git diff --check
       - name: Commit the readiness record
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REF: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
