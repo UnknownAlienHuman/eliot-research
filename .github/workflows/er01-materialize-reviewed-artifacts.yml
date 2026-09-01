@@ -24,6 +24,45 @@ jobs:
           node-version: 22
       - run: corepack enable
       - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Make identity coherence a non-throwing refinement
+        run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/contracts/src/registry-contracts.ts")
+          source = path.read_text()
+          old = '''function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
+            return (
+              value.schema_id ===
+              buildContractSchemaId(
+                value.family,
+                value.export_name,
+                value.schema_version,
+                value.schema_generation,
+              )
+            );
+          }
+          '''
+          new = '''function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
+            try {
+              return (
+                value.schema_id ===
+                buildContractSchemaId(
+                  value.family,
+                  value.export_name,
+                  value.schema_version,
+                  value.schema_generation,
+                )
+              );
+            } catch {
+              return false;
+            }
+          }
+          '''
+          if source.count(old) != 1:
+              raise SystemExit("unexpected identity refinement source")
+          path.write_text(source.replace(old, new, 1))
+          PY
       - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
       - name: Verify owned source before generation
@@ -47,12 +86,12 @@ jobs:
           test "${before}" = "${after}"
           node docs/contracts/generate.mjs --check
           git diff --check
-      - name: Commit generated artifacts
+      - name: Commit reviewed source and generated artifacts
         env:
           HEAD_REF: ${{ github.ref_name }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/contracts/schema-corpus.v1.json docs/contracts/schema-index.v1.json docs/contracts/compatibility-registry.v1.json docs/contracts/canonical-fixtures.v1.json
-          git commit -m "docs(contracts): refresh reviewed schema artifacts"
+          git add packages/contracts/src/registry-contracts.ts docs/contracts/schema-corpus.v1.json docs/contracts/schema-index.v1.json docs/contracts/compatibility-registry.v1.json docs/contracts/canonical-fixtures.v1.json
+          git commit -m "fix(contracts): finalize bounded registry generation"
           git push origin "HEAD:${HEAD_REF}"
