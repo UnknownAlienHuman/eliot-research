@@ -196,10 +196,16 @@ function dependencies(
       bridge_generation: "bridge-generation-1",
     },
     jobs: {
-      reserve: vi.fn(async () => ({
+      reserve: vi.fn(async (submission) => ({
         outcome: "CREATED" as const,
-        request_digest: DIGEST,
-        record: jobRecord,
+        request_digest: submission.request_digest,
+        record: {
+          ...jobRecord,
+          request_digest: submission.request_digest,
+          result: jobRecord.result === null
+            ? null
+            : { ...jobRecord.result, request_digest: submission.request_digest },
+        },
       })),
       read: vi.fn(async () => jobRecord),
       cancel: vi.fn(async () => ({
@@ -230,8 +236,13 @@ function dependencies(
 }
 
 async function expectCode(promise: Promise<unknown>, code: string): Promise<void> {
-  await expect(promise).rejects.toBeInstanceOf(FederationServiceError);
-  await expect(promise).rejects.toMatchObject({ code });
+  try {
+    await promise;
+    throw new Error(`expected ${code}`);
+  } catch (error) {
+    expect(error).toBeInstanceOf(FederationServiceError);
+    expect(error).toMatchObject({ code });
+  }
 }
 
 describe("ER-22 federation service", () => {
@@ -288,11 +299,17 @@ describe("ER-22 federation service", () => {
   });
 
   it("surfaces an idempotency conflict instead of starting duplicate work", async () => {
-    const input = dependencies();
-    input.jobs.reserve = vi.fn(async () => ({
-      outcome: "CONFLICT" as const,
-      existing_request_digest: "b".repeat(64),
-    }));
+    const base = dependencies();
+    const input: FederationServiceDependencies = {
+      ...base,
+      jobs: {
+        ...base.jobs,
+        reserve: vi.fn(async () => ({
+          outcome: "CONFLICT" as const,
+          existing_request_digest: "b".repeat(64),
+        })),
+      },
+    };
     const service = createFederationService(input);
 
     await expectCode(service.submit(context(), request()), "FEDERATION_IDEMPOTENCY_CONFLICT");
