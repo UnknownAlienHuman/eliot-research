@@ -23,6 +23,9 @@
       "path": "packages/cloudflare-projection"
     },
     {
+      "path": "packages/cloudflare-evidence"
+    },
+    {
       "path": "packages/google-drive-exchange"
     },
     {

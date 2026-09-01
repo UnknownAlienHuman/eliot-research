@@ -211,6 +211,26 @@
         "negative acceptance case",
         "real boundary receipt when applicable"
       ]
+    },
+    {
+      "id": "implemented-009",
+      "path": "apps/eliotr-core/src/evidence-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07/ER-11 exact evidence requires live D1/R2 range readback receipts.",
+      "owner_packets": [
+        "ER-07",
+        "ER-11",
+        "ER-19",
+        "ER-21",
+        "ER-24",
+        "ER-39"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "strict locator or existing handle resolution reopens the pinned admitted SourceRevision under an authorized frozen ScopeSnapshot, verifies checksum-bound R2 byte ranges, persists immutable handles and resolution receipts, invalidates stale handles, and derives citation-set receipts for context/output gates",
+      "completion_evidence": [
+        "forged preview, scope, purge, UTF-8 and digest negative tests",
+        "SQLite guard and invalidation fixture",
+        "live Access, remote D1 Core/Search, R2 conditional range and citation/output receipts"
+      ]
     }
   ]
 }

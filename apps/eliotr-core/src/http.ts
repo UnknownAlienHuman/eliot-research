@@ -1,3 +1,4 @@
+import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import type {
   ApiProblem,
   ApplicationLifecycle,
@@ -24,6 +25,12 @@ import {
   type CompositionRootInput,
 } from "./composition-root.js";
 import type { Env } from "./env.js";
+import {
+  EvidenceHttpInputError,
+  parseEvidenceHandleRef,
+  parseEvidenceOpenRange,
+  parseVerifyEvidenceRequest,
+} from "./evidence-http.js";
 import {
   dispatchIngestOperation,
   IngestHttpInputError,
@@ -324,6 +331,33 @@ async function dispatch(
         await application.services.semantic.catalog(context, parseCatalogRequest(url)),
       );
     }
+    case "research.verify": {
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      return apiResult(
+        request,
+        env,
+        await application.services.semantic.verify(
+          context,
+          await parseVerifyEvidenceRequest(request, match.route.maximum_request_bytes),
+        ),
+      );
+    }
+    case "research.open": {
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      const ref = match.params.ref;
+      if (ref === undefined) throw new EvidenceHttpInputError(
+        "EVIDENCE_HANDLE_REF_INVALID",
+        400,
+        "evidence handle path parameter is missing",
+      );
+      return application.services.semantic.open(
+        context,
+        parseEvidenceHandleRef(ref),
+        parseEvidenceOpenRange(url),
+      );
+    }
     default:
       if (match.route.operation.startsWith("ingest.")) {
         const blocked = await requireApplicationReady(request, application);
@@ -407,7 +441,8 @@ function mapError(request: Request, error: unknown): Response {
       { "www-authenticate": "Bearer realm=\"Cloudflare Access\"" },
     );
   }
-  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError) {
+  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError ||
+      error instanceof EvidenceHttpInputError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof IngestServiceError) {
@@ -415,6 +450,28 @@ function mapError(request: Request, error: unknown): Response {
   }
   if (error instanceof IngestAuthorityError) return mapIngestAuthorityError(request, error);
   if (error instanceof IngestStorageError) return mapIngestStorageError(request, error);
+  if (error instanceof EvidenceRuntimeError) {
+    if (error.retryable) {
+      return problem(request, 503, error.code, "Exact evidence resolution is temporarily unavailable", true);
+    }
+    if (error.code === "EVIDENCE_AUTHORIZATION_DENIED") {
+      return problem(request, 403, error.code, "Exact evidence access is not authorized", false);
+    }
+    if (error.code === "EVIDENCE_SCOPE_NOT_FOUND" || error.code === "EVIDENCE_SOURCE_NOT_FOUND" ||
+        error.code === "EVIDENCE_HANDLE_NOT_FOUND" || error.code === "EVIDENCE_OBJECT_NOT_FOUND") {
+      return problem(request, 404, error.code, "Exact evidence authority does not exist", false);
+    }
+    if (error.code === "EVIDENCE_SOURCE_NOT_LIVE" || error.code === "EVIDENCE_HANDLE_NOT_LIVE" ||
+        error.code === "EVIDENCE_SCOPE_INVALIDATED" || error.code === "EVIDENCE_SCOPE_EXPIRED") {
+      return problem(request, 410, error.code, "Exact evidence is no longer available", false);
+    }
+    if (error.code === "EVIDENCE_INPUT_INVALID" || error.code === "EVIDENCE_RANGE_INVALID" ||
+        error.code === "EVIDENCE_LOCATOR_NOT_RESOLVABLE" || error.code === "EVIDENCE_PRECISION_UNSUPPORTED" ||
+        error.code === "CITATION_SET_INVALID") {
+      return problem(request, 400, error.code, "Exact evidence request is invalid", false);
+    }
+    return problem(request, 409, error.code, "Exact evidence authority conflicts with current state", false);
+  }
   if (error instanceof CatalogInputError) {
     return problem(request, 400, error.code, error.message, false);
   }

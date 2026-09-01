@@ -1,0 +1,19 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-39",
+    "depends_on": [
+      "ER-01", "ER-02", "ER-03", "ER-06", "ER-07", "ER-11",
+      "ER-13", "ER-19", "ER-21", "ER-24", "ER-37", "ER-38"
+    ],
+    "owned_paths": [
+      "packages/cloudflare-evidence/**",
+      "apps/eliotr-core/src/evidence-service.ts",
+      "apps/eliotr-core/src/evidence-http.ts",
+      "scripts/check-evidence-resolution.mjs"
+    ],
+    "mandatory_negative_case": "Forge locator preview and citation completeness, then redact the pinned revision; no unverified bytes or stale handle may reach context or output.",
+    "document": "ER-39-exact-evidence-resolution.md",
+    "max_package_source_lines": 10000
+  }
+}
