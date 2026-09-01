@@ -18,7 +18,4 @@ export * from "./navigation.js";
 export * from "./publication.js";
 export * from "./model.js";
 export * from "./backup.js";
-export * from "./registry-contracts.js";
-export * from "./schema-registry.js";
-export * from "./canonical-fixtures.js";
 export * from "./validation/cross-field.js";
