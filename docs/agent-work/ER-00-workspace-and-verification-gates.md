@@ -125,6 +125,7 @@ Implementation commit `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296` passed exact-he
 
 M1 is complete. M2 canonical JSON/identity, M3–M4 domain authority, M5 ABI promotion and M6–M7
 shadow/cutover/removal remain open. TypeScript/Cloudflare remains the active product authority.
+
 ## Post-M1 ownership handoff
 
 M1 completion evidence is retained above. After M1 closed, the deterministic kernel, shared
