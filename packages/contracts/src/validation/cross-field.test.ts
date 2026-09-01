@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ErasureReceiptSchema, ErasureRequestSchema } from "../erasure.js";
 import {
   decodeContractWithInvariants,
   isResearchClosingDisposition,
@@ -98,4 +99,41 @@ describe("cross-field wire invariants", () => {
       origin: { ownership_mode: "ownership_cutover" },
     }, [validateNormalizedBundleOwnership])).toThrow("ownership_cutover requires");
   });
+  it("requires exact erasure location closure and a purge-ledger reference", () => {
+    const base = {
+      protocol: "erc.privacy.erasure.v1" as const,
+      erasure_ref: { id: "erase-1", revision: 1 },
+      requested_locations: ["CanonicalPayload", "BackupRestorePath"] as const,
+      completed_locations: ["CanonicalPayload"] as const,
+      blocked_locations: [] as const,
+      purge_ledger_entry_ref: "purge-ledger-1",
+      issued_at: "2026-09-01T02:00:00.000Z",
+    };
+    expect(ErasureReceiptSchema.safeParse({ ...base, state: "COMPLETE" }).success).toBe(false);
+    expect(ErasureReceiptSchema.safeParse({ ...base, state: "BLOCKED" }).success).toBe(false);
+    expect(ErasureReceiptSchema.safeParse({
+      ...base,
+      state: "BLOCKED",
+      blocked_locations: [{
+        location: "BackupRestorePath",
+        policy_or_hold_ref: "backup-hold-1",
+        next_review_at: "2026-09-30T00:00:00.000Z",
+      }],
+    }).success).toBe(true);
+  });
+
+  it("rejects duplicate erasure subjects, duplicate locations and a non-forward deadline", () => {
+    const result = ErasureRequestSchema.safeParse({
+      protocol: "erc.privacy.erasure.v1",
+      erasure_ref: { id: "erase-1", revision: 1 },
+      requested_by_principal_ref: "owner-1",
+      exact_subject_refs: ["source:one", "source:one"],
+      required_locations: ["Blob", "Blob"],
+      legal_basis_ref: "basis-1",
+      admitted_at: "2026-09-01T02:00:00.000Z",
+      deadline: "2026-09-01T02:00:00.000Z",
+    });
+    expect(result.success).toBe(false);
+  });
+
 });

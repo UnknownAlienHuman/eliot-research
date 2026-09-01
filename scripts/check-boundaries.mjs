@@ -29,6 +29,7 @@ const PACKAGE_RULES = new Map([
   ["packages/retrieval", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy"])],
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/platform-cloudflare", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
+  ["packages/cloudflare-erasure", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-projection", new Set([
     "@eliotr/contracts",
     "@eliotr/platform-cloudflare",
@@ -47,6 +48,7 @@ const PACKAGE_RULES = new Map([
   ["apps/eliotr-core", new Set([
     "@eliotr/cloudflare-projection",
     "@eliotr/cloudflare-evidence",
+    "@eliotr/cloudflare-erasure",
     "@eliotr/contracts",
     "@eliotr/domain",
     "@eliotr/policy",

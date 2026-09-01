@@ -11,7 +11,7 @@ for (const name of readdirSync(migrations).filter((name) => /^\d+_.*\.sql$/u.tes
 }
 assert.equal(
   db.prepare("SELECT value FROM schema_state WHERE key='schema_generation'").get().value,
-  "core-v7-evidence-resolution",
+  "core-v8-erasure-closure",
 );
 const strict = new Map(db.prepare("PRAGMA table_list").all().map((row) => [row.name, row.strict]));
 for (const table of [

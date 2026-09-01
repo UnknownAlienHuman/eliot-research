@@ -22,8 +22,8 @@
     "ingest:check": "node scripts/check-ingest-admission.mjs",
     "projection:check": "node scripts/check-projection-execution.mjs",
     "gemini:check": "node scripts/check-gemini-integration.mjs",
-    "check": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status",
-    "check:affected": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status",
+    "check": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status",
+    "check:affected": "pnpm contracts:check && pnpm boundaries:check && pnpm budgets:check && pnpm work-packets:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status",
     "work-packets:check": "node scripts/check-work-packets.mjs",
     "cf:types": "pnpm --filter @eliotr/core cf:types",
     "cf:dev": "pnpm --filter @eliotr/core dev",
@@ -36,7 +36,8 @@
     "cf:deploy": "node scripts/deploy-cloudflare.mjs",
     "test:provisioners": "node scripts/test-access-runtime-config.mjs && node scripts/test-access-runtime-preflight.mjs && node scripts/test-foundation-receipt-schema.mjs && node scripts/run-provisioner-tests.mjs",
     "check:implementation-status": "node scripts/check-implementation-status.mjs",
-    "evidence:check": "node scripts/check-evidence-resolution.mjs"
+    "evidence:check": "node scripts/check-evidence-resolution.mjs",
+    "erasure:check": "node scripts/check-erasure-closure.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

@@ -13,16 +13,17 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@eliotr/cloudflare-erasure": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/cloudflare-projection": "workspace:*",
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
-    "@eliotr/policy": "workspace:*",
-    "@eliotr/retrieval": "workspace:*",
-    "@eliotr/research": "workspace:*",
-    "@eliotr/platform-cloudflare": "workspace:*",
     "@eliotr/google-drive-exchange": "workspace:*",
     "@eliotr/interfaces": "workspace:*",
-    "@eliotr/cloudflare-evidence": "workspace:*"
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/policy": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "@eliotr/retrieval": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

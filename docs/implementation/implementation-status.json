@@ -155,16 +155,17 @@
     {
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-28 erasure coordinator",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-28 exact erasure coordinator",
       "owner_packets": [
         "ER-28"
       ],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "operation throws and cannot return a success receipt",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "generation-fenced exact dependency closure quarantines subjects, verifies absence across every requested location, records non-revealing purge ledger entries, invalidates dependents, and blocks rather than claiming subset completion",
       "completion_evidence": [
-        "implementation tests",
-        "negative acceptance case",
-        "real boundary receipt when applicable"
+        "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
+        "apps/eliotr-core/src/erasure-coordinator.test.ts exact completion and absence-negative cases",
+        "packages/cloudflare-erasure location-adapter and authority tests",
+        "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED"
       ]
     },
     {

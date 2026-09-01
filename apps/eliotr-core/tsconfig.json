@@ -19,6 +19,9 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/cloudflare-erasure"
+    },
+    {
       "path": "../../packages/cloudflare-evidence"
     },
     {
