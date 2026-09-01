@@ -162,3 +162,24 @@ This is canonical byte/digest parity only. `SourceOwnerCutoverReceiptSchema`, cr
 application readback, authorization, fencing, revision-set equality and owner-generation state remain
 TypeScript authority. No product path invokes Rust, no mismatch is called a live receipt, and M3–M7
 remain open.
+
+## Active implementation slice — object-residency-key.v1
+
+This slice ports the existing deterministic serializer from `packages/domain/src/residency.ts` without
+moving its decisions or side effects:
+
+- six identifiers retain `IdentifierSchema` semantics: non-empty and at most 256 JavaScript UTF-16 units;
+- valid UTF-8 scalar values are encoded with exact `encodeURIComponent` byte rules and uppercase percent
+  triplets; the unescaped alphabet is `A-Z a-z 0-9 - _ . ! ~ * ' ( )`;
+- the fixed algorithm segment is `sha256`, followed by exactly 64 lowercase hexadecimal bytes;
+- the serialized identity preserves field order and separates scope, access, confidentiality, encryption
+  key, retention and erasure domains;
+- explicit ceilings are 768 pre-decode bytes per identifier and 13,925 serialized bytes;
+- 22 committed vectors cover ASCII, all reserved/safe characters, BMP and astral Unicode, literal percent
+  triplets, maximum lengths, field-position separation and every typed negative path;
+- the same corpus executes through the independent JavaScript authority reference, native Rust and
+  compiled Rust/Wasm, with fuzz and branch-coverage reach.
+
+`ObjectResidencyKeySchema`, `residencyDomainsEqual`, `validateDeduplication`, R2 placement, encryption,
+retention, erasure, transition receipts and all runtime effects remain TypeScript authority. No production
+call site consumes Rust output, no live receipt is claimed, and M3–M7 remain open.

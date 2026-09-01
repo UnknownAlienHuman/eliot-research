@@ -9,6 +9,7 @@ mod canonical_body;
 mod evaluator;
 mod model;
 mod parser;
+mod residency_key;
 mod stable_id;
 
 pub use canonical_body::*;
@@ -19,6 +20,7 @@ pub use model::{
     VECTOR_PROTOCOL, VECTOR_SCHEMA_GENERATION, VectorSet,
 };
 pub use parser::{VectorParseError, VectorParseErrorKind, parse_vector_set};
+pub use residency_key::*;
 pub use stable_id::*;
 
 /// Exact committed M1 fixture bytes embedded into native Rust and Rust/Wasm builds.
