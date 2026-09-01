@@ -176,7 +176,10 @@ impl StableIdExpectedError {
             ),
             StableIdOperation::ValidateStableId => matches!(
                 self,
-                Self::InvalidPrefix | Self::InvalidUtf8 | Self::InvalidLength | Self::InvalidAlphabet
+                Self::InvalidPrefix
+                    | Self::InvalidUtf8
+                    | Self::InvalidLength
+                    | Self::InvalidAlphabet
             ),
         }
     }

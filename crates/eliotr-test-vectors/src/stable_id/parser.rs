@@ -14,10 +14,9 @@ use eliotr_canonical::{
 
 use super::model::{
     MAX_STABLE_ID_VECTOR_CASE_ID_BYTES, MAX_STABLE_ID_VECTOR_CASES,
-    MAX_STABLE_ID_VECTOR_FRAME_BYTES, MAX_STABLE_ID_VECTOR_PAYLOAD_BYTES,
-    STABLE_ID_COLUMNS_HEADER, STABLE_ID_PROTOCOL_HEADER, STABLE_ID_SCHEMA_GENERATION,
-    StableIdExpectedError, StableIdExpectedOutcome, StableIdOperation, StableIdVector,
-    StableIdVectorSet,
+    MAX_STABLE_ID_VECTOR_FRAME_BYTES, MAX_STABLE_ID_VECTOR_PAYLOAD_BYTES, STABLE_ID_COLUMNS_HEADER,
+    STABLE_ID_PROTOCOL_HEADER, STABLE_ID_SCHEMA_GENERATION, StableIdExpectedError,
+    StableIdExpectedOutcome, StableIdOperation, StableIdVector, StableIdVectorSet,
 };
 
 const GENERATION_HEADER: &str = "# schema_generation=1";
@@ -108,9 +107,7 @@ impl std::error::Error for StableIdParseError {}
 /// # Errors
 ///
 /// Returns the first bounded parse, schema, compatibility, or expected-output-shape error.
-pub fn parse_stable_id_vector_set(
-    input: &str,
-) -> Result<StableIdVectorSet, StableIdParseError> {
+pub fn parse_stable_id_vector_set(input: &str) -> Result<StableIdVectorSet, StableIdParseError> {
     if input.len() > MAX_STABLE_ID_VECTOR_FRAME_BYTES {
         return Err(StableIdParseError::new(
             0,
@@ -191,8 +188,7 @@ pub fn parse_stable_id_vector_set(
 
         let operation = parse_operation(columns[1], line_number)?;
         let input_bytes = parse_hex(columns[2], "input_hex", line_number)?;
-        let expected =
-            parse_expected(operation, columns[3], columns[4], columns[5], line_number)?;
+        let expected = parse_expected(operation, columns[3], columns[4], columns[5], line_number)?;
         cases.push(StableIdVector::new(
             case_id.to_owned(),
             operation,
@@ -208,10 +204,7 @@ pub fn parse_stable_id_vector_set(
         ));
     }
 
-    Ok(StableIdVectorSet::new(
-        STABLE_ID_SCHEMA_GENERATION,
-        cases,
-    ))
+    Ok(StableIdVectorSet::new(STABLE_ID_SCHEMA_GENERATION, cases))
 }
 
 fn require_header(
@@ -243,10 +236,7 @@ fn is_canonical_case_id(case_id: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-fn parse_operation(
-    token: &str,
-    line: usize,
-) -> Result<StableIdOperation, StableIdParseError> {
+fn parse_operation(token: &str, line: usize) -> Result<StableIdOperation, StableIdParseError> {
     match token {
         "derive_stable_id" => Ok(StableIdOperation::DeriveStableId),
         "validate_stable_id" => Ok(StableIdOperation::ValidateStableId),
@@ -304,10 +294,7 @@ fn parse_expected(
     }
 }
 
-fn parse_error_code(
-    code: &str,
-    line: usize,
-) -> Result<StableIdExpectedError, StableIdParseError> {
+fn parse_error_code(code: &str, line: usize) -> Result<StableIdExpectedError, StableIdParseError> {
     let error = match code {
         STABLE_ID_INPUT_TOO_LARGE_CODE => StableIdExpectedError::InputTooLarge,
         STABLE_ID_PREFIX_TOO_LARGE_CODE => StableIdExpectedError::PrefixTooLarge,
@@ -328,11 +315,7 @@ fn parse_error_code(
     Ok(error)
 }
 
-fn parse_hex(
-    value: &str,
-    field: &'static str,
-    line: usize,
-) -> Result<Vec<u8>, StableIdParseError> {
+fn parse_hex(value: &str, field: &'static str, line: usize) -> Result<Vec<u8>, StableIdParseError> {
     if value == "-" {
         return Ok(Vec::new());
     }

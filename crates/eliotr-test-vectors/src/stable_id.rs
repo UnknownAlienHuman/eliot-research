@@ -11,8 +11,8 @@ pub use evaluator::{
 };
 pub use model::{
     STABLE_ID_COLUMNS_HEADER, STABLE_ID_PROTOCOL, STABLE_ID_PROTOCOL_HEADER,
-    STABLE_ID_SCHEMA_GENERATION, StableIdExpectedError, StableIdExpectedOutcome,
-    StableIdOperation, StableIdVector, StableIdVectorSet,
+    STABLE_ID_SCHEMA_GENERATION, StableIdExpectedError, StableIdExpectedOutcome, StableIdOperation,
+    StableIdVector, StableIdVectorSet,
 };
 pub use parser::{StableIdParseError, StableIdParseErrorKind, parse_stable_id_vector_set};
 

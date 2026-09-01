@@ -7,9 +7,7 @@ use core::fmt;
 use eliotr_canonical::{derive_stable_id_frame, validate_stable_id};
 
 use super::EMBEDDED_STABLE_ID_VECTORS;
-use super::model::{
-    StableIdExpectedOutcome, StableIdOperation, StableIdVector, StableIdVectorSet,
-};
+use super::model::{StableIdExpectedOutcome, StableIdOperation, StableIdVector, StableIdVectorSet};
 use super::parser::{StableIdParseError, parse_stable_id_vector_set};
 
 /// Parse or semantic mismatch without source bytes.
@@ -109,10 +107,7 @@ pub fn verify_stable_id_vector_set(
                     case_id: case.case_id().to_owned(),
                 });
             }
-            (
-                StableIdExpectedOutcome::Error(expected),
-                ActualOutcome::Error(actual_code),
-            ) => {
+            (StableIdExpectedOutcome::Error(expected), ActualOutcome::Error(actual_code)) => {
                 let expected_code = expected.code();
                 if expected_code != actual_code {
                     return Err(StableIdVerificationError::ErrorCodeMismatch {
@@ -153,8 +148,7 @@ fn execute(case: &StableIdVector) -> ActualOutcome {
 #[cfg(test)]
 mod tests {
     use super::{
-        StableIdVerificationError, verify_embedded_stable_id_vectors,
-        verify_stable_id_vector_set,
+        StableIdVerificationError, verify_embedded_stable_id_vectors, verify_stable_id_vector_set,
     };
     use crate::{STABLE_ID_COLUMNS_HEADER, STABLE_ID_PROTOCOL_HEADER, parse_stable_id_vector_set};
 

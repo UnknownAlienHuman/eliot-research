@@ -22,5 +22,4 @@ pub use parser::{VectorParseError, VectorParseErrorKind, parse_vector_set};
 pub use stable_id::*;
 
 /// Exact committed M1 fixture bytes embedded into native Rust and Rust/Wasm builds.
-pub const EMBEDDED_CANONICAL_UTF8_VECTORS: &str =
-    include_str!("../fixtures/canonical-utf8.v1.txt");
+pub const EMBEDDED_CANONICAL_UTF8_VECTORS: &str = include_str!("../fixtures/canonical-utf8.v1.txt");
