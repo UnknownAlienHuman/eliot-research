@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned Miri toolchain
         run: |
           rustup toolchain install nightly-2026-08-31 \
@@ -25,18 +25,20 @@ jobs:
             --component miri
       - name: Run Miri on pure crates
         run: |
-          cargo +nightly-2026-08-31 miri test --package eliotr-canonical
-          cargo +nightly-2026-08-31 miri test --package eliotr-test-vectors
+          cargo +nightly-2026-08-31 miri test --locked --package eliotr-canonical
+          cargo +nightly-2026-08-31 miri test --locked --package eliotr-test-vectors
 
   fuzz:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned fuzz toolchain
         run: |
           rustup toolchain install nightly-2026-08-31 --profile minimal
           cargo +nightly-2026-08-31 install cargo-fuzz --version 0.13.2 --locked
+      - name: Verify the frozen fuzz dependency graph
+        run: cargo +nightly-2026-08-31 metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
       - name: Run the bounded M1 fuzz corpus
         run: |
           cargo +nightly-2026-08-31 fuzz run m1_kernel \
@@ -46,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install pinned mutation toolchain
         run: |
           rustup toolchain install 1.98.0 --profile minimal
