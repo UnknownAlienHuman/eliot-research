@@ -1,0 +1,22 @@
+{
+  "fixtures": [
+    {
+      "canonical_body_sha256": "3a5f9fd2b254eebe574b2c4a28f9804df0da9df359e59ceee125fa7da90fef22",
+      "fixture_id": "normalized-bundle-v1",
+      "fixture_path": "tests/fixtures/contracts/eliotr.normalized.v1.yaml",
+      "media_type": "application/yaml",
+      "protocol": "eliotr.normalized.v1",
+      "schema_export": "NormalizedBundleManifestSchema"
+    },
+    {
+      "canonical_body_sha256": "b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e",
+      "fixture_id": "source-owner-cutover-v1",
+      "fixture_path": "tests/fixtures/contracts/source.owner-cutover.v1.yaml",
+      "media_type": "application/yaml",
+      "protocol": "source.owner-cutover.v1",
+      "schema_export": "SourceOwnerCutoverReceiptSchema"
+    }
+  ],
+  "protocol": "eliotr.contract-canonical-fixtures.v1",
+  "registry_generation": 1
+}
