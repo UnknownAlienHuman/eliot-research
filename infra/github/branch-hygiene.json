@@ -1,0 +1,8 @@
+{
+  "protocol": "eliotr.branch-hygiene.v1",
+  "default_branch": "main",
+  "max_non_default_branches": 5,
+  "ttl_hours": 24,
+  "bootstrap_delete_before": "2026-09-02T00:00:00.000Z",
+  "preserve_open_pull_requests": true
+}
