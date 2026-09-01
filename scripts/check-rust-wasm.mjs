@@ -8,6 +8,7 @@ const wasmPath = new URL(
 const SELF_TEST_EXPORTS = Object.freeze([
   "eliotr_m1_verify_embedded_vectors_v1",
   "eliotr_m2_verify_embedded_canonical_body_vectors_v1",
+  "eliotr_m2_verify_embedded_stable_id_vectors_v1",
 ]);
 const MAX_COMPRESSED_BYTES = 128 * 1024;
 const modeIndex = process.argv.indexOf("--mode");
@@ -27,7 +28,9 @@ if (compressedBytes > MAX_COMPRESSED_BYTES) {
 const module = new globalThis.WebAssembly.Module(bytes);
 const imports = globalThis.WebAssembly.Module.imports(module);
 if (imports.length !== 0) {
-  throw new Error(`Rust/Wasm verification artifact must be self-contained; imports: ${JSON.stringify(imports)}`);
+  throw new Error(
+    `Rust/Wasm verification artifact must be self-contained; imports: ${JSON.stringify(imports)}`,
+  );
 }
 
 const exports = globalThis.WebAssembly.Module.exports(module);
@@ -35,7 +38,9 @@ const kernelExports = exports.map(({ name }) => name).filter((name) => name.star
 
 if (mode === "default") {
   if (kernelExports.length !== 0) {
-    throw new Error(`default Rust/Wasm exposed product-shaped ABI symbols: ${kernelExports.join(", ")}`);
+    throw new Error(
+      `default Rust/Wasm exposed product-shaped ABI symbols: ${kernelExports.join(", ")}`,
+    );
   }
   console.log(
     `Rust/Wasm default: PASS (${bytes.byteLength} raw bytes, ${compressedBytes} gzip bytes, zero imports).`,
