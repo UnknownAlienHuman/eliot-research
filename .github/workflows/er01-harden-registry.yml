@@ -26,6 +26,35 @@ jobs:
       - run: corepack prepare pnpm@11.23.0 --activate
       - name: Apply the exact registry hardening patch
         run: |
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path("docs/contracts/er01-harden.py")
+          source = path.read_text()
+          old = '''    if source.count("left.localeCompare(right)") != 3:
+              raise SystemExit("unexpected localeCompare count in schema registry")
+          source = source.replace(
+              "left.localeCompare(right)",
+              "compareCodeUnits(left, right)",
+          )
+          '''
+          new = '''    if source.count("left.localeCompare(right)") != 2:
+              raise SystemExit("unexpected localeCompare count in schema registry")
+          source = source.replace(
+              "left.localeCompare(right)",
+              "compareCodeUnits(left, right)",
+          )
+          source = replace_once(
+              source,
+              "left.export_name.localeCompare(right.export_name)",
+              "compareCodeUnits(left.export_name, right.export_name)",
+              "registry export ordering",
+          )
+          '''
+          if source.count(old) != 1:
+              raise SystemExit("unexpected comparator patch source")
+          path.write_text(source.replace(old, new, 1))
+          PY
           python docs/contracts/er01-harden.py
           rm docs/contracts/er01-harden.py
           rm -f \
