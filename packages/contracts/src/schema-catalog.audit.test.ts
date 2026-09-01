@@ -42,7 +42,7 @@ describe("ER-01 exported schema inventory", () => {
       }
     }
 
-    console.log(`ER01_SCHEMA_AUDIT=${JSON.stringify(rows)}`);
+    console.warn(`ER01_SCHEMA_AUDIT=${JSON.stringify(rows)}`);
     expect(rows.length).toBeGreaterThan(0);
   });
 });
