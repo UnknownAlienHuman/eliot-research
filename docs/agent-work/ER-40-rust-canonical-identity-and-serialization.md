@@ -142,3 +142,23 @@ pinned Rust 1.98.0 formatter is enforced before lint, native tests, Wasm executi
 This is a generic shadow primitive, not a stable-ID cutover for ingest, projection, evidence,
 erasure, owner-cutover, receipt or handle families. Those families require their own named vectors,
 observation evidence, rollback and promotion review. Live receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — source.owner-cutover.v1 canonical vectors
+
+This slice ports the first named M2 contract corpus while leaving TypeScript authority intact:
+
+- nine committed cases use the existing `canonical-body.v1` frame rather than introducing another
+  parser or operation vocabulary;
+- two differently ordered FENCED receipts and one already canonical receipt must emit identical bytes;
+- a RETIRED receipt preserves Unicode identifiers and array order;
+- duplicate root and escaped-equivalent nested keys fail with `ELIOTR_JSON_DUPLICATE_KEY`;
+- SHA-256 cases bind both concrete canonical receipts and the exact existing
+  `tests/fixtures/contracts/source.owner-cutover.v1.yaml` bytes;
+- the YAML fixture digest must remain
+  `b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e`;
+- independent JavaScript, native Rust and compiled Rust/Wasm execute the exact same corpus.
+
+This is canonical byte/digest parity only. `SourceOwnerCutoverReceiptSchema`, cross-field validation,
+application readback, authorization, fencing, revision-set equality and owner-generation state remain
+TypeScript authority. No product path invokes Rust, no mismatch is called a live receipt, and M3–M7
+remain open.

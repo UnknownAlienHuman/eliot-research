@@ -39,9 +39,21 @@ admitted, each part is at most 4 KiB, and the complete preimage is at most 64 Ki
 significant. The direct parts API rejects embedded NUL so one logical input cannot have multiple
 preimage interpretations.
 
-Both M2 corpora run independently through TypeScript, native Rust and compiled Rust/Wasm. They are
-differential shadow infrastructure only: no product family consumes Rust output, no mutation is
+The product-neutral M2 corpora run independently through TypeScript, native Rust and compiled Rust/Wasm.
+They are differential shadow infrastructure only: no product family consumes Rust output, no mutation is
 duplicated, and no TypeScript authority has been removed.
+
+## M2 `source.owner-cutover.v1` canonical golden slice
+
+The first named contract corpus binds the generic kernel to the existing owner-cutover contract without
+moving its schema or state-machine authority. Nine committed cases cover shuffled and idempotent FENCED
+receipts, a RETIRED receipt with Unicode identifiers, duplicate root/nested keys, canonical receipt
+digests, and the exact no-trailing-newline YAML fixture digest
+`b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e`.
+
+The independent JavaScript reference, native Rust and Rust/Wasm execute the same bytes. This slice does
+not validate Zod shape, authorization, owner fencing, generation collision, time ordering, or revision-set
+closure; those remain with TypeScript and the later M3 contract/domain migration.
 
 The default Wasm build exposes no product ABI and is inspected before the feature build can replace its
 artifact. CI-only scalar verifiers exist under `m1-self-test-export`; they are not M5 product exports.
