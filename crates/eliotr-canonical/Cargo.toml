@@ -1,6 +1,6 @@
 [package]
 name = "eliotr-canonical"
-description = "Pure bounded UTF-8 transport validation for the Eliot Research deterministic kernel."
+description = "Pure bounded canonical bytes, SHA-256, generation, and stable-ID primitives."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
