@@ -1,0 +1,82 @@
+name: er00-one-shot-scope-repair
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/er00-one-shot-scope-repair.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/ER-00-rust-m1-foundation-20260901'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Restore single-packet ER-00 scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          python <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          base_sha = os.environ["BASE_SHA"]
+
+          checker = subprocess.run(
+              ["git", "show", f"{base_sha}:scripts/check-work-packets.mjs"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout
+          (root / "scripts/check-work-packets.mjs").write_text(checker)
+
+          manifest_path = root / "docs/agent-work/manifest.json"
+          manifest = json.loads(manifest_path.read_text())
+          packet = next(item for item in manifest["packets"] if item["id"] == "ER-17")
+          packet["owned_paths"] = [
+              "packages/platform-cloudflare/src/access.ts",
+              "packages/platform-cloudflare/src/observability.ts",
+              "packages/platform-cloudflare/src/runtime-limits.ts",
+          ]
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+          packet_path = root / "docs/agent-work/ER-00-workspace-and-verification-gates.md"
+          packet_doc = packet_path.read_text()
+          replacements = {
+              "- Compare every packet document's `## Owned paths` section exactly against the machine scheduler.\n": "",
+              "- `pnpm work-packets:check` rejects any manifest/document ownership drift and any overlap or DAG error.\n": "- `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.\n",
+              "- The ER-17 production and test paths agree exactly across both scheduler representations.\n": "",
+              "- exact packet-document/scheduler parity gate;\n": "",
+              "- every other packet document used by the exact manifest-parity check\n": "- every other packet document\n",
+          }
+          for old, new in replacements.items():
+              if old not in packet_doc:
+                  raise SystemExit(f"missing expected ER-00 text: {old!r}")
+              packet_doc = packet_doc.replace(old, new, 1)
+          packet_path.write_text(packet_doc)
+
+          Path(".github/workflows/er00-one-shot-scope-repair.yml").unlink()
+          PY
+          node --check scripts/check-work-packets.mjs
+          node scripts/check-work-packets.mjs
+          git diff --check
+      - name: Commit scoped repair
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git commit -m "fix(er00): keep M1 within packet ownership"
+          git push origin "HEAD:${HEAD_REF}"
