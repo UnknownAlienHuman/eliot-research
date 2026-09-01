@@ -269,8 +269,14 @@ describe("ER-01 public contract registry", () => {
 
     expect(
       ContractSchemaIndexEntrySchema.safeParse({
-        ...initial,
         schema_id: buildContractSchemaId("source", "OtherSchema", 1, 1),
+        export_name: initial.export_name,
+        family: initial.family,
+        schema_version: initial.schema_version,
+        schema_generation: initial.schema_generation,
+        kind: initial.kind,
+        structural_strictness: initial.structural_strictness,
+        json_schema_sha256: initial.json_schema_sha256,
       }).success,
     ).toBe(false);
 
