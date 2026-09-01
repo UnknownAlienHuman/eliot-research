@@ -66,6 +66,25 @@ jobs:
           echo 'ad6d9d6d24ba39af9aabee20aceff83ac23c282e3fc3577d84b77ef4a61ecb19  /tmp/eliot-evidence-overlay.tgz' | sha256sum --check --strict
           tar --extract --gzip --file /tmp/eliot-evidence-overlay.tgz
           rm -f .eliotr-evidence-overlay.part*.b64 .eliotr-evidence-overlay.ready
+      - name: Remove verified dead resolver imports
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('packages/cloudflare-evidence/src/resolver.ts')
+          source = path.read_text(encoding='utf-8')
+          replacements = {
+              '  type EvidenceResolutionReceipt,\n': '',
+              'import { citationResolutionReceiptDigestPayload } from "./citation-registry.js";\n': '',
+              '  evidenceHandleIdentityPayload,\n  evidenceResolutionReceiptDigestPayload,\n': '  evidenceHandleIdentityPayload,\n',
+          }
+          for before, after in replacements.items():
+              if before not in source:
+                  raise SystemExit(f'expected resolver hygiene target missing: {before!r}')
+              source = source.replace(before, after, 1)
+          path.write_text(source, encoding='utf-8')
+          PY
       - name: Canonicalize and verify frozen workspace lockfile
         shell: bash
         run: |
