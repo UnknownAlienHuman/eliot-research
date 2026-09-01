@@ -1,7 +1,8 @@
-import type {
-  ContractCompatibilityEntry,
-  ContractCompatibilityRegistry,
-  ContractSchemaIndexEntry,
+import {
+  ContractSchemaIndexEntrySchema,
+  type ContractCompatibilityEntry,
+  type ContractCompatibilityRegistry,
+  type ContractSchemaIndexEntry,
 } from "./registry-contracts.js";
 
 const EXACT_INDEX_FIELDS = [
@@ -40,15 +41,18 @@ function terminalEntries(
 /**
  * Proves that the generated current index names every active terminal history entry and no retired one.
  *
- * @throws {Error} when the index is stale, incomplete, duplicated, or disagrees with compatibility
- * history.
+ * @throws {Error} when the index is malformed, stale, incomplete, duplicated, or disagrees with
+ * compatibility history.
  */
 export function assertCurrentContractCompatibility(
-  currentEntries: readonly ContractSchemaIndexEntry[],
+  currentEntries: readonly unknown[],
   registry: ContractCompatibilityRegistry,
 ): void {
+  const parsedCurrentEntries = currentEntries.map((entry) =>
+    ContractSchemaIndexEntrySchema.parse(entry),
+  );
   const currentByExport = new Map<string, ContractSchemaIndexEntry>();
-  for (const current of currentEntries) {
+  for (const current of parsedCurrentEntries) {
     if (currentByExport.has(current.export_name)) {
       throw new Error(
         `current schema index contains duplicate export ${current.export_name}`,
@@ -96,7 +100,7 @@ export function assertCurrentContractCompatibility(
     }
   }
 
-  for (const current of currentEntries) {
+  for (const current of parsedCurrentEntries) {
     if (!terminalsByExport.has(current.export_name)) {
       throw new Error(
         `${current.export_name} exists in the current index without compatibility history`,
