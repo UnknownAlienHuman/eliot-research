@@ -5,13 +5,16 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./registry": "./src/registry-index.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --pretty false",
-    "test": "vitest run"
+    "test": "vitest run",
+    "artifacts:write": "tsc -b && node ../../docs/contracts/generate.mjs --write",
+    "artifacts:check": "tsc -b && node ../../docs/contracts/generate.mjs --check"
   },
   "dependencies": {
     "zod": "4.4.3"
