@@ -79,7 +79,7 @@ jobs:
 
   rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -94,26 +94,21 @@ jobs:
             --component rustfmt \
             --target wasm32-unknown-unknown
           rustup default 1.98.0
-      - name: Cache pinned Cargo tools
-        uses: actions/cache@v4
+      - name: Install checksum-verified pinned Cargo tools
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf
         with:
-          path: |
-            ~/.cargo/bin/cargo-deny
-            ~/.cargo/bin/cargo-llvm-cov
-            ~/.cargo/bin/cargo-nextest
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: rust-tools-${{ runner.os }}-1.98.0-nextest-0.9.143-deny-0.20.2-llvm-cov-0.9.0
-      - name: Install pinned Cargo tools
+          tool: |
+            cargo-nextest@0.9.143
+            cargo-deny@0.20.2
+            cargo-llvm-cov@0.9.0
+          fallback: none
+      - name: Verify pinned Cargo tool versions
         run: |
-          cargo nextest --version | grep -F "cargo-nextest 0.9.143" ||
-            cargo install cargo-nextest --version 0.9.143 --locked
-          cargo deny --version | grep -F "cargo-deny 0.20.2" ||
-            cargo install cargo-deny --version 0.20.2 --locked
-          cargo llvm-cov --version | grep -F "cargo-llvm-cov 0.9.0" ||
-            cargo install cargo-llvm-cov --version 0.9.0 --locked
+          cargo nextest --version | grep -F "cargo-nextest 0.9.143"
+          cargo deny --version | grep -F "cargo-deny 0.20.2"
+          cargo llvm-cov --version | grep -F "cargo-llvm-cov 0.9.0"
       - name: Verify locked workspace metadata
-        run: cargo metadata --workspace --all-features --locked --format-version 1 > /dev/null
+        run: cargo metadata --all-features --locked --format-version 1 > /dev/null
       - name: Verify Rust language boundaries
         run: node scripts/check-rust-boundaries.mjs
       - name: Verify shared vectors through TypeScript
