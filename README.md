@@ -2,10 +2,14 @@
 
 **Pluggable external research federation for ELIOT Memory OS.**
 
-> **Status: architecture master published; implementation scaffold.** The authoritative standalone
-> contract is [Eliot Research Cloud 29.1](docs/architecture/ELIOT_RESEARCH.md). No implementation or
-> deployed resources exist; live Cloudflare and Google Drive write/readback remain required gates.
-> Continuous integration remains disabled until implementation begins.
+> **Status: active implementation; not production-ready.** The authoritative standalone contract is
+> [Eliot Research Cloud 29.1](docs/architecture/ELIOT_RESEARCH.md), and the language boundary is governed
+> by [eliotr.language-runtime.v1](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md). Several authority
+> paths are implemented and pass deterministic CI, but mandatory product routes and real Cloudflare,
+> Google, provider, recovery and workload qualification remain open. See the
+> [machine-readable implementation status](docs/implementation/implementation-status.json),
+> [gap register](docs/implementation/gap-register.md), and
+> [production readiness plan](docs/implementation/production-readiness-plan.md).
 
 ---
 
@@ -68,6 +72,12 @@ and scope algebra, qualification and readiness, exact and high-recall guarantees
 semantics, investigation and protocol model, hypothesis and evidence ledgers, controlled distillation,
 coverage receipts, wiki contract, artifact compiler, federation, disclosure and budget policy.
 
+**Hybrid runtime by responsibility.** TypeScript owns the fast-moving Cloudflare control plane, product
+transports, PWA and deployment integration. Rust owns the pure deterministic kernel and native
+verification tools. SQL owns D1 schema, constraints and executable transaction fixtures. Language
+percentage is not an architectural objective, and permanent duplicate TypeScript/Rust authority is
+forbidden.
+
 **One owner per state family.** Original bytes, source identity, normalized artifacts, projects,
 evidence handle mapping, investigations, wiki heads, jobs and receipts, erasure cases and the purge
 ledger each have exactly one owner. Anything needed to reconstruct evidence, a wiki page, an
@@ -98,14 +108,16 @@ apps/
 
 packages/
   contracts/              versioned wire and domain types, incl. the ELIOT federation contract
-  domain/                 pure domain logic and invariants
-  policy/                 storage, inference disclosure, client disclosure, retention and license
+  domain/                 transitional TypeScript domain implementation
+  policy/                 transitional TypeScript policy implementation
   platform-cloudflare/    thin adapters over managed platform primitives
   retrieval/              lanes, query products, evidence handle resolution
   research/               investigations, protocols, hypotheses, coverage, artifact compilation
   interfaces/             owner API, private agent surface, federation endpoint
   google-drive-exchange/  bounded external-client transport — class Experiment, has an expiry
   testkit/                shared fixtures, fakes and assertion helpers
+
+crates/                    target Rust deterministic-kernel workspace; introduced by migration M1+
 
 infra/
   d1/                     metadata schema migrations and named query registry
@@ -114,14 +126,15 @@ infra/
   workflows/              durable workflow stage definitions
 
 docs/
-  architecture/  adr/  contracts/  generated/
+  architecture/  adr/  contracts/  generated/  implementation/
 
 tests/
   golden-corpus/          versioned real-document corpus
   fixtures/               recorded deterministic fixtures
 ```
 
-A package is not a service. Everything compiles into one Worker application plus static assets.
+A package or crate is not a service. Everything deploys as one Worker application plus static assets;
+the Rust kernel is embedded as Wasm or used by offline native verification tools.
 
 ## Delivery order
 
@@ -139,17 +152,22 @@ Vertical slices, each producing a working user loop before the next layer of res
 | **7** | Specialist profiles: code intelligence, scholarly metadata, conversation episodes, structured data |
 
 A slice is not complete until a real round trip through the real platform has executed. A passing type
-check is not a deployment gate.
+check is not a deployment gate. The ordered closure criteria are maintained in the
+[production readiness plan](docs/implementation/production-readiness-plan.md).
 
 ## Continuous integration
 
-CI is disabled for this repository. It is enabled when the first contracts exist and there is a real
-check to run — contract validation, lint, type check, bundle and startup budgets, and a dry-run
-deployment. Until then a green pipeline would prove nothing.
+Pull-request CI is enabled. It installs the frozen pnpm graph and runs contract fixtures, package
+boundaries, source budgets, work-packet validation, D1 authority fixtures, lint, strict TypeScript,
+unit and Workers-runtime tests, PWA build, generated Cloudflare binding types and a Wrangler deployment
+dry-run. Branch hygiene runs independently on `main`.
+
+Rust gates become mandatory when migration M1 introduces the Cargo workspace. No green local or CI gate
+is represented as live Cloudflare, Google, provider, recovery or workload qualification.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
 
-The repository is private while the contracts are unstable; the license is MIT so that the
-boundary contracts can be shared or open-sourced without a later relicensing step.
+The repository is public under the MIT license. Contracts and implementation status remain explicitly
+versioned while the product is not production-ready.
