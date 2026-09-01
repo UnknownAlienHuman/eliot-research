@@ -136,6 +136,9 @@ This slice adds the next product-neutral M2 primitive without changing product a
 - one versioned 36-case corpus evaluated independently by TypeScript, native Rust and Rust/Wasm;
 - native property/boundary tests plus existing Miri, fuzz, mutation, coverage and Wasm gates.
 
+The 36-case corpus is committed rather than generated during PR verification, and the repository-
+pinned Rust 1.98.0 formatter is enforced before lint, native tests, Wasm execution and coverage.
+
 This is a generic shadow primitive, not a stable-ID cutover for ingest, projection, evidence,
 erasure, owner-cutover, receipt or handle families. Those families require their own named vectors,
 observation evidence, rollback and promotion review. Live receipts remain `NOT EXECUTED`.
