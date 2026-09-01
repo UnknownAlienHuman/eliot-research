@@ -70,8 +70,11 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - Pin Rust, Cargo resolver, Wasm target, nextest, deny, llvm-cov, Miri, fuzz and mutation tools.
 - Introduce only the M1 crates: bounded UTF-8 transport validation, strict shared vectors and a portable
   Rust/Wasm shell.
+- Bound the shared frame, case count, case identity and decoded payloads before allocation; represent
+  `max_bytes` as one canonical unsigned 32-bit value in TypeScript, native Rust and Rust/Wasm.
 - Execute the exact committed vector bytes through TypeScript, native Rust and compiled Rust/Wasm.
-- Keep the default Wasm build free of product ABI exports; the scalar M1 self-test is feature-gated.
+- Inspect the default Wasm artifact before the feature build overwrites it; keep it free of product ABI
+  exports and keep the scalar M1 self-test feature-gated.
 - Enforce pure-core exclusions for I/O, clocks, environment, randomness and platform runtime imports.
 - Run merge-blocking format, lint, native tests, doctests, dependency policy, Wasm, size and coverage
   gates; schedule pinned Miri, fuzz and mutation jobs.
@@ -82,21 +85,24 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `pnpm install --frozen-lockfile` and both Cargo lockfiles are reproducible.
 - `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.
 - `pnpm boundaries:negative` injects a forbidden import and proves the existing boundary gate fails.
-- Strict malformed/unknown/duplicate vector cases fail in both TypeScript and Rust parsers.
+- Unknown protocol/error codes, duplicate IDs, blank rows, over-limit frames/cases/IDs/payloads and
+  architecture-dependent numeric values fail in both TypeScript and Rust parsers.
 - `cargo fmt --all --check` passes.
 - `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` passes.
 - `cargo nextest run --workspace --all-features --locked` and Rust doctests pass.
 - `cargo deny check` passes.
-- The workspace builds for `wasm32-unknown-unknown`; the feature-gated Wasm self-test executes with zero
-  imports and stays within the compressed M1 budget.
-- Deterministic-core coverage is at least 90% with branch instrumentation.
+- The default `wasm32-unknown-unknown` artifact has zero runtime imports and no `eliotr_*` export; the
+  feature-gated self-test artifact exposes only the test symbol, executes the exact corpus and stays
+  within the compressed M1 budget.
+- Deterministic-core coverage is at least 90% with branch instrumentation and a frozen Cargo graph.
 - No TypeScript authority is removed, no product route changes, and no live platform gate is implied.
 
 ## Mandatory negative boundary
 
 Create a temporary `node:fs/promises` import inside `packages/domain`, run the real package-boundary gate,
-and prove it exits nonzero before deleting the fixture. Mutate the shared fixture protocol, error code and
-case identity and prove both strict parsers reject the malformed frame.
+and prove it exits nonzero before deleting the fixture. Mutate the shared fixture protocol, error code,
+case identity, blank-line discipline and every explicit resource limit and prove both strict parsers
+reject the malformed frame.
 
 ## Handoff contract
 
@@ -104,7 +110,7 @@ Produce:
 
 - frozen TypeScript and Rust toolchain registry;
 - M1 Cargo workspace and lockfiles;
-- strict versioned vector corpus consumed by TypeScript, native Rust and Rust/Wasm;
+- bounded, strict, versioned vector corpus consumed by TypeScript, native Rust and Rust/Wasm;
 - merge-blocking Rust CI plus pinned scheduled Miri/fuzz/mutation verification;
 - updated readiness record that leaves M2–M7 and all live receipts explicitly open.
 

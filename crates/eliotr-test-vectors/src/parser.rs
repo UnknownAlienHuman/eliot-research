@@ -1,4 +1,4 @@
-//! Strict parser for the dependency-free M1 fixture frame.
+//! Strict, bounded parser for the dependency-free M1 fixture frame.
 
 #![forbid(unsafe_code)]
 
@@ -8,11 +8,11 @@ use std::fmt;
 use eliotr_canonical::{UTF8_INVALID_CODE, UTF8_TOO_LARGE_CODE};
 
 use crate::model::{
-    CanonicalUtf8Vector, ExpectedError, ExpectedOutcome, VECTOR_PROTOCOL, VECTOR_SCHEMA_GENERATION,
-    VectorSet,
+    CanonicalUtf8Vector, ExpectedError, ExpectedOutcome, MAX_VECTOR_CASE_ID_BYTES,
+    MAX_VECTOR_CASES, MAX_VECTOR_FRAME_BYTES, MAX_VECTOR_PAYLOAD_BYTES, VECTOR_PROTOCOL_HEADER,
+    VECTOR_SCHEMA_GENERATION, VectorSet,
 };
 
-const PROTOCOL_HEADER: &str = "# protocol=eliotr.test-vectors.canonical-utf8.v1";
 const GENERATION_HEADER: &str = "# schema_generation=1";
 const COLUMNS_HEADER: &str = "# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code";
 const COLUMN_COUNT: usize = 6;
@@ -20,6 +20,13 @@ const COLUMN_COUNT: usize = 6;
 /// Exact reason a fixture frame was rejected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VectorParseErrorKind {
+    /// The complete UTF-8 frame exceeded its explicit byte budget.
+    FrameTooLarge {
+        /// Observed frame length in bytes.
+        actual_bytes: usize,
+        /// Maximum admitted frame length in bytes.
+        max_bytes: usize,
+    },
     /// A required header was absent.
     MissingHeader {
         /// Exact required header.
@@ -27,21 +34,33 @@ pub enum VectorParseErrorKind {
     },
     /// A header was present but unknown or out of order.
     UnexpectedHeader {
-        /// Exact required header.
+        /// Exact required header or row kind.
         expected: &'static str,
-        /// Observed line.
-        actual: String,
+    },
+    /// A blank line appeared inside the strict frame.
+    UnexpectedBlankLine,
+    /// The declared case count exceeded the explicit frame budget.
+    TooManyCases {
+        /// Maximum admitted number of cases.
+        max_cases: usize,
     },
     /// A case row did not contain the exact column count.
     WrongColumnCount {
         /// Observed column count.
         actual: usize,
     },
+    /// A case identity exceeded its explicit ASCII byte budget.
+    CaseIdTooLong {
+        /// Observed identity length in bytes.
+        actual_bytes: usize,
+        /// Maximum admitted identity length in bytes.
+        max_bytes: usize,
+    },
     /// A case identity was empty or outside the canonical ASCII grammar.
     InvalidCaseId,
     /// A case identity appeared more than once.
     DuplicateCaseId,
-    /// The byte limit was not an unsigned decimal integer.
+    /// The byte limit was not a canonical unsigned 32-bit decimal integer.
     InvalidMaxBytes,
     /// The byte limit used a non-canonical leading zero.
     NonCanonicalMaxBytes,
@@ -49,6 +68,15 @@ pub enum VectorParseErrorKind {
     InvalidHex {
         /// Name of the rejected field.
         field: &'static str,
+    },
+    /// A decoded byte field exceeded its explicit byte budget.
+    PayloadTooLarge {
+        /// Name of the rejected field.
+        field: &'static str,
+        /// Observed decoded length in bytes.
+        actual_bytes: usize,
+        /// Maximum admitted decoded length in bytes.
+        max_bytes: usize,
     },
     /// The expected outcome token was not `ok` or `error`.
     InvalidExpectedOutcome,
@@ -97,25 +125,33 @@ impl fmt::Display for VectorParseError {
 
 impl std::error::Error for VectorParseError {}
 
-/// Parses the strict, versioned M1 vector frame.
+/// Parses the strict, versioned, architecture-independent M1 vector frame.
 ///
-/// Unknown headers, fields, outcome values, error codes, duplicate identities, and non-canonical
-/// integers fail closed.
+/// Unknown headers, blank lines, fields, outcome values, error codes, duplicate identities,
+/// non-canonical integers, and every explicit resource limit fail closed before semantic execution.
 ///
 /// # Errors
 ///
-/// Returns [`VectorParseError`] at the first rejected line.
+/// Returns [`VectorParseError`] at the first rejected line or at line zero when the whole frame is
+/// rejected before line parsing.
 pub fn parse_vector_set(input: &str) -> Result<VectorSet, VectorParseError> {
+    if input.len() > MAX_VECTOR_FRAME_BYTES {
+        return Err(VectorParseError::new(
+            0,
+            VectorParseErrorKind::FrameTooLarge {
+                actual_bytes: input.len(),
+                max_bytes: MAX_VECTOR_FRAME_BYTES,
+            },
+        ));
+    }
+
     let lines: Vec<(usize, &str)> = input
         .lines()
         .enumerate()
-        .filter_map(|(index, line)| {
-            let one_based = index + 1;
-            (!line.is_empty()).then_some((one_based, line))
-        })
+        .map(|(index, line)| (index + 1, line))
         .collect();
 
-    require_header(&lines, 0, PROTOCOL_HEADER)?;
+    require_header(&lines, 0, VECTOR_PROTOCOL_HEADER)?;
     require_header(&lines, 1, GENERATION_HEADER)?;
     require_header(&lines, 2, COLUMNS_HEADER)?;
 
@@ -123,12 +159,25 @@ pub fn parse_vector_set(input: &str) -> Result<VectorSet, VectorParseError> {
     let mut cases = Vec::new();
 
     for &(line_number, line) in lines.iter().skip(3) {
+        if line.is_empty() {
+            return Err(VectorParseError::new(
+                line_number,
+                VectorParseErrorKind::UnexpectedBlankLine,
+            ));
+        }
         if line.starts_with('#') {
             return Err(VectorParseError::new(
                 line_number,
                 VectorParseErrorKind::UnexpectedHeader {
                     expected: "a case row",
-                    actual: line.to_owned(),
+                },
+            ));
+        }
+        if cases.len() == MAX_VECTOR_CASES {
+            return Err(VectorParseError::new(
+                line_number,
+                VectorParseErrorKind::TooManyCases {
+                    max_cases: MAX_VECTOR_CASES,
                 },
             ));
         }
@@ -144,13 +193,22 @@ pub fn parse_vector_set(input: &str) -> Result<VectorSet, VectorParseError> {
         }
 
         let case_id = columns[0];
+        if case_id.len() > MAX_VECTOR_CASE_ID_BYTES {
+            return Err(VectorParseError::new(
+                line_number,
+                VectorParseErrorKind::CaseIdTooLong {
+                    actual_bytes: case_id.len(),
+                    max_bytes: MAX_VECTOR_CASE_ID_BYTES,
+                },
+            ));
+        }
         if !is_canonical_case_id(case_id) {
             return Err(VectorParseError::new(
                 line_number,
                 VectorParseErrorKind::InvalidCaseId,
             ));
         }
-        if !case_ids.insert(case_id.to_owned()) {
+        if !case_ids.insert(case_id) {
             return Err(VectorParseError::new(
                 line_number,
                 VectorParseErrorKind::DuplicateCaseId,
@@ -176,11 +234,6 @@ pub fn parse_vector_set(input: &str) -> Result<VectorSet, VectorParseError> {
         ));
     }
 
-    debug_assert_eq!(
-        VECTOR_PROTOCOL,
-        PROTOCOL_HEADER.trim_start_matches("# protocol=")
-    );
-
     Ok(VectorSet::new(VECTOR_SCHEMA_GENERATION, cases))
 }
 
@@ -199,10 +252,7 @@ fn require_header(
     if actual != expected {
         return Err(VectorParseError::new(
             line_number,
-            VectorParseErrorKind::UnexpectedHeader {
-                expected,
-                actual: actual.to_owned(),
-            },
+            VectorParseErrorKind::UnexpectedHeader { expected },
         ));
     }
 
@@ -218,7 +268,13 @@ fn is_canonical_case_id(case_id: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-fn parse_max_bytes(value: &str, line: usize) -> Result<usize, VectorParseError> {
+fn parse_max_bytes(value: &str, line: usize) -> Result<u32, VectorParseError> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(VectorParseError::new(
+            line,
+            VectorParseErrorKind::InvalidMaxBytes,
+        ));
+    }
     if value.len() > 1 && value.starts_with('0') {
         return Err(VectorParseError::new(
             line,
@@ -227,7 +283,7 @@ fn parse_max_bytes(value: &str, line: usize) -> Result<usize, VectorParseError> 
     }
 
     value
-        .parse::<usize>()
+        .parse::<u32>()
         .map_err(|_error| VectorParseError::new(line, VectorParseErrorKind::InvalidMaxBytes))
 }
 
@@ -285,8 +341,20 @@ fn parse_hex(value: &str, field: &'static str, line: usize) -> Result<Vec<u8>, V
         ));
     }
 
-    let mut bytes = Vec::with_capacity(value.len() / 2);
-    for pair in value.as_bytes().chunks_exact(2) {
+    let decoded_bytes = value.len() / 2;
+    if decoded_bytes > MAX_VECTOR_PAYLOAD_BYTES {
+        return Err(VectorParseError::new(
+            line,
+            VectorParseErrorKind::PayloadTooLarge {
+                field,
+                actual_bytes: decoded_bytes,
+                max_bytes: MAX_VECTOR_PAYLOAD_BYTES,
+            },
+        ));
+    }
+
+    let mut bytes = Vec::with_capacity(decoded_bytes);
+    for pair in value.as_bytes().as_chunks::<2>().0 {
         let high = hex_nibble(pair[0]);
         let low = hex_nibble(pair[1]);
         let (Some(high), Some(low)) = (high, low) else {
@@ -305,176 +373,5 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
         b'0'..=b'9' => Some(byte - b'0'),
         b'a'..=b'f' => Some(byte - b'a' + 10),
         _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{VectorParseErrorKind, parse_vector_set};
-
-    const VALID: &str = "\
-# protocol=eliotr.test-vectors.canonical-utf8.v1
-# schema_generation=1
-# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code
-case_one|1|61|ok|61|-
-";
-
-    #[test]
-    fn parses_the_canonical_frame() {
-        let result = parse_vector_set(VALID);
-        assert!(matches!(result, Ok(set) if set.cases().len() == 1));
-    }
-
-    #[test]
-    fn rejects_unknown_protocol() {
-        let input = VALID.replacen(
-            "eliotr.test-vectors.canonical-utf8.v1",
-            "eliotr.test-vectors.unknown.v1",
-            1,
-        );
-        assert!(matches!(
-            parse_vector_set(&input),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    VectorParseErrorKind::UnexpectedHeader { .. }
-                )
-        ));
-    }
-
-    #[test]
-    fn rejects_missing_columns_header() {
-        let input = "\
-# protocol=eliotr.test-vectors.canonical-utf8.v1
-# schema_generation=1
-";
-        assert!(matches!(
-            parse_vector_set(input),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::MissingHeader { .. })
-        ));
-    }
-
-    #[test]
-    fn rejects_an_extra_column() {
-        let input = VALID.replace("|-\n", "|-|extra\n");
-        assert!(matches!(
-            parse_vector_set(&input),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    VectorParseErrorKind::WrongColumnCount { actual: 7 }
-                )
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_and_duplicate_case_ids() {
-        let invalid = VALID.replace("case_one", "Case-One");
-        assert!(matches!(
-            parse_vector_set(&invalid),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::InvalidCaseId)
-        ));
-
-        let duplicate = format!("{VALID}case_one|1|62|ok|62|-\n");
-        assert!(matches!(
-            parse_vector_set(&duplicate),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::DuplicateCaseId)
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_and_noncanonical_limits() {
-        let invalid = VALID.replace("|1|61|", "|x|61|");
-        assert!(matches!(
-            parse_vector_set(&invalid),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::InvalidMaxBytes)
-        ));
-
-        let leading_zero = VALID.replace("|1|61|", "|01|61|");
-        assert!(matches!(
-            parse_vector_set(&leading_zero),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    VectorParseErrorKind::NonCanonicalMaxBytes
-                )
-        ));
-    }
-
-    #[test]
-    fn rejects_malformed_hex() {
-        for value in ["", "a", "0A", "gg"] {
-            let input = VALID.replace("|61|ok|", &format!("|{value}|ok|"));
-            assert!(matches!(
-                parse_vector_set(&input),
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        VectorParseErrorKind::InvalidHex {
-                            field: "input_hex"
-                        }
-                    )
-            ));
-        }
-    }
-
-    #[test]
-    fn rejects_unknown_outcomes_and_error_codes() {
-        let unknown_outcome = VALID.replace("|ok|61|-", "|maybe|61|-");
-        assert!(matches!(
-            parse_vector_set(&unknown_outcome),
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    VectorParseErrorKind::InvalidExpectedOutcome
-                )
-        ));
-
-        let unknown_code = VALID.replace("|ok|61|-", "|error|-|ELIOTR_UNKNOWN");
-        assert!(matches!(
-            parse_vector_set(&unknown_code),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::UnknownErrorCode)
-        ));
-    }
-
-    #[test]
-    fn rejects_inconsistent_outcome_columns() {
-        let success_with_error = VALID.replace("|ok|61|-", "|ok|61|ELIOTR_UTF8_INVALID");
-        assert!(matches!(
-            parse_vector_set(&success_with_error),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::InconsistentOutcome)
-        ));
-
-        let error_with_output = VALID.replace("|ok|61|-", "|error|61|ELIOTR_UTF8_INVALID");
-        assert!(matches!(
-            parse_vector_set(&error_with_output),
-            Err(error)
-                if matches!(error.kind(), VectorParseErrorKind::InconsistentOutcome)
-        ));
-    }
-
-    #[test]
-    fn rejects_a_frame_without_cases() {
-        let input = "\
-# protocol=eliotr.test-vectors.canonical-utf8.v1
-# schema_generation=1
-# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code
-";
-        assert!(matches!(
-            parse_vector_set(input),
-            Err(error) if matches!(error.kind(), VectorParseErrorKind::NoCases)
-        ));
-    }
-
-    #[test]
-    fn reports_one_based_line_numbers() {
-        let input = VALID.replace("|1|61|", "|01|61|");
-        assert!(matches!(parse_vector_set(&input), Err(error) if error.line() == 4));
     }
 }

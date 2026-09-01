@@ -1,12 +1,30 @@
-//! Typed representation of the shared M1 conformance vectors.
+//! Typed representation and architecture-independent limits for the shared M1 vectors.
 
 #![forbid(unsafe_code)]
 
 /// The only fixture protocol admitted by migration phase M1.
 pub const VECTOR_PROTOCOL: &str = "eliotr.test-vectors.canonical-utf8.v1";
 
+/// Exact protocol header required at the start of every fixture frame.
+pub const VECTOR_PROTOCOL_HEADER: &str = "# protocol=eliotr.test-vectors.canonical-utf8.v1";
+
 /// The schema generation admitted by migration phase M1.
 pub const VECTOR_SCHEMA_GENERATION: u32 = 1;
+
+/// Maximum UTF-8 byte length of one complete vector frame.
+pub const MAX_VECTOR_FRAME_BYTES: usize = 1024 * 1024;
+
+/// Maximum number of cases admitted by one vector frame.
+pub const MAX_VECTOR_CASES: usize = 4096;
+
+/// Maximum byte length of one ASCII case identity.
+pub const MAX_VECTOR_CASE_ID_BYTES: usize = 128;
+
+/// Maximum decoded byte length of an input or successful output field.
+pub const MAX_VECTOR_PAYLOAD_BYTES: usize = 256 * 1024;
+
+/// Maximum transport budget representable identically by native Rust, Rust/Wasm, and TypeScript.
+pub const MAX_VECTOR_MAX_BYTES: u32 = u32::MAX;
 
 /// A parsed set of strict conformance cases.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +58,7 @@ impl VectorSet {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalUtf8Vector {
     case_id: String,
-    max_bytes: usize,
+    max_bytes: u32,
     input: Vec<u8>,
     expected: ExpectedOutcome,
 }
@@ -48,7 +66,7 @@ pub struct CanonicalUtf8Vector {
 impl CanonicalUtf8Vector {
     pub(crate) fn new(
         case_id: String,
-        max_bytes: usize,
+        max_bytes: u32,
         input: Vec<u8>,
         expected: ExpectedOutcome,
     ) -> Self {
@@ -66,9 +84,9 @@ impl CanonicalUtf8Vector {
         &self.case_id
     }
 
-    /// Returns the explicit input byte budget.
+    /// Returns the fixed-width input byte budget.
     #[must_use]
-    pub const fn max_bytes(&self) -> usize {
+    pub const fn max_bytes(&self) -> u32 {
         self.max_bytes
     }
 

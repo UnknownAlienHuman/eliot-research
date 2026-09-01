@@ -48,6 +48,8 @@ locked harness so `libfuzzer-sys` cannot enter the product dependency graph.
 Merge CI installs the three stable Cargo utilities from their pinned GitHub releases through
 `taiki-e/install-action` pinned to commit `1ed6d7be6168f6c9046541087ff549b6bc581fdf`, with checksum
 verification enabled and fallback installation disabled. CI then verifies each executable's exact version.
+Official GitHub actions are commit-pinned to `actions/checkout` `3d3c42e5aac5ba805825da76410c181273ba90b1`
+(`v7.0.1`) and `actions/setup-node` `820762786026740c76f36085b0efc47a31fe5020` (`v7.0.0`).
 
 ## M1 scope guard
 
@@ -59,10 +61,16 @@ M1 creates the workspace and proof machinery only:
   `wasm32-unknown-unknown`;
 - TypeScript remains the product authority until the M2–M7 differential promotion sequence.
 
+The fixture frame has one cross-runtime resource contract: 1 MiB complete UTF-8 frame, 4,096 cases,
+128-byte ASCII case IDs, 256 KiB decoded input/output fields and canonical unsigned 32-bit `max_bytes`.
+Rust and TypeScript reject every overflow before payload allocation or semantic execution.
+
 The feature-gated `eliotr_m1_verify_embedded_vectors_v1` symbol is a CI-only scalar self-test. It is not a
-product ABI operation and is absent from the default build. Rust 2024 requires its `no_mangle` attribute
-to be acknowledged as unsafe; the adapter contains no unsafe block or memory access. Pure crates use
-`#![forbid(unsafe_code)]`.
+product ABI operation and is absent from the default build. CI inspects the default artifact before the
+feature build overwrites the target path, then permits only the self-test symbol in the second artifact.
+Both artifacts must have zero runtime imports and remain under the compressed M1 budget. Rust 2024
+requires the self-test's `no_mangle` attribute to be acknowledged as unsafe; the adapter contains no
+unsafe block or memory access. Pure crates use `#![forbid(unsafe_code)]`.
 
 ## Bootstrap
 
@@ -98,13 +106,13 @@ No bootstrap or dry-run command authorizes a live deployment.
 |---|---|
 | `pnpm boundaries:negative` | Inject a forbidden Node import and prove the package gate rejects it. |
 | `pnpm rust:boundaries` | Enforce pure-core dependency/runtime exclusions and synthetic negatives. |
-| `pnpm rust:vectors` | Parse and execute the committed corpus through the TypeScript reference. |
+| `pnpm rust:vectors` | Parse and execute the bounded committed corpus through the TypeScript reference. |
 | `pnpm rust:fmt` | Check `rustfmt` without mutation. |
 | `pnpm rust:clippy` | Lint every target and feature with warnings denied. |
 | `pnpm rust:test` | Run native tests with nextest plus Rust documentation tests. |
 | `pnpm rust:deny` | Enforce advisory, license, duplicate and source policy. |
-| `pnpm rust:wasm` | Build the default workspace, then execute the feature-gated Wasm corpus self-test. |
-| `pnpm rust:coverage` | Enforce at least 90% line coverage with branch instrumentation. |
+| `pnpm rust:wasm` | Inspect the default artifact, then execute and inspect the feature-gated self-test artifact. |
+| `pnpm rust:coverage` | Enforce at least 90% line coverage with branch instrumentation and `--locked`. |
 | `pnpm rust:check` | Run every M1 Rust merge gate. |
 | `pnpm check` | Run TypeScript/Cloudflare gates and `pnpm rust:check`. |
 
@@ -119,7 +127,7 @@ A toolchain update is one atomic ER-00 change:
 1. change root/leaf pins together;
 2. regenerate `pnpm-lock.yaml`, `Cargo.lock`, and `fuzz/Cargo.lock`;
 3. regenerate Wrangler binding types when the Cloudflare toolchain changes;
-4. run contract, boundary, budget and work-packet checks;
+4. run contract, boundary, budget, branch-hygiene and work-packet checks;
 5. run lint, project-reference typecheck, unit and Workers integration tests;
 6. run all Rust merge gates and the minified Wrangler dry-run;
 7. record exact versions and generation impact in the PR.

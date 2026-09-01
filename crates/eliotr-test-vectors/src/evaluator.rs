@@ -92,7 +92,7 @@ impl From<VectorParseError> for VectorVerificationError {
 /// Returns the first deterministic mismatch without including source bytes.
 pub fn verify_vector_set(set: &VectorSet) -> Result<(), VectorVerificationError> {
     for case in set.cases() {
-        let actual = validate_canonical_utf8_transport(case.input(), case.max_bytes());
+        let actual = validate_canonical_utf8_transport(case.input(), case.max_bytes() as usize);
         match (case.expected(), actual) {
             (ExpectedOutcome::Success { output }, Ok(value)) => {
                 if value.as_bytes() != output {
@@ -236,5 +236,46 @@ wrong_success|0|61|ok|61|-
                 actual_code: "ELIOTR_UTF8_TOO_LARGE",
             }) if case_id == "wrong_success"
         ));
+    }
+
+    #[test]
+    fn wraps_parse_errors_and_formats_every_mismatch_without_source_bytes() {
+        let parse_error = parse_vector_set("");
+        let Err(parse_error) = parse_error else {
+            return;
+        };
+        let wrapped = VectorVerificationError::from(parse_error);
+        assert!(
+            wrapped
+                .to_string()
+                .contains("invalid Eliot Research vector frame")
+        );
+
+        let messages = [
+            VectorVerificationError::UnexpectedError {
+                case_id: "a".to_owned(),
+                actual_code: "E",
+            }
+            .to_string(),
+            VectorVerificationError::UnexpectedSuccess {
+                case_id: "b".to_owned(),
+            }
+            .to_string(),
+            VectorVerificationError::OutputMismatch {
+                case_id: "c".to_owned(),
+            }
+            .to_string(),
+            VectorVerificationError::ErrorCodeMismatch {
+                case_id: "d".to_owned(),
+                expected_code: "X",
+                actual_code: "Y",
+            }
+            .to_string(),
+        ];
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.starts_with("vector "))
+        );
     }
 }
