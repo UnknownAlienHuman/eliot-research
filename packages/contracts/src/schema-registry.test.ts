@@ -19,6 +19,7 @@ import {
   CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
   CONTRACT_JSON_SCHEMA_DIALECT,
   CONTRACT_SCHEMA_INDEX_PROTOCOL,
+  CONTRACT_SCHEMA_MAX_ORDINAL,
   CONTRACT_SCHEMA_REGISTRY,
   CONTRACT_SCHEMA_REGISTRY_GENERATION,
   CanonicalFixtureDescriptorSchema,
@@ -26,6 +27,7 @@ import {
   ContractSchemaCorpusDocumentSchema,
   ContractSchemaIndexDocumentSchema,
   ContractSchemaIndexEntrySchema,
+  assertCurrentContractCompatibility,
   buildContractSchemaId,
   generateContractSchemaCorpus,
   getContractSchemaDescriptor,
@@ -219,7 +221,7 @@ describe("ER-01 public contract registry", () => {
     ).toEqual(expected);
   });
 
-  it("requires one non-retired compatibility entry for every current schema", async () => {
+  it("requires the current index to equal every active terminal history entry", async () => {
     const index = await buildExpectedIndex();
     const compatibility = ContractCompatibilityRegistrySchema.parse(
       parseJson(compatibilityRegistryRaw),
@@ -228,6 +230,9 @@ describe("ER-01 public contract registry", () => {
     expect(compatibility.registry_generation).toBe(
       CONTRACT_SCHEMA_REGISTRY_GENERATION,
     );
+    expect(() =>
+      assertCurrentContractCompatibility(index.entries, compatibility),
+    ).not.toThrow();
     for (const current of index.entries) {
       const matches = compatibility.entries.filter(
         (entry) =>
@@ -259,13 +264,27 @@ describe("ER-01 public contract registry", () => {
       "BACKWARD_COMPATIBLE",
       initial.schema_id,
     );
-    expect(
-      ContractCompatibilityRegistrySchema.safeParse({
-        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
-        registry_generation: 2,
-        entries: [initial, backward],
-      }).success,
-    ).toBe(true);
+    const validHistory = ContractCompatibilityRegistrySchema.parse({
+      protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+      registry_generation: 2,
+      entries: [initial, backward],
+    });
+
+    expect(() =>
+      assertCurrentContractCompatibility(
+        [exactIndexFields(backward)],
+        validHistory,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertCurrentContractCompatibility(
+        [exactIndexFields(initial)],
+        validHistory,
+      ),
+    ).toThrow("terminal history");
+    expect(() =>
+      assertCurrentContractCompatibility([], validHistory),
+    ).toThrow("missing from the current index");
 
     expect(
       ContractSchemaIndexEntrySchema.safeParse({
@@ -279,12 +298,45 @@ describe("ER-01 public contract registry", () => {
         json_schema_sha256: initial.json_schema_sha256,
       }).success,
     ).toBe(false);
+    expect(
+      ContractSchemaIndexEntrySchema.safeParse({
+        ...exactIndexFields(initial),
+        schema_generation: CONTRACT_SCHEMA_MAX_ORDINAL + 1,
+      }).success,
+    ).toBe(false);
+    expect(() =>
+      buildContractSchemaId(
+        "common",
+        "SyntheticSchema",
+        1,
+        CONTRACT_SCHEMA_MAX_ORDINAL + 1,
+      ),
+    ).toThrow();
 
     expect(
       ContractCompatibilityRegistrySchema.safeParse({
         protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
         registry_generation: 2,
         entries: [backward],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 3,
+        entries: [
+          initial,
+          backward,
+          compatibilityEntry(
+            "SyntheticSchema",
+            "common",
+            1,
+            3,
+            "BACKWARD_COMPATIBLE",
+            initial.schema_id,
+          ),
+        ],
       }).success,
     ).toBe(false);
 
@@ -362,6 +414,29 @@ describe("ER-01 public contract registry", () => {
         entries: [versionTwo, lowerBreaking],
       }).success,
     ).toBe(false);
+
+    const retired = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      2,
+      "RETIRED",
+      initial.schema_id,
+    );
+    const retiredHistory = ContractCompatibilityRegistrySchema.parse({
+      protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+      registry_generation: 2,
+      entries: [initial, retired],
+    });
+    expect(() =>
+      assertCurrentContractCompatibility([], retiredHistory),
+    ).not.toThrow();
+    expect(() =>
+      assertCurrentContractCompatibility(
+        [exactIndexFields(retired)],
+        retiredHistory,
+      ),
+    ).toThrow("retired");
   });
 
   it("matches canonical fixture metadata and rejects path traversal", () => {
@@ -392,6 +467,20 @@ describe("ER-01 public contract registry", () => {
     expect(
       serializeCanonicalContractJson({ z: 1, A: 2, a: 3, omitted: undefined }),
     ).toBe('{"A":2,"a":3,"z":1}');
+
+    const hostileKey = JSON.parse(
+      '{"__proto__":{"polluted":true},"a":1}',
+    ) as unknown;
+    expect(serializeCanonicalContractJson(hostileKey)).toBe(
+      '{"__proto__":{"polluted":true},"a":1}',
+    );
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
+
+    const cyclic: { self?: unknown } = {};
+    cyclic.self = cyclic;
+    expect(() => serializeCanonicalContractJson(cyclic)).toThrow(
+      "cyclic value",
+    );
     expect(() => serializeCanonicalContractJson(Number.NaN)).toThrow(
       "non-finite number",
     );
