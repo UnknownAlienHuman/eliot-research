@@ -54,10 +54,16 @@ impl fmt::Display for VectorVerificationError {
                 "vector {case_id} expected success but returned {actual_code}"
             ),
             Self::UnexpectedSuccess { case_id } => {
-                write!(formatter, "vector {case_id} expected an error but succeeded")
+                write!(
+                    formatter,
+                    "vector {case_id} expected an error but succeeded"
+                )
             }
             Self::OutputMismatch { case_id } => {
-                write!(formatter, "vector {case_id} returned different output bytes")
+                write!(
+                    formatter,
+                    "vector {case_id} returned different output bytes"
+                )
             }
             Self::ErrorCodeMismatch {
                 case_id,

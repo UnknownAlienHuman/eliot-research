@@ -45,7 +45,7 @@ async function rustFiles(directory) {
 
 function sourceViolations(source) {
   return forbiddenSourcePatterns
-    .filter(([_name, pattern]) => pattern.test(source))
+    .filter((entry) => entry[1].test(source))
     .map(([name]) => name);
 }
 

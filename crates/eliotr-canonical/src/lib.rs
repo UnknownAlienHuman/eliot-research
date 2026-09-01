@@ -95,10 +95,7 @@ mod tests {
 
     #[test]
     fn preserves_ascii_bytes() {
-        assert_eq!(
-            validate_canonical_utf8_transport(b"hello", 5),
-            Ok("hello")
-        );
+        assert_eq!(validate_canonical_utf8_transport(b"hello", 5), Ok("hello"));
     }
 
     #[test]

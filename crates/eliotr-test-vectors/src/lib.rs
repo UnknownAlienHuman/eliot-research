@@ -9,15 +9,12 @@ mod evaluator;
 mod model;
 mod parser;
 
-pub use evaluator::{
-    VectorVerificationError, verify_embedded_vectors, verify_vector_set,
-};
+pub use evaluator::{VectorVerificationError, verify_embedded_vectors, verify_vector_set};
 pub use model::{
-    CanonicalUtf8Vector, ExpectedError, ExpectedOutcome, VECTOR_PROTOCOL,
-    VECTOR_SCHEMA_GENERATION, VectorSet,
+    CanonicalUtf8Vector, ExpectedError, ExpectedOutcome, VECTOR_PROTOCOL, VECTOR_SCHEMA_GENERATION,
+    VectorSet,
 };
 pub use parser::{VectorParseError, VectorParseErrorKind, parse_vector_set};
 
 /// Exact committed M1 fixture bytes embedded into native Rust and Rust/Wasm builds.
-pub const EMBEDDED_CANONICAL_UTF8_VECTORS: &str =
-    include_str!("../fixtures/canonical-utf8.v1.txt");
+pub const EMBEDDED_CANONICAL_UTF8_VECTORS: &str = include_str!("../fixtures/canonical-utf8.v1.txt");

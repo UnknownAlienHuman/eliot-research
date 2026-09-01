@@ -14,8 +14,7 @@ use crate::model::{
 
 const PROTOCOL_HEADER: &str = "# protocol=eliotr.test-vectors.canonical-utf8.v1";
 const GENERATION_HEADER: &str = "# schema_generation=1";
-const COLUMNS_HEADER: &str =
-    "# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code";
+const COLUMNS_HEADER: &str = "# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code";
 const COLUMN_COUNT: usize = 6;
 
 /// Exact reason a fixture frame was rejected.
@@ -177,7 +176,10 @@ pub fn parse_vector_set(input: &str) -> Result<VectorSet, VectorParseError> {
         ));
     }
 
-    debug_assert_eq!(VECTOR_PROTOCOL, PROTOCOL_HEADER.trim_start_matches("# protocol="));
+    debug_assert_eq!(
+        VECTOR_PROTOCOL,
+        PROTOCOL_HEADER.trim_start_matches("# protocol=")
+    );
 
     Ok(VectorSet::new(VECTOR_SCHEMA_GENERATION, cases))
 }
@@ -224,9 +226,9 @@ fn parse_max_bytes(value: &str, line: usize) -> Result<usize, VectorParseError> 
         ));
     }
 
-    value.parse::<usize>().map_err(|_error| {
-        VectorParseError::new(line, VectorParseErrorKind::InvalidMaxBytes)
-    })
+    value
+        .parse::<usize>()
+        .map_err(|_error| VectorParseError::new(line, VectorParseErrorKind::InvalidMaxBytes))
 }
 
 fn parse_expected(
@@ -272,11 +274,7 @@ fn parse_expected(
     }
 }
 
-fn parse_hex(
-    value: &str,
-    field: &'static str,
-    line: usize,
-) -> Result<Vec<u8>, VectorParseError> {
+fn parse_hex(value: &str, field: &'static str, line: usize) -> Result<Vec<u8>, VectorParseError> {
     if value == "-" {
         return Ok(Vec::new());
     }
