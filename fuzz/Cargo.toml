@@ -8,8 +8,8 @@ publish = false
 cargo-fuzz = true
 
 [dependencies]
-eliotr-canonical = { path = "../crates/eliotr-canonical" }
-eliotr-test-vectors = { path = "../crates/eliotr-test-vectors" }
+eliotr-canonical = { path = "../crates/eliotr-canonical", version = "=0.1.0" }
+eliotr-test-vectors = { path = "../crates/eliotr-test-vectors", version = "=0.1.0" }
 libfuzzer-sys = "=0.4.13"
 
 [[bin]]
