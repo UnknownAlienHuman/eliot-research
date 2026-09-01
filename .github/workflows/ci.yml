@@ -96,6 +96,11 @@ jobs:
             --component rustfmt \
             --target wasm32-unknown-unknown
           rustup default 1.98.0
+      - name: Install pinned branch-coverage toolchain
+        run: |
+          rustup toolchain install nightly-2026-08-31 \
+            --profile minimal \
+            --component llvm-tools-preview
       - name: Install checksum-verified pinned Cargo tools
         uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf
         with:
@@ -140,7 +145,7 @@ jobs:
           node scripts/check-rust-wasm.mjs --mode self-test
       - name: Enforce deterministic-core coverage
         run: |
-          cargo llvm-cov \
+          cargo +nightly-2026-08-31 llvm-cov \
             --package eliotr-canonical \
             --package eliotr-test-vectors \
             --all-features \
