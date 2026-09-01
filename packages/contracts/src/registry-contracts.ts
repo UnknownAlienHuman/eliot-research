@@ -74,6 +74,49 @@ export type ContractStructuralStrictness = z.infer<
   typeof ContractStructuralStrictnessSchema
 >;
 
+interface SchemaIdentityFields {
+  readonly schema_id: string;
+  readonly export_name: string;
+  readonly family: ContractSchemaFamily;
+  readonly schema_version: number;
+  readonly schema_generation: number;
+}
+
+export function contractSchemaSlug(exportName: string): string {
+  return exportName
+    .replace(/Schema$/u, "")
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
+    .replace(/([a-z0-9])([A-Z])/gu, "$1-$2")
+    .toLowerCase();
+}
+
+export function buildContractSchemaId(
+  family: ContractSchemaFamily,
+  exportName: string,
+  schemaVersion: number,
+  schemaGeneration: number,
+): ContractSchemaId {
+  return `urn:eliotr:contracts:${family}:${contractSchemaSlug(exportName)}:v${schemaVersion}:g${schemaGeneration}`;
+}
+
+function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
+  return (
+    value.schema_id ===
+    buildContractSchemaId(
+      value.family,
+      value.export_name,
+      value.schema_version,
+      value.schema_generation,
+    )
+  );
+}
+
+const schemaIdentityRefinement = {
+  path: ["schema_id"] as const,
+  message:
+    "schema_id must encode the exact family, export name, version and generation",
+};
+
 export const ContractSchemaIdentitySchema = z
   .object({
     schema_id: ContractSchemaIdSchema,
@@ -82,7 +125,8 @@ export const ContractSchemaIdentitySchema = z
     schema_version: PositiveIntegerSchema,
     schema_generation: PositiveIntegerSchema,
   })
-  .strict();
+  .strict()
+  .refine(hasCoherentSchemaIdentity, schemaIdentityRefinement);
 export type ContractSchemaIdentity = z.infer<
   typeof ContractSchemaIdentitySchema
 >;
@@ -98,7 +142,8 @@ export const ContractSchemaCorpusEntrySchema = z
     structural_strictness: ContractStructuralStrictnessSchema,
     json_schema: z.record(z.string(), z.unknown()),
   })
-  .strict();
+  .strict()
+  .refine(hasCoherentSchemaIdentity, schemaIdentityRefinement);
 
 export const ContractSchemaCorpusDocumentSchema = z
   .object({
@@ -155,7 +200,8 @@ export const ContractSchemaIndexEntrySchema = z
     structural_strictness: ContractStructuralStrictnessSchema,
     json_schema_sha256: Sha256Schema,
   })
-  .strict();
+  .strict()
+  .refine(hasCoherentSchemaIdentity, schemaIdentityRefinement);
 export type ContractSchemaIndexEntry = z.infer<
   typeof ContractSchemaIndexEntrySchema
 >;
@@ -229,6 +275,7 @@ export const ContractCompatibilityEntrySchema = z
     note: z.string().min(1).max(1024),
   })
   .strict()
+  .refine(hasCoherentSchemaIdentity, schemaIdentityRefinement)
   .superRefine((value, context) => {
     if (
       value.compatibility === "INITIAL" &&
