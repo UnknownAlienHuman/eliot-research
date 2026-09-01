@@ -16,8 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - run: corepack enable
@@ -36,6 +36,8 @@ jobs:
         run: pnpm budgets:check
       - name: Verify swarm work packets
         run: pnpm work-packets:check
+      - name: Verify branch and worktree hygiene
+        run: pnpm branch-hygiene:check
       - name: Verify delivery authority fixture
         run: pnpm delivery:check
       - name: Verify ingest admission authority fixture
@@ -81,8 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
       - name: Install pinned Rust toolchain
@@ -123,8 +125,10 @@ jobs:
         run: cargo test --doc --workspace --all-features --locked
       - name: Audit Rust dependencies and sources
         run: cargo deny check
-      - name: Build portable Rust workspace
-        run: cargo build --workspace --target wasm32-unknown-unknown --release --locked
+      - name: Build and inspect the default portable Rust workspace
+        run: |
+          cargo build --workspace --target wasm32-unknown-unknown --release --locked
+          node scripts/check-rust-wasm.mjs --mode default
       - name: Execute exact vectors through compiled Rust/Wasm
         run: |
           cargo build \
@@ -133,18 +137,19 @@ jobs:
             --release \
             --features m1-self-test-export \
             --locked
-          node scripts/check-rust-wasm.mjs
+          node scripts/check-rust-wasm.mjs --mode self-test
       - name: Enforce deterministic-core coverage
         run: |
           cargo llvm-cov \
             --package eliotr-canonical \
             --package eliotr-test-vectors \
             --all-features \
+            --locked \
             --branch \
             --fail-under-lines 90 \
             --text
       - name: Verify the scheduled fuzz dependency lock
         run: |
-          cargo generate-lockfile --manifest-path fuzz/Cargo.toml
-          cat fuzz/Cargo.lock
+          test -f fuzz/Cargo.lock
+          cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
           test -z "$(git status --porcelain -- fuzz/Cargo.lock)"
