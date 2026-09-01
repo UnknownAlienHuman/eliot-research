@@ -9,6 +9,7 @@ import {
   CONTRACT_SCHEMA_REGISTRY_GENERATION,
   ContractCompatibilityRegistrySchema,
   ContractSchemaIndexDocumentSchema,
+  assertCurrentContractCompatibility,
   generateContractSchemaCorpus,
   serializeCanonicalContractJson,
 } from "../../packages/contracts/dist/registry-index.js";
@@ -102,43 +103,7 @@ function assertCurrentCompatibility(index, rawCompatibility) {
     );
   }
 
-  const exactFields = [
-    "schema_id",
-    "export_name",
-    "family",
-    "schema_version",
-    "schema_generation",
-    "kind",
-    "structural_strictness",
-    "json_schema_sha256",
-  ];
-
-  for (const current of index.entries) {
-    const matches = parsed.entries.filter(
-      (entry) =>
-        entry.export_name === current.export_name &&
-        entry.schema_version === current.schema_version &&
-        entry.schema_generation === current.schema_generation,
-    );
-    if (matches.length !== 1) {
-      throw new Error(
-        `${current.export_name} requires exactly one current compatibility entry; received ${matches.length}`,
-      );
-    }
-
-    const [match] = matches;
-    if (match === undefined || match.compatibility === "RETIRED") {
-      throw new Error(`${current.export_name} current generation is retired`);
-    }
-    for (const field of exactFields) {
-      if (match[field] !== current[field]) {
-        throw new Error(
-          `${current.export_name} compatibility ${field} drift: ${String(match[field])} != ${String(current[field])}`,
-        );
-      }
-    }
-  }
-
+  assertCurrentContractCompatibility(index.entries, parsed);
   return parsed;
 }
 
