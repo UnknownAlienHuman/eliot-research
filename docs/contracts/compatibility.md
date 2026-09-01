@@ -6,11 +6,16 @@ The compatibility registry is append-only. A current schema is identified by
 ## Change classes
 
 - **INITIAL** — first published generated schema; it has no predecessor.
-- **BACKWARD_COMPATIBLE** — old readers can safely interpret the new shape. Increment the family
-  generation and point `supersedes_schema_id` to the previous entry.
+- **BACKWARD_COMPATIBLE** — old readers can safely interpret the new shape. Keep the schema version,
+  increment the generation and point `supersedes_schema_id` to the previous entry.
 - **BREAKING** — an old reader can reject or, worse, misinterpret the new shape. Increment the schema
-  version, reset or explicitly advance the generation, and retain a migration note.
-- **RETIRED** — the generation is no longer admitted as current. Retirement never deletes history.
+  version and retain a migration note.
+- **RETIRED** — the generation is no longer admitted as current. Keep the version, advance the
+  generation and retain the predecessor. Retirement never deletes history.
+
+Every non-initial entry must reference an existing predecessor with the same export name and family. A
+compatibility entry cannot supersede itself, cross families, move backward in generation, or create a
+cycle. The schema URN must encode exactly the entry's family, export name, version and generation.
 
 Any generated JSON Schema byte change requires a new registry entry. Updating only the digest under an
 existing version/generation is forbidden because it destroys reproducibility.
