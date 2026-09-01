@@ -123,7 +123,7 @@
     {
       "export_name": "CanonicalFixtureDescriptorSchema",
       "family": "registry",
-      "json_schema_sha256": "b328bdef1cc655e1ae46539bb6fe1742b7e90dc56e93be8c6b6334b02a75c0d4",
+      "json_schema_sha256": "d86ed8de8135869aa03983e31e002b8d3b6fc1f2b3998b3e971e57735a041196",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v1:g1",
@@ -133,7 +133,7 @@
     {
       "export_name": "CanonicalFixtureRegistryDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "a88e62be06452c4ed086c2f1063b9b64580cd222c705dd8cc0056d89fcb444ff",
+      "json_schema_sha256": "bbc4c262582eb1dde80531b52fab6531badf59dde41646f2cea7644328866e4d",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v1:g1",
@@ -253,7 +253,7 @@
     {
       "export_name": "ContractSchemaCorpusDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "899f04b54bd5a5592fb81da459597c44e77a4a1caf656b0cd4bb6743e072f650",
+      "json_schema_sha256": "5f1c328a1b832654241b449eacf28d904f97a6750783c3cbbfee2a002064b37a",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v1:g1",
@@ -263,7 +263,7 @@
     {
       "export_name": "ContractSchemaCorpusEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "015d0148df45473f568049860b367e17396362259b3825725cbba33e5d51f5cf",
+      "json_schema_sha256": "fe6f8ad554221d2f032953fb140bd725aac7919174b22319b3201627779e5dda",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
@@ -291,16 +291,6 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
-      "export_name": "ContractSchemaIdentitySchema",
-      "family": "registry",
-      "json_schema_sha256": "eb0a86ca5682541d9ed8bd6e019b30c2d473a1ea9c96cdb769e5d874e563ebd4",
-      "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
-      "schema_version": 1,
-      "structural_strictness": "CLOSED_OBJECT"
-    },
-    {
       "export_name": "ContractSchemaIdSchema",
       "family": "registry",
       "json_schema_sha256": "1a8e1543ea422c131b3d1be1349b3f6db7c932ecc2cbd189661a03089f9cf245",
@@ -311,9 +301,19 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "ContractSchemaIdentitySchema",
+      "family": "registry",
+      "json_schema_sha256": "2a1d535ff8533abfda4f1c432827062a1d9057df37547eca6935b1bdefdceced",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ContractSchemaIndexDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "e5c00d1ed5bab49055e10f3e93cba294ee0a3060340e7cfa4e4656de1d5e1273",
+      "json_schema_sha256": "f6edf0e436f864e260fa0c8e367312801ccf39bd71ca4ed681393759d1e9f3e1",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v1:g1",
@@ -323,7 +323,7 @@
     {
       "export_name": "ContractSchemaIndexEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "e1485578bf2f1fb45da8ca386f6fe7456627ba13a23c758f280ad050b5860cb3",
+      "json_schema_sha256": "cdbcf78dc267daaf8e161658edeead838a83a53674c87b1c95efe5e745dc1131",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",
@@ -881,16 +881,6 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
-      "export_name": "ProjectionItemSchema",
-      "family": "retrieval",
-      "json_schema_sha256": "4dd6b015a93824a357cb1d5a0ef10dc703d90cc91b4aee11c7dff769ebfb295f",
-      "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
-      "schema_version": 1,
-      "structural_strictness": "CLOSED_OBJECT"
-    },
-    {
       "export_name": "ProjectSchema",
       "family": "library",
       "json_schema_sha256": "86201296a4ca4c7d5943a10b06fc900c01966e86f13da5d2f29da80b63528307",
@@ -907,6 +897,16 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:library:project-source-membership:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectionItemSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "4dd6b015a93824a357cb1d5a0ef10dc703d90cc91b4aee11c7dff769ebfb295f",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },

@@ -1168,6 +1168,7 @@
           "fixture_path": {
             "maxLength": 512,
             "minLength": 1,
+            "pattern": "^(?:tests\\/fixtures\\/contracts|docs\\/contracts)\\/[A-Za-z0-9._/-]+$",
             "type": "string"
           },
           "media_type": {
@@ -1242,6 +1243,7 @@
               "fixture_path": {
                 "maxLength": 512,
                 "minLength": 1,
+                "pattern": "^(?:tests\\/fixtures\\/contracts|docs\\/contracts)\\/[A-Za-z0-9._/-]+$",
                 "type": "string"
               },
               "media_type": {
@@ -2592,6 +2594,13 @@
             "maximum": 9007199254740991,
             "type": "integer"
           },
+          "__schema10": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          },
           "__schema2": {
             "const": "https://json-schema.org/draft/2020-12/schema",
             "type": "string"
@@ -2607,71 +2616,28 @@
             "additionalProperties": false,
             "properties": {
               "export_name": {
-                "maxLength": 256,
-                "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
-                "type": "string"
+                "$ref": "#/$defs/__schema6"
               },
               "family": {
-                "enum": [
-                  "backup",
-                  "common",
-                  "drive-exchange",
-                  "erasure",
-                  "evidence",
-                  "federation",
-                  "library",
-                  "model",
-                  "navigation",
-                  "normalized-bundle",
-                  "operations",
-                  "owner-cutover",
-                  "policy",
-                  "publication",
-                  "registry",
-                  "research",
-                  "residency",
-                  "retrieval",
-                  "scope",
-                  "security",
-                  "source"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema7"
               },
               "json_schema": {
-                "additionalProperties": {},
-                "propertyNames": {
-                  "type": "string"
-                },
-                "type": "object"
+                "$ref": "#/$defs/__schema10"
               },
               "kind": {
-                "enum": [
-                  "SCALAR",
-                  "ENUM",
-                  "OBJECT",
-                  "UNION",
-                  "OTHER"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema8"
               },
               "schema_generation": {
                 "$ref": "#/$defs/__schema1"
               },
               "schema_id": {
-                "maxLength": 256,
-                "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-                "type": "string"
+                "$ref": "#/$defs/__schema5"
               },
               "schema_version": {
                 "$ref": "#/$defs/__schema1"
               },
               "structural_strictness": {
-                "enum": [
-                  "CLOSED_OBJECT",
-                  "EXPLICIT_MAP",
-                  "NON_OBJECT"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema9"
               }
             },
             "required": [
@@ -2685,6 +2651,60 @@
               "json_schema"
             ],
             "type": "object"
+          },
+          "__schema5": {
+            "maxLength": 256,
+            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema6": {
+            "maxLength": 256,
+            "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
+            "type": "string"
+          },
+          "__schema7": {
+            "enum": [
+              "backup",
+              "common",
+              "drive-exchange",
+              "erasure",
+              "evidence",
+              "federation",
+              "library",
+              "model",
+              "navigation",
+              "normalized-bundle",
+              "operations",
+              "owner-cutover",
+              "policy",
+              "publication",
+              "registry",
+              "research",
+              "residency",
+              "retrieval",
+              "scope",
+              "security",
+              "source"
+            ],
+            "type": "string"
+          },
+          "__schema8": {
+            "enum": [
+              "SCALAR",
+              "ENUM",
+              "OBJECT",
+              "UNION",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "__schema9": {
+            "enum": [
+              "CLOSED_OBJECT",
+              "EXPLICIT_MAP",
+              "NON_OBJECT"
+            ],
+            "type": "string"
           }
         },
         "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v1:g1",
@@ -2733,21 +2753,16 @@
       "json_schema": {
         "$defs": {
           "__schema0": {
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991,
-            "type": "integer"
-          }
-        },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "export_name": {
+            "maxLength": 256,
+            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema1": {
             "maxLength": 256,
             "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
             "type": "string"
           },
-          "family": {
+          "__schema2": {
             "enum": [
               "backup",
               "common",
@@ -2773,14 +2788,12 @@
             ],
             "type": "string"
           },
-          "json_schema": {
-            "additionalProperties": {},
-            "propertyNames": {
-              "type": "string"
-            },
-            "type": "object"
+          "__schema3": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
           },
-          "kind": {
+          "__schema4": {
             "enum": [
               "SCALAR",
               "ENUM",
@@ -2790,24 +2803,49 @@
             ],
             "type": "string"
           },
-          "schema_generation": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "schema_id": {
-            "maxLength": 256,
-            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-            "type": "string"
-          },
-          "schema_version": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "structural_strictness": {
+          "__schema5": {
             "enum": [
               "CLOSED_OBJECT",
               "EXPLICIT_MAP",
               "NON_OBJECT"
             ],
             "type": "string"
+          },
+          "__schema6": {
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            },
+            "type": "object"
+          }
+        },
+        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "export_name": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "family": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "json_schema": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "kind": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "schema_generation": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "schema_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "structural_strictness": {
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -2897,26 +2935,42 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "ContractSchemaIdSchema",
+      "family": "registry",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "maxLength": 256,
+        "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+        "title": "ContractSchemaId",
+        "type": "string",
+        "x-eliotr-family": "registry",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "SCALAR",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
       "export_name": "ContractSchemaIdentitySchema",
       "family": "registry",
       "json_schema": {
         "$defs": {
           "__schema0": {
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991,
-            "type": "integer"
-          }
-        },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "export_name": {
+            "maxLength": 256,
+            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema1": {
             "maxLength": 256,
             "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
             "type": "string"
           },
-          "family": {
+          "__schema2": {
             "enum": [
               "backup",
               "common",
@@ -2942,16 +2996,30 @@
             ],
             "type": "string"
           },
+          "__schema3": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "$id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "export_name": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "family": {
+            "$ref": "#/$defs/__schema2"
+          },
           "schema_generation": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema3"
           },
           "schema_id": {
-            "maxLength": 256,
-            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-            "type": "string"
+            "$ref": "#/$defs/__schema0"
           },
           "schema_version": {
-            "$ref": "#/$defs/__schema0"
+            "$ref": "#/$defs/__schema3"
           }
         },
         "required": [
@@ -2975,27 +3043,6 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
-      "export_name": "ContractSchemaIdSchema",
-      "family": "registry",
-      "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "maxLength": 256,
-        "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-        "title": "ContractSchemaId",
-        "type": "string",
-        "x-eliotr-family": "registry",
-        "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
-        "x-eliotr-semantic-authority": "zod-runtime"
-      },
-      "kind": "SCALAR",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
-      "schema_version": 1,
-      "structural_strictness": "NON_OBJECT"
-    },
-    {
       "export_name": "ContractSchemaIndexDocumentSchema",
       "family": "registry",
       "json_schema": {
@@ -3008,6 +3055,10 @@
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991,
             "type": "integer"
+          },
+          "__schema10": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
           },
           "__schema2": {
             "const": "https://json-schema.org/draft/2020-12/schema",
@@ -3024,68 +3075,28 @@
             "additionalProperties": false,
             "properties": {
               "export_name": {
-                "maxLength": 256,
-                "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
-                "type": "string"
+                "$ref": "#/$defs/__schema6"
               },
               "family": {
-                "enum": [
-                  "backup",
-                  "common",
-                  "drive-exchange",
-                  "erasure",
-                  "evidence",
-                  "federation",
-                  "library",
-                  "model",
-                  "navigation",
-                  "normalized-bundle",
-                  "operations",
-                  "owner-cutover",
-                  "policy",
-                  "publication",
-                  "registry",
-                  "research",
-                  "residency",
-                  "retrieval",
-                  "scope",
-                  "security",
-                  "source"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema7"
               },
               "json_schema_sha256": {
-                "pattern": "^[a-f0-9]{64}$",
-                "type": "string"
+                "$ref": "#/$defs/__schema10"
               },
               "kind": {
-                "enum": [
-                  "SCALAR",
-                  "ENUM",
-                  "OBJECT",
-                  "UNION",
-                  "OTHER"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema8"
               },
               "schema_generation": {
                 "$ref": "#/$defs/__schema1"
               },
               "schema_id": {
-                "maxLength": 256,
-                "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-                "type": "string"
+                "$ref": "#/$defs/__schema5"
               },
               "schema_version": {
                 "$ref": "#/$defs/__schema1"
               },
               "structural_strictness": {
-                "enum": [
-                  "CLOSED_OBJECT",
-                  "EXPLICIT_MAP",
-                  "NON_OBJECT"
-                ],
-                "type": "string"
+                "$ref": "#/$defs/__schema9"
               }
             },
             "required": [
@@ -3099,6 +3110,60 @@
               "json_schema_sha256"
             ],
             "type": "object"
+          },
+          "__schema5": {
+            "maxLength": 256,
+            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema6": {
+            "maxLength": 256,
+            "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
+            "type": "string"
+          },
+          "__schema7": {
+            "enum": [
+              "backup",
+              "common",
+              "drive-exchange",
+              "erasure",
+              "evidence",
+              "federation",
+              "library",
+              "model",
+              "navigation",
+              "normalized-bundle",
+              "operations",
+              "owner-cutover",
+              "policy",
+              "publication",
+              "registry",
+              "research",
+              "residency",
+              "retrieval",
+              "scope",
+              "security",
+              "source"
+            ],
+            "type": "string"
+          },
+          "__schema8": {
+            "enum": [
+              "SCALAR",
+              "ENUM",
+              "OBJECT",
+              "UNION",
+              "OTHER"
+            ],
+            "type": "string"
+          },
+          "__schema9": {
+            "enum": [
+              "CLOSED_OBJECT",
+              "EXPLICIT_MAP",
+              "NON_OBJECT"
+            ],
+            "type": "string"
           }
         },
         "$id": "urn:eliotr:contracts:registry:contract-schema-index-document:v1:g1",
@@ -3147,21 +3212,16 @@
       "json_schema": {
         "$defs": {
           "__schema0": {
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991,
-            "type": "integer"
-          }
-        },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "export_name": {
+            "maxLength": 256,
+            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema1": {
             "maxLength": 256,
             "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
             "type": "string"
           },
-          "family": {
+          "__schema2": {
             "enum": [
               "backup",
               "common",
@@ -3187,11 +3247,12 @@
             ],
             "type": "string"
           },
-          "json_schema_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "type": "string"
+          "__schema3": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
           },
-          "kind": {
+          "__schema4": {
             "enum": [
               "SCALAR",
               "ENUM",
@@ -3201,24 +3262,46 @@
             ],
             "type": "string"
           },
-          "schema_generation": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "schema_id": {
-            "maxLength": 256,
-            "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
-            "type": "string"
-          },
-          "schema_version": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "structural_strictness": {
+          "__schema5": {
             "enum": [
               "CLOSED_OBJECT",
               "EXPLICIT_MAP",
               "NON_OBJECT"
             ],
             "type": "string"
+          },
+          "__schema6": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "export_name": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "family": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "json_schema_sha256": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "kind": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "schema_generation": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "schema_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "schema_version": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "structural_strictness": {
+            "$ref": "#/$defs/__schema5"
           }
         },
         "required": [
@@ -8847,94 +8930,6 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
-      "export_name": "ProjectionItemSchema",
-      "family": "retrieval",
-      "json_schema": {
-        "$defs": {
-          "__schema0": {
-            "maxLength": 256,
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "$id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "canonical_section_id": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "content_sha256": {
-            "pattern": "^[a-f0-9]{64}$",
-            "type": "string"
-          },
-          "document_context_header": {
-            "type": "string"
-          },
-          "heading_path": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "instruction_taint": {
-            "enum": [
-              "CLEARED",
-              "DATA_ONLY",
-              "UNTRUSTED",
-              "COMMAND_LIKE"
-            ],
-            "type": "string"
-          },
-          "item_key": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "normalized_offset_map_ref": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "project_membership_ids": {
-            "items": {
-              "$ref": "#/$defs/__schema0"
-            },
-            "type": "array"
-          },
-          "projection_generation": {
-            "$ref": "#/$defs/__schema0"
-          },
-          "section_text": {
-            "type": "string"
-          },
-          "source_revision_ref": {
-            "$ref": "#/$defs/__schema0"
-          }
-        },
-        "required": [
-          "item_key",
-          "canonical_section_id",
-          "source_revision_ref",
-          "project_membership_ids",
-          "heading_path",
-          "document_context_header",
-          "section_text",
-          "normalized_offset_map_ref",
-          "content_sha256",
-          "instruction_taint",
-          "projection_generation"
-        ],
-        "title": "ProjectionItem",
-        "type": "object",
-        "x-eliotr-family": "retrieval",
-        "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
-        "x-eliotr-semantic-authority": "zod-runtime"
-      },
-      "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
-      "schema_version": 1,
-      "structural_strictness": "CLOSED_OBJECT"
-    },
-    {
       "export_name": "ProjectSchema",
       "family": "library",
       "json_schema": {
@@ -9100,6 +9095,94 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:library:project-source-membership:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectionItemSchema",
+      "family": "retrieval",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "canonical_section_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "content_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "document_context_header": {
+            "type": "string"
+          },
+          "heading_path": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "instruction_taint": {
+            "enum": [
+              "CLEARED",
+              "DATA_ONLY",
+              "UNTRUSTED",
+              "COMMAND_LIKE"
+            ],
+            "type": "string"
+          },
+          "item_key": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "normalized_offset_map_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "project_membership_ids": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "type": "array"
+          },
+          "projection_generation": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "section_text": {
+            "type": "string"
+          },
+          "source_revision_ref": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "item_key",
+          "canonical_section_id",
+          "source_revision_ref",
+          "project_membership_ids",
+          "heading_path",
+          "document_context_header",
+          "section_text",
+          "normalized_offset_map_ref",
+          "content_sha256",
+          "instruction_taint",
+          "projection_generation"
+        ],
+        "title": "ProjectionItem",
+        "type": "object",
+        "x-eliotr-family": "retrieval",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
