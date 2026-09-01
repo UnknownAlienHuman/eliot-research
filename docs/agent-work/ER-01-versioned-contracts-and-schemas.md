@@ -35,6 +35,7 @@ outside the paths below.
 - Preserve exact normalized-bundle and owner-cutover canonical bodies/hashes.
 - Keep transport state separate from the exact nine-value research disposition.
 - Publish only wire/domain shapes; no platform bindings or policy decisions.
+- Keep `erc.privacy.erasure.v1` self-contained: exact subject/location identity, dependency-closure targets, fenced backend operations, non-revealing ledger entries, and terminal COMPLETE/BLOCKED invariants live in the versioned contract rather than an application-private type layer.
 
 ## Acceptance
 

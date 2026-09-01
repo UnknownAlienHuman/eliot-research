@@ -23,7 +23,7 @@ function databaseFixture(input: {
         async first<T>() {
           if (sql.includes("schema_state")) {
             return {
-              value: input.schemaGeneration ?? "core-v7-evidence-resolution",
+              value: input.schemaGeneration ?? "core-v8-erasure-closure",
             } as T;
           }
           if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;
@@ -47,7 +47,7 @@ function databaseFixture(input: {
 function environment(
   core: D1Database,
   search: D1Database = databaseFixture({
-    schemaGeneration: "search-v2-projection-generations",
+    schemaGeneration: "search-v3-erasure-invalidation",
   }).database,
 ): Env {
   return {

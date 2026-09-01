@@ -1,4 +1,22 @@
-import type { ErasureReceipt, ErasureRequest, PurgeLocation } from "@eliotr/contracts";
+import type {
+  ErasureReceipt,
+  ErasureRequest,
+  PurgeLocation,
+} from "@eliotr/contracts";
+
+export type {
+  AbsenceVerificationReceipt,
+  ErasureBackend,
+  ErasureBlocker,
+  ErasureDependencyClosure,
+  ErasureFence,
+  ErasureReceipt,
+  ErasureRequest,
+  PurgeAttemptReceipt,
+  PurgeLedgerEntry,
+  PurgeLocation,
+  PurgeTarget,
+} from "@eliotr/contracts";
 
 export const ERASURE_STAGES = [
   "REQUESTED",
@@ -11,25 +29,6 @@ export const ERASURE_STAGES = [
   "INVALIDATE_DEPENDENTS",
   "COMPLETE_OR_BLOCKED",
 ] as const;
-
-export interface ErasureDependencyClosure {
-  readonly request: ErasureRequest;
-  readonly locations: ReadonlyMap<PurgeLocation, readonly string[]>;
-  readonly dependent_wiki_block_refs: readonly string[];
-  readonly dependent_artifact_section_refs: readonly string[];
-  readonly backup_epoch_refs: readonly string[];
-  readonly provider_copy_refs: readonly string[];
-}
-
-export interface ErasureBackend {
-  quarantineAndRevoke(request: ErasureRequest): Promise<void>;
-  enumerateClosure(request: ErasureRequest): Promise<ErasureDependencyClosure>;
-  checkRetentionAndHolds(closure: ErasureDependencyClosure): Promise<readonly { location: PurgeLocation; blocking_ref: string; next_review_at: string }[]>;
-  purge(location: PurgeLocation, objectRefs: readonly string[]): Promise<readonly string[]>;
-  verifyAbsent(location: PurgeLocation, objectRefs: readonly string[]): Promise<boolean>;
-  appendPurgeLedger(receipt: ErasureReceipt): Promise<string>;
-  invalidateDependents(closure: ErasureDependencyClosure): Promise<void>;
-}
 
 export interface ErasureCoordinator {
   execute(request: ErasureRequest): Promise<ErasureReceipt>;

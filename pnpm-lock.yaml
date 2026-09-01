@@ -41,6 +41,9 @@ importers:
 
   apps/eliotr-core:
     dependencies:
+      '@eliotr/cloudflare-erasure':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-erasure
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
@@ -97,6 +100,12 @@ importers:
       vite:
         specifier: 8.2.2
         version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.1)
+
+  packages/cloudflare-erasure:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/cloudflare-evidence:
     dependencies:

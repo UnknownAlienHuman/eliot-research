@@ -23,6 +23,9 @@
       "path": "packages/cloudflare-projection"
     },
     {
+      "path": "packages/cloudflare-erasure"
+    },
+    {
       "path": "packages/cloudflare-evidence"
     },
     {

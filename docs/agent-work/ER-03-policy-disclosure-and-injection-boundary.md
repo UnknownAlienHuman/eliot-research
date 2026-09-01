@@ -23,6 +23,10 @@ outside the paths below.
 - §13.1–13.6
 - §14.6
 
+## Contract boundary coordination
+
+- Privacy-erasure wire/backend types come only from `@eliotr/contracts`; policy may re-export them and evaluate constraints, but it must not define a second `ErasureBackend` or deletion protocol.
+
 ## Required implementation
 
 - Implement fixed-order policy evaluation across storage, purge/read, task/source, client disclosure, inference disclosure, retention/license, and output minimization.
