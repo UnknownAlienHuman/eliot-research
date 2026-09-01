@@ -3,7 +3,7 @@
   "repository": "UnknownAlienHuman/eliot-research",
   "baseline_commit": "c5bce4ce9baffe8542e85e7f37ba2fddc6670e01",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-01T14:00:00Z",
+  "generated_at": "2026-09-01T17:20:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
@@ -34,19 +34,12 @@
         "rust-toolchain.toml",
         "deny.toml",
         ".config/nextest.toml",
-        "crates/README.md",
-        "crates/eliotr-canonical/**",
-        "crates/eliotr-test-vectors/**",
-        "crates/eliotr-kernel-wasm/**",
-        "fuzz/**",
         "scripts/check-boundaries.mjs",
         "scripts/test-boundary-negative.mjs",
         "scripts/check-budgets.mjs",
         "scripts/check-contract-fixtures.mjs",
         "scripts/check-work-packets.mjs",
         "scripts/check-rust-boundaries.mjs",
-        "scripts/check-rust-vectors.mjs",
-        "scripts/check-rust-wasm.mjs",
         "docs/agent-work/manifest.json",
         "docs/agent-work/ER-00-workspace-and-verification-gates.md",
         "docs/implementation/toolchain.md",
@@ -678,6 +671,28 @@
       ],
       "mandatory_negative_case": "Query code after repository head advances and prove evidence stays pinned to the admitted commit SHA.",
       "document": "ER-35-specialist-corpus-profiles.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-40",
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-02",
+        "ER-23"
+      ],
+      "owned_paths": [
+        "crates/README.md",
+        "crates/eliotr-canonical/**",
+        "crates/eliotr-test-vectors/**",
+        "crates/eliotr-kernel-wasm/**",
+        "fuzz/**",
+        "scripts/check-rust-vectors.mjs",
+        "scripts/check-rust-wasm.mjs",
+        "docs/agent-work/ER-40-rust-canonical-identity-and-serialization.md"
+      ],
+      "mandatory_negative_case": "Mutate shared canonical JSON metadata with duplicate keys, unsupported numeric forms, over-limit text, unknown fields, or a digest mismatch; TypeScript, native Rust and Rust/Wasm must fail closed before any authority promotion.",
+      "document": "ER-40-rust-canonical-identity-and-serialization.md",
       "max_package_source_lines": 10000
     }
   ]

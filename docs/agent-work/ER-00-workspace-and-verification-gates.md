@@ -28,19 +28,12 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `rust-toolchain.toml`
 - `deny.toml`
 - `.config/nextest.toml`
-- `crates/README.md`
-- `crates/eliotr-canonical/**`
-- `crates/eliotr-test-vectors/**`
-- `crates/eliotr-kernel-wasm/**`
-- `fuzz/**`
 - `scripts/check-boundaries.mjs`
 - `scripts/test-boundary-negative.mjs`
 - `scripts/check-budgets.mjs`
 - `scripts/check-contract-fixtures.mjs`
 - `scripts/check-work-packets.mjs`
 - `scripts/check-rust-boundaries.mjs`
-- `scripts/check-rust-vectors.mjs`
-- `scripts/check-rust-wasm.mjs`
 - `docs/agent-work/manifest.json`
 - `docs/agent-work/ER-00-workspace-and-verification-gates.md`
 - `docs/implementation/toolchain.md`
@@ -132,3 +125,12 @@ Implementation commit `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296` passed exact-he
 
 M1 is complete. M2 canonical JSON/identity, M3–M4 domain authority, M5 ABI promotion and M6–M7
 shadow/cutover/removal remain open. TypeScript/Cloudflare remains the active product authority.
+
+## Post-M1 ownership handoff
+
+M1 completion evidence is retained above. After M1 closed, the deterministic kernel, shared
+vectors, Wasm shell, fuzz contour, and vector/Wasm verification scripts moved to **ER-40** for
+the ordered M2 canonical identity and serialization migration. ER-00 continues to own the
+repository-wide toolchain, lockfiles, CI composition, and integration gates. A change requiring
+both ownership domains must be split or explicitly coordinated; permanent dual ownership is
+prohibited.
