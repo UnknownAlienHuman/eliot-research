@@ -24,3 +24,13 @@ the exact embedded corpus before the versioned M5 ABI is defined.
 Cloudflare bindings, network I/O, storage authority, clocks, randomness and environment reads do not
 belong in pure crates. New authority moves into Rust only in the M2–M7 order and only after differential
 fixtures prove byte-for-byte agreement.
+
+## M2 canonical-body shadow slice
+
+`eliotr-canonical` now also contains the bounded, product-neutral `canonical-body.v1` family: canonical
+JSON for null/boolean/string/safe-integer/array/object values, exact SHA-256 body digests and fixed-width
+`g1_<sha256>` generation-token validation. Its committed vectors run independently through TypeScript,
+native Rust and Rust/Wasm. This is differential shadow infrastructure only: no product contract consumes
+these outputs and no TypeScript authority has been removed.
+
+Object keys follow the current TypeScript authority's ECMAScript UTF-16 code-unit order, including astral/BMP divergence cases.

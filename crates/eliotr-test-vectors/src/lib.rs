@@ -5,10 +5,12 @@
 
 #![forbid(unsafe_code)]
 
+mod canonical_body;
 mod evaluator;
 mod model;
 mod parser;
 
+pub use canonical_body::*;
 pub use evaluator::{VectorVerificationError, verify_embedded_vectors, verify_vector_set};
 pub use model::{
     CanonicalUtf8Vector, ExpectedError, ExpectedOutcome, MAX_VECTOR_CASE_ID_BYTES,

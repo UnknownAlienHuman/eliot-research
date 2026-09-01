@@ -105,3 +105,18 @@ Produce:
 
 Do not broaden M2 into D1, R2, Queue, Workflow, provider, model, browser, or Cloudflare runtime
 effects. Do not call a local differential pass a live receipt or a product-authority cutover.
+
+## Active implementation slice — canonical-body.v1
+
+This branch implements only the product-neutral M2 foundation:
+
+- bounded canonical JSON for null, booleans, strings, safe integers, arrays and objects;
+- object-key ordering by ECMAScript UTF-16 code units for parity with the current TypeScript
+  authority, including an explicit astral/BMP divergent vector;
+- deterministic SHA-256 over exact body bytes;
+- fixed-width lowercase `g1_<sha256>` generation tokens;
+- one strict corpus evaluated by independent TypeScript, native Rust and Rust/Wasm paths;
+- expanded Miri/fuzz/mutation reach through the existing pure-crate verification jobs.
+
+Floats, arbitrary product objects, existing wire-contract families, stable product IDs, shadow observation
+receipts and authority promotion remain outside this slice. Live receipts remain `NOT EXECUTED`.
