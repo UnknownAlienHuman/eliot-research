@@ -11,7 +11,7 @@ import {
   ContractSchemaIndexDocumentSchema,
   generateContractSchemaCorpus,
   serializeCanonicalContractJson,
-} from "../../packages/contracts/dist/index.js";
+} from "../../packages/contracts/dist/registry-index.js";
 
 const mode = globalThis.process.argv[2] ?? "--check";
 const supportedModes = new Set(["--bootstrap", "--check", "--write"]);
@@ -142,15 +142,10 @@ function assertCurrentCompatibility(index, rawCompatibility) {
   return parsed;
 }
 
-async function writeGeneratedArtifacts(
-  corpus,
-  index,
-  compatibility,
-) {
+async function writeDerivedArtifacts(corpus, index) {
   await Promise.all([
     writeFile(schemaCorpusUrl, documentText(corpus)),
     writeFile(schemaIndexUrl, documentText(index)),
-    writeFile(compatibilityRegistryUrl, documentText(compatibility)),
     writeFile(
       canonicalFixtureRegistryUrl,
       documentText(CANONICAL_FIXTURE_REGISTRY),
@@ -178,7 +173,11 @@ if (mode === "--bootstrap") {
     );
   }
   const compatibility = buildInitialCompatibilityRegistry(index);
-  await writeGeneratedArtifacts(corpus, index, compatibility);
+  await writeDerivedArtifacts(corpus, index);
+  await writeFile(
+    compatibilityRegistryUrl,
+    documentText(compatibility),
+  );
 } else {
   if (existingCompatibility === undefined) {
     throw new Error(
@@ -191,7 +190,7 @@ if (mode === "--bootstrap") {
   );
 
   if (mode === "--write") {
-    await writeGeneratedArtifacts(corpus, index, compatibility);
+    await writeDerivedArtifacts(corpus, index);
   } else {
     await Promise.all([
       assertExactArtifact(schemaCorpusUrl, documentText(corpus)),
