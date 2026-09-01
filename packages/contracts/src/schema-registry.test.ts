@@ -7,23 +7,37 @@ import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import schemaIndexRaw from "../../../docs/contracts/schema-index.v1.json?raw";
 import * as publicContracts from "./index.js";
 import {
-  CANONICAL_FIXTURE_REGISTRY,
   CompletionDispositionSchema,
+  EvidenceContextBlockSchema,
+  FederationJobStatusSchema,
+  SourceOwnerCutoverReceiptSchema,
+} from "./index.js";
+import * as registryContracts from "./registry-index.js";
+import {
+  CANONICAL_FIXTURE_REGISTRY,
+  CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
+  CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
   CONTRACT_JSON_SCHEMA_DIALECT,
   CONTRACT_SCHEMA_INDEX_PROTOCOL,
   CONTRACT_SCHEMA_REGISTRY,
   CONTRACT_SCHEMA_REGISTRY_GENERATION,
+  CanonicalFixtureDescriptorSchema,
   ContractCompatibilityRegistrySchema,
   ContractSchemaCorpusDocumentSchema,
   ContractSchemaIndexDocumentSchema,
-  EvidenceContextBlockSchema,
-  FederationJobStatusSchema,
-  SourceOwnerCutoverReceiptSchema,
+  ContractSchemaIndexEntrySchema,
+  buildContractSchemaId,
   generateContractSchemaCorpus,
   getContractSchemaDescriptor,
   requireContractSchemaDescriptor,
   serializeCanonicalContractJson,
-} from "./index.js";
+} from "./registry-index.js";
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
 
 function parseJson(raw: string): unknown {
   return JSON.parse(raw) as unknown;
@@ -31,6 +45,10 @@ function parseJson(raw: string): unknown {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasObjectJsonType(value: unknown): boolean {
+  return value === "object" || (Array.isArray(value) && value.includes("object"));
 }
 
 function assertClosedDeclaredObjects(value: unknown, path = "$root"): void {
@@ -43,11 +61,13 @@ function assertClosedDeclaredObjects(value: unknown, path = "$root"): void {
   if (!isObject(value)) return;
 
   if (
-    value.type === "object" &&
+    hasObjectJsonType(value.type) &&
     Object.hasOwn(value, "properties") &&
     value.additionalProperties !== false
   ) {
-    throw new Error(`${path} is a declared object without additionalProperties:false`);
+    throw new Error(
+      `${path} is a declared object without additionalProperties:false`,
+    );
   }
 
   for (const [key, child] of Object.entries(value)) {
@@ -107,12 +127,45 @@ function exactIndexFields(entry: {
   };
 }
 
+function compatibilityEntry(
+  exportName: string,
+  family: "common" | "source",
+  version: number,
+  generation: number,
+  compatibility: "INITIAL" | "BACKWARD_COMPATIBLE" | "BREAKING" | "RETIRED",
+  supersedesSchemaId?: string,
+) {
+  return {
+    schema_id: buildContractSchemaId(
+      family,
+      exportName,
+      version,
+      generation,
+    ),
+    export_name: exportName,
+    family,
+    schema_version: version,
+    schema_generation: generation,
+    kind: "OBJECT" as const,
+    structural_strictness: "CLOSED_OBJECT" as const,
+    json_schema_sha256: "0".repeat(64),
+    compatibility,
+    ...(supersedesSchemaId === undefined
+      ? {}
+      : { supersedes_schema_id: supersedesSchemaId }),
+    note: "synthetic compatibility fixture",
+  };
+}
+
 describe("ER-01 public contract registry", () => {
-  it("covers every and only publicly exported Zod schema", () => {
-    const publicSchemaExports = Object.entries(publicContracts)
+  it("covers every and only public Zod schema while isolating tooling", () => {
+    const publicSchemaExports = [
+      ...Object.entries(publicContracts),
+      ...Object.entries(registryContracts),
+    ]
       .filter(([_name, value]) => value instanceof z.ZodType)
       .map(([name]) => name)
-      .sort((left, right) => left.localeCompare(right));
+      .sort(compareCodeUnits);
     const registeredExports = CONTRACT_SCHEMA_REGISTRY.map(
       (descriptor) => descriptor.export_name,
     );
@@ -124,6 +177,10 @@ describe("ER-01 public contract registry", () => {
         CONTRACT_SCHEMA_REGISTRY.map((descriptor) => descriptor.schema_id),
       ).size,
     ).toBe(CONTRACT_SCHEMA_REGISTRY.length);
+
+    expect("CONTRACT_SCHEMA_REGISTRY" in publicContracts).toBe(false);
+    expect("generateContractSchemaCorpus" in publicContracts).toBe(false);
+    expect("CONTRACT_SCHEMA_REGISTRY" in registryContracts).toBe(true);
 
     for (const descriptor of CONTRACT_SCHEMA_REGISTRY) {
       expect(getContractSchemaDescriptor(descriptor.export_name)).toBe(
@@ -144,9 +201,9 @@ describe("ER-01 public contract registry", () => {
     const expectedText = `${serializeCanonicalContractJson(generated, true)}\n`;
 
     expect(schemaCorpusRaw).toBe(expectedText);
-    expect(ContractSchemaCorpusDocumentSchema.parse(parseJson(schemaCorpusRaw))).toEqual(
-      generated,
-    );
+    expect(
+      ContractSchemaCorpusDocumentSchema.parse(parseJson(schemaCorpusRaw)),
+    ).toEqual(generated);
     for (const entry of generated.schemas) {
       assertClosedDeclaredObjects(entry.json_schema, entry.export_name);
     }
@@ -157,9 +214,9 @@ describe("ER-01 public contract registry", () => {
     const expectedText = `${serializeCanonicalContractJson(expected, true)}\n`;
 
     expect(schemaIndexRaw).toBe(expectedText);
-    expect(ContractSchemaIndexDocumentSchema.parse(parseJson(schemaIndexRaw))).toEqual(
-      expected,
-    );
+    expect(
+      ContractSchemaIndexDocumentSchema.parse(parseJson(schemaIndexRaw)),
+    ).toEqual(expected);
   });
 
   it("requires one non-retired compatibility entry for every current schema", async () => {
@@ -186,7 +243,122 @@ describe("ER-01 public contract registry", () => {
     }
   });
 
-  it("matches canonical fixture metadata and registered schema identities", () => {
+  it("rejects malformed identity and compatibility histories", () => {
+    const initial = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      1,
+      "INITIAL",
+    );
+    const backward = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      2,
+      "BACKWARD_COMPATIBLE",
+      initial.schema_id,
+    );
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 2,
+        entries: [initial, backward],
+      }).success,
+    ).toBe(true);
+
+    expect(
+      ContractSchemaIndexEntrySchema.safeParse({
+        ...initial,
+        schema_id: buildContractSchemaId("source", "OtherSchema", 1, 1),
+      }).success,
+    ).toBe(false);
+
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 2,
+        entries: [backward],
+      }).success,
+    ).toBe(false);
+
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 2,
+        entries: [
+          initial,
+          { ...backward, supersedes_schema_id: backward.schema_id },
+        ],
+      }).success,
+    ).toBe(false);
+
+    const otherInitial = compatibilityEntry(
+      "OtherSchema",
+      "source",
+      1,
+      1,
+      "INITIAL",
+    );
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 2,
+        entries: [
+          otherInitial,
+          { ...backward, supersedes_schema_id: otherInitial.schema_id },
+        ],
+      }).success,
+    ).toBe(false);
+
+    const newerInitial = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      2,
+      "INITIAL",
+    );
+    const olderBackward = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      1,
+      "BACKWARD_COMPATIBLE",
+      newerInitial.schema_id,
+    );
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 2,
+        entries: [newerInitial, olderBackward],
+      }).success,
+    ).toBe(false);
+
+    const versionTwo = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      2,
+      1,
+      "INITIAL",
+    );
+    const lowerBreaking = compatibilityEntry(
+      "SyntheticSchema",
+      "common",
+      1,
+      3,
+      "BREAKING",
+      versionTwo.schema_id,
+    );
+    expect(
+      ContractCompatibilityRegistrySchema.safeParse({
+        protocol: CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL,
+        registry_generation: 3,
+        entries: [versionTwo, lowerBreaking],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("matches canonical fixture metadata and rejects path traversal", () => {
     const expectedText = `${serializeCanonicalContractJson(
       CANONICAL_FIXTURE_REGISTRY,
       true,
@@ -197,6 +369,32 @@ describe("ER-01 public contract registry", () => {
       expect(getContractSchemaDescriptor(fixture.schema_export)).toBeDefined();
       expect(fixture.canonical_body_sha256).toMatch(/^[a-f0-9]{64}$/u);
     }
+
+    expect(
+      CanonicalFixtureDescriptorSchema.safeParse({
+        fixture_id: "bad-path",
+        protocol: CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
+        schema_export: "ContractSchemaIdentitySchema",
+        fixture_path: "docs/contracts/../secret.json",
+        media_type: "application/json",
+        canonical_body_sha256: "0".repeat(64),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("serializes deterministic plain JSON and rejects hidden runtime state", () => {
+    expect(
+      serializeCanonicalContractJson({ z: 1, A: 2, a: 3, omitted: undefined }),
+    ).toBe('{"A":2,"a":3,"z":1}');
+    expect(() => serializeCanonicalContractJson(Number.NaN)).toThrow(
+      "non-finite number",
+    );
+    expect(() => serializeCanonicalContractJson(Number.POSITIVE_INFINITY)).toThrow(
+      "non-finite number",
+    );
+    expect(() => serializeCanonicalContractJson(new Date(0))).toThrow(
+      "plain or null prototype",
+    );
   });
 
   it("rejects a tenth disposition and unknown security authority", () => {
