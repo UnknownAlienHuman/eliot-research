@@ -15,6 +15,11 @@ export const CANONICAL_FIXTURE_REGISTRY_PROTOCOL =
   "eliotr.contract-canonical-fixtures.v1" as const;
 export const CONTRACT_JSON_SCHEMA_DIALECT =
   "https://json-schema.org/draft/2020-12/schema" as const;
+export const CONTRACT_SCHEMA_MAX_ORDINAL = 4_294_967_295 as const;
+
+const ContractSchemaOrdinalSchema = PositiveIntegerSchema.max(
+  CONTRACT_SCHEMA_MAX_ORDINAL,
+);
 
 export const CONTRACT_SCHEMA_FAMILIES = [
   "backup",
@@ -83,7 +88,7 @@ interface SchemaIdentityFields {
 }
 
 export function contractSchemaSlug(exportName: string): string {
-  return exportName
+  return ContractSchemaExportNameSchema.parse(exportName)
     .replace(/Schema$/u, "")
     .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
     .replace(/([a-z0-9])([A-Z])/gu, "$1-$2")
@@ -96,7 +101,12 @@ export function buildContractSchemaId(
   schemaVersion: number,
   schemaGeneration: number,
 ): ContractSchemaId {
-  return `urn:eliotr:contracts:${family}:${contractSchemaSlug(exportName)}:v${schemaVersion}:g${schemaGeneration}`;
+  const parsedFamily = ContractSchemaFamilySchema.parse(family);
+  const parsedVersion = ContractSchemaOrdinalSchema.parse(schemaVersion);
+  const parsedGeneration = ContractSchemaOrdinalSchema.parse(schemaGeneration);
+  return ContractSchemaIdSchema.parse(
+    `urn:eliotr:contracts:${parsedFamily}:${contractSchemaSlug(exportName)}:v${parsedVersion}:g${parsedGeneration}`,
+  );
 }
 
 function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
@@ -122,8 +132,8 @@ export const ContractSchemaIdentitySchema = z
     schema_id: ContractSchemaIdSchema,
     export_name: ContractSchemaExportNameSchema,
     family: ContractSchemaFamilySchema,
-    schema_version: PositiveIntegerSchema,
-    schema_generation: PositiveIntegerSchema,
+    schema_version: ContractSchemaOrdinalSchema,
+    schema_generation: ContractSchemaOrdinalSchema,
   })
   .strict()
   .refine(hasCoherentSchemaIdentity, schemaIdentityRefinement);
@@ -136,8 +146,8 @@ export const ContractSchemaCorpusEntrySchema = z
     schema_id: ContractSchemaIdSchema,
     export_name: ContractSchemaExportNameSchema,
     family: ContractSchemaFamilySchema,
-    schema_version: PositiveIntegerSchema,
-    schema_generation: PositiveIntegerSchema,
+    schema_version: ContractSchemaOrdinalSchema,
+    schema_generation: ContractSchemaOrdinalSchema,
     kind: ContractSchemaKindSchema,
     structural_strictness: ContractStructuralStrictnessSchema,
     json_schema: z.record(z.string(), z.unknown()),
@@ -148,9 +158,9 @@ export const ContractSchemaCorpusEntrySchema = z
 export const ContractSchemaCorpusDocumentSchema = z
   .object({
     protocol: z.literal(CONTRACT_SCHEMA_CORPUS_PROTOCOL),
-    registry_generation: PositiveIntegerSchema,
+    registry_generation: ContractSchemaOrdinalSchema,
     json_schema_dialect: z.literal(CONTRACT_JSON_SCHEMA_DIALECT),
-    schema_count: PositiveIntegerSchema,
+    schema_count: ContractSchemaOrdinalSchema,
     schemas: z.array(ContractSchemaCorpusEntrySchema).min(1),
   })
   .strict()
@@ -194,8 +204,8 @@ export const ContractSchemaIndexEntrySchema = z
     schema_id: ContractSchemaIdSchema,
     export_name: ContractSchemaExportNameSchema,
     family: ContractSchemaFamilySchema,
-    schema_version: PositiveIntegerSchema,
-    schema_generation: PositiveIntegerSchema,
+    schema_version: ContractSchemaOrdinalSchema,
+    schema_generation: ContractSchemaOrdinalSchema,
     kind: ContractSchemaKindSchema,
     structural_strictness: ContractStructuralStrictnessSchema,
     json_schema_sha256: Sha256Schema,
@@ -209,9 +219,9 @@ export type ContractSchemaIndexEntry = z.infer<
 export const ContractSchemaIndexDocumentSchema = z
   .object({
     protocol: z.literal(CONTRACT_SCHEMA_INDEX_PROTOCOL),
-    registry_generation: PositiveIntegerSchema,
+    registry_generation: ContractSchemaOrdinalSchema,
     json_schema_dialect: z.literal(CONTRACT_JSON_SCHEMA_DIALECT),
-    schema_count: PositiveIntegerSchema,
+    schema_count: ContractSchemaOrdinalSchema,
     entries: z.array(ContractSchemaIndexEntrySchema).min(1),
   })
   .strict()
@@ -265,8 +275,8 @@ export const ContractCompatibilityEntrySchema = z
     schema_id: ContractSchemaIdSchema,
     export_name: ContractSchemaExportNameSchema,
     family: ContractSchemaFamilySchema,
-    schema_version: PositiveIntegerSchema,
-    schema_generation: PositiveIntegerSchema,
+    schema_version: ContractSchemaOrdinalSchema,
+    schema_generation: ContractSchemaOrdinalSchema,
     kind: ContractSchemaKindSchema,
     structural_strictness: ContractStructuralStrictnessSchema,
     json_schema_sha256: Sha256Schema,
@@ -305,7 +315,7 @@ export type ContractCompatibilityEntry = z.infer<
 export const ContractCompatibilityRegistrySchema = z
   .object({
     protocol: z.literal(CONTRACT_COMPATIBILITY_REGISTRY_PROTOCOL),
-    registry_generation: PositiveIntegerSchema,
+    registry_generation: ContractSchemaOrdinalSchema,
     entries: z.array(ContractCompatibilityEntrySchema).min(1),
   })
   .strict()
@@ -315,6 +325,9 @@ export const ContractCompatibilityRegistrySchema = z
     const entriesById = new Map(
       value.entries.map((entry) => [entry.schema_id, entry]),
     );
+    const successorCounts = new Map<string, number>();
+    const familyByExport = new Map<string, ContractSchemaFamily>();
+    const initialCounts = new Map<string, number>();
 
     for (const [index, entry] of value.entries.entries()) {
       if (schemaIds.has(entry.schema_id)) {
@@ -335,6 +348,62 @@ export const ContractCompatibilityRegistrySchema = z
         });
       }
       generationKeys.add(generationKey);
+
+      const establishedFamily = familyByExport.get(entry.export_name);
+      if (
+        establishedFamily !== undefined &&
+        establishedFamily !== entry.family
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "family"],
+          message: "one export name cannot move across schema families",
+        });
+      } else {
+        familyByExport.set(entry.export_name, entry.family);
+      }
+
+      if (entry.compatibility === "INITIAL") {
+        initialCounts.set(
+          entry.export_name,
+          (initialCounts.get(entry.export_name) ?? 0) + 1,
+        );
+      }
+
+      if (entry.supersedes_schema_id !== undefined) {
+        const count =
+          (successorCounts.get(entry.supersedes_schema_id) ?? 0) + 1;
+        successorCounts.set(entry.supersedes_schema_id, count);
+        if (count > 1) {
+          context.addIssue({
+            code: "custom",
+            path: ["entries", index, "supersedes_schema_id"],
+            message: "compatibility history cannot branch",
+          });
+        }
+      }
+    }
+
+    for (const exportName of familyByExport.keys()) {
+      if (initialCounts.get(exportName) !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries"],
+          message: `${exportName} must have exactly one INITIAL root`,
+        });
+      }
+      const leafCount = value.entries.filter(
+        (entry) =>
+          entry.export_name === exportName &&
+          !successorCounts.has(entry.schema_id),
+      ).length;
+      if (leafCount !== 1) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries"],
+          message: `${exportName} must have exactly one terminal generation`,
+        });
+      }
     }
 
     for (const [index, entry] of value.entries.entries()) {
@@ -451,7 +520,7 @@ export type CanonicalFixtureDescriptor = z.infer<
 export const CanonicalFixtureRegistryDocumentSchema = z
   .object({
     protocol: z.literal(CANONICAL_FIXTURE_REGISTRY_PROTOCOL),
-    registry_generation: PositiveIntegerSchema,
+    registry_generation: ContractSchemaOrdinalSchema,
     fixtures: z.array(CanonicalFixtureDescriptorSchema).min(1),
   })
   .strict()
