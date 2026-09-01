@@ -5,6 +5,16 @@
 
 #![forbid(unsafe_code)]
 
+mod canonical_json;
+mod canonical_json_error;
+mod generation;
+mod sha256;
+
+pub use canonical_json::*;
+pub use canonical_json_error::*;
+pub use generation::*;
+pub use sha256::sha256;
+
 use core::fmt;
 
 /// Stable error code returned when input exceeds its explicit byte budget.

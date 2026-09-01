@@ -1,3 +1,4 @@
+import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
 import { TextDecoder } from "node:util";
 import { readFile } from "node:fs/promises";
 
@@ -243,4 +244,10 @@ assertRejected(
 
 console.log(
   `Rust migration vectors: PASS (${cases.length} cases; bounded strict-parser negatives PASS).`,
+);
+await verifyCanonicalBodyReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt",
+    import.meta.url,
+  ),
 );
