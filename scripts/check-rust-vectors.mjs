@@ -1,4 +1,5 @@
 import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
+import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
 import { TextDecoder } from "node:util";
 import { readFile } from "node:fs/promises";
 
@@ -248,6 +249,12 @@ console.log(
 await verifyCanonicalBodyReference(
   new URL(
     "../crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt",
+    import.meta.url,
+  ),
+);
+await verifyStableIdReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/stable-id.v1.txt",
     import.meta.url,
   ),
 );
