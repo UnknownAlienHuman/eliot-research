@@ -45,6 +45,10 @@ product code runs.
 The stable workspace has no third-party runtime dependencies in M1. `fuzz/` is an excluded, separately
 locked harness so `libfuzzer-sys` cannot enter the product dependency graph.
 
+Merge CI installs the three stable Cargo utilities from their pinned GitHub releases through
+`taiki-e/install-action` pinned to commit `1ed6d7be6168f6c9046541087ff549b6bc581fdf`, with checksum
+verification enabled and fallback installation disabled. CI then verifies each executable's exact version.
+
 ## M1 scope guard
 
 M1 creates the workspace and proof machinery only:
@@ -79,7 +83,7 @@ cargo install cargo-deny --version 0.20.2 --locked
 cargo install cargo-llvm-cov --version 0.9.0 --locked
 
 pnpm install --frozen-lockfile
-cargo metadata --workspace --all-features --locked --format-version 1 > /dev/null
+cargo metadata --all-features --locked --format-version 1 > /dev/null
 cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
 pnpm check
 pnpm cf:types
