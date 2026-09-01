@@ -1,11 +1,13 @@
 # Public contract artifacts
 
 `packages/contracts/src` is the runtime authority for public wire structure and semantic validation.
-This directory contains deterministic, reviewable artifacts derived from that authority.
+Registry tooling is exported separately through `@eliotr/contracts/registry`, so normal Worker and PWA
+imports do not construct the schema corpus. This directory contains deterministic, reviewable artifacts
+derived from that tooling boundary.
 
 ## Committed artifacts
 
-- `schema-corpus.v1.json` — one Draft 2020-12 document for every exported Zod schema;
+- `schema-corpus.v1.json` — one Draft 2020-12 document for every public Zod schema;
 - `schema-index.v1.json` — stable schema identity, family, version, generation, structural class and
   SHA-256 of each compact canonical JSON Schema document;
 - `compatibility-registry.v1.json` — append-only compatibility history;
@@ -14,7 +16,8 @@ This directory contains deterministic, reviewable artifacts derived from that au
 
 Every generated object schema with declared properties must be closed with
 `additionalProperties: false`. Explicit record/map schemas remain open only through a declared
-`additionalProperties` value schema.
+`additionalProperties` value schema. Registry identities fail closed when the URN disagrees with the
+entry's family, export name, version or generation.
 
 ## Authority boundary
 
