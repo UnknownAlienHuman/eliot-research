@@ -352,10 +352,10 @@ fn validate_part(index: usize, part: &[u8], reject_nul: bool) -> Result<(), Stab
             max_bytes: STABLE_ID_PART_MAX_BYTES,
         });
     }
-    if reject_nul {
-        if let Some(offset) = part.iter().position(|byte| *byte == 0) {
-            return Err(StableIdError::InteriorNul { index, offset });
-        }
+    if reject_nul
+        && let Some(offset) = part.iter().position(|byte| *byte == 0)
+    {
+        return Err(StableIdError::InteriorNul { index, offset });
     }
     core::str::from_utf8(part).map_err(|error| StableIdError::InvalidUtf8 {
         field: StableIdUtf8Field::Part { index },
