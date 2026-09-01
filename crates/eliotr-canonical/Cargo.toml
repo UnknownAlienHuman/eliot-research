@@ -1,0 +1,12 @@
+[package]
+name = "eliotr-canonical"
+description = "Pure bounded UTF-8 transport validation for the Eliot Research deterministic kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

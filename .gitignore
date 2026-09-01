@@ -6,6 +6,13 @@ build/
 .output/
 *.tsbuildinfo
 
+target/
+fuzz/target/
+fuzz/artifacts/
+*.profraw
+*.profdata
+lcov.info
+
 .dev.vars
 .env
 .env.*

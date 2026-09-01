@@ -30,6 +30,8 @@ jobs:
         run: pnpm contracts:check
       - name: Verify package boundaries
         run: pnpm boundaries:check
+      - name: Prove forbidden imports fail closed
+        run: pnpm boundaries:negative
       - name: Verify source budgets
         run: pnpm budgets:check
       - name: Verify swarm work packets
@@ -74,3 +76,80 @@ jobs:
         run: pnpm cf:types
       - name: Dry-run Worker deployment
         run: pnpm cf:dry-run
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.0 \
+            --profile minimal \
+            --component clippy \
+            --component llvm-tools-preview \
+            --component rustfmt \
+            --target wasm32-unknown-unknown
+          rustup default 1.98.0
+      - name: Cache pinned Cargo tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-deny
+            ~/.cargo/bin/cargo-llvm-cov
+            ~/.cargo/bin/cargo-nextest
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: rust-tools-${{ runner.os }}-1.98.0-nextest-0.9.143-deny-0.20.2-llvm-cov-0.9.0
+      - name: Install pinned Cargo tools
+        run: |
+          cargo nextest --version | grep -F "cargo-nextest 0.9.143" ||
+            cargo install cargo-nextest --version 0.9.143 --locked
+          cargo deny --version | grep -F "cargo-deny 0.20.2" ||
+            cargo install cargo-deny --version 0.20.2 --locked
+          cargo llvm-cov --version | grep -F "cargo-llvm-cov 0.9.0" ||
+            cargo install cargo-llvm-cov --version 0.9.0 --locked
+      - name: Verify locked workspace metadata
+        run: cargo metadata --workspace --all-features --locked --format-version 1 > /dev/null
+      - name: Verify Rust language boundaries
+        run: node scripts/check-rust-boundaries.mjs
+      - name: Verify shared vectors through TypeScript
+        run: node scripts/check-rust-vectors.mjs
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint every Rust target and feature
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run native Rust tests
+        run: cargo nextest run --workspace --all-features --locked
+      - name: Run Rust documentation tests
+        run: cargo test --doc --workspace --all-features --locked
+      - name: Audit Rust dependencies and sources
+        run: cargo deny check
+      - name: Build portable Rust workspace
+        run: cargo build --workspace --target wasm32-unknown-unknown --release --locked
+      - name: Execute exact vectors through compiled Rust/Wasm
+        run: |
+          cargo build \
+            --package eliotr-kernel-wasm \
+            --target wasm32-unknown-unknown \
+            --release \
+            --features m1-self-test-export \
+            --locked
+          node scripts/check-rust-wasm.mjs
+      - name: Enforce deterministic-core coverage
+        run: |
+          cargo llvm-cov \
+            --package eliotr-canonical \
+            --package eliotr-test-vectors \
+            --all-features \
+            --branch \
+            --fail-under-lines 90 \
+            --text
+      - name: Verify the scheduled fuzz dependency lock
+        run: |
+          cargo generate-lockfile --manifest-path fuzz/Cargo.toml
+          cat fuzz/Cargo.lock
+          test -z "$(git status --porcelain -- fuzz/Cargo.lock)"
