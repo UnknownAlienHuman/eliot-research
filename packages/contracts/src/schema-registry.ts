@@ -25,6 +25,7 @@ import {
   CONTRACT_JSON_SCHEMA_DIALECT,
   CONTRACT_SCHEMA_CORPUS_PROTOCOL,
   ContractSchemaCorpusDocumentSchema,
+  buildContractSchemaId,
   type ContractSchemaFamily,
   type ContractSchemaKind,
   type ContractStructuralStrictness,
@@ -112,14 +113,6 @@ function compareCodeUnits(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
   return 0;
-}
-
-function schemaSlug(exportName: string): string {
-  return exportName
-    .replace(/Schema$/u, "")
-    .replace(/([A-Z]+)([A-Z][a-z])/gu, "$1-$2")
-    .replace(/([a-z0-9])([A-Z])/gu, "$1-$2")
-    .toLowerCase();
 }
 
 function canonicalizeJson(value: unknown): ContractJsonValue {
@@ -261,7 +254,12 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
         throw new Error(`duplicate public contract schema export ${exportName}`);
       }
 
-      const schemaId = `urn:eliotr:contracts:${module.family}:${schemaSlug(exportName)}:v${version.schema_version}:g${version.schema_generation}`;
+      const schemaId = buildContractSchemaId(
+        module.family,
+        exportName,
+        version.schema_version,
+        version.schema_generation,
+      );
       if (schemaIds.has(schemaId)) {
         throw new Error(`duplicate public contract schema ID ${schemaId}`);
       }
