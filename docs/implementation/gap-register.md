@@ -8,7 +8,7 @@ production definition and final exit evidence are specified in
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
 | P0 | Federation service intentionally throws | ER-22 | idempotent async job, cursor/range read, less-assertive disposition mapping |
-| P1 | Rust deterministic-kernel migration M1–M7 required by `eliotr.language-runtime.v1` has not started | ER-00, ER-01, ER-02, ER-03 and capability owners | Cargo workspace and gates; shared TS/native-Rust/Wasm fixtures; shadow receipts; promoted Rust authority; superseded TS domain removal |
+| P1 | Rust deterministic-kernel M1 verification foundation is complete; M2–M7 authority migration remains open | ER-00, ER-01, ER-02, ER-03 and capability owners | M2 canonical identity/serialization parity; M3–M4 deterministic-domain migration; M5–M7 ABI promotion, shadow receipts, promoted Rust authority and superseded TypeScript removal |
 | P1 | Exact erasure closure is implemented but not live-qualified across Cloudflare/provider/offsite paths | ER-28, ER-34 | remote R2/D1/AI Search/offsite deletion, blocked-lock, restart replay and restore purge-ledger receipts |
 | P1 | Projection generations and readiness execution are implemented but not live-qualified | ER-05, ER-06, ER-15, ER-16, ER-24, ER-38 | remote pinned-R2 readback, D1 Search shadow activation/rollback, AI Search item readback, promoted managed generation and Queue replay receipts |
 | P1 | Exact EvidenceHandle resolution and citation/output gating are implemented but not live-qualified | ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-39 | deployed Access grant, remote D1 Core/Search guard, checksum-bound R2 range readback, purge invalidation and end-to-end citation receipt |

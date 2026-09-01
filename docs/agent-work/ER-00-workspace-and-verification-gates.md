@@ -117,3 +117,18 @@ Produce:
 The PR must state contract/generation impact, exact commands, negative-case results, Wasm size, coverage,
 and live receipts (`NOT EXECUTED`). Do not mark M1 complete with a missing lockfile, skipped target,
 unbounded parser, mocked Wasm execution, or product ABI/authority promotion.
+
+## Completion evidence — 2026-09-01
+
+Implementation commit `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296` passed exact-head CI run `33522427515`:
+
+- legacy TypeScript/Cloudflare verification, PWA build, binding generation and Worker dry-run passed;
+- Rust format, Clippy, 28/28 native tests, doctests and dependency/source policy passed;
+- the default Wasm artifact was 363 raw / 258 gzip bytes with zero imports and no product ABI;
+- the feature-gated self-test artifact was 8,790 raw / 4,142 gzip bytes with zero imports;
+- coverage was 99.60% lines, 96.75% branches, 100% functions and 97.38% regions;
+- `Cargo.lock` and the excluded `fuzz/Cargo.lock` were consumed with `--locked`;
+- Cloudflare, Google, provider, recovery and workload receipts were `NOT EXECUTED`.
+
+M1 is complete. M2 canonical JSON/identity, M3–M4 domain authority, M5 ABI promotion and M6–M7
+shadow/cutover/removal remain open. TypeScript/Cloudflare remains the active product authority.
