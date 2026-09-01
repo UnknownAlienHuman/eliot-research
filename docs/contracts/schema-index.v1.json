@@ -133,7 +133,7 @@
     {
       "export_name": "CanonicalFixtureRegistryDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "bbc4c262582eb1dde80531b52fab6531badf59dde41646f2cea7644328866e4d",
+      "json_schema_sha256": "de300dc03d6933028f2158844ff67421817a79ef1b79c529584627b51bf1c92c",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v1:g1",
@@ -233,7 +233,7 @@
     {
       "export_name": "ContractCompatibilityEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "2883faf030783b663923475ec9982c6b9b6e9abfbe9430ffa4f734db94985cdd",
+      "json_schema_sha256": "62b729b3e1b3e93d1b36dd7c0e5229a5f5ed890e697d28ef97e68bea96b913a5",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v1:g1",
@@ -243,7 +243,7 @@
     {
       "export_name": "ContractCompatibilityRegistrySchema",
       "family": "registry",
-      "json_schema_sha256": "9d6bcc7dd5f42a64d47cb72138b4b839297052939a4ef4a65ca0864f95c17abb",
+      "json_schema_sha256": "bd7e14e78b9e3b47452cdf08b7327755701c88b5d3d5a8f85a127118678a5f7b",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v1:g1",
@@ -253,7 +253,7 @@
     {
       "export_name": "ContractSchemaCorpusDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "5f1c328a1b832654241b449eacf28d904f97a6750783c3cbbfee2a002064b37a",
+      "json_schema_sha256": "95a0f45ac7897404944388cfb7069380ef037619472a7b85ef55ce9ddb58aece",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v1:g1",
@@ -263,7 +263,7 @@
     {
       "export_name": "ContractSchemaCorpusEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "fe6f8ad554221d2f032953fb140bd725aac7919174b22319b3201627779e5dda",
+      "json_schema_sha256": "38608e42d451e54505fc73b75093fd13bf62f7d793b3dc8ebae2876d4ffa4c88",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
@@ -303,7 +303,7 @@
     {
       "export_name": "ContractSchemaIdentitySchema",
       "family": "registry",
-      "json_schema_sha256": "2a1d535ff8533abfda4f1c432827062a1d9057df37547eca6935b1bdefdceced",
+      "json_schema_sha256": "454635ac43253d1d78b83beac49c62c36253e43216e0e7452b0d89f82ae1d0ea",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
@@ -313,7 +313,7 @@
     {
       "export_name": "ContractSchemaIndexDocumentSchema",
       "family": "registry",
-      "json_schema_sha256": "f6edf0e436f864e260fa0c8e367312801ccf39bd71ca4ed681393759d1e9f3e1",
+      "json_schema_sha256": "95542405566ac7e19a6aa333e2b383b92c11eb296abe4b237f6e47f949416f4e",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v1:g1",
@@ -323,7 +323,7 @@
     {
       "export_name": "ContractSchemaIndexEntrySchema",
       "family": "registry",
-      "json_schema_sha256": "cdbcf78dc267daaf8e161658edeead838a83a53674c87b1c95efe5e745dc1131",
+      "json_schema_sha256": "a2ade74f8eed9ad089cb6d2bacf5bd1aa349564392c8e6b0aff4453b35c848d0",
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",

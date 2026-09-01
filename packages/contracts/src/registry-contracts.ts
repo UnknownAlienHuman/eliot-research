@@ -110,15 +110,19 @@ export function buildContractSchemaId(
 }
 
 function hasCoherentSchemaIdentity(value: SchemaIdentityFields): boolean {
-  return (
-    value.schema_id ===
-    buildContractSchemaId(
-      value.family,
-      value.export_name,
-      value.schema_version,
-      value.schema_generation,
-    )
-  );
+  try {
+    return (
+      value.schema_id ===
+      buildContractSchemaId(
+        value.family,
+        value.export_name,
+        value.schema_version,
+        value.schema_generation,
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 const schemaIdentityRefinement = {
