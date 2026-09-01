@@ -1,7 +1,8 @@
 # Contract compatibility policy
 
 The compatibility registry is append-only. A current schema is identified by
-`(export_name, schema_version, schema_generation)` and by its generation-specific `$id`.
+`(export_name, schema_version, schema_generation)` and by its generation-specific `$id`. Versions,
+generations and registry ordinals are canonical unsigned 32-bit positive integers.
 
 ## Change classes
 
@@ -13,9 +14,15 @@ The compatibility registry is append-only. A current schema is identified by
 - **RETIRED** — the generation is no longer admitted as current. Keep the version, advance the
   generation and retain the predecessor. Retirement never deletes history.
 
-Every non-initial entry must reference an existing predecessor with the same export name and family. A
-compatibility entry cannot supersede itself, cross families, move backward in generation, or create a
-cycle. The schema URN must encode exactly the entry's family, export name, version and generation.
+Every export has one linear history: exactly one `INITIAL` root, no branch, and exactly one terminal
+entry. Every non-initial entry must reference an existing predecessor with the same export name and
+family. An entry cannot supersede itself, cross families, move backward in generation, or create a cycle.
+The schema URN must encode exactly the entry's family, export name, version and generation.
+
+The generated current index must point to the unique terminal entry for every active export. A terminal
+`RETIRED` entry must be absent from the current index; an active terminal entry must be present with the
+same schema ID, digest, structural class, version and generation. This reconciliation prevents a stale
+index from silently retaining a superseded contract.
 
 Any generated JSON Schema byte change requires a new registry entry. Updating only the digest under an
 existing version/generation is forbidden because it destroys reproducibility.
