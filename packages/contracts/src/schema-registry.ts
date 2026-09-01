@@ -108,6 +108,12 @@ const FAMILY_VERSIONS: Readonly<
   source: { schema_version: 1, schema_generation: 1 },
 });
 
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
 function schemaSlug(exportName: string): string {
   return exportName
     .replace(/Schema$/u, "")
@@ -137,9 +143,16 @@ function canonicalizeJson(value: unknown): ContractJsonValue {
   }
 
   if (typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new TypeError(
+        "contract JSON objects must have a plain or null prototype",
+      );
+    }
+
     const output: ContractJsonObject = {};
     for (const [key, child] of Object.entries(value).sort(([left], [right]) =>
-      left.localeCompare(right),
+      compareCodeUnits(left, right),
     )) {
       if (child !== undefined) output[key] = canonicalizeJson(child);
     }
@@ -161,17 +174,25 @@ function asJsonObject(value: unknown): ContractJsonObject {
   return canonical;
 }
 
+function hasJsonType(
+  document: ContractJsonObject,
+  expected: string,
+): boolean {
+  const value = document.type;
+  return value === expected || (Array.isArray(value) && value.includes(expected));
+}
+
 function classifyKind(document: ContractJsonObject): ContractSchemaKind {
   if (Array.isArray(document.enum)) return "ENUM";
-  if (document.type === "object") return "OBJECT";
   if (Array.isArray(document.anyOf) || Array.isArray(document.oneOf)) {
     return "UNION";
   }
+  if (hasJsonType(document, "object")) return "OBJECT";
   if (
-    document.type === "string" ||
-    document.type === "integer" ||
-    document.type === "number" ||
-    document.type === "boolean"
+    hasJsonType(document, "string") ||
+    hasJsonType(document, "integer") ||
+    hasJsonType(document, "number") ||
+    hasJsonType(document, "boolean")
   ) {
     return "SCALAR";
   }
@@ -181,7 +202,7 @@ function classifyKind(document: ContractJsonObject): ContractSchemaKind {
 function classifyStrictness(
   document: ContractJsonObject,
 ): ContractStructuralStrictness {
-  if (document.type !== "object") return "NON_OBJECT";
+  if (!hasJsonType(document, "object")) return "NON_OBJECT";
   if (document.properties !== undefined) {
     return document.additionalProperties === false
       ? "CLOSED_OBJECT"
@@ -228,7 +249,7 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
   for (const module of SCHEMA_MODULES) {
     const version = FAMILY_VERSIONS[module.family];
     for (const [exportName, candidate] of Object.entries(module.exports).sort(
-      ([left], [right]) => left.localeCompare(right),
+      ([left], [right]) => compareCodeUnits(left, right),
     )) {
       if (!(candidate instanceof z.ZodType)) continue;
       if (!exportName.endsWith("Schema")) {
@@ -268,7 +289,7 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
 
   return Object.freeze(
     descriptors.sort((left, right) =>
-      left.export_name.localeCompare(right.export_name),
+      compareCodeUnits(left.export_name, right.export_name),
     ),
   );
 }
