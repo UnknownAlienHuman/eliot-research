@@ -1,12 +1,15 @@
 # Implementation gap register
 
 This register prevents agents from confusing broad architecture coverage with executable coverage.
-It supplements the per-agent packets; it does not create a second ownership system.
+It supplements the per-agent packets; it does not create a second ownership system. The dependency order,
+production definition and final exit evidence are specified in
+[`production-readiness-plan.md`](production-readiness-plan.md).
 
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
-| P1 | Exact erasure closure is implemented but not live-qualified across Cloudflare/provider/offsite paths | ER-28, ER-34 | remote R2/D1/AI Search/offsite deletion, blocked-lock, restart replay and restore purge-ledger receipts |
 | P0 | Federation service intentionally throws | ER-22 | idempotent async job, cursor/range read, less-assertive disposition mapping |
+| P1 | Rust deterministic-kernel migration M1–M7 required by `eliotr.language-runtime.v1` has not started | ER-00, ER-01, ER-02, ER-03 and capability owners | Cargo workspace and gates; shared TS/native-Rust/Wasm fixtures; shadow receipts; promoted Rust authority; superseded TS domain removal |
+| P1 | Exact erasure closure is implemented but not live-qualified across Cloudflare/provider/offsite paths | ER-28, ER-34 | remote R2/D1/AI Search/offsite deletion, blocked-lock, restart replay and restore purge-ledger receipts |
 | P1 | Projection generations and readiness execution are implemented but not live-qualified | ER-05, ER-06, ER-15, ER-16, ER-24, ER-38 | remote pinned-R2 readback, D1 Search shadow activation/rollback, AI Search item readback, promoted managed generation and Queue replay receipts |
 | P1 | Exact EvidenceHandle resolution and citation/output gating are implemented but not live-qualified | ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-39 | deployed Access grant, remote D1 Core/Search guard, checksum-bound R2 range readback, purge invalidation and end-to-end citation receipt |
 | P1 | Governed bundle ingest and SourceAdmissionDecision are implemented but not live-qualified | ER-13, ER-14, ER-21, ER-24, ER-29, ER-37 | deployed owner/service prepare, real multipart R2 readback/promotion, remote guarded D1 commit, duplicate/lost-ACK and Queue projection receipts |
@@ -16,6 +19,8 @@ It supplements the per-agent packets; it does not create a second ownership syst
 | P1 | Research Workflow has contract stages but not governed execution | ER-09, ER-20, ER-24 | cancellation/budget at every checkpoint; evidence freeze and claim audit |
 | P1 | Managed search response needs strict locator decoding before canonical resolution | ER-06, ER-07, ER-16 | oversized/malformed/fake-handle fixtures; exact resolver required |
 | P1 | Scope algebra persistence is not wired to the deterministic evaluator | ER-10, ER-30 | immutable snapshot digest, purge-ledger binding and invalidation fixtures |
+| P1 | Corpus Lens navigation/orientation remains fail-closed | ER-06, ER-10, ER-31 | SourceCard, DocumentMap and ProjectAtlas over frozen scope; explicit omissions and coverage limits |
+| P1 | Minimum Wiki, Artifact Compiler, trace and change products are not composed | ER-11, ER-12, ER-21, ER-24 | immutable revision/head CAS, fully resolved citations, copy-on-write update and purge dependency invalidation |
 | P1 | Drive cursor/OAuth/tamper flow remains non-live | ER-18, ER-19, ER-20, ER-26 | disposable append/import/readback/reconnect + historical-row tamper fixture |
 | P2 | Backup/restore export exists only as design contour | ER-34 | clean-account restore with purge ledger applied before payload exposure |
 | P2 | PWA screens are shells and lack session/error/offline behavior | ER-25 | owner flow, degraded provider state, evidence viewer and job reconnect tests |
@@ -25,7 +30,7 @@ It supplements the per-agent packets; it does not create a second ownership syst
 Rules:
 
 1. Close the P0 authority and evidence path before adding advanced research products.
-2. A live product gate cannot be replaced by a mock, typecheck, or dry-run.
+2. A live product gate cannot be replaced by a mock, typecheck, local Wasm run or dry-run.
 3. A provider result remains a locator or candidate until the canonical readback path succeeds.
 4. Update this table and `implementation-status.json` in the same change that removes or adds a scaffold.
 5. `IMPLEMENTED_NOT_LIVE` means code and deterministic negative tests exist; it does not mean a platform round trip occurred.
@@ -34,3 +39,5 @@ Rules:
 8. Ingest `ADMITTED` requires a durable SourceRevision, exact promotion readback and projection outbox in the same guarded authority path.
 9. An index hit or provider citation remains a locator until exact authorized R2 bytes produce a durable EvidenceHandle and resolution receipt.
 10. AI Search `uploadAndPoll` completion remains shadow state until item readback and managed-generation promotion both succeed.
+11. TypeScript and Rust may coexist during differential shadow migration, but permanent dual authority is prohibited.
+12. Production readiness requires the ordered exit evidence in `production-readiness-plan.md`, not merely an empty P0 list.
