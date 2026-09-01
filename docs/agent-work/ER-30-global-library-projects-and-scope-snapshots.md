@@ -13,7 +13,9 @@ outside the paths below.
 
 - `packages/domain/src/scope.ts`
 - `packages/domain/src/project-membership.ts`
+- `packages/domain/src/project-membership.test.ts`
 - `apps/eliotr-core/src/scope-service.ts`
+- `apps/eliotr-core/src/scope-service.test.ts`
 
 ## Read only
 
@@ -51,3 +53,31 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## Implemented boundary
+
+Scope expressions are strictly decoded, resource bounded and normalized before resolution. UNION and
+INTERSECT operands are flattened, sorted and deduplicated; EXCEPT remains ordered; selected-source
+identities are sorted and deduplicated. The existing deterministic atom resolver supplies exact
+source-revision, owner-generation and policy-closure tuples.
+
+The service binds the immutable snapshot to the normalized expression, participant generations,
+ordered member revisions, owner generations, policy authority, disclosure closure, purge-ledger
+revision, optional client fence, explicit creation instant and bounded expiry. A two-stage SHA-256
+construction derives a content-addressed snapshot ID and then binds that ID into the final digest.
+Persistence must return `CREATED` or exact-byte `REPLAY`, followed by strict readback; conflicts and
+readback mismatches fail closed.
+
+Currentness reopens the persisted snapshot and re-resolves the complete authority closure. Expiry,
+member/project generation change, source-owner change, new deny, policy/disclosure change, purge-ledger
+advance, stale client fence, digest tamper or missing persistence all prevent `requireCurrent` from
+authorizing retrieval. The mandatory fixture removes a purged member after freeze and proves the old
+snapshot is rejected even when a caller retains an old index/cache/summary copy.
+
+Temporal membership validation permits one global source to participate in many projects while
+rejecting overlapping intervals for one project/source authority pair. Temporary selected-source
+scopes expose no membership mutation operation.
+
+Live D1 composition and retained remote readback/invalidation receipts are `NOT EXECUTED`; ER-24 owns
+that follow-up. No schema migration or backfill is required because the existing `scope_snapshot` and
+membership tables already carry the required fields.
