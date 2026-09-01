@@ -9,6 +9,7 @@ all-features = true
 ignore = []
 
 [licenses]
+unused-allowed-license = "allow"
 allow = [
     "Apache-2.0",
     "MIT",
