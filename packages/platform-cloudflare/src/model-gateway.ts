@@ -1,5 +1,5 @@
 import type { ModelCallInput, ModelCallReceipt, ModelRoutePort } from "@eliotr/research";
-const MAX_BYTES = 256 * 1024, IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u, SHA256 = /^[a-f0-9]{64}$/u;
+const MAX_BYTES = 256 * 1024, IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u, SHA256 = /^[a-f0-9]{64}$/u;
 const DEPLOYMENT_KEYS = new Set(["parameters_digest", "pricing_snapshot_ref", "prompt_generation", "route_ref", "route_version", "schema_generation"]), INPUT_KEYS = new Set(["budget_reservation_ref", "cancellation_ref", "evidence_pack", "max_input_bytes", "max_output_bytes", "output_object_ref", "prompt_generation", "route_ref", "schema_generation"]), RECEIPT_KEYS = new Set(["billed_usd", "input_tokens", "output_object_ref", "output_sha256", "output_tokens", "receipt_ref", "route_fingerprint_ref"]), REF_KEYS = new Set(["id", "revision"]);
 export const APPLICATION_MODEL_ROUTES = Object.freeze(["dynamic/eliotr-economy", "dynamic/eliotr-balanced", "dynamic/eliotr-strong", "dynamic/eliotr-frontier", "dynamic/eliotr-audit-writer", "dynamic/eliotr-audit-verifier", "dynamic/eliotr-vision", "dynamic/eliotr-extract", "dynamic/eliotr-report-section", "dynamic/eliotr-report-integrator"] as const);
 export type ApplicationModelRoute = (typeof APPLICATION_MODEL_ROUTES)[number];
