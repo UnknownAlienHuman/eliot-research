@@ -1,4 +1,5 @@
 import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
+import { verifyResidencyKeyReference } from "../crates/eliotr-test-vectors/reference/residency-key.mjs";
 import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
 import { TextDecoder } from "node:util";
 import { readFile } from "node:fs/promises";
@@ -252,9 +253,29 @@ await verifyCanonicalBodyReference(
     import.meta.url,
   ),
 );
+await verifyCanonicalBodyReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/owner-cutover-canonical.v1.txt",
+    import.meta.url,
+  ),
+  "Owner-cutover canonical",
+);
+await verifyResidencyKeyReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/residency-key.v1.txt",
+    import.meta.url,
+  ),
+);
 await verifyStableIdReference(
   new URL(
     "../crates/eliotr-test-vectors/fixtures/stable-id.v1.txt",
     import.meta.url,
   ),
+);
+await verifyStableIdReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/ingest-identities.v1.txt",
+    import.meta.url,
+  ),
+  "Ingest identity",
 );

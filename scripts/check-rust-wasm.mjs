@@ -9,6 +9,9 @@ const SELF_TEST_EXPORTS = Object.freeze([
   "eliotr_m1_verify_embedded_vectors_v1",
   "eliotr_m2_verify_embedded_canonical_body_vectors_v1",
   "eliotr_m2_verify_embedded_stable_id_vectors_v1",
+  "eliotr_m2_verify_embedded_ingest_identity_vectors_v1",
+  "eliotr_m2_verify_embedded_owner_cutover_canonical_vectors_v1",
+  "eliotr_m2_verify_embedded_residency_key_vectors_v1",
 ]);
 const MAX_COMPRESSED_BYTES = 128 * 1024;
 const modeIndex = process.argv.indexOf("--mode");

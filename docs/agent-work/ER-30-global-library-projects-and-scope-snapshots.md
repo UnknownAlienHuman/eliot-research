@@ -56,28 +56,38 @@ with placeholders, TODO authority paths, mocked live gates, or a stronger dispos
 
 ## Implemented boundary
 
-Scope expressions are strictly decoded, resource bounded and normalized before resolution. UNION and
-INTERSECT operands are flattened, sorted and deduplicated; EXCEPT remains ordered; selected-source
-identities are sorted and deduplicated. The existing deterministic atom resolver supplies exact
-source-revision, owner-generation and policy-closure tuples.
+Scope expressions receive an iterative pre-decode depth/atom/source-count gate before recursive Zod
+validation. UNION and INTERSECT operands are flattened, sorted and deduplicated; EXCEPT remains ordered;
+selected-source identities are sorted and deduplicated. The deterministic atom resolver supplies exact
+source-revision, owner-generation and policy-closure tuples, with one bounded call per unique atom and an aggregate resolution-row ceiling.
 
 The service binds the immutable snapshot to the normalized expression, participant generations,
-ordered member revisions, owner generations, policy authority, disclosure closure, purge-ledger
-revision, optional client fence, explicit creation instant and bounded expiry. A two-stage SHA-256
-construction derives a content-addressed snapshot ID and then binds that ID into the final digest.
-Persistence must return `CREATED` or exact-byte `REPLAY`, followed by strict readback; conflicts and
-readback mismatches fail closed.
+ordered member revisions, owner generations, the complete member-policy-closure generation, policy
+authority, disclosure closure, purge-ledger revision, optional client fence, explicit creation instant
+and bounded expiry. A two-stage SHA-256 construction derives a content-addressed snapshot ID and then
+binds that ID into the final digest. Canonical bytes are bounded before hashing. Persistence accepts only
+`CREATED` or exact replay, followed by strict readback; unknown outcomes, conflicts and readback drift
+fail closed.
 
-Currentness reopens the persisted snapshot and re-resolves the complete authority closure. Expiry,
-member/project generation change, source-owner change, new deny, policy/disclosure change, purge-ledger
-advance, stale client fence, digest tamper or missing persistence all prevent `requireCurrent` from
-authorizing retrieval. The mandatory fixture removes a purged member after freeze and proves the old
-snapshot is rejected even when a caller retains an old index/cache/summary copy.
+Currentness verifies shape, canonical form, identity, digest, persisted equality and expiry before it
+reopens mutable authority. A forged or expired snapshot therefore cannot trigger arbitrary atom or policy
+lookups. A valid snapshot is then re-resolved and invalidated by participant/project generation change,
+member-policy closure change, membership change, source-owner change, new deny, policy/disclosure change,
+purge-ledger advance or rollback, or stale client fence. `requireCurrent` returns no scope on any reason.
+The mandatory fixture purges one member after freeze and proves an old cached/indexed snapshot is rejected.
 
-Temporal membership validation permits one global source to participate in many projects while
-rejecting overlapping intervals for one project/source authority pair. Temporary selected-source
-scopes expose no membership mutation operation.
+Temporal membership validation permits one global source to participate in many projects, uses half-open
+intervals, accepts adjacency, orders offset timestamps by their actual instant and rejects overlap. Tuple
+identities use collision-free JSON framing, so delimiter-bearing project/source IDs cannot alias another
+D1 membership key. No new `DomainErrorCode` or contract generation is introduced.
 
-Live D1 composition and retained remote readback/invalidation receipts are `NOT EXECUTED`; ER-24 owns
-that follow-up. No schema migration or backfill is required because the existing `scope_snapshot` and
-membership tables already carry the required fields.
+## Verification and migration
+
+The exact branch must pass repository CI, including ESLint, strict TypeScript, domain/core tests,
+implementation-status validation, package boundaries, source budgets, Worker dry-run and the unchanged
+Rust verification job.
+
+Live D1 composition, principal grants and retained deployed readback/invalidation receipts are
+`NOT EXECUTED`; ER-24 owns that follow-up. No schema migration or backfill is required because the
+existing `project_source_membership` and `scope_snapshot` tables already carry the required authority
+fields.

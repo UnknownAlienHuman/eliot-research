@@ -1,6 +1,6 @@
 [package]
 name = "eliotr-canonical"
-description = "Pure bounded canonical bytes, SHA-256, generation, and stable-ID primitives."
+description = "Pure bounded canonical bytes, SHA-256, generation, stable-ID, and residency-key primitives."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

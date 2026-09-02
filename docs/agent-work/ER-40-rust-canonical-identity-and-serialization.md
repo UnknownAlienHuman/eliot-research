@@ -142,3 +142,69 @@ pinned Rust 1.98.0 formatter is enforced before lint, native tests, Wasm executi
 This is a generic shadow primitive, not a stable-ID cutover for ingest, projection, evidence,
 erasure, owner-cutover, receipt or handle families. Those families require their own named vectors,
 observation evidence, rollback and promotion review. Live receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — source.owner-cutover.v1 canonical vectors
+
+This slice ports the first named M2 contract corpus while leaving TypeScript authority intact:
+
+- nine committed cases use the existing `canonical-body.v1` frame rather than introducing another
+  parser or operation vocabulary;
+- two differently ordered FENCED receipts and one already canonical receipt must emit identical bytes;
+- a RETIRED receipt preserves Unicode identifiers and array order;
+- duplicate root and escaped-equivalent nested keys fail with `ELIOTR_JSON_DUPLICATE_KEY`;
+- SHA-256 cases bind both concrete canonical receipts and the exact existing
+  `tests/fixtures/contracts/source.owner-cutover.v1.yaml` bytes;
+- the YAML fixture digest must remain
+  `b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e`;
+- independent JavaScript, native Rust and compiled Rust/Wasm execute the exact same corpus.
+
+This is canonical byte/digest parity only. `SourceOwnerCutoverReceiptSchema`, cross-field validation,
+application readback, authorization, fencing, revision-set equality and owner-generation state remain
+TypeScript authority. No product path invokes Rust, no mismatch is called a live receipt, and M3–M7
+remain open.
+
+## Active implementation slice — object-residency-key.v1
+
+This slice ports the existing deterministic serializer from `packages/domain/src/residency.ts` without
+moving its decisions or side effects:
+
+- six identifiers retain `IdentifierSchema` semantics: non-empty and at most 256 JavaScript UTF-16 units;
+- valid UTF-8 scalar values are encoded with exact `encodeURIComponent` byte rules and uppercase percent
+  triplets; the unescaped alphabet is `A-Z a-z 0-9 - _ . ! ~ * ' ( )`;
+- the fixed algorithm segment is `sha256`, followed by exactly 64 lowercase hexadecimal bytes;
+- the serialized identity preserves field order and separates scope, access, confidentiality, encryption
+  key, retention and erasure domains;
+- explicit ceilings are 768 pre-decode bytes per identifier and 13,925 serialized bytes;
+- 22 committed vectors cover ASCII, all reserved/safe characters, BMP and astral Unicode, literal percent
+  triplets, maximum lengths, field-position separation and every typed negative path;
+- the same corpus executes through the independent JavaScript authority reference, native Rust and
+  compiled Rust/Wasm, with fuzz and branch-coverage reach.
+
+`ObjectResidencyKeySchema`, `residencyDomainsEqual`, `validateDeduplication`, R2 placement, encryption,
+retention, erasure, transition receipts and all runtime effects remain TypeScript authority. No production
+call site consumes Rust output, no live receipt is claimed, and M3–M7 remain open.
+
+## Active implementation slice — ingest-identities.v1
+
+This slice binds the generic stable-ID shadow primitive to the exact formulas currently called by
+`stableIngestId` after TypeScript input admission:
+
+- `ingest(principal_ref, idempotency_key)` and the derived `candidate(operation_id)` identity;
+- `qualification(operation_id)` and
+  `admission(operation_id, qualification_digest, decision)` for all three current decision values;
+- `intent-ingest`, `attempt-ingest`, `receipt-ingest` and `idem-ingest`;
+- the ingest-commit handoff identities `intent-projection`, `idem-projection` and
+  `outbox(projection_intent_id, "1")`.
+
+The 31 committed cases include one complete dependency chain, admitted punctuation, swapped and
+boundary-sensitive parts, 256-character principal/idempotency/source-revision boundaries, direct
+validation of representative outputs, malformed prefixes, invalid UTF-8, short digests and uppercase
+digest bytes. The independent JavaScript reference, native Rust and compiled Rust/Wasm execute the
+exact same bytes, including strict parser mutations for duplicate identities, unknown operations, bad
+output shapes, unknown error codes and operation-incompatible errors.
+
+This is identity parity for already-admitted strings only. `authorityIdentifier`, Zod contracts, D1
+uniqueness, replay conflict handling, qualification/admission semantics, source-head mutation, outbox
+settlement and projection execution remain TypeScript/Cloudflare authority. No production call site
+uses Rust, no live observation receipt is claimed, and promotion still requires a separate rollback-bound
+review packet.

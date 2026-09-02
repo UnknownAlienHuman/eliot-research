@@ -10,10 +10,11 @@ export interface ScopeUniverse {
   readonly selectedSourceHeads: ReadonlyMap<string, string>;
 }
 
-export type ScopeAtom = Exclude<
+type ScopeSetExpression = Extract<
   ScopeExpression,
-  { kind: "UNION" | "INTERSECT" | "EXCEPT"; left: ScopeExpression; right: ScopeExpression }
+  { kind: "UNION" | "INTERSECT" | "EXCEPT" }
 >;
+export type ScopeAtom = Exclude<ScopeExpression, ScopeSetExpression>;
 
 export interface ScopeExpressionMetrics {
   readonly depth: number;
@@ -21,60 +22,109 @@ export interface ScopeExpressionMetrics {
   readonly selected_source_count: number;
 }
 
-function isSetExpression(
-  expression: ScopeExpression,
-): expression is Extract<ScopeExpression, { kind: "UNION" | "INTERSECT" | "EXCEPT" }> {
-  return expression.kind === "UNION" || expression.kind === "INTERSECT" || expression.kind === "EXCEPT";
-}
-
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function union(left: ReadonlySet<string>, right: ReadonlySet<string>): Set<string> {
+function isSetExpression(expression: ScopeExpression): expression is ScopeSetExpression {
+  return expression.kind === "UNION" ||
+    expression.kind === "INTERSECT" ||
+    expression.kind === "EXCEPT";
+}
+
+function resolveAtom(
+  expression: ScopeAtom,
+  universe: ScopeUniverse,
+): Result<ReadonlySet<string>, DomainError> {
+  switch (expression.kind) {
+    case "GLOBAL_LIBRARY":
+      return ok(new Set(universe.globalSourceRevisionRefs));
+    case "PROJECT": {
+      const value = universe.projects.get(expression.project_id);
+      return value === undefined
+        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `project:${expression.project_id}`))
+        : ok(new Set(value));
+    }
+    case "SELECTED_SOURCES": {
+      const revisions = new Set<string>();
+      for (const sourceId of expression.source_ids) {
+        const revision = universe.selectedSourceHeads.get(sourceId);
+        if (revision === undefined) {
+          return err(domainError("SCOPE_REFERENCE_UNKNOWN", `source:${sourceId}`));
+        }
+        revisions.add(revision);
+      }
+      return ok(revisions);
+    }
+    case "SOURCE_CLASS": {
+      const value = universe.sourceClasses.get(expression.source_class);
+      return value === undefined
+        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `class:${expression.source_class}`))
+        : ok(new Set(value));
+    }
+    case "TAG": {
+      const value = universe.tags.get(expression.tag);
+      return value === undefined
+        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `tag:${expression.tag}`))
+        : ok(new Set(value));
+    }
+  }
+}
+
+function union(left: ReadonlySet<string>, right: ReadonlySet<string>): ReadonlySet<string> {
   return new Set([...left, ...right]);
 }
 
-function intersect(left: ReadonlySet<string>, right: ReadonlySet<string>): Set<string> {
+function intersect(left: ReadonlySet<string>, right: ReadonlySet<string>): ReadonlySet<string> {
   return new Set([...left].filter((value) => right.has(value)));
 }
 
-function except(left: ReadonlySet<string>, right: ReadonlySet<string>): Set<string> {
+function except(left: ReadonlySet<string>, right: ReadonlySet<string>): ReadonlySet<string> {
   return new Set([...left].filter((value) => !right.has(value)));
 }
 
+export function resolveScopeExpression(
+  expression: ScopeExpression,
+  universe: ScopeUniverse,
+): Result<ReadonlySet<string>, DomainError> {
+  if (!isSetExpression(expression)) return resolveAtom(expression, universe);
+  const left = resolveScopeExpression(expression.left, universe);
+  if (!left.ok) return left;
+  const right = resolveScopeExpression(expression.right, universe);
+  if (!right.ok) return right;
+  if (expression.kind === "UNION") return ok(union(left.value, right.value));
+  if (expression.kind === "INTERSECT") return ok(intersect(left.value, right.value));
+  return ok(except(left.value, right.value));
+}
+
 function normalizeAtom(expression: ScopeAtom): ScopeAtom {
-  switch (expression.kind) {
-    case "GLOBAL_LIBRARY":
-      return { kind: "GLOBAL_LIBRARY" };
-    case "PROJECT":
-      return { kind: "PROJECT", project_id: expression.project_id };
-    case "SOURCE_CLASS":
-      return { kind: "SOURCE_CLASS", source_class: expression.source_class };
-    case "TAG":
-      return { kind: "TAG", tag: expression.tag };
-    case "SELECTED_SOURCES":
-      return {
-        kind: "SELECTED_SOURCES",
-        source_ids: [...new Set(expression.source_ids)].sort(compareText),
-      };
-  }
+  if (expression.kind !== "SELECTED_SOURCES") return expression;
+  return {
+    kind: "SELECTED_SOURCES",
+    source_ids: [...new Set(expression.source_ids)].sort(compareText),
+  };
 }
 
 function flattenCommutative(
   expression: ScopeExpression,
   kind: "UNION" | "INTERSECT",
 ): readonly ScopeExpression[] {
-  if (expression.kind !== kind) return [expression];
+  if (!isSetExpression(expression) || expression.kind !== kind) return [expression];
   return [
     ...flattenCommutative(expression.left, kind),
     ...flattenCommutative(expression.right, kind),
   ];
 }
 
+function normalizedIdentity(expression: ScopeExpression): string {
+  return JSON.stringify(expression);
+}
+
 /**
- * Returns one deterministic AST for equivalent commutative/associative scope expressions.
- * EXCEPT remains ordered. Selected source identities are sorted and deduplicated.
+ * Canonicalizes the recursive scope AST without changing its set semantics.
+ *
+ * `UNION` and `INTERSECT` are flattened, deduplicated and sorted. `EXCEPT` keeps operand order.
+ * Selected source IDs are deduplicated and sorted, so equivalent temporary scopes share one identity.
  */
 export function normalizeScopeExpression(expression: ScopeExpression): ScopeExpression {
   if (!isSetExpression(expression)) return normalizeAtom(expression);
@@ -89,38 +139,38 @@ export function normalizeScopeExpression(expression: ScopeExpression): ScopeExpr
   const unique = new Map<string, ScopeExpression>();
   for (const operand of flattenCommutative(expression, expression.kind)) {
     const normalized = normalizeScopeExpression(operand);
-    unique.set(scopeExpressionIdentity(normalized), normalized);
+    unique.set(normalizedIdentity(normalized), normalized);
   }
   const operands = [...unique.entries()]
     .sort(([left], [right]) => compareText(left, right))
     .map(([, operand]) => operand);
   const first = operands[0];
-  if (first === undefined) throw new Error("scope set expression contains no operands");
-  return operands.slice(1).reduce<ScopeExpression>(
-    (left, right) => ({ kind: expression.kind, left, right }),
-    first,
-  );
+  if (first === undefined) return normalizeScopeExpression(expression.left);
+  return operands.slice(1).reduce<ScopeExpression>((left, right) => ({
+    kind: expression.kind,
+    left,
+    right,
+  }), first);
 }
 
-/** Stable, content-free identity text for a normalized scope AST. */
 export function scopeExpressionIdentity(expression: ScopeExpression): string {
-  return JSON.stringify(normalizeScopeExpression(expression));
+  return normalizedIdentity(normalizeScopeExpression(expression));
 }
 
-/** Returns unique normalized atoms in deterministic identity order. */
 export function scopeExpressionAtoms(expression: ScopeExpression): readonly ScopeAtom[] {
-  const atoms = new Map<string, ScopeAtom>();
-  const visit = (current: ScopeExpression): void => {
+  const normalized = normalizeScopeExpression(expression);
+  const byIdentity = new Map<string, ScopeAtom>();
+  const pending: ScopeExpression[] = [normalized];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
     if (isSetExpression(current)) {
-      visit(current.left);
-      visit(current.right);
-      return;
+      pending.push(current.right, current.left);
+    } else {
+      byIdentity.set(normalizedIdentity(current), current);
     }
-    const normalized = normalizeAtom(current);
-    atoms.set(JSON.stringify(normalized), normalized);
-  };
-  visit(normalizeScopeExpression(expression));
-  return [...atoms.entries()]
+  }
+  return [...byIdentity.entries()]
     .sort(([left], [right]) => compareText(left, right))
     .map(([, atom]) => atom);
 }
@@ -129,19 +179,24 @@ export function inspectScopeExpression(expression: ScopeExpression): ScopeExpres
   let depth = 0;
   let atomCount = 0;
   let selectedSourceCount = 0;
-  const stack: Array<readonly [ScopeExpression, number]> = [[expression, 1]];
-  while (stack.length > 0) {
-    const entry = stack.pop();
-    if (entry === undefined) break;
-    const [current, currentDepth] = entry;
-    depth = Math.max(depth, currentDepth);
-    if (isSetExpression(current)) {
-      stack.push([current.right, currentDepth + 1], [current.left, currentDepth + 1]);
-      continue;
-    }
-    atomCount += 1;
-    if (current.kind === "SELECTED_SOURCES") {
-      selectedSourceCount += current.source_ids.length;
+  const pending: { readonly expression: ScopeExpression; readonly depth: number }[] = [{
+    expression,
+    depth: 1,
+  }];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === undefined) continue;
+    depth = Math.max(depth, current.depth);
+    if (isSetExpression(current.expression)) {
+      pending.push(
+        { expression: current.expression.right, depth: current.depth + 1 },
+        { expression: current.expression.left, depth: current.depth + 1 },
+      );
+    } else {
+      atomCount += 1;
+      if (current.expression.kind === "SELECTED_SOURCES") {
+        selectedSourceCount += current.expression.source_ids.length;
+      }
     }
   }
   return {
@@ -149,57 +204,4 @@ export function inspectScopeExpression(expression: ScopeExpression): ScopeExpres
     atom_count: atomCount,
     selected_source_count: selectedSourceCount,
   };
-}
-
-export function resolveScopeExpression(
-  expression: ScopeExpression,
-  universe: ScopeUniverse,
-): Result<ReadonlySet<string>, DomainError> {
-  switch (expression.kind) {
-    case "GLOBAL_LIBRARY":
-      return ok(new Set(universe.globalSourceRevisionRefs));
-    case "PROJECT": {
-      const refs = universe.projects.get(expression.project_id);
-      return refs === undefined
-        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `unknown project ${expression.project_id}`))
-        : ok(new Set(refs));
-    }
-    case "SOURCE_CLASS": {
-      const refs = universe.sourceClasses.get(expression.source_class);
-      return refs === undefined
-        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `unknown source class ${expression.source_class}`))
-        : ok(new Set(refs));
-    }
-    case "TAG": {
-      const refs = universe.tags.get(expression.tag);
-      return refs === undefined
-        ? err(domainError("SCOPE_REFERENCE_UNKNOWN", `unknown tag ${expression.tag}`))
-        : ok(new Set(refs));
-    }
-    case "SELECTED_SOURCES": {
-      const revisions = new Set<string>();
-      for (const sourceId of expression.source_ids) {
-        const revision = universe.selectedSourceHeads.get(sourceId);
-        if (revision === undefined) {
-          return err(domainError("SCOPE_REFERENCE_UNKNOWN", `unknown source ${sourceId}`));
-        }
-        revisions.add(revision);
-      }
-      return ok(revisions);
-    }
-    case "UNION":
-    case "INTERSECT":
-    case "EXCEPT": {
-      const left = resolveScopeExpression(expression.left, universe);
-      if (!left.ok) return left;
-      const right = resolveScopeExpression(expression.right, universe);
-      if (!right.ok) return right;
-      const result = expression.kind === "UNION"
-        ? union(left.value, right.value)
-        : expression.kind === "INTERSECT"
-          ? intersect(left.value, right.value)
-          : except(left.value, right.value);
-      return ok(result);
-    }
-  }
 }

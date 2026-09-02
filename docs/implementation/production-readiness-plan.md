@@ -63,6 +63,7 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 ### Implemented but not live-qualified
 
 - Cloudflare Access-protected HTTP dispatch and owner catalog;
+- deterministic immutable ScopeSnapshot persistence and currentness authority;
 - governed normalized-bundle ingest and SourceAdmissionDecision;
 - D1 outbox, Queue inbox, retry and ACK discipline;
 - deterministic projection execution and generation activation;
@@ -72,7 +73,6 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 
 ### Still fail-closed or unavailable
 
-- ER-30 persisted ScopeSnapshot service;
 - ER-31 Corpus Lens navigation/orientation service;
 - `research.query`;
 - `research.run` and the governed Research Workflow;
@@ -261,11 +261,12 @@ D1, R2, Queue, Workflow, provider or model effect.
 
 ### 8.2 Persisted scopes — ER-10/ER-30
 
-- [ ] Wire deterministic `UNION`, `INTERSECT` and `EXCEPT` evaluation to immutable ScopeSnapshot
-      persistence.
-- [ ] Bind snapshot digest to exact revisions, owner generations, policy closure, purge-ledger revision,
-      disclosure closure, client fence and expiry.
-- [ ] Implement principal grants, currentness checks and exact invalidation.
+- [x] Wire deterministic `UNION`, `INTERSECT` and `EXCEPT` evaluation to an immutable
+      ScopeSnapshot repository contract with created/exact-replay/readback semantics.
+- [x] Bind snapshot digest to exact revisions, owner generations, member-policy closure, purge-ledger
+      revision, disclosure closure, client fence and expiry.
+- [x] Implement deterministic currentness checks and exact invalidation.
+- [ ] Compose principal grants and the remote D1 ScopeSnapshot repository.
 - [ ] Prevent retrieval, evidence resolution and research execution from using an unfrozen scope.
 
 ### 8.3 Managed retrieval and Corpus Lens — ER-06/ER-07/ER-16/ER-31
