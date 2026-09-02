@@ -1,0 +1,91 @@
+name: er31-finalize-owned-change
+
+on:
+  push:
+    branches:
+      - agent/ER-31-corpus-lens-navigation-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er31-finalize-owned-change
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[er31-finalized]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: agent/ER-31-corpus-lens-navigation-20260902
+          fetch-depth: 0
+
+      - name: Materialize ER-31 and bind ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .er31-payload/payload-*.b64 > /tmp/er31-payload.tar.gz.b64
+          base64 --decode /tmp/er31-payload.tar.gz.b64 > /tmp/er31-payload.tar.gz
+          echo "bf556392099fd3fd6d3ccdf4d2199675ec0fa272e4c173d346c0f748b81ce50e  /tmp/er31-payload.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/er31-payload.tar.gz -C .
+
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          owned_paths = [
+              "packages/retrieval/src/navigation.ts",
+              "packages/retrieval/src/navigation-model.ts",
+              "packages/retrieval/src/navigation-limits.ts",
+              "packages/retrieval/src/navigation-codec.ts",
+              "packages/retrieval/src/navigation-builders.ts",
+              "packages/retrieval/src/navigation.test.ts",
+              "apps/eliotr-core/src/navigation-service.ts",
+              "apps/eliotr-core/src/navigation-service.test.ts",
+          ]
+
+          manifest_path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          matches = [packet for packet in manifest["packets"] if packet["id"] == "ER-31"]
+          if len(matches) != 1:
+              raise SystemExit("expected exactly one ER-31 work packet")
+          matches[0]["owned_paths"] = owned_paths
+          manifest_path.write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          plan_path = Path("docs/implementation/production-readiness-plan.md")
+          plan = plan_path.read_text(encoding="utf-8")
+          replacements = {
+              "- deterministic immutable ScopeSnapshot persistence and currentness authority;\n":
+                  "- deterministic immutable ScopeSnapshot persistence and currentness authority;\n"
+                  "- deterministic Corpus Lens SourceCard/DocumentMap/ProjectAtlas orientation with explicit omissions;\n",
+              "### Still fail-closed or unavailable\n":
+                  "### Still unavailable or not composed\n",
+              "- ER-31 Corpus Lens navigation/orientation service;\n":
+                  "- ER-31 Corpus Lens persistence and active Worker composition;\n",
+              "- [ ] Implement `research.orient` and `research.query` without treating top-k as completeness proof.\n":
+                  "- [x] Implement deterministic orientation without treating top-k as completeness proof.\n"
+                  "- [ ] Persist and compose `research.orient`; implement `research.query`.\n",
+              "- [ ] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.\n":
+                  "- [x] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.\n",
+          }
+          for old, new in replacements.items():
+              count = plan.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected one production-plan occurrence, found {count}: {old!r}")
+              plan = plan.replace(old, new)
+          plan_path.write_text(plan, encoding="utf-8")
+          PY
+
+          rm -rf .er31-payload
+          git rm -- .github/workflows/er31-finalize.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-31: implement Corpus Lens navigation [er31-finalized]"
+          git push origin HEAD:agent/ER-31-corpus-lens-navigation-20260902
