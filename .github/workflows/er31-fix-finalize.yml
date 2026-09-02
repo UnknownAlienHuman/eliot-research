@@ -30,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat .er31-fix/payload-*.b64 > /tmp/er31-fix.tar.gz.b64
+          cat .er31-fix/piece-*.b64 > /tmp/er31-fix.tar.gz.b64
           base64 --decode /tmp/er31-fix.tar.gz.b64 > /tmp/er31-fix.tar.gz
           echo "c1f31216b7ba4a0e93b98dac0a7ec6975231789cc401c5ae9971512f292d1a3d  /tmp/er31-fix.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/er31-fix.tar.gz -C .
