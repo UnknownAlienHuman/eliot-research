@@ -41,10 +41,16 @@ jobs:
 
           path = Path("infra/ai-search/model-gateway.test.mjs")
           source = path.read_text(encoding="utf-8")
-          old = "new Headers("
-          if source.count(old) != 1:
-              raise SystemExit(f"expected one Headers constructor, found {source.count(old)}")
-          path.write_text(source.replace(old, "new globalThis.Headers(", 1), encoding="utf-8")
+          replacements = {
+              "new Headers(": "new globalThis.Headers(",
+              "../../packages/platform-cloudflare/src/model-gateway.js":
+                  "../../packages/platform-cloudflare/dist/model-gateway.js",
+          }
+          for old, new in replacements.items():
+              if source.count(old) != 1:
+                  raise SystemExit(f"expected one fixture token {old!r}, found {source.count(old)}")
+              source = source.replace(old, new, 1)
+          path.write_text(source, encoding="utf-8")
           PY
           rm apply-er16-model-gateway.py
           rm -rf .er16-model-gateway
@@ -68,6 +74,7 @@ jobs:
           pnpm budgets:check
           pnpm lint
           pnpm typecheck
+          test -f packages/platform-cloudflare/dist/model-gateway.js
           node infra/ai-search/model-gateway.test.mjs
           git diff --check
 
