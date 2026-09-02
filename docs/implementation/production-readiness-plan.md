@@ -64,6 +64,7 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 
 - Cloudflare Access-protected HTTP dispatch and owner catalog;
 - deterministic immutable ScopeSnapshot persistence and currentness authority;
+- deterministic Corpus Lens SourceCard/DocumentMap/ProjectAtlas orientation with explicit omissions;
 - governed normalized-bundle ingest and SourceAdmissionDecision;
 - D1 outbox, Queue inbox, retry and ACK discipline;
 - deterministic projection execution and generation activation;
@@ -71,9 +72,9 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 - exact erasure closure and purge ledger;
 - Gemini Spark MCP planning and Google orchestration boundary.
 
-### Still fail-closed or unavailable
+### Still unavailable or not composed
 
-- ER-31 Corpus Lens navigation/orientation service;
+- ER-31 Corpus Lens persistence and active Worker composition;
 - `research.query`;
 - `research.run` and the governed Research Workflow;
 - Wiki proposal/promotion and dependency tracking;
@@ -276,8 +277,9 @@ D1, R2, Queue, Workflow, provider or model effect.
 - [ ] Implement exact, lexical, semantic, literal and structure lanes with bounded degradation.
 - [ ] Keep D1 FTS fallback operational when managed search is degraded.
 - [ ] Recheck owner generation, policy, scope and purge state after retrieval.
-- [ ] Implement `research.orient` and `research.query` without treating top-k as completeness proof.
-- [ ] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.
+- [x] Implement deterministic orientation without treating top-k as completeness proof.
+- [ ] Persist and compose `research.orient`; implement `research.query`.
+- [x] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.
 
 ### 8.4 Governed Research Workflow — ER-08/ER-09/ER-10
 

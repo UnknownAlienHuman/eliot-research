@@ -19,7 +19,7 @@ production definition and final exit evidence are specified in
 | P1 | Research Workflow has contract stages but not governed execution | ER-09, ER-20, ER-24 | cancellation/budget at every checkpoint; evidence freeze and claim audit |
 | P1 | Managed search response needs strict locator decoding before canonical resolution | ER-06, ER-07, ER-16 | oversized/malformed/fake-handle fixtures; exact resolver required |
 | P1 | ScopeSnapshot authority is implemented but not composed into remote D1, principal grants or retrieval and is not live-qualified | ER-10, ER-24, ER-30 | compose the D1 repository, grants and retrieval gate; retain remote persistence/readback plus purge, deny and expiry invalidation receipts |
-| P1 | Corpus Lens navigation/orientation remains fail-closed | ER-06, ER-10, ER-31 | SourceCard, DocumentMap and ProjectAtlas over frozen scope; explicit omissions and coverage limits |
+| P1 | Corpus Lens deterministic navigation is implemented but not persisted, composed into `research.orient`, or live-qualified | ER-06, ER-07, ER-24, ER-31, ER-39 | persist content-addressed SourceCard/DocumentMap/ProjectAtlas artifacts; compose current ScopeSnapshot and principal gates; retain remote D1 readback plus Atlas→section→resolved EvidenceHandle receipts |
 | P1 | Minimum Wiki, Artifact Compiler, trace and change products are not composed | ER-11, ER-12, ER-21, ER-24 | immutable revision/head CAS, fully resolved citations, copy-on-write update and purge dependency invalidation |
 | P1 | Drive cursor/OAuth/tamper flow remains non-live | ER-18, ER-19, ER-20, ER-26 | disposable append/import/readback/reconnect + historical-row tamper fixture |
 | P2 | Backup/restore export exists only as design contour | ER-34 | clean-account restore with purge ledger applied before payload exposure |
@@ -40,4 +40,5 @@ Rules:
 9. An index hit or provider citation remains a locator until exact authorized R2 bytes produce a durable EvidenceHandle and resolution receipt.
 10. AI Search `uploadAndPoll` completion remains shadow state until item readback and managed-generation promotion both succeed.
 11. TypeScript and Rust may coexist during differential shadow migration, but permanent dual authority is prohibited.
-12. Production readiness requires the ordered exit evidence in `production-readiness-plan.md`, not merely an empty P0 list.
+12. SourceCard, DocumentMap, ProjectAtlas, reading routes and unresolved EvidenceHandle candidates are navigation-only and cannot satisfy publication support.
+13. Production readiness requires the ordered exit evidence in `production-readiness-plan.md`, not merely an empty P0 list.
