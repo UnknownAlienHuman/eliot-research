@@ -55,6 +55,20 @@ jobs:
           import json
           from pathlib import Path
 
+          scope_path = Path("packages/domain/src/scope.ts")
+          scope = scope_path.read_text(encoding="utf-8")
+          old_interface = "export interface ScopeUniverse {\n  readonly global: ReadonlySet<string>;\n  readonly projects: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly sourceClasses: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly tags: ReadonlyMap<string, ReadonlySet<string>>;\n}\n"
+          new_interface = "export interface ScopeUniverse {\n  readonly globalSourceRevisionRefs: ReadonlySet<string>;\n  readonly projects: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly sourceClasses: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly tags: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly selectedSourceHeads: ReadonlyMap<string, string>;\n}\n"
+          old_global = "    case \"GLOBAL_LIBRARY\":\n      return ok(new Set(universe.global));\n"
+          new_global = "    case \"GLOBAL_LIBRARY\":\n      return ok(new Set(universe.globalSourceRevisionRefs));\n"
+          old_selected = "    case \"SELECTED_SOURCES\": {\n      const missing = expression.source_ids.find((sourceId) => !universe.global.has(sourceId));\n      return missing === undefined\n        ? ok(new Set(expression.source_ids))\n        : err(domainError(\"SCOPE_REFERENCE_UNKNOWN\", `source:${missing}`));\n    }\n"
+          new_selected = "    case \"SELECTED_SOURCES\": {\n      const revisions = new Set<string>();\n      for (const sourceId of expression.source_ids) {\n        const revision = universe.selectedSourceHeads.get(sourceId);\n        if (revision === undefined) {\n          return err(domainError(\"SCOPE_REFERENCE_UNKNOWN\", `source:${sourceId}`));\n        }\n        revisions.add(revision);\n      }\n      return ok(revisions);\n    }\n"
+          for old, new in [(old_interface, new_interface), (old_global, new_global), (old_selected, new_selected)]:
+              if scope.count(old) != 1:
+                  raise SystemExit("expected one ScopeUniverse compatibility target")
+              scope = scope.replace(old, new)
+          scope_path.write_text(scope, encoding="utf-8")
+
           registry_path = Path("docs/implementation/implementation-status.json")
           registry = json.loads(registry_path.read_text(encoding="utf-8"))
           entry = next(item for item in registry["entries"] if item["id"] == "pending-008")
