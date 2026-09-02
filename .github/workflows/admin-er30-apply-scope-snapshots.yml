@@ -49,7 +49,7 @@ jobs:
           diff -u "$RUNNER_TEMP/expected-payload-paths" "$RUNNER_TEMP/actual-payload-paths"
 
           git reset --hard origin/main
-          tar -xzf "$RUNNER_TEMP/er30-scope-snapshots.tar.gz" -C "$GITHUB_WORKSPACE"
+          tar -xzf "$RUNNNER_TEMP/er30-scope-snapshots.tar.gz" -C "$GITHUB_WORKSPACE"
 
           python3 <<'PY'
           import json
@@ -57,14 +57,8 @@ jobs:
 
           scope_test_path = Path("apps/eliotr-core/src/scope-service.test.ts")
           scope_test = scope_test_path.read_text(encoding="utf-8")
-          old_expectation = """      "SCOPE_IDENTIFIER_INVALID",
-    );
-
-    const malformedAuthority"""
-          new_expectation = """      "SCOPE_RESOLUTION_FAILED",
-    );
-
-    const malformedAuthority"""
+          old_expectation = "      \"SCOPE_IDENTIFIER_INVALID\",\n    );\n\n    const malformedAuthority"
+          new_expectation = "      \"SCOPE_RESOLUTION_FAILED\",\n    );\n\n    const malformedAuthority"
           if scope_test.count(old_expectation) != 1:
               raise SystemExit("expected one malformed atom error expectation")
           scope_test_path.write_text(
