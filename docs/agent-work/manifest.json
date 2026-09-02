@@ -608,7 +608,13 @@
       ],
       "owned_paths": [
         "packages/retrieval/src/navigation.ts",
-        "apps/eliotr-core/src/navigation-service.ts"
+        "packages/retrieval/src/navigation-model.ts",
+        "packages/retrieval/src/navigation-limits.ts",
+        "packages/retrieval/src/navigation-codec.ts",
+        "packages/retrieval/src/navigation-builders.ts",
+        "packages/retrieval/src/navigation.test.ts",
+        "apps/eliotr-core/src/navigation-service.ts",
+        "apps/eliotr-core/src/navigation-service.test.ts"
       ],
       "mandatory_negative_case": "Generate a plausible Atlas claim with no supporting source span and prove it remains navigation only and cannot support publication.",
       "document": "ER-31-corpus-lens-navigation.md",

@@ -25,13 +25,14 @@ registry, gap register and completion evidence in the same change.
 ### `SCAFFOLD_FAIL_CLOSED`
 
 ```text
-ER-31 Corpus Lens navigation/orientation
+(none)
 ```
 
 ### `IMPLEMENTED_NOT_LIVE`
 
 ```text
 deterministic immutable ScopeSnapshot persistence/currentness with purge, deny, owner, policy, disclosure, fence and expiry invalidation
+deterministic Corpus Lens SourceCard/DocumentMap/ProjectAtlas orientation with explicit omissions and navigation-only evidence expansion
 generic federation boundary with strict auth/fence/reference and conservative disposition mapping
 Cloudflare Access-protected HTTP dispatch and owner catalog
 governed normalized-bundle ingest and SourceAdmissionDecision
@@ -59,6 +60,10 @@ federation.result
 federation.cancel
 ```
 
+`research.orient` remains unavailable in the active Worker generation until ER-24 supplies a persisted
+navigation store and composes the authoritative current ScopeSnapshot gate. The ER-31 deterministic
+service itself is implemented; this does not imply route composition or live platform qualification.
+
 Some unavailable operations are not separate status markers because they are composition outputs of the
 owned service/workflow packets. They remain release blockers and are enumerated in the gap register and
 production readiness plan.
@@ -72,6 +77,10 @@ Queue send accepted
 
 Workflow completed
 ≠ research completed
+
+ProjectAtlas / SourceCard / DocumentMap
+≠ EvidenceHandle resolution
+≠ publication support
 
 AI Search or provider hit
 ≠ EvidenceHandle
