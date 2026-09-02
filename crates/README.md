@@ -43,6 +43,29 @@ The product-neutral M2 corpora run independently through TypeScript, native Rust
 They are differential shadow infrastructure only: no product family consumes Rust output, no mutation is
 duplicated, and no TypeScript authority has been removed.
 
+## M2 ingest identity-family shadow slice
+
+The committed `ingest-identities.v1` corpus binds the generic stable-ID kernel to every current
+`stableIngestId` prefix/arity formula used by ingest admission and its queued projection handoff:
+
+- `ingest(principal_ref, idempotency_key)` and `candidate(operation_id)`;
+- `qualification(operation_id)` and
+  `admission(operation_id, qualification_digest, decision)` for `ADMITTED`, `QUARANTINED` and
+  `REJECTED`;
+- ingest intent, attempt, receipt and idempotency identities;
+- projection intent and idempotency identities derived during ingest commit;
+- `outbox(projection_intent_id, "1")`.
+
+Thirty-one committed cases cover the complete dependency chain, all currently admitted identifier
+punctuation, part ordering and boundary separation, exact 256-character upstream identifier ceilings,
+validation of representative outputs, malformed prefixes, invalid UTF-8, wrong digest length and
+non-lowercase digest bytes. The same fixture bytes run through the independent JavaScript reference,
+native Rust and compiled Rust/Wasm.
+
+This corpus assumes inputs have already passed the current TypeScript `authorityIdentifier` and contract
+validators. It does not move D1 uniqueness, idempotency replay, admission decisions, queue settlement,
+projection dispatch, or any runtime effect into Rust.
+
 ## M2 `source.owner-cutover.v1` canonical golden slice
 
 The first named contract corpus binds the generic kernel to the existing owner-cutover contract without
