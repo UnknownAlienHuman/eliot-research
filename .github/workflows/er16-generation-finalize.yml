@@ -1,0 +1,117 @@
+name: er16-generation-finalize
+
+on:
+  push:
+    branches:
+      - agent/ER-16-ai-search-generation-lifecycle-20260902
+    paths:
+      - .github/workflows/er16-generation-finalize.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er16-generation-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-ai-search-generation-lifecycle-20260902
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Bind exports, tests, and ER-16 ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          generation_path = "packages/platform-cloudflare/src/ai-search-generation.ts"
+
+          ai_search = Path("packages/platform-cloudflare/src/ai-search.ts")
+          source = ai_search.read_text(encoding="utf-8").rstrip()
+          export_line = 'export * from "./ai-search-generation.js";'
+          if export_line not in source:
+              source += f"\n\n{export_line}"
+          ai_search.write_text(source + "\n", encoding="utf-8")
+
+          bridge = Path("packages/platform-cloudflare/src/ai-search.test.ts")
+          bridge_source = bridge.read_text(encoding="utf-8").rstrip()
+          import_line = 'import "../../../infra/ai-search/ai-search-generation.test.mjs";'
+          if import_line not in bridge_source:
+              bridge_source += f"\n{import_line}"
+          bridge.write_text(bridge_source + "\n", encoding="utf-8")
+
+          manifest_path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          packets = [packet for packet in manifest["packets"] if packet["id"] == "ER-16"]
+          if len(packets) != 1:
+              raise SystemExit("expected exactly one ER-16 packet")
+          owned_paths = packets[0]["owned_paths"]
+          if generation_path not in owned_paths:
+              anchor = "packages/platform-cloudflare/src/ai-search.ts"
+              index = owned_paths.index(anchor) + 1
+              owned_paths.insert(index, generation_path)
+          manifest_path.write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          packet_path = Path(
+              "docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md"
+          )
+          packet = packet_path.read_text(encoding="utf-8")
+          bullet = f"- `{generation_path}`\n"
+          if bullet not in packet:
+              anchor = "- `packages/platform-cloudflare/src/ai-search.ts`\n"
+              if packet.count(anchor) != 1:
+                  raise SystemExit("unexpected ER-16 owned-path anchor")
+              packet = packet.replace(anchor, anchor + bullet, 1)
+          heading = "## Active implementation slice — AI Search generation lifecycle"
+          if heading not in packet:
+              packet = packet.rstrip() + f'''\n\n{heading}\n\nThis slice adds the non-live generation state machine required before AI Search provisioning can be\ntrusted:\n\n- immutable instance-profile admission, including embedding model and metadata-field equality;\n- bounded declarations and monotonic shadow indexing/readback accounting;\n- `SHADOW_COMPLETE` only after every expected item is indexed and read back, no failures or\n  differential mismatches remain, and a retained golden-set result is present;\n- fail-closed `BLOCKED` state for any failed item or mismatch;\n- active-head compare-and-swap promotion that atomically retires the previous generation;\n- explicit rejection of candidate sets that mix scores from different index generations.\n\nNo Cloudflare instance is created or mutated by this slice. Persistence, provisioning API calls, live\ngolden-set receipts, production promotion, and workload qualification remain open and `NOT EXECUTED`.\n'''
+          packet_path.write_text(packet, encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er16-generation-finalize.yml
+          git diff --check
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify exact generation lifecycle before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm work-packets:check
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm lint
+          pnpm typecheck
+          test -f packages/platform-cloudflare/dist/ai-search-generation.js
+          pnpm exec vitest run packages/platform-cloudflare/src/ai-search.test.ts
+          git diff --check
+
+      - name: Commit verified ER-16 generation lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-16: implement AI Search generation lifecycle [er16-generation-finalized]"
+          git push origin HEAD:agent/ER-16-ai-search-generation-lifecycle-20260902
