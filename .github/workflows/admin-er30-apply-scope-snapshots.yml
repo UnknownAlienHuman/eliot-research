@@ -55,6 +55,23 @@ jobs:
           import json
           from pathlib import Path
 
+          scope_test_path = Path("apps/eliotr-core/src/scope-service.test.ts")
+          scope_test = scope_test_path.read_text(encoding="utf-8")
+          old_expectation = """      "SCOPE_IDENTIFIER_INVALID",
+    );
+
+    const malformedAuthority"""
+          new_expectation = """      "SCOPE_RESOLUTION_FAILED",
+    );
+
+    const malformedAuthority"""
+          if scope_test.count(old_expectation) != 1:
+              raise SystemExit("expected one malformed atom error expectation")
+          scope_test_path.write_text(
+              scope_test.replace(old_expectation, new_expectation),
+              encoding="utf-8",
+          )
+
           scope_path = Path("packages/domain/src/scope.ts")
           scope = scope_path.read_text(encoding="utf-8")
           old_interface = "export interface ScopeUniverse {\n  readonly global: ReadonlySet<string>;\n  readonly projects: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly sourceClasses: ReadonlyMap<string, ReadonlySet<string>>;\n  readonly tags: ReadonlyMap<string, ReadonlySet<string>>;\n}\n"
