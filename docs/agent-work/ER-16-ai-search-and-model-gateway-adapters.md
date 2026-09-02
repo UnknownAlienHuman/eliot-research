@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `packages/platform-cloudflare/src/ai-search.ts`
+- `packages/platform-cloudflare/src/ai-search.test.ts`
 - `packages/platform-cloudflare/src/model-gateway.ts`
 - `infra/ai-search/**`
 - `infra/cloudflare/ai-gateways.json`
