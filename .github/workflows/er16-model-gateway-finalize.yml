@@ -36,6 +36,16 @@ jobs:
           echo "b696e89790606e2af768b5fe278ceec96e768bce3f776ed5acb0f6dfc246f501  /tmp/er16-model-gateway.tar.gz" | sha256sum --check --strict
           tar -xzf /tmp/er16-model-gateway.tar.gz -C .
           python3 apply-er16-model-gateway.py
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("infra/ai-search/model-gateway.test.mjs")
+          source = path.read_text(encoding="utf-8")
+          old = "new Headers("
+          if source.count(old) != 1:
+              raise SystemExit(f"expected one Headers constructor, found {source.count(old)}")
+          path.write_text(source.replace(old, "new globalThis.Headers(", 1), encoding="utf-8")
+          PY
           rm apply-er16-model-gateway.py
           rm -rf .er16-model-gateway
           git rm -- .github/workflows/er16-model-gateway-finalize.yml
@@ -58,7 +68,7 @@ jobs:
           pnpm budgets:check
           pnpm lint
           pnpm typecheck
-          pnpm exec vitest run packages/platform-cloudflare/src/ai-search.test.ts --reporter=verbose
+          node infra/ai-search/model-gateway.test.mjs
           git diff --check
 
       - name: Commit verified ER-16 model-gateway change
