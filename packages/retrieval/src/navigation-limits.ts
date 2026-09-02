@@ -15,6 +15,7 @@ export const MAX_JSON_NODES = 32_768;
 export const MAX_ORIENTATION_SOURCES = 128;
 export const MAX_ORIENTATION_CANDIDATES = 512;
 export const MAX_FOCUS_TERMS = 64;
+export const MAX_FOCUS_TERM_BYTES = 1_024;
 export const MAX_OMISSION_SAMPLE = 512;
 
 export const VERSION_TOKEN = /^(?:v|version[-_:]?)?\d+(?:\.\d+){1,3}$/iu;

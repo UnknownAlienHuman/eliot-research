@@ -7,16 +7,23 @@ import {
   type VersionedRef,
 } from "@eliotr/contracts";
 import {
+  MAX_FOCUS_TERMS,
+  MAX_FOCUS_TERM_BYTES,
+  MAX_OMISSION_SAMPLE,
+  MAX_ORIENTATION_CANDIDATES,
+  MAX_ORIENTATION_SOURCES,
   NavigationError,
   evidenceHandleCandidateSupport,
   extractNavigationSections,
   navigationOnlySupport,
   parseDocumentMapArtifact,
   parseEvidenceHandleCandidate,
+  parseIdentifier,
   parseNavigationScopeSnapshot,
   parseProjectAtlasArtifact,
   parseSourceCardArtifact,
   sameVersionedRef,
+  versionedRefKey,
   type NavigationCentrality,
   type NavigationExpansionRequest,
   type NavigationExpansionResult,
@@ -28,13 +35,6 @@ import {
   type OrientationResult,
 } from "@eliotr/retrieval";
 
-const MAX_ORIENTATION_SOURCES = 128;
-const MAX_ORIENTATION_CANDIDATES = 512;
-const MAX_FOCUS_TERMS = 64;
-const MAX_FOCUS_TERM_BYTES = 1_024;
-const MAX_OMISSION_SAMPLE = 512;
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-
 function fail(code: NavigationError["code"], message: string): never {
   throw new NavigationError(code, message);
 }
@@ -45,22 +45,6 @@ function utf8Length(value: string): number {
 
 function compareText(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function versionedRefKey(value: VersionedRef): string {
-  return `${value.id}@${value.revision}`;
-}
-
-function parseIdentifier(value: unknown, label: string): string {
-  if (
-    typeof value !== "string" ||
-    value !== value.trim() ||
-    !IDENTIFIER.test(value) ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
-    fail("NAVIGATION_INPUT_INVALID", `${label} is not a canonical identifier`);
-  }
-  return value;
 }
 
 function parseVersionedRef(value: unknown, label: string): VersionedRef {

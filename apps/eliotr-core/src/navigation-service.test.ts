@@ -339,8 +339,8 @@ describe("ER-31 Corpus Lens navigation service", () => {
       section_ref: "intro",
     })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
 
-    const original = store.getSourceCards.bind(store);
-    store.getSourceCards = async () => original(["revision-a"]);
+    const outsideCard = await card(sourceRevision("revision-z"), "Outside frozen request");
+    store.getSourceCards = async () => [structuredClone(outsideCard)];
     await expect(createNavigationService(store).orient({
       scope_snapshot: store.scopeSnapshot,
       focus_terms: [],

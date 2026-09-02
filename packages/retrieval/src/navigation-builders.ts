@@ -195,6 +195,27 @@ interface AtlasGroup {
   readonly cards: readonly SourceCard[];
 }
 
+type AtlasNode = ProjectAtlasRevision["nodes"][number];
+
+interface BuiltAtlasGroup {
+  readonly root: AtlasNode;
+  readonly nodes: readonly AtlasNode[];
+}
+
+const ATLAS_GROUP_KINDS: readonly AtlasGroup["kind"][] = [
+  "TOPIC",
+  "SOURCE_FAMILY",
+  "VERSION",
+  "PERIOD",
+];
+
+const ATLAS_GROUP_DIRECTORY_LABEL: Readonly<Record<AtlasGroup["kind"], string>> = {
+  TOPIC: "Topic index",
+  SOURCE_FAMILY: "Source-family index",
+  VERSION: "Version index",
+  PERIOD: "Period index",
+};
+
 function addGroup(map: Map<string, SourceCard[]>, key: string, card: SourceCard): void {
   const existing = map.get(key);
   if (existing === undefined) map.set(key, [card]);
@@ -210,6 +231,123 @@ function sortedCardRefs(cards: readonly SourceCard[]): VersionedRef[] {
 async function atlasNodeId(kind: string, label: string): Promise<string> {
   const digest = await sha256Hex(`eliotr.atlas-node.v1\0${kind}\0${label}`);
   return `atlas-node-${digest.slice(0, 48)}`;
+}
+
+function partition<T>(values: readonly T[], size: number): T[][] {
+  const output: T[][] = [];
+  for (let offset = 0; offset < values.length; offset += size) {
+    output.push(values.slice(offset, offset + size));
+  }
+  return output;
+}
+
+async function buildAtlasGroupNodes(
+  group: AtlasGroup,
+  centrality: ReadonlyMap<string, number>,
+): Promise<BuiltAtlasGroup> {
+  const cards = [...group.cards].sort((left, right) =>
+    compareText(left.source_revision_ref, right.source_revision_ref));
+  const sourceRefs = cards.map((card) => card.source_revision_ref);
+  const centralitySum = sourceRefs.reduce(
+    (sum, sourceRef) => sum + (centrality.get(sourceRef) ?? 0),
+    0,
+  );
+  const rootId = await atlasNodeId(group.kind, group.label);
+  const cardPartitions = partition(cards, MAX_NODE_REFERENCES);
+  if (cardPartitions.length <= 1) {
+    const root: AtlasNode = {
+      node_id: rootId,
+      label: group.label,
+      kind: group.kind,
+      source_card_refs: sortedCardRefs(cards),
+      child_node_ids: [],
+      annotations: {
+        centrality_sum: centralitySum,
+        navigation_authority: "NAVIGATION_ONLY",
+        source_revision_refs: sourceRefs,
+      },
+    };
+    return { root, nodes: [root] };
+  }
+
+  const leaves = await Promise.all(cardPartitions.map(async (partitionCards, index) => {
+    const partitionRefs = partitionCards.map((card) => card.source_revision_ref);
+    const partitionIdentity = canonicalJson(partitionCards.map((card) => card.card_ref));
+    return {
+      node_id: await atlasNodeId(
+        group.kind,
+        `${group.label}\0reference-partition\0${index + 1}\0${partitionIdentity}`,
+      ),
+      label: `${group.label} — partition ${index + 1}/${cardPartitions.length}`,
+      kind: group.kind,
+      source_card_refs: sortedCardRefs(partitionCards),
+      child_node_ids: [],
+      annotations: {
+        atlas_role: "REFERENCE_PARTITION",
+        centrality_sum: partitionRefs.reduce(
+          (sum, sourceRef) => sum + (centrality.get(sourceRef) ?? 0),
+          0,
+        ),
+        group_node_id: rootId,
+        navigation_authority: "NAVIGATION_ONLY",
+        partition_count: cardPartitions.length,
+        partition_index: index + 1,
+        source_revision_refs: partitionRefs,
+      },
+    } satisfies AtlasNode;
+  }));
+  const root: AtlasNode = {
+    node_id: rootId,
+    label: group.label,
+    kind: group.kind,
+    source_card_refs: [],
+    child_node_ids: leaves.map((node) => node.node_id).sort(compareText),
+    annotations: {
+      atlas_role: "REFERENCE_DIRECTORY",
+      centrality_sum: centralitySum,
+      navigation_authority: "NAVIGATION_ONLY",
+      partition_count: leaves.length,
+      source_revision_count: sourceRefs.length,
+      source_revision_refs: sourceRefs.slice(0, MAX_NODE_REFERENCES),
+      source_revision_refs_truncated: sourceRefs.length > MAX_NODE_REFERENCES,
+    },
+  };
+  return { root, nodes: [root, ...leaves] };
+}
+
+async function buildAtlasDirectoryNodes(groupRoots: readonly AtlasNode[]): Promise<AtlasNode[]> {
+  const directories: AtlasNode[] = [];
+  for (const kind of ATLAS_GROUP_KINDS) {
+    const roots = groupRoots.filter((node) => node.kind === kind)
+      .sort((left, right) => compareText(left.node_id, right.node_id));
+    const rootPartitions = partition(roots, MAX_NODE_REFERENCES);
+    for (let index = 0; index < rootPartitions.length; index += 1) {
+      const rootsInPartition = rootPartitions[index] ?? [];
+      const childNodeIds = rootsInPartition.map((node) => node.node_id).sort(compareText);
+      const label = rootPartitions.length === 1
+        ? ATLAS_GROUP_DIRECTORY_LABEL[kind]
+        : `${ATLAS_GROUP_DIRECTORY_LABEL[kind]} ${index + 1}/${rootPartitions.length}`;
+      directories.push({
+        node_id: await atlasNodeId(
+          kind,
+          `group-directory\0${kind}\0${canonicalJson(childNodeIds)}`,
+        ),
+        label,
+        kind,
+        source_card_refs: [],
+        child_node_ids: childNodeIds,
+        annotations: {
+          atlas_role: "GROUP_DIRECTORY",
+          child_group_count: childNodeIds.length,
+          group_kind: kind,
+          navigation_authority: "NAVIGATION_ONLY",
+          partition_count: rootPartitions.length,
+          partition_index: index + 1,
+        },
+      });
+    }
+  }
+  return directories;
 }
 
 export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<ProjectAtlasRevision> {
@@ -280,22 +418,14 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
       (centrality.get(card.source_revision_ref) ?? 0) + increment,
     ));
   }
-  const nodes: ProjectAtlasRevision["nodes"] = [];
+  const nodes: AtlasNode[] = [];
+  const groupRoots: AtlasNode[] = [];
   for (const group of groups) {
-    const sourceRefs = uniqueSorted(group.cards.map((card) => card.source_revision_ref));
-    nodes.push({
-      node_id: await atlasNodeId(group.kind, group.label),
-      label: group.label,
-      kind: group.kind,
-      source_card_refs: sortedCardRefs(group.cards),
-      child_node_ids: [],
-      annotations: {
-        centrality_sum: sourceRefs.reduce((sum, sourceRef) => sum + (centrality.get(sourceRef) ?? 0), 0),
-        navigation_authority: "NAVIGATION_ONLY",
-        source_revision_refs: sourceRefs,
-      },
-    });
+    const built = await buildAtlasGroupNodes(group, centrality);
+    nodes.push(...built.nodes);
+    groupRoots.push(built.root);
   }
+  const auxiliaryRootIds: string[] = [];
 
   const expectedClasses = parseStringArray(
     input.expected_source_classes ?? [],
@@ -310,7 +440,7 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
     ...(omitted.length === 0 ? [] : [`navigation artifacts unavailable for ${omitted.length} frozen source revision(s)`]),
   ];
   if (underResearched.length > 0) {
-    nodes.push({
+    const gapNode: AtlasNode = {
       node_id: await atlasNodeId("GAP", canonicalJson(underResearched)),
       label: "Coverage gaps",
       kind: "GAP",
@@ -323,7 +453,9 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
         omitted_source_revision_refs: omitted.slice(0, MAX_NODE_REFERENCES),
         omissions_truncated: omitted.length > MAX_NODE_REFERENCES,
       },
-    });
+    };
+    nodes.push(gapNode);
+    auxiliaryRootIds.push(gapNode.node_id);
   }
 
   const routeCards = [...representedCards].sort((left, right) => {
@@ -340,7 +472,7 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
     source_revision_refs: routeCards.map((card) => card.source_revision_ref),
   }];
   if (routeCards.length > 0) {
-    nodes.push({
+    const routeNode: AtlasNode = {
       node_id: await atlasNodeId("READING_ROUTE", routeId),
       label: "Central sources first",
       kind: "READING_ROUTE",
@@ -351,16 +483,27 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
         route_id: routeId,
         source_revision_refs: routeCards.map((card) => card.source_revision_ref),
       },
-    });
+    };
+    nodes.push(routeNode);
+    auxiliaryRootIds.push(routeNode.node_id);
   }
 
-  const childIds = nodes.map((node) => node.node_id).sort(compareText);
+  let groupRootIds = groupRoots.map((node) => node.node_id).sort(compareText);
+  if (groupRootIds.length + auxiliaryRootIds.length > MAX_NODE_REFERENCES) {
+    const directories = await buildAtlasDirectoryNodes(groupRoots);
+    nodes.push(...directories);
+    groupRootIds = directories.map((node) => node.node_id).sort(compareText);
+  }
+  const childIds = [...groupRootIds, ...auxiliaryRootIds].sort(compareText);
+  if (childIds.length > MAX_NODE_REFERENCES || nodes.length + 1 > MAX_ATLAS_NODES) {
+    fail("NAVIGATION_LIMIT_EXCEEDED", "atlas hierarchy exceeds its bounded node fanout");
+  }
   const rootId = await atlasNodeId("PROJECT", `${projectRef.id}@${projectRef.revision}`);
   nodes.unshift({
     node_id: rootId,
     label: `Project ${projectRef.id}`,
     kind: "PROJECT",
-    source_card_refs: sortedCardRefs(representedCards),
+    source_card_refs: sortedCardRefs(representedCards).slice(0, MAX_NODE_REFERENCES),
     child_node_ids: childIds,
     annotations: {
       coverage_kind: omitted.length === 0 ? "sampled_with_method" : "unknown",
@@ -368,7 +511,9 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
       omitted_source_revision_count: omitted.length,
       omitted_source_revision_refs: omitted.slice(0, MAX_NODE_REFERENCES),
       omissions_truncated: omitted.length > MAX_NODE_REFERENCES,
+      represented_source_revision_count: represented.length,
       represented_source_revision_refs: represented,
+      root_source_card_refs_truncated: represented.length > MAX_NODE_REFERENCES,
       scope_member_count: scope.member_source_revision_refs.length,
     },
   });

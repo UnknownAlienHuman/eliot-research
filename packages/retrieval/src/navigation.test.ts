@@ -4,6 +4,7 @@ import {
   buildDocumentMap,
   buildProjectAtlas,
   buildSourceCard,
+  MAX_NODE_REFERENCES,
   navigationOnlySupport,
   parseProjectAtlasArtifact,
   requireResolvedEvidenceForPublication,
@@ -246,6 +247,45 @@ describe("ER-31 deterministic navigation artifacts", () => {
     } catch (error) {
       expect(error).toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
     }
+  });
+
+  it("partitions Atlas reference fanout without lowering the admitted source ceiling", async () => {
+    const sourceRefs = Array.from(
+      { length: MAX_NODE_REFERENCES + 1 },
+      (_value, index) => `revision-${String(index).padStart(4, "0")}`,
+    );
+    const sources = sourceRefs.map((sourceRef) => sourceRevision(sourceRef));
+    const [cards, maps] = await Promise.all([
+      Promise.all(sources.map((source, index) => card(source, `Kernel ${index}`))),
+      Promise.all(sources.map((source) => documentMap(source))),
+    ]);
+    const atlas = await buildProjectAtlas({
+      project_ref: { id: "project-large", revision: 1 },
+      scope_snapshot: scope(sourceRefs),
+      source_cards: cards,
+      document_maps: maps,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    });
+
+    expect(atlas.nodes.every((node) =>
+      node.source_card_refs.length <= MAX_NODE_REFERENCES &&
+      node.child_node_ids.length <= MAX_NODE_REFERENCES)).toBe(true);
+    const root = atlas.nodes.find((node) => node.kind === "PROJECT");
+    expect(root?.source_card_refs).toHaveLength(MAX_NODE_REFERENCES);
+    expect(root?.annotations).toMatchObject({
+      represented_source_revision_count: MAX_NODE_REFERENCES + 1,
+      root_source_card_refs_truncated: true,
+    });
+
+    const memoryRoot = atlas.nodes.find((node) => node.kind === "TOPIC" && node.label === "memory");
+    expect(memoryRoot?.source_card_refs).toHaveLength(0);
+    expect(memoryRoot?.child_node_ids).toHaveLength(2);
+    const partitionIds = new Set(memoryRoot?.child_node_ids ?? []);
+    const partitionReferenceCount = atlas.nodes
+      .filter((node) => partitionIds.has(node.node_id))
+      .reduce((sum, node) => sum + node.source_card_refs.length, 0);
+    expect(partitionReferenceCount).toBe(MAX_NODE_REFERENCES + 1);
   });
 
   it("never upgrades a plausible Atlas claim or an unresolved handle into publication evidence", async () => {
