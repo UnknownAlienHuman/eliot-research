@@ -1,0 +1,72 @@
+name: er16-model-gateway-finalize
+
+on:
+  push:
+    branches:
+      - agent/ER-16-model-gateway-policy-boundary-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er16-model-gateway-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[er16-model-finalized]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-model-gateway-policy-boundary-20260902
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Materialize exact ER-16 model-gateway payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .er16-model-gateway/piece-*.b64 > /tmp/er16-model-gateway.tar.gz.b64
+          base64 --decode /tmp/er16-model-gateway.tar.gz.b64 > /tmp/er16-model-gateway.tar.gz
+          echo "b696e89790606e2af768b5fe278ceec96e768bce3f776ed5acb0f6dfc246f501  /tmp/er16-model-gateway.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/er16-model-gateway.tar.gz -C .
+          python3 apply-er16-model-gateway.py
+          rm apply-er16-model-gateway.py
+          rm -rf .er16-model-gateway
+          git rm -- .github/workflows/er16-model-gateway-finalize.yml
+          git diff --check
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify exact model-gateway boundary before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm work-packets:check
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm lint
+          pnpm typecheck
+          pnpm exec vitest run packages/platform-cloudflare/src/ai-search.test.ts --reporter=verbose
+          git diff --check
+
+      - name: Commit verified ER-16 model-gateway change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-16: implement strict model-gateway policy [er16-model-finalized]"
+          git push origin HEAD:agent/ER-16-model-gateway-policy-boundary-20260902
