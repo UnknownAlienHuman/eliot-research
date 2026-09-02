@@ -18,7 +18,7 @@ production definition and final exit evidence are specified in
 | P1 | D1 outbox, Queue inbox and projection acceptance are implemented but not live-qualified | ER-13, ER-15, ER-24 | remote Queue lost-ACK, duplicate delivery, poison message, DLQ and restart receipts |
 | P1 | Research Workflow has contract stages but not governed execution | ER-09, ER-20, ER-24 | cancellation/budget at every checkpoint; evidence freeze and claim audit |
 | P1 | Managed search response needs strict locator decoding before canonical resolution | ER-06, ER-07, ER-16 | oversized/malformed/fake-handle fixtures; exact resolver required |
-| P1 | Scope algebra persistence is not wired to the deterministic evaluator | ER-10, ER-30 | immutable snapshot digest, purge-ledger binding and invalidation fixtures |
+| P1 | ScopeSnapshot authority is implemented but not composed into remote D1, principal grants or retrieval and is not live-qualified | ER-10, ER-24, ER-30 | compose the D1 repository, grants and retrieval gate; retain remote persistence/readback plus purge, deny and expiry invalidation receipts |
 | P1 | Corpus Lens navigation/orientation remains fail-closed | ER-06, ER-10, ER-31 | SourceCard, DocumentMap and ProjectAtlas over frozen scope; explicit omissions and coverage limits |
 | P1 | Minimum Wiki, Artifact Compiler, trace and change products are not composed | ER-11, ER-12, ER-21, ER-24 | immutable revision/head CAS, fully resolved citations, copy-on-write update and purge dependency invalidation |
 | P1 | Drive cursor/OAuth/tamper flow remains non-live | ER-18, ER-19, ER-20, ER-26 | disposable append/import/readback/reconnect + historical-row tamper fixture |

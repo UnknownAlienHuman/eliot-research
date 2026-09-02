@@ -25,13 +25,13 @@ registry, gap register and completion evidence in the same change.
 ### `SCAFFOLD_FAIL_CLOSED`
 
 ```text
-ER-30 ScopeSnapshot persistence
 ER-31 Corpus Lens navigation/orientation
 ```
 
 ### `IMPLEMENTED_NOT_LIVE`
 
 ```text
+deterministic immutable ScopeSnapshot persistence/currentness with purge, deny, owner, policy, disclosure, fence and expiry invalidation
 generic federation boundary with strict auth/fence/reference and conservative disposition mapping
 Cloudflare Access-protected HTTP dispatch and owner catalog
 governed normalized-bundle ingest and SourceAdmissionDecision
