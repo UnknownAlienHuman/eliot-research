@@ -75,7 +75,16 @@ jobs:
           pnpm lint
           pnpm typecheck
           test -f packages/platform-cloudflare/dist/model-gateway.js
-          node infra/ai-search/model-gateway.test.mjs
+          cat > er16-vitest.config.mjs <<'EOF'
+          export default {
+            test: {
+              environment: "node",
+              include: ["infra/ai-search/model-gateway.test.mjs"],
+            },
+          };
+          EOF
+          pnpm exec vitest run --config er16-vitest.config.mjs
+          rm er16-vitest.config.mjs
           git diff --check
 
       - name: Commit verified ER-16 model-gateway change
