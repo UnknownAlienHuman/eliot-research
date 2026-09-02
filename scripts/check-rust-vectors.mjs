@@ -279,3 +279,10 @@ await verifyStableIdReference(
   ),
   "Ingest identity",
 );
+await verifyStableIdReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/projection-identities.v1.txt",
+    import.meta.url,
+  ),
+  "Projection identity",
+);
