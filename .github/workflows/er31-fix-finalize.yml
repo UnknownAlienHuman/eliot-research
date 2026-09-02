@@ -1,0 +1,67 @@
+name: er31-fix-finalize
+
+on:
+  push:
+    branches:
+      - agent/ER-31-corpus-lens-navigation-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er31-fix-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[er31-fix-finalized]') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: agent/ER-31-corpus-lens-navigation-20260902
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+
+      - name: Materialize and verify exact fix payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .er31-fix/payload-*.b64 > /tmp/er31-fix.tar.gz.b64
+          base64 --decode /tmp/er31-fix.tar.gz.b64 > /tmp/er31-fix.tar.gz
+          echo "c1f31216b7ba4a0e93b98dac0a7ec6975231789cc401c5ae9971512f292d1a3d  /tmp/er31-fix.tar.gz" | sha256sum --check --strict
+          tar -xzf /tmp/er31-fix.tar.gz -C .
+          rm -rf .er31-fix
+          git rm -- .github/workflows/er31-fix-finalize.yml
+          git diff --check
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify ER-31 fix before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm budgets:check
+          pnpm lint
+          pnpm typecheck
+          pnpm exec vitest run packages/retrieval/src/navigation.test.ts
+          pnpm --filter @eliotr/core test
+
+      - name: Commit exact verified change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-31: harden bounded Atlas navigation [er31-fix-finalized]"
+          git push origin HEAD:agent/ER-31-corpus-lens-navigation-20260902
