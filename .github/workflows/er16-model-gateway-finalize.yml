@@ -39,18 +39,26 @@ jobs:
           python3 <<'PY'
           from pathlib import Path
 
-          path = Path("infra/ai-search/model-gateway.test.mjs")
-          source = path.read_text(encoding="utf-8")
-          replacements = {
+          fixture_path = Path("infra/ai-search/model-gateway.test.mjs")
+          fixture = fixture_path.read_text(encoding="utf-8")
+          fixture_replacements = {
               "new Headers(": "new globalThis.Headers(",
               "../../packages/platform-cloudflare/src/model-gateway.js":
                   "../../packages/platform-cloudflare/dist/model-gateway.js",
           }
-          for old, new in replacements.items():
-              if source.count(old) != 1:
-                  raise SystemExit(f"expected one fixture token {old!r}, found {source.count(old)}")
-              source = source.replace(old, new, 1)
-          path.write_text(source, encoding="utf-8")
+          for old, new in fixture_replacements.items():
+              if fixture.count(old) != 1:
+                  raise SystemExit(f"expected one fixture token {old!r}, found {fixture.count(old)}")
+              fixture = fixture.replace(old, new, 1)
+          fixture_path.write_text(fixture, encoding="utf-8")
+
+          gateway_path = Path("packages/platform-cloudflare/src/model-gateway.ts")
+          gateway = gateway_path.read_text(encoding="utf-8")
+          old = "IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u"
+          new = "IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u"
+          if gateway.count(old) != 1:
+              raise SystemExit(f"expected one identifier grammar, found {gateway.count(old)}")
+          gateway_path.write_text(gateway.replace(old, new, 1), encoding="utf-8")
           PY
           rm apply-er16-model-gateway.py
           rm -rf .er16-model-gateway
