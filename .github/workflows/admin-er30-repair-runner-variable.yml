@@ -1,0 +1,46 @@
+name: admin-er30-repair-runner-variable
+
+on:
+  push:
+    branches:
+      - agent/ER-30-scope-snapshots-20260901
+
+permissions:
+  contents: write
+
+concurrency:
+  group: admin-er30-repair-runner-variable
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Repair and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path(".github/workflows/admin-er30-apply-scope-snapshots.yml")
+          text = path.read_text(encoding="utf-8")
+          if text.count("RUNNNER_TEMP") != 1:
+              raise SystemExit("expected one RUNNNER_TEMP typo")
+          path.write_text(text.replace("RUNNNER_TEMP", "RUNNER_TEMP"), encoding="utf-8")
+          PY
+          rm .github/workflows/admin-er30-repair-runner-variable.yml
+          git diff --check
+          git add -A
+          test "$(git diff --cached --name-only | sort)" = $'.github/workflows/admin-er30-apply-scope-snapshots.yml\n.github/workflows/admin-er30-repair-runner-variable.yml'
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "chore(admin): repair ER-30 runner variable"
+          git push \
+            --force-with-lease="refs/heads/$GITHUB_REF_NAME:$GITHUB_SHA" \
+            origin "HEAD:refs/heads/$GITHUB_REF_NAME"
