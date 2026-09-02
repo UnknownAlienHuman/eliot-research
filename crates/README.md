@@ -66,6 +66,27 @@ This corpus assumes inputs have already passed the current TypeScript `authority
 validators. It does not move D1 uniqueness, idempotency replay, admission decisions, queue settlement,
 projection dispatch, or any runtime effect into Rust.
 
+## M2 projection identity-family shadow slice
+
+The committed `projection-identities.v1` corpus binds the generic stable-ID kernel to every current
+`stableProjectionId` prefix/arity formula used by projection execution:
+
+- `projection(source_revision_ref, content_sha256, object_residency_key_digest, projector_profile)`;
+- `source(source_revision_ref)` and `generation(projection_generation)` path tokens;
+- `projection-execute(intent_id, intent_revision, projection_generation)`;
+- D1 Search and managed-search completion receipts;
+- `receipt-projection-terminal` for both `SUCCEEDED` and `PARTIAL` settlements.
+
+Thirty-six committed cases cover a complete dependency chain, both terminal outcomes, exact field-order
+sensitivity, content/residency/profile/readback changes, identifier punctuation, 256-character source,
+profile and managed-generation ceilings, representative output validation, malformed prefixes, invalid
+UTF-8, short digests and non-lowercase digest bytes. TypeScript, native Rust and compiled Rust/Wasm
+execute the same fixture bytes.
+
+The settlement digest is an already-admitted explicit input in this family. Canonical settlement-body
+parity, source-token truncation for managed keys, D1 activation, provider readback, lease settlement and
+all runtime effects remain TypeScript/Cloudflare authority.
+
 ## M2 `source.owner-cutover.v1` canonical golden slice
 
 The first named contract corpus binds the generic kernel to the existing owner-cutover contract without
