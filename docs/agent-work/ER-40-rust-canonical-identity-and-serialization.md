@@ -208,3 +208,25 @@ uniqueness, replay conflict handling, qualification/admission semantics, source-
 settlement and projection execution remain TypeScript/Cloudflare authority. No production call site
 uses Rust, no live observation receipt is claimed, and promotion still requires a separate rollback-bound
 review packet.
+
+## Active implementation slice — projection-identities.v1
+
+This slice binds the generic stable-ID shadow primitive to all seven formulas currently called through
+`stableProjectionId` in `packages/cloudflare-projection`:
+
+- projection generation from source revision, content digest, residency-key digest and projector profile;
+- full source and generation tokens used by projection work storage;
+- projection execution operation identity from intent reference and projection generation;
+- D1 Search and managed-search receipt identities;
+- terminal projection receipt identity for both `SUCCEEDED` and `PARTIAL`.
+
+The 36 committed cases include one complete dependency chain, field-order and NUL-boundary separation,
+changes to every digest/profile/generation input, admitted identifier punctuation, exact 256-character
+upstream identifier ceilings, representative complete-ID validation and typed malformed-input paths.
+The same bytes execute through the independent JavaScript reference, native Rust and Rust/Wasm.
+
+This is identity parity for already-admitted strings. `projectionGeneration` input validation,
+`projectionDigest` settlement-body construction, source-token slicing, R2 materialization, D1 activation,
+AI Search upload/readback, execution leases, terminal settlement and all production effects remain
+TypeScript/Cloudflare authority. No product call site consumes Rust output, live receipts remain
+`NOT EXECUTED`, and promotion still requires a separately reviewed rollback-bound packet.
