@@ -1,45 +1,46 @@
-import type { LocatorCandidate, ProjectionItem } from "@eliotr/contracts";
-import type { ManagedSearchPort, ProjectionSinkPort, RetrievalRequest } from "@eliotr/retrieval";
+import type { ProjectionItem } from "@eliotr/contracts";
+import { decodeUnresolvedLocatorCandidates, type ManagedSearchPort, type ProjectionSinkPort, type RetrievalRequest, type UnresolvedLocatorCandidate } from "@eliotr/retrieval";
 import type { AiSearchNamespaceLike } from "./bindings.js";
-
-export interface AiSearchInstanceProfile {
-  readonly id: string;
-  readonly generation: string;
-  readonly index_method: { readonly vector: boolean; readonly keyword: boolean };
-  readonly fusion_method?: "rrf" | "max";
-  readonly keyword_tokenizer?: "porter" | "trigram";
-  readonly keyword_match_mode?: "and" | "or";
-  readonly embedding_model?: string;
-  readonly reranking: boolean;
-  readonly max_num_results: number;
-  readonly metadata_fields: readonly string[];
+const MAX_RESULTS = 50, MAX_PREVIEW_BYTES = 64 * 1024, MAX_KEY_CHARS = 256, MAX_QUERY_CHARS = 100_000, MAX_CHUNK_ID_CHARS = 256;
+const RESULT_KEYS = new Set(["chunks", "search_query"]), CHUNK_KEYS = new Set(["id", "item", "score", "scoring_details", "text", "type"]), ITEM_KEYS = new Set(["key", "metadata", "timestamp"]);
+const METADATA_KEYS = new Set(["canonical_section_id", "content_sha256", "instruction_taint", "item_key", "projection_generation", "source_revision_ref"]), SCORING_KEYS = new Set(["fusion_method", "keyword_rank", "keyword_score", "reranking_score", "vector_rank", "vector_score"]);
+export interface AiSearchInstanceProfile { readonly id: string; readonly generation: string; readonly index_method: { readonly vector: boolean; readonly keyword: boolean }; readonly fusion_method?: "rrf" | "max"; readonly keyword_tokenizer?: "porter" | "trigram"; readonly keyword_match_mode?: "and" | "or"; readonly embedding_model?: string; readonly reranking: boolean; readonly max_num_results: number; readonly metadata_fields: readonly string[]; }
+export interface AiSearchGenerationManifest { readonly namespace: string; readonly generation: string; readonly instances: readonly AiSearchInstanceProfile[]; readonly active_head_expected_generation: string | null; readonly golden_set_result_ref?: string; }
+export interface AiSearchAdapter extends ManagedSearchPort, ProjectionSinkPort { readonly locator_only: true; }
+export interface AiSearchAdapterFactory { create(namespace: AiSearchNamespaceLike, manifest: AiSearchGenerationManifest): AiSearchAdapter; }
+export interface AiSearchLocatorDecodeOptions { readonly expected_index_generation: string; readonly requested_lanes: readonly ("SEM" | "LEX" | "LITERAL")[]; readonly max_results: number; readonly max_preview_bytes: number; }
+export class AiSearchLocatorDecodeError extends Error { public constructor(message: string, cause?: unknown) { super(message, cause === undefined ? undefined : { cause }); this.name = "AiSearchLocatorDecodeError"; } }
+interface Metadata { readonly canonical_section_id: string; readonly content_sha256: string; readonly instruction_taint: "CLEARED" | "DATA_ONLY" | "UNTRUSTED" | "COMMAND_LIKE"; readonly item_key: string; readonly projection_generation: string; readonly source_revision_ref: string; }
+interface Scoring { readonly fusion_method?: "rrf" | "max"; readonly keyword_rank?: number; readonly keyword_score?: number; readonly reranking_score?: number; readonly vector_rank?: number; readonly vector_score?: number; }
+interface Chunk { readonly id: string; readonly item_key: string; readonly item_timestamp?: number; readonly metadata: Metadata; readonly score: number; readonly scoring_details?: Scoring; readonly text: string; readonly type: "text"; }
+export function projectionMetadata(item: ProjectionItem): Readonly<Record<string, string>> { return Object.freeze({ canonical_section_id: item.canonical_section_id, content_sha256: item.content_sha256, instruction_taint: item.instruction_taint, item_key: item.item_key, projection_generation: item.projection_generation, source_revision_ref: item.source_revision_ref }); }
+export function decodeAiSearchSearchResult(request: RetrievalRequest, rawResult: unknown, options: AiSearchLocatorDecodeOptions): readonly UnresolvedLocatorCandidate[] {
+  validateRequest(request); validateOptions(request, options); const result = exactObject(rawResult, RESULT_KEYS, "AI Search result"); if (!Array.isArray(result.chunks)) fail("AI Search result.chunks must be an array"); if (result.chunks.length > options.max_results) fail(`AI Search returned ${result.chunks.length} chunks; maximum is ${options.max_results}`); nonemptyString(result.search_query, "AI Search result.search_query", MAX_QUERY_CHARS);
+  const seen = new Set<string>(); const candidates = result.chunks.map((raw, index) => { const candidate = mapAiSearchChunkToLocator(request, raw, { expected_index_generation: options.expected_index_generation, requested_lanes: options.requested_lanes, provider_rank: index + 1, max_preview_bytes: options.max_preview_bytes }); if (seen.has(candidate.candidate_id)) fail(`AI Search returned duplicate chunk id ${candidate.candidate_id}`); seen.add(candidate.candidate_id); return candidate; }); return Object.freeze(candidates);
 }
-
-export interface AiSearchGenerationManifest {
-  readonly namespace: string;
-  readonly generation: string;
-  readonly instances: readonly AiSearchInstanceProfile[];
-  readonly active_head_expected_generation: string | null;
-  readonly golden_set_result_ref?: string;
+export function mapAiSearchChunkToLocator(request: RetrievalRequest, rawChunk: unknown, context: { readonly expected_index_generation: string; readonly requested_lanes: readonly ("SEM" | "LEX" | "LITERAL")[]; readonly provider_rank: number; readonly max_preview_bytes: number }): UnresolvedLocatorCandidate {
+  validateRequest(request); const generation = nonemptyString(context.expected_index_generation, "expected_index_generation", 256); validateLanes(context.requested_lanes); positiveInteger(context.provider_rank, "provider_rank"); previewLimit(context.max_preview_bytes); const chunk = parseChunk(rawChunk); if (chunk.metadata.projection_generation !== generation) fail("AI Search chunk projection_generation does not match the promoted managed generation"); if (!request.scope_snapshot.member_source_revision_refs.includes(chunk.metadata.source_revision_ref)) fail("AI Search chunk source_revision_ref is outside the frozen ScopeSnapshot");
+  const row = { candidate_id: chunk.id, lane: selectLane(context.requested_lanes, chunk.scoring_details), source_revision_ref: chunk.metadata.source_revision_ref, canonical_section_id: chunk.metadata.canonical_section_id, preview: chunk.text, raw_score: chunk.score, rank: context.provider_rank, index_generation: chunk.metadata.projection_generation, metadata: Object.freeze({ content_sha256: chunk.metadata.content_sha256, instruction_taint: chunk.metadata.instruction_taint, item_key: chunk.metadata.item_key, projection_generation: chunk.metadata.projection_generation, provider: "cloudflare_ai_search", provider_chunk_type: chunk.type, provider_item_key: chunk.item_key, ...(chunk.item_timestamp === undefined ? {} : { provider_item_timestamp: chunk.item_timestamp }), ...flattenScoring(chunk.scoring_details) }) };
+  const first = decodeLocators([row], 1, context.max_preview_bytes)[0]; if (first === undefined) fail("AI Search locator validation produced no candidate"); return Object.freeze({ ...first, metadata: Object.freeze({ ...first.metadata }) });
 }
-
-export interface AiSearchAdapter extends ManagedSearchPort, ProjectionSinkPort {
-  readonly locator_only: true;
+function parseChunk(raw: unknown): Chunk {
+  const chunk = exactObject(raw, CHUNK_KEYS, "AI Search chunk"), id = nonemptyString(chunk.id, "AI Search chunk.id", MAX_CHUNK_ID_CHARS), type = nonemptyString(chunk.type, "AI Search chunk.type", 16); if (type !== "text") fail("AI Search chunk.type must be text"); const score = unitScore(chunk.score, "AI Search chunk.score"); if (typeof chunk.text !== "string") fail("AI Search chunk.text must be a string"); const item = exactObject(chunk.item, ITEM_KEYS, "AI Search chunk.item"), itemKey = nonemptyString(item.key, "AI Search chunk.item.key", MAX_KEY_CHARS), itemTimestamp = item.timestamp === undefined ? undefined : nonnegativeInteger(item.timestamp, "AI Search chunk.item.timestamp"), metadata = parseMetadata(item.metadata); if (metadata.item_key !== itemKey) fail("AI Search chunk.item.key does not match metadata.item_key"); const scoring = chunk.scoring_details === undefined ? undefined : parseScoring(chunk.scoring_details);
+  return { id, item_key: itemKey, ...(itemTimestamp === undefined ? {} : { item_timestamp: itemTimestamp }), metadata, score, ...(scoring === undefined ? {} : { scoring_details: scoring }), text: chunk.text, type };
 }
-
-export interface AiSearchAdapterFactory {
-  create(namespace: AiSearchNamespaceLike, manifest: AiSearchGenerationManifest): AiSearchAdapter;
-}
-
-export function projectionMetadata(item: ProjectionItem): Readonly<Record<string, string>> {
-  return {
-    source_revision_ref: item.source_revision_ref,
-    canonical_section_id: item.canonical_section_id,
-    projection_generation: item.projection_generation,
-    instruction_taint: item.instruction_taint,
-  };
-}
-
-export function mapAiSearchChunkToLocator(_request: RetrievalRequest, raw: unknown): LocatorCandidate {
-  throw new Error(`ER-16 must implement strict AI Search response decoding; received ${typeof raw}`);
-}
+function parseMetadata(raw: unknown): Metadata { const value = exactObject(raw, METADATA_KEYS, "AI Search chunk.item.metadata"), digest = nonemptyString(value.content_sha256, "AI Search metadata.content_sha256", 64), taint = nonemptyString(value.instruction_taint, "AI Search metadata.instruction_taint", 32); if (!/^[a-f0-9]{64}$/u.test(digest)) fail("AI Search metadata.content_sha256 must be 64 lowercase hexadecimal characters"); if (!isTaint(taint)) fail("AI Search metadata.instruction_taint is invalid"); return { canonical_section_id: nonemptyString(value.canonical_section_id, "AI Search metadata.canonical_section_id", 256), content_sha256: digest, instruction_taint: taint, item_key: nonemptyString(value.item_key, "AI Search metadata.item_key", MAX_KEY_CHARS), projection_generation: nonemptyString(value.projection_generation, "AI Search metadata.projection_generation", 256), source_revision_ref: nonemptyString(value.source_revision_ref, "AI Search metadata.source_revision_ref", 256) }; }
+function parseScoring(raw: unknown): Scoring { const value = exactObject(raw, SCORING_KEYS, "AI Search chunk.scoring_details"), out: { fusion_method?: "rrf" | "max"; keyword_rank?: number; keyword_score?: number; reranking_score?: number; vector_rank?: number; vector_score?: number } = {}; if (value.vector_score !== undefined) out.vector_score = unitScore(value.vector_score, "AI Search scoring_details.vector_score"); if (value.reranking_score !== undefined) out.reranking_score = unitScore(value.reranking_score, "AI Search scoring_details.reranking_score"); if (value.keyword_score !== undefined) out.keyword_score = nonnegativeNumber(value.keyword_score, "AI Search scoring_details.keyword_score"); if (value.keyword_rank !== undefined) out.keyword_rank = positiveInteger(value.keyword_rank, "AI Search scoring_details.keyword_rank"); if (value.vector_rank !== undefined) out.vector_rank = positiveInteger(value.vector_rank, "AI Search scoring_details.vector_rank"); if (value.fusion_method !== undefined) { const method = nonemptyString(value.fusion_method, "AI Search scoring_details.fusion_method", 16); if (method !== "rrf" && method !== "max") fail("AI Search scoring_details.fusion_method is invalid"); out.fusion_method = method; } return Object.freeze(out); }
+function flattenScoring(value?: Scoring): Readonly<Record<string, string | number | boolean>> { return value === undefined ? {} : { ...(value.fusion_method === undefined ? {} : { provider_fusion_method: value.fusion_method }), ...(value.keyword_rank === undefined ? {} : { provider_keyword_rank: value.keyword_rank }), ...(value.keyword_score === undefined ? {} : { provider_keyword_score: value.keyword_score }), ...(value.reranking_score === undefined ? {} : { provider_reranking_score: value.reranking_score }), ...(value.vector_rank === undefined ? {} : { provider_vector_rank: value.vector_rank }), ...(value.vector_score === undefined ? {} : { provider_vector_score: value.vector_score }) }; }
+function selectLane(lanes: readonly ("SEM" | "LEX" | "LITERAL")[], scoring?: Scoring): "SEM" | "LEX" { if (lanes.includes("SEM") && scoring?.vector_score !== undefined) return "SEM"; if (lanes.includes("LEX") && scoring?.keyword_score !== undefined) return "LEX"; if (lanes.includes("SEM")) return "SEM"; if (lanes.includes("LEX")) return "LEX"; fail("AI Search results require a requested SEM or LEX retrieval lane"); }
+function validateRequest(request: RetrievalRequest): void { if (typeof request !== "object" || request === null) fail("retrieval request must be an object"); if (!Number.isInteger(request.requested_limit) || request.requested_limit < 1) fail("retrieval request.requested_limit must be a positive integer"); if (typeof request.scope_snapshot !== "object" || request.scope_snapshot === null || !Array.isArray(request.scope_snapshot.member_source_revision_refs)) fail("retrieval request must contain a frozen ScopeSnapshot"); }
+function validateOptions(request: RetrievalRequest, options: AiSearchLocatorDecodeOptions): void { nonemptyString(options.expected_index_generation, "expected_index_generation", 256); validateLanes(options.requested_lanes); if (!Number.isInteger(options.max_results) || options.max_results < 1 || options.max_results > MAX_RESULTS) fail(`AI Search max_results must be an integer between 1 and ${MAX_RESULTS}`); if (options.max_results > request.requested_limit) fail("AI Search max_results exceeds the retrieval request limit"); previewLimit(options.max_preview_bytes); }
+function validateLanes(lanes: readonly ("SEM" | "LEX" | "LITERAL")[]): void { if (!Array.isArray(lanes) || lanes.length < 1) fail("AI Search requested_lanes must be a non-empty array"); const seen = new Set<string>(); for (const lane of lanes) { if (lane !== "SEM" && lane !== "LEX" && lane !== "LITERAL") fail("AI Search requested_lanes contains an unsupported lane"); if (seen.has(lane)) fail(`AI Search requested_lanes contains duplicate lane ${lane}`); seen.add(lane); } }
+function previewLimit(value: number): void { if (!Number.isInteger(value) || value < 0 || value > MAX_PREVIEW_BYTES) fail(`AI Search max_preview_bytes must be an integer between 0 and ${MAX_PREVIEW_BYTES}`); }
+function decodeLocators(input: unknown, maxResults: number, maxPreviewBytes: number): readonly UnresolvedLocatorCandidate[] { try { return decodeUnresolvedLocatorCandidates(input, { max_results: maxResults, max_preview_bytes: maxPreviewBytes }); } catch (error) { if (error instanceof AiSearchLocatorDecodeError) throw error; throw new AiSearchLocatorDecodeError("AI Search result could not be decoded as unresolved locators", error); } }
+function exactObject(value: unknown, allowed: ReadonlySet<string>, label: string): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be an object`); const prototype = Object.getPrototypeOf(value); if (prototype !== Object.prototype && prototype !== null) fail(`${label} must be a plain object`); const out = value as Record<string, unknown>; for (const key of Object.keys(out)) if (!allowed.has(key)) fail(`${label} contains unsupported field ${key}`); return out; }
+function nonemptyString(value: unknown, label: string, max: number): string { if (typeof value !== "string" || value.length < 1) fail(`${label} must be a non-empty string`); if (value.length > max) fail(`${label} exceeds ${max} characters`); return value; }
+function unitScore(value: unknown, label: string): number { const score = nonnegativeNumber(value, label); if (score > 1) fail(`${label} must be between 0 and 1`); return score; }
+function nonnegativeNumber(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) fail(`${label} must be a finite nonnegative number`); return value; }
+function nonnegativeInteger(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) fail(`${label} must be a nonnegative safe integer`); return value; }
+function positiveInteger(value: unknown, label: string): number { const integer = nonnegativeInteger(value, label); if (integer < 1) fail(`${label} must be positive`); return integer; }
+function isTaint(value: string): value is Metadata["instruction_taint"] { return value === "CLEARED" || value === "DATA_ONLY" || value === "UNTRUSTED" || value === "COMMAND_LIKE"; }
+function fail(message: string): never { throw new AiSearchLocatorDecodeError(message); }
