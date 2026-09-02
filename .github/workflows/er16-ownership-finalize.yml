@@ -1,0 +1,76 @@
+name: er16-ownership-finalize
+
+on:
+  push:
+    branches:
+      - agent/ER-16-managed-search-locator-boundary-20260902
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er16-ownership-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[er16-ownership-finalized]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-managed-search-locator-boundary-20260902
+          fetch-depth: 0
+
+      - name: Bind the Vitest bridge to ER-16 ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest_path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          packet = next((item for item in manifest["packets"] if item["id"] == "ER-16"), None)
+          if packet is None:
+              raise SystemExit("ER-16 packet is missing")
+          expected = [
+              "packages/platform-cloudflare/src/ai-search.ts",
+              "packages/platform-cloudflare/src/model-gateway.ts",
+              "infra/ai-search/**",
+              "infra/cloudflare/ai-gateways.json",
+          ]
+          if packet["owned_paths"] != expected:
+              raise SystemExit(f"unexpected ER-16 ownership: {packet['owned_paths']!r}")
+          packet["owned_paths"] = [
+              "packages/platform-cloudflare/src/ai-search.ts",
+              "packages/platform-cloudflare/src/ai-search.test.ts",
+              "packages/platform-cloudflare/src/model-gateway.ts",
+              "infra/ai-search/**",
+              "infra/cloudflare/ai-gateways.json",
+          ]
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          doc_path = Path("docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md")
+          doc = doc_path.read_text(encoding="utf-8")
+          old = "- `packages/platform-cloudflare/src/ai-search.ts`\n- `packages/platform-cloudflare/src/model-gateway.ts`\n"
+          new = "- `packages/platform-cloudflare/src/ai-search.ts`\n- `packages/platform-cloudflare/src/ai-search.test.ts`\n- `packages/platform-cloudflare/src/model-gateway.ts`\n"
+          if doc.count(old) != 1:
+              raise SystemExit("unexpected ER-16 owned-path section")
+          doc_path.write_text(doc.replace(old, new, 1), encoding="utf-8")
+          PY
+          node scripts/check-work-packets.mjs
+          git rm -- .github/workflows/er16-ownership-finalize.yml
+          git diff --check
+
+      - name: Commit exact ownership record
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-16: bind locator test ownership [er16-ownership-finalized]"
+          git push origin HEAD:agent/ER-16-managed-search-locator-boundary-20260902
