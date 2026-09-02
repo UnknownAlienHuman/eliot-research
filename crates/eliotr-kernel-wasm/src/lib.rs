@@ -10,6 +10,7 @@ pub fn embedded_vectors_pass() -> bool {
     eliotr_test_vectors::verify_embedded_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_canonical_body_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_stable_id_vectors().is_ok()
+        && eliotr_test_vectors::verify_embedded_ingest_identity_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_owner_cutover_canonical_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_residency_key_vectors().is_ok()
 }
@@ -33,6 +34,13 @@ pub extern "C" fn eliotr_m2_verify_embedded_canonical_body_vectors_v1() -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn eliotr_m2_verify_embedded_stable_id_vectors_v1() -> u32 {
     u32::from(eliotr_test_vectors::verify_embedded_stable_id_vectors().is_ok())
+}
+
+/// CI-only scalar M2 ingest identity-family export.
+#[cfg(feature = "m1-self-test-export")]
+#[unsafe(no_mangle)]
+pub extern "C" fn eliotr_m2_verify_embedded_ingest_identity_vectors_v1() -> u32 {
+    u32::from(eliotr_test_vectors::verify_embedded_ingest_identity_vectors().is_ok())
 }
 
 /// CI-only scalar M2 owner-cutover canonical-family export.

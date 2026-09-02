@@ -272,3 +272,10 @@ await verifyStableIdReference(
     import.meta.url,
   ),
 );
+await verifyStableIdReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/ingest-identities.v1.txt",
+    import.meta.url,
+  ),
+  "Ingest identity",
+);

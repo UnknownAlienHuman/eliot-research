@@ -259,10 +259,20 @@ function assertRejected(name, source, expectedMessage) {
   fail(`${name}: malformed frame was accepted`);
 }
 
-export async function verifyStableIdReference(fixtureUrl) {
+export async function verifyStableIdReference(
+  fixtureUrl,
+  label = "Stable ID",
+) {
   const source = await readFile(fixtureUrl, "utf8");
   const cases = parseFrame(source);
   verifyCases(cases);
+
+  const rows = source
+    .split("\n")
+    .slice(3)
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  const firstRow = rows[0];
+  if (firstRow === undefined) fail(`${label}: fixture contains no reusable case row`);
 
   assertRejected(
     "unknown protocol",
@@ -271,27 +281,51 @@ export async function verifyStableIdReference(fixtureUrl) {
   );
   assertRejected(
     "duplicate identity",
-    `${source}source_no_parts|derive_stable_id|736f75726365|error|-|ELIOTR_STABLE_ID_PREFIX\n`,
+    `${source.endsWith("\n") ? source : `${source}\n`}${firstRow}\n`,
     "duplicate case_id",
   );
+
+  const unknownOperationColumns = firstRow.split("|");
+  unknownOperationColumns[1] = "unknown_operation";
+  assertRejected(
+    "unknown operation",
+    source.replace(firstRow, unknownOperationColumns.join("|")),
+    "invalid operation",
+  );
+
+  const successRow = rows.find((row) => row.includes("|ok|"));
+  if (successRow === undefined) fail(`${label}: fixture must contain one success case`);
+  const invalidOutputColumns = successRow.split("|");
+  invalidOutputColumns[4] = "61";
   assertRejected(
     "invalid output shape",
-    source.replace(
-      /source_no_parts\|derive_stable_id\|[^|]+\|ok\|[^|]+\|-/u,
-      "source_no_parts|derive_stable_id|736f75726365|ok|61|-",
-    ),
+    source.replace(successRow, invalidOutputColumns.join("|")),
     "invalid output shape",
   );
+
+  const errorRow = rows.find((row) => row.includes("|error|"));
+  if (errorRow === undefined) fail(`${label}: fixture must contain one negative case`);
+  const unknownErrorColumns = errorRow.split("|");
+  unknownErrorColumns[5] = "ELIOTR_UNKNOWN";
+  assertRejected(
+    "unknown error",
+    source.replace(errorRow, unknownErrorColumns.join("|")),
+    "unknown error code",
+  );
+
+  const incompatibleErrorColumns = errorRow.split("|");
+  incompatibleErrorColumns[5] = incompatibleErrorColumns[1] === "derive_stable_id"
+    ? CODES.length
+    : CODES.tooManyParts;
   assertRejected(
     "incompatible error",
-    source.replace(
-      /validate_empty\|validate_stable_id\|-\|error\|-\|ELIOTR_STABLE_ID_LENGTH/u,
-      "validate_empty|validate_stable_id|-|error|-|ELIOTR_STABLE_ID_TOO_MANY_PARTS",
-    ),
-    "incompatible validation error",
+    source.replace(errorRow, incompatibleErrorColumns.join("|")),
+    incompatibleErrorColumns[1] === "derive_stable_id"
+      ? "incompatible derive error"
+      : "incompatible validation error",
   );
 
   globalThis.console.log(
-    `Stable ID vectors: PASS (${cases.length} bounded cross-runtime cases).`,
+    `${label} vectors: PASS (${cases.length} bounded cross-runtime cases).`,
   );
 }

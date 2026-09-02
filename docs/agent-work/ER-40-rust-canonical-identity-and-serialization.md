@@ -183,3 +183,28 @@ moving its decisions or side effects:
 `ObjectResidencyKeySchema`, `residencyDomainsEqual`, `validateDeduplication`, R2 placement, encryption,
 retention, erasure, transition receipts and all runtime effects remain TypeScript authority. No production
 call site consumes Rust output, no live receipt is claimed, and M3–M7 remain open.
+
+## Active implementation slice — ingest-identities.v1
+
+This slice binds the generic stable-ID shadow primitive to the exact formulas currently called by
+`stableIngestId` after TypeScript input admission:
+
+- `ingest(principal_ref, idempotency_key)` and the derived `candidate(operation_id)` identity;
+- `qualification(operation_id)` and
+  `admission(operation_id, qualification_digest, decision)` for all three current decision values;
+- `intent-ingest`, `attempt-ingest`, `receipt-ingest` and `idem-ingest`;
+- the ingest-commit handoff identities `intent-projection`, `idem-projection` and
+  `outbox(projection_intent_id, "1")`.
+
+The 31 committed cases include one complete dependency chain, admitted punctuation, swapped and
+boundary-sensitive parts, 256-character principal/idempotency/source-revision boundaries, direct
+validation of representative outputs, malformed prefixes, invalid UTF-8, short digests and uppercase
+digest bytes. The independent JavaScript reference, native Rust and compiled Rust/Wasm execute the
+exact same bytes, including strict parser mutations for duplicate identities, unknown operations, bad
+output shapes, unknown error codes and operation-incompatible errors.
+
+This is identity parity for already-admitted strings only. `authorityIdentifier`, Zod contracts, D1
+uniqueness, replay conflict handling, qualification/admission semantics, source-head mutation, outbox
+settlement and projection execution remain TypeScript/Cloudflare authority. No production call site
+uses Rust, no live observation receipt is claimed, and promotion still requires a separate rollback-bound
+review packet.
