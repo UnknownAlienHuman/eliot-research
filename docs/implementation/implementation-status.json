@@ -201,16 +201,17 @@
     {
       "id": "pending-008",
       "path": "apps/eliotr-core/src/scope-service.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-30 scope snapshot persistence",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.",
       "owner_packets": [
         "ER-30"
       ],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "operation throws and cannot return a success receipt",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "strict temporal memberships and deterministic scope algebra produce immutable digest-bound snapshots; persistence accepts created or exact replay with strict readback, and currentness fails closed on expiry, persistence drift, participant, membership, owner, member-policy, policy, disclosure, purge, fence or deny changes",
       "completion_evidence": [
-        "implementation tests",
-        "negative acceptance case",
-        "real boundary receipt when applicable"
+        "packages/domain/src/project-membership.test.ts temporal many-to-many, half-open interval, offset-order and collision-negative cases",
+        "apps/eliotr-core/src/scope-service.test.ts deterministic persistence/readback, strict resource and authority-output negative cases",
+        "mandatory purge-after-freeze case proves an old snapshot cannot pass requireCurrent",
+        "ER-24 remote D1 composition, principal grants and deployed invalidation receipts NOT EXECUTED"
       ]
     },
     {
