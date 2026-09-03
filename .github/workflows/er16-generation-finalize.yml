@@ -17,7 +17,7 @@ concurrency:
 jobs:
   finalize:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -28,29 +28,154 @@ jobs:
         with:
           node-version: 22
 
-      - name: Bind exports, tests, and ER-16 ownership
+      - name: Rebase the slice onto current main and create the Cloudflare AI package boundary
         shell: bash
         run: |
           set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+          mkdir -p packages/cloudflare-ai/src
+          mv packages/platform-cloudflare/src/ai-search-generation.ts \
+            packages/cloudflare-ai/src/ai-search-generation.ts
+
           python3 <<'PY'
           import json
           from pathlib import Path
 
-          generation_path = "packages/platform-cloudflare/src/ai-search-generation.ts"
+          package_root = Path("packages/cloudflare-ai")
+          source_path = package_root / "src/ai-search-generation.ts"
+          source = source_path.read_text(encoding="utf-8")
+          old_import = 'import type { AiSearchInstanceProfile } from "./ai-search.js";'
+          new_import = 'import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";'
+          if source.count(old_import) != 1:
+              raise SystemExit("unexpected AI Search profile import")
+          source_path.write_text(source.replace(old_import, new_import, 1), encoding="utf-8")
 
-          ai_search = Path("packages/platform-cloudflare/src/ai-search.ts")
-          source = ai_search.read_text(encoding="utf-8").rstrip()
-          export_line = 'export * from "./ai-search-generation.js";'
-          if export_line not in source:
-              source += f"\n\n{export_line}"
-          ai_search.write_text(source + "\n", encoding="utf-8")
+          test_path = Path("infra/ai-search/ai-search-generation.test.mjs")
+          test_source = test_path.read_text(encoding="utf-8")
+          old_test_import = '../../packages/platform-cloudflare/dist/ai-search.js'
+          new_test_import = '../../packages/cloudflare-ai/dist/index.js'
+          if test_source.count(old_test_import) != 1:
+              raise SystemExit("unexpected generation test import")
+          test_path.write_text(
+              test_source.replace(old_test_import, new_test_import, 1),
+              encoding="utf-8",
+          )
 
-          bridge = Path("packages/platform-cloudflare/src/ai-search.test.ts")
-          bridge_source = bridge.read_text(encoding="utf-8").rstrip()
-          import_line = 'import "../../../infra/ai-search/ai-search-generation.test.mjs";'
-          if import_line not in bridge_source:
-              bridge_source += f"\n{import_line}"
-          bridge.write_text(bridge_source + "\n", encoding="utf-8")
+          package_json = {
+              "name": "@eliotr/cloudflare-ai",
+              "version": "0.0.0",
+              "private": True,
+              "type": "module",
+              "sideEffects": False,
+              "exports": {".": "./src/index.ts"},
+              "types": "./src/index.ts",
+              "scripts": {
+                  "build": "tsc -b",
+                  "typecheck": "tsc -b --pretty false",
+                  "test": "vitest run",
+              },
+              "dependencies": {
+                  "@eliotr/contracts": "workspace:*",
+                  "@eliotr/platform-cloudflare": "workspace:*",
+              },
+          }
+          (package_root / "package.json").write_text(
+              json.dumps(package_json, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          (package_root / "tsconfig.json").write_text(
+              json.dumps(
+                  {
+                      "extends": "../../tsconfig.base.json",
+                      "compilerOptions": {
+                          "rootDir": "src",
+                          "outDir": "dist",
+                          "tsBuildInfoFile": "dist/.tsbuildinfo",
+                          "types": ["@cloudflare/workers-types"],
+                      },
+                      "include": ["src/**/*.ts"],
+                      "references": [
+                          {"path": "../contracts"},
+                          {"path": "../platform-cloudflare"},
+                      ],
+                  },
+                  indent=2,
+              ) + "\n",
+              encoding="utf-8",
+          )
+          (package_root / "src/index.ts").write_text(
+              'export * from "./ai-search-generation.js";\n',
+              encoding="utf-8",
+          )
+          (package_root / "src/ai-search-generation.test.ts").write_text(
+              'import "../../../infra/ai-search/ai-search-generation.test.mjs";\n',
+              encoding="utf-8",
+          )
+          (package_root / "AGENTS.md").write_text(
+              "# Cloudflare AI package\n\n"
+              "Read `../../docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md` "
+              "and architecture §§6.2–6.4.2 and §8 before editing. Keep provider selection, "
+              "live mutation, and authority outside deterministic generation policy.\n",
+              encoding="utf-8",
+          )
+          (package_root / "README.md").write_text(
+              "# @eliotr/cloudflare-ai\n\n"
+              "Bounded Cloudflare AI Search generation governance and related provider-neutral "
+              "AI policy primitives. The package performs no live Cloudflare mutation.\n",
+              encoding="utf-8",
+          )
+
+          root_tsconfig_path = Path("tsconfig.json")
+          root_tsconfig = json.loads(root_tsconfig_path.read_text(encoding="utf-8"))
+          reference = {"path": "packages/cloudflare-ai"}
+          if reference not in root_tsconfig["references"]:
+              platform_index = root_tsconfig["references"].index(
+                  {"path": "packages/platform-cloudflare"}
+              )
+              root_tsconfig["references"].insert(platform_index + 1, reference)
+          root_tsconfig_path.write_text(
+              json.dumps(root_tsconfig, indent=2) + "\n",
+              encoding="utf-8",
+          )
+
+          boundary_path = Path("scripts/check-boundaries.mjs")
+          boundary = boundary_path.read_text(encoding="utf-8")
+          boundary_entry = (
+              '  ["packages/cloudflare-ai", new Set(['
+              '"@eliotr/contracts", "@eliotr/platform-cloudflare"])],\n'
+          )
+          if boundary_entry not in boundary:
+              anchor = (
+                  '  ["packages/platform-cloudflare", new Set(['
+                  '"@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", '
+                  '"@eliotr/research"])],\n'
+              )
+              if boundary.count(anchor) != 1:
+                  raise SystemExit("unexpected package-boundary anchor")
+              boundary = boundary.replace(anchor, anchor + boundary_entry, 1)
+          boundary_path.write_text(boundary, encoding="utf-8")
+
+          ci_path = Path(".github/workflows/ci.yml")
+          ci = ci_path.read_text(encoding="utf-8")
+          old_ci = (
+              "pnpm exec vitest run packages/platform-cloudflare "
+              "packages/cloudflare-projection packages/cloudflare-evidence "
+              "packages/cloudflare-erasure --reporter=verbose"
+          )
+          new_ci = (
+              "pnpm exec vitest run packages/platform-cloudflare packages/cloudflare-ai "
+              "packages/cloudflare-projection packages/cloudflare-evidence "
+              "packages/cloudflare-erasure --reporter=verbose"
+          )
+          if new_ci not in ci:
+              if ci.count(old_ci) != 1:
+                  raise SystemExit("unexpected Cloudflare package test command")
+              ci = ci.replace(old_ci, new_ci, 1)
+          ci_path.write_text(ci, encoding="utf-8")
 
           manifest_path = Path("docs/agent-work/manifest.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -58,60 +183,60 @@ jobs:
           if len(packets) != 1:
               raise SystemExit("expected exactly one ER-16 packet")
           owned_paths = packets[0]["owned_paths"]
-          if generation_path not in owned_paths:
-              anchor = "packages/platform-cloudflare/src/ai-search.ts"
-              index = owned_paths.index(anchor) + 1
-              owned_paths.insert(index, generation_path)
+          package_claim = "packages/cloudflare-ai/**"
+          if package_claim not in owned_paths:
+              owned_paths.insert(0, package_claim)
           manifest_path.write_text(
               json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
               encoding="utf-8",
           )
 
-          packet_path = Path(
-              "docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md"
-          )
+          packet_path = Path("docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md")
           packet = packet_path.read_text(encoding="utf-8")
-          bullet = f"- `{generation_path}`\n"
-          if bullet not in packet:
-              anchor = "- `packages/platform-cloudflare/src/ai-search.ts`\n"
+          package_bullet = "- `packages/cloudflare-ai/**`\n"
+          if package_bullet not in packet:
+              anchor = "## Owned paths\n\n"
               if packet.count(anchor) != 1:
-                  raise SystemExit("unexpected ER-16 owned-path anchor")
-              packet = packet.replace(anchor, anchor + bullet, 1)
+                  raise SystemExit("unexpected ER-16 owned-path heading")
+              packet = packet.replace(anchor, anchor + package_bullet, 1)
           heading = "## Active implementation slice — AI Search generation lifecycle"
           if heading not in packet:
-              packet = packet.rstrip() + f'''\n\n{heading}\n\nThis slice adds the non-live generation state machine required before AI Search provisioning can be\ntrusted:\n\n- immutable instance-profile admission, including embedding model and metadata-field equality;\n- bounded declarations and monotonic shadow indexing/readback accounting;\n- `SHADOW_COMPLETE` only after every expected item is indexed and read back, no failures or\n  differential mismatches remain, and a retained golden-set result is present;\n- fail-closed `BLOCKED` state for any failed item or mismatch;\n- active-head compare-and-swap promotion that atomically retires the previous generation;\n- explicit rejection of candidate sets that mix scores from different index generations.\n\nNo Cloudflare instance is created or mutated by this slice. Persistence, provisioning API calls, live\ngolden-set receipts, production promotion, and workload qualification remain open and `NOT EXECUTED`.\n'''
+              packet = packet.rstrip() + f'''\n\n{heading}\n\nThe saturated `platform-cloudflare` package is not extended past its 10,000-line ceiling. Generation\ngovernance instead lives in the dedicated `@eliotr/cloudflare-ai` package boundary.\n\nThis non-live state machine provides:\n\n- immutable instance-profile admission, including embedding-model and metadata-field equality;\n- bounded declarations and monotonic shadow indexing/readback accounting;\n- `SHADOW_COMPLETE` only after every expected item is indexed and read back, no failure or\n  differential mismatch remains, and a retained golden-set result is present;\n- fail-closed `BLOCKED` state for any failed item or mismatch;\n- active-head compare-and-swap promotion that atomically retires the previous generation;\n- explicit rejection of candidate sets that mix scores from different index generations.\n\nNo Cloudflare instance is created or mutated by this slice. Registry persistence, provisioning API\ncalls, live golden-set receipts, production promotion, and workload qualification remain open and\n`NOT EXECUTED`.\n'''
           packet_path.write_text(packet, encoding="utf-8")
           PY
+
           git rm -- .github/workflows/er16-generation-finalize.yml
           git diff --check
 
-      - name: Install frozen dependencies
+      - name: Regenerate and verify the frozen workspace lock
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
           corepack prepare pnpm@11.23.0 --activate
+          pnpm install --lockfile-only --ignore-scripts
           pnpm install --frozen-lockfile
 
-      - name: Verify exact generation lifecycle before commit
+      - name: Verify the exact modular generation lifecycle
         shell: bash
         run: |
           set -euo pipefail
-          pnpm work-packets:check
+          pnpm contracts:check
           pnpm boundaries:check
+          pnpm boundaries:negative
           pnpm budgets:check
+          pnpm work-packets:check
           pnpm lint
           pnpm typecheck
-          test -f packages/platform-cloudflare/dist/ai-search-generation.js
-          pnpm exec vitest run packages/platform-cloudflare/src/ai-search.test.ts
+          test -f packages/cloudflare-ai/dist/ai-search-generation.js
+          pnpm exec vitest run packages/cloudflare-ai --reporter=verbose
+          pnpm exec vitest run packages/platform-cloudflare --reporter=verbose
           git diff --check
 
-      - name: Commit verified ER-16 generation lifecycle
+      - name: Commit the verified ER-16 package extraction
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "ER-16: implement AI Search generation lifecycle [er16-generation-finalized]"
+          git commit -m "ER-16: isolate AI Search generation governance [er16-generation-finalized]"
           git push origin HEAD:agent/ER-16-ai-search-generation-lifecycle-20260902
