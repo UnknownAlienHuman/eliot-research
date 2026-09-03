@@ -3,6 +3,8 @@ import { assertImmutableAiSearchProfile } from "./ai-search-generation.js";
 import {
   AI_SEARCH_CUSTOM_METADATA_FIELDS,
   AI_SEARCH_RERANKING_MODEL,
+  AI_SEARCH_RETRIEVAL_GATEWAY_ID,
+  AI_SEARCH_SCORE_THRESHOLD,
   assertCloudflareAiSearchInstanceProfile,
 } from "./ai-search-profile.js";
 import {
@@ -69,10 +71,16 @@ function assertReadbackMatchesSpec(
       "AI Search instance is not backed by built-in storage",
     );
   }
-  if (!readback.enable || readback.cache || readback.rewrite_query) {
+  if (
+    !readback.enable ||
+    readback.cache ||
+    readback.rewrite_query ||
+    readback.ai_gateway_id !== AI_SEARCH_RETRIEVAL_GATEWAY_ID ||
+    readback.score_threshold !== AI_SEARCH_SCORE_THRESHOLD
+  ) {
     provisioningFailure(
       "AI_SEARCH_PROVISIONING_CONFIGURATION_MISMATCH",
-      "AI Search instance enable, cache, or rewrite policy differs",
+      "AI Search instance enable, cache, rewrite, gateway, or score policy differs",
     );
   }
   if (

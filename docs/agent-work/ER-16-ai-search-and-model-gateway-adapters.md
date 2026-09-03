@@ -149,8 +149,11 @@ production generation promotion was executed.
 
 The `@eliotr/cloudflare-ai` package now exposes a narrow namespace port containing only `list`, `get`
 and `create`; the provisioner has no `update` or `delete` capability. Before any provider mutation it
-validates the real Cloudflare instance-ID grammar, the immutable vector/keyword/fusion profile, chunking,
-and the exact five-field text metadata schema shared with projection upload and retrieval decoding.
+validates the real Cloudflare instance-ID grammar, the immutable vector/keyword/fusion profile, the
+provider's 0-30 chunk-overlap range, and the exact five-field text metadata schema shared with
+projection upload and retrieval decoding. Every instance is explicitly attached to `eliotr-retrieval`,
+uses `score_threshold: 0` so provider defaults cannot silently reduce recall, and keeps cache and query
+rewriting disabled.
 
 Provisioning behavior is fail-closed:
 

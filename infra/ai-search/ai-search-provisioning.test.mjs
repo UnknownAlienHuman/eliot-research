@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from "vitest";
 import { projectionMetadata } from "../../packages/platform-cloudflare/dist/index.js";
 import {
   AI_SEARCH_CUSTOM_METADATA_FIELDS,
+  AI_SEARCH_MAX_CHUNK_OVERLAP,
   AI_SEARCH_RERANKING_MODEL,
+  AI_SEARCH_RETRIEVAL_GATEWAY_ID,
+  AI_SEARCH_SCORE_THRESHOLD,
   AiSearchProvisioningError,
   compileAiSearchCreateRequest,
   decodeAiSearchInstanceInfo,
@@ -35,7 +38,7 @@ function spec(overrides = {}) {
     namespace: "eliotr-production",
     profile: profile(),
     chunk_size: 512,
-    chunk_overlap: 64,
+    chunk_overlap: 20,
     ...overrides,
   };
 }
@@ -78,6 +81,7 @@ function info(overrides = {}) {
   return {
     ...summary(),
     ai_search_model: null,
+    ai_gateway_id: AI_SEARCH_RETRIEVAL_GATEWAY_ID,
     embedding_model: "@cf/baai/bge-m3",
     reranking: true,
     reranking_model: AI_SEARCH_RERANKING_MODEL,
@@ -91,7 +95,7 @@ function info(overrides = {}) {
     indexing_options: { keyword_tokenizer: "porter" },
     retrieval_options: { keyword_match_mode: "or", boost_by: [] },
     chunk_size: 512,
-    chunk_overlap: 64,
+    chunk_overlap: 20,
     score_threshold: 0,
     max_num_results: 20,
     sync_interval: 21600,
@@ -134,6 +138,7 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
     const request = compileAiSearchCreateRequest(spec());
     expect(request).toEqual({
       id: "search-instance-g2",
+      ai_gateway_id: AI_SEARCH_RETRIEVAL_GATEWAY_ID,
       index_method: { vector: true, keyword: true },
       fusion_method: "rrf",
       indexing_options: { keyword_tokenizer: "porter" },
@@ -144,7 +149,8 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
       rewrite_query: false,
       cache: false,
       chunk_size: 512,
-      chunk_overlap: 64,
+      chunk_overlap: 20,
+      score_threshold: AI_SEARCH_SCORE_THRESHOLD,
       max_num_results: 20,
       custom_metadata: metadata(),
       enable: true,
@@ -327,6 +333,8 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
     const mismatches = [
       info({ cache: true }),
       info({ rewrite_query: true }),
+      info({ ai_gateway_id: "wrong-retrieval-gateway" }),
+      info({ score_threshold: 0.4 }),
       info({ chunk_size: 768 }),
       info({ retrieval_options: {
         keyword_match_mode: "or",
@@ -392,6 +400,13 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
         ),
       "AI_SEARCH_PROVISIONING_INPUT_INVALID",
     );
+    expectSyncCode(
+      () =>
+        compileAiSearchCreateRequest(
+          spec({ chunk_overlap: AI_SEARCH_MAX_CHUNK_OVERLAP + 1 }),
+        ),
+      "AI_SEARCH_PROVISIONING_INPUT_INVALID",
+    );
   });
 
   it("strictly decodes standalone list and info fixtures", () => {
@@ -401,7 +416,9 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
     });
     expect(decodeAiSearchInstanceInfo(info())).toMatchObject({
       id: "search-instance-g2",
+      ai_gateway_id: AI_SEARCH_RETRIEVAL_GATEWAY_ID,
       embedding_model: "@cf/baai/bge-m3",
+      score_threshold: AI_SEARCH_SCORE_THRESHOLD,
       custom_metadata: metadata(),
     });
   });

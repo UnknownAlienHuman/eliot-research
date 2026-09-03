@@ -1,6 +1,9 @@
 import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
 import {
+  AI_SEARCH_MAX_CHUNK_OVERLAP,
   AI_SEARCH_RERANKING_MODEL,
+  AI_SEARCH_RETRIEVAL_GATEWAY_ID,
+  AI_SEARCH_SCORE_THRESHOLD,
   aiSearchCustomMetadataDefinitions,
   assertCloudflareAiSearchInstanceProfile,
 } from "./ai-search-profile.js";
@@ -52,6 +55,7 @@ export interface AiSearchProvisioningNamespace {
 
 export interface AiSearchCreateRequest {
   readonly id: string;
+  readonly ai_gateway_id: typeof AI_SEARCH_RETRIEVAL_GATEWAY_ID;
   readonly index_method: Readonly<{ vector: boolean; keyword: boolean }>;
   readonly fusion_method?: "rrf" | "max";
   readonly indexing_options?: Readonly<{ keyword_tokenizer: "porter" | "trigram" }>;
@@ -66,6 +70,7 @@ export interface AiSearchCreateRequest {
   readonly cache: false;
   readonly chunk_size: number;
   readonly chunk_overlap: number;
+  readonly score_threshold: typeof AI_SEARCH_SCORE_THRESHOLD;
   readonly max_num_results: number;
   readonly custom_metadata: ReturnType<typeof aiSearchCustomMetadataDefinitions>;
   readonly enable: true;
@@ -139,11 +144,12 @@ export function validateAiSearchProvisioningSpec(
   if (
     !Number.isSafeInteger(spec.chunk_overlap) ||
     spec.chunk_overlap < 0 ||
+    spec.chunk_overlap > AI_SEARCH_MAX_CHUNK_OVERLAP ||
     spec.chunk_overlap >= spec.chunk_size
   ) {
     provisioningFailure(
       "AI_SEARCH_PROVISIONING_INPUT_INVALID",
-      "chunk_overlap must be a non-negative integer below chunk_size",
+      `chunk_overlap must be an integer in [0, ${AI_SEARCH_MAX_CHUNK_OVERLAP}] and below chunk_size`,
     );
   }
 }
@@ -155,6 +161,7 @@ export function compileAiSearchCreateRequest(
   const profile = spec.profile;
   return Object.freeze({
     id: profile.id,
+    ai_gateway_id: AI_SEARCH_RETRIEVAL_GATEWAY_ID,
     index_method: Object.freeze({
       vector: profile.index_method.vector,
       keyword: profile.index_method.keyword,
@@ -186,6 +193,7 @@ export function compileAiSearchCreateRequest(
     cache: false,
     chunk_size: spec.chunk_size,
     chunk_overlap: spec.chunk_overlap,
+    score_threshold: AI_SEARCH_SCORE_THRESHOLD,
     max_num_results: profile.max_num_results,
     custom_metadata: aiSearchCustomMetadataDefinitions(),
     enable: true,

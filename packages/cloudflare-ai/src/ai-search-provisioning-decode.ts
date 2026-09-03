@@ -23,6 +23,7 @@ export interface AiSearchMetadataDefinition {
 }
 
 export interface AiSearchInstanceReadback extends AiSearchInstanceSummary {
+  readonly ai_gateway_id?: string;
   readonly embedding_model?: string;
   readonly reranking: boolean;
   readonly reranking_model?: string;
@@ -38,6 +39,7 @@ export interface AiSearchInstanceReadback extends AiSearchInstanceSummary {
   }>[];
   readonly chunk_size: number;
   readonly chunk_overlap: number;
+  readonly score_threshold?: number;
   readonly max_num_results: number;
   readonly custom_metadata: readonly AiSearchMetadataDefinition[];
 }
@@ -177,6 +179,17 @@ function safeInteger(
     provisioningFailure(
       "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
       `${label} is outside its allowed range`,
+    );
+  }
+  return value;
+}
+
+function optionalUnitInterval(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+    provisioningFailure(
+      "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
+      `${label} must be a finite number in [0, 1]`,
     );
   }
   return value;
@@ -449,19 +462,9 @@ function decodeCustomMetadata(raw: unknown): readonly AiSearchMetadataDefinition
 function validateOptionalInfoFields(value: Record<string, unknown>): void {
   optionalString(value.ai_search_model, "AI Search info.ai_search_model", MODEL);
   optionalString(value.rewrite_model, "AI Search info.rewrite_model", MODEL);
-  optionalString(value.ai_gateway_id, "AI Search info.ai_gateway_id");
   optionalString(value.token_id, "AI Search info.token_id");
   if (value.source_params !== undefined && value.source_params !== null) {
     exactObject(value.source_params, new Set(), "AI Search info.source_params");
-  }
-  if (value.score_threshold !== undefined && value.score_threshold !== null) {
-    const score = value.score_threshold;
-    if (typeof score !== "number" || !Number.isFinite(score) || score < 0 || score > 1) {
-      provisioningFailure(
-        "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
-        "AI Search info.score_threshold is invalid",
-      );
-    }
   }
   if (value.sync_interval !== undefined && value.sync_interval !== null) {
     safeInteger(value.sync_interval, "AI Search info.sync_interval", 1, 86_400);
@@ -493,6 +496,11 @@ export function decodeAiSearchInstanceInfo(raw: unknown): AiSearchInstanceReadba
   validateOptionalInfoFields(value);
   const summary = decodeSummaryFields(value, "AI Search instance info");
   const indexMethod = decodeIndexMethod(value.index_method);
+  const gatewayId = optionalString(value.ai_gateway_id, "AI Search info.ai_gateway_id");
+  const scoreThreshold = optionalUnitInterval(
+    value.score_threshold,
+    "AI Search info.score_threshold",
+  );
   const embeddingModel = optionalString(
     value.embedding_model,
     "AI Search info.embedding_model",
@@ -521,6 +529,7 @@ export function decodeAiSearchInstanceInfo(raw: unknown): AiSearchInstanceReadba
   );
   return Object.freeze({
     ...summary,
+    ...(gatewayId === undefined ? {} : { ai_gateway_id: gatewayId }),
     ...(embeddingModel === undefined ? {} : { embedding_model: embeddingModel }),
     reranking: booleanValue(value.reranking, "AI Search info.reranking"),
     ...(rerankingModel === undefined ? {} : { reranking_model: rerankingModel }),
@@ -535,6 +544,7 @@ export function decodeAiSearchInstanceInfo(raw: unknown): AiSearchInstanceReadba
     boost_by: retrieval.boost_by,
     chunk_size: chunkSize,
     chunk_overlap: chunkOverlap,
+    ...(scoreThreshold === undefined ? {} : { score_threshold: scoreThreshold }),
     max_num_results: safeInteger(
       value.max_num_results,
       "AI Search info.max_num_results",

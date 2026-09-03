@@ -9,6 +9,9 @@ export const AI_SEARCH_CUSTOM_METADATA_FIELDS = Object.freeze([
 ] as const);
 
 export const AI_SEARCH_RERANKING_MODEL = "@cf/baai/bge-reranker-base" as const;
+export const AI_SEARCH_RETRIEVAL_GATEWAY_ID = "eliotr-retrieval" as const;
+export const AI_SEARCH_SCORE_THRESHOLD = 0 as const;
+export const AI_SEARCH_MAX_CHUNK_OVERLAP = 30 as const;
 
 const INSTANCE_ID = /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/u;
 const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
