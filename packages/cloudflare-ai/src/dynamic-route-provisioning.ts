@@ -1,122 +1,4 @@
-from pathlib import Path
-
-
-def write(path: str, content: str) -> None:
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content.rstrip() + "\n", encoding="utf-8")
-
-
-codec_path = Path("packages/cloudflare-ai/src/dynamic-route-provisioning-codec.ts")
-codec = codec_path.read_text(encoding="utf-8")
-codec = codec.replace(
-    "function providerRouteName(",
-    "export function providerDynamicRouteName(",
-)
-codec = codec.replace("providerRouteName(", "providerDynamicRouteName(")
-codec = codec.replace(
-    "function decodeDeployment(",
-    "export function decodeDynamicRouteDeploymentForProvisioning(",
-)
-codec = codec.replace(
-    "decodeDeployment(",
-    "decodeDynamicRouteDeploymentForProvisioning(",
-)
-marker = "export function decodeDynamicRouteProvisioningReceipt"
-if codec.count(marker) != 1:
-    raise SystemExit("dynamic route promotion codec split marker is not unique")
-head, tail = codec.split(marker, 1)
-body_start = head.index("const IDENTIFIER")
-head_body = head[body_start:]
-head_imports = r'''import { decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import {
-  canonicalModelGatewayJson,
-  modelGatewaySha256,
-} from "./model-gateway-request.js";
-import {
-  DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES,
-  DYNAMIC_ROUTE_DEFINITION_MAX_BYTES,
-  DYNAMIC_ROUTE_GATEWAY_ID,
-  dynamicRouteProvisioningFailure,
-  type DynamicRouteCompiledDesired,
-  type DynamicRouteCreateRequest,
-  type DynamicRouteListEntry,
-  type DynamicRouteProviderMetadata,
-  type DynamicRouteProviderSnapshot,
-  type DynamicRouteProvisioningErrorCode,
-  type DynamicRouteProvisioningInput,
-  type VerifiedDynamicRouteProviderSnapshot,
-} from "./dynamic-route-provisioning-contract.js";
-
-'''
-write(str(codec_path), head_imports + head_body)
-
-promotion_imports = r'''import {
-  DYNAMIC_ROUTE_GATEWAY_ID,
-  DYNAMIC_ROUTE_QUALIFICATION_MAX_AGE_MS,
-  dynamicRouteProvisioningFailure,
-  type DynamicRouteActiveGeneration,
-  type DynamicRouteCandidate,
-  type DynamicRouteCandidateWriteReceipt,
-  type DynamicRoutePromotionOptions,
-  type DynamicRoutePromotionWriteReceipt,
-  type DynamicRouteProvisioningReceipt,
-  type DynamicRouteQualificationEvidence,
-} from "./dynamic-route-provisioning-contract.js";
-import {
-  boundedDynamicRouteIdentifier,
-  decodeDynamicRouteDeploymentForProvisioning,
-  exactDynamicRouteObject,
-  exactDynamicRouteSha256,
-  providerDynamicRouteName,
-} from "./dynamic-route-provisioning-codec.js";
-
-const PROVISIONING_RECEIPT_KEYS = new Set([
-  "control_plane_receipt_ref",
-  "deployment",
-  "disposition",
-  "provider_route_id",
-  "provider_route_name",
-  "provider_snapshot_sha256",
-  "route_definition_sha256",
-]);
-const QUALIFICATION_KEYS = new Set([
-  "control_plane_readback_ref",
-  "execution_probe_ref",
-  "expires_at",
-  "gateway_id",
-  "parameters_digest",
-  "pricing_snapshot_ref",
-  "prompt_generation",
-  "provider_route_id",
-  "provider_route_name",
-  "provider_snapshot_sha256",
-  "route_definition_sha256",
-  "route_ref",
-  "route_version",
-  "schema_generation",
-  "tier",
-  "verified_at",
-]);
-const CANDIDATE_WRITE_KEYS = new Set(["candidate_ref", "readback_sha256"]);
-const ACTIVE_KEYS = new Set([
-  "candidate_ref",
-  "candidate_sha256",
-  "route_ref",
-  "route_version",
-]);
-const PROMOTION_WRITE_KEYS = new Set(["active", "promotion_ref"]);
-
-'''
-write(
-    "packages/cloudflare-ai/src/dynamic-route-promotion-codec.ts",
-    promotion_imports + marker + tail,
-)
-
-
-write(
-    "packages/cloudflare-ai/src/dynamic-route-provisioning.ts",
-    r'''import {
   DYNAMIC_ROUTE_GATEWAY_ID,
   DynamicRouteProvisioningError,
   dynamicRouteProvisioningFailure,
@@ -477,10 +359,14 @@ export function createDynamicRouteProvisioner(
   registry: DynamicRouteRegistryPort,
 ): DynamicRouteProvisioner {
   return Object.freeze({
-    provision(input) {
+    provision(input: DynamicRouteProvisioningInput) {
       return provisionDynamicRouteGeneration(controlPlane, input);
     },
-    promote(receipt, qualification, options) {
+    promote(
+      receipt: DynamicRouteProvisioningReceipt,
+      qualification: DynamicRouteQualificationEvidence,
+      options: DynamicRoutePromotionOptions,
+    ) {
       return promoteDynamicRouteGeneration(
         registry,
         receipt,
@@ -490,17 +376,3 @@ export function createDynamicRouteProvisioner(
     },
   });
 }
-''',
-)
-
-index_path = Path("packages/cloudflare-ai/src/index.ts")
-index = index_path.read_text(encoding="utf-8").rstrip()
-for export in (
-    'export * from "./dynamic-route-provisioning-contract.js";',
-    'export * from "./dynamic-route-provisioning-codec.js";',
-    'export * from "./dynamic-route-promotion-codec.js";',
-    'export * from "./dynamic-route-provisioning.js";',
-):
-    if export not in index:
-        index += "\n" + export
-index_path.write_text(index + "\n", encoding="utf-8")

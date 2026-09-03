@@ -52,3 +52,7 @@ export {
   createModelGatewayFetchAdapter,
   executeObservedModelGatewayCall,
 } from "./model-gateway-execution.js";
+export * from "./dynamic-route-provisioning-contract.js";
+export * from "./dynamic-route-provisioning-codec.js";
+export * from "./dynamic-route-promotion-codec.js";
+export * from "./dynamic-route-provisioning.js";
