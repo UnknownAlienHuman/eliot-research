@@ -159,24 +159,6 @@ jobs:
               boundary = boundary.replace(anchor, anchor + boundary_entry, 1)
           boundary_path.write_text(boundary, encoding="utf-8")
 
-          ci_path = Path(".github/workflows/ci.yml")
-          ci = ci_path.read_text(encoding="utf-8")
-          old_ci = (
-              "pnpm exec vitest run packages/platform-cloudflare "
-              "packages/cloudflare-projection packages/cloudflare-evidence "
-              "packages/cloudflare-erasure --reporter=verbose"
-          )
-          new_ci = (
-              "pnpm exec vitest run packages/platform-cloudflare packages/cloudflare-ai "
-              "packages/cloudflare-projection packages/cloudflare-evidence "
-              "packages/cloudflare-erasure --reporter=verbose"
-          )
-          if new_ci not in ci:
-              if ci.count(old_ci) != 1:
-                  raise SystemExit("unexpected Cloudflare package test command")
-              ci = ci.replace(old_ci, new_ci, 1)
-          ci_path.write_text(ci, encoding="utf-8")
-
           manifest_path = Path("docs/agent-work/manifest.json")
           manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
           packets = [packet for packet in manifest["packets"] if packet["id"] == "ER-16"]
@@ -205,7 +187,6 @@ jobs:
           packet_path.write_text(packet, encoding="utf-8")
           PY
 
-          git rm -- .github/workflows/er16-generation-finalize.yml
           git diff --check
 
       - name: Regenerate and verify the frozen workspace lock
