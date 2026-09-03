@@ -1,8 +1,10 @@
 import {
   decodeDynamicRouteFingerprint,
   type ModelRouteDeployment,
+  type RouteFingerprint,
 } from "@eliotr/platform-cloudflare";
 import {
+  ModelGatewayExecutionError,
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
   type ModelGatewayUsageObservation,
@@ -28,8 +30,14 @@ const USAGE_KEYS = new Set([
   "prompt_tokens_details",
   "total_tokens",
 ]);
+const DLP_KEYS = new Set(["action", "findings"]);
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const LOG_ID = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+const POLICY_ERROR_CODES = new Set([2016, 2017, 2029, 2030]);
+const RATE_LIMIT_ERROR_CODES = new Set([2003]);
+const MAX_ERROR_BODY_BYTES = 64 * 1024;
+const MAX_JSON_DEPTH = 16;
+const MAX_JSON_MEMBERS = 2048;
 
 function exactObject(
   value: unknown,
@@ -61,6 +69,15 @@ function exactObject(
   return record;
 }
 
+function plainObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return null;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return null;
+  return value as Record<string, unknown>;
+}
+
 function boundedString(
   value: unknown,
   label: string,
@@ -69,6 +86,7 @@ function boundedString(
   if (
     typeof value !== "string" ||
     value.length < 1 ||
+    value.trim().length < 1 ||
     new TextEncoder().encode(value).byteLength > maximumBytes ||
     /[\u0000\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
   ) {
@@ -78,6 +96,14 @@ function boundedString(
     );
   }
   return value;
+}
+
+function optionalBoundedString(
+  value: unknown,
+  label: string,
+): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return boundedString(value, label, 1024);
 }
 
 function nonnegativeInteger(value: unknown, label: string): number {
@@ -111,7 +137,7 @@ function header(
   }
   if (
     value.length < 1 ||
-    value.length > 256 ||
+    value.length > 8192 ||
     value !== value.trim() ||
     /[\u0000-\u001f\u007f]/u.test(value)
   ) {
@@ -126,6 +152,7 @@ function header(
 async function readBoundedBody(
   response: Response,
   maximumBytes: number,
+  requireNonEmpty: boolean,
 ): Promise<Uint8Array> {
   const rawLength = response.headers.get("content-length");
   if (rawLength !== null) {
@@ -139,15 +166,18 @@ async function readBoundedBody(
     if (!Number.isSafeInteger(declaredLength) || declaredLength > maximumBytes) {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway response exceeds the reserved output byte budget",
+        "AI Gateway response exceeds its byte budget",
       );
     }
   }
   if (response.body === null) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response body is missing",
-    );
+    if (requireNonEmpty) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway response body is missing",
+      );
+    }
+    return new Uint8Array();
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -161,22 +191,20 @@ async function readBoundedBody(
         await reader.cancel("response byte budget exceeded");
         modelGatewayExecutionFailure(
           "MODEL_GATEWAY_RESPONSE_INVALID",
-          "AI Gateway response exceeds the reserved output byte budget",
+          "AI Gateway response exceeds its byte budget",
         );
       }
       chunks.push(next.value);
     }
   } catch (cause) {
-    if (cause instanceof Error && cause.name === "ModelGatewayExecutionError") {
-      throw cause;
-    }
+    if (cause instanceof ModelGatewayExecutionError) throw cause;
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response body could not be read",
       { cause },
     );
   }
-  if (length < 1) {
+  if (requireNonEmpty && length < 1) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response body is empty",
@@ -189,6 +217,120 @@ async function readBoundedBody(
     offset += chunk.byteLength;
   }
   return output;
+}
+
+interface JsonState {
+  members: number;
+  readonly ancestors: WeakSet<object>;
+}
+
+function validateBoundedJson(value: unknown, depth: number, state: JsonState): void {
+  if (depth > MAX_JSON_DEPTH) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response contains excessively deep JSON",
+    );
+  }
+  if (
+    value === null ||
+    typeof value === "boolean" ||
+    typeof value === "string"
+  ) {
+    if (
+      typeof value === "string" &&
+      new TextEncoder().encode(value).byteLength > MAX_ERROR_BODY_BYTES
+    ) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway response contains an oversized JSON string",
+      );
+    }
+    return;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway response contains a non-finite JSON number",
+      );
+    }
+    return;
+  }
+  if (typeof value !== "object" || value === undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response contains a non-JSON value",
+    );
+  }
+  if (state.ancestors.has(value)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response contains cyclic JSON",
+    );
+  }
+  state.ancestors.add(value);
+  if (Array.isArray(value)) {
+    state.members += value.length;
+    if (state.members > MAX_JSON_MEMBERS) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway response exceeds the JSON member bound",
+      );
+    }
+    value.forEach((entry) => validateBoundedJson(entry, depth + 1, state));
+    state.ancestors.delete(value);
+    return;
+  }
+  const record = plainObject(value);
+  if (record === null) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response contains a non-plain JSON object",
+    );
+  }
+  const keys = Object.keys(record);
+  state.members += keys.length;
+  if (state.members > MAX_JSON_MEMBERS) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response exceeds the JSON member bound",
+    );
+  }
+  keys.forEach((key) => validateBoundedJson(record[key], depth + 1, state));
+  state.ancestors.delete(value);
+}
+
+function decodeDlpAction(headers: Headers): "FLAG" | "BLOCK" | undefined {
+  const raw = header(headers, "cf-aig-dlp", false);
+  if (raw === undefined) return undefined;
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(raw);
+  } catch (cause) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway DLP header is not valid JSON",
+      { cause },
+    );
+  }
+  const value = exactObject(decoded, DLP_KEYS, "AI Gateway DLP header");
+  if (value.action !== "FLAG" && value.action !== "BLOCK") {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway DLP action is unsupported",
+    );
+  }
+  if (!Array.isArray(value.findings) || value.findings.length < 1 || value.findings.length > 64) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway DLP findings are invalid",
+    );
+  }
+  validateBoundedJson(value.findings, 0, {
+    members: 0,
+    ancestors: new WeakSet(),
+  });
+  return value.action;
 }
 
 function decodeUsage(raw: unknown): ModelGatewayUsageObservation {
@@ -210,6 +352,23 @@ function decodeUsage(raw: unknown): ModelGatewayUsageObservation {
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway response token totals do not reconcile",
     );
+  }
+  for (const [key, value] of [
+    ["prompt_tokens_details", usage.prompt_tokens_details],
+    ["completion_tokens_details", usage.completion_tokens_details],
+  ] as const) {
+    if (value !== undefined && value !== null) {
+      validateBoundedJson(value, 0, {
+        members: 0,
+        ancestors: new WeakSet(),
+      });
+      if (plainObject(value) === null) {
+        modelGatewayExecutionFailure(
+          "MODEL_GATEWAY_RESPONSE_INVALID",
+          `AI Gateway response usage.${key} must be an object`,
+        );
+      }
+    }
   }
   return Object.freeze({
     input_tokens: inputTokens,
@@ -238,6 +397,12 @@ function decodeAssistantContent(rawChoices: unknown): string {
       "AI Gateway response reached the model output limit",
     );
   }
+  if (choice.finish_reason === "content_filter") {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_POLICY_REJECTED",
+      "AI Gateway provider content policy filtered the model output",
+    );
+  }
   if (choice.finish_reason !== "stop") {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
@@ -263,7 +428,7 @@ function decodeAssistantContent(rawChoices: unknown): string {
   }
   if (message.refusal !== undefined && message.refusal !== null) {
     modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "MODEL_GATEWAY_POLICY_REJECTED",
       "AI Gateway response contains a provider refusal",
     );
   }
@@ -277,6 +442,104 @@ function decodeAssistantContent(rawChoices: unknown): string {
     );
   }
   return boundedString(message.content, "AI Gateway response assistant content");
+}
+
+function decodeFingerprint(
+  headers: Headers,
+  deployment: ModelRouteDeployment,
+): RouteFingerprint {
+  try {
+    return decodeDynamicRouteFingerprint(headers, deployment);
+  } catch (cause) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response does not contain a valid dynamic-route fingerprint",
+      { cause },
+    );
+  }
+}
+
+function possibleErrorCode(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
+    return value;
+  }
+  if (typeof value === "string" && /^(0|[1-9][0-9]{0,9})$/u.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function collectErrorCodes(raw: unknown): ReadonlySet<number> {
+  const codes = new Set<number>();
+  const root = plainObject(raw);
+  if (root === null) return codes;
+  const direct = possibleErrorCode(root.code);
+  if (direct !== undefined) codes.add(direct);
+  const error = plainObject(root.error);
+  const errorCode = possibleErrorCode(error?.code);
+  if (errorCode !== undefined) codes.add(errorCode);
+  if (Array.isArray(root.errors) && root.errors.length <= 32) {
+    for (const entry of root.errors) {
+      const record = plainObject(entry);
+      const code = possibleErrorCode(record?.code);
+      if (code !== undefined) codes.add(code);
+    }
+  }
+  return codes;
+}
+
+export async function rejectModelGatewayHttpFailure(
+  response: Response,
+): Promise<never> {
+  const dlpAction = decodeDlpAction(response.headers);
+  const bytes = await readBoundedBody(response, MAX_ERROR_BODY_BYTES, false);
+  let raw: unknown;
+  if (bytes.byteLength > 0) {
+    try {
+      raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      validateBoundedJson(raw, 0, {
+        members: 0,
+        ancestors: new WeakSet(),
+      });
+    } catch (cause) {
+      if (cause instanceof ModelGatewayExecutionError) throw cause;
+      raw = undefined;
+    }
+  }
+  const codes = collectErrorCodes(raw);
+  if (
+    dlpAction !== undefined ||
+    [...codes].some((code) => POLICY_ERROR_CODES.has(code))
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_POLICY_REJECTED",
+      "AI Gateway blocked the request or response under DLP or guardrail policy",
+      { http_status: response.status },
+    );
+  }
+  if (response.status === 401 || response.status === 403) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_AUTH_REJECTED",
+      "AI Gateway rejected the authenticated request",
+      { http_status: response.status },
+    );
+  }
+  if (
+    response.status === 429 ||
+    [...codes].some((code) => RATE_LIMIT_ERROR_CODES.has(code))
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_LIMIT_REJECTED",
+      "AI Gateway rejected the request because a rate or spend limit was reached",
+      { http_status: response.status },
+    );
+  }
+  modelGatewayExecutionFailure(
+    "MODEL_GATEWAY_UPSTREAM_REJECTED",
+    "AI Gateway returned a non-success status",
+    { http_status: response.status },
+  );
 }
 
 export async function decodeModelGatewayResponse(
@@ -297,7 +560,14 @@ export async function decodeModelGatewayResponse(
       "AI Gateway response must be application/json",
     );
   }
-  const fingerprint = decodeDynamicRouteFingerprint(response.headers, deployment);
+  const dlpAction = decodeDlpAction(response.headers);
+  if (dlpAction !== undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_POLICY_REJECTED",
+      `AI Gateway returned a DLP ${dlpAction} observation`,
+    );
+  }
+  const fingerprint = decodeFingerprint(response.headers, deployment);
   const logId = header(response.headers, "cf-aig-log-id", true);
   if (logId === undefined || !LOG_ID.test(logId)) {
     modelGatewayExecutionFailure(
@@ -305,15 +575,26 @@ export async function decodeModelGatewayResponse(
       "AI Gateway log identifier is invalid",
     );
   }
-  const cacheStatus = header(response.headers, "cf-aig-cache-status", false);
-  if (cacheStatus !== undefined && /hit/iu.test(cacheStatus)) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway returned a cache hit despite explicit cache bypass",
-    );
+  const rawCacheStatus = header(response.headers, "cf-aig-cache-status", false);
+  let cacheStatus: "MISS" | undefined;
+  if (rawCacheStatus !== undefined) {
+    const normalized = rawCacheStatus.toUpperCase();
+    if (normalized !== "HIT" && normalized !== "MISS") {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway cache status is unsupported",
+      );
+    }
+    if (normalized === "HIT") {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway returned a cache hit despite explicit cache bypass",
+      );
+    }
+    cacheStatus = "MISS";
   }
   const successfulStep = header(response.headers, "cf-aig-step", false);
-  const bodyBytes = await readBoundedBody(response, maximumBytes);
+  const bodyBytes = await readBoundedBody(response, maximumBytes, true);
   let rawBody: unknown;
   try {
     rawBody = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes));
@@ -325,7 +606,13 @@ export async function decodeModelGatewayResponse(
     );
   }
   const body = exactObject(rawBody, RESPONSE_KEYS, "AI Gateway response");
-  boundedString(body.id, "AI Gateway response id", 256);
+  const responseId = boundedString(body.id, "AI Gateway response id", 256);
+  if (!IDENTIFIER.test(responseId)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response id is not a bounded identifier",
+    );
+  }
   if (body.object !== "chat.completion") {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
@@ -333,6 +620,11 @@ export async function decodeModelGatewayResponse(
     );
   }
   nonnegativeInteger(body.created, "AI Gateway response created");
+  optionalBoundedString(body.service_tier, "AI Gateway response service_tier");
+  optionalBoundedString(
+    body.system_fingerprint,
+    "AI Gateway response system_fingerprint",
+  );
   const responseModel = boundedString(body.model, "AI Gateway response model", 256);
   if (!IDENTIFIER.test(responseModel)) {
     modelGatewayExecutionFailure(
