@@ -90,4 +90,4 @@ execution across Workflow retries remain owned by ER-09. The executable corpus i
 model call, provider fallback, spend-limit, DLP, Guardrail, billing, output-store or fingerprint-store
 operation was executed; all such receipts remain `NOT EXECUTED`.
 """
-doc_path.write_text(doc + "\n", encoding="utf-8")
+doc_path.write_text(doc, encoding="utf-8")
