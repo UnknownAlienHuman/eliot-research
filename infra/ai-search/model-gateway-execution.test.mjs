@@ -686,6 +686,24 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       ),
       "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED",
     );
+
+    const malformed = await fixture({
+      dependencies: {
+        fingerprints: {
+          putImmutable: vi.fn(),
+          getLatest: vi.fn(async () => ({
+            ...fingerprint(await deployment()),
+            parameters_digest: "not-a-sha256-digest",
+          })),
+        },
+      },
+    });
+    await expectCode(
+      createModelGatewayFetchAdapter(malformed.dependencies).resolveFingerprint(
+        "dynamic/eliotr-balanced",
+      ),
+      "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED",
+    );
   });
 
   it("classifies standalone policy failures without depending on execution fixtures", async () => {

@@ -155,15 +155,15 @@ function decodeCompiledPrompt(raw: unknown): CompiledModelGatewayPrompt {
   });
 }
 
-function decodeRouteDeployment(raw: unknown): ModelRouteDeployment {
+function decodeRouteDeployment(
+  raw: unknown,
+  errorCode: ModelGatewayExecutionErrorCode = "MODEL_GATEWAY_REQUEST_INVALID",
+  message = "registered model route deployment is invalid",
+): ModelRouteDeployment {
   try {
     return decodeModelRouteDeployment(raw);
   } catch (cause) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_REQUEST_INVALID",
-      "registered model route deployment is invalid",
-      { cause },
-    );
+    modelGatewayExecutionFailure(errorCode, message, { cause });
   }
 }
 
@@ -177,14 +177,18 @@ function decodeStoredFingerprint(
     "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED",
     "stored route fingerprint",
   );
-  const deployment = decodeRouteDeployment({
-    route_ref: value.route_ref,
-    route_version: value.route_version,
-    prompt_generation: value.prompt_generation,
-    schema_generation: value.schema_generation,
-    parameters_digest: value.parameters_digest,
-    pricing_snapshot_ref: value.pricing_snapshot_ref,
-  });
+  const deployment = decodeRouteDeployment(
+    {
+      route_ref: value.route_ref,
+      route_version: value.route_version,
+      prompt_generation: value.prompt_generation,
+      schema_generation: value.schema_generation,
+      parameters_digest: value.parameters_digest,
+      pricing_snapshot_ref: value.pricing_snapshot_ref,
+    },
+    "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED",
+    "stored route fingerprint deployment is invalid",
+  );
   if (
     expectedRouteRef !== undefined &&
     deployment.route_ref !== expectedRouteRef
