@@ -101,6 +101,15 @@ importers:
         specifier: 8.2.2
         version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.1)
 
+  packages/cloudflare-ai:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
   packages/cloudflare-erasure:
     dependencies:
       '@eliotr/contracts':

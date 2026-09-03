@@ -11,6 +11,7 @@ outside the paths below.
 
 ## Owned paths
 
+- `packages/cloudflare-ai/**`
 - `packages/platform-cloudflare/src/ai-search.ts`
 - `packages/platform-cloudflare/src/ai-search.test.ts`
 - `packages/platform-cloudflare/src/model-gateway.ts`
@@ -109,3 +110,22 @@ observed estimate and does not replace the provider/billing authority. The slice
 invoke the live gateway, persist model output, create the immutable route fingerprint record, provision
 Dynamic Route versions, or prove spend-limit/DLP/fallback behavior. Those remain open, so ER-16 is not
 complete. Cloudflare, Google and provider receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — AI Search generation lifecycle
+
+The saturated `platform-cloudflare` package is not extended past its 10,000-line ceiling. Generation
+governance instead lives in the dedicated `@eliotr/cloudflare-ai` package boundary.
+
+This non-live state machine provides:
+
+- immutable instance-profile admission, including embedding-model and metadata-field equality;
+- bounded declarations and monotonic shadow indexing/readback accounting;
+- `SHADOW_COMPLETE` only after every expected item is indexed and read back, no failure or
+  differential mismatch remains, and a retained golden-set result is present;
+- fail-closed `BLOCKED` state for any failed item or mismatch;
+- active-head compare-and-swap promotion that atomically retires the previous generation;
+- explicit rejection of candidate sets that mix scores from different index generations.
+
+No Cloudflare instance is created or mutated by this slice. Registry persistence, provisioning API
+calls, live golden-set receipts, production promotion, and workload qualification remain open and
+`NOT EXECUTED`.
