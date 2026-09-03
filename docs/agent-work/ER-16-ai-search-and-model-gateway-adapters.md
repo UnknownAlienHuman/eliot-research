@@ -82,3 +82,30 @@ byte overflow, cardinality overflow, duplicate lanes and attempted literal-proof
 This slice does not implement namespace provisioning, item upload/readback, active-generation promotion,
 model-gateway execution, live AI Search calls or the packet's immutable-model negative gate. Those remain
 open. Cloudflare, Google and provider receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — reasoning-gateway call policy boundary
+
+This slice replaces the model-gateway type-only scaffold with a strict, transport-neutral policy
+compiler and response-observation decoder for the `eliotr-reasoning` gateway.
+
+The boundary:
+
+- accepts only the ten application-owned `dynamic/eliotr-*` routes and rejects direct provider/model
+  selection or unknown input/deployment fields;
+- binds each call to the deployed route version plus exact prompt, output-schema, parameter and pricing
+  generations;
+- requires bounded `EvidencePack` input containing unique LIVE resolved handles and verifies that the
+  declared byte count does not understate exact UTF-8 excerpts;
+- caps both reserved input and output at the repository's 256 KiB ordinary model-call envelope;
+- emits only the Cloudflare `compat/chat/completions` route policy, five scalar custom-metadata entries,
+  metadata-only logging, payload-log suppression and explicit cache bypass;
+- records the actual provider and exact model selected by a Dynamic Route from the documented
+  `cf-aig-provider` and `cf-aig-model` response headers;
+- strictly decodes compact model receipts and requires route-fingerprint and reserved-output-object
+  parity before usage/cost observations are admitted.
+
+Cache remains bypassed until a separate revision-keyed cache contract is implemented. Gateway cost is an
+observed estimate and does not replace the provider/billing authority. The slice does not compile prompts,
+invoke the live gateway, persist model output, create the immutable route fingerprint record, provision
+Dynamic Route versions, or prove spend-limit/DLP/fallback behavior. Those remain open, so ER-16 is not
+complete. Cloudflare, Google and provider receipts remain `NOT EXECUTED`.

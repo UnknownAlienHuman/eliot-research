@@ -1,35 +1,39 @@
 import type { ModelCallInput, ModelCallReceipt, ModelRoutePort } from "@eliotr/research";
-
-export interface RouteFingerprint {
-  readonly route_ref: string;
-  readonly provider: string;
-  readonly exact_model_id: string;
-  readonly route_version: string;
-  readonly prompt_generation: string;
-  readonly schema_generation: string;
-  readonly parameters_digest: string;
-  readonly pricing_snapshot_ref: string;
+const MAX_BYTES = 256 * 1024, IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u, SHA256 = /^[a-f0-9]{64}$/u;
+const DEPLOYMENT_KEYS = new Set(["parameters_digest", "pricing_snapshot_ref", "prompt_generation", "route_ref", "route_version", "schema_generation"]), INPUT_KEYS = new Set(["budget_reservation_ref", "cancellation_ref", "evidence_pack", "max_input_bytes", "max_output_bytes", "output_object_ref", "prompt_generation", "route_ref", "schema_generation"]), RECEIPT_KEYS = new Set(["billed_usd", "input_tokens", "output_object_ref", "output_sha256", "output_tokens", "receipt_ref", "route_fingerprint_ref"]), REF_KEYS = new Set(["id", "revision"]);
+export const APPLICATION_MODEL_ROUTES = Object.freeze(["dynamic/eliotr-economy", "dynamic/eliotr-balanced", "dynamic/eliotr-strong", "dynamic/eliotr-frontier", "dynamic/eliotr-audit-writer", "dynamic/eliotr-audit-verifier", "dynamic/eliotr-vision", "dynamic/eliotr-extract", "dynamic/eliotr-report-section", "dynamic/eliotr-report-integrator"] as const);
+export type ApplicationModelRoute = (typeof APPLICATION_MODEL_ROUTES)[number];
+export interface ModelRouteDeployment { readonly route_ref: ApplicationModelRoute; readonly route_version: string; readonly prompt_generation: string; readonly schema_generation: string; readonly parameters_digest: string; readonly pricing_snapshot_ref: string; }
+export interface RouteFingerprint extends ModelRouteDeployment { readonly provider: string; readonly exact_model_id: string; }
+export interface ModelGatewayCallPolicy { readonly gateway_id: "eliotr-reasoning"; readonly provider: "compat"; readonly endpoint: "chat/completions"; readonly route_ref: ApplicationModelRoute; readonly headers: Readonly<Record<string, string>>; }
+export interface ModelGatewayAdapter extends ModelRoutePort { execute(input: ModelCallInput): Promise<ModelCallReceipt>; resolveFingerprint(routeRef: string): Promise<RouteFingerprint>; }
+export class ModelGatewayPolicyError extends Error { public constructor(message: string, cause?: unknown) { super(message, cause === undefined ? undefined : { cause }); this.name = "ModelGatewayPolicyError"; } }
+export function prepareModelGatewayCall(input: ModelCallInput, rawDeployment: unknown): ModelGatewayCallPolicy {
+  const deployment = decodeModelRouteDeployment(rawDeployment); validateInput(input, deployment); const metadata = { budget_reservation_ref: identifier(input.budget_reservation_ref, "budget_reservation_ref"), evidence_pack_ref: refKey(input.evidence_pack.pack_ref, "evidence_pack.pack_ref"), output_object_ref: identifier(input.output_object_ref, "output_object_ref"), prompt_generation: deployment.prompt_generation, schema_generation: deployment.schema_generation };
+  return Object.freeze({ gateway_id: "eliotr-reasoning", provider: "compat", endpoint: "chat/completions", route_ref: deployment.route_ref, headers: Object.freeze({ "cf-aig-collect-log": "true", "cf-aig-collect-log-payload": "false", "cf-aig-metadata": JSON.stringify(metadata), "cf-aig-skip-cache": "true" }) });
 }
-
-export interface ModelGatewayAdapter extends ModelRoutePort {
-  execute(input: ModelCallInput): Promise<ModelCallReceipt>;
-  resolveFingerprint(routeRef: string): Promise<RouteFingerprint>;
+export function decodeDynamicRouteFingerprint(rawHeaders: Headers | Readonly<Record<string, string>>, rawDeployment: unknown): RouteFingerprint {
+  const deployment = decodeModelRouteDeployment(rawDeployment), provider = header(rawHeaders, "cf-aig-provider"), model = header(rawHeaders, "cf-aig-model"); if (provider === null || model === null) fail("dynamic route response is missing cf-aig-provider or cf-aig-model"); return Object.freeze({ ...deployment, provider: identifier(provider, "cf-aig-provider"), exact_model_id: identifier(model, "cf-aig-model") });
 }
-
-export const APPLICATION_MODEL_ROUTES = [
-  "dynamic/eliotr-economy",
-  "dynamic/eliotr-balanced",
-  "dynamic/eliotr-strong",
-  "dynamic/eliotr-frontier",
-  "dynamic/eliotr-audit-writer",
-  "dynamic/eliotr-audit-verifier",
-  "dynamic/eliotr-vision",
-  "dynamic/eliotr-extract",
-  "dynamic/eliotr-report-section",
-  "dynamic/eliotr-report-integrator",
-] as const;
-
-export const GATEWAY_SEPARATION = {
-  retrieval: { cache: false, rate_limit: false, model_substitution: false },
-  reasoning: { byok: true, dynamic_routes: true, spend_limits: true, fallback: true, dlp: true },
-} as const;
+export function decodeModelCallReceipt(input: ModelCallInput, expectedFingerprintRef: string, raw: unknown): ModelCallReceipt {
+  const value = exactObject(raw, RECEIPT_KEYS, "model call receipt"), fingerprint = identifier(expectedFingerprintRef, "expected route fingerprint reference"); if (identifier(value.route_fingerprint_ref, "route_fingerprint_ref") !== fingerprint) fail("model call receipt route fingerprint does not match the expected fingerprint"); if (identifier(value.output_object_ref, "output_object_ref") !== input.output_object_ref) fail("model call receipt output object does not match the reserved output object");
+  return Object.freeze({ receipt_ref: identifier(value.receipt_ref, "receipt_ref"), route_fingerprint_ref: fingerprint, output_object_ref: input.output_object_ref, output_sha256: sha256(value.output_sha256, "output_sha256"), input_tokens: integer(value.input_tokens, "input_tokens"), output_tokens: integer(value.output_tokens, "output_tokens"), billed_usd: nonnegative(value.billed_usd, "billed_usd") });
+}
+export function decodeModelRouteDeployment(raw: unknown): ModelRouteDeployment {
+  const value = exactObject(raw, DEPLOYMENT_KEYS, "model route deployment"), route = identifier(value.route_ref, "route_ref"); if (!isRoute(route)) fail("model route deployment references an unsupported application route"); return Object.freeze({ route_ref: route, route_version: identifier(value.route_version, "route_version"), prompt_generation: identifier(value.prompt_generation, "prompt_generation"), schema_generation: identifier(value.schema_generation, "schema_generation"), parameters_digest: sha256(value.parameters_digest, "parameters_digest"), pricing_snapshot_ref: identifier(value.pricing_snapshot_ref, "pricing_snapshot_ref") });
+}
+function validateInput(input: ModelCallInput, deployment: ModelRouteDeployment): void {
+  exactObject(input, INPUT_KEYS, "model call input"); if (input.route_ref !== deployment.route_ref) fail("model call route does not match the deployed dynamic route"); if (input.prompt_generation !== deployment.prompt_generation || input.schema_generation !== deployment.schema_generation) fail("model call prompt or schema generation does not match the route deployment"); const maxInput = boundedBytes(input.max_input_bytes, "max_input_bytes"); boundedBytes(input.max_output_bytes, "max_output_bytes"); identifier(input.budget_reservation_ref, "budget_reservation_ref"); identifier(input.output_object_ref, "output_object_ref"); if (input.cancellation_ref !== undefined) identifier(input.cancellation_ref, "cancellation_ref");
+  const pack = input.evidence_pack; if (typeof pack !== "object" || pack === null || !Array.isArray(pack.resolved_evidence) || !Number.isSafeInteger(pack.total_utf8_bytes) || pack.total_utf8_bytes < 0 || pack.total_utf8_bytes > maxInput) fail("evidence pack exceeds the reserved model input budget"); refKey(pack.pack_ref, "evidence_pack.pack_ref"); refKey(pack.scope_snapshot_ref, "evidence_pack.scope_snapshot_ref"); refKey(pack.trace_ref, "evidence_pack.trace_ref"); const seen = new Set<string>(); let excerptBytes = 0; for (const evidence of pack.resolved_evidence) { if (typeof evidence !== "object" || evidence === null || evidence.handle?.terminal_state !== "LIVE" || typeof evidence.exact_excerpt !== "string") fail("model calls require LIVE resolved evidence with exact excerpts"); const key = refKey(evidence.handle.handle_ref, "evidence.handle.handle_ref"); if (seen.has(key)) fail("evidence pack contains a duplicate evidence handle"); seen.add(key); excerptBytes += new TextEncoder().encode(evidence.exact_excerpt).byteLength; if (excerptBytes > pack.total_utf8_bytes) fail("evidence pack total_utf8_bytes understates exact excerpt bytes"); }
+}
+function exactObject(value: unknown, keys: ReadonlySet<string>, label: string): Record<string, unknown> { if (typeof value !== "object" || value === null || Array.isArray(value)) fail(`${label} must be a plain object`); const prototype = Object.getPrototypeOf(value); if (prototype !== Object.prototype && prototype !== null) fail(`${label} must be a plain object`); const record = value as Record<string, unknown>; for (const key of Object.keys(record)) if (!keys.has(key)) fail(`${label} contains unsupported field ${key}`); return record; }
+function header(source: Headers | Readonly<Record<string, string>>, name: string): string | null { if (typeof source !== "object" || source === null || Array.isArray(source)) fail("dynamic route response headers must be an object"); if (typeof (source as Headers).get === "function") return (source as Headers).get(name); const matches = Object.entries(source).filter(([key]) => key.toLowerCase() === name); if (matches.length > 1) fail(`response contains duplicate ${name} headers`); const value = matches[0]?.[1]; return value === undefined ? null : value; }
+function refKey(value: unknown, label: string): string { const record = exactObject(value, REF_KEYS, label), revision = integer(record.revision, `${label}.revision`); if (revision < 1) fail(`${label}.revision must be positive`); return `${identifier(record.id, `${label}.id`)}:${revision}`; }
+function boundedBytes(value: unknown, label: string): number { const result = integer(value, label); if (result < 1 || result > MAX_BYTES) fail(`${label} must be between 1 and ${MAX_BYTES}`); return result; }
+function identifier(value: unknown, label: string): string { if (typeof value !== "string" || !IDENTIFIER.test(value)) fail(`${label} must be a bounded identifier`); return value; }
+function sha256(value: unknown, label: string): string { if (typeof value !== "string" || !SHA256.test(value)) fail(`${label} must be 64 lowercase hexadecimal characters`); return value; }
+function integer(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) fail(`${label} must be a nonnegative safe integer`); return value; }
+function nonnegative(value: unknown, label: string): number { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) fail(`${label} must be a finite nonnegative number`); return value; }
+function isRoute(value: string): value is ApplicationModelRoute { return (APPLICATION_MODEL_ROUTES as readonly string[]).includes(value); }
+function fail(message: string): never { throw new ModelGatewayPolicyError(message); }
+export const GATEWAY_SEPARATION = { retrieval: { cache: false, rate_limit: false, model_substitution: false }, reasoning: { byok: true, dynamic_routes: true, spend_limits: true, fallback: true, dlp: true } } as const;
