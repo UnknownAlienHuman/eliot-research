@@ -68,7 +68,10 @@ The decoder:
 - enforces the provider ceiling of 50 results, the caller's retrieval limit, a 64 KiB UTF-8 preview
   ceiling, bounded identifiers, finite scores and positive ranks;
 - requires every returned source revision to remain inside the frozen `ScopeSnapshot`;
-- requires the stored `item.key`, metadata `item_key`, and promoted `projection_generation` to agree;
+- requires the stored `item.key` to use the canonical `<ProjectionItem.item_key>.md` filename,
+  derives the item identity from that filename, and requires the promoted `projection_generation`;
+- admits exactly five shared custom metadata fields: `source_revision_ref`, `canonical_section_id`,
+  `projection_generation`, `instruction_taint`, and `content_sha256`;
 - retains the content digest, taint state and documented scoring details only as locator metadata;
 - maps managed vector results to `SEM` and managed keyword results to `LEX`, never to literal proof;
 - passes reconstructed rows through the existing ERC strict locator decoder and returns only
@@ -129,3 +132,14 @@ This non-live state machine provides:
 No Cloudflare instance is created or mutated by this slice. Registry persistence, provisioning API
 calls, live golden-set receipts, production promotion, and workload qualification remain open and
 `NOT EXECUTED`.
+
+## Coordinated ER-38/ER-16 correction — managed item wire parity
+
+The managed-index writer and search-result decoder now share one five-field metadata constructor.
+`ProjectionItem.item_key` is carried by the canonical provider filename `<item_key>.md`, while source,
+section, generation, taint and digest remain in the five custom metadata slots. Upload admission rejects
+source-revision or projection-generation drift before the provider call; readback rejects missing,
+altered or additional metadata and binds the exact metadata map into the item receipt digest.
+
+This correction is fixture-qualified only. No AI Search upload, item readback, namespace mutation or
+production generation promotion was executed.

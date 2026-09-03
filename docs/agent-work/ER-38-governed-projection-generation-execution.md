@@ -58,7 +58,9 @@ durable projection acceptance
 - R2 Work writes are immutable and digest/size/readback verified.
 - D1 Search stays shadowed until projection items, spans, FTS rows and item-set digest agree.
 - A partial D1 Search activation transaction rolls back and cannot advertise `READY`.
-- AI Search metadata contains only five bounded generation-scoped fields.
+- AI Search uses the canonical `<ProjectionItem.item_key>.md` provider key and exactly five
+  bounded metadata fields: `source_revision_ref`, `canonical_section_id`, `projection_generation`,
+  `instruction_taint`, and `content_sha256`.
 - `semantic_ready` requires exact upload and item-info readback plus an explicitly promoted managed generation.
 - `uploadAndPoll` completion by itself does not create evidence authority.
 - Managed-index degradation may leave exact/lexical channels ready but settles the job as `PARTIAL`.
@@ -88,3 +90,10 @@ pnpm cf:dry-run
 Local SQLite, mocks and Wrangler dry-run keep this contour at `IMPLEMENTED_NOT_LIVE`. Promotion to
 `LIVE_QUALIFIED` requires deployed Queue redelivery, remote R2 Work readback, remote D1 Search
 activation/rollback receipts, AI Search item readback and a promoted T2/T3 generation.
+
+## Coordinated managed-index wire correction
+
+ER-38 now consumes ER-16's shared `projectionMetadata` constructor instead of maintaining a divergent
+provider shape. The writer rejects source/generation drift before upload, requires exact five-field
+metadata on item-info readback, and includes the read-back metadata in the immutable managed receipt
+digest. This remains `IMPLEMENTED_NOT_LIVE`; provider calls in tests are fixtures.

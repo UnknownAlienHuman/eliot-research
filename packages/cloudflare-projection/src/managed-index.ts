@@ -1,4 +1,5 @@
 import type { ProjectionItem } from "@eliotr/contracts";
+import { projectionMetadata } from "@eliotr/platform-cloudflare";
 import {
   assertProjectionIdentifier,
   assertProjectionInteger,
@@ -68,6 +69,14 @@ function assertExpectedMetadata(
     throw new Error(`${label}.metadata is missing`);
   }
   const record = value as Readonly<Record<string, unknown>>;
+  const expectedKeys = Object.keys(expected).sort();
+  const observedKeys = Object.keys(record).sort();
+  if (
+    observedKeys.length !== expectedKeys.length ||
+    observedKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error(`${label}.metadata fields differ from the uploaded generation`);
+  }
   for (const [key, expectedValue] of Object.entries(expected)) {
     if (record[key] !== expectedValue) {
       throw new Error(`${label}.metadata.${key} differs from the uploaded generation`);
@@ -122,6 +131,14 @@ function managedDocument(item: ProjectionItem): string {
   return header.length === 0 ? item.section_text : `${header}\n\n${item.section_text}`;
 }
 
+function managedItemFilename(itemKey: string): string {
+  const key = assertProjectionIdentifier(itemKey, "projection item key");
+  if (key.includes("/") || key.length > 253) {
+    throw new Error("projection item key cannot form a bounded canonical AI Search filename");
+  }
+  return `${key}.md`;
+}
+
 async function indexItem(
   instance: ProjectionAiSearchInstance,
   context: ProjectionSourceContext,
@@ -129,23 +146,19 @@ async function indexItem(
   profile: ProjectionExecutionProfile,
   item: ProjectionItem,
 ): Promise<ManagedItemReceipt> {
-  const sourceToken = (await stableProjectionId(
-    "source",
-    context.source_revision.source_revision_ref,
-  )).slice("source-".length, "source-".length + 24);
-  const key = `${sourceToken}-${item.item_key}.md`;
+  if (item.source_revision_ref !== context.source_revision.source_revision_ref) {
+    throw new Error("projection item source revision differs from the execution context");
+  }
+  if (item.projection_generation !== projectionGeneration) {
+    throw new Error("projection item generation differs from the requested managed generation");
+  }
+  const key = managedItemFilename(item.item_key);
   const document = managedDocument(item);
   const size = utf8ProjectionLength(document);
   if (size < 1 || size > 4 * 1024 * 1024) {
     throw new Error("managed projection item exceeds the AI Search Items API file envelope");
   }
-  const metadata = {
-    source_token: sourceToken,
-    item_key: item.item_key,
-    projection_generation: projectionGeneration,
-    instruction_taint: item.instruction_taint,
-    content_sha256: item.content_sha256,
-  } as const;
+  const metadata = projectionMetadata(item);
   const uploaded = decodeItem(
     await instance.items.uploadAndPoll(key, document, {
       metadata,
@@ -182,6 +195,7 @@ async function indexItem(
       status: readback.status,
       file_size: readback.file_size,
       chunks_count: readback.chunks_count,
+      metadata: readback.metadata,
     })),
   };
 }

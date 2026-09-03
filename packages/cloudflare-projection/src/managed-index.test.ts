@@ -120,6 +120,15 @@ describe("managed AI Search projection adapter", () => {
     });
     expect(uploadAndPoll).toHaveBeenCalledOnce();
     expect(info).toHaveBeenCalledOnce();
+    expect(key).toBe("projection-item-1.md");
+    expect(metadata).toEqual({
+      canonical_section_id: "section-1",
+      content_sha256: A,
+      instruction_taint: "DATA_ONLY",
+      projection_generation: "projection-g1",
+      source_revision_ref: "revision-1",
+    });
+    expect(Object.keys(metadata)).toHaveLength(5);
   });
 
   it("degrades instead of advertising semantic readiness on mismatched readback", async () => {
@@ -224,6 +233,82 @@ describe("managed AI Search projection adapter", () => {
       shadow_readback_digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
       reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
     });
+  });
+
+  it("rejects a legacy sixth metadata field during exact item readback", async () => {
+    let key = "";
+    let size = 0;
+    let metadata: Readonly<Record<string, string>> = {};
+    const port = createManagedProjectionPort({
+      profile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              async uploadAndPoll(
+                uploadedKey: string,
+                content: string,
+                options?: { readonly metadata?: Readonly<Record<string, string>> },
+              ) {
+                key = uploadedKey;
+                size = new TextEncoder().encode(content).byteLength;
+                metadata = options?.metadata ?? {};
+                return {
+                  id: "provider-item-1",
+                  key,
+                  status: "completed",
+                  chunks_count: 1,
+                  file_size: size,
+                  metadata,
+                };
+              },
+              get() {
+                return {
+                  async info() {
+                    return {
+                      id: "provider-item-1",
+                      key,
+                      status: "completed",
+                      chunks_count: 1,
+                      file_size: size,
+                      metadata: { ...metadata, item_key: item.item_key },
+                    };
+                  },
+                };
+              },
+            },
+          };
+        },
+      },
+    });
+    await expect(port.index(context, "projection-g1", [item])).resolves.toMatchObject({
+      state: "DEGRADED",
+      reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
+    });
+  });
+
+  it("rejects projection-generation drift before upload", async () => {
+    const uploadAndPoll = vi.fn();
+    const port = createManagedProjectionPort({
+      profile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() {
+                throw new Error("readback must not run");
+              },
+            },
+          };
+        },
+      },
+    });
+    await expect(port.index(context, "projection-g2", [item])).resolves.toMatchObject({
+      state: "DEGRADED",
+      reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
+    });
+    expect(uploadAndPoll).not.toHaveBeenCalled();
   });
 
 });
