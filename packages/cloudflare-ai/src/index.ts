@@ -19,3 +19,36 @@ export {
   type AiSearchMetadataDefinition,
 } from "./ai-search-provisioning-decode.js";
 export { ensureAiSearchInstance } from "./ai-search-provisioning.js";
+export {
+  ModelGatewayExecutionError,
+  type CompiledModelGatewayPrompt,
+  type DecodedModelGatewayResponse,
+  type ModelCallInput,
+  type ModelCallReceipt,
+  type ModelGatewayCredentialPort,
+  type ModelGatewayDeploymentRegistryPort,
+  type ModelGatewayExecutionDependencies,
+  type ModelGatewayExecutionErrorCode,
+  type ModelGatewayExecutionObservation,
+  type ModelGatewayFetchPort,
+  type ModelGatewayFingerprintStorePort,
+  type ModelGatewayOutputStorePort,
+  type ModelGatewayPricingPort,
+  type ModelGatewayPricingQuote,
+  type ModelGatewayPricingQuoteInput,
+  type ModelGatewayPromptCompilerPort,
+  type ModelGatewayUsageObservation,
+  type PreparedModelGatewayHttpRequest,
+} from "./model-gateway-execution-contract.js";
+export { prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
+export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
+export {
+  canonicalModelGatewayJson,
+  modelGatewayRequestParametersSha256,
+  modelGatewaySha256,
+} from "./model-gateway-request.js";
+export { decodeModelGatewayResponse } from "./model-gateway-response.js";
+export {
+  createModelGatewayFetchAdapter,
+  executeObservedModelGatewayCall,
+} from "./model-gateway-execution.js";
