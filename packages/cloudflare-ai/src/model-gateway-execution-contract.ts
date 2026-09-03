@@ -15,6 +15,7 @@ export type ModelGatewayExecutionErrorCode =
   | "MODEL_GATEWAY_TRANSPORT_FAILED"
   | "MODEL_GATEWAY_AUTH_REJECTED"
   | "MODEL_GATEWAY_LIMIT_REJECTED"
+  | "MODEL_GATEWAY_POLICY_REJECTED"
   | "MODEL_GATEWAY_UPSTREAM_REJECTED"
   | "MODEL_GATEWAY_RESPONSE_INVALID"
   | "MODEL_GATEWAY_OUTPUT_TRUNCATED"
@@ -75,15 +76,15 @@ export interface ModelGatewayPromptCompilerPort {
   compile(
     input: ModelCallInput,
     deployment: ModelRouteDeployment,
-  ): Promise<CompiledModelGatewayPrompt>;
+  ): Promise<unknown>;
 }
 
 export interface ModelGatewayCredentialPort {
-  readGatewayToken(): Promise<string>;
+  readGatewayToken(): Promise<unknown>;
 }
 
 export interface ModelGatewayFetchPort {
-  fetch(url: string, init: RequestInit): Promise<Response>;
+  fetch(url: string, init: RequestInit): Promise<unknown>;
 }
 
 export interface ModelGatewayOutputStorePort {
@@ -91,21 +92,15 @@ export interface ModelGatewayOutputStorePort {
     ref: string,
     body: ReadableStream<Uint8Array>,
     expectedSha256: string,
-  ): Promise<{
-    readonly object_ref: string;
-    readonly readback_sha256: string;
-  }>;
+  ): Promise<unknown>;
 }
 
 export interface ModelGatewayFingerprintStorePort {
   putImmutable(
     fingerprint: RouteFingerprint,
     expectedSha256: string,
-  ): Promise<{
-    readonly fingerprint_ref: string;
-    readonly readback_sha256: string;
-  }>;
-  getLatest(routeRef: string): Promise<RouteFingerprint | null>;
+  ): Promise<unknown>;
+  getLatest(routeRef: string): Promise<unknown | null>;
 }
 
 export interface ModelGatewayPricingQuoteInput {
@@ -122,7 +117,7 @@ export interface ModelGatewayPricingQuote {
 }
 
 export interface ModelGatewayPricingPort {
-  quote(input: ModelGatewayPricingQuoteInput): Promise<ModelGatewayPricingQuote>;
+  quote(input: ModelGatewayPricingQuoteInput): Promise<unknown>;
 }
 
 export interface ModelGatewayExecutionDependencies {
@@ -142,6 +137,7 @@ export interface PreparedModelGatewayHttpRequest {
   readonly headers: Readonly<Record<string, string>>;
   readonly body: string;
   readonly body_sha256: string;
+  readonly parameters_sha256: string;
   readonly request_timeout_ms: number;
 }
 
@@ -159,7 +155,7 @@ export interface DecodedModelGatewayResponse {
   readonly usage: ModelGatewayUsageObservation;
   readonly fingerprint: RouteFingerprint;
   readonly log_id: string;
-  readonly cache_status?: string;
+  readonly cache_status?: "MISS";
   readonly successful_step?: string;
 }
 
@@ -169,5 +165,8 @@ export interface ModelGatewayExecutionObservation {
   readonly gateway_log_id: string;
   readonly pricing_quote_ref: string;
   readonly request_body_sha256: string;
+  readonly request_parameters_sha256: string;
   readonly response_body_sha256: string;
+  readonly response_model: string;
+  readonly successful_step?: string;
 }
