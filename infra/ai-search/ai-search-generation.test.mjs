@@ -8,7 +8,7 @@ import {
   promoteAiSearchGeneration,
   recordAiSearchShadowObservation,
   validateAiSearchGenerationRegistry,
-} from "../../packages/platform-cloudflare/dist/ai-search.js";
+} from "../../packages/cloudflare-ai/dist/index.js";
 
 const timestamp = "2026-09-02T12:00:00.000Z";
 

@@ -1,5 +1,5 @@
 import type { LocatorCandidate } from "@eliotr/contracts";
-import type { AiSearchInstanceProfile } from "./ai-search.js";
+import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
 
 export type AiSearchGenerationState =
   | "DECLARED"

@@ -318,6 +318,7 @@
         "ER-03"
       ],
       "owned_paths": [
+        "packages/cloudflare-ai/**",
         "packages/platform-cloudflare/src/ai-search.ts",
         "packages/platform-cloudflare/src/ai-search.test.ts",
         "packages/platform-cloudflare/src/model-gateway.ts",
