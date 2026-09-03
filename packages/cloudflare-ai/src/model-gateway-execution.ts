@@ -16,15 +16,13 @@ import {
   type ModelGatewayExecutionObservation,
   type ModelGatewayPricingQuote,
 } from "./model-gateway-execution-contract.js";
+import { prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
+import { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 import {
   canonicalModelGatewayJson,
   modelGatewaySha256,
-  prepareModelGatewayHttpRequest,
 } from "./model-gateway-request.js";
-import {
-  decodeModelGatewayResponse,
-  rejectModelGatewayHttpFailure,
-} from "./model-gateway-response.js";
+import { decodeModelGatewayResponse } from "./model-gateway-response.js";
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;

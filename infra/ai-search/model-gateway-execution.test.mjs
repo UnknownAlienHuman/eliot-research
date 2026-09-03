@@ -160,7 +160,7 @@ function responseBody(overrides = {}) {
 
 function gatewayResponse(body = responseBody(), options = {}) {
   const text = typeof body === "string" ? body : JSON.stringify(body);
-  return new Response(text, {
+  return new globalThis.Response(text, {
     status: options.status ?? 200,
     headers: {
       ...RESPONSE_HEADERS,
@@ -190,7 +190,7 @@ async function fixture(overrides = {}) {
   };
   const outputs = {
     putImmutable: vi.fn(async (objectRef, stream, expectedSha256) => {
-      outputBodies.push(new Uint8Array(await new Response(stream).arrayBuffer()));
+      outputBodies.push(new Uint8Array(await new globalThis.Response(stream).arrayBuffer()));
       return {
         object_ref: objectRef,
         readback_sha256: expectedSha256,
@@ -302,7 +302,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
     const body = requestBody();
     const deployed = await deployment(body);
     const compiledPrompt = await compiled(body);
-    const invalidCalls = [
+    await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
         deployed,
@@ -310,20 +310,20 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
         `https://gateway.ai.cloudflare.com/v1/${ACCOUNT_ID}/other-gateway`,
         TOKEN,
       ),
+      "MODEL_GATEWAY_REQUEST_INVALID",
+    );
+    const unsafeBody = requestBody({ tools: [] });
+    await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
         deployed,
-        compiledPrompt,
-        BASE_URL,
-        `Bearer ${TOKEN}`,
-      ),
-      prepareModelGatewayHttpRequest(
-        input(),
-        await deployment(requestBody({ tools: [] })),
-        await compiled(requestBody({ tools: [] })),
+        await compiled(unsafeBody),
         BASE_URL,
         TOKEN,
       ),
+      "MODEL_GATEWAY_REQUEST_INVALID",
+    );
+    await expectCode(
       prepareModelGatewayHttpRequest(
         input({ max_input_bytes: 64 }),
         deployed,
@@ -331,27 +331,31 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
         BASE_URL,
         TOKEN,
       ),
-      prepareModelGatewayHttpRequest(
-        input(),
-        await deployment(requestBody({ max_tokens: 9_000 })),
-        await compiled(requestBody({ max_tokens: 9_000 })),
-        BASE_URL,
-        TOKEN,
-      ),
-    ];
-    for (const call of invalidCalls) {
-      await expectCode(call, "MODEL_GATEWAY_REQUEST_INVALID");
-    }
+      "MODEL_GATEWAY_REQUEST_INVALID",
+    );
+    const oversizedOutput = requestBody({ max_tokens: 9_000 });
     await expectCode(
       prepareModelGatewayHttpRequest(
         input(),
-        deployed,
-        compiledPrompt,
+        await deployment(oversizedOutput),
+        await compiled(oversizedOutput),
         BASE_URL,
-        " token-with-space ",
+        TOKEN,
       ),
-      "MODEL_GATEWAY_CREDENTIAL_INVALID",
+      "MODEL_GATEWAY_REQUEST_INVALID",
     );
+    for (const invalidToken of [`Bearer ${TOKEN}`, " token-with-space "]) {
+      await expectCode(
+        prepareModelGatewayHttpRequest(
+          input(),
+          deployed,
+          compiledPrompt,
+          BASE_URL,
+          invalidToken,
+        ),
+        "MODEL_GATEWAY_CREDENTIAL_INVALID",
+      );
+    }
   });
 
   it("rejects request-body and deployed-parameter digest drift", async () => {
@@ -399,7 +403,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       input_tokens: 120,
       output_tokens: 30,
     });
-    const persistedText = new TextDecoder().decode(state.outputBodies[0]);
+    const persistedText = new globalThis.TextDecoder().decode(state.outputBodies[0]);
     expect(JSON.parse(persistedText)).toEqual(responseBody());
     expect(observation).toMatchObject({
       receipt: {
@@ -417,7 +421,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
       successful_step: "route-step-2",
     });
     expect(observation.receipt.output_sha256).toBe(
-      await modelGatewaySha256(new TextEncoder().encode(persistedText)),
+      await modelGatewaySha256(new globalThis.TextEncoder().encode(persistedText)),
     );
     expect(Object.isFrozen(observation)).toBe(true);
   });
@@ -577,7 +581,7 @@ describe("ER-16 reasoning gateway fetch execution boundary", () => {
   it("rejects malformed content, metadata, and reserved response byte overflow", async () => {
     const deployed = await deployment();
     const invalidResponses = [
-      new Response("not-json", {
+      new globalThis.Response("not-json", {
         headers: { ...RESPONSE_HEADERS, "content-type": "text/plain" },
       }),
       gatewayResponse({ ...responseBody(), unknown: true }),

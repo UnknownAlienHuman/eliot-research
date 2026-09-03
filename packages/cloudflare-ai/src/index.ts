@@ -40,16 +40,14 @@ export {
   type ModelGatewayUsageObservation,
   type PreparedModelGatewayHttpRequest,
 } from "./model-gateway-execution-contract.js";
+export { prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
+export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
-  prepareModelGatewayHttpRequest,
 } from "./model-gateway-request.js";
-export {
-  decodeModelGatewayResponse,
-  rejectModelGatewayHttpFailure,
-} from "./model-gateway-response.js";
+export { decodeModelGatewayResponse } from "./model-gateway-response.js";
 export {
   createModelGatewayFetchAdapter,
   executeObservedModelGatewayCall,

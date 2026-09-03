@@ -179,3 +179,37 @@ Provisioning behavior is fail-closed:
 The executable corpus uses binding fixtures only. No namespace list, create, info, update, delete,
 indexing, generation promotion or provider billing operation was executed against Cloudflare. Live
 receipts and workload qualification remain `NOT EXECUTED`.
+
+## Active implementation slice — reasoning-gateway fetch execution boundary
+
+The transport-neutral policy compiler is now connected to a bounded fetch execution adapter in the
+`@eliotr/cloudflare-ai` package. The provider contract was rechecked against the official Cloudflare
+Authenticated Gateway, Dynamic Route, request-handling, caching, DLP and Guardrail documentation on
+2026-09-03.
+
+The execution boundary:
+
+- resolves an exact registered Dynamic Route deployment and validates route, prompt, schema and evidence
+  generations before compiling or sending a prompt;
+- admits only a trusted compiler result whose canonical request bytes and invocation-parameter projection
+  match independent SHA-256 bindings, including the deployment's immutable parameter digest;
+- sends one non-streaming request only to the exact
+  `eliotr-reasoning/compat/chat/completions` endpoint;
+- authenticates the `gateway.ai.cloudflare.com` endpoint with `cf-aig-authorization`; it never places the
+  Cloudflare token in the provider `Authorization` header;
+- overrides generic AI Gateway retries to one attempt, while any provider fallback remains an explicit
+  node inside the versioned Dynamic Route;
+- requires payload logging disabled, metadata logging enabled and cache bypassed;
+- strictly decodes one complete assistant choice, reconciled usage, actual provider/model headers, the
+  gateway log ID and optional successful Dynamic Route step;
+- rejects output truncation, provider refusal, content filtering, cache hits, DLP flags/blocks and
+  Guardrail blocks before immutable output publication;
+- persists the exact provider response and selected route fingerprint only through digest-verified
+  immutable ports, then prices observed tokens against the deployment's pinned pricing snapshot;
+- emits a compact `ModelCallReceipt` only after output, fingerprint and pricing parity all hold.
+
+A transport exception is treated as an unknown upstream execution outcome and is not retried by this
+adapter. Durable call idempotency, lost-acknowledgement reconciliation and prevention of duplicate paid
+execution across Workflow retries remain owned by ER-09. The executable corpus is fixture-only. No live
+model call, provider fallback, spend-limit, DLP, Guardrail, billing, output-store or fingerprint-store
+operation was executed; all such receipts remain `NOT EXECUTED`.
