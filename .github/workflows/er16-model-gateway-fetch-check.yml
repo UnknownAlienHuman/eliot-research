@@ -29,7 +29,9 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/tmp-er16-model-gateway-finalize.py
+          python3 scripts/tmp-er16-model-gateway-test-order.py
           git rm -- scripts/tmp-er16-model-gateway-finalize.py
+          git rm -- scripts/tmp-er16-model-gateway-test-order.py
           git rm -- .github/workflows/er16-model-gateway-fetch-check.yml
           git diff --check
       - run: corepack enable
