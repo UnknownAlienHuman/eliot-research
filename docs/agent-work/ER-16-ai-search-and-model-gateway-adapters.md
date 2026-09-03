@@ -213,3 +213,30 @@ adapter. Durable call idempotency, lost-acknowledgement reconciliation and preve
 execution across Workflow retries remain owned by ER-09. The executable corpus is fixture-only. No live
 model call, provider fallback, spend-limit, DLP, Guardrail, billing, output-store or fingerprint-store
 operation was executed; all such receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — versioned Dynamic Route provisioning
+
+ER-16 now contains a create-only versioned Dynamic Route provisioner and an explicit promotion gate.
+The provider-facing port deliberately contains only `list`, `get`, and `create`; route policy is never
+updated in place and this slice owns no provider deletion.
+
+Each desired generation binds the decoded `ModelRouteDeployment`, canonical route-definition bytes,
+parameter digest, prompt generation, schema generation, and pricing snapshot. Its deterministic provider
+name includes the deployment-identity digest. Existing names are accepted only after exact detail
+readback; drift is a hard collision.
+
+One uncertain create is reconciled by one list/get readback. No second create is issued. An exact match
+returns `CREATE_RECONCILED`; absence, conflicting bytes, or unavailable readback leaves a typed
+`PROVIDER_CREATE` unresolved effect.
+
+Provider provisioning and authority promotion are separate phases. Promotion first requires qualification
+evidence bound to the exact provider snapshot and route execution probe, stages one immutable candidate
+with digest readback, reads the active generation, and performs expected-active-version CAS. Production
+accepts only fresh `LIVE` qualification with a maximum one-hour validity window; `FIXTURE` evidence is
+restricted to `TEST`.
+
+The fixture corpus covers exact creation, existing-version reuse, lost-acknowledgement reconciliation,
+create uncertainty, provider-name collision, malformed control-plane responses, stale or drifted
+qualification, candidate readback mismatch, active-generation race, and ambiguous promotion settlement.
+The capability fixture keeps live Cloudflare control-plane write/readback, route execution, fallback, and
+Spend Limit probes explicitly `NOT_EXECUTED`.

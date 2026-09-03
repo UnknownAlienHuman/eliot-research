@@ -41,3 +41,20 @@ boundary, budget, lint, typecheck and Cloudflare AI/platform tests remained gree
 The adapter itself never retries an ambiguous transport outcome. Durable call-level idempotency and
 reconciliation across Workflow retries belong to the research-workflow execution packet. Live model,
 provider, billing, Guardrail, DLP, fallback, and spend-limit receipts remain `NOT EXECUTED`.
+
+## Versioned Dynamic Route provisioning
+
+Dynamic Route generations are create-only. A deterministic provider name is bound to the decoded
+`ModelRouteDeployment` identity, while the complete route definition and deployment metadata are
+independently SHA-256 bound. The provisioner exposes only `list`, `get`, and `create`; it owns no provider
+update or delete operation.
+
+A failed create is never replayed blindly. The adapter performs one exact list/get reconciliation and
+returns `CREATE_RECONCILED` only when the immutable provider snapshot matches. Otherwise it reports
+`DYNAMIC_ROUTE_CREATE_UNCERTAIN` with `PROVIDER_CREATE` as the unresolved effect.
+
+Promotion is a separate authority transition. The provider snapshot is staged as an immutable candidate,
+then activated through expected-active-version CAS. Production promotion requires fresh `LIVE`
+qualification bound to the exact gateway, deployment generations, provider identity, definition digest,
+snapshot digest, control-plane readback, and execution probe. Fixture evidence can promote only in the
+`TEST` environment.
