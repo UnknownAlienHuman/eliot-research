@@ -399,7 +399,7 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
       total_count: 1,
       result: [{ id: "search-instance-g2", type: null }],
     });
-    expect(decodeAiSearchInstanceInfo(info(), "embedding-g2")).toMatchObject({
+    expect(decodeAiSearchInstanceInfo(info())).toMatchObject({
       id: "search-instance-g2",
       embedding_model: "@cf/baai/bge-m3",
       custom_metadata: metadata(),

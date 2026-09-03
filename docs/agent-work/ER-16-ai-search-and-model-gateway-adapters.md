@@ -143,3 +143,27 @@ altered or additional metadata and binds the exact metadata map into the item re
 
 This correction is fixture-qualified only. No AI Search upload, item readback, namespace mutation or
 production generation promotion was executed.
+
+
+## Active implementation slice — namespace instance provisioning boundary
+
+The `@eliotr/cloudflare-ai` package now exposes a narrow namespace port containing only `list`, `get`
+and `create`; the provisioner has no `update` or `delete` capability. Before any provider mutation it
+validates the real Cloudflare instance-ID grammar, the immutable vector/keyword/fusion profile, chunking,
+and the exact five-field text metadata schema shared with projection upload and retrieval decoding.
+
+Provisioning behavior is fail-closed:
+
+- namespace listing is strictly decoded and bounded to 100 pages / 10,000 observed instances;
+- duplicate IDs, unstable pagination totals, repeated pages and unknown response fields are rejected;
+- an existing instance is accepted only after strict `info()` readback matches the desired built-in
+  storage, embedding model, keyword/fusion settings, reranker, chunking, cache/rewrite policy and metadata;
+- a missing instance is created once with cache and query rewriting disabled, then read back exactly;
+- a lost create acknowledgement is reconciled through `get(id).info()` and produces
+  `CREATE_RECONCILED` only on exact parity;
+- an unresolved or mismatched post-create state produces `AI_SEARCH_PROVISIONING_CREATE_UNCERTAIN`;
+- receipts bind canonical desired and observed configuration SHA-256 digests.
+
+The executable corpus uses binding fixtures only. No namespace list, create, info, update, delete,
+indexing, generation promotion or provider billing operation was executed against Cloudflare. Live
+receipts and workload qualification remain `NOT EXECUTED`.

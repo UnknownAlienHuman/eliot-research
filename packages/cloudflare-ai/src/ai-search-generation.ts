@@ -1,5 +1,6 @@
 import type { LocatorCandidate } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
+import { assertCloudflareAiSearchInstanceProfile } from "./ai-search-profile.js";
 
 export type AiSearchGenerationState =
   | "DECLARED"
@@ -78,7 +79,7 @@ export interface AiSearchPromotionRequest {
 const AI_SEARCH_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const AI_SEARCH_MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const MAX_AI_SEARCH_GENERATIONS = 64;
-const MAX_AI_SEARCH_METADATA_FIELDS = 64;
+const MAX_AI_SEARCH_METADATA_FIELDS = 5;
 
 function generationFailure(
   code: AiSearchGenerationErrorCode,
@@ -148,6 +149,14 @@ function normalizedMetadataFields(values: readonly string[]): readonly string[] 
 function normalizedAiSearchProfile(
   profile: AiSearchInstanceProfile,
 ): Readonly<Record<string, unknown>> {
+  try {
+    assertCloudflareAiSearchInstanceProfile(profile);
+  } catch (cause) {
+    generationFailure(
+      "AI_SEARCH_PROFILE_INVALID",
+      cause instanceof Error ? cause.message : "AI Search profile is invalid",
+    );
+  }
   boundedIdentifier(profile.id, "profile.id");
   boundedIdentifier(profile.generation, "profile.generation");
   if (

@@ -152,14 +152,6 @@ async function findExistingInstance(
         "AI Search list total_count changed during pagination",
       );
     }
-    const pageFingerprint = decoded.result.map((entry) => entry.id).join("\u0000");
-    if (decoded.result.length > 0 && pageFingerprints.has(pageFingerprint)) {
-      provisioningFailure(
-        "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
-        "AI Search list repeated a page during pagination",
-      );
-    }
-    pageFingerprints.add(pageFingerprint);
     for (const summary of decoded.result) {
       if (seenIds.has(summary.id)) {
         provisioningFailure(
@@ -172,6 +164,14 @@ async function findExistingInstance(
       seenIds.add(summary.id);
       if (summary.id === spec.profile.id) matches.push(summary);
     }
+    const pageFingerprint = decoded.result.map((entry) => entry.id).join("\u0000");
+    if (decoded.result.length > 0 && pageFingerprints.has(pageFingerprint)) {
+      provisioningFailure(
+        "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
+        "AI Search list repeated a page during pagination",
+      );
+    }
+    pageFingerprints.add(pageFingerprint);
     observedCount += decoded.result.length;
     if (observedCount > total) {
       provisioningFailure(
