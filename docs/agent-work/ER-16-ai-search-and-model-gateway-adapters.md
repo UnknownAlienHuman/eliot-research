@@ -83,9 +83,11 @@ source ceiling. The corpus covers stale generation, out-of-scope source, item-ke
 chunk identity, authority-shaped metadata, unknown fields, malformed scores/ranks/digests/taint, preview
 byte overflow, cardinality overflow, duplicate lanes and attempted literal-proof escalation.
 
-This slice does not implement namespace provisioning, item upload/readback, active-generation promotion,
-model-gateway execution, live AI Search calls or the packet's immutable-model negative gate. Those remain
-open. Cloudflare, Google and provider receipts remain `NOT EXECUTED`.
+This locator slice does not itself provision namespaces, write projection items, promote generations,
+execute model calls or contact Cloudflare. The coordinated follow-on slices below now implement the
+non-live provisioning policy, writer/readback parity, generation lifecycle and reasoning-gateway policy.
+Live AI Search execution and the packet's immutable-model live gate remain open. Cloudflare, Google and
+provider receipts remain `NOT EXECUTED`.
 
 ## Active implementation slice — reasoning-gateway call policy boundary
 
@@ -144,16 +146,20 @@ altered or additional metadata and binds the exact metadata map into the item re
 This correction is fixture-qualified only. No AI Search upload, item readback, namespace mutation or
 production generation promotion was executed.
 
-
 ## Active implementation slice — namespace instance provisioning boundary
 
 The `@eliotr/cloudflare-ai` package now exposes a narrow namespace port containing only `list`, `get`
 and `create`; the provisioner has no `update` or `delete` capability. Before any provider mutation it
 validates the real Cloudflare instance-ID grammar, the immutable vector/keyword/fusion profile, the
-provider's 0-30 chunk-overlap range, and the exact five-field text metadata schema shared with
+provider's 0–30 chunk-overlap range, and the exact five-field text metadata schema shared with
 projection upload and retrieval decoding. Every instance is explicitly attached to `eliotr-retrieval`,
 uses `score_threshold: 0` so provider defaults cannot silently reduce recall, and keeps cache and query
 rewriting disabled.
+
+The provider contract was rechecked against the official Workers Binding and REST create schemas on
+2026-09-03. The implementation pins the binding's `list`/`get`/`create` surface, the 64-character
+instance-ID ceiling, the five custom-metadata slots, immutable embedding-model behavior and the REST
+chunk-overlap ceiling rather than relying on undocumented defaults.
 
 Provisioning behavior is fail-closed:
 
