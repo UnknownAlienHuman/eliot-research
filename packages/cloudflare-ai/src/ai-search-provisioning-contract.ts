@@ -68,6 +68,7 @@ export interface AiSearchCreateRequest {
   readonly reranking_model?: typeof AI_SEARCH_RERANKING_MODEL;
   readonly rewrite_query: false;
   readonly cache: false;
+  readonly chunk: true;
   readonly chunk_size: number;
   readonly chunk_overlap: number;
   readonly score_threshold: typeof AI_SEARCH_SCORE_THRESHOLD;
@@ -191,6 +192,7 @@ export function compileAiSearchCreateRequest(
     ...(profile.reranking ? { reranking_model: AI_SEARCH_RERANKING_MODEL } : {}),
     rewrite_query: false,
     cache: false,
+    chunk: true,
     chunk_size: spec.chunk_size,
     chunk_overlap: spec.chunk_overlap,
     score_threshold: AI_SEARCH_SCORE_THRESHOLD,

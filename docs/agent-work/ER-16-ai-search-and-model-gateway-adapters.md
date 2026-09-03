@@ -156,10 +156,13 @@ projection upload and retrieval decoding. Every instance is explicitly attached 
 uses `score_threshold: 0` so provider defaults cannot silently reduce recall, and keeps cache and query
 rewriting disabled.
 
-The provider contract was rechecked against the official Workers Binding and REST create schemas on
-2026-09-03. The implementation pins the binding's `list`/`get`/`create` surface, the 64-character
-instance-ID ceiling, the five custom-metadata slots, immutable embedding-model behavior and the REST
-chunk-overlap ceiling rather than relying on undocumented defaults.
+The provider contract was rechecked against the official Workers Binding, generated runtime types
+and REST create schemas on 2026-09-03. The implementation pins the binding's `list`/`get`/`create`
+surface, the 64-character instance-ID ceiling, the five custom-metadata slots, immutable embedding-model
+behavior and the REST chunk-overlap ceiling rather than relying on undocumented defaults. Strict
+readback accepts both documented `enable` and generated-runtime `paused` state, optional built-in
+`type`/`source`, the compatibility `hybrid_search_enabled` flag, explicit chunk state and bounded
+provider metadata; contradictory compatibility fields still fail closed.
 
 Provisioning behavior is fail-closed:
 

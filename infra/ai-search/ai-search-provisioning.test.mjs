@@ -90,6 +90,7 @@ function info(overrides = {}) {
     cache: false,
     cache_threshold: "close_enough",
     cache_ttl: 172800,
+    chunk: true,
     index_method: { vector: true, keyword: true },
     fusion_method: "rrf",
     indexing_options: { keyword_tokenizer: "porter" },
@@ -100,6 +101,7 @@ function info(overrides = {}) {
     max_num_results: 20,
     sync_interval: 21600,
     custom_metadata: metadata(),
+    metadata: { created_from_aisearch_wizard: false },
     last_activity: timestamp,
     ...overrides,
   };
@@ -148,6 +150,7 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
       reranking_model: AI_SEARCH_RERANKING_MODEL,
       rewrite_query: false,
       cache: false,
+      chunk: true,
       chunk_size: 512,
       chunk_overlap: 20,
       score_threshold: AI_SEARCH_SCORE_THRESHOLD,
@@ -333,6 +336,7 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
     const mismatches = [
       info({ cache: true }),
       info({ rewrite_query: true }),
+      info({ chunk: false }),
       info({ ai_gateway_id: "wrong-retrieval-gateway" }),
       info({ score_threshold: 0.4 }),
       info({ chunk_size: 768 }),
@@ -409,6 +413,48 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
     );
   });
 
+  it("normalizes the official paused and optional built-in source shape", () => {
+    const runtimeShape = info({
+      type: undefined,
+      source: undefined,
+      enable: undefined,
+      paused: false,
+      hybrid_search_enabled: true,
+      created_by: "cloudflare",
+      modified_by: "cloudflare",
+      engine_version: 2,
+    });
+    expect(decodeAiSearchInstanceInfo(runtimeShape)).toMatchObject({
+      type: null,
+      source: null,
+      enable: true,
+      chunk: true,
+    });
+    const withoutPagination = listPage();
+    delete withoutPagination.result_info;
+    expect(decodeAiSearchInstanceListPage(withoutPagination, 1)).toMatchObject({
+      total_count: 1,
+    });
+  });
+
+  it("rejects contradictory compatibility fields and unbounded provider metadata", () => {
+    expectSyncCode(
+      () => decodeAiSearchInstanceInfo(info({ enable: true, paused: true })),
+      "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
+    );
+    expectSyncCode(
+      () => decodeAiSearchInstanceInfo(info({ hybrid_search_enabled: false })),
+      "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
+    );
+    const oversizedMetadata = Object.fromEntries(
+      Array.from({ length: 33 }, (_, index) => [`key-${index}`, index]),
+    );
+    expectSyncCode(
+      () => decodeAiSearchInstanceInfo(info({ metadata: oversizedMetadata })),
+      "AI_SEARCH_PROVISIONING_PROVIDER_RESPONSE_INVALID",
+    );
+  });
+
   it("strictly decodes standalone list and info fixtures", () => {
     expect(decodeAiSearchInstanceListPage(listPage(), 1)).toMatchObject({
       total_count: 1,
@@ -419,6 +465,7 @@ describe("ER-16 AI Search namespace provisioning boundary", () => {
       ai_gateway_id: AI_SEARCH_RETRIEVAL_GATEWAY_ID,
       embedding_model: "@cf/baai/bge-m3",
       score_threshold: AI_SEARCH_SCORE_THRESHOLD,
+      chunk: true,
       custom_metadata: metadata(),
     });
   });

@@ -73,6 +73,7 @@ function assertReadbackMatchesSpec(
   }
   if (
     !readback.enable ||
+    !readback.chunk ||
     readback.cache ||
     readback.rewrite_query ||
     readback.ai_gateway_id !== AI_SEARCH_RETRIEVAL_GATEWAY_ID ||
@@ -80,7 +81,7 @@ function assertReadbackMatchesSpec(
   ) {
     provisioningFailure(
       "AI_SEARCH_PROVISIONING_CONFIGURATION_MISMATCH",
-      "AI Search instance enable, cache, rewrite, gateway, or score policy differs",
+      "AI Search instance enable, chunk, cache, rewrite, gateway, or score policy differs",
     );
   }
   if (
