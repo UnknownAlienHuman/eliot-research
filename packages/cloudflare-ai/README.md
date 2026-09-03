@@ -31,6 +31,10 @@ The reasoning-gateway fetch adapter:
 - prices observed usage against the deployment's pinned pricing snapshot before emitting a compact
   `ModelCallReceipt`.
 
+Targeted qualification run `33721052502` passed normative contracts, package boundaries and their
+negative gate, source budgets, the work-packet DAG, ESLint, the complete TypeScript build, all 141
+Cloudflare AI/platform tests, Worker deployment dry-run and diff hygiene on the finalized source.
+
 The adapter itself never retries an ambiguous transport outcome. Durable call-level idempotency and
 reconciliation across Workflow retries belong to the research-workflow execution packet. Live model,
 provider, billing, Guardrail, DLP, fallback, and spend-limit receipts remain `NOT EXECUTED`.
