@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AI_SEARCH_CUSTOM_METADATA_FIELDS,
   AiSearchGenerationError,
   assertAiSearchGenerationIsolation,
   assertImmutableAiSearchProfile,
@@ -23,12 +24,7 @@ function profile(overrides = {}) {
     embedding_model: "@cf/baai/bge-m3",
     reranking: true,
     max_num_results: 20,
-    metadata_fields: [
-      "canonical_section_id",
-      "content_sha256",
-      "projection_generation",
-      "source_revision_ref",
-    ],
+    metadata_fields: [...AI_SEARCH_CUSTOM_METADATA_FIELDS],
     ...overrides,
   };
 }
@@ -109,6 +105,16 @@ describe("ER-16 AI Search generation lifecycle", () => {
           profile: profile({
             metadata_fields: ["source_revision_ref", "source_revision_ref"],
           }),
+          expected_item_count: 2,
+          declared_at: timestamp,
+        }),
+      "AI_SEARCH_PROFILE_INVALID",
+    );
+    expectCode(
+      () =>
+        declareAiSearchGeneration([], {
+          namespace: "eliotr-production",
+          profile: profile({ id: "Uppercase-Instance" }),
           expected_item_count: 2,
           declared_at: timestamp,
         }),

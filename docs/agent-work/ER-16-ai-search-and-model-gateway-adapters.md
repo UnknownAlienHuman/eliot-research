@@ -83,9 +83,11 @@ source ceiling. The corpus covers stale generation, out-of-scope source, item-ke
 chunk identity, authority-shaped metadata, unknown fields, malformed scores/ranks/digests/taint, preview
 byte overflow, cardinality overflow, duplicate lanes and attempted literal-proof escalation.
 
-This slice does not implement namespace provisioning, item upload/readback, active-generation promotion,
-model-gateway execution, live AI Search calls or the packet's immutable-model negative gate. Those remain
-open. Cloudflare, Google and provider receipts remain `NOT EXECUTED`.
+This locator slice does not itself provision namespaces, write projection items, promote generations,
+execute model calls or contact Cloudflare. The coordinated follow-on slices below now implement the
+non-live provisioning policy, writer/readback parity, generation lifecycle and reasoning-gateway policy.
+Live AI Search execution and the packet's immutable-model live gate remain open. Cloudflare, Google and
+provider receipts remain `NOT EXECUTED`.
 
 ## Active implementation slice — reasoning-gateway call policy boundary
 
@@ -143,3 +145,37 @@ altered or additional metadata and binds the exact metadata map into the item re
 
 This correction is fixture-qualified only. No AI Search upload, item readback, namespace mutation or
 production generation promotion was executed.
+
+## Active implementation slice — namespace instance provisioning boundary
+
+The `@eliotr/cloudflare-ai` package now exposes a narrow namespace port containing only `list`, `get`
+and `create`; the provisioner has no `update` or `delete` capability. Before any provider mutation it
+validates the real Cloudflare instance-ID grammar, the immutable vector/keyword/fusion profile, the
+provider's 0–30 chunk-overlap range, and the exact five-field text metadata schema shared with
+projection upload and retrieval decoding. Every instance is explicitly attached to `eliotr-retrieval`,
+uses `score_threshold: 0` so provider defaults cannot silently reduce recall, and keeps cache and query
+rewriting disabled.
+
+The provider contract was rechecked against the official Workers Binding, generated runtime types
+and REST create schemas on 2026-09-03. The implementation pins the binding's `list`/`get`/`create`
+surface, the 64-character instance-ID ceiling, the five custom-metadata slots, immutable embedding-model
+behavior and the REST chunk-overlap ceiling rather than relying on undocumented defaults. Strict
+readback accepts both documented `enable` and generated-runtime `paused` state, optional built-in
+`type`/`source`, the compatibility `hybrid_search_enabled` flag, explicit chunk state and bounded
+provider metadata; contradictory compatibility fields still fail closed.
+
+Provisioning behavior is fail-closed:
+
+- namespace listing is strictly decoded and bounded to 100 pages / 10,000 observed instances;
+- duplicate IDs, unstable pagination totals, repeated pages and unknown response fields are rejected;
+- an existing instance is accepted only after strict `info()` readback matches the desired built-in
+  storage, embedding model, keyword/fusion settings, reranker, chunking, cache/rewrite policy and metadata;
+- a missing instance is created once with cache and query rewriting disabled, then read back exactly;
+- a lost create acknowledgement is reconciled through `get(id).info()` and produces
+  `CREATE_RECONCILED` only on exact parity;
+- an unresolved or mismatched post-create state produces `AI_SEARCH_PROVISIONING_CREATE_UNCERTAIN`;
+- receipts bind canonical desired and observed configuration SHA-256 digests.
+
+The executable corpus uses binding fixtures only. No namespace list, create, info, update, delete,
+indexing, generation promotion or provider billing operation was executed against Cloudflare. Live
+receipts and workload qualification remain `NOT EXECUTED`.
