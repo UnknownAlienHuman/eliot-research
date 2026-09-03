@@ -1,6 +1,7 @@
-import type {
-  ModelGatewayCallPolicy,
-  ModelRouteDeployment,
+import {
+  prepareModelGatewayCall,
+  type ModelGatewayCallPolicy,
+  type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
 import {
   modelGatewayExecutionFailure,
@@ -22,7 +23,22 @@ const JSON_BODY_KEYS = new Set([
   "temperature",
   "top_p",
 ]);
+const PARAMETER_KEYS = Object.freeze([
+  "max_tokens",
+  "response_format",
+  "seed",
+  "stop",
+  "stream",
+  "temperature",
+  "top_p",
+] as const);
 const MESSAGE_KEYS = new Set(["content", "role"]);
+const POLICY_HEADER_KEYS = new Set([
+  "cf-aig-collect-log",
+  "cf-aig-collect-log-payload",
+  "cf-aig-metadata",
+  "cf-aig-skip-cache",
+]);
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_MESSAGES = 128;
 const MAX_JSON_DEPTH = 32;
@@ -63,11 +79,14 @@ function utf8Bytes(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function boundedString(value: unknown, label: string, maximum = MAX_STRING_BYTES): string {
+function boundedText(
+  value: unknown,
+  label: string,
+  maximum = MAX_STRING_BYTES,
+): string {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
-    value !== value.trim() ||
     utf8Bytes(value) > maximum ||
     /[\u0000\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)
   ) {
@@ -160,7 +179,7 @@ function validateMessages(raw: unknown): void {
       );
     }
     if (message.role === "user") userMessages += 1;
-    boundedString(message.content, `model request messages[${index}].content`);
+    boundedText(message.content, `model request messages[${index}].content`);
   });
   if (userMessages < 1) {
     modelGatewayExecutionFailure(
@@ -173,7 +192,7 @@ function validateMessages(raw: unknown): void {
 function validateStop(raw: unknown): void {
   if (raw === undefined) return;
   if (typeof raw === "string") {
-    boundedString(raw, "model request stop", 1024);
+    boundedText(raw, "model request stop", 1024);
     return;
   }
   if (!Array.isArray(raw) || raw.length < 1 || raw.length > 4) {
@@ -183,14 +202,19 @@ function validateStop(raw: unknown): void {
     );
   }
   raw.forEach((value, index) =>
-    boundedString(value, `model request stop[${index}]`, 1024),
+    boundedText(value, `model request stop[${index}]`, 1024),
   );
+}
+
+interface JsonValidationState {
+  members: number;
+  readonly ancestors: WeakSet<object>;
 }
 
 function validateJsonTree(
   value: unknown,
   depth: number,
-  state: { members: number },
+  state: JsonValidationState,
 ): void {
   if (depth > MAX_JSON_DEPTH) {
     modelGatewayExecutionFailure(
@@ -220,6 +244,19 @@ function validateJsonTree(
     }
     return;
   }
+  if (typeof value !== "object" || value === undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model request response_format contains a non-JSON value",
+    );
+  }
+  if (state.ancestors.has(value)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model request response_format contains a cycle",
+    );
+  }
+  state.ancestors.add(value);
   if (Array.isArray(value)) {
     state.members += value.length;
     if (state.members > MAX_JSON_MEMBERS) {
@@ -229,13 +266,8 @@ function validateJsonTree(
       );
     }
     value.forEach((entry) => validateJsonTree(entry, depth + 1, state));
+    state.ancestors.delete(value);
     return;
-  }
-  if (typeof value !== "object") {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_REQUEST_INVALID",
-      "model request response_format contains a non-JSON value",
-    );
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
@@ -254,18 +286,26 @@ function validateJsonTree(
     );
   }
   keys.forEach((key) => {
-    boundedString(key, "model request response_format key", 256);
+    boundedText(key, "model request response_format key", 256);
     validateJsonTree(record[key], depth + 1, state);
   });
+  state.ancestors.delete(value);
 }
 
-export function canonicalModelGatewayJson(value: unknown): string {
+function canonicalJson(value: unknown, ancestors: WeakSet<object>): string {
   if (
     value === null ||
     typeof value === "boolean" ||
     typeof value === "string"
   ) {
-    return JSON.stringify(value);
+    const encoded = JSON.stringify(value);
+    if (encoded === undefined) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_REQUEST_INVALID",
+        "canonical model request contains an unsupported primitive",
+      );
+    }
+    return encoded;
   }
   if (typeof value === "number") {
     if (!Number.isFinite(value)) {
@@ -276,46 +316,64 @@ export function canonicalModelGatewayJson(value: unknown): string {
     }
     return JSON.stringify(value);
   }
+  if (typeof value !== "object" || value === undefined) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "canonical model request contains a non-JSON value",
+    );
+  }
+  if (ancestors.has(value)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "canonical model request contains a cycle",
+    );
+  }
+  ancestors.add(value);
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalModelGatewayJson).join(",")}]`;
+    const encoded = `[${value
+      .map((entry) => canonicalJson(entry, ancestors))
+      .join(",")}]`;
+    ancestors.delete(value);
+    return encoded;
   }
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${canonicalModelGatewayJson(record[key])}`,
-      )
-      .join(",")}}`;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "canonical model request contains a non-plain object",
+    );
   }
-  modelGatewayExecutionFailure(
-    "MODEL_GATEWAY_REQUEST_INVALID",
-    "canonical model request contains a non-JSON value",
-  );
+  const record = value as Record<string, unknown>;
+  const encoded = `{${Object.keys(record)
+    .filter((key) => record[key] !== undefined)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${canonicalJson(record[key], ancestors)}`,
+    )
+    .join(",")}}`;
+  ancestors.delete(value);
+  return encoded;
 }
 
-export async function modelGatewaySha256(value: string | Uint8Array): Promise<string> {
-  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+export function canonicalModelGatewayJson(value: unknown): string {
+  return canonicalJson(value, new WeakSet());
+}
+
+export async function modelGatewaySha256(
+  value: string | Uint8Array,
+): Promise<string> {
+  const source =
+    typeof value === "string" ? new TextEncoder().encode(value) : value;
+  const bytes = new Uint8Array(source.byteLength);
+  bytes.set(source);
+  const digest = await crypto.subtle.digest("SHA-256", bytes.buffer);
   return [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
 
-function validateRequestBody(
-  raw: unknown,
-  deployment: ModelRouteDeployment,
-): string {
-  const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
-  if (body.model !== deployment.route_ref) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_REQUEST_INVALID",
-      "model request must address the deployed dynamic route",
-    );
-  }
-  validateMessages(body.messages);
+function validateRequestParameters(body: Record<string, unknown>): void {
   safeInteger(body.max_tokens, "model request max_tokens", 1, 1_000_000);
   if (body.stream !== false) {
     modelGatewayExecutionFailure(
@@ -330,16 +388,77 @@ function validateRequestBody(
   }
   validateStop(body.stop);
   if (body.response_format !== undefined) {
-    validateJsonTree(body.response_format, 0, { members: 0 });
+    validateJsonTree(body.response_format, 0, {
+      members: 0,
+      ancestors: new WeakSet(),
+    });
   }
-  const canonical = canonicalModelGatewayJson(body);
-  if (utf8Bytes(canonical) > MAX_REQUEST_BYTES) {
+}
+
+function parameterProjection(
+  body: Record<string, unknown>,
+): Readonly<Record<string, unknown>> {
+  const projection: Record<string, unknown> = {};
+  for (const key of PARAMETER_KEYS) {
+    if (body[key] !== undefined) projection[key] = body[key];
+  }
+  return Object.freeze(projection);
+}
+
+export async function modelGatewayRequestParametersSha256(
+  rawBody: unknown,
+): Promise<string> {
+  const body = exactObject(rawBody, JSON_BODY_KEYS, "model request body");
+  validateRequestParameters(body);
+  return modelGatewaySha256(
+    canonicalModelGatewayJson(parameterProjection(body)),
+  );
+}
+
+async function validateRequestBody(
+  raw: unknown,
+  deployment: ModelRouteDeployment,
+  maximumInputBytes: number,
+  maximumOutputBytes: number,
+): Promise<{
+  readonly body: string;
+  readonly parameters_sha256: string;
+}> {
+  const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
+  if (body.model !== deployment.route_ref) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
-      `canonical model request exceeds ${MAX_REQUEST_BYTES} bytes`,
+      "model request must address the deployed dynamic route",
     );
   }
-  return canonical;
+  validateMessages(body.messages);
+  validateRequestParameters(body);
+  const maxTokens = safeInteger(
+    body.max_tokens,
+    "model request max_tokens",
+    1,
+    1_000_000,
+  );
+  if (maxTokens > maximumOutputBytes) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model request max_tokens exceeds the reserved output byte ceiling",
+    );
+  }
+  const canonical = canonicalModelGatewayJson(body);
+  const bodyBytes = utf8Bytes(canonical);
+  if (bodyBytes > MAX_REQUEST_BYTES || bodyBytes > maximumInputBytes) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "canonical model request exceeds the reserved input byte budget",
+    );
+  }
+  return Object.freeze({
+    body: canonical,
+    parameters_sha256: await modelGatewaySha256(
+      canonicalModelGatewayJson(parameterProjection(body)),
+    ),
+  });
 }
 
 function reasoningEndpoint(baseUrl: string): string {
@@ -381,8 +500,9 @@ function reasoningEndpoint(baseUrl: string): string {
   return `${url.origin}/v1/${parts[1]}/eliotr-reasoning/compat/chat/completions`;
 }
 
-function gatewayToken(value: string): string {
+function gatewayToken(value: unknown): string {
   if (
+    typeof value !== "string" ||
     value.length < 1 ||
     value.length > 4096 ||
     value !== value.trim() ||
@@ -397,26 +517,89 @@ function gatewayToken(value: string): string {
   return value;
 }
 
+function validatePolicy(policy: ModelGatewayCallPolicy): void {
+  if (
+    policy.gateway_id !== "eliotr-reasoning" ||
+    policy.provider !== "compat" ||
+    policy.endpoint !== "chat/completions"
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model gateway policy selected an unsupported gateway endpoint",
+    );
+  }
+  const headers = exactObject(
+    policy.headers,
+    POLICY_HEADER_KEYS,
+    "model gateway policy headers",
+  );
+  if (
+    headers["cf-aig-collect-log"] !== "true" ||
+    headers["cf-aig-collect-log-payload"] !== "false" ||
+    headers["cf-aig-skip-cache"] !== "true" ||
+    typeof headers["cf-aig-metadata"] !== "string" ||
+    utf8Bytes(headers["cf-aig-metadata"]) > 8192
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model gateway policy headers violate logging or cache requirements",
+    );
+  }
+}
+
 export async function prepareModelGatewayHttpRequest(
   input: ModelCallInput,
   deployment: ModelRouteDeployment,
-  policy: ModelGatewayCallPolicy,
   compiled: CompiledModelGatewayPrompt,
   baseUrl: string,
-  rawToken: string,
+  rawToken: unknown,
 ): Promise<PreparedModelGatewayHttpRequest> {
-  const body = validateRequestBody(compiled.request_body, deployment);
+  let policy: ModelGatewayCallPolicy;
+  try {
+    policy = prepareModelGatewayCall(input, deployment);
+  } catch (cause) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "model route deployment or call input failed policy validation",
+      { cause },
+    );
+  }
+  validatePolicy(policy);
+  const maximumInputBytes = safeInteger(
+    input.max_input_bytes,
+    "reserved input byte budget",
+    1,
+    MAX_REQUEST_BYTES,
+  );
+  const maximumOutputBytes = safeInteger(
+    input.max_output_bytes,
+    "reserved output byte budget",
+    1,
+    MAX_REQUEST_BYTES,
+  );
+  const validated = await validateRequestBody(
+    compiled.request_body,
+    deployment,
+    maximumInputBytes,
+    maximumOutputBytes,
+  );
   if (!SHA256.test(compiled.request_body_sha256)) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "compiled model request digest is not canonical SHA-256",
     );
   }
-  const bodySha256 = await modelGatewaySha256(body);
+  const bodySha256 = await modelGatewaySha256(validated.body);
   if (bodySha256 !== compiled.request_body_sha256) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "compiled model request digest does not match canonical request bytes",
+    );
+  }
+  if (validated.parameters_sha256 !== deployment.parameters_digest) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_REQUEST_INVALID",
+      "compiled model parameters differ from the deployed parameter generation",
     );
   }
   const requestTimeout = safeInteger(
@@ -431,13 +614,15 @@ export async function prepareModelGatewayHttpRequest(
     method: "POST",
     headers: Object.freeze({
       Accept: "application/json",
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
+      "cf-aig-authorization": `Bearer ${token}`,
       ...policy.headers,
       "cf-aig-request-timeout": String(requestTimeout),
+      "cf-aig-max-attempts": "1",
     }),
-    body,
+    body: validated.body,
     body_sha256: bodySha256,
+    parameters_sha256: validated.parameters_sha256,
     request_timeout_ms: requestTimeout,
   });
 }
