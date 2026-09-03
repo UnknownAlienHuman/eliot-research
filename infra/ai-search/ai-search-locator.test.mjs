@@ -29,7 +29,7 @@ function projectionItem(overrides = {}) {
 
 function nestedItem(metadata = {}, item = {}) {
   return {
-    key: "projection-item-1",
+    key: "projection-item-1.md",
     timestamp: 1_775_925_540_000,
     metadata: { ...projectionMetadata(projectionItem()), ...metadata },
     ...item,
@@ -76,7 +76,6 @@ describe("Cloudflare AI Search locator boundary", () => {
       canonical_section_id: "section-1",
       content_sha256: DIGEST,
       instruction_taint: "CLEARED",
-      item_key: "projection-item-1",
       projection_generation: GENERATION,
       source_revision_ref: SOURCE,
     });
@@ -104,7 +103,8 @@ describe("Cloudflare AI Search locator boundary", () => {
       index_generation: GENERATION,
       metadata: {
         provider: "cloudflare_ai_search",
-        provider_item_key: "projection-item-1",
+        item_key: "projection-item-1",
+        provider_item_key: "projection-item-1.md",
         provider_item_timestamp: 1_775_925_540_000,
         provider_vector_score: 0.83,
         provider_keyword_score: 2.75,
@@ -128,10 +128,11 @@ describe("Cloudflare AI Search locator boundary", () => {
     expect(candidate).toMatchObject({ lane: "LEX", rank: 7, proof_state: "UNRESOLVED_LOCATOR" });
   });
 
-  it("rejects stale generations, out-of-scope sources, mismatched item keys, and duplicates", () => {
+  it("rejects stale generations, out-of-scope sources, noncanonical item keys, and duplicates", () => {
     expect(() => decodeAiSearchSearchResult(request(), result([chunk({ item: nestedItem({ projection_generation: "projection-generation-0" }) })]), options())).toThrow(/promoted managed generation/u);
     expect(() => decodeAiSearchSearchResult(request(), result([chunk({ item: nestedItem({ source_revision_ref: OTHER_SOURCE }) })]), options())).toThrow(/outside the frozen ScopeSnapshot/u);
-    expect(() => decodeAiSearchSearchResult(request(), result([chunk({ item: nestedItem({}, { key: "different-item-key" }) })]), options())).toThrow(/does not match metadata.item_key/u);
+    expect(() => decodeAiSearchSearchResult(request(), result([chunk({ item: nestedItem({}, { key: "different-item-key" }) })]), options())).toThrow(/canonical \.md suffix/u);
+    expect(() => decodeAiSearchSearchResult(request(), result([chunk({ item: nestedItem({}, { key: "nested/projection-item-1.md" }) })]), options())).toThrow(/canonical projection item filename/u);
     expect(() => decodeAiSearchSearchResult(request(), result([chunk(), chunk()]), options())).toThrow(/duplicate chunk id/u);
   });
 
@@ -139,6 +140,7 @@ describe("Cloudflare AI Search locator boundary", () => {
     const invalid = [
       result([chunk()], { partial: true }),
       result([chunk({ content: "legacy REST field" })]),
+      result([chunk({ item: nestedItem({ item_key: "legacy-sixth-field" }) })]),
       result([chunk({ item: nestedItem({ evidence_handle_ref: "forged-handle" }) })]),
       result([chunk({ scoring_details: { vector_score: 0.5, explanation: "provider rationale" } })]),
     ];
