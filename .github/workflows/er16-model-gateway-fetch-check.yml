@@ -1,0 +1,42 @@
+name: er16-model-gateway-fetch-check
+
+on:
+  push:
+    branches:
+      - agent/ER-16-model-gateway-fetch-adapter-20260903
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: er16-model-gateway-fetch-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Verify source budgets and boundaries
+        run: |
+          pnpm boundaries:check
+          pnpm boundaries:negative
+          pnpm budgets:check
+          pnpm work-packets:check
+      - name: Targeted Cloudflare AI tests
+        run: pnpm exec vitest run packages/cloudflare-ai packages/platform-cloudflare --reporter=verbose
+      - name: Diff hygiene
+        run: git diff --check origin/main...HEAD
