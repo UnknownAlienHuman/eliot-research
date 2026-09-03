@@ -68,7 +68,6 @@ response = replace_once(
     response,
     '''const POLICY_ERROR_CODES = new Set([2016, 2017, 2029, 2030]);
 const RATE_LIMIT_ERROR_CODES = new Set([2003]);
-const MAX_ERROR_BODY_BYTES = 64 * 1024;
 ''',
     "",
     "response HTTP failure constants",
