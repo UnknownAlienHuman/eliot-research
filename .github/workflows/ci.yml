@@ -64,8 +64,10 @@ jobs:
         run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
       - name: Test retrieval, research and Drive exchange
         run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
-      - name: Test Cloudflare AI, federation, platform, projection, evidence and erasure packages
-        run: timeout 180s pnpm exec vitest run packages/cloudflare-ai packages/cloudflare-federation packages/platform-cloudflare packages/cloudflare-projection packages/cloudflare-evidence packages/cloudflare-erasure --reporter=verbose
+      - name: Test Cloudflare federation package command
+        run: timeout 180s pnpm --filter @eliotr/cloudflare-federation test
+      - name: Test Cloudflare AI, platform, projection, evidence and erasure packages
+        run: timeout 180s pnpm exec vitest run packages/cloudflare-ai packages/platform-cloudflare packages/cloudflare-projection packages/cloudflare-evidence packages/cloudflare-erasure --reporter=verbose
       - name: Test testkit, integration harness and PWA
         run: timeout 180s pnpm exec vitest run packages/testkit tests apps/eliotr-pwa --reporter=verbose
       - name: Test Worker runtime
