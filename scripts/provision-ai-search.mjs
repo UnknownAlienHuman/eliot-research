@@ -36,11 +36,14 @@ function readPath(value, path) {
 function normalizedMetadata(value) {
   if (!Array.isArray(value)) return value;
   return value
-    .map((entry) => ({
-      field_name: entry?.field_name,
-      data_type: entry?.data_type,
-    }))
-    .sort((left, right) => String(left.field_name).localeCompare(String(right.field_name)));
+    .map((entry) =>
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? { ...entry }
+        : entry,
+    )
+    .sort((left, right) =>
+      String(left?.field_name).localeCompare(String(right?.field_name)),
+    );
 }
 function normalizedRetrievalOptions(value) {
   if (value === undefined || value === null || typeof value !== "object" || Array.isArray(value)) {
