@@ -51,7 +51,70 @@
         "MCP_ACCESS_AUDIENCE": "replace-me",
         "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID": "replace-me.access",
         "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
-      }
+      },
+      "d1_databases": [
+        {
+          "binding": "CORE_DB",
+          "database_name": "eliotr-core-test",
+          "migrations_dir": "../../infra/d1/core/migrations"
+        },
+        {
+          "binding": "SEARCH_DB",
+          "database_name": "eliotr-search-test",
+          "migrations_dir": "../../infra/d1/search/migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "EVIDENCE_BUCKET",
+          "bucket_name": "eliotr-evidence-test"
+        },
+        {
+          "binding": "WORK_BUCKET",
+          "bucket_name": "eliotr-work-test"
+        }
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "JOB_QUEUE",
+            "queue": "eliotr-jobs-test"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "eliotr-jobs-test",
+            "max_batch_size": 10,
+            "max_batch_timeout": 5,
+            "max_retries": 5,
+            "dead_letter_queue": "eliotr-dlq-test",
+            "max_concurrency": 10,
+            "retry_delay": 30
+          }
+        ]
+      },
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "RESEARCH_SESSION",
+            "class_name": "ResearchSession"
+          }
+        ]
+      },
+      "workflows": [
+        {
+          "binding": "RESEARCH_WORKFLOW",
+          "name": "eliotr-research-workflow-test",
+          "class_name": "ResearchWorkflow"
+        }
+      ],
+      "ai_search_namespaces": [],
+      "analytics_engine_datasets": [
+        {
+          "binding": "METRICS",
+          "dataset": "eliotr_metrics_test"
+        }
+      ]
     }
   },
   "d1_databases": [
