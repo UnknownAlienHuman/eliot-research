@@ -1,0 +1,73 @@
+name: er38-managed-generation-profile-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-38-managed-generation-profile-parity-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er38-managed-generation-profile-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ !contains(github.event.head_commit.message, '[er38-profile-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-38-managed-generation-profile-parity-20260904
+          fetch-depth: 0
+
+      - name: Synchronize runtime profile with desired generation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          desired = json.loads(
+              Path("infra/ai-search/instances.json").read_text(encoding="utf-8")
+          )
+          matches = [
+              instance for instance in desired["instances"]
+              if instance.get("purpose") == "private natural-language source sections"
+          ]
+          if len(matches) != 1:
+              raise SystemExit("expected one private prose AI Search instance")
+          instance_id = matches[0]["id"]
+          generation = desired["generation"]
+
+          path = Path("apps/eliotr-core/src/projection-execution-handler.ts")
+          text = path.read_text(encoding="utf-8")
+          old_instance = '  managed_instance_id: "private-prose-g1",\n'
+          old_generation = '  managed_generation: "g1-qwen3-2026-08-28",\n'
+          new_instance = f'  managed_instance_id: "{instance_id}",\n'
+          new_generation = f'  managed_generation: "{generation}",\n'
+          if text.count(old_instance) != 1:
+              raise SystemExit("stale managed_instance_id anchor missing or ambiguous")
+          if text.count(old_generation) != 1:
+              raise SystemExit("stale managed_generation anchor missing or ambiguous")
+          path.write_text(
+              text.replace(old_instance, new_instance)
+                  .replace(old_generation, new_generation),
+              encoding="utf-8",
+          )
+          PY
+          git rm -- .github/workflows/er38-managed-generation-profile-sync.yml
+          git diff --check
+
+      - name: Commit synchronized runtime profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-38: synchronize managed generation profile [er38-profile-synced]"
+          git push origin HEAD:agent/ER-38-managed-generation-profile-parity-20260904
