@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,15 +36,22 @@ const COMMAND_VALUE_OPTIONS = Object.freeze({
 });
 
 class OperatorInputError extends Error {
-  constructor(message) {
-    super(message);
+  constructor(message, options = {}) {
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "OperatorInputError";
     this.code = "AI_SEARCH_GENERATION_OPERATOR_INPUT_INVALID";
   }
 }
 
-function inputFailure(message) {
-  throw new OperatorInputError(message);
+function inputFailure(message, cause) {
+  throw new OperatorInputError(
+    message,
+    cause === undefined ? {} : { cause },
+  );
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function usage() {
@@ -149,6 +156,10 @@ function exactObject(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     inputFailure(`${label} must be an object`);
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    inputFailure(`${label} must be a plain object`);
+  }
   return value;
 }
 
@@ -217,13 +228,19 @@ async function loadDesiredState(path) {
   try {
     bytes = await readFile(path);
   } catch (cause) {
-    throw new OperatorInputError(`cannot read AI Search desired state: ${cause.message}`);
+    inputFailure(
+      `cannot read AI Search desired state: ${errorMessage(cause)}`,
+      cause,
+    );
   }
   let desired;
   try {
     desired = JSON.parse(bytes.toString("utf8"));
   } catch (cause) {
-    throw new OperatorInputError(`AI Search desired state is invalid JSON: ${cause.message}`);
+    inputFailure(
+      `AI Search desired state is invalid JSON: ${errorMessage(cause)}`,
+      cause,
+    );
   }
   return Object.freeze({
     bytes,
@@ -251,7 +268,8 @@ async function databaseIdFromConfig(path) {
     document = JSON.parse(await readFile(path, "utf8"));
   } catch (cause) {
     throw new OperatorInputError(
-      `cannot read generated deploy config; set ELIOTR_SEARCH_DATABASE_ID or --database-id (${cause.message})`,
+      `cannot read generated deploy config; set ELIOTR_SEARCH_DATABASE_ID or --database-id (${errorMessage(cause)})`,
+      { cause },
     );
   }
   const matches = Array.isArray(document.d1_databases)
@@ -370,6 +388,43 @@ function operationInput(command, options, desired) {
   }
 }
 
+function requireCompiledPrimaryProfile(cloudflareAi, desired) {
+  if (
+    typeof cloudflareAi.assertCloudflareAiSearchInstanceProfile !== "function" ||
+    typeof cloudflareAi.assertImmutableAiSearchProfile !== "function" ||
+    typeof cloudflareAi.createAiSearchGenerationRegistryService !== "function" ||
+    typeof cloudflareAi.createD1AiSearchGenerationRegistryStore !== "function" ||
+    typeof cloudflareAi.AI_SEARCH_PRIMARY_NAMESPACE !== "string" ||
+    typeof cloudflareAi.AI_SEARCH_PRIMARY_GENERATION !== "string" ||
+    typeof cloudflareAi.AI_SEARCH_PRIMARY_INSTANCE_ID !== "string" ||
+    typeof cloudflareAi.AI_SEARCH_PRIMARY_PROJECTION_PROFILE !== "object" ||
+    cloudflareAi.AI_SEARCH_PRIMARY_PROJECTION_PROFILE === null
+  ) {
+    inputFailure("built @eliotr/cloudflare-ai omits the required generation authority surface");
+  }
+  if (cloudflareAi.AI_SEARCH_PRIMARY_NAMESPACE !== desired.namespace) {
+    inputFailure("desired namespace differs from the compiled primary namespace");
+  }
+  if (cloudflareAi.AI_SEARCH_PRIMARY_GENERATION !== desired.generation) {
+    inputFailure("desired generation differs from the compiled primary generation");
+  }
+  if (cloudflareAi.AI_SEARCH_PRIMARY_INSTANCE_ID !== desired.profile.id) {
+    inputFailure("desired primary instance differs from the compiled primary instance");
+  }
+  try {
+    cloudflareAi.assertCloudflareAiSearchInstanceProfile(desired.profile);
+    cloudflareAi.assertImmutableAiSearchProfile(
+      cloudflareAi.AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      desired.profile,
+    );
+  } catch (cause) {
+    throw new OperatorInputError(
+      "desired primary profile differs from the compiled immutable profile",
+      { cause },
+    );
+  }
+}
+
 async function persistReceipt(stateDirectory, document) {
   const receipt = document.persistence_receipt;
   if (receipt === undefined) return null;
@@ -386,7 +441,9 @@ async function persistReceipt(stateDirectory, document) {
     if (cause?.code !== "EEXIST") throw cause;
     const existing = await readFile(path, "utf8");
     if (existing !== bytes) {
-      throw new Error(`receipt path already contains different bytes: ${path}`);
+      throw new Error(`receipt path already contains different bytes: ${path}`, {
+        cause,
+      });
     }
   }
   return path;
@@ -432,21 +489,7 @@ async function main() {
   const input = operationInput(command, options, desired);
   const connection = await resolveConnection(options);
   const cloudflareAi = await loadCloudflareAiModule();
-  if (typeof cloudflareAi.assertCloudflareAiSearchInstanceProfile === "function") {
-    cloudflareAi.assertCloudflareAiSearchInstanceProfile(desired.profile);
-  }
-  if (
-    cloudflareAi.AI_SEARCH_PRIMARY_GENERATION !== undefined &&
-    cloudflareAi.AI_SEARCH_PRIMARY_GENERATION !== desired.generation
-  ) {
-    inputFailure("desired generation differs from the compiled primary generation");
-  }
-  if (
-    cloudflareAi.AI_SEARCH_PRIMARY_INSTANCE_ID !== undefined &&
-    cloudflareAi.AI_SEARCH_PRIMARY_INSTANCE_ID !== desired.profile.id
-  ) {
-    inputFailure("desired primary instance differs from the compiled primary instance");
-  }
+  requireCompiledPrimaryProfile(cloudflareAi, desired);
 
   const database = createCloudflareD1HttpDatabase(connection);
   const service = cloudflareAi.createAiSearchGenerationRegistryService(
