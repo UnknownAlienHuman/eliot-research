@@ -55,6 +55,18 @@ async function sha256(value: string): Promise<string> {
     .join("");
 }
 
+function deeplyNestedScope(depth: number): unknown {
+  let scope: unknown = { kind: "PROJECT", project_id: "project-1" };
+  for (let index = 1; index < depth; index += 1) {
+    scope = {
+      kind: "UNION",
+      left: scope,
+      right: { kind: "TAG", tag: `tag-${index}` },
+    };
+  }
+  return scope;
+}
+
 function request(overrides: Partial<FederationRequest> = {}): FederationRequest {
   return {
     protocol: "eliotr.federation.v1",
@@ -418,7 +430,22 @@ describe("ER-22 federation service", () => {
     );
   });
 
-  it("fails closed on unknown request, scope, security and budget fields", async () => {
+  it("rejects excessive scope depth before recursive schema parsing", async () => {
+  const input = dependencies();
+  const service = createFederationService(input);
+  const malicious = {
+    ...request(),
+    scope_expression: deeplyNestedScope(10_000),
+  } as FederationRequest;
+
+  await expectCode(
+    service.submit(context(), malicious),
+    "FEDERATION_SCOPE_TOO_DEEP",
+  );
+  expect(input.jobs.reserve).not.toHaveBeenCalled();
+});
+
+it("fails closed on unknown request, scope, security and budget fields", async () => {
     const service = createFederationService(dependencies());
     const base = request();
 
