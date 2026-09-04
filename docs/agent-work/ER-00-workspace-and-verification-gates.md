@@ -15,6 +15,9 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `package.json`
 - `pnpm-workspace.yaml`
 - `pnpm-lock.yaml`
+- `packages/cloudflare-federation/package.json`
+- `packages/cloudflare-federation/tsconfig.json`
+- `packages/cloudflare-federation/AGENTS.md`
 - `tsconfig.json`
 - `tsconfig.base.json`
 - `eslint.config.mjs`

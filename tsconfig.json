@@ -20,6 +20,9 @@
       "path": "packages/platform-cloudflare"
     },
     {
+      "path": "packages/cloudflare-federation"
+    },
+    {
       "path": "packages/cloudflare-ai"
     },
     {

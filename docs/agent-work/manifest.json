@@ -1,9 +1,9 @@
 {
   "protocol": "eliotr.agent-work.v1",
   "repository": "UnknownAlienHuman/eliot-research",
-  "baseline_commit": "b1827368a60c9821bd758912aa7f08534e3aba5a",
+  "baseline_commit": "ec21df807a6ee10e4b2b35283224ff172a077cf8",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-04T04:59:52.124770Z",
+  "generated_at": "2026-09-04T16:20:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
@@ -21,6 +21,9 @@
         "package.json",
         "pnpm-workspace.yaml",
         "pnpm-lock.yaml",
+        "packages/cloudflare-federation/package.json",
+        "packages/cloudflare-federation/tsconfig.json",
+        "packages/cloudflare-federation/AGENTS.md",
         "tsconfig.json",
         "tsconfig.base.json",
         "eslint.config.mjs",
