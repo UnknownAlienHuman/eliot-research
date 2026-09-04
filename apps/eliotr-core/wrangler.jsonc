@@ -33,6 +33,7 @@
     "MCP_HOSTNAME": "mcp.replace-me.example",
     "MCP_ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
     "MCP_ACCESS_AUDIENCE": "replace-me",
+    "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID": "replace-me.access",
     "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
   },
   "env": {
@@ -48,6 +49,7 @@
         "MCP_HOSTNAME": "mcp.replace-me.example",
         "MCP_ACCESS_TEAM_DOMAIN": "https://replace-me.cloudflareaccess.com",
         "MCP_ACCESS_AUDIENCE": "replace-me",
+        "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID": "replace-me.access",
         "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
       }
     }
