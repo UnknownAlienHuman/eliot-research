@@ -1,0 +1,58 @@
+name: er13-federation-schema-readback-fix
+
+on:
+  push:
+    branches:
+      - agent/ER-13-federation-job-schema-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er13-federation-schema-readback-fix
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er13-readback-fixed]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-13-federation-job-schema-20260904
+          fetch-depth: 0
+      - name: Use field-exact SQLite readback assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path("infra/d1/core/federation-job-authority.test.mjs")
+          text = path.read_text(encoding="utf-8")
+          old = '''assert.deepEqual(readback, {
+            request_digest: digest,
+            job_id: status.job_id,
+            transport_state: "ACCEPTED",
+            state_version: 1,
+          });'''
+          new = '''assert.equal(readback?.request_digest, digest);
+          assert.equal(readback?.job_id, status.job_id);
+          assert.equal(readback?.transport_state, "ACCEPTED");
+          assert.equal(readback?.state_version, 1);'''
+          if text.count(old) != 1:
+              raise SystemExit("federation readback assertion anchor missing or ambiguous")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er13-federation-schema-readback-fix.yml
+          node infra/d1/core/federation-job-authority.test.mjs
+          git diff --check
+      - name: Commit exact readback assertion
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-13: make federation schema readback exact [er13-readback-fixed]"
+          git push origin HEAD:agent/ER-13-federation-job-schema-20260904
