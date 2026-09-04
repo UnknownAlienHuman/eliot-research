@@ -4,6 +4,7 @@
     "id": "ER-41",
     "depends_on": ["ER-13", "ER-22", "ER-24"],
     "owned_paths": [
+      "apps/eliotr-core/src/federation-d1-codec.ts",
       "apps/eliotr-core/src/federation-d1-authority.ts",
       "apps/eliotr-core/src/federation-d1-authority.test.ts",
       "docs/agent-work/ER-41-federation-d1-runtime.md"
