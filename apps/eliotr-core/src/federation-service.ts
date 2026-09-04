@@ -20,6 +20,7 @@ import type {
   FederationBundleRange,
   FederationChangePage,
 } from "@eliotr/interfaces";
+import { federationScopeExceedsDepth } from "./federation-scope-limits.js";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_QUESTION_BYTES = 32 * 1024;
 const MAX_EXPECTED_RESULT_BYTES = 16 * 1024;
@@ -149,10 +150,6 @@ async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
-function scopeDepth(scope: FederationRequest["scope_expression"]): number {
-  if (scope.kind !== "UNION" && scope.kind !== "INTERSECT" && scope.kind !== "EXCEPT") return 1;
-  return 1 + Math.max(scopeDepth(scope.left), scopeDepth(scope.right));
-}
 function selectedSourceCount(scope: FederationRequest["scope_expression"]): number {
   if (scope.kind === "SELECTED_SOURCES") return scope.source_ids.length;
   if (scope.kind !== "UNION" && scope.kind !== "INTERSECT" && scope.kind !== "EXCEPT") return 0;
@@ -160,6 +157,7 @@ function selectedSourceCount(scope: FederationRequest["scope_expression"]): numb
 }
 
 function parseRequest(value: unknown, now: number): FederationRequest {
+  if (federationScopeExceedsDepth(isRecord(value) ? value.scope_expression : undefined, MAX_SCOPE_DEPTH)) fail("FEDERATION_SCOPE_TOO_DEEP", `scope expression exceeds depth ${MAX_SCOPE_DEPTH}`);
   const parsed = FederationRequestSchema.safeParse(value);
   if (!parsed.success) {
     fail("FEDERATION_REQUEST_INVALID", "federation request failed strict schema validation");
@@ -182,7 +180,7 @@ function parseRequest(value: unknown, now: number): FederationRequest {
     fail("FEDERATION_REFERENCE_LIMIT", `allowed_input_handle_refs exceeds ${MAX_INPUT_HANDLES} entries`);
   }
   assertUnique(request.allowed_input_handle_refs.map(refKey), "FEDERATION_REFERENCE_DUPLICATE", "allowed_input_handle_refs contains duplicates");
-  if (scopeDepth(request.scope_expression) > MAX_SCOPE_DEPTH) {
+  if (federationScopeExceedsDepth(request.scope_expression, MAX_SCOPE_DEPTH)) {
     fail("FEDERATION_SCOPE_TOO_DEEP", `scope expression exceeds depth ${MAX_SCOPE_DEPTH}`);
   }
   if (selectedSourceCount(request.scope_expression) > MAX_SELECTED_SOURCES) {
