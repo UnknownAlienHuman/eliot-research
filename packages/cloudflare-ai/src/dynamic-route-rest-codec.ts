@@ -1,24 +1,18 @@
 import {
   canonicalModelGatewayJson,
-  modelGatewaySha256,
 } from "./model-gateway-request.js";
 import {
   CLOUDFLARE_API_BASE_URL,
   DYNAMIC_ROUTE_REST_LIST_MAX_PAGES,
   DYNAMIC_ROUTE_REST_LIST_PER_PAGE,
-  DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES,
   DynamicRouteRestError,
   type DecodedDynamicRoute,
   type DecodedDynamicRouteDeployment,
   type DecodedDynamicRouteVersion,
   type DynamicRouteRestAmbiguousEffect,
-  type DynamicRouteRestBinding,
-  type DynamicRouteRestBindingWriteReceipt,
   type DynamicRouteRestErrorCode,
-  type DynamicRouteRestResponse,
 } from "./dynamic-route-rest-contract.js";
 import {
-  DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES,
   DYNAMIC_ROUTE_DEFINITION_MAX_BYTES,
   DYNAMIC_ROUTE_GATEWAY_ID,
   type DynamicRouteCreateRequest,
@@ -32,18 +26,8 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const API_TOKEN = /^[!-~]{20,512}$/u;
 const MAX_ROUTE_ELEMENTS = 256;
 const MAX_API_COLLECTION = 10_000;
-const MAX_API_MESSAGES = 100;
-const MAX_API_MESSAGE_BYTES = 4 * 1024;
 const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
 
-const ENVELOPE_KEYS = new Set([
-  "errors",
-  "messages",
-  "result",
-  "result_info",
-  "success",
-]);
 const ROUTE_KEYS = new Set([
   "created_at",
   "deployment",
@@ -84,18 +68,6 @@ const METADATA_KEYS = new Set([
   "route_version",
   "schema_generation",
 ]);
-const BINDING_KEYS = new Set([
-  "account_id",
-  "gateway_id",
-  "metadata",
-  "protocol",
-  "provider_deployment_id",
-  "provider_route_id",
-  "provider_route_name",
-  "provider_version_id",
-  "route_definition_sha256",
-]);
-const BINDING_RECEIPT_KEYS = new Set(["binding", "readback_sha256"]);
 
 export function dynamicRouteRestFailure(
   code: DynamicRouteRestErrorCode,
@@ -243,136 +215,6 @@ export function compileCloudflareDeploymentCreateBody(
   });
 }
 
-export async function readDynamicRouteRestJson(
-  response: DynamicRouteRestResponse,
-  ambiguousEffect: DynamicRouteRestAmbiguousEffect,
-): Promise<unknown> {
-  const declaredLength = response.headers.get("content-length");
-  if (declaredLength !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(declaredLength)) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-        "Cloudflare response contains a malformed content-length",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-    if (Number(declaredLength) > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-        "Cloudflare response exceeds the byte envelope",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-  }
-
-  let bytes: Uint8Array;
-  if (response.body === null) {
-    const text = await response.text();
-    bytes = encoder.encode(text);
-    if (bytes.byteLength > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-      dynamicRouteRestFailure(
-        "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-        "Cloudflare response exceeds the byte envelope",
-        { ambiguous_effect: ambiguousEffect },
-      );
-    }
-  } else {
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) break;
-      if (!(chunk.value instanceof Uint8Array)) {
-        await reader.cancel("invalid response chunk");
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-          "Cloudflare response stream returned a non-byte chunk",
-          { ambiguous_effect: ambiguousEffect },
-        );
-      }
-      total += chunk.value.byteLength;
-      if (total > DYNAMIC_ROUTE_REST_RESPONSE_MAX_BYTES) {
-        await reader.cancel("response byte envelope exceeded");
-        dynamicRouteRestFailure(
-          "DYNAMIC_ROUTE_REST_RESPONSE_TOO_LARGE",
-          "Cloudflare response exceeds the byte envelope",
-          { ambiguous_effect: ambiguousEffect },
-        );
-      }
-      chunks.push(chunk.value);
-    }
-    bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-  }
-
-  let text: string;
-  try {
-    text = decoder.decode(bytes);
-  } catch {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-      "Cloudflare response is not valid UTF-8",
-      { ambiguous_effect: ambiguousEffect },
-    );
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-      "Cloudflare response is not valid JSON",
-      { ambiguous_effect: ambiguousEffect },
-    );
-  }
-}
-
-export function decodeCloudflareApiEnvelope(
-  raw: unknown,
-  response: DynamicRouteRestResponse,
-  ambiguousEffect: DynamicRouteRestAmbiguousEffect,
-): Readonly<{ result: unknown; result_info: unknown }> {
-  const root = exactObject(
-    raw,
-    ENVELOPE_KEYS,
-    "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-    "Cloudflare API envelope",
-    ambiguousEffect,
-  );
-  if (typeof root.success !== "boolean") {
-    responseInvalid("Cloudflare API success flag is malformed", ambiguousEffect);
-  }
-  decodeMessageArray(root.errors, "errors", ambiguousEffect);
-  decodeMessageArray(root.messages, "messages", ambiguousEffect);
-  if (!response.ok) {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_HTTP_FAILED",
-      `Cloudflare control plane returned HTTP ${boundedStatus(response.status)}`,
-      {
-        retryable: response.status >= 500,
-        ambiguous_effect: ambiguousEffect,
-      },
-    );
-  }
-  if (root.success !== true || (root.errors as readonly unknown[]).length !== 0) {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_API_FAILED",
-      "Cloudflare control plane rejected the request",
-      { ambiguous_effect: ambiguousEffect },
-    );
-  }
-  if (!("result" in root)) {
-    responseInvalid("Cloudflare API result is missing", ambiguousEffect);
-  }
-  return Object.freeze({
-    result: root.result,
-    result_info: root.result_info,
-  });
-}
 
 export function decodeCloudflareRoute(raw: unknown): DecodedDynamicRoute {
   const record = exactObject(
@@ -522,159 +364,8 @@ export function decodeCloudflareRouteListPage(
   });
 }
 
-export function decodeDynamicRouteCreateRequest(
-  raw: DynamicRouteCreateRequest,
-): DynamicRouteCreateRequest {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    inputInvalid("Dynamic Route create request must be an object");
-  }
-  const record = raw as unknown as Record<string, unknown>;
-  const allowed = new Set([
-    "gateway_id",
-    "metadata",
-    "name",
-    "route_definition",
-  ]);
-  if (Object.keys(record).some((key) => !allowed.has(key))) {
-    inputInvalid("Dynamic Route create request contains unsupported fields");
-  }
-  const gatewayId = requireDynamicRouteGatewayId(record.gateway_id);
-  if (typeof record.name !== "string" || !ROUTE_NAME.test(record.name)) {
-    inputInvalid("Dynamic Route create request name is invalid");
-  }
-  const metadata = decodeProviderMetadata(
-    record.metadata,
-    "DYNAMIC_ROUTE_REST_INPUT_INVALID",
-  );
-  const body = compileCloudflareRouteCreateBody({
-    gateway_id: gatewayId,
-    name: record.name,
-    route_definition: record.route_definition,
-    metadata,
-  });
-  return Object.freeze({
-    gateway_id: gatewayId,
-    name: body.name,
-    route_definition: body.elements,
-    metadata,
-  });
-}
 
-export function decodeDynamicRouteRestBinding(
-  raw: unknown,
-): DynamicRouteRestBinding {
-  const record = exactObject(
-    raw,
-    BINDING_KEYS,
-    "DYNAMIC_ROUTE_REST_BINDING_CONFLICT",
-    "Dynamic Route REST binding",
-    "NONE",
-  );
-  if (record.protocol !== "eliotr.dynamic-route-rest-binding.v1") {
-    bindingConflict("Dynamic Route binding protocol is unsupported");
-  }
-  if (typeof record.account_id !== "string" || !ACCOUNT_ID.test(record.account_id)) {
-    bindingConflict("Dynamic Route binding account is invalid");
-  }
-  if (record.gateway_id !== DYNAMIC_ROUTE_GATEWAY_ID) {
-    bindingConflict("Dynamic Route binding gateway is invalid");
-  }
-  const metadata = decodeProviderMetadata(
-    record.metadata,
-    "DYNAMIC_ROUTE_REST_BINDING_CONFLICT",
-  );
-  return Object.freeze({
-    protocol: "eliotr.dynamic-route-rest-binding.v1",
-    account_id: record.account_id,
-    gateway_id: DYNAMIC_ROUTE_GATEWAY_ID,
-    provider_route_id: bindingIdentifier(record.provider_route_id, "route ID"),
-    provider_route_name: bindingRouteName(record.provider_route_name),
-    provider_version_id: bindingIdentifier(
-      record.provider_version_id,
-      "version ID",
-    ),
-    provider_deployment_id: bindingIdentifier(
-      record.provider_deployment_id,
-      "deployment ID",
-    ),
-    route_definition_sha256: bindingSha256(
-      record.route_definition_sha256,
-      "definition digest",
-    ),
-    metadata,
-  });
-}
-
-export async function dynamicRouteRestBindingSha256(
-  binding: DynamicRouteRestBinding,
-): Promise<string> {
-  const json = canonicalModelGatewayJson(binding);
-  if (encoder.encode(json).byteLength > DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES) {
-    bindingConflict("Dynamic Route binding exceeds the byte envelope");
-  }
-  return modelGatewaySha256(json);
-}
-
-export function decodeDynamicRouteBindingWriteReceipt(
-  raw: unknown,
-  expected: DynamicRouteRestBinding,
-  expectedSha256: string,
-): DynamicRouteRestBindingWriteReceipt {
-  const record = exactObject(
-    raw,
-    BINDING_RECEIPT_KEYS,
-    "DYNAMIC_ROUTE_REST_BINDING_FAILED",
-    "Dynamic Route binding write receipt",
-    "BINDING_WRITE",
-  );
-  const binding = decodeDynamicRouteRestBinding(record.binding);
-  const readbackSha256 = bindingSha256(
-    record.readback_sha256,
-    "binding readback digest",
-  );
-  if (
-    readbackSha256 !== expectedSha256 ||
-    canonicalModelGatewayJson(binding) !== canonicalModelGatewayJson(expected)
-  ) {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_BINDING_FAILED",
-      "Dynamic Route binding readback differs from the immutable write",
-      { ambiguous_effect: "BINDING_WRITE" },
-    );
-  }
-  return Object.freeze({ binding, readback_sha256: readbackSha256 });
-}
-
-export async function verifyRouteReadback(
-  route: DecodedDynamicRoute,
-  deployment: DecodedDynamicRouteDeployment,
-  binding: DynamicRouteRestBinding,
-): Promise<void> {
-  const definitionSha256 = await modelGatewaySha256(
-    canonicalModelGatewayJson(route.version.elements),
-  );
-  if (
-    route.id !== binding.provider_route_id ||
-    route.name !== binding.provider_route_name ||
-    route.version.id !== binding.provider_version_id ||
-    route.version.route_id !== binding.provider_route_id ||
-    deployment.id !== binding.provider_deployment_id ||
-    deployment.route_id !== binding.provider_route_id ||
-    deployment.version_id !== binding.provider_version_id ||
-    route.deployment?.id !== binding.provider_deployment_id ||
-    route.deployment.version_id !== binding.provider_version_id ||
-    definitionSha256 !== binding.route_definition_sha256 ||
-    binding.metadata.route_definition_sha256 !==
-      binding.route_definition_sha256
-  ) {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_READBACK_MISMATCH",
-      "Cloudflare Dynamic Route readback differs from the immutable binding",
-    );
-  }
-}
-
-function decodeProviderMetadata(
+export function decodeProviderMetadata(
   raw: unknown,
   code: DynamicRouteRestErrorCode,
 ): DynamicRouteProviderMetadata {
@@ -720,7 +411,7 @@ function decodeProviderMetadata(
   });
 }
 
-function exactObject(
+export function exactObject(
   raw: unknown,
   allowed: ReadonlySet<string>,
   code: DynamicRouteRestErrorCode,
@@ -748,25 +439,6 @@ function exactObject(
   return record;
 }
 
-function decodeMessageArray(
-  raw: unknown,
-  label: string,
-  ambiguousEffect: DynamicRouteRestAmbiguousEffect,
-): void {
-  if (!Array.isArray(raw) || raw.length > MAX_API_MESSAGES) {
-    responseInvalid(`Cloudflare API ${label} is malformed`, ambiguousEffect);
-  }
-  for (const entry of raw) {
-    const json = canonicalModelGatewayJson(entry);
-    if (encoder.encode(json).byteLength > MAX_API_MESSAGE_BYTES) {
-      responseInvalid(
-        `Cloudflare API ${label} exceeds its bound`,
-        ambiguousEffect,
-      );
-    }
-  }
-}
-
 function decodeTimestamp(raw: unknown, label: string): void {
   if (
     typeof raw !== "string" ||
@@ -791,48 +463,19 @@ function nonNegativeInteger(raw: unknown, label: string): number {
   return raw as number;
 }
 
-function boundedStatus(status: number): number {
+export function boundedStatus(status: number): number {
   return Number.isInteger(status) && status >= 100 && status <= 599
     ? status
     : 500;
 }
 
-function responseInvalid(
+export function responseInvalid(
   message: string,
   ambiguousEffect: DynamicRouteRestAmbiguousEffect,
 ): never {
   dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_RESPONSE_INVALID", message, {
     ambiguous_effect: ambiguousEffect,
   });
-}
-
-function inputInvalid(message: string): never {
-  dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_INPUT_INVALID", message);
-}
-
-function bindingConflict(message: string): never {
-  dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_BINDING_CONFLICT", message);
-}
-
-function bindingIdentifier(raw: unknown, label: string): string {
-  if (typeof raw !== "string" || !IDENTIFIER.test(raw)) {
-    bindingConflict(`${label} is invalid`);
-  }
-  return raw;
-}
-
-function bindingRouteName(raw: unknown): string {
-  if (typeof raw !== "string" || !ROUTE_NAME.test(raw)) {
-    bindingConflict("route name is invalid");
-  }
-  return raw;
-}
-
-function bindingSha256(raw: unknown, label: string): string {
-  if (typeof raw !== "string" || !SHA256.test(raw)) {
-    bindingConflict(`${label} is invalid`);
-  }
-  return raw;
 }
 
 function failWith(

@@ -8,26 +8,30 @@ import {
   modelGatewaySha256,
 } from "./model-gateway-request.js";
 import {
-  cloudflareDynamicRouteBaseUrl,
-  compileCloudflareDeploymentCreateBody,
-  compileCloudflareRouteCreateBody,
-  decodeCloudflareApiEnvelope,
-  decodeCloudflareDeployment,
-  decodeCloudflareRoute,
-  decodeCloudflareRouteListPage,
   decodeDynamicRouteBindingWriteReceipt,
   decodeDynamicRouteCreateRequest,
   decodeDynamicRouteRestBinding,
-  dynamicRouteRequestHeaders,
   dynamicRouteRestBindingSha256,
+  verifyRouteReadback,
+} from "./dynamic-route-rest-binding-codec.js";
+import {
+  cloudflareDynamicRouteBaseUrl,
+  compileCloudflareDeploymentCreateBody,
+  compileCloudflareRouteCreateBody,
+  decodeCloudflareDeployment,
+  decodeCloudflareRoute,
+  decodeCloudflareRouteListPage,
+  dynamicRouteRequestHeaders,
   dynamicRouteRestFailure,
-  readDynamicRouteRestJson,
   requireDynamicRouteAccountId,
   requireDynamicRouteApiToken,
   requireDynamicRouteGatewayId,
   requireProviderIdentifier,
-  verifyRouteReadback,
 } from "./dynamic-route-rest-codec.js";
+import {
+  decodeCloudflareApiEnvelope,
+  readDynamicRouteRestJson,
+} from "./dynamic-route-rest-response-codec.js";
 import {
   DYNAMIC_ROUTE_REST_LIST_MAX_PAGES,
   DYNAMIC_ROUTE_REST_LIST_PER_PAGE,
@@ -59,7 +63,7 @@ export function createCloudflareDynamicRouteRestControlPlane(
   const client = createRestClient(dependencies);
 
   const controlPlane: DynamicRouteControlPlanePort = Object.freeze({
-    async list(requestedGatewayId) {
+    async list(requestedGatewayId: typeof DYNAMIC_ROUTE_GATEWAY_ID) {
       requireDynamicRouteGatewayId(requestedGatewayId);
       const routes: Readonly<{
         provider_route_id: string;
@@ -115,7 +119,10 @@ export function createCloudflareDynamicRouteRestControlPlane(
       return Object.freeze({ routes: Object.freeze(routes) });
     },
 
-    async get(requestedGatewayId, providerRouteId) {
+    async get(
+      requestedGatewayId: typeof DYNAMIC_ROUTE_GATEWAY_ID,
+      providerRouteId: string,
+    ) {
       requireDynamicRouteGatewayId(requestedGatewayId);
       const routeId = requireProviderIdentifier(providerRouteId, "route ID");
       const binding = await loadBinding(
@@ -134,7 +141,7 @@ export function createCloudflareDynamicRouteRestControlPlane(
       return normalizedRouteSnapshot(route, binding);
     },
 
-    async create(rawRequest) {
+    async create(rawRequest: DynamicRouteCreateRequest) {
       const request = decodeDynamicRouteCreateRequest(rawRequest);
       const definitionSha256 = await modelGatewaySha256(
         canonicalModelGatewayJson(request.route_definition),
@@ -212,7 +219,12 @@ function createRestClient(
   dependencies: DynamicRouteRestControlPlaneDependencies,
 ): RestClient {
   return Object.freeze({
-    async request(method, url, body, ambiguousEffect) {
+    async request(
+      method: "GET" | "POST",
+      url: string,
+      body: unknown | undefined,
+      ambiguousEffect: DynamicRouteRestAmbiguousEffect,
+    ) {
       let token: string;
       try {
         token = requireDynamicRouteApiToken(

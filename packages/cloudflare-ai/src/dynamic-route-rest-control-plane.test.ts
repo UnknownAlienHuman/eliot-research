@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type {
+  DYNAMIC_ROUTE_GATEWAY_ID,
   DynamicRouteCreateRequest,
   DynamicRouteProviderMetadata,
 } from "./dynamic-route-provisioning-contract.js";
@@ -9,6 +10,7 @@ import {
   type DynamicRouteRestBinding,
   type DynamicRouteRestBindingStorePort,
   type DynamicRouteRestFetchPort,
+  type DynamicRouteRestResponse,
 } from "./dynamic-route-rest-contract.js";
 import { createCloudflareDynamicRouteRestControlPlane } from "./dynamic-route-rest-control-plane.js";
 import {
@@ -110,12 +112,12 @@ function jsonResponse(
   body: unknown,
   status = 200,
   headers: Readonly<Record<string, string>> = {},
-): Response {
+): DynamicRouteRestResponse {
   const text = JSON.stringify(body);
   return new Response(text, {
     status,
     headers: { "content-type": "application/json", ...headers },
-  });
+  }) as unknown as DynamicRouteRestResponse;
 }
 
 async function createRequest(): Promise<DynamicRouteCreateRequest> {
@@ -159,7 +161,7 @@ function fakeBindings(): DynamicRouteRestBindingStorePort & {
 }
 
 function fakeFetch(
-  responses: readonly (Response | Error)[],
+  responses: readonly (DynamicRouteRestResponse | Error)[],
 ): DynamicRouteRestFetchPort & {
   readonly fetch: ReturnType<typeof vi.fn>;
 } {
@@ -400,7 +402,9 @@ describe("Cloudflare Dynamic Routing REST control plane", () => {
       "DYNAMIC_ROUTE_REST_CREDENTIAL_INVALID",
     );
     await expectRestError(
-      controlPlane(fetch).list("other-gateway"),
+      controlPlane(fetch).list(
+        "other-gateway" as typeof DYNAMIC_ROUTE_GATEWAY_ID,
+      ),
       "DYNAMIC_ROUTE_REST_INPUT_INVALID",
     );
     expect(fetch.fetch).not.toHaveBeenCalled();
