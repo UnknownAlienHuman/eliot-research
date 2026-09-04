@@ -134,6 +134,12 @@ importers:
         specifier: workspace:*
         version: link:../retrieval
 
+  packages/cloudflare-federation:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cloudflare-projection:
     dependencies:
       '@eliotr/contracts':
