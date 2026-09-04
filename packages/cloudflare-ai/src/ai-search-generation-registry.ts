@@ -47,14 +47,30 @@ function emptyRegistry(): AiSearchGenerationRegistry {
   });
 }
 
+function canonicalProfile(
+  profile: AiSearchGenerationRecord["profile"],
+): Readonly<Record<string, unknown>> {
+  return {
+    ...profile,
+    index_method: { ...profile.index_method },
+    metadata_fields: [...profile.metadata_fields].sort(),
+  };
+}
+
 function recordFingerprint(record: AiSearchGenerationRecord): string {
   return canonicalModelGatewayJson({
     ...record,
-    profile: {
-      ...record.profile,
-      index_method: { ...record.profile.index_method },
-      metadata_fields: [...record.profile.metadata_fields].sort(),
-    },
+    profile: canonicalProfile(record.profile),
+  });
+}
+
+function declarationFingerprint(record: AiSearchGenerationRecord): string {
+  return canonicalModelGatewayJson({
+    namespace: record.namespace,
+    generation: record.generation,
+    profile: canonicalProfile(record.profile),
+    expected_item_count: record.expected_item_count,
+    declared_at: record.declared_at,
   });
 }
 
@@ -63,6 +79,50 @@ function exactExistingRecord(
   expected: AiSearchGenerationRecord,
 ): boolean {
   return recordFingerprint(existing) === recordFingerprint(expected);
+}
+
+function exactExistingDeclaration(
+  existing: AiSearchGenerationRecord,
+  candidate: AiSearchGenerationRecord,
+): boolean {
+  return declarationFingerprint(existing) === declarationFingerprint(candidate);
+}
+
+function isExactAppliedPromotionReplay(
+  registry: AiSearchGenerationRegistry,
+  request: AiSearchPromotionRequest,
+): boolean {
+  if (
+    request.expected_active_head_generation === request.target_generation ||
+    registry.active_head_generation !== request.target_generation
+  ) {
+    return false;
+  }
+
+  const target = registry.generations.find(
+    (record) => record.generation === request.target_generation,
+  );
+  if (
+    target?.state !== "ACTIVE" ||
+    target.activated_at !== request.promoted_at
+  ) {
+    return false;
+  }
+
+  const retirementMarkers = registry.generations.filter(
+    (record) =>
+      record.generation !== request.target_generation &&
+      record.retired_at === request.promoted_at,
+  );
+  if (request.expected_active_head_generation === null) {
+    return retirementMarkers.length === 0;
+  }
+  return (
+    retirementMarkers.length === 1 &&
+    retirementMarkers[0]?.generation ===
+      request.expected_active_head_generation &&
+    retirementMarkers[0].state === "RETIRED"
+  );
 }
 
 async function readSnapshot(
@@ -328,12 +388,6 @@ export function createAiSearchGenerationRegistryService(
       const namespace = inputIdentifier(declaration.namespace, "namespace");
       const previous = await readSnapshot(store, namespace);
       const registry = previous?.artifact.registry ?? emptyRegistry();
-      if (registry.generations.length >= MAX_GENERATIONS) {
-        aiSearchGenerationRegistryFailure(
-          "AI_SEARCH_REGISTRY_INPUT_INVALID",
-          `AI Search generation registry cannot exceed ${MAX_GENERATIONS} records`,
-        );
-      }
       const candidate = declareAiSearchGeneration(
         registry.generations.map((record) => record.profile),
         declaration,
@@ -342,7 +396,7 @@ export function createAiSearchGenerationRegistryService(
         (record) => record.generation === candidate.generation,
       );
       if (existing !== undefined) {
-        if (exactExistingRecord(existing, candidate)) {
+        if (exactExistingDeclaration(existing, candidate)) {
           if (previous === null) {
             aiSearchGenerationRegistryFailure(
               "AI_SEARCH_REGISTRY_READBACK_INVALID",
@@ -353,7 +407,13 @@ export function createAiSearchGenerationRegistryService(
         }
         aiSearchGenerationRegistryFailure(
           "AI_SEARCH_REGISTRY_GENERATION_CONFLICT",
-          "AI Search generation identity already belongs to different bytes",
+          "AI Search generation identity already belongs to different declaration bytes",
+        );
+      }
+      if (registry.generations.length >= MAX_GENERATIONS) {
+        aiSearchGenerationRegistryFailure(
+          "AI_SEARCH_REGISTRY_INPUT_INVALID",
+          `AI Search generation registry cannot exceed ${MAX_GENERATIONS} records`,
         );
       }
       const next: AiSearchGenerationRegistry = Object.freeze({
@@ -416,6 +476,9 @@ export function createAiSearchGenerationRegistryService(
           "AI_SEARCH_REGISTRY_GENERATION_CONFLICT",
           "AI Search generation registry does not exist",
         );
+      }
+      if (isExactAppliedPromotionReplay(previous.artifact.registry, request)) {
+        return existingReceipt("PROMOTE", request.target_generation, previous);
       }
       const next = promoteAiSearchGeneration(previous.artifact.registry, request);
       if (next === previous.artifact.registry) {
