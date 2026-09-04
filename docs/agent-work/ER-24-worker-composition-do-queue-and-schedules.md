@@ -22,8 +22,10 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/index.test.ts`
-- `apps/eliotr-core/src/research-workflow.ts`
 - `apps/eliotr-core/wrangler.jsonc`
+
+ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
+boundary but does not edit or reimplement that workflow authority.
 
 ER-36 owns the `gemini-mcp*.ts` implementation files. ER-24 owns only their routing/composition changes
 in `index.ts`, `env.ts`, and `wrangler.jsonc`.
@@ -114,4 +116,4 @@ pnpm check:implementation-status
 ```
 
 Live owner JWT, Gemini service token, remote D1, Queue duplicate/DLQ, deployed Worker, Google readback and
-WebSocket receipts remain `NOT EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
+WebSocket receipts remain `NOT_EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
