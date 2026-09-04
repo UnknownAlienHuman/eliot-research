@@ -93,6 +93,62 @@ function stable(value) {
 }
 function equal(left, right) { return JSON.stringify(stable(left)) === JSON.stringify(stable(right)); }
 
+const comparedPaths = [
+  "type", "source", "id", "ai_gateway_id", "embedding_model", "index_method",
+  "fusion_method", "indexing_options", "retrieval_options", "max_num_results",
+  "score_threshold", "reranking", "reranking_model", "rewrite_query", "cache",
+  "chunk", "chunk_size", "chunk_overlap", "custom_metadata", "enable",
+];
+
+function configurationDrift(spec, existing) {
+  const drift = [];
+  for (const field of comparedPaths) {
+    const expected = expectedValue(spec.create, field);
+    const actual = normalizedExisting(existing, field);
+    if (!equal(actual, expected)) {
+      drift.push({ field, expected: stable(expected), actual: stable(actual) });
+    }
+  }
+  return drift;
+}
+
+function assertExactInstance(spec, existing, phase) {
+  const drift = configurationDrift(spec, existing);
+  if (drift.length > 0) {
+    throw new Error(
+      `AI Search instance ${spec.id} ${phase} differs from generation ${desired.generation}. ` +
+      `Do not mutate it in place; create a new generation. Drift: ${JSON.stringify(drift, null, 2)}`,
+    );
+  }
+}
+
+async function reconcileCreate(path, spec, createError) {
+  let observed;
+  try {
+    observed = await request("GET", path, undefined, true);
+  } catch (readError) {
+    throw new Error(
+      `AI Search create for ${spec.id} has an unknown effect; authoritative readback failed and no second create was attempted`,
+      { cause: new AggregateError([createError, readError], "create and reconciliation failed") },
+    );
+  }
+  if (observed === null) {
+    throw new Error(
+      `AI Search create for ${spec.id} could not be reconciled; no second create was attempted because the first create effect is unknown`,
+      { cause: createError },
+    );
+  }
+  try {
+    assertExactInstance(spec, observed, "post-create readback");
+  } catch (readbackError) {
+    throw new Error(
+      `AI Search create for ${spec.id} has an unknown effect and post-create readback is not exact; no second create was attempted`,
+      { cause: new AggregateError([createError, readbackError], "create acknowledgement and readback disagree") },
+    );
+  }
+  return observed;
+}
+
 const namespacePath = `/accounts/${enc(accountId)}/ai-search/namespaces/${enc(desired.namespace)}`;
 const namespace = await request("GET", namespacePath, undefined, true);
 if (namespace === null && checkOnly) {
@@ -115,41 +171,42 @@ if (namespace === null) {
   console.log(`verified AI Search namespace ${desired.namespace}`);
 }
 
-const comparedPaths = [
-  "type", "source", "id", "ai_gateway_id", "embedding_model", "index_method",
-  "fusion_method", "indexing_options", "retrieval_options", "max_num_results",
-  "score_threshold", "reranking", "reranking_model", "rewrite_query", "cache",
-  "chunk", "chunk_size", "chunk_overlap", "custom_metadata", "enable",
-];
 const receipts = [];
 for (const spec of desired.instances) {
   const path = `${namespacePath}/instances/${enc(spec.id)}`;
   const existing = await request("GET", path, undefined, true);
-  if (existing === null) {
-    if (checkOnly) {
-      receipts.push({ id: spec.id, disposition: "CREATE" });
-      continue;
-    }
-    await request("POST", `${namespacePath}/instances`, spec.create);
-    console.log(`created AI Search instance ${spec.id}`);
-    receipts.push({ id: spec.id, disposition: "CREATED" });
+  if (existing !== null) {
+    assertExactInstance(spec, existing, "readback");
+    console.log(`verified AI Search instance ${spec.id}`);
+    receipts.push({ id: spec.id, disposition: "VERIFIED" });
+    continue;
+  }
+  if (checkOnly) {
+    receipts.push({ id: spec.id, disposition: "CREATE" });
     continue;
   }
 
-  const drift = [];
-  for (const field of comparedPaths) {
-    const expected = expectedValue(spec.create, field);
-    const actual = normalizedExisting(existing, field);
-    if (!equal(actual, expected)) drift.push({ field, expected: stable(expected), actual: stable(actual) });
+  let createError;
+  try {
+    await request("POST", `${namespacePath}/instances`, spec.create);
+  } catch (error) {
+    createError = error;
   }
-  if (drift.length > 0) {
-    throw new Error(
-      `AI Search instance ${spec.id} differs from generation ${desired.generation}. ` +
-      `Do not mutate it in place; create a new generation. Drift: ${JSON.stringify(drift, null, 2)}`,
-    );
+
+  if (createError !== undefined) {
+    await reconcileCreate(path, spec, createError);
+    console.log(`reconciled AI Search instance ${spec.id}`);
+    receipts.push({ id: spec.id, disposition: "CREATE_RECONCILED" });
+    continue;
   }
-  console.log(`verified AI Search instance ${spec.id}`);
-  receipts.push({ id: spec.id, disposition: "VERIFIED" });
+
+  const created = await request("GET", path, undefined, true);
+  if (created === null) {
+    throw new Error(`AI Search instance ${spec.id} is absent from post-create readback`);
+  }
+  assertExactInstance(spec, created, "post-create readback");
+  console.log(`created and verified AI Search instance ${spec.id}`);
+  receipts.push({ id: spec.id, disposition: "CREATED" });
 }
 
 console.log(JSON.stringify({
