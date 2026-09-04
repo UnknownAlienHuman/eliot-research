@@ -1,0 +1,135 @@
+name: er22-federation-request-authority-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-22-federation-request-authority-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er22-federation-request-authority-sync
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-authority-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-federation-request-authority-20260904
+          fetch-depth: 0
+
+      - name: Bind every execution-shaping request reference to the manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          service_path = Path("apps/eliotr-core/src/federation-service.ts")
+          service = service_path.read_text(encoding="utf-8")
+          old = '''  const authorityRefs = [
+              request.privacy_policy_ref,
+              request.disclosure_policy_ref,
+              request.retention_policy_ref,
+              request.license_policy_ref,
+              request.residency_profile_ref,
+              request.budget_ref,
+              request.stop_rule_ref,
+            ];'''
+          new = '''  const authorityRefs = [
+              request.privacy_policy_ref,
+              request.disclosure_policy_ref,
+              request.retention_policy_ref,
+              request.license_policy_ref,
+              request.residency_profile_ref,
+              request.budget_ref,
+              request.stop_rule_ref,
+              request.progress_contract_ref,
+              request.required_result_schema_ref,
+              ...(request.export_manifest_ref === undefined
+                ? []
+                : [request.export_manifest_ref]),
+            ];'''
+          if service.count(old) != 1:
+              raise SystemExit("federation authority-ref anchor missing or ambiguous")
+          service_path.write_text(service.replace(old, new), encoding="utf-8")
+
+          test_path = Path("apps/eliotr-core/src/federation-service.test.ts")
+          test = test_path.read_text(encoding="utf-8")
+          generation_anchor = '''      "budget-1": "budget-generation-1",
+              "stop-rule-1": "stop-generation-1",'''
+          generation_replacement = '''      "budget-1": "budget-generation-1",
+              "stop-rule-1": "stop-generation-1",
+              "progress-contract-1": "progress-generation-1",
+              "result-schema-1": "result-schema-generation-1",'''
+          if test.count(generation_anchor) != 1:
+              raise SystemExit("federation manifest-generation anchor missing or ambiguous")
+          test = test.replace(generation_anchor, generation_replacement)
+
+          assertion_anchor = '''    await expectCode(
+              createFederationService(missingBudget).submit(context(), request()),
+              "FEDERATION_REFERENCE_DENIED",
+            );
+          });'''
+          assertion_replacement = '''    await expectCode(
+              createFederationService(missingBudget).submit(context(), request()),
+              "FEDERATION_REFERENCE_DENIED",
+            );
+
+            const { "progress-contract-1": _progressGeneration, ...withoutProgress } =
+              generations;
+            const missingProgress = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(allowedUses, {
+                provider_and_policy_generations: withoutProgress,
+              }),
+            );
+            await expectCode(
+              createFederationService(missingProgress).submit(context(), request()),
+              "FEDERATION_REFERENCE_DENIED",
+            );
+
+            const { "result-schema-1": _resultSchemaGeneration, ...withoutResultSchema } =
+              generations;
+            const missingResultSchema = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(allowedUses, {
+                provider_and_policy_generations: withoutResultSchema,
+              }),
+            );
+            await expectCode(
+              createFederationService(missingResultSchema).submit(context(), request()),
+              "FEDERATION_REFERENCE_DENIED",
+            );
+
+            await expectCode(
+              createFederationService(dependencies()).submit(
+                context(),
+                request({ export_manifest_ref: "export-manifest-1" }),
+              ),
+              "FEDERATION_REFERENCE_DENIED",
+            );
+          });'''
+          if test.count(assertion_anchor) != 1:
+              raise SystemExit("federation negative-test anchor missing or ambiguous")
+          test_path.write_text(test.replace(assertion_anchor, assertion_replacement), encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er22-federation-request-authority-sync.yml
+          git diff --check
+
+      - name: Commit authority correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-22: bind all request authorities to the manifest [er22-authority-synced]"
+          git push origin HEAD:agent/ER-22-federation-request-authority-20260904
