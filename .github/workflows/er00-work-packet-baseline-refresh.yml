@@ -1,0 +1,59 @@
+name: er00-work-packet-baseline-refresh
+
+on:
+  push:
+    branches:
+      - agent/ER-00-work-packet-manifest-sync-20260903
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er00-work-packet-baseline-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    if: ${{ !contains(github.event.head_commit.message, '[er00-baseline-refreshed]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-00-work-packet-manifest-sync-20260903
+          fetch-depth: 0
+
+      - name: Refresh generated-manifest base after prerequisite ownership fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          if manifest.get("protocol") != "eliotr.agent-work.v1":
+              raise SystemExit("unexpected work-packet protocol")
+          if manifest.get("baseline_commit") != "d29265cd43394ac4d1a6237452bb92a7ed00d8b7":
+              raise SystemExit("unexpected previous baseline")
+          manifest["baseline_commit"] = "159fadce3efbeba278523015c4525fdf46a0fe3f"
+          manifest["generated_at"] = "2026-09-04T02:12:00Z"
+          path.write_text(
+              json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          git rm -- .github/workflows/er00-work-packet-baseline-refresh.yml
+          python3 -m json.tool docs/agent-work/manifest.json >/dev/null
+          git diff --check
+
+      - name: Commit refreshed manifest base
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-00: refresh work-packet manifest baseline [er00-baseline-refreshed]"
+          git push origin HEAD:agent/ER-00-work-packet-manifest-sync-20260903
