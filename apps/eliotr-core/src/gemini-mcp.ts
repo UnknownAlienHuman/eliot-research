@@ -19,9 +19,11 @@ import {
 } from "./gemini-mcp-tools.js";
 import { readReadiness } from "./readiness.js";
 
-const REQUIRED_MCP_SERVICE_PRINCIPAL = "gemini-spark";
+const MCP_LOGICAL_PRINCIPAL = "gemini-spark";
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
+const ACCESS_SERVICE_TOKEN_CLIENT_ID =
+  /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u;
 const ALLOWED_TRANSPORTS = new Set<GoogleExternalTransport>([
   "disabled",
   "gemini-mcp",
@@ -42,10 +44,17 @@ let verifierCache: AccessVerifierCache | undefined;
 
 function traceId(request: Request): string {
   const candidate = request.headers.get("cf-ray");
-  return candidate !== null && SAFE_TRACE_ID.test(candidate) ? candidate : crypto.randomUUID();
+  return candidate !== null && SAFE_TRACE_ID.test(candidate)
+    ? candidate
+    : crypto.randomUUID();
 }
 
-function jsonError(status: number, code: string, trace: string, retryable = false): Response {
+function jsonError(
+  status: number,
+  code: string,
+  trace: string,
+  retryable = false,
+): Response {
   return new Response(JSON.stringify({
     protocol: "eliotr.mcp.http-error.v1",
     code,
@@ -81,8 +90,29 @@ function requiredHostname(raw: string | undefined): string {
   return raw;
 }
 
-function configuredVerifier(env: Env): AccessVerifier {
-  if (env.MCP_ACCESS_TEAM_DOMAIN === undefined || env.MCP_ACCESS_AUDIENCE === undefined) {
+function requiredServiceTokenClientId(raw: string | undefined): string {
+  if (
+    raw === undefined ||
+    raw.length > 256 ||
+    !ACCESS_SERVICE_TOKEN_CLIENT_ID.test(raw)
+  ) {
+    throw new AccessVerificationError(
+      "ACCESS_CONFIG_INVALID",
+      "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID must be the exact Cloudflare Access service-token Client ID",
+      true,
+    );
+  }
+  return raw;
+}
+
+function configuredVerifier(
+  env: Env,
+  serviceTokenClientId: string,
+): AccessVerifier {
+  if (
+    env.MCP_ACCESS_TEAM_DOMAIN === undefined ||
+    env.MCP_ACCESS_AUDIENCE === undefined
+  ) {
     throw new AccessVerificationError(
       "ACCESS_CONFIG_INVALID",
       "Dedicated MCP Cloudflare Access runtime configuration is missing",
@@ -92,13 +122,13 @@ function configuredVerifier(env: Env): AccessVerifier {
   const key = JSON.stringify([
     env.MCP_ACCESS_TEAM_DOMAIN,
     env.MCP_ACCESS_AUDIENCE,
-    REQUIRED_MCP_SERVICE_PRINCIPAL,
+    serviceTokenClientId,
   ]);
   if (verifierCache?.key === key) return verifierCache.verifier;
   const verifier = createCloudflareAccessVerifier({
     team_domain: env.MCP_ACCESS_TEAM_DOMAIN,
     audience: env.MCP_ACCESS_AUDIENCE,
-    allowed_service_principal_common_names: [REQUIRED_MCP_SERVICE_PRINCIPAL],
+    allowed_service_principal_common_names: [serviceTokenClientId],
   });
   verifierCache = { key, verifier };
   return verifier;
@@ -111,20 +141,21 @@ function googleTransport(env: Env): GoogleExternalTransport {
 }
 
 function authenticatedContext(
-  env: Env,
   identity: AccessIdentity,
   trace: string,
+  expectedServiceTokenClientId: string,
+  deploymentGeneration: string,
 ): McpToolCallContext | Response {
   if (
     identity.authentication_method !== "service_token" ||
-    identity.principal_ref !== REQUIRED_MCP_SERVICE_PRINCIPAL
+    identity.principal_ref !== expectedServiceTokenClientId
   ) {
     return jsonError(403, "MCP_SERVICE_PRINCIPAL_DENIED", trace);
   }
   return {
-    principal_ref: identity.principal_ref,
+    principal_ref: MCP_LOGICAL_PRINCIPAL,
     trace_id: trace,
-    deployment_generation: env.DEPLOYMENT_GENERATION,
+    deployment_generation: deploymentGeneration,
   };
 }
 
@@ -143,14 +174,22 @@ function serverDependencies(
         deployment_generation: env.DEPLOYMENT_GENERATION,
         ready: readiness.ready,
         blocking_reason_codes: readiness.blocking_reason_codes,
-        enabled_surfaces: ["system_status", "catalog", "google_sync_planning"],
+        enabled_surfaces: [
+          "system_status",
+          "catalog",
+          "google_sync_planning",
+        ],
         google_external_transport: googleTransport(env),
         exact_readback_required: true,
         canonical_mutation_available_through_mcp: false,
       };
     },
     async catalog(
-      input: { readonly project_id?: string; readonly cursor?: string; readonly limit: number },
+      input: {
+        readonly project_id?: string;
+        readonly cursor?: string;
+        readonly limit: number;
+      },
     ): Promise<unknown> {
       return readCatalog(env.CORE_DB, input);
     },
@@ -173,8 +212,17 @@ export async function handleGeminiMcp(
   const trace = traceId(request);
   const url = new URL(request.url);
   let hostname: string;
+  let configuredClientId: string | undefined;
   try {
     hostname = requiredHostname(env.MCP_HOSTNAME);
+    if (
+      dependencies.accessVerifier === undefined ||
+      env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID !== undefined
+    ) {
+      configuredClientId = requiredServiceTokenClientId(
+        env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
+      );
+    }
   } catch {
     return jsonError(503, "MCP_CONFIGURATION_UNAVAILABLE", trace, true);
   }
@@ -194,15 +242,24 @@ export async function handleGeminiMcp(
 
   let identity: AccessIdentity;
   try {
-    const verifier = dependencies.accessVerifier ?? configuredVerifier(env);
+    const verifier = dependencies.accessVerifier ??
+      configuredVerifier(env, configuredClientId as string);
     identity = await verifier.verify(request);
   } catch (error) {
     if (error instanceof AccessVerificationError) {
-      const unavailable = error.retryable || error.code === "ACCESS_CONFIG_INVALID" ||
-        error.code === "ACCESS_JWKS_UNAVAILABLE" || error.code === "ACCESS_JWKS_INVALID";
+      const unavailable = error.retryable ||
+        error.code === "ACCESS_CONFIG_INVALID" ||
+        error.code === "ACCESS_JWKS_UNAVAILABLE" ||
+        error.code === "ACCESS_JWKS_INVALID";
       return jsonError(
-        unavailable ? 503 : error.code === "ACCESS_SERVICE_PRINCIPAL_DENIED" ? 403 : 401,
-        unavailable ? "MCP_AUTHENTICATION_UNAVAILABLE" : "MCP_AUTHENTICATION_FAILED",
+        unavailable
+          ? 503
+          : error.code === "ACCESS_SERVICE_PRINCIPAL_DENIED"
+            ? 403
+            : 401,
+        unavailable
+          ? "MCP_AUTHENTICATION_UNAVAILABLE"
+          : "MCP_AUTHENTICATION_FAILED",
         trace,
         unavailable,
       );
@@ -210,7 +267,13 @@ export async function handleGeminiMcp(
     return jsonError(503, "MCP_AUTHENTICATION_UNAVAILABLE", trace, true);
   }
 
-  const context = authenticatedContext(env, identity, trace);
+  const expectedClientId = configuredClientId ?? identity.principal_ref;
+  const context = authenticatedContext(
+    identity,
+    trace,
+    expectedClientId,
+    env.DEPLOYMENT_GENERATION,
+  );
   if (context instanceof Response) return context;
   return handleGeminiMcpProtocol(
     request,
