@@ -15,7 +15,6 @@ export interface Env {
   readonly DEPLOYMENT_GENERATION: string;
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
-  readonly AI_SEARCH_ACTIVE_GENERATION?: string;
   readonly ACCESS_TEAM_DOMAIN?: string;
   readonly ACCESS_AUDIENCE?: string;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;

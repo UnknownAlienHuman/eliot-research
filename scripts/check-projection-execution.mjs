@@ -17,44 +17,70 @@ const runtimeSource = readFileSync(
   resolve(root, "apps/eliotr-core/src/projection-execution-handler.ts"),
   "utf8",
 );
-const profileMatch =
-  /export const PROJECTION_EXECUTION_PROFILE:[^=]+=\s*\{([\s\S]*?)\n\};/u.exec(
-    runtimeSource,
-  );
-assert(profileMatch, "projection execution profile block is missing");
-const profileBody = profileMatch[1];
-function profileString(key) {
-  const matches = [...profileBody.matchAll(
-    new RegExp(`${key}:\\s*"([^"]+)"`, "gu"),
-  )];
-  assert.equal(matches.length, 1, `${key} must have one string literal`);
-  return matches[0][1];
+const primaryProfileSource = readFileSync(
+  resolve(root, "packages/cloudflare-ai/src/ai-search-primary-profile.ts"),
+  "utf8",
+);
+function exportedString(source, name) {
+  const match = new RegExp(`export const ${name} = "([^"]+)"`, "u").exec(source);
+  assert(match, `${name} must be one exported string literal`);
+  return match[1];
 }
+const primaryNamespace = exportedString(
+  primaryProfileSource,
+  "AI_SEARCH_PRIMARY_NAMESPACE",
+);
+const primaryGeneration = exportedString(
+  primaryProfileSource,
+  "AI_SEARCH_PRIMARY_GENERATION",
+);
+const primaryInstanceId = exportedString(
+  primaryProfileSource,
+  "AI_SEARCH_PRIMARY_INSTANCE_ID",
+);
 const privateProse = desiredSearch.instances.filter(
   (instance) => instance?.purpose === "private natural-language source sections",
 );
 assert.equal(privateProse.length, 1, "desired state must contain one private-prose instance");
 const desiredPrivateProse = privateProse[0];
 assert.equal(desiredPrivateProse.create.id, desiredPrivateProse.id);
-assert.equal(
-  profileString("managed_instance_id"),
-  desiredPrivateProse.id,
-  "Worker managed instance must match desired shadow state",
-);
-assert.equal(
-  profileString("managed_generation"),
-  desiredSearch.generation,
-  "Worker managed generation must match desired shadow state",
+assert.equal(primaryNamespace, desiredSearch.namespace);
+assert.equal(primaryGeneration, desiredSearch.generation);
+assert.equal(primaryInstanceId, desiredPrivateProse.id);
+assert.match(
+  runtimeSource,
+  /managed_instance_id:\s*AI_SEARCH_PRIMARY_INSTANCE_ID/u,
+  "Worker managed instance must use the primary profile authority",
 );
 assert.match(
-  profileBody,
+  runtimeSource,
+  /managed_generation:\s*AI_SEARCH_PRIMARY_GENERATION/u,
+  "Worker managed generation must use the primary profile authority",
+);
+assert.match(
+  runtimeSource,
   /managed_generation_active:\s*false/u,
   "desired shadow generation must remain inactive by default",
 );
 assert.match(
   runtimeSource,
-  /env\.AI_SEARCH_ACTIVE_GENERATION ===\s*PROJECTION_EXECUTION_PROFILE\.managed_generation/u,
-  "managed readiness must require the exact promoted environment generation",
+  /createD1AiSearchGenerationRegistryStore\(env\.SEARCH_DB\)/u,
+  "managed readiness must read the SEARCH_DB generation registry",
+);
+assert.match(
+  runtimeSource,
+  /registry\.read\(\s*AI_SEARCH_PRIMARY_NAMESPACE/u,
+  "managed readiness must read the primary namespace authority",
+);
+assert.match(
+  runtimeSource,
+  /projectionManagedGenerationIsActive\(snapshot\)/u,
+  "managed readiness must derive from the exact registry snapshot",
+);
+assert.doesNotMatch(
+  runtimeSource,
+  /AI_SEARCH_ACTIVE_GENERATION/u,
+  "environment variables must not promote managed search",
 );
 
 for (const name of [
