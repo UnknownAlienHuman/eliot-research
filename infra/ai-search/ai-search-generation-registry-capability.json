@@ -1,0 +1,38 @@
+{
+  "protocol": "eliotr.ai-search-generation-registry-capability.v1",
+  "status": "IMPLEMENTED_NOT_LIVE",
+  "authority": {
+    "lifecycle": "packages/cloudflare-ai/src/ai-search-generation.ts",
+    "durable_adapter": "packages/cloudflare-ai/src/ai-search-generation-registry.ts",
+    "backend": "INJECTED_AT_COMPOSITION",
+    "d1_schema": "NOT_IMPLEMENTED_IN_ER_16"
+  },
+  "persistence_contract": {
+    "artifact_schema": "eliotr.ai-search-generation-registry.v1",
+    "maximum_artifact_bytes": 262144,
+    "maximum_generations": 64,
+    "write_operation": "ATOMIC_REVISION_AND_SHA256_COMPARE_AND_SWAP",
+    "write_retry_after_unknown_effect": "FORBIDDEN",
+    "lost_acknowledgement_reconciliation": "ONE_AUTHORITATIVE_READBACK",
+    "required_readback": "EXACT_REVISION_NAMESPACE_AND_ARTIFACT_SHA256",
+    "active_head_update": "SAME_BOUNDED_ARTIFACT_AS_GENERATION_STATES"
+  },
+  "negative_evidence": [
+    "UNKNOWN_FIELD_REJECTED",
+    "CROSS_NAMESPACE_READBACK_REJECTED",
+    "NONCANONICAL_GENERATION_ORDER_REJECTED",
+    "DIGEST_DRIFT_REJECTED",
+    "GENERATION_IDENTITY_REUSE_REJECTED",
+    "CAS_CONFLICT_REJECTED",
+    "LOST_ACKNOWLEDGEMENT_RECONCILED_WITHOUT_SECOND_WRITE",
+    "UNRESOLVED_WRITE_EFFECT_NOT_RETRIED",
+    "APPLIED_WITHOUT_EXACT_READBACK_REJECTED"
+  ],
+  "live_receipts": {
+    "d1_registry_write": "NOT_EXECUTED",
+    "d1_compare_and_swap": "NOT_EXECUTED",
+    "ai_search_instance_mutation": "NOT_EXECUTED",
+    "ai_search_generation_promotion": "NOT_EXECUTED",
+    "golden_set_observation": "NOT_EXECUTED"
+  }
+}
