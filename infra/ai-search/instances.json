@@ -1,7 +1,7 @@
 {
   "protocol": "eliotr.ai-search-generation.v1",
   "namespace": "eliotr",
-  "generation": "g1-qwen3-2026-08-28",
+  "generation": "g2-qwen3-2026-09-03",
   "embedding_generation": "qwen3-embedding-0.6b-2026-08-28",
   "activation_requires": [
     "T2_PASS",
@@ -11,10 +11,11 @@
   ],
   "instances": [
     {
-      "id": "private-prose-g1",
+      "id": "private-prose-g2",
       "purpose": "private natural-language source sections",
       "create": {
-        "id": "private-prose-g1",
+        "id": "private-prose-g2",
+        "ai_gateway_id": "eliotr-retrieval",
         "embedding_model": "@cf/qwen/qwen3-embedding-0.6b",
         "index_method": {
           "vector": true,
@@ -25,18 +26,25 @@
           "keyword_tokenizer": "porter"
         },
         "retrieval_options": {
-          "keyword_match_mode": "and"
+          "keyword_match_mode": "and",
+          "boost_by": []
         },
         "max_num_results": 50,
+        "score_threshold": 0,
         "reranking": true,
         "reranking_model": "@cf/baai/bge-reranker-base",
+        "rewrite_query": false,
+        "cache": false,
+        "chunk": true,
+        "chunk_size": 512,
+        "chunk_overlap": 20,
         "custom_metadata": [
           {
-            "field_name": "source_token",
+            "field_name": "source_revision_ref",
             "data_type": "text"
           },
           {
-            "field_name": "item_key",
+            "field_name": "canonical_section_id",
             "data_type": "text"
           },
           {
@@ -51,14 +59,16 @@
             "field_name": "content_sha256",
             "data_type": "text"
           }
-        ]
+        ],
+        "enable": true
       }
     },
     {
-      "id": "private-literal-g1",
+      "id": "private-literal-g2",
       "purpose": "identifiers code and partial literal matching",
       "create": {
-        "id": "private-literal-g1",
+        "id": "private-literal-g2",
+        "ai_gateway_id": "eliotr-retrieval",
         "index_method": {
           "vector": false,
           "keyword": true
@@ -67,17 +77,48 @@
           "keyword_tokenizer": "trigram"
         },
         "retrieval_options": {
-          "keyword_match_mode": "and"
+          "keyword_match_mode": "and",
+          "boost_by": []
         },
         "max_num_results": 50,
-        "reranking": false
+        "score_threshold": 0,
+        "reranking": false,
+        "rewrite_query": false,
+        "cache": false,
+        "chunk": true,
+        "chunk_size": 512,
+        "chunk_overlap": 20,
+        "custom_metadata": [
+          {
+            "field_name": "source_revision_ref",
+            "data_type": "text"
+          },
+          {
+            "field_name": "canonical_section_id",
+            "data_type": "text"
+          },
+          {
+            "field_name": "projection_generation",
+            "data_type": "text"
+          },
+          {
+            "field_name": "instruction_taint",
+            "data_type": "text"
+          },
+          {
+            "field_name": "content_sha256",
+            "data_type": "text"
+          }
+        ],
+        "enable": true
       }
     },
     {
-      "id": "wiki-g1",
+      "id": "wiki-g2",
       "purpose": "published and draft Wiki blocks",
       "create": {
-        "id": "wiki-g1",
+        "id": "wiki-g2",
+        "ai_gateway_id": "eliotr-retrieval",
         "embedding_model": "@cf/qwen/qwen3-embedding-0.6b",
         "index_method": {
           "vector": true,
@@ -88,18 +129,49 @@
           "keyword_tokenizer": "porter"
         },
         "retrieval_options": {
-          "keyword_match_mode": "and"
+          "keyword_match_mode": "and",
+          "boost_by": []
         },
         "max_num_results": 50,
+        "score_threshold": 0,
         "reranking": true,
-        "reranking_model": "@cf/baai/bge-reranker-base"
+        "reranking_model": "@cf/baai/bge-reranker-base",
+        "rewrite_query": false,
+        "cache": false,
+        "chunk": true,
+        "chunk_size": 512,
+        "chunk_overlap": 20,
+        "custom_metadata": [
+          {
+            "field_name": "source_revision_ref",
+            "data_type": "text"
+          },
+          {
+            "field_name": "canonical_section_id",
+            "data_type": "text"
+          },
+          {
+            "field_name": "projection_generation",
+            "data_type": "text"
+          },
+          {
+            "field_name": "instruction_taint",
+            "data_type": "text"
+          },
+          {
+            "field_name": "content_sha256",
+            "data_type": "text"
+          }
+        ],
+        "enable": true
       }
     },
     {
-      "id": "artifact-g1",
+      "id": "artifact-g2",
       "purpose": "artifact section retrieval",
       "create": {
-        "id": "artifact-g1",
+        "id": "artifact-g2",
+        "ai_gateway_id": "eliotr-retrieval",
         "embedding_model": "@cf/qwen/qwen3-embedding-0.6b",
         "index_method": {
           "vector": true,
@@ -110,18 +182,49 @@
           "keyword_tokenizer": "porter"
         },
         "retrieval_options": {
-          "keyword_match_mode": "and"
+          "keyword_match_mode": "and",
+          "boost_by": []
         },
         "max_num_results": 50,
+        "score_threshold": 0,
         "reranking": true,
-        "reranking_model": "@cf/baai/bge-reranker-base"
+        "reranking_model": "@cf/baai/bge-reranker-base",
+        "rewrite_query": false,
+        "cache": false,
+        "chunk": true,
+        "chunk_size": 512,
+        "chunk_overlap": 20,
+        "custom_metadata": [
+          {
+            "field_name": "source_revision_ref",
+            "data_type": "text"
+          },
+          {
+            "field_name": "canonical_section_id",
+            "data_type": "text"
+          },
+          {
+            "field_name": "projection_generation",
+            "data_type": "text"
+          },
+          {
+            "field_name": "instruction_taint",
+            "data_type": "text"
+          },
+          {
+            "field_name": "content_sha256",
+            "data_type": "text"
+          }
+        ],
+        "enable": true
       }
     },
     {
-      "id": "web-capture-g1",
+      "id": "web-capture-g2",
       "purpose": "captured external web revisions",
       "create": {
-        "id": "web-capture-g1",
+        "id": "web-capture-g2",
+        "ai_gateway_id": "eliotr-retrieval",
         "embedding_model": "@cf/qwen/qwen3-embedding-0.6b",
         "index_method": {
           "vector": true,
@@ -132,11 +235,41 @@
           "keyword_tokenizer": "porter"
         },
         "retrieval_options": {
-          "keyword_match_mode": "or"
+          "keyword_match_mode": "or",
+          "boost_by": []
         },
         "max_num_results": 50,
+        "score_threshold": 0,
         "reranking": true,
-        "reranking_model": "@cf/baai/bge-reranker-base"
+        "reranking_model": "@cf/baai/bge-reranker-base",
+        "rewrite_query": false,
+        "cache": false,
+        "chunk": true,
+        "chunk_size": 512,
+        "chunk_overlap": 20,
+        "custom_metadata": [
+          {
+            "field_name": "source_revision_ref",
+            "data_type": "text"
+          },
+          {
+            "field_name": "canonical_section_id",
+            "data_type": "text"
+          },
+          {
+            "field_name": "projection_generation",
+            "data_type": "text"
+          },
+          {
+            "field_name": "instruction_taint",
+            "data_type": "text"
+          },
+          {
+            "field_name": "content_sha256",
+            "data_type": "text"
+          }
+        ],
+        "enable": true
       }
     }
   ]
