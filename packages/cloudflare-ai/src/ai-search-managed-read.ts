@@ -176,7 +176,11 @@ export function createAiSearchManagedSearchPort(
   }
   const active = authority(inputAuthority);
   return Object.freeze({
-    async search(request, lanes, contextExpansion) {
+    async search(
+      request: ManagedRequest,
+      lanes: ManagedLanes,
+      contextExpansion: ManagedExpansion,
+    ) {
       const compiled = compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active);
       if (request.scope_snapshot.member_source_revision_refs.length === 0) return Object.freeze([]);
       let instance: AiSearchInstanceLike;
