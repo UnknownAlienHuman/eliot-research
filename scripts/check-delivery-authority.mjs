@@ -11,11 +11,14 @@ for (const name of [
   "0002_execution_coordination.sql",
   "0003_delivery_inbox_payload_digest.sql",
   "0004_outbox_delivery_fence.sql",
+  "0009_federation_authority.sql",
 ]) db.exec(readFileSync(resolve(root, name), "utf8"));
 assert.equal(db.prepare("SELECT value FROM schema_state WHERE key = 'schema_generation'").get().value, "core-v4-delivery-fenced");
 const tableStrictness = new Map(db.prepare("PRAGMA table_list").all().map((row) => [row.name, row.strict]));
 assert.equal(tableStrictness.get("operation_execution_lease"), 1);
 assert.equal(tableStrictness.get("delivery_inbox"), 1);
+assert.equal(tableStrictness.get("federation_reference_manifest"), 1);
+assert.equal(tableStrictness.get("federation_job"), 1);
 const digest = "a".repeat(64);
 const invalidDigest = `${"a".repeat(63)}z`;
 const createdAt = "2026-08-30T00:00:00.000Z";
@@ -48,4 +51,73 @@ assert.throws(() => {
   } catch (error) { db.exec("ROLLBACK"); throw error; }
 });
 assert.equal(db.prepare("SELECT COUNT(*) AS count FROM operation_intent WHERE intent_id='intent-rollback'").get().count,0);
-console.log("delivery authority migration fixture: PASS");
+
+const manifest = {
+  manifest_ref: { id: "manifest-1", revision: 1 },
+  scope_snapshot_ref: { id: "scope-1", revision: 1 },
+  client_fence_ref: "fence-1",
+  expires_at: "2026-09-01T00:00:00.000Z",
+  manifest_digest: "b".repeat(64),
+};
+const manifestInsert = db.prepare(
+  "INSERT INTO federation_reference_manifest(manifest_id,revision,manifest_json," +
+  "manifest_digest,scope_snapshot_id,scope_snapshot_revision,client_fence_ref," +
+  "expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+);
+manifestInsert.run(
+  "manifest-1", 1, JSON.stringify(manifest), manifest.manifest_digest,
+  "scope-1", 1, "fence-1", manifest.expires_at, createdAt,
+);
+assert.throws(() => manifestInsert.run(
+  "manifest-invalid", 1,
+  JSON.stringify({ ...manifest, manifest_ref: { id: "another-id", revision: 1 } }),
+  manifest.manifest_digest, "scope-1", 1, "fence-1", manifest.expires_at, createdAt,
+), /CHECK constraint failed/u, "manifest columns cannot diverge from canonical identity");
+const federationRequest = {
+  protocol: "eliotr.federation.v1",
+  exchange_id: "exchange-1",
+  idempotency_key: "idempotency-1",
+  requester_principal_ref: "client-1",
+  bridge_generation: "bridge-1",
+  client_fence_ref: "fence-1",
+};
+const federationStatus = {
+  exchange_id: "exchange-1",
+  idempotency_key: "idempotency-1",
+  job_id: "job-1",
+  attempt: 1,
+  transport_state: "ACCEPTED",
+  completion_disposition: null,
+  completed_obligation_refs: [],
+  partial_bundle_refs: [],
+  open_research_debt_refs: [],
+};
+const federationInsert = db.prepare(
+  "INSERT INTO federation_job(job_id,exchange_id,idempotency_key,request_digest," +
+  "request_json,requester_principal_ref,requester_credential_generation," +
+  "server_principal_ref,server_credential_generation,bridge_generation,client_fence_ref," +
+  "allowed_manifest_id,allowed_manifest_revision,origin_trace_id,attempt,transport_state," +
+  "status_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'ACCEPTED',?,?,?)",
+);
+federationInsert.run(
+  "job-1", "exchange-1", "idempotency-1", digest, JSON.stringify(federationRequest),
+  "client-1", "client-credential-1", "server-1", "server-credential-1", "bridge-1",
+  "fence-1", "manifest-1", 1, "trace-1", JSON.stringify(federationStatus),
+  createdAt, createdAt,
+);
+assert.throws(() => federationInsert.run(
+  "job-2", "exchange-1", "idempotency-1", "c".repeat(64),
+  JSON.stringify(federationRequest), "client-1", "client-credential-1", "server-1",
+  "server-credential-1", "bridge-1", "fence-1", "manifest-1", 1, "trace-2",
+  JSON.stringify({ ...federationStatus, job_id: "job-2" }), createdAt, createdAt,
+), /UNIQUE constraint failed/u, "federation idempotency identity cannot reserve a second job");
+assert.throws(() => federationInsert.run(
+  "job-invalid-digest", "exchange-2", "idempotency-2", invalidDigest,
+  JSON.stringify({ ...federationRequest, exchange_id: "exchange-2", idempotency_key: "idempotency-2" }),
+  "client-1", "client-credential-1", "server-1", "server-credential-1", "bridge-1",
+  "fence-1", "manifest-1", 1, "trace-3",
+  JSON.stringify({ ...federationStatus, exchange_id: "exchange-2", idempotency_key: "idempotency-2", job_id: "job-invalid-digest" }),
+  createdAt, createdAt,
+), /CHECK constraint failed/u, "federation request digest must be lowercase SHA-256");
+
+console.log("delivery and federation authority migration fixture: PASS");
