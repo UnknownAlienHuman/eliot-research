@@ -32,6 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/er00-branch-hygiene-materialize.py
+          git restore --source=HEAD -- .github/workflows/branch-hygiene.yml
           git rm -- \
             .github/er00-branch-hygiene-materialize.py \
             .github/workflows/er00-branch-hygiene-materialize.yml
