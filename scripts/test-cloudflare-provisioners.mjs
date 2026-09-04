@@ -13,6 +13,12 @@ const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.d
 const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
 const canonicalConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc");
 const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");
+const desiredAiSearch = JSON.parse(await readFile(
+  resolve(repositoryRoot, "infra/ai-search/instances.json"),
+  "utf8",
+));
+const desiredAiSearchInstanceId = desiredAiSearch.instances[0]?.id;
+assert.equal(typeof desiredAiSearchInstanceId, "string");
 const aiSearchDesired = JSON.parse(await readFile(
   resolve(repositoryRoot, "infra/ai-search/instances.json"),
   "utf8",
