@@ -26,6 +26,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `.npmrc`
 - `.gitignore`
 - `.github/**`
+- `infra/github/branch-hygiene.json`
 - `Cargo.toml`
 - `Cargo.lock`
 - `rust-toolchain.toml`
@@ -37,6 +38,9 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `scripts/check-contract-fixtures.mjs`
 - `scripts/check-work-packets.mjs`
 - `scripts/check-rust-boundaries.mjs`
+- `scripts/branch-hygiene-lib.mjs`
+- `scripts/branch-hygiene.mjs`
+- `scripts/test-branch-hygiene.mjs`
 - `docs/agent-work/manifest.json`
 - `docs/agent-work/ER-00-workspace-and-verification-gates.md`
 - `docs/implementation/toolchain.md`
@@ -72,6 +76,8 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - Inspect the default Wasm artifact before the feature build overwrites it; keep it free of product ABI
   exports and keep the scalar M1 self-test feature-gated.
 - Enforce pure-core exclusions for I/O, clocks, environment, randomness and platform runtime imports.
+- Preserve open PR heads, immediately remove closed PR heads, expire no-PR branches after 24 hours,
+  and evict the oldest quarantine heads before enforcing the five-branch ceiling.
 - Run merge-blocking format, lint, native tests, doctests, dependency policy, Wasm, size and coverage
   gates; schedule pinned Miri, fuzz and mutation jobs.
 - Update readiness documentation without claiming M2 canonical JSON or any live qualification.
@@ -80,6 +86,8 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 
 - `pnpm install --frozen-lockfile` and both Cargo lockfiles are reproducible.
 - `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.
+- Branch hygiene preserves open PRs, deletes closed PR heads immediately, rechecks head identity before
+  deletion, and deterministically evicts the oldest recent no-PR branches above the ceiling.
 - `pnpm boundaries:negative` injects a forbidden import and proves the existing boundary gate fails.
 - Unknown protocol/error codes, duplicate IDs, blank rows, over-limit frames/cases/IDs/payloads and
   architecture-dependent numeric values fail in both TypeScript and Rust parsers.
