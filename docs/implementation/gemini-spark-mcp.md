@@ -13,16 +13,22 @@ Gemini CLI Streamable HTTP POST https://<MCP_HOSTNAME>/mcp
 → dedicated hostname Cloudflare Access application
 → dedicated MCP Access audience
 → signed Access JWT verification
-→ exact service-token common_name = gemini-spark
+→ exact service-token Client ID from JWT common_name
+→ internal logical principal gemini-spark
 → MCP protocol/version/body validation
 → four-tool allow-list
 → bounded result
 ```
 
+Cloudflare's service-token JWT uses the token Client ID as `common_name`; the human-readable service
+token name is not an authenticated principal. The Worker therefore requires the exact Client ID through
+`MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID`, verifies that signed value, and only then maps it to the internal
+logical principal `gemini-spark`.
+
 The MCP hostname and Access audience are separate from the owner/API hostname and audience. The ordinary
-API `ACCESS_SERVICE_PRINCIPALS` must not contain `gemini-spark`; the dedicated MCP verifier has an exact
-one-principal allow-list. A service token that reaches one Access application therefore cannot be
-reinterpreted as an ordinary trusted-agent credential by application routing.
+API `ACCESS_SERVICE_PRINCIPALS` must not contain the dedicated MCP Client ID; the dedicated MCP verifier
+has an exact one-Client-ID allow-list. A service token that reaches one Access application therefore
+cannot be reinterpreted as an ordinary trusted-agent credential by application routing.
 
 Supported protocol revisions:
 
@@ -65,7 +71,8 @@ or Workspace permissions; those remain independent live preconditions.
 
 - a request on the ordinary owner/API hostname cannot reach MCP;
 - owner Access identity cannot use MCP;
-- service principal other than `gemini-spark` cannot use MCP;
+- a service token whose signed Client ID differs cannot use MCP;
+- the human-readable token name cannot substitute for its signed Client ID;
 - browser `Origin` is rejected;
 - request body above 128 KiB is rejected;
 - JSON-RPC batch is rejected;

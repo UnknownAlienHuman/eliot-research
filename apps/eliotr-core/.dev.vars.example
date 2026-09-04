@@ -5,11 +5,13 @@ AI_GATEWAY_REASONING_URL=
 AI_GATEWAY_RETRIEVAL_URL=
 ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
 ACCESS_AUDIENCE=replace-me
-# Ordinary API service principals only. Do not add gemini-spark.
+# Ordinary API service-token Client IDs only. Do not add the dedicated Gemini token.
 ACCESS_SERVICE_PRINCIPALS=
 MCP_HOSTNAME=mcp.replace-me.example
 MCP_ACCESS_TEAM_DOMAIN=https://replace-me.cloudflareaccess.com
 MCP_ACCESS_AUDIENCE=replace-me
+# Exact Cloudflare Access service-token Client ID, normally ending in .access.
+MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID=replace-me.access
 # Exactly one external Google transport may own the state family.
 GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp
 GOOGLE_CLIENT_ID=

@@ -50,11 +50,16 @@ request
 POST /mcp
 → hostname Cloudflare Access
 → signed Access JWT verification
-→ exact service-token common_name = gemini-spark
+→ exact service-token Client ID from signed common_name
+→ internal logical principal gemini-spark
 → MCP protocol/header/body validation
 → four-tool product allow-list
 → bounded JSON-RPC response
 ```
+
+The Access service-token name is not a signed identity. Cloudflare places the exact token Client ID in
+`common_name`; ER-36 admits that configured Client ID and only then maps it to the internal
+`gemini-spark` principal.
 
 ELIOT MCP is plan/readback-validation only. Google-side effects remain in the official Google Workspace
 or gcloud extensions, require ordinary user confirmation, and must be exactly read back. A Google
@@ -89,7 +94,8 @@ typed unavailable or fail-closed.
 - missing/forged Access identity is rejected before application execution;
 - stale Core/Search schema generations block protected product routes;
 - service principals cannot cross owner-only boundaries;
-- only `gemini-spark` can enter MCP dispatch;
+- only the configured MCP Access service-token Client ID can enter MCP dispatch;
+- the internal tool context sees only the logical `gemini-spark` principal;
 - browser-originated MCP calls are rejected;
 - Queue messages without matching D1 authority are never executed;
 - duplicate/failed receipts cannot fabricate success;

@@ -17,10 +17,11 @@
       "apps/eliotr-core/src/gemini-mcp-google-sync.ts",
       "apps/eliotr-core/src/gemini-mcp-tools.ts",
       "apps/eliotr-core/src/gemini-mcp.test.ts",
+      "apps/eliotr-core/src/gemini-mcp-service-token.test.ts",
       "integrations/gemini-spark/**",
       "docs/implementation/gemini-spark-mcp.md"
     ],
-    "mandatory_negative_case": "Submit dry_run=false, a browser Origin, an owner JWT, and a digest-mismatching Google readback; deny effects and preserve candidate-only state.",
+    "mandatory_negative_case": "Submit dry_run=false, a browser Origin, an owner JWT, a human-readable token name instead of the signed Client ID, and a digest-mismatching Google readback; deny effects and preserve candidate-only state.",
     "document": "ER-36-gemini-spark-mcp-and-google-orchestration.md",
     "max_package_source_lines": 10000
   }
