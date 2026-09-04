@@ -19,6 +19,7 @@ authority channel and do not let a Google transport result promote itself into E
 - `apps/eliotr-core/src/gemini-mcp-google-sync.ts`
 - `apps/eliotr-core/src/gemini-mcp-tools.ts`
 - `apps/eliotr-core/src/gemini-mcp.test.ts`
+- `apps/eliotr-core/src/gemini-mcp-service-token.test.ts`
 - `integrations/gemini-spark/**`
 - `docs/implementation/gemini-spark-mcp.md`
 
