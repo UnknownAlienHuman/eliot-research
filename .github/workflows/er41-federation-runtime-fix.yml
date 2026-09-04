@@ -37,75 +37,52 @@ jobs:
 
           authority = Path("packages/cloudflare-federation/src/federation-d1-authority.ts")
           text = authority.read_text(encoding="utf-8")
-          old = '''  if (
-            manifest.client_fence_ref !== binding.client_fence_ref ||
-          '''
-          new = '''  if (
-            !sameRef(
-              manifest.manifest_ref,
-              binding.allowed_reference_manifest_ref,
-            ) ||
-            manifest.client_fence_ref !== binding.client_fence_ref ||
-          '''
+          old = "  if (\n    manifest.client_fence_ref !== binding.client_fence_ref ||\n"
+          new = (
+              "  if (\n"
+              "    !sameRef(\n"
+              "      manifest.manifest_ref,\n"
+              "      binding.allowed_reference_manifest_ref,\n"
+              "    ) ||\n"
+              "    manifest.client_fence_ref !== binding.client_fence_ref ||\n"
+          )
           if text.count(old) != 1:
               raise SystemExit("manifest authorization anchor missing or ambiguous")
           authority.write_text(text.replace(old, new), encoding="utf-8")
 
           codec = Path("packages/cloudflare-federation/src/federation-d1-codec.ts")
           text = codec.read_text(encoding="utf-8")
-          old = '''  let invalid = false;
-          if (status.transport_state === "CANCELLED") {
-            const expectedReceipt = cancellationReason === null
-              ? null
-              : await federationCancellationReceiptRef(jobId, cancellationReason);
-            invalid =
-              status.completion_disposition !== "CANCELLED" ||
-              observed !== "CANCELLED" ||
-              cancellationReason === null ||
-              cancelledAt === null ||
-              cancelledAt !== updatedAt ||
-              result !== null ||
-              status.cancellation_receipt_ref !== expectedReceipt ||
-              status.terminal_receipt_ref !== expectedReceipt;
-          } else {
-            invalid =
-              cancellationReason !== null ||
-              cancelledAt !== null ||
-              status.cancellation_receipt_ref !== undefined ||
-              (active && status.terminal_receipt_ref !== undefined) ||
-              ((active || status.transport_state === "FAILED") &&
-                (status.completion_disposition !== null ||
-                  observed !== null ||
-                  result !== null)) ||
-              (status.transport_state === "COMPLETED" && observed === null);
-          }
-          '''
-          new = '''  const expectedReceipt =
-            status.transport_state === "CANCELLED" && cancellationReason !== null
-              ? await federationCancellationReceiptRef(jobId, cancellationReason)
-              : null;
-          const invalid = status.transport_state === "CANCELLED"
-            ? status.completion_disposition !== "CANCELLED" ||
-              observed !== "CANCELLED" ||
-              cancellationReason === null ||
-              cancelledAt === null ||
-              cancelledAt !== updatedAt ||
-              result !== null ||
-              status.cancellation_receipt_ref !== expectedReceipt ||
-              status.terminal_receipt_ref !== expectedReceipt
-            : cancellationReason !== null ||
-              cancelledAt !== null ||
-              status.cancellation_receipt_ref !== undefined ||
-              (active && status.terminal_receipt_ref !== undefined) ||
-              ((active || status.transport_state === "FAILED") &&
-                (status.completion_disposition !== null ||
-                  observed !== null ||
-                  result !== null)) ||
-              (status.transport_state === "COMPLETED" && observed === null);
-          '''
-          if text.count(old) != 1:
-              raise SystemExit("job-state validation anchor missing or ambiguous")
-          codec.write_text(text.replace(old, new), encoding="utf-8")
+          start_marker = "  let invalid = false;\n"
+          end_marker = "  if (invalid) {\n"
+          if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+              raise SystemExit("job-state validation anchors missing or ambiguous")
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = (
+              "  const expectedReceipt =\n"
+              "    status.transport_state === \"CANCELLED\" && cancellationReason !== null\n"
+              "      ? await federationCancellationReceiptRef(jobId, cancellationReason)\n"
+              "      : null;\n"
+              "  const invalid = status.transport_state === \"CANCELLED\"\n"
+              "    ? status.completion_disposition !== \"CANCELLED\" ||\n"
+              "      observed !== \"CANCELLED\" ||\n"
+              "      cancellationReason === null ||\n"
+              "      cancelledAt === null ||\n"
+              "      cancelledAt !== updatedAt ||\n"
+              "      result !== null ||\n"
+              "      status.cancellation_receipt_ref !== expectedReceipt ||\n"
+              "      status.terminal_receipt_ref !== expectedReceipt\n"
+              "    : cancellationReason !== null ||\n"
+              "      cancelledAt !== null ||\n"
+              "      status.cancellation_receipt_ref !== undefined ||\n"
+              "      (active && status.terminal_receipt_ref !== undefined) ||\n"
+              "      ((active || status.transport_state === \"FAILED\") &&\n"
+              "        (status.completion_disposition !== null ||\n"
+              "          observed !== null ||\n"
+              "          result !== null)) ||\n"
+              "      (status.transport_state === \"COMPLETED\" && observed === null);\n"
+          )
+          codec.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
           PY
           git rm -- .github/workflows/er41-federation-runtime-fix.yml
           pnpm install --frozen-lockfile
