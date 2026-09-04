@@ -13,9 +13,8 @@ acknowledgements.
 
 ## Owned paths
 
-- `apps/eliotr-core/src/federation-d1-codec.ts`
 - `apps/eliotr-core/src/federation-d1-authority.ts`
-- `apps/eliotr-core/src/federation-d1-authority.test.ts`
+- `tests/federation-d1-authority.test.ts`
 - `docs/agent-work/ER-41-federation-d1-runtime.md`
 
 ## Authority path
@@ -46,19 +45,21 @@ cancel
 - The stored request digest is recomputed from canonical request bytes on every read.
 - One `(exchange_id, idempotency_key)` maps to one deterministic job and one request digest.
 - A repeated exact reservation returns the durable prior status without another mutation.
-- Payload, peer generation, bridge generation, fence or manifest substitution returns conflict/denial.
+- Payload substitution under the same authority returns conflict; another authority binding is denied
+  without exposing the existing request digest.
 - Cancellation is allowed only from active transport states and is idempotent only for the same reason.
-- A lost insert or cancellation acknowledgement is reconciled through exact D1 readback; the mutation is
-  never blindly repeated.
+- A lost manifest insert, job reservation or cancellation acknowledgement is reconciled through exact D1
+  readback; the mutation is never blindly repeated.
+- Cancellation receipt identity is recomputed from the job and exact reason on every durable read.
 - Corrupt, noncanonical or column-divergent rows fail closed.
 - This packet does not expose federation routes, authorize a peer, read R2 bundles or claim research
   execution; those remain ER-24/ER-22 follow-ups.
 
 ## Mandatory negative boundary
 
-Lose the response after D1 accepts a reservation and after it accepts cancellation. Exact readback must
-return replay/cancelled state with one mutation only. Reuse the idempotency identity with different request
-bytes and reject it without changing the existing job.
+Lose the response after D1 accepts a manifest, reservation and cancellation. Exact readback must return the
+prior state with one mutation only. Reuse the idempotency identity with different request bytes and reject
+it without changing the existing job; use another authority binding and reveal no existing digest.
 
 ## Verification
 
@@ -67,10 +68,10 @@ pnpm work-packets:check
 pnpm budgets:check
 pnpm lint
 pnpm typecheck
-pnpm --filter @eliotr/core test
+pnpm exec vitest run tests/federation-d1-authority.test.ts
 pnpm delivery:check
 pnpm cf:dry-run
 ```
 
-Local D1 mocks and SQLite migration constraints are `IMPLEMENTED_NOT_LIVE`. Remote D1, deployed Access,
-Worker restart and real lost-ack receipts remain `NOT_EXECUTED`.
+Deterministic D1 port fixtures and SQLite migration constraints are `IMPLEMENTED_NOT_LIVE`. Remote D1,
+deployed Access, Worker restart and real lost-ack receipts remain `NOT_EXECUTED`.
