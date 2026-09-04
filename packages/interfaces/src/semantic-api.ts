@@ -1,10 +1,7 @@
 import type {
-  FederationEvidenceBundle,
-  FederationJobStatus,
   EvidenceHandle,
   LocatorCandidate,
   ResolvedEvidence,
-  FederationRequest,
   RetrievalTrace,
   ScopeExpression,
   VersionedRef,
@@ -74,11 +71,4 @@ export interface SemanticApi {
   proposeWiki(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<VersionedRef>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, afterCursor: string, allowedScopes: readonly string[]): Promise<{ refs: readonly string[]; next_cursor: string }>;
-}
-
-export interface FederationApi {
-  submit(context: AuthenticatedRequestContext, request: FederationRequest): Promise<FederationJobStatus>;
-  status(context: AuthenticatedRequestContext, exchangeId: string): Promise<FederationJobStatus>;
-  result(context: AuthenticatedRequestContext, exchangeId: string): Promise<FederationEvidenceBundle | null>;
-  cancel(context: AuthenticatedRequestContext, exchangeId: string, reason: string): Promise<FederationJobStatus>;
 }

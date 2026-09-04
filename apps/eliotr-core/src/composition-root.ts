@@ -49,7 +49,14 @@ function capabilities(env: Env): Record<string, unknown> {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
     enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE"],
-    disabled_slices: ["RETRIEVAL", "RESEARCH", "WIKI", "DRIVE_EXCHANGE", "ERASURE"],
+    disabled_slices: [
+      "RETRIEVAL",
+      "RESEARCH",
+      "FEDERATION",
+      "WIKI",
+      "DRIVE_EXCHANGE",
+      "ERASURE",
+    ],
     routes: ROUTES,
     exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false,
@@ -79,6 +86,9 @@ function federationApi(): FederationApi {
     status: () => unavailable("federation.status"),
     result: () => unavailable("federation.result"),
     cancel: () => unavailable("federation.cancel"),
+    readBundle: () => unavailable("federation.bundle.read"),
+    readBundleManifest: () => unavailable("federation.bundle.manifest"),
+    changes: () => unavailable("federation.changes"),
   };
 }
 
