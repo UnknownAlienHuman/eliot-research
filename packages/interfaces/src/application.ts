@@ -1,4 +1,5 @@
-import type { FederationApi, SemanticApi } from "./semantic-api.js";
+import type { FederationApi } from "./federation-api.js";
+import type { SemanticApi } from "./semantic-api.js";
 import type { OwnerApi } from "./owner-api.js";
 
 export interface ApplicationServices {
