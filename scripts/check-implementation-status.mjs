@@ -15,6 +15,7 @@ const allowedStates = new Set([
 const extensions = new Set([".ts", ".tsx", ".mjs", ".js"]);
 const ignored = new Set(["node_modules", "dist", "dist-types", "coverage", ".wrangler"]);
 const markerPattern = /^\s*\/\/\s*(SCAFFOLD_FAIL_CLOSED|IN_PROGRESS|IMPLEMENTED_NOT_LIVE|LIVE_QUALIFIED):\s+([^\r\n]+?)\s*$/gmu;
+const pendingStatePattern = /\bIMPLEMENTATION_PENDING\b/u;
 const sourceFiles = new Map();
 const errors = [];
 
@@ -98,9 +99,18 @@ for (const entry of registry.entries) {
 }
 
 for (const [path, content] of sourceFiles) {
-  for (const marker of markersIn(content)) {
+  const markers = markersIn(content);
+  for (const marker of markers) {
     const key = `${path}\u0000${marker.sentinel}`;
     if (!registrations.has(key)) errors.push(`${path}: unregistered implementation marker: ${marker.sentinel}`);
+  }
+  if (
+    pendingStatePattern.test(content) &&
+    !markers.some((marker) => marker.state === "SCAFFOLD_FAIL_CLOSED")
+  ) {
+    errors.push(
+      `${path}: runtime IMPLEMENTATION_PENDING state lacks a registered SCAFFOLD_FAIL_CLOSED marker`,
+    );
   }
 }
 

@@ -15,6 +15,7 @@ export interface ResearchWorkflowSkeletonResult {
   readonly receipt_ref: string;
 }
 
+// SCAFFOLD_FAIL_CLOSED: ER-09 Research Workflow returns explicit pending state until governed execution is implemented.
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
   public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowSkeletonResult> {
     return step.do("fail-closed-until-er-09", async () => ({

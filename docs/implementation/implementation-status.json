@@ -1,6 +1,6 @@
 {
   "protocol": "eliotr.implementation-status.v1",
-  "baseline_commit": "8b4fe019f862ae49ed2ad937734a711ea086d315",
+  "baseline_commit": "cbdf64e65b7457ae751c4bfc6e392c4908a3d3c1",
   "states": [
     "SCAFFOLD_FAIL_CLOSED",
     "IN_PROGRESS",
@@ -14,6 +14,37 @@
     "placeholder_success_response": "fail"
   },
   "entries": [
+    {
+      "id": "scaffold-001",
+      "path": "apps/eliotr-core/src/research-workflow.ts",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-09 Research Workflow returns explicit pending state until governed execution is implemented.",
+      "owner_packets": [
+        "ER-09"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "Cloudflare Workflow binding executes one durable fail-closed step that returns IMPLEMENTATION_PENDING and INCONCLUSIVE without performing research or creating canonical research evidence",
+      "completion_evidence": [
+        "governed checkpoint executor for every ER-09 stage",
+        "budget and cancellation checks before every side effect",
+        "evidence freeze, claim audit and terminal research receipt",
+        "live Workflow retry, resume and cancellation receipts"
+      ]
+    },
+    {
+      "id": "scaffold-002",
+      "path": "apps/eliotr-core/src/research-session.ts",
+      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-24 ResearchSession exposes only explicit pending status until durable session execution is implemented.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "SCAFFOLD_FAIL_CLOSED",
+      "behavior": "ResearchSession Durable Object exposes only a 503 pending status and 501 fallback; it does not persist session authority, accept WebSockets or coordinate live research",
+      "completion_evidence": [
+        "durable D1/R2-backed session state and replay contract",
+        "hibernation-safe WebSocket transport with reconnect tests",
+        "live Durable Object eviction, resume and deployment-restart receipts"
+      ]
+    },
     {
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
