@@ -1,0 +1,135 @@
+name: er22-reference-admission-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-22-federation-reference-admission-20260904
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: er22-reference-admission-verified-merge
+  cancel-in-progress: false
+
+jobs:
+  finalize-verify-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-reference-admission-merge-gate]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/ER-22-federation-reference-admission-20260904
+      PREREQUISITE_BRANCH: agent/ER-22-federation-reference-d1-read-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-federation-reference-admission-20260904
+          fetch-depth: 0
+
+      - name: Require strict reference read authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 300); do
+            data="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$PREREQUISITE_BRANCH" --state all --limit 1 --json number,state,mergedAt)"
+            [[ -n "$(jq -r '.[0].mergedAt // empty' <<<"$data")" ]] && exit 0
+            [[ "$(jq -r '.[0].state // empty' <<<"$data")" == "CLOSED" ]] && {
+              echo "reference read prerequisite closed without merge" >&2
+              exit 1
+            }
+            sleep 8
+          done
+          echo "reference read prerequisite did not merge" >&2
+          exit 1
+
+      - name: Rebuild immutable admission on current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main "$BRANCH"
+          git show "origin/$BRANCH:apps/eliotr-core/src/federation-d1-reference-admission.ts" > /tmp/federation-d1-reference-admission.ts
+          git show "origin/$BRANCH:apps/eliotr-core/src/federation-d1-reference-admission.test.ts" > /tmp/federation-d1-reference-admission.test.ts
+          git reset --hard origin/main
+          cp /tmp/federation-d1-reference-admission.ts apps/eliotr-core/src/federation-d1-reference-admission.ts
+          cp /tmp/federation-d1-reference-admission.test.ts apps/eliotr-core/src/federation-d1-reference-admission.test.ts
+
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          document_path = Path("docs/agent-work/ER-22-generic-federation-boundary.md")
+          document = document_path.read_text(encoding="utf-8")
+          lines = document.splitlines()
+          heading = lines.index("## Owned paths")
+          end = next(
+              (index for index in range(heading + 1, len(lines)) if lines[index].startswith("## ")),
+              len(lines),
+          )
+          paths = [
+              line[3:-1]
+              for line in lines[heading + 1:end]
+              if line.startswith("- `") and line.endswith("`")
+          ]
+          for addition in [
+              "apps/eliotr-core/src/federation-d1-reference-admission.ts",
+              "apps/eliotr-core/src/federation-d1-reference-admission.test.ts",
+          ]:
+              if addition not in paths:
+                  paths.append(addition)
+          lines = lines[:heading] + [
+              "## Owned paths",
+              "",
+              *[f"- `{path}`" for path in paths],
+              "",
+          ] + lines[end:]
+          document_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+          manifest_path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          packet = next((entry for entry in manifest["packets"] if entry["id"] == "ER-22"), None)
+          if packet is None:
+              raise SystemExit("ER-22 packet missing")
+          packet["owned_paths"] = paths
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          rm -f .github/workflows/er22-reference-admission-verified-merge.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-22: finalize immutable reference admission [er22-reference-admission-merge-gate]"
+          git push --force-with-lease origin HEAD:"$BRANCH"
+          echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] || { echo "open PR not found" >&2; exit 1; }
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Require verify and rust on the exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+            [[ "$head_sha" == "$CANDIDATE_SHA" ]] || { echo "PR head moved" >&2; exit 1; }
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            [[ "$verify" == success && "$rust" == success ]] && exit 0
+            case "$verify/$rust" in *failure*|*cancelled*|*timed_out*|*action_required*|*startup_failure*|*stale*) exit 1;; esac
+            sleep 8
+          done
+          exit 1
+
+      - name: Squash-merge the exact green head
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-22: add immutable federation reference admission (#$PR_NUMBER)" \
+            --body "Admit exact immutable ScopeSnapshot and manifest revisions with digest verification, scope binding, exact replay and no retry of ambiguous D1 writes. Exact head passed verify and rust."
