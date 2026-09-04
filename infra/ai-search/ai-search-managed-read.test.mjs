@@ -5,7 +5,7 @@ import {
   AiSearchManagedReadError,
   compileAiSearchManagedSearchRequest,
   createAiSearchManagedSearchPort,
-} from "../../packages/platform-cloudflare/dist/index.js";
+} from "../../packages/cloudflare-ai/dist/index.js";
 
 const SOURCE = "source-revision-1";
 const GENERATION = "g2-qwen3-2026-09-03";
