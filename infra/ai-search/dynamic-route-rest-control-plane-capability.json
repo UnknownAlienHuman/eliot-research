@@ -1,0 +1,52 @@
+{
+  "capability": "eliotr.cloudflare.dynamic-route-rest-control-plane.v1",
+  "status": "implemented_not_live_qualified",
+  "api_contract": {
+    "base_url": "https://api.cloudflare.com/client/v4",
+    "gateway_id": "eliotr-reasoning",
+    "routes_path": "/accounts/{account_id}/ai-gateway/gateways/{gateway_id}/routes",
+    "deployment_path": "/accounts/{account_id}/ai-gateway/gateways/{gateway_id}/routes/{route_id}/deployments",
+    "authentication": "bearer_api_token",
+    "mutation_surface": [
+      "create_route_with_initial_immutable_version",
+      "create_deployment_when_initial_version_is_not_active"
+    ],
+    "forbidden_surface": [
+      "update_route",
+      "update_version",
+      "delete_route",
+      "delete_version",
+      "delete_deployment",
+      "blind_retry_after_ambiguous_write"
+    ]
+  },
+  "safety_properties": {
+    "fixed_api_origin": true,
+    "strict_response_envelopes": true,
+    "bounded_response_bytes": 524288,
+    "bounded_list_pages": 100,
+    "bounded_route_elements": 256,
+    "immutable_binding_required_for_get": true,
+    "route_version_deployment_readback_required": true,
+    "definition_sha256_required": true,
+    "credentials_excluded_from_errors": true,
+    "provider_bodies_excluded_from_errors": true,
+    "ambiguous_write_phase_classification": true
+  },
+  "verification": {
+    "unit_and_negative_corpus": "packages/cloudflare-ai/src/dynamic-route-rest-control-plane.test.ts",
+    "repository_ci": "required_on_exact_pr_head",
+    "cloudflare_live_route_create": "NOT_EXECUTED",
+    "cloudflare_live_deployment_create": "NOT_EXECUTED",
+    "cloudflare_live_readback": "NOT_EXECUTED",
+    "credential_rotation": "NOT_EXECUTED",
+    "lost_acknowledgement_recovery": "NOT_EXECUTED"
+  },
+  "remaining_gaps": [
+    "authoritative binding persistence composition",
+    "live least-privilege API token qualification",
+    "live route/version/deployment readback receipts",
+    "operator reconciliation for partial provider mutations",
+    "production Dynamic Route promotion and rollback"
+  ]
+}

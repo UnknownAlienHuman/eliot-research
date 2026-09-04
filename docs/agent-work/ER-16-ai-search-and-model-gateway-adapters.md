@@ -240,3 +240,22 @@ create uncertainty, provider-name collision, malformed control-plane responses, 
 qualification, candidate readback mismatch, active-generation race, and ambiguous promotion settlement.
 The capability fixture keeps live Cloudflare control-plane write/readback, route execution, fallback, and
 Spend Limit probes explicitly `NOT_EXECUTED`.
+
+## Active implementation slice — Cloudflare Dynamic Routing REST control plane
+
+This slice binds the existing pure Dynamic Route provisioner to the current Cloudflare
+control-plane API through a strict REST adapter. The API origin and dedicated
+`eliotr-reasoning` gateway are fixed. Route creation sends the complete immutable element
+array and receives its initial immutable version; a deployment is created only when the
+returned route did not already activate that exact version.
+
+Success requires exact route, version, deployment, definition-digest, immutable-binding and
+binding-digest readback. No mutation is retried after dispatch. Failures classify the
+possible effect as `NONE`, `ROUTE_CREATE`, `DEPLOYMENT_CREATE`, or `BINDING_WRITE`. The
+adapter exposes no update or delete method and excludes API credentials and provider response
+bodies from errors.
+
+The binding store remains an injected authority port. Its D1 implementation, least-privilege
+API-token qualification, operator reconciliation after partial provider mutation,
+promotion/rollback procedure and live route/version/deployment receipts remain open. Live
+Cloudflare operations are `NOT_EXECUTED`.
