@@ -1,0 +1,89 @@
+name: er00-main-ci-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-00-main-push-ci-20260904
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: er00-main-ci-verified-merge
+  cancel-in-progress: false
+
+jobs:
+  verify-and-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[er00-main-ci-merge-gate]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: "69"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-00-main-push-ci-20260904
+          fetch-depth: 0
+
+      - name: Finalize the exact candidate tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq .state)"
+          if [[ "$state" != "OPEN" ]]; then
+            echo "PR is already $state"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -- .github/workflows/er00-main-ci-verified-merge.yml
+          git commit -m "ER-00: finalize main-push CI candidate [er00-main-ci-merge-gate]"
+          git push origin HEAD:agent/ER-00-main-push-ci-20260904
+          echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Require verify and rust on the exact PR head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 100); do
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+            if [[ "$head_sha" != "$CANDIDATE_SHA" ]]; then
+              echo "PR head moved from $CANDIDATE_SHA to $head_sha" >&2
+              exit 1
+            fi
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            if [[ "$verify" == "success" && "$rust" == "success" ]]; then
+              exit 0
+            fi
+            for conclusion in "$verify" "$rust"; do
+              case "$conclusion" in
+                failure|cancelled|timed_out|action_required|startup_failure|stale)
+                  echo "required check failed: verify=$verify rust=$rust" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            sleep 8
+          done
+          echo "required checks did not complete for $CANDIDATE_SHA" >&2
+          exit 1
+
+      - name: Squash-merge the exact green head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-00: run full CI after every main push (#69)" \
+            --body "Run the full verify and Rust workflows on every resulting main commit as an independent post-merge signal. Exact candidate passed required checks."
