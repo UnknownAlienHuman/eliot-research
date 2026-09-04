@@ -1,0 +1,223 @@
+name: er16-rest-repair
+
+on:
+  push:
+    branches:
+      - agent/ER-16-dynamic-route-rest-control-plane-20260903
+    paths:
+      - .github/workflows/er16-rest-repair.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-dynamic-route-rest-control-plane-20260903
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Split the oversized codec and bind public exports
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          codec_path = Path("packages/cloudflare-ai/src/dynamic-route-rest-codec.ts")
+          source = codec_path.read_text(encoding="utf-8")
+
+          moved_start = source.index("export function decodeDynamicRouteCreateRequest(")
+          moved_end = source.index("\nfunction decodeProviderMetadata(", moved_start)
+          moved = source[moved_start:moved_end].rstrip()
+          source = source[:moved_start] + source[moved_end:]
+          source = source.replace(
+              "\nfunction decodeProviderMetadata(",
+              "\nexport function decodeProviderMetadata(",
+              1,
+          )
+          source = source.replace("\nfunction exactObject(", "\nexport function exactObject(", 1)
+
+          input_start = source.index("\nfunction inputInvalid(")
+          binding_start = source.index("\nfunction bindingConflict(", input_start)
+          fail_start = source.index("\nfunction failWith(", binding_start)
+          input_helper = source[input_start:binding_start].strip()
+          binding_helpers = source[binding_start:fail_start].strip()
+          source = source[:input_start] + source[fail_start:]
+          codec_path.write_text(source.rstrip() + "\n", encoding="utf-8")
+
+          binding_path = Path(
+              "packages/cloudflare-ai/src/dynamic-route-rest-binding-codec.ts"
+          )
+          binding_path.write_text(
+              '''import {
+            canonicalModelGatewayJson,
+            modelGatewaySha256,
+          } from "./model-gateway-request.js";
+          import {
+            type DecodedDynamicRoute,
+            type DecodedDynamicRouteDeployment,
+            type DynamicRouteRestBinding,
+            type DynamicRouteRestBindingWriteReceipt,
+            type DynamicRouteRestErrorCode,
+          } from "./dynamic-route-rest-contract.js";
+          import {
+            DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES,
+            DYNAMIC_ROUTE_GATEWAY_ID,
+            type DynamicRouteCreateRequest,
+            type DynamicRouteProviderMetadata,
+          } from "./dynamic-route-provisioning-contract.js";
+          import {
+            compileCloudflareRouteCreateBody,
+            decodeProviderMetadata,
+            dynamicRouteRestFailure,
+            exactObject,
+            requireDynamicRouteGatewayId,
+          } from "./dynamic-route-rest-codec.js";
+
+          const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
+          const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+          const ROUTE_NAME = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+          const SHA256 = /^[a-f0-9]{64}$/u;
+          const BINDING_KEYS = new Set([
+            "account_id",
+            "gateway_id",
+            "metadata",
+            "protocol",
+            "provider_deployment_id",
+            "provider_route_id",
+            "provider_route_name",
+            "provider_version_id",
+            "route_definition_sha256",
+          ]);
+          const BINDING_RECEIPT_KEYS = new Set(["binding", "readback_sha256"]);
+          const encoder = new TextEncoder();
+
+          '''.replace("          ", "")
+              + moved
+              + "\n\n"
+              + input_helper
+              + "\n\n"
+              + binding_helpers
+              + "\n",
+              encoding="utf-8",
+          )
+
+          control_path = Path(
+              "packages/cloudflare-ai/src/dynamic-route-rest-control-plane.ts"
+          )
+          control = control_path.read_text(encoding="utf-8")
+          moved_imports = [
+              "  decodeDynamicRouteBindingWriteReceipt,\n",
+              "  decodeDynamicRouteCreateRequest,\n",
+              "  decodeDynamicRouteRestBinding,\n",
+              "  dynamicRouteRestBindingSha256,\n",
+              "  verifyRouteReadback,\n",
+          ]
+          for item in moved_imports:
+              if control.count(item) != 1:
+                  raise SystemExit(f"unexpected control-plane import: {item!r}")
+              control = control.replace(item, "", 1)
+          anchor = '''import {
+            canonicalModelGatewayJson,
+            modelGatewaySha256,
+          } from "./model-gateway-request.js";
+          '''.replace("          ", "")
+          extra = '''import {
+            decodeDynamicRouteBindingWriteReceipt,
+            decodeDynamicRouteCreateRequest,
+            decodeDynamicRouteRestBinding,
+            dynamicRouteRestBindingSha256,
+            verifyRouteReadback,
+          } from "./dynamic-route-rest-binding-codec.js";
+          '''.replace("          ", "")
+          if control.count(anchor) != 1:
+              raise SystemExit("control-plane import anchor drifted")
+          control_path.write_text(
+              control.replace(anchor, anchor + extra, 1),
+              encoding="utf-8",
+          )
+
+          index_path = Path("packages/cloudflare-ai/src/index.ts")
+          index = index_path.read_text(encoding="utf-8").rstrip()
+          for statement in [
+              'export * from "./dynamic-route-rest-contract.js";',
+              'export * from "./dynamic-route-rest-control-plane.js";',
+          ]:
+              if statement not in index:
+                  index += "\n" + statement
+          index_path.write_text(index + "\n", encoding="utf-8")
+
+          packet_path = Path(
+              "docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md"
+          )
+          packet = packet_path.read_text(encoding="utf-8").rstrip()
+          heading = "## Active implementation slice — Cloudflare Dynamic Routing REST control plane"
+          if heading not in packet:
+              packet += '''
+
+          ## Active implementation slice — Cloudflare Dynamic Routing REST control plane
+
+          This slice binds the existing pure Dynamic Route provisioner to the current Cloudflare
+          control-plane API through a strict REST adapter. The API origin and dedicated
+          `eliotr-reasoning` gateway are fixed. Route creation sends the complete immutable element
+          array and receives its initial immutable version; a deployment is created only when the
+          returned route did not already activate that exact version.
+
+          Success requires exact route, version, deployment, definition-digest, immutable-binding and
+          binding-digest readback. No mutation is retried after dispatch. Failures classify the
+          possible effect as `NONE`, `ROUTE_CREATE`, `DEPLOYMENT_CREATE`, or `BINDING_WRITE`. The
+          adapter exposes no update or delete method and excludes API credentials and provider response
+          bodies from errors.
+
+          The binding store remains an injected authority port. Its D1 implementation, least-privilege
+          API-token qualification, operator reconciliation after partial provider mutation,
+          promotion/rollback procedure and live route/version/deployment receipts remain open. Live
+          Cloudflare operations are `NOT_EXECUTED`.
+          '''.replace("          ", "")
+          packet_path.write_text(packet + "\n", encoding="utf-8")
+          PY
+
+          rm -f .github/workflows/er16-rest-finalize.yml
+          git diff --check
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify repository and ER-16 boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm work-packets:check
+          pnpm boundaries:check
+          pnpm boundaries:negative
+          pnpm budgets:check
+          pnpm lint
+          pnpm typecheck
+          pnpm exec vitest run packages/cloudflare-ai/src/dynamic-route-rest-control-plane.test.ts
+          pnpm exec vitest run packages/cloudflare-ai
+          git diff --check
+
+      - name: Commit the clean verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/er16-rest-repair.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-16: implement strict Dynamic Route REST control plane"
+          git push origin HEAD:agent/ER-16-dynamic-route-rest-control-plane-20260903
