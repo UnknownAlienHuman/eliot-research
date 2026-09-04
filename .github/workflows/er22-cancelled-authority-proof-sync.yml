@@ -1,0 +1,140 @@
+name: er22-cancelled-authority-proof-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-22-cancelled-authority-proof-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er22-cancelled-authority-proof-sync
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-cancel-proof-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-cancelled-authority-proof-20260904
+          fetch-depth: 0
+
+      - name: Require exact cancellation authority before normalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          service_path = Path("apps/eliotr-core/src/federation-service.ts")
+          service = service_path.read_text(encoding="utf-8")
+          old = '''  if (status.transport_state === "CANCELLED" &&
+              ((observedDisposition !== null && observedDisposition !== "CANCELLED") ||
+               (status.completion_disposition !== null && status.completion_disposition !== "CANCELLED") ||
+               record.result !== null)) {
+            fail("FEDERATION_AUTHORITY_INVALID", "cancelled transport exposed a non-cancelled outcome");
+          }'''
+          new = '''  if (
+            status.transport_state === "CANCELLED" &&
+            (observedDisposition !== "CANCELLED" ||
+              status.completion_disposition !== "CANCELLED" ||
+              status.cancellation_receipt_ref === undefined ||
+              record.result !== null)
+          ) {
+            fail(
+              "FEDERATION_AUTHORITY_INVALID",
+              "cancelled transport lacks exact cancellation authority",
+            );
+          }'''
+          if service.count(old) != 1:
+              raise SystemExit("cancelled federation normalization anchor missing or ambiguous")
+          service_path.write_text(service.replace(old, new), encoding="utf-8")
+
+          test_path = Path("apps/eliotr-core/src/federation-service.test.ts")
+          test = test_path.read_text(encoding="utf-8")
+          status_anchor = '''    terminal_receipt_ref: "terminal-receipt-1",
+            };'''
+          status_replacement = '''    terminal_receipt_ref: "terminal-receipt-1",
+              ...(transportState === "CANCELLED"
+                ? { cancellation_receipt_ref: "cancellation-receipt-1" }
+                : {}),
+            };'''
+          if test.count(status_anchor) != 1:
+              raise SystemExit("federation status fixture anchor missing or ambiguous")
+          test = test.replace(status_anchor, status_replacement)
+
+          insertion_anchor = '''  it("rejects expired or wrong-scope evidence bundles", async () => {'''
+          insertion = '''  it("does not manufacture cancellation from an unproven terminal state", async () => {
+            const missingObserved: FederationJobRecord = {
+              request_digest: DIGEST,
+              status: status("CANCELLED", "CANCELLED"),
+              observed_completion_disposition: null,
+              result: null,
+            };
+            await expectCode(
+              createFederationService(dependencies(missingObserved)).status(
+                context(),
+                "exchange-1",
+                "idempotency-1",
+              ),
+              "FEDERATION_AUTHORITY_INVALID",
+            );
+
+            const missingDeclared: FederationJobRecord = {
+              request_digest: DIGEST,
+              status: {
+                ...status("CANCELLED", "CANCELLED"),
+                completion_disposition: null,
+              },
+              observed_completion_disposition: "CANCELLED",
+              result: null,
+            };
+            await expectCode(
+              createFederationService(dependencies(missingDeclared)).status(
+                context(),
+                "exchange-1",
+                "idempotency-1",
+              ),
+              "FEDERATION_AUTHORITY_INVALID",
+            );
+
+            const missingReceipt: FederationJobRecord = {
+              request_digest: DIGEST,
+              status: {
+                ...status("CANCELLED", "CANCELLED"),
+                cancellation_receipt_ref: undefined,
+              },
+              observed_completion_disposition: "CANCELLED",
+              result: null,
+            };
+            await expectCode(
+              createFederationService(dependencies(missingReceipt)).status(
+                context(),
+                "exchange-1",
+                "idempotency-1",
+              ),
+              "FEDERATION_AUTHORITY_INVALID",
+            );
+          });
+
+          it("rejects expired or wrong-scope evidence bundles", async () => {'''
+          if test.count(insertion_anchor) != 1:
+              raise SystemExit("federation cancellation negative-test anchor missing or ambiguous")
+          test_path.write_text(test.replace(insertion_anchor, insertion), encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er22-cancelled-authority-proof-sync.yml
+          git diff --check
+
+      - name: Commit cancellation-proof boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-22: require exact cancellation authority [er22-cancel-proof-synced]"
+          git push origin HEAD:agent/ER-22-cancelled-authority-proof-20260904
