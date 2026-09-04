@@ -1,9 +1,9 @@
 {
   "protocol": "eliotr.agent-work.v1",
   "repository": "UnknownAlienHuman/eliot-research",
-  "baseline_commit": "c5bce4ce9baffe8542e85e7f37ba2fddc6670e01",
+  "baseline_commit": "413f843de32082535559b0a10fa2ba4c56f70fdc",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-01T17:20:00Z",
+  "generated_at": "2026-09-04T02:00:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
@@ -337,8 +337,11 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/access.ts",
+        "packages/platform-cloudflare/src/access.test.ts",
         "packages/platform-cloudflare/src/observability.ts",
-        "packages/platform-cloudflare/src/runtime-limits.ts"
+        "packages/platform-cloudflare/src/observability.test.ts",
+        "packages/platform-cloudflare/src/runtime-limits.ts",
+        "packages/platform-cloudflare/src/runtime-limits.test.ts"
       ],
       "mandatory_negative_case": "Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.",
       "document": "ER-17-access-observability-and-runtime-limits.md",
