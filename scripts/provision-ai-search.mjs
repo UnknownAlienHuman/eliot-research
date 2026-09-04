@@ -33,6 +33,34 @@ async function request(method, path, body, allow404 = false) {
 function readPath(value, path) {
   return path.split(".").reduce((current, key) => current?.[key], value);
 }
+function normalizedMetadata(value) {
+  if (!Array.isArray(value)) return value;
+  return value
+    .map((entry) => ({
+      field_name: entry?.field_name,
+      data_type: entry?.data_type,
+    }))
+    .sort((left, right) => String(left.field_name).localeCompare(String(right.field_name)));
+}
+function normalizedRetrievalOptions(value) {
+  if (value === undefined || value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  return {
+    ...value,
+    boost_by: Array.isArray(value.boost_by) ? value.boost_by : [],
+  };
+}
+function normalizedEnable(instance) {
+  const enabled = instance.enable;
+  const paused = instance.paused;
+  if (typeof enabled === "boolean" && typeof paused === "boolean" && enabled === paused) {
+    return { contradiction: { enable: enabled, paused } };
+  }
+  if (typeof enabled === "boolean") return enabled;
+  if (typeof paused === "boolean") return !paused;
+  return undefined;
+}
 function normalizedExisting(instance, path) {
   if (path === "embedding_model") {
     return instance.embedding_model ?? instance.ai_search_model?.embedding_model ?? instance.ai_search_model?.id ?? instance.ai_search_model;
@@ -40,9 +68,20 @@ function normalizedExisting(instance, path) {
   if (path === "reranking_model") {
     return instance.reranking_model ?? instance.reranker_model ?? instance.reranking?.model;
   }
+  if (path === "enable") return normalizedEnable(instance);
+  if (path === "custom_metadata") return normalizedMetadata(instance.custom_metadata);
+  if (path === "retrieval_options") return normalizedRetrievalOptions(instance.retrieval_options);
+  if (path === "type" || path === "source") return instance[path] ?? null;
   return readPath(instance, path);
 }
+function expectedValue(create, path) {
+  if (path === "custom_metadata") return normalizedMetadata(create.custom_metadata);
+  if (path === "retrieval_options") return normalizedRetrievalOptions(create.retrieval_options);
+  if (path === "type" || path === "source") return null;
+  return readPath(create, path);
+}
 function stable(value) {
+  if (value === undefined) return null;
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object") {
     return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, stable(child)]));
@@ -74,13 +113,15 @@ if (namespace === null) {
 }
 
 const comparedPaths = [
-  "id", "embedding_model", "index_method", "fusion_method", "indexing_options",
-  "retrieval_options", "max_num_results", "reranking", "reranking_model",
+  "type", "source", "id", "ai_gateway_id", "embedding_model", "index_method",
+  "fusion_method", "indexing_options", "retrieval_options", "max_num_results",
+  "score_threshold", "reranking", "reranking_model", "rewrite_query", "cache",
+  "chunk", "chunk_size", "chunk_overlap", "custom_metadata", "enable",
 ];
 const receipts = [];
 for (const spec of desired.instances) {
   const path = `${namespacePath}/instances/${enc(spec.id)}`;
-  let existing = await request("GET", path, undefined, true);
+  const existing = await request("GET", path, undefined, true);
   if (existing === null) {
     if (checkOnly) {
       receipts.push({ id: spec.id, disposition: "CREATE" });
@@ -94,11 +135,9 @@ for (const spec of desired.instances) {
 
   const drift = [];
   for (const field of comparedPaths) {
-    const expected = readPath(spec.create, field);
-    if (expected === undefined) continue;
+    const expected = expectedValue(spec.create, field);
     const actual = normalizedExisting(existing, field);
-    if (actual === undefined) drift.push({ field, expected, actual: "<missing in API readback>" });
-    else if (!equal(actual, expected)) drift.push({ field, expected, actual });
+    if (!equal(actual, expected)) drift.push({ field, expected: stable(expected), actual: stable(actual) });
   }
   if (drift.length > 0) {
     throw new Error(
