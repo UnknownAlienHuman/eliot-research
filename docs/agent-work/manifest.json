@@ -1,9 +1,9 @@
 {
   "protocol": "eliotr.agent-work.v1",
   "repository": "UnknownAlienHuman/eliot-research",
-  "baseline_commit": "c5bce4ce9baffe8542e85e7f37ba2fddc6670e01",
+  "baseline_commit": "159fadce3efbeba278523015c4525fdf46a0fe3f",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-01T17:20:00Z",
+  "generated_at": "2026-09-04T02:12:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
@@ -257,11 +257,6 @@
       "owned_paths": [
         "packages/platform-cloudflare/src/bindings.ts",
         "packages/platform-cloudflare/src/d1.ts",
-        "packages/platform-cloudflare/src/index.ts",
-        "packages/platform-cloudflare/package.json",
-        "packages/platform-cloudflare/tsconfig.json",
-        "packages/platform-cloudflare/AGENTS.md",
-        "infra/d1/**",
         "packages/platform-cloudflare/src/d1-outbox-authority.ts",
         "packages/platform-cloudflare/src/d1-outbox-authority.test.ts",
         "packages/platform-cloudflare/src/d1-outbox-store.ts",
@@ -270,6 +265,8 @@
         "packages/platform-cloudflare/src/d1-inbox-store.test.ts",
         "packages/platform-cloudflare/src/execution-lease.ts",
         "packages/platform-cloudflare/src/execution-lease.test.ts",
+        "packages/platform-cloudflare/src/index.ts",
+        "infra/d1/**",
         "scripts/check-delivery-authority.mjs"
       ],
       "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
@@ -285,7 +282,18 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/r2.ts",
+        "packages/platform-cloudflare/src/r2.test.ts",
         "packages/platform-cloudflare/src/ingest.ts",
+        "packages/platform-cloudflare/src/ingest-types.ts",
+        "packages/platform-cloudflare/src/ingest-validation.ts",
+        "packages/platform-cloudflare/src/ingest-state.ts",
+        "packages/platform-cloudflare/src/ingest-storage.ts",
+        "packages/platform-cloudflare/src/ingest-multipart.ts",
+        "packages/platform-cloudflare/src/ingest-verification.ts",
+        "packages/platform-cloudflare/src/ingest-promotion.ts",
+        "packages/platform-cloudflare/src/ingest-test-fixture.ts",
+        "packages/platform-cloudflare/src/ingest.test.ts",
+        "packages/platform-cloudflare/src/ingest-resilience.test.ts",
         "infra/r2/**"
       ],
       "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",
@@ -337,8 +345,11 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/access.ts",
+        "packages/platform-cloudflare/src/access.test.ts",
         "packages/platform-cloudflare/src/observability.ts",
-        "packages/platform-cloudflare/src/runtime-limits.ts"
+        "packages/platform-cloudflare/src/observability.test.ts",
+        "packages/platform-cloudflare/src/runtime-limits.ts",
+        "packages/platform-cloudflare/src/runtime-limits.test.ts"
       ],
       "mandatory_negative_case": "Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.",
       "document": "ER-17-access-observability-and-runtime-limits.md",
@@ -461,22 +472,18 @@
         "ER-21"
       ],
       "owned_paths": [
-        "apps/eliotr-core/package.json",
-        "apps/eliotr-core/tsconfig.json",
-        "apps/eliotr-core/vitest.config.ts",
-        "apps/eliotr-core/wrangler.jsonc",
-        "apps/eliotr-core/AGENTS.md",
         "apps/eliotr-core/src/env.ts",
         "apps/eliotr-core/src/index.ts",
         "apps/eliotr-core/src/http.ts",
         "apps/eliotr-core/src/composition-root.ts",
         "apps/eliotr-core/src/queue.ts",
+        "apps/eliotr-core/src/scheduled.ts",
+        "apps/eliotr-core/src/projection-delivery-handler.ts",
+        "apps/eliotr-core/src/projection-delivery-handler.test.ts",
         "apps/eliotr-core/src/readiness.ts",
         "apps/eliotr-core/src/research-session.ts",
-        "apps/eliotr-core/src/scheduled.ts",
         "apps/eliotr-core/src/index.test.ts",
-        "apps/eliotr-core/src/projection-delivery-handler.ts",
-        "apps/eliotr-core/src/projection-delivery-handler.test.ts"
+        "apps/eliotr-core/wrangler.jsonc"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -555,13 +562,13 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/erasure-backend.ts",
-        "apps/eliotr-core/src/erasure-coordinator.ts",
-        "infra/erasure/**",
         "packages/cloudflare-erasure/**",
-        "scripts/check-erasure-closure.mjs",
+        "apps/eliotr-core/src/erasure-coordinator.ts",
         "apps/eliotr-core/src/erasure-coordinator.test.ts",
         "apps/eliotr-core/src/erasure-runtime.ts",
-        "apps/eliotr-core/src/erasure-runtime.test.ts"
+        "apps/eliotr-core/src/erasure-runtime.test.ts",
+        "infra/erasure/**",
+        "scripts/check-erasure-closure.mjs"
       ],
       "mandatory_negative_case": "Block one requested backup location and prove no subset purge can issue COMPLETE/PURGED.",
       "document": "ER-28-privacy-erasure-and-purge-closure.md",
@@ -595,7 +602,9 @@
       "owned_paths": [
         "packages/domain/src/scope.ts",
         "packages/domain/src/project-membership.ts",
-        "apps/eliotr-core/src/scope-service.ts"
+        "packages/domain/src/project-membership.test.ts",
+        "apps/eliotr-core/src/scope-service.ts",
+        "apps/eliotr-core/src/scope-service.test.ts"
       ],
       "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
       "document": "ER-30-global-library-projects-and-scope-snapshots.md",

@@ -1,10 +1,11 @@
-import { access, readFile, readdir } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const manifestPath = resolve(root, "docs/agent-work/manifest.json");
-const fragmentsDirectory = resolve(root, "docs/agent-work/packets");
+const agentWorkDirectory = resolve(root, "docs/agent-work");
+const manifestPath = resolve(agentWorkDirectory, "manifest.json");
+const fragmentsDirectory = resolve(agentWorkDirectory, "packets");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const errors = [];
 
@@ -42,6 +43,124 @@ async function loadFragments() {
   return packets;
 }
 
+function duplicateValues(values) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const value of values) {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  }
+  return [...duplicates].sort();
+}
+
+function parseDocumentOwnedPaths(packetId, documentName, markdown) {
+  const lines = markdown.split(/\r?\n/u);
+  const headingIndexes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index] === "## Owned paths") headingIndexes.push(index);
+  }
+  if (headingIndexes.length !== 1) {
+    errors.push(
+      `${packetId}: ${documentName} must contain exactly one "## Owned paths" heading`,
+    );
+    return null;
+  }
+
+  const paths = [];
+  const headingIndex = headingIndexes[0];
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^##(?:\s|$)/u.test(line)) break;
+    if (line.trim() === "") continue;
+
+    const match = /^- `([^`]+)`$/u.exec(line);
+    if (match !== null) {
+      paths.push(match[1]);
+      continue;
+    }
+
+    if (line.startsWith("- ") || paths.length === 0) {
+      errors.push(
+        `${packetId}: ${documentName}:${index + 1} has malformed owned-path entry`,
+      );
+      continue;
+    }
+
+    // Packet documents may explain cross-packet handoffs directly after the
+    // bullet block. Once at least one exact path was parsed, ordinary prose
+    // terminates the machine-readable owned-path section.
+    break;
+  }
+
+  if (paths.length === 0) {
+    errors.push(`${packetId}: ${documentName} has no documented owned paths`);
+    return null;
+  }
+  for (const duplicate of duplicateValues(paths)) {
+    errors.push(`${packetId}: duplicate documented owned path: ${duplicate}`);
+  }
+  return paths;
+}
+
+function compareDocumentOwnedPaths(packet, documentPaths) {
+  const manifestPaths = packet.owned_paths;
+  const manifestSet = new Set(manifestPaths);
+  const documentSet = new Set(documentPaths);
+  for (const path of manifestPaths) {
+    if (!documentSet.has(path)) {
+      errors.push(`${packet.id}: manifest owns path absent from packet document: ${path}`);
+    }
+  }
+  for (const path of documentPaths) {
+    if (!manifestSet.has(path)) {
+      errors.push(`${packet.id}: packet document owns path absent from manifest: ${path}`);
+    }
+  }
+  const sameOrder = manifestPaths.every(
+    (path, index) => path === documentPaths[index],
+  );
+  if (
+    manifestPaths.length === documentPaths.length &&
+    !sameOrder &&
+    manifestPaths.every((path) => documentSet.has(path))
+  ) {
+    errors.push(`${packet.id}: manifest and packet document owned paths use different order`);
+  }
+}
+
+async function validatePacketDocument(packet) {
+  if (typeof packet.document !== "string" || packet.document.length === 0) {
+    errors.push(`${packet.id}: missing packet document name`);
+    return;
+  }
+  const documentPath = resolve(agentWorkDirectory, packet.document);
+  const relativeDocumentPath = relative(agentWorkDirectory, documentPath);
+  if (
+    relativeDocumentPath === "" ||
+    relativeDocumentPath.startsWith("..") ||
+    isAbsolute(relativeDocumentPath)
+  ) {
+    errors.push(`${packet.id}: packet document escapes docs/agent-work`);
+    return;
+  }
+
+  let markdown;
+  try {
+    markdown = await readFile(documentPath, "utf8");
+  } catch {
+    errors.push(`${packet.id}: missing packet document ${packet.document}`);
+    return;
+  }
+  const documentPaths = parseDocumentOwnedPaths(
+    packet.id,
+    packet.document,
+    markdown,
+  );
+  if (documentPaths !== null && Array.isArray(packet.owned_paths)) {
+    compareDocumentOwnedPaths(packet, documentPaths);
+  }
+}
+
 const packetList = [...(manifest.packets ?? []), ...await loadFragments()];
 const ids = new Set();
 const packets = new Map();
@@ -49,14 +168,16 @@ for (const packet of packetList) {
   if (ids.has(packet.id)) errors.push(`duplicate packet id: ${packet.id}`);
   ids.add(packet.id);
   packets.set(packet.id, packet);
-  if (!Array.isArray(packet.owned_paths) || packet.owned_paths.length === 0) errors.push(`${packet.id}: no owned_paths`);
+  if (!Array.isArray(packet.owned_paths) || packet.owned_paths.length === 0) {
+    errors.push(`${packet.id}: no owned_paths`);
+  } else {
+    for (const duplicate of duplicateValues(packet.owned_paths)) {
+      errors.push(`${packet.id}: duplicate manifest owned path: ${duplicate}`);
+    }
+  }
   if (!packet.mandatory_negative_case) errors.push(`${packet.id}: no mandatory negative case`);
   if ((packet.max_package_source_lines ?? Infinity) > 10_000) errors.push(`${packet.id}: package line limit > 10000`);
-  try {
-    await access(resolve(root, "docs/agent-work", packet.document));
-  } catch {
-    errors.push(`${packet.id}: missing packet document ${packet.document}`);
-  }
+  await validatePacketDocument(packet);
 }
 
 for (const packet of packetList) {
@@ -85,7 +206,7 @@ function patternsOverlap(left, right) {
 
 const claims = [];
 for (const packet of packetList) {
-  for (const path of packet.owned_paths) claims.push({ id: packet.id, path });
+  for (const path of packet.owned_paths ?? []) claims.push({ id: packet.id, path });
 }
 for (let i = 0; i < claims.length; i += 1) {
   for (let j = i + 1; j < claims.length; j += 1) {
@@ -115,4 +236,4 @@ if (errors.length > 0) {
   console.error(errors.map((error) => `- ${error}`).join("\n"));
   process.exit(1);
 }
-console.log(`Work packet manifest valid: ${packets.size} packets, ${claims.length} exclusive path claims, acyclic DAG.`);
+console.log(`Work packet manifest valid: ${packets.size} packets, ${claims.length} exclusive path claims, acyclic DAG, packet documents synchronized.`);
