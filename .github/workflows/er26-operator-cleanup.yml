@@ -1,0 +1,138 @@
+name: er26-operator-cleanup
+
+on:
+  push:
+    branches:
+      - agent/ER-26-ai-search-generation-operator-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er26-operator-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: ${{ !contains(github.event.head_commit.message, '[er26-operator-cleaned]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-26-ai-search-generation-operator-20260904
+          fetch-depth: 0
+
+      - name: Finalize operator corpus and ownership
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          manage = Path("scripts/manage-ai-search-generation.mjs")
+          text = manage.read_text(encoding="utf-8")
+          old = '  const suffix = `${receipt.revision}-${receipt.artifact_sha256.slice(0, 16)}`;\n'
+          new = '  const suffix = `${receipt.disposition.toLowerCase()}-${receipt.revision}-${receipt.artifact_sha256.slice(0, 16)}`;\n'
+          if text.count(old) != 1:
+              raise SystemExit("receipt suffix anchor missing or ambiguous")
+          manage.write_text(text.replace(old, new), encoding="utf-8")
+
+          test = Path("scripts/test-ai-search-generation-operator.mjs")
+          text = test.read_text(encoding="utf-8")
+          text = text.replace(
+              'import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";\n',
+              'import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";\n',
+          )
+          text = text.replace(
+              'import { fileURLToPath } from "node:url";\n',
+              'import { fileURLToPath, URL } from "node:url";\n',
+          )
+          anchor = '''try {
+            const empty = parsedSuccess(await run("status"), "empty status");
+          '''
+          insertion = '''try {
+            const driftedDesired = structuredClone(desired);
+            const driftedPrimary = driftedDesired.instances.find(
+              (instance) => instance?.purpose === "private natural-language source sections",
+            );
+            assert(driftedPrimary, "primary desired instance is missing");
+            driftedPrimary.create.embedding_model = "@cf/incompatible/embedding-model";
+            const driftedDesiredPath = resolve(stateRoot, "drifted-desired.json");
+            await writeFile(
+              driftedDesiredPath,
+              `${JSON.stringify(driftedDesired, null, 2)}\\n`,
+              "utf8",
+            );
+            const beforeProfileDrift = requests;
+            parsedFailure(
+              await run("status", ["--desired-state", driftedDesiredPath]),
+              "AI_SEARCH_GENERATION_OPERATOR_INPUT_INVALID",
+              "drifted desired profile",
+            );
+            assert.equal(
+              requests,
+              beforeProfileDrift,
+              "drifted desired profile contacted D1",
+            );
+
+            const empty = parsedSuccess(await run("status"), "empty status");
+          '''
+          if text.count(anchor) != 1:
+              raise SystemExit("operator test insertion anchor missing or ambiguous")
+          test.write_text(text.replace(anchor, insertion), encoding="utf-8")
+
+          runner = Path("scripts/run-provisioner-tests.mjs")
+          runner.write_text(
+              '''process.env.ELIOTR_ACCESS_TEAM_DOMAIN ??= "https://mock-team.cloudflareaccess.com";
+          process.env.ELIOTR_ACCESS_AUDIENCE ??= "mock-access-audience";
+          process.env.ELIOTR_ACCESS_SERVICE_PRINCIPALS ??= "eliotr-federation,eliotr-agent";
+          await import("./test-cloudflare-provisioners.mjs");
+          await import("./test-ai-search-provisioning-readback.mjs");
+          await import("./test-ai-search-provisioning-reconciliation.mjs");
+          await import("./test-ai-search-generation-operator.mjs");
+          ''',
+              encoding="utf-8",
+          )
+
+          packet = Path("docs/agent-work/ER-26-cloudflare-provisioning-and-deployment.md")
+          text = packet.read_text(encoding="utf-8")
+          anchor = '- `scripts/test-ai-search-provisioning-readback.mjs`\n'
+          addition = anchor + '- `scripts/test-ai-search-provisioning-reconciliation.mjs`\n'
+          if "test-ai-search-provisioning-reconciliation.mjs" not in text:
+              if text.count(anchor) != 1:
+                  raise SystemExit("ER-26 packet ownership anchor missing or ambiguous")
+              text = text.replace(anchor, addition)
+          packet.write_text(text, encoding="utf-8")
+
+          manifest = Path("docs/agent-work/manifest.json")
+          text = manifest.read_text(encoding="utf-8")
+          anchor = '        "scripts/test-ai-search-provisioning-readback.mjs",\n'
+          addition = anchor + '        "scripts/test-ai-search-provisioning-reconciliation.mjs",\n'
+          if "test-ai-search-provisioning-reconciliation.mjs" not in text:
+              if text.count(anchor) != 1:
+                  raise SystemExit("ER-26 manifest ownership anchor missing or ambiguous")
+              text = text.replace(anchor, addition)
+          manifest.write_text(text, encoding="utf-8")
+          PY
+          git rm -f -- \
+            .github/workflows/er26-generation-operator-finalize.yml \
+            .github/workflows/er26-generation-operator-recovery.yml \
+            .github/workflows/er26-generation-operator-safe-merge.yml \
+            .github/workflows/er26-generation-operator-verified-merge.yml \
+            .github/workflows/er26-operator-cleanup.yml
+          node --check scripts/lib/cloudflare-d1-http.mjs
+          node --check scripts/manage-ai-search-generation.mjs
+          node --check scripts/test-ai-search-generation-operator.mjs
+          python3 -m json.tool docs/agent-work/manifest.json >/dev/null
+          git diff --check
+
+      - name: Commit cleaned operator slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-26: finalize generation operator corpus [er26-operator-cleaned]"
+          git push origin HEAD:agent/ER-26-ai-search-generation-operator-20260904
