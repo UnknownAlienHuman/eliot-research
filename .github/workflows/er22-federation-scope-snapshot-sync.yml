@@ -1,0 +1,380 @@
+name: er22-federation-scope-snapshot-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-22-federation-scope-snapshot-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er22-federation-scope-snapshot-sync
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-scope-snapshot-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-federation-scope-snapshot-20260904
+          fetch-depth: 0
+
+      - name: Bind federation requests to the exact signed scope snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          service_path = Path("apps/eliotr-core/src/federation-service.ts")
+          service = service_path.read_text(encoding="utf-8")
+
+          if "ScopeSnapshotSchema," not in service:
+              service = service.replace(
+                  "  Sha256Schema,\n  VersionedRefSchema,",
+                  "  Sha256Schema,\n  ScopeSnapshotSchema,\n  VersionedRefSchema,",
+              )
+          if "type ScopeSnapshot," not in service:
+              service = service.replace(
+                  "  type FederationRequest,\n  type VersionedRef,",
+                  "  type FederationRequest,\n  type ScopeSnapshot,\n  type VersionedRef,",
+              )
+
+          if "export function canonicalFederationJson" not in service:
+              if service.count("function canonicalJson(value: unknown): string {") != 1:
+                  raise SystemExit("canonical federation JSON anchor missing or ambiguous")
+              service = service.replace(
+                  "function canonicalJson(value: unknown): string {",
+                  "export function canonicalFederationJson(value: unknown): string {",
+              ).replace("canonicalJson(", "canonicalFederationJson(")
+          if "export async function federationSha256Hex" not in service:
+              if service.count("async function sha256Hex(value: string): Promise<string> {") != 1:
+                  raise SystemExit("federation SHA anchor missing or ambiguous")
+              service = service.replace(
+                  "async function sha256Hex(value: string): Promise<string> {",
+                  "export async function federationSha256Hex(value: string): Promise<string> {",
+              ).replace("sha256Hex(", "federationSha256Hex(")
+
+          manifest_interface = '''export interface FederationReferenceManifestAuthority {
+            get(ref: VersionedRef): Promise<AllowedReferenceManifest | null>;
+          }'''
+          scope_interface = '''export interface FederationReferenceManifestAuthority {
+            get(ref: VersionedRef): Promise<AllowedReferenceManifest | null>;
+          }
+          export interface FederationScopeSnapshotAuthority {
+            get(ref: VersionedRef): Promise<ScopeSnapshot | null>;
+          }'''
+          if "export interface FederationScopeSnapshotAuthority" not in service:
+              if service.count(manifest_interface) != 1:
+                  raise SystemExit("federation manifest authority interface anchor missing")
+              service = service.replace(manifest_interface, scope_interface)
+
+          dependency_anchor = '''  readonly manifests: FederationReferenceManifestAuthority;
+            readonly bundles: FederationBundleAuthority;'''
+          dependency_replacement = '''  readonly manifests: FederationReferenceManifestAuthority;
+            readonly scopes: FederationScopeSnapshotAuthority;
+            readonly bundles: FederationBundleAuthority;'''
+          if "readonly scopes: FederationScopeSnapshotAuthority;" not in service:
+              if service.count(dependency_anchor) != 1:
+                  raise SystemExit("federation dependency anchor missing")
+              service = service.replace(dependency_anchor, dependency_replacement)
+
+          insertion_anchor = '''function assertAllowedHandleRefs(
+            manifest: AllowedReferenceManifest,
+            refs: readonly VersionedRef[],
+          ): void {'''
+          scope_helpers = '''function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+            if (left.length !== right.length) return false;
+            const normalizedLeft = [...left].sort();
+            const normalizedRight = [...right].sort();
+            return normalizedLeft.every((value, index) => value === normalizedRight[index]);
+          }
+          async function loadScopeSnapshot(
+            dependencies: FederationServiceDependencies,
+            binding: FederationAuthorityBinding,
+            manifest: AllowedReferenceManifest,
+            now: number,
+          ): Promise<ScopeSnapshot> {
+            const raw = await dependencies.scopes.get(manifest.scope_snapshot_ref);
+            if (raw === null) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_NOT_FOUND", "ScopeSnapshot was not found");
+            }
+            const parsed = ScopeSnapshotSchema.safeParse(raw);
+            if (!parsed.success) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_INVALID", "ScopeSnapshot failed strict validation");
+            }
+            const snapshot = parsed.data;
+            const { digest: _digest, ...digestPayload } = snapshot;
+            if (
+              await federationSha256Hex(canonicalFederationJson(digestPayload)) !==
+              snapshot.digest
+            ) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_DIGEST_MISMATCH", "ScopeSnapshot digest is invalid");
+            }
+            if (
+              snapshot.snapshot_id !== manifest.scope_snapshot_ref.id ||
+              snapshot.revision !== manifest.scope_snapshot_ref.revision
+            ) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_MISMATCH", "scope authority returned another revision");
+            }
+            if (snapshot.client_fence_ref !== binding.client_fence_ref) {
+              fail("FEDERATION_CLIENT_FENCE_MISMATCH", "ScopeSnapshot is not bound to this client fence");
+            }
+            if (
+              Date.parse(snapshot.created_at) > now ||
+              Date.parse(snapshot.expires_at) <= now
+            ) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_EXPIRED", "ScopeSnapshot is not currently valid");
+            }
+            if (
+              !Object.prototype.hasOwnProperty.call(
+                manifest.provider_and_policy_generations,
+                snapshot.policy_authority_ref,
+              ) ||
+              isRevoked(manifest, snapshot.policy_authority_ref)
+            ) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_POLICY_DENIED", "scope policy authority is not admitted");
+            }
+
+            const members = snapshot.member_source_revision_refs;
+            if (new Set(members).size !== members.length) {
+              fail("FEDERATION_SCOPE_SNAPSHOT_INVALID", "ScopeSnapshot contains duplicate members");
+            }
+            const manifestMembers = manifest.allowed_source_revision_refs.map(refKey);
+            if (
+              new Set(manifestMembers).size !== manifestMembers.length ||
+              !sameStringSet(members, manifestMembers)
+            ) {
+              fail(
+                "FEDERATION_SCOPE_MEMBERSHIP_MISMATCH",
+                "ScopeSnapshot members differ from AllowedReferenceManifest",
+              );
+            }
+            const memberSet = new Set(members);
+            const ownerKeys = Object.keys(snapshot.source_owner_generations);
+            if (
+              !sameStringSet(ownerKeys, members) ||
+              manifest.allowed_source_revision_refs.some((ref) => isRevoked(manifest, ref)) ||
+              ownerKeys.some((key) => !memberSet.has(key))
+            ) {
+              fail("FEDERATION_SCOPE_MEMBERSHIP_MISMATCH", "scope membership authority is stale");
+            }
+            return snapshot;
+          }
+
+          function assertAllowedHandleRefs(
+            manifest: AllowedReferenceManifest,
+            refs: readonly VersionedRef[],
+          ): void {'''
+          if "async function loadScopeSnapshot(" not in service:
+              if service.count(insertion_anchor) != 1:
+                  raise SystemExit("scope helper insertion anchor missing")
+              service = service.replace(insertion_anchor, scope_helpers)
+
+          authorize_type = '''  ): Promise<{ binding: FederationAuthorityBinding; manifest: AllowedReferenceManifest; now: number }> {'''
+          authorize_type_new = '''  ): Promise<{
+            binding: FederationAuthorityBinding;
+            manifest: AllowedReferenceManifest;
+            scopeSnapshot: ScopeSnapshot;
+            now: number;
+          }> {'''
+          if authorize_type in service:
+              service = service.replace(authorize_type, authorize_type_new)
+
+          authorize_body = '''    const manifest = await loadManifest(dependencies, binding, operation, observedNow);
+              return { binding, manifest, now: observedNow };'''
+          authorize_body_new = '''    const manifest = await loadManifest(dependencies, binding, operation, observedNow);
+              const scopeSnapshot = await loadScopeSnapshot(
+                dependencies,
+                binding,
+                manifest,
+                observedNow,
+              );
+              return { binding, manifest, scopeSnapshot, now: observedNow };'''
+          if "const scopeSnapshot = await loadScopeSnapshot(" not in service:
+              if service.count(authorize_body) != 1:
+                  raise SystemExit("authorize scope snapshot anchor missing")
+              service = service.replace(authorize_body, authorize_body_new)
+
+          request_binding_anchor = '''      if (!requestBindingMatches(request, authorized.binding)) {
+                fail("FEDERATION_REQUEST_BINDING_MISMATCH", "request identity, bridge generation, or client fence does not match authentication");
+              }
+              assertAllowedHandleRefs(authorized.manifest, request.allowed_input_handle_refs);'''
+          request_binding_new = '''      if (!requestBindingMatches(request, authorized.binding)) {
+                fail("FEDERATION_REQUEST_BINDING_MISMATCH", "request identity, bridge generation, or client fence does not match authentication");
+              }
+              if (
+                canonicalFederationJson(request.scope_expression) !==
+                canonicalFederationJson(authorized.scopeSnapshot.resolved_scope_expression)
+              ) {
+                fail(
+                  "FEDERATION_SCOPE_MISMATCH",
+                  "request scope differs from the signed ScopeSnapshot",
+                );
+              }
+              assertAllowedHandleRefs(authorized.manifest, request.allowed_input_handle_refs);'''
+          if "request scope differs from the signed ScopeSnapshot" not in service:
+              if service.count(request_binding_anchor) != 1:
+                  raise SystemExit("request scope binding anchor missing")
+              service = service.replace(request_binding_anchor, request_binding_new)
+          service_path.write_text(service, encoding="utf-8")
+
+          test_path = Path("apps/eliotr-core/src/federation-service.test.ts")
+          test = test_path.read_text(encoding="utf-8")
+          if "type ScopeSnapshot," not in test:
+              test = test.replace(
+                  "  type FederationRequest,\n  type VersionedRef,",
+                  "  type FederationRequest,\n  type ScopeSnapshot,\n  type VersionedRef,",
+              )
+
+          factory_anchor = '''type ManifestFactory = () => Promise<AllowedReferenceManifest>;
+
+          function dependencies('''
+          factory_new = '''type ManifestFactory = () => Promise<AllowedReferenceManifest>;
+          type ScopeSnapshotFactory = () => Promise<ScopeSnapshot>;
+
+          async function scopeSnapshot(
+            overrides: Partial<Omit<ScopeSnapshot, "digest">> = {},
+          ): Promise<ScopeSnapshot> {
+            const payload: Omit<ScopeSnapshot, "digest"> = {
+              snapshot_id: scopeRef.id,
+              revision: scopeRef.revision,
+              resolved_scope_expression: { kind: "PROJECT", project_id: "project-1" },
+              participant_generations: {
+                "client-principal": "client-credential-generation-1",
+                "server-principal": "server-credential-generation-1",
+              },
+              member_source_revision_refs: [],
+              source_owner_generations: {},
+              policy_authority_ref: "privacy-policy-1",
+              disclosure_closure_digest: DIGEST,
+              purge_ledger_revision: 1,
+              client_fence_ref: "client-fence-1",
+              created_at: "2026-09-01T19:00:00.000Z",
+              expires_at: FUTURE,
+              ...overrides,
+            };
+            return { ...payload, digest: await sha256(canonical(payload)) };
+          }
+
+          function dependencies('''
+          if "async function scopeSnapshot(" not in test:
+              if test.count(factory_anchor) != 1:
+                  raise SystemExit("scope snapshot test factory anchor missing")
+              test = test.replace(factory_anchor, factory_new)
+
+          signature_anchor = '''  manifestFactory: ManifestFactory = () => manifest(uses),
+          ): FederationServiceDependencies {'''
+          signature_new = '''  manifestFactory: ManifestFactory = () => manifest(uses),
+            scopeFactory: ScopeSnapshotFactory = () => scopeSnapshot(),
+          ): FederationServiceDependencies {'''
+          if "scopeFactory: ScopeSnapshotFactory" not in test:
+              if test.count(signature_anchor) != 1:
+                  raise SystemExit("dependencies signature anchor missing")
+              test = test.replace(signature_anchor, signature_new)
+
+          manifest_dep_anchor = '''    manifests: { get: vi.fn(manifestFactory) },
+              bundles: {'''
+          manifest_dep_new = '''    manifests: { get: vi.fn(manifestFactory) },
+              scopes: { get: vi.fn(scopeFactory) },
+              bundles: {'''
+          if "scopes: { get: vi.fn(scopeFactory) }" not in test:
+              if test.count(manifest_dep_anchor) != 1:
+                  raise SystemExit("scope dependency insertion anchor missing")
+              test = test.replace(manifest_dep_anchor, manifest_dep_new)
+
+          test_anchor = '''  it("rejects a tampered manifest before invoking durable job authority", async () => {'''
+          scope_tests = '''  it("binds submission scope to the exact signed ScopeSnapshot", async () => {
+            const input = dependencies();
+            const service = createFederationService(input);
+            await expectCode(
+              service.submit(
+                context(),
+                request({ scope_expression: { kind: "GLOBAL_LIBRARY" } }),
+              ),
+              "FEDERATION_SCOPE_MISMATCH",
+            );
+            expect(input.jobs.reserve).not.toHaveBeenCalled();
+          });
+
+          it("rejects tampered, expired, foreign-fence and membership-drifted snapshots", async () => {
+            const signed = await scopeSnapshot();
+            const tampered: ScopeSnapshot = {
+              ...signed,
+              resolved_scope_expression: { kind: "GLOBAL_LIBRARY" },
+            };
+            const tamperedInput = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(),
+              async () => tampered,
+            );
+            await expectCode(
+              createFederationService(tamperedInput).submit(context(), request()),
+              "FEDERATION_SCOPE_SNAPSHOT_DIGEST_MISMATCH",
+            );
+            expect(tamperedInput.jobs.reserve).not.toHaveBeenCalled();
+
+            const expiredInput = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(),
+              () => scopeSnapshot({ expires_at: PAST }),
+            );
+            await expectCode(
+              createFederationService(expiredInput).submit(context(), request()),
+              "FEDERATION_SCOPE_SNAPSHOT_EXPIRED",
+            );
+
+            const fenceInput = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(),
+              () => scopeSnapshot({ client_fence_ref: "other-fence" }),
+            );
+            await expectCode(
+              createFederationService(fenceInput).submit(context(), request()),
+              "FEDERATION_CLIENT_FENCE_MISMATCH",
+            );
+
+            const membershipInput = dependencies(
+              record(),
+              allowedUses,
+              () => manifest(),
+              () => scopeSnapshot({
+                member_source_revision_refs: ["source-revision-1@1"],
+                source_owner_generations: {
+                  "source-revision-1@1": "source-owner-generation-1",
+                },
+              }),
+            );
+            await expectCode(
+              createFederationService(membershipInput).submit(context(), request()),
+              "FEDERATION_SCOPE_MEMBERSHIP_MISMATCH",
+            );
+            expect(membershipInput.jobs.reserve).not.toHaveBeenCalled();
+          });
+
+          it("rejects a tampered manifest before invoking durable job authority", async () => {'''
+          if "binds submission scope to the exact signed ScopeSnapshot" not in test:
+              if test.count(test_anchor) != 1:
+                  raise SystemExit("scope snapshot negative-test insertion anchor missing")
+              test = test.replace(test_anchor, scope_tests)
+          test_path.write_text(test, encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er22-federation-scope-snapshot-sync.yml
+          git diff --check
+
+      - name: Commit signed scope binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-22: bind federation to signed ScopeSnapshot [er22-scope-snapshot-synced]"
+          git push origin HEAD:agent/ER-22-federation-scope-snapshot-20260904
