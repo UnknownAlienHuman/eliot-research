@@ -57,6 +57,10 @@ function manifestAuthorizes(
     ...refKeys(manifest.scope_snapshot_ref),
   ].some((key) => revoked.has(key));
   if (
+    !sameRef(
+      manifest.manifest_ref,
+      binding.allowed_reference_manifest_ref,
+    ) ||
     manifest.client_fence_ref !== binding.client_fence_ref ||
     manifest.provider_and_policy_generations[
       binding.requester_principal_ref
@@ -391,7 +395,11 @@ export function createD1FederationJobAuthority(
       );
     },
 
-    async read(rawBinding, rawExchangeId, rawIdempotencyKey) {
+    async read(
+      rawBinding: FederationAuthorityBinding,
+      rawExchangeId: string,
+      rawIdempotencyKey: string,
+    ) {
       const binding = normalizeFederationBinding(rawBinding);
       const stored = await readFederationJob(
         database,
@@ -404,10 +412,10 @@ export function createD1FederationJobAuthority(
     },
 
     async cancel(
-      rawBinding,
-      rawExchangeId,
-      rawIdempotencyKey,
-      rawReason,
+      rawBinding: FederationAuthorityBinding,
+      rawExchangeId: string,
+      rawIdempotencyKey: string,
+      rawReason: string,
     ) {
       const binding = normalizeFederationBinding(rawBinding);
       const exchangeId = federationIdentifier(rawExchangeId, "exchange id");

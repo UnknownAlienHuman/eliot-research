@@ -268,32 +268,33 @@ async function assertJobState(
   const active = FEDERATION_ACTIVE_STATES.has(
     status.transport_state as "ACCEPTED" | "RUNNING" | "PARTIAL" | "BLOCKED",
   );
-  let invalid = false;
-  if (status.transport_state === "CANCELLED") {
-    const expectedReceipt = cancellationReason === null
-      ? null
-      : await federationCancellationReceiptRef(jobId, cancellationReason);
-    invalid =
-      status.completion_disposition !== "CANCELLED" ||
+  const expectedReceipt =
+    status.transport_state === "CANCELLED" && cancellationReason !== null
+      ? await federationCancellationReceiptRef(jobId, cancellationReason)
+      : null;
+  const terminalWithoutReceipt =
+    (status.transport_state === "COMPLETED" ||
+      status.transport_state === "FAILED") &&
+    status.terminal_receipt_ref === undefined;
+  const invalid = status.transport_state === "CANCELLED"
+    ? status.completion_disposition !== "CANCELLED" ||
       observed !== "CANCELLED" ||
       cancellationReason === null ||
       cancelledAt === null ||
       cancelledAt !== updatedAt ||
       result !== null ||
       status.cancellation_receipt_ref !== expectedReceipt ||
-      status.terminal_receipt_ref !== expectedReceipt;
-  } else {
-    invalid =
-      cancellationReason !== null ||
+      status.terminal_receipt_ref !== expectedReceipt
+    : cancellationReason !== null ||
       cancelledAt !== null ||
       status.cancellation_receipt_ref !== undefined ||
       (active && status.terminal_receipt_ref !== undefined) ||
+      terminalWithoutReceipt ||
       ((active || status.transport_state === "FAILED") &&
         (status.completion_disposition !== null ||
           observed !== null ||
           result !== null)) ||
       (status.transport_state === "COMPLETED" && observed === null);
-  }
   if (invalid) {
     federationD1Fail(
       "FEDERATION_D1_INPUT_INVALID",
