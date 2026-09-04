@@ -31,7 +31,10 @@ authority channel and do not let a Google transport result promote itself into E
 
 ## Acceptance
 
-- only the signed Access service-token principal `gemini-spark` reaches JSON-RPC dispatch;
+- only the configured Cloudflare Access service-token Client ID reaches JSON-RPC dispatch;
+- the external Client ID is mapped to the internal logical principal `gemini-spark` only after exact
+  signed JWT verification;
+- a human-readable token name cannot substitute for the signed Client ID in `common_name`;
 - MCP 2025-06-18 initialization and protocol-header enforcement work without server session state;
 - tool discovery exposes exactly four product-level tools;
 - ELIOT MCP cannot select providers, models, databases, buckets, indexes, credentials, or arbitrary URLs;
@@ -43,6 +46,6 @@ authority channel and do not let a Google transport result promote itself into E
 
 ## Mandatory negative boundary
 
-Request `dry_run=false`, send a browser Origin, use an owner JWT, and present a Google readback with a
-different payload digest. The server must deny the first three and return `OBSERVED_MISMATCH` for the
-last without changing canonical ELIOT state.
+Request `dry_run=false`, send a browser Origin, use an owner JWT, present the token name instead of the
+configured Client ID, and present a Google readback with a different payload digest. The server must deny
+the first four and return `OBSERVED_MISMATCH` for the last without changing canonical ELIOT state.
