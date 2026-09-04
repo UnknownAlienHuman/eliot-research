@@ -12,9 +12,16 @@ const desired = JSON.parse(
 const target = desired.instances[0];
 assert(target && typeof target.id === "string");
 const accountId = "mock-account-ai-search-reconciliation";
+const namespaceCollectionPath =
+  `/client/v4/accounts/${accountId}/ai-search/namespaces`;
+const namespacePath = `${namespaceCollectionPath}/${desired.namespace}`;
+const instanceCollectionPath = `${namespacePath}/instances`;
+let namespaceRecord = null;
 let instances = new Map();
-let mode = "normal";
-let mutations = 0;
+let namespaceMode = "normal";
+let instanceMode = "normal";
+let namespaceMutations = 0;
+let instanceMutations = 0;
 
 function response(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -23,6 +30,14 @@ function response(res, status, payload) {
     "content-length": Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function notFound(res, message = "not found") {
+  response(res, 404, {
+    success: false,
+    errors: [{ code: 1000, message }],
+    result: null,
+  });
 }
 
 async function requestJson(req) {
@@ -47,87 +62,138 @@ function providerReadback(spec) {
   return readback;
 }
 
-function reset(nextMode) {
-  mode = nextMode;
-  mutations = 0;
-  instances = new Map(
-    desired.instances.map((spec) => [spec.id, providerReadback(spec)]),
-  );
-  instances.delete(target.id);
+function exactNamespace() {
+  return {
+    id: "namespace-1",
+    name: desired.namespace,
+    description: "Eliot Research private managed retrieval namespace",
+  };
 }
 
-const namespacePath =
-  `/client/v4/accounts/${accountId}/ai-search/namespaces/${desired.namespace}`;
-const instanceCollectionPath = `${namespacePath}/instances`;
+function allInstances() {
+  return new Map(
+    desired.instances.map((spec) => [spec.id, providerReadback(spec)]),
+  );
+}
+
+function resetNamespace(nextMode) {
+  namespaceMode = nextMode;
+  instanceMode = "normal";
+  namespaceRecord = null;
+  instances = allInstances();
+  namespaceMutations = 0;
+  instanceMutations = 0;
+}
+
+function resetInstance(nextMode) {
+  namespaceMode = "normal";
+  instanceMode = nextMode;
+  namespaceRecord = exactNamespace();
+  instances = allInstances();
+  instances.delete(target.id);
+  namespaceMutations = 0;
+  instanceMutations = 0;
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://mock");
     const method = req.method ?? "GET";
 
     if (method === "GET" && url.pathname === namespacePath) {
+      if (namespaceRecord === null) {
+        notFound(res);
+      } else {
+        response(res, 200, {
+          success: true,
+          result: structuredClone(namespaceRecord),
+        });
+      }
+      return;
+    }
+
+    if (method === "POST" && url.pathname === namespaceCollectionPath) {
+      namespaceMutations += 1;
+      const body = await requestJson(req);
+      assert.equal(body?.name, desired.namespace);
+      if (namespaceMode === "fail-before-write") {
+        res.destroy();
+        return;
+      }
+      namespaceRecord = {
+        id: "namespace-1",
+        name: namespaceMode === "readback-drift"
+          ? "foreign-namespace"
+          : body.name,
+        description: body.description,
+      };
+      if (namespaceMode === "lost-acknowledgement") {
+        res.destroy();
+        return;
+      }
       response(res, 200, {
         success: true,
-        result: { id: "namespace-1", name: desired.namespace },
+        result: structuredClone(namespaceRecord),
       });
       return;
     }
-    if (method === "GET" && url.pathname.startsWith(`${instanceCollectionPath}/`)) {
+
+    if (
+      method === "GET" &&
+      url.pathname.startsWith(`${instanceCollectionPath}/`)
+    ) {
       const id = decodeURIComponent(
         url.pathname.slice(instanceCollectionPath.length + 1),
       );
       const instance = instances.get(id);
       if (instance === undefined) {
-        response(res, 404, {
-          success: false,
-          errors: [{ code: 1000, message: "not found" }],
-          result: null,
-        });
+        notFound(res);
       } else {
-        response(res, 200, { success: true, result: structuredClone(instance) });
-      }
-      return;
-    }
-    if (method === "POST" && url.pathname === instanceCollectionPath) {
-      mutations += 1;
-      const body = await requestJson(req);
-      if (mode === "fail-before-write") {
-        response(res, 503, {
-          success: false,
-          errors: [{ code: 2001, message: "write unavailable" }],
-          result: null,
+        response(res, 200, {
+          success: true,
+          result: structuredClone(instance),
         });
-        return;
       }
-      const stored = structuredClone(body);
-      if (mode === "readback-drift") stored.cache = true;
-      instances.set(stored.id, stored);
-      if (mode === "lost-acknowledgement") {
-        response(res, 504, {
-          success: false,
-          errors: [{ code: 2002, message: "acknowledgement lost" }],
-          result: null,
-        });
-        return;
-      }
-      response(res, 200, { success: true, result: structuredClone(stored) });
       return;
     }
 
-    response(res, 404, {
-      success: false,
-      errors: [{ code: 1000, message: "unexpected route" }],
-      result: null,
-    });
+    if (method === "POST" && url.pathname === instanceCollectionPath) {
+      instanceMutations += 1;
+      const body = await requestJson(req);
+      assert.equal(body?.id, target.id);
+      if (instanceMode === "fail-before-write") {
+        res.destroy();
+        return;
+      }
+      const stored = structuredClone(body);
+      if (instanceMode === "readback-drift") stored.cache = true;
+      instances.set(stored.id, stored);
+      if (instanceMode === "lost-acknowledgement") {
+        res.destroy();
+        return;
+      }
+      response(res, 200, {
+        success: true,
+        result: structuredClone(stored),
+      });
+      return;
+    }
+
+    notFound(res, `${method} ${url.pathname}`);
   } catch (error) {
     response(res, 500, {
       success: false,
-      errors: [{ message: error instanceof Error ? error.stack : String(error) }],
+      errors: [{
+        message: error instanceof Error ? error.stack : String(error),
+      }],
       result: null,
     });
   }
 });
 
-await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+await new Promise((resolveListen) =>
+  server.listen(0, "127.0.0.1", resolveListen),
+);
 const address = server.address();
 assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
@@ -155,6 +221,15 @@ function runProvisioner() {
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      resolveRun({
+        status: null,
+        signal: null,
+        stdout,
+        stderr: `${stderr}${error.stack ?? String(error)}`,
+      });
+    });
     child.on("close", (status, signal) => {
       clearTimeout(timeout);
       resolveRun({ status, signal, stdout, stderr });
@@ -162,40 +237,90 @@ function runProvisioner() {
   });
 }
 
-function expectPass(result, disposition) {
+function expectPass(result, field, disposition) {
   assert.equal(
     result.status,
     0,
-    `provisioner failed (signal=${result.signal ?? "none"})\n${result.stdout}\n${result.stderr}`,
+    `provisioner failed (signal=${result.signal ?? "none"})\n` +
+      `${result.stdout}\n${result.stderr}`,
   );
-  assert.match(result.stdout, new RegExp(`"disposition": "${disposition}"`, "u"));
-  assert.equal(mutations, 1, `${disposition} issued more than one POST`);
+  assert.match(
+    result.stdout,
+    new RegExp(`"${field}": "${disposition}"`, "u"),
+  );
 }
+
 function expectFailure(result, fragment) {
   assert.notEqual(result.status, 0, `${fragment} unexpectedly passed`);
-  assert.match(`${result.stdout}\n${result.stderr}`, new RegExp(fragment, "u"));
-  assert.equal(mutations, 1, `${fragment} issued more than one POST`);
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    new RegExp(fragment, "u"),
+  );
+}
+
+function expectMutationCounts(namespaceCount, instanceCount, label) {
+  assert.equal(
+    namespaceMutations,
+    namespaceCount,
+    `${label} issued an unexpected namespace POST count`,
+  );
+  assert.equal(
+    instanceMutations,
+    instanceCount,
+    `${label} issued an unexpected instance POST count`,
+  );
 }
 
 try {
-  reset("normal");
-  expectPass(await runProvisioner(), "CREATED");
+  resetNamespace("normal");
+  expectPass(await runProvisioner(), "namespace_disposition", "CREATED");
+  expectMutationCounts(1, 0, "acknowledged namespace create");
 
-  reset("lost-acknowledgement");
-  expectPass(await runProvisioner(), "CREATE_RECONCILED");
+  resetNamespace("lost-acknowledgement");
+  expectPass(
+    await runProvisioner(),
+    "namespace_disposition",
+    "CREATE_RECONCILED",
+  );
+  expectMutationCounts(1, 0, "lost namespace acknowledgement");
 
-  reset("fail-before-write");
+  resetNamespace("fail-before-write");
+  expectFailure(
+    await runProvisioner(),
+    "no second namespace create was attempted",
+  );
+  expectMutationCounts(1, 0, "unresolved namespace create");
+  assert.equal(namespaceRecord, null);
+
+  resetNamespace("readback-drift");
+  expectFailure(await runProvisioner(), "namespace post-create readback");
+  expectMutationCounts(1, 0, "drifted namespace readback");
+
+  resetInstance("normal");
+  expectPass(await runProvisioner(), "disposition", "CREATED");
+  expectMutationCounts(0, 1, "acknowledged instance create");
+
+  resetInstance("lost-acknowledgement");
+  expectPass(await runProvisioner(), "disposition", "CREATE_RECONCILED");
+  expectMutationCounts(0, 1, "lost instance acknowledgement");
+
+  resetInstance("fail-before-write");
   expectFailure(await runProvisioner(), "no second create was attempted");
+  expectMutationCounts(0, 1, "unresolved instance create");
   assert.equal(instances.has(target.id), false);
 
-  reset("readback-drift");
+  resetInstance("readback-drift");
   expectFailure(await runProvisioner(), "post-create readback");
+  expectMutationCounts(0, 1, "drifted instance readback");
 
   console.log(
-    "AI Search create reconciliation: PASS (exact readback required; lost ACK reconciled; unresolved effects never retried).",
+    "AI Search create reconciliation: PASS (namespace and instance exact " +
+      "readback required; lost ACK reconciled; unresolved effects never retried).",
   );
 } finally {
   await new Promise((resolveClose, rejectClose) => {
-    server.close((error) => error ? rejectClose(error) : resolveClose());
+    server.close((error) =>
+      error ? rejectClose(error) : resolveClose(),
+    );
   });
 }
