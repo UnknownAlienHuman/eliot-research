@@ -1,0 +1,72 @@
+name: er16-managed-search-read-port-materialize
+
+on:
+  push:
+    branches:
+      - agent/ER-16-managed-search-read-port-20260903
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er16-managed-search-read-port-materialize
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    if: ${{ !contains(github.event.head_commit.message, '[er16-managed-read-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-managed-search-read-port-20260903
+          fetch-depth: 0
+
+      - name: Materialize managed-search implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          source_path = Path(".github/workflows/er16-managed-search-read-port-sync.yml")
+          source = source_path.read_text(encoding="utf-8")
+          start_marker = "          addition = r'''"
+          end_marker = "\n          '''\n\n          path.write_text"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          addition = dedent(source[start:end]).strip()
+          if not addition.startswith("export const AI_SEARCH_MANAGED_QUERY_MAX_BYTES"):
+              raise SystemExit("managed-search implementation extraction failed")
+
+          target = Path("packages/platform-cloudflare/src/ai-search.ts")
+          text = target.read_text(encoding="utf-8")
+          sentinel = "export function createAiSearchManagedSearchPort("
+          if sentinel in text:
+              raise SystemExit("managed-search read port already exists")
+          target.write_text(
+              text.rstrip() + "\n\n" + addition + "\n",
+              encoding="utf-8",
+          )
+          Path("packages/platform-cloudflare/src/ai-search.test.ts").write_text(
+              'import "../../../infra/ai-search/ai-search-locator.test.mjs";\n'
+              'import "../../../infra/ai-search/ai-search-managed-read.test.mjs";\n'
+              'import "../../../infra/ai-search/model-gateway.test.mjs";\n',
+              encoding="utf-8",
+          )
+          PY
+          git diff --check
+
+      - name: Commit production files only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- \
+            packages/platform-cloudflare/src/ai-search.ts \
+            packages/platform-cloudflare/src/ai-search.test.ts
+          git commit -m "ER-16: execute promoted managed-search reads [er16-managed-read-synced]"
+          git push origin HEAD:agent/ER-16-managed-search-read-port-20260903
