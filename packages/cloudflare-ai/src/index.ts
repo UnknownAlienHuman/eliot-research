@@ -3,6 +3,7 @@ export * from "./ai-search-generation.js";
 export * from "./ai-search-generation-registry-contract.js";
 export * from "./ai-search-generation-registry-codec.js";
 export { createAiSearchGenerationRegistryService } from "./ai-search-generation-registry.js";
+export { createD1AiSearchGenerationRegistryStore } from "./ai-search-generation-registry-d1.js";
 export {
   AiSearchProvisioningError,
   compileAiSearchCreateRequest,
