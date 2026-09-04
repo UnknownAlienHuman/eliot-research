@@ -5,9 +5,7 @@ import { handleGeminiMcp } from "./gemini-mcp.js";
 
 const CLIENT_ID = "0123456789abcdef0123456789abcdef.access";
 
-function environment(
-  clientId: string | undefined = CLIENT_ID,
-): Env {
+function environment(clientId: string = CLIENT_ID): Env {
   return {
     ENVIRONMENT: "development",
     DEPLOYMENT_GENERATION: "generation-1",
@@ -15,9 +13,7 @@ function environment(
     MCP_HOSTNAME: "mcp.example",
     MCP_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
     MCP_ACCESS_AUDIENCE: "mcp-audience",
-    ...(clientId === undefined
-      ? {}
-      : { MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: clientId }),
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: clientId,
   } as unknown as Env;
 }
 
@@ -82,14 +78,14 @@ describe("Gemini MCP Access service-token identity", () => {
     });
   });
 
-  it("fails closed when the configured Client ID is absent or malformed", async () => {
-    const absent = await handleGeminiMcp(
+  it("fails closed when the configured Client ID is blank or malformed", async () => {
+    const blank = await handleGeminiMcp(
       request(),
-      environment(undefined),
+      environment(""),
       {} as ExecutionContext,
     );
-    expect(absent.status).toBe(503);
-    expect(await body(absent)).toMatchObject({
+    expect(blank.status).toBe(503);
+    expect(await body(blank)).toMatchObject({
       code: "MCP_CONFIGURATION_UNAVAILABLE",
     });
 
