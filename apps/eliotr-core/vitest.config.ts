@@ -6,6 +6,7 @@ export default defineConfig({
     cloudflareTest({
       wrangler: {
         configPath: "./wrangler.jsonc",
+        environment: "test",
       },
     }),
   ],
