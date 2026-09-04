@@ -63,3 +63,6 @@ export interface FederationApiV1 {
     allowedScopeRefs: readonly VersionedRef[],
   ): Promise<FederationChangePage>;
 }
+
+/** Compatibility name for the single authoritative federation API. */
+export type FederationApi = FederationApiV1;
