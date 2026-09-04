@@ -21,6 +21,7 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/run-provisioner-tests.mjs`
 - `scripts/test-ai-search-generation-operator.mjs`
 - `scripts/test-ai-search-provisioning-readback.mjs`
+- `scripts/test-ai-search-provisioning-reconciliation.mjs`
 - `scripts/provision-ai-gateways.mjs`
 - `scripts/deploy-cloudflare.mjs`
 - `scripts/test-cloudflare-provisioners.mjs`

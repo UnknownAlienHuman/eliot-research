@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desired = JSON.parse(
@@ -209,6 +209,30 @@ const T2 = "2026-09-04T03:02:00.000Z";
 const T3 = "2026-09-04T03:03:00.000Z";
 
 try {
+  const driftedDesired = structuredClone(desired);
+  const driftedPrimary = driftedDesired.instances.find(
+    (instance) => instance?.purpose === "private natural-language source sections",
+  );
+  assert(driftedPrimary, "primary desired instance is missing");
+  driftedPrimary.create.embedding_model = "@cf/incompatible/embedding-model";
+  const driftedDesiredPath = resolve(stateRoot, "drifted-desired.json");
+  await writeFile(
+    driftedDesiredPath,
+    `${JSON.stringify(driftedDesired, null, 2)}\n`,
+    "utf8",
+  );
+  const beforeProfileDrift = requests;
+  parsedFailure(
+    await run("status", ["--desired-state", driftedDesiredPath]),
+    "AI_SEARCH_GENERATION_OPERATOR_INPUT_INVALID",
+    "drifted desired profile",
+  );
+  assert.equal(
+    requests,
+    beforeProfileDrift,
+    "drifted desired profile contacted D1",
+  );
+
   const empty = parsedSuccess(await run("status"), "empty status");
   assert.equal(empty.registry_snapshot, null);
   assert.equal(requests, 1);

@@ -428,7 +428,7 @@ function requireCompiledPrimaryProfile(cloudflareAi, desired) {
 async function persistReceipt(stateDirectory, document) {
   const receipt = document.persistence_receipt;
   if (receipt === undefined) return null;
-  const suffix = `${receipt.revision}-${receipt.artifact_sha256.slice(0, 16)}`;
+  const suffix = `${receipt.disposition.toLowerCase()}-${receipt.revision}-${receipt.artifact_sha256.slice(0, 16)}`;
   const path = resolve(
     stateDirectory,
     `ai-search-generation-${document.operation.toLowerCase()}-${suffix}.json`,
