@@ -4,6 +4,7 @@ import {
   AI_SEARCH_PRIMARY_GENERATION,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
 } from "@eliotr/cloudflare-ai";
+import { createApplication } from "./composition-root.js";
 import type { Env } from "./env.js";
 import { handleHttp } from "./http.js";
 import {
@@ -305,5 +306,41 @@ describe("managed projection generation authority", () => {
         },
       },
     } as never)).toThrow(/immutable desired profile/u);
+  });
+});
+
+describe("federation application contract", () => {
+  it("exposes the complete V1 surface and keeps every operation fail-closed", async () => {
+    const fixture = databaseFixture();
+    const application = createApplication({
+      env: environment(fixture.database),
+      executionContext: executionContext(),
+    });
+
+    expect(Object.keys(application.services.federation).sort()).toEqual([
+      "cancel",
+      "changes",
+      "readBundle",
+      "readBundleManifest",
+      "result",
+      "status",
+      "submit",
+    ]);
+    await expect(
+      application.services.federation.readBundle(
+        {} as never,
+        { id: "bundle-1", revision: 1 },
+      ),
+    ).rejects.toMatchObject({
+      code: "IMPLEMENTATION_SLICE_PENDING",
+      operation: "federation.bundle.read",
+      retryable: false,
+    });
+    const capabilities = await application.services.owner.systemCapabilities(
+      {} as never,
+    );
+    expect(capabilities.disabled_slices).toEqual(
+      expect.arrayContaining(["FEDERATION"]),
+    );
   });
 });
