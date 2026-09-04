@@ -47,7 +47,7 @@ function databaseFixture(input: {
 function environment(
   core: D1Database,
   search: D1Database = databaseFixture({
-    schemaGeneration: "search-v3-erasure-invalidation",
+    schemaGeneration: "search-v4-ai-search-generation-registry",
   }).database,
 ): Env {
   return {

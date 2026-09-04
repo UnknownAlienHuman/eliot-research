@@ -19,17 +19,62 @@ for (const name of readdirSync(resolve(root, "infra/d1/search/migrations"))
 assert.equal(core.prepare("SELECT value FROM schema_state WHERE key='schema_generation'").get().value,
   "core-v8-erasure-closure");
 assert.equal(search.prepare("SELECT value FROM schema_state WHERE key='schema_generation'").get().value,
-  "search-v3-erasure-invalidation");
+  "search-v4-ai-search-generation-registry");
 const strict = new Map(core.prepare("PRAGMA table_list").all().map((row) => [row.name, row.strict]));
 for (const table of [
   "erasure_execution", "erasure_dependency_registry", "erasure_hold", "erasure_target",
   "erasure_stage_receipt", "erasure_dependent_invalidation", "backup_purge_obligation",
   "erasure_terminal_guard",
 ]) assert.equal(strict.get(table), 1, `${table} must be STRICT`);
+const searchStrict = new Map(
+  search.prepare("PRAGMA table_list").all().map((row) => [row.name, row.strict]),
+);
+assert.equal(searchStrict.get("ai_search_generation_registry"), 1,
+  "AI Search generation registry must be STRICT");
 
 const now = "2026-09-01T02:00:00.000Z";
 const nextReview = "2026-09-08T02:00:00.000Z";
 const sha = (value) => value.repeat(64);
+const registryArtifact = {
+  schema: "eliotr.ai-search-generation-registry.v1",
+  namespace: "eliotr-managed-search",
+  revision: 1,
+  registry: { active_head_generation: null, generations: [] },
+};
+const insertRegistry = search.prepare(
+  "INSERT INTO ai_search_generation_registry(namespace,revision,artifact_sha256," +
+  "artifact_json) VALUES (?,?,?,?)",
+);
+insertRegistry.run(
+  registryArtifact.namespace,
+  registryArtifact.revision,
+  sha("b"),
+  JSON.stringify(registryArtifact),
+);
+assert.equal(search.prepare(
+  "SELECT revision FROM ai_search_generation_registry WHERE namespace=?",
+).get(registryArtifact.namespace).revision, 1);
+assert.throws(() => insertRegistry.run(
+  "eliotr-foreign", 1, sha("c"),
+  JSON.stringify({ ...registryArtifact, namespace: "eliotr-other" }),
+), /CHECK constraint failed/u, "registry row cannot bind another namespace");
+assert.throws(() => insertRegistry.run(
+  "eliotr-revision-drift", 2, sha("d"),
+  JSON.stringify({ ...registryArtifact, namespace: "eliotr-revision-drift" }),
+), /CHECK constraint failed/u, "registry row cannot bind another revision");
+assert.throws(() => insertRegistry.run(
+  "eliotr-uppercase-digest", 1, sha("A"),
+  JSON.stringify({ ...registryArtifact, namespace: "eliotr-uppercase-digest" }),
+), /CHECK constraint failed/u, "registry digest must be lowercase SHA-256");
+const oversizedRegistry = {
+  ...registryArtifact,
+  namespace: "eliotr-oversized",
+  padding: "x".repeat(262_144),
+};
+assert.throws(() => insertRegistry.run(
+  oversizedRegistry.namespace, 1, sha("e"), JSON.stringify(oversizedRegistry),
+), /CHECK constraint failed/u, "registry artifact must fit the 256 KiB envelope");
+
 const requestJson = JSON.stringify({
   admitted_at: now,
   deadline: nextReview,
