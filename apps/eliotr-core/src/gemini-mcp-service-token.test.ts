@@ -1,0 +1,107 @@
+import type { AccessVerifier } from "@eliotr/platform-cloudflare";
+import { describe, expect, it } from "vitest";
+import type { Env } from "./env.js";
+import { handleGeminiMcp } from "./gemini-mcp.js";
+
+const CLIENT_ID = "0123456789abcdef0123456789abcdef.access";
+
+function environment(
+  clientId: string | undefined = CLIENT_ID,
+): Env {
+  return {
+    ENVIRONMENT: "development",
+    DEPLOYMENT_GENERATION: "generation-1",
+    GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+    MCP_HOSTNAME: "mcp.example",
+    MCP_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+    MCP_ACCESS_AUDIENCE: "mcp-audience",
+    ...(clientId === undefined
+      ? {}
+      : { MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: clientId }),
+  } as unknown as Env;
+}
+
+function request(): Request {
+  return new Request("https://mcp.example/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "mcp-protocol-version": "2025-06-18",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "ping",
+    }),
+  });
+}
+
+function verifier(principalRef: string): AccessVerifier {
+  return {
+    async verify() {
+      return {
+        principal_ref: principalRef,
+        credential_generation: "service-credential-1",
+        authentication_method: "service_token" as const,
+        expires_at: "2026-09-04T14:00:00.000Z",
+      };
+    },
+  };
+}
+
+async function body(response: Response): Promise<Record<string, unknown>> {
+  return await response.json() as Record<string, unknown>;
+}
+
+describe("Gemini MCP Access service-token identity", () => {
+  it("admits the exact signed Access Client ID", async () => {
+    const response = await handleGeminiMcp(
+      request(),
+      environment(),
+      {} as ExecutionContext,
+      { accessVerifier: verifier(CLIENT_ID) },
+    );
+    expect(response.status).toBe(200);
+    expect(await body(response)).toMatchObject({
+      jsonrpc: "2.0",
+      id: 1,
+      result: {},
+    });
+  });
+
+  it("rejects the human-readable token name in place of the signed Client ID", async () => {
+    const response = await handleGeminiMcp(
+      request(),
+      environment(),
+      {} as ExecutionContext,
+      { accessVerifier: verifier("gemini-spark") },
+    );
+    expect(response.status).toBe(403);
+    expect(await body(response)).toMatchObject({
+      code: "MCP_SERVICE_PRINCIPAL_DENIED",
+    });
+  });
+
+  it("fails closed when the configured Client ID is absent or malformed", async () => {
+    const absent = await handleGeminiMcp(
+      request(),
+      environment(undefined),
+      {} as ExecutionContext,
+    );
+    expect(absent.status).toBe(503);
+    expect(await body(absent)).toMatchObject({
+      code: "MCP_CONFIGURATION_UNAVAILABLE",
+    });
+
+    const malformed = await handleGeminiMcp(
+      request(),
+      environment("gemini-spark"),
+      {} as ExecutionContext,
+      { accessVerifier: verifier("gemini-spark") },
+    );
+    expect(malformed.status).toBe(503);
+    expect(await body(malformed)).toMatchObject({
+      code: "MCP_CONFIGURATION_UNAVAILABLE",
+    });
+  });
+});
