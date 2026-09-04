@@ -18,10 +18,7 @@
       "apps/eliotr-core/src/gemini-mcp-tools.ts",
       "apps/eliotr-core/src/gemini-mcp.test.ts",
       "integrations/gemini-spark/**",
-      "docs/implementation/gemini-spark-mcp.md",
-      "docs/agent-work/ER-36-gemini-spark-mcp-and-google-orchestration.md",
-      "docs/agent-work/packets/**",
-      "scripts/check-gemini-integration.mjs"
+      "docs/implementation/gemini-spark-mcp.md"
     ],
     "mandatory_negative_case": "Submit dry_run=false, a browser Origin, an owner JWT, and a digest-mismatching Google readback; deny effects and preserve candidate-only state.",
     "document": "ER-36-gemini-spark-mcp-and-google-orchestration.md",
