@@ -149,6 +149,30 @@ async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+function preflightScopeDepth(value: unknown): void {
+  if (!isRecord(value)) return;
+  const stack: Array<{ value: unknown; depth: number }> = [
+    { value: value.scope_expression, depth: 1 },
+  ];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    if (current.depth > MAX_SCOPE_DEPTH) {
+      fail(
+        "FEDERATION_SCOPE_TOO_DEEP",
+        `scope expression exceeds depth ${MAX_SCOPE_DEPTH}`,
+      );
+    }
+    if (!isRecord(current.value)) continue;
+    const kind = current.value.kind;
+    if (kind === "UNION" || kind === "INTERSECT" || kind === "EXCEPT") {
+      stack.push(
+        { value: current.value.left, depth: current.depth + 1 },
+        { value: current.value.right, depth: current.depth + 1 },
+      );
+    }
+  }
+}
 function scopeDepth(scope: FederationRequest["scope_expression"]): number {
   if (scope.kind !== "UNION" && scope.kind !== "INTERSECT" && scope.kind !== "EXCEPT") return 1;
   return 1 + Math.max(scopeDepth(scope.left), scopeDepth(scope.right));
@@ -160,6 +184,7 @@ function selectedSourceCount(scope: FederationRequest["scope_expression"]): numb
 }
 
 function parseRequest(value: unknown, now: number): FederationRequest {
+  preflightScopeDepth(value);
   const parsed = FederationRequestSchema.safeParse(value);
   if (!parsed.success) {
     fail("FEDERATION_REQUEST_INVALID", "federation request failed strict schema validation");
