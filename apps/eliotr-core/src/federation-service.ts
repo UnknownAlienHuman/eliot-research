@@ -132,7 +132,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalFederationJson(value: unknown): string {
   if (value === null) return "null";
   if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
   if (typeof value === "number") {
@@ -143,9 +143,9 @@ function canonicalJson(value: unknown): string {
   }
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (!isRecord(value)) fail("FEDERATION_REQUEST_INVALID", "canonical input contains an unsupported value");
-  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalFederationJson(value[key])}`).join(",")}}`;
 }
-async function sha256Hex(value: string): Promise<string> {
+export async function federationSha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -165,7 +165,7 @@ function parseRequest(value: unknown, now: number): FederationRequest {
     fail("FEDERATION_REQUEST_INVALID", "federation request failed strict schema validation");
   }
   const request = parsed.data;
-  if (utf8Length(canonicalJson(request)) > MAX_REQUEST_BYTES) {
+  if (utf8Length(canonicalFederationJson(request)) > MAX_REQUEST_BYTES) {
     fail("FEDERATION_REQUEST_TOO_LARGE", `federation request exceeds ${MAX_REQUEST_BYTES} UTF-8 bytes`);
   }
   if (utf8Length(request.question) > MAX_QUESTION_BYTES) {
@@ -259,7 +259,7 @@ async function loadManifest(
   if (raw === null) fail("FEDERATION_MANIFEST_NOT_FOUND", "AllowedReferenceManifest was not found");
   const manifest = parseManifest(raw);
   const { manifest_digest: _manifestDigest, ...digestPayload } = manifest;
-  if (await sha256Hex(canonicalJson(digestPayload)) !== manifest.manifest_digest) {
+  if (await federationSha256Hex(canonicalFederationJson(digestPayload)) !== manifest.manifest_digest) {
     fail("FEDERATION_MANIFEST_DIGEST_MISMATCH", "AllowedReferenceManifest digest does not match its content");
   }
   if (refKey(manifest.manifest_ref) !== refKey(binding.allowed_reference_manifest_ref)) {
@@ -502,7 +502,7 @@ export function createFederationService(dependencies: FederationServiceDependenc
       }
       assertAllowedHandleRefs(authorized.manifest, request.allowed_input_handle_refs);
       assertAuthorizedRequestRefs(authorized.manifest, request);
-      const requestDigest = await sha256Hex(canonicalJson(request));
+      const requestDigest = await federationSha256Hex(canonicalFederationJson(request));
       const reservation = await dependencies.jobs.reserve({
         binding: authorized.binding,
         request,

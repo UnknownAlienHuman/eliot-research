@@ -14,6 +14,8 @@ outside the paths below.
 - `packages/interfaces/src/federation-api.ts`
 - `apps/eliotr-core/src/federation-service.ts`
 - `apps/eliotr-core/src/federation-service.test.ts`
+- `apps/eliotr-core/src/federation-d1-job-authority.ts`
+- `apps/eliotr-core/src/federation-d1-job-authority.test.ts`
 
 ## Read only
 

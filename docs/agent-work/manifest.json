@@ -443,7 +443,9 @@
       "owned_paths": [
         "packages/interfaces/src/federation-api.ts",
         "apps/eliotr-core/src/federation-service.ts",
-        "apps/eliotr-core/src/federation-service.test.ts"
+        "apps/eliotr-core/src/federation-service.test.ts",
+        "apps/eliotr-core/src/federation-d1-job-authority.ts",
+        "apps/eliotr-core/src/federation-d1-job-authority.test.ts"
       ],
       "mandatory_negative_case": "Complete transport with an inconclusive research result and prove status is COMPLETED + INCONCLUSIVE, not ANSWERED_WITH_SUPPORTED_RESULT.",
       "document": "ER-22-generic-federation-boundary.md",
