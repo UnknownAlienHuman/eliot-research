@@ -1,0 +1,123 @@
+name: er13-reference-authority-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-13-federation-reference-authority-schema-20260904
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: er13-reference-authority-verified-merge
+  cancel-in-progress: false
+
+jobs:
+  finalize-verify-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[er13-reference-authority-merge-gate]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/ER-13-federation-reference-authority-schema-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-13-federation-reference-authority-schema-20260904
+          fetch-depth: 0
+
+      - name: Require federation job schema prerequisite
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            state="$(gh pr view 70 --repo "$GITHUB_REPOSITORY" --json state --jq .state)"
+            [[ "$state" == "MERGED" ]] && exit 0
+            [[ "$state" == "CLOSED" ]] && { echo "PR #70 closed without merge" >&2; exit 1; }
+            sleep 8
+          done
+          echo "PR #70 did not merge" >&2
+          exit 1
+
+      - name: Rebuild the additive schema on current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main "$BRANCH"
+          git show "origin/$BRANCH:infra/d1/core/migrations/0010_federation_reference_authority.sql" > /tmp/0010.sql
+          git show "origin/$BRANCH:infra/d1/core/federation-reference-authority.test.mjs" > /tmp/reference-authority.test.mjs
+          git reset --hard origin/main
+          cp /tmp/0010.sql infra/d1/core/migrations/0010_federation_reference_authority.sql
+          cp /tmp/reference-authority.test.mjs infra/d1/core/federation-reference-authority.test.mjs
+
+          python3 <<'PY'
+          import subprocess
+          from pathlib import Path
+
+          old_generation = "core-v9-federation-job-authority"
+          new_generation = "core-v10-federation-reference-authority"
+          result = subprocess.run(
+              ["git", "grep", "-Il", old_generation, "--", ":(exclude)infra/d1/core/migrations/**"],
+              check=False,
+              text=True,
+              capture_output=True,
+          )
+          if result.returncode not in (0, 1):
+              raise SystemExit(result.stderr)
+          paths = [Path(name) for name in result.stdout.splitlines() if name]
+          if not paths:
+              raise SystemExit("no current core-v9 readiness references found")
+          for path in paths:
+              path.write_text(
+                  path.read_text(encoding="utf-8").replace(old_generation, new_generation),
+                  encoding="utf-8",
+              )
+
+          gate_path = Path("scripts/check-delivery-authority.mjs")
+          gate = gate_path.read_text(encoding="utf-8")
+          evidence = 'await import("../infra/d1/core/federation-reference-authority.test.mjs");'
+          if evidence not in gate:
+              gate = gate.rstrip() + "\n\n" + evidence + "\n"
+              gate_path.write_text(gate, encoding="utf-8")
+          PY
+
+          rm -f .github/workflows/er13-reference-authority-verified-merge.yml
+          node infra/d1/core/federation-reference-authority.test.mjs
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-13: finalize federation reference authority [er13-reference-authority-merge-gate]"
+          git push --force-with-lease origin HEAD:"$BRANCH"
+          echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          [[ -n "$PR_NUMBER" && "$PR_NUMBER" != "null" ]] || { echo "open PR not found" >&2; exit 1; }
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+
+      - name: Require verify and rust on the exact candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 150); do
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+            [[ "$head_sha" == "$CANDIDATE_SHA" ]] || { echo "PR head moved" >&2; exit 1; }
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            [[ "$verify" == success && "$rust" == success ]] && exit 0
+            case "$verify/$rust" in *failure*|*cancelled*|*timed_out*|*action_required*|*startup_failure*|*stale*) exit 1;; esac
+            sleep 8
+          done
+          exit 1
+
+      - name: Squash-merge the exact green head
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-13: add immutable federation reference authority to CORE_DB (#$PR_NUMBER)" \
+            --body "Persist exact immutable ScopeSnapshot and AllowedReferenceManifest revisions under a fence-bound foreign key, with executable negative migration evidence. Exact head passed verify and rust."
