@@ -76,6 +76,34 @@ async function proveForbiddenImportFailsClosed() {
   }
 }
 
+async function proveUnregisteredPendingStateFailsClosed() {
+  const relativeFixture =
+    "apps/eliotr-core/src/__eliotr_pending_status_negative__.ts";
+  const fixture = resolve(root, relativeFixture);
+  let created = false;
+
+  try {
+    await writeFile(
+      fixture,
+      'export const state = "IMPLEMENTATION_PENDING" as const;\n',
+      { flag: "wx" },
+    );
+    created = true;
+    runGateExpectingFailure(
+      "scripts/check-implementation-status.mjs",
+      [
+        `${relativeFixture}: runtime IMPLEMENTATION_PENDING state lacks a registered SCAFFOLD_FAIL_CLOSED marker`,
+      ],
+      "unregistered implementation-pending negative fixture",
+    );
+    console.log(
+      "Implementation-pending negative boundary: PASS (gate rejected unregistered runtime scaffold).",
+    );
+  } finally {
+    if (created) await rm(fixture, { force: true });
+  }
+}
+
 async function proveWorkPacketParityFailsClosed() {
   const accessPath =
     "packages/platform-cloudflare/src/access.ts";
@@ -128,4 +156,5 @@ async function proveWorkPacketParityFailsClosed() {
 }
 
 await proveForbiddenImportFailsClosed();
+await proveUnregisteredPendingStateFailsClosed();
 await proveWorkPacketParityFailsClosed();
