@@ -16,16 +16,19 @@ States:
   Google, provider, recovery, or workload round trip has not produced a live receipt.
 - `LIVE_QUALIFIED` — implementation and its named live gate have a retained receipt.
 
-`pnpm check:implementation-status` fails when a registered marker is missing or stale. Removing a marker
-is therefore an explicit implementation event, not cosmetic cleanup. The committer must update the
-registry, gap register and completion evidence in the same change.
+`pnpm check:implementation-status` fails when a registered marker is missing or stale. It also rejects
+any source file that contains the runtime state `IMPLEMENTATION_PENDING` without a registered
+`SCAFFOLD_FAIL_CLOSED` marker. Removing a marker is therefore an explicit implementation event, not
+cosmetic cleanup. The committer must update the registry, gap register and completion evidence in the
+same change.
 
 ## Current registered contours
 
 ### `SCAFFOLD_FAIL_CLOSED`
 
 ```text
-(none)
+ResearchWorkflow: returns IMPLEMENTATION_PENDING / INCONCLUSIVE; no governed research execution
+ResearchSession Durable Object: exposes only pending status; no authoritative session state or WebSocket loop
 ```
 
 ### `IMPLEMENTED_NOT_LIVE`
@@ -58,6 +61,9 @@ federation.submit
 federation.status
 federation.result
 federation.cancel
+federation.bundle.read
+federation.bundle.manifest
+federation.changes
 ```
 
 `research.orient` remains unavailable in the active Worker generation until ER-24 supplies a persisted
