@@ -1,0 +1,137 @@
+name: er00-cloudflare-federation-workspace-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-13-federation-d1-codec-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er00-cloudflare-federation-workspace-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ !contains(github.event.head_commit.message, '[er00-cloudflare-federation-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-13-federation-d1-codec-20260904
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+
+      - name: Synchronize workspace lock and scheduler metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("docs/agent-work/manifest.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          if manifest.get("protocol") != "eliotr.agent-work.v1":
+              raise SystemExit("unexpected work-packet protocol")
+          packet = next(
+              (item for item in manifest.get("packets", []) if item.get("id") == "ER-00"),
+              None,
+          )
+          if packet is None:
+              raise SystemExit("ER-00 packet missing")
+          expected = [
+              "package.json",
+              "pnpm-workspace.yaml",
+              "pnpm-lock.yaml",
+              "tsconfig.json",
+              "tsconfig.base.json",
+              "eslint.config.mjs",
+              "vitest.config.ts",
+              ".editorconfig",
+              ".npmrc",
+              ".gitignore",
+              ".github/**",
+              "Cargo.toml",
+              "Cargo.lock",
+              "rust-toolchain.toml",
+              "deny.toml",
+              ".config/nextest.toml",
+              "scripts/check-boundaries.mjs",
+              "scripts/test-boundary-negative.mjs",
+              "scripts/check-budgets.mjs",
+              "scripts/check-contract-fixtures.mjs",
+              "scripts/check-work-packets.mjs",
+              "scripts/check-rust-boundaries.mjs",
+              "docs/agent-work/manifest.json",
+              "docs/agent-work/ER-00-workspace-and-verification-gates.md",
+              "docs/implementation/toolchain.md",
+              "docs/implementation/production-readiness-plan.md",
+              "docs/implementation/gap-register.md",
+              "scripts/check-implementation-status.mjs",
+          ]
+          if packet.get("owned_paths") != expected:
+              raise SystemExit("unexpected ER-00 ownership before synchronization")
+          packet["owned_paths"] = [
+              "package.json",
+              "pnpm-workspace.yaml",
+              "pnpm-lock.yaml",
+              "packages/cloudflare-federation/package.json",
+              "packages/cloudflare-federation/tsconfig.json",
+              "packages/cloudflare-federation/AGENTS.md",
+              "tsconfig.json",
+              "tsconfig.base.json",
+              "eslint.config.mjs",
+              "vitest.config.ts",
+              ".editorconfig",
+              ".npmrc",
+              ".gitignore",
+              ".github/**",
+              "Cargo.toml",
+              "Cargo.lock",
+              "rust-toolchain.toml",
+              "deny.toml",
+              ".config/nextest.toml",
+              "scripts/check-boundaries.mjs",
+              "scripts/test-boundary-negative.mjs",
+              "scripts/check-budgets.mjs",
+              "scripts/check-contract-fixtures.mjs",
+              "scripts/check-work-packets.mjs",
+              "scripts/check-rust-boundaries.mjs",
+              "docs/agent-work/manifest.json",
+              "docs/agent-work/ER-00-workspace-and-verification-gates.md",
+              "docs/implementation/toolchain.md",
+              "docs/implementation/production-readiness-plan.md",
+              "docs/implementation/gap-register.md",
+              "scripts/check-implementation-status.mjs",
+          ]
+          manifest["baseline_commit"] = "ec21df807a6ee10e4b2b35283224ff172a077cf8"
+          manifest["generated_at"] = "2026-09-04T16:20:00Z"
+          path.write_text(
+              json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          pnpm install --lockfile-only
+          git rm -- .github/workflows/er00-cloudflare-federation-workspace-sync.yml
+          pnpm install --frozen-lockfile
+          node scripts/check-work-packets.mjs
+          node scripts/check-boundaries.mjs
+          node scripts/check-budgets.mjs
+          git diff --check
+
+      - name: Commit synchronized workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-00: synchronize cloudflare federation workspace [er00-cloudflare-federation-synced]"
+          git push origin HEAD:agent/ER-13-federation-d1-codec-20260904
