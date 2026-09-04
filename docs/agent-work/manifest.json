@@ -1,9 +1,9 @@
 {
   "protocol": "eliotr.agent-work.v1",
   "repository": "UnknownAlienHuman/eliot-research",
-  "baseline_commit": "d29265cd43394ac4d1a6237452bb92a7ed00d8b7",
+  "baseline_commit": "159fadce3efbeba278523015c4525fdf46a0fe3f",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-04T02:08:00Z",
+  "generated_at": "2026-09-04T02:12:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
