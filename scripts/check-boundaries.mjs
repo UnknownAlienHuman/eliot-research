@@ -47,6 +47,7 @@ const PACKAGE_RULES = new Map([
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["apps/eliotr-pwa", new Set(["@eliotr/contracts"])],
   ["apps/eliotr-core", new Set([
+    "@eliotr/cloudflare-ai",
     "@eliotr/cloudflare-projection",
     "@eliotr/cloudflare-evidence",
     "@eliotr/cloudflare-erasure",
