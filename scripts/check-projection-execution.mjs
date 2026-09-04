@@ -9,6 +9,54 @@ const search = new DatabaseSync(":memory:");
 core.exec("PRAGMA foreign_keys = ON");
 search.exec("PRAGMA foreign_keys = ON");
 
+const desiredSearch = JSON.parse(readFileSync(
+  resolve(root, "infra/ai-search/instances.json"),
+  "utf8",
+));
+const runtimeSource = readFileSync(
+  resolve(root, "apps/eliotr-core/src/projection-execution-handler.ts"),
+  "utf8",
+);
+const profileMatch =
+  /export const PROJECTION_EXECUTION_PROFILE:[^=]+=\s*\{([\s\S]*?)\n\};/u.exec(
+    runtimeSource,
+  );
+assert(profileMatch, "projection execution profile block is missing");
+const profileBody = profileMatch[1];
+function profileString(key) {
+  const matches = [...profileBody.matchAll(
+    new RegExp(`${key}:\\s*"([^"]+)"`, "gu"),
+  )];
+  assert.equal(matches.length, 1, `${key} must have one string literal`);
+  return matches[0][1];
+}
+const privateProse = desiredSearch.instances.filter(
+  (instance) => instance?.purpose === "private natural-language source sections",
+);
+assert.equal(privateProse.length, 1, "desired state must contain one private-prose instance");
+const desiredPrivateProse = privateProse[0];
+assert.equal(desiredPrivateProse.create.id, desiredPrivateProse.id);
+assert.equal(
+  profileString("managed_instance_id"),
+  desiredPrivateProse.id,
+  "Worker managed instance must match desired shadow state",
+);
+assert.equal(
+  profileString("managed_generation"),
+  desiredSearch.generation,
+  "Worker managed generation must match desired shadow state",
+);
+assert.match(
+  profileBody,
+  /managed_generation_active:\s*false/u,
+  "desired shadow generation must remain inactive by default",
+);
+assert.match(
+  runtimeSource,
+  /env\.AI_SEARCH_ACTIVE_GENERATION ===\s*PROJECTION_EXECUTION_PROFILE\.managed_generation/u,
+  "managed readiness must require the exact promoted environment generation",
+);
+
 for (const name of [
   "0001_initial.sql",
   "0002_execution_coordination.sql",
@@ -256,13 +304,13 @@ function writeTerminalAttempt(expectedSemanticReceipt) {
     "semantic_receipt_ref=?,semantic_readback_digest=?,updated_at=? " +
     "WHERE source_revision_ref='revision-1' AND projection_generation=?",
   ).run(
-    d1Receipt, digestC, "private-prose-g1", "g1-qwen3-2026-08-28",
+    d1Receipt, digestC, "private-prose-g2", "g2-qwen3-2026-09-03",
     "managed-receipt-1", digestA, now, projection,
   );
   for (const [channel, generation, receipt] of [
     ["exact_ready", projection, d1Receipt],
     ["lexical_ready", projection, d1Receipt],
-    ["semantic_ready", "g1-qwen3-2026-08-28", "managed-receipt-1"],
+    ["semantic_ready", "g2-qwen3-2026-09-03", "managed-receipt-1"],
   ]) {
     core.prepare(
       "INSERT INTO source_readiness(source_revision_ref,channel,state,generation," +
