@@ -1,0 +1,101 @@
+name: er26-generation-operator-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-26-ai-search-generation-operator-20260904
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: er26-generation-operator-verified-merge
+  cancel-in-progress: true
+
+jobs:
+  merge-after-ci:
+    if: ${{ !contains(github.event.head_commit.message, '[er26-verified-merge]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: UnknownAlienHuman/eliot-research
+      BRANCH: agent/ER-26-ai-search-generation-operator-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-26-ai-search-generation-operator-20260904
+          fetch-depth: 0
+
+      - name: Ensure the pull request exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="$(gh api "repos/${REPOSITORY}/pulls?state=open&head=UnknownAlienHuman:${BRANCH}" --jq '.[0].number // empty')"
+          if [[ -z "${pr_number}" ]]; then
+            gh pr create \
+              --repo "${REPOSITORY}" \
+              --base main \
+              --head "${BRANCH}" \
+              --title "ER-26: operate AI Search generations through the durable registry" \
+              --body "Adds a guarded SEARCH_DB generation operator using the canonical lifecycle and D1 CAS adapter. Live Cloudflare operations were not executed."
+          fi
+
+      - name: Wait for repository CI on the exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          workflow_id="$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml" --jq '.id')"
+          success=0
+          for _ in $(seq 1 100); do
+            run_json="$(gh api "repos/${REPOSITORY}/actions/workflows/${workflow_id}/runs?branch=${BRANCH}&per_page=50")"
+            row="$(jq -c --arg sha "${head_sha}" '[.workflow_runs[] | select(.head_sha == $sha)] | sort_by(.created_at) | reverse | .[0] // empty' <<<"${run_json}")"
+            if [[ -z "${row}" ]]; then
+              sleep 30
+              continue
+            fi
+            status="$(jq -r '.status' <<<"${row}")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"${row}")"
+            if [[ "${status}" != "completed" ]]; then
+              sleep 30
+              continue
+            fi
+            if [[ "${conclusion}" != "success" ]]; then
+              echo "ci.yml failed on ${head_sha}: ${conclusion}" >&2
+              exit 1
+            fi
+            success=1
+            break
+          done
+          if [[ "${success}" != "1" ]]; then
+            echo "timed out waiting for ci.yml on ${head_sha}" >&2
+            exit 1
+          fi
+
+      - name: Remove temporary workflows and merge the tested tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f --ignore-unmatch -- \
+            .github/workflows/er26-generation-operator-finalize.yml \
+            .github/workflows/er26-generation-operator-verified-merge.yml
+          git commit -m "ER-26: remove temporary verification workflows [er26-verified-merge]"
+          git push origin HEAD:"${BRANCH}"
+          final_sha="$(git rev-parse HEAD)"
+          pr_number="$(gh api "repos/${REPOSITORY}/pulls?state=open&head=UnknownAlienHuman:${BRANCH}" --jq '.[0].number // empty')"
+          if [[ -z "${pr_number}" ]]; then
+            echo "open pull request for ${BRANCH} was not found" >&2
+            exit 1
+          fi
+          gh api \
+            --method PUT \
+            "repos/${REPOSITORY}/pulls/${pr_number}/merge" \
+            -f merge_method=squash \
+            -f sha="${final_sha}" \
+            -f commit_title="ER-26: operate AI Search generations through the durable registry (#${pr_number})" \
+            -f commit_message="Add the guarded remote SEARCH_DB operator, exact lifecycle receipts, lost-acknowledgement reconciliation and no-retry uncertain-write evidence. The exact code tree passed ci.yml before removal of temporary workflow files. Live Cloudflare operations were not executed."
