@@ -1,0 +1,138 @@
+name: er16-rest-repair-v5
+
+on:
+  push:
+    branches:
+      - agent/ER-16-dynamic-route-rest-control-plane-20260903
+    paths:
+      - .github/workflows/er16-rest-repair-v5.yml
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-16-dynamic-route-rest-control-plane-20260903
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Reproduce audited splits and remove transferred symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow_path = Path(".github/workflows/er16-rest-repair-v3.yml")
+          workflow = workflow_path.read_text(encoding="utf-8")
+          marker = "          python3 <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end_marker = "\n          PY\n\n          rm -f .github/workflows/er16-rest-finalize.yml"
+          end = workflow.index(end_marker, start)
+          exec(
+              compile(
+                  textwrap.dedent(workflow[start:end]),
+                  "er16-rest-complete-split.py",
+                  "exec",
+              ),
+              {},
+          )
+
+          binding_path = Path(
+              "packages/cloudflare-ai/src/dynamic-route-rest-binding-codec.ts"
+          )
+          binding = binding_path.read_text(encoding="utf-8")
+          for line in [
+              "  type DynamicRouteRestErrorCode,\n",
+              "  type DynamicRouteProviderMetadata,\n",
+          ]:
+              if binding.count(line) != 1:
+                  raise SystemExit(f"unexpected binding-codec import: {line!r}")
+              binding = binding.replace(line, "", 1)
+          binding_path.write_text(binding, encoding="utf-8")
+
+          codec_path = Path("packages/cloudflare-ai/src/dynamic-route-rest-codec.ts")
+          codec = codec_path.read_text(encoding="utf-8")
+          for line in [
+              "  modelGatewaySha256,\n",
+              "  type DynamicRouteRestBinding,\n",
+              "  type DynamicRouteRestBindingWriteReceipt,\n",
+              "  DYNAMIC_ROUTE_ARTIFACT_MAX_BYTES,\n",
+          ]:
+              if codec.count(line) != 1:
+                  raise SystemExit(f"unexpected REST-codec import: {line!r}")
+              codec = codec.replace(line, "", 1)
+
+          binding_keys_start = codec.index("const BINDING_KEYS = new Set([")
+          receipt_key_start = codec.index(
+              "const BINDING_RECEIPT_KEYS = new Set(",
+              binding_keys_start,
+          )
+          codec = codec[:binding_keys_start] + codec[receipt_key_start:]
+          receipt_line = (
+              'const BINDING_RECEIPT_KEYS = new Set(["binding", "readback_sha256"]);\n'
+          )
+          if codec.count(receipt_line) != 1:
+              raise SystemExit("unexpected binding receipt-key declaration")
+          codec = codec.replace(receipt_line, "", 1)
+          codec_path.write_text(codec, encoding="utf-8")
+
+          packet_path = Path(
+              "docs/agent-work/ER-16-ai-search-and-model-gateway-adapters.md"
+          )
+          packet_path.write_text(
+              packet_path.read_text(encoding="utf-8").rstrip() + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+          rm -f .github/workflows/er16-rest-finalize.yml
+          git diff --check
+
+      - name: Install frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+
+      - name: Verify repository and ER-16 boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm work-packets:check
+          pnpm boundaries:check
+          pnpm boundaries:negative
+          pnpm budgets:check
+          pnpm lint
+          pnpm typecheck
+          pnpm exec vitest run packages/cloudflare-ai/src/dynamic-route-rest-control-plane.test.ts
+          pnpm exec vitest run packages/cloudflare-ai
+          git diff --check
+
+      - name: Commit the clean verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/er16-rest-repair.yml \
+            .github/workflows/er16-rest-repair-v2.yml \
+            .github/workflows/er16-rest-repair-v3.yml \
+            .github/workflows/er16-rest-repair-v4.yml \
+            .github/workflows/er16-rest-repair-v5.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-16: implement strict Dynamic Route REST control plane"
+          git push origin HEAD:agent/ER-16-dynamic-route-rest-control-plane-20260903
