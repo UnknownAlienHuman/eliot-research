@@ -18,32 +18,34 @@ ELIOT admission/reconciliation receipt.
 
 ## Cloudflare Access prerequisite
 
-Create a dedicated MCP hostname and a separate Cloudflare Access application for it. Its service token
-must have signed `common_name` exactly:
+Create a dedicated MCP hostname and a separate Cloudflare Access application for it. Create one
+dedicated service token, preferably named `gemini-spark`, and retain its exact Client ID and one-time
+Client Secret.
 
-```text
-gemini-spark
-```
-
-Set these deployment inputs:
+Cloudflare signs the service-token **Client ID** into the Access JWT `common_name`; it does not sign the
+human-readable token name there. Configure the Worker with the exact Client ID:
 
 ```text
 ELIOTR_MCP_HOSTNAME
 ELIOTR_MCP_ACCESS_TEAM_DOMAIN
 ELIOTR_MCP_ACCESS_AUDIENCE
+ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID
 ```
 
-`ELIOTR_MCP_HOSTNAME` must differ from `ELIOTR_ACCESS_HOSTNAME`. Do not add `gemini-spark` to the
-ordinary `ELIOTR_ACCESS_SERVICE_PRINCIPALS` list.
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` normally ends in `.access`. `ELIOTR_MCP_HOSTNAME` must
+differ from `ELIOTR_ACCESS_HOSTNAME`. Do not add the dedicated Client ID to the ordinary
+`ELIOTR_ACCESS_SERVICE_PRINCIPALS` list.
 
-The Gemini client sends the dedicated service token through environment references:
+The Gemini client sends the same dedicated service token through environment references:
 
 ```text
 ELIOTR_CF_ACCESS_CLIENT_ID
 ELIOTR_CF_ACCESS_CLIENT_SECRET
 ```
 
-Do not place their values in this repository or in Gemini settings JSON.
+`ELIOTR_CF_ACCESS_CLIENT_ID` must equal the Worker deployment value
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID`. Do not place either credential value in this repository or
+in Gemini settings JSON.
 
 ## Setup
 
