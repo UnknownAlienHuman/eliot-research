@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./env.js";
 
+// SCAFFOLD_FAIL_CLOSED: ER-24 ResearchSession exposes only explicit pending status until durable session execution is implemented.
 export class ResearchSession extends DurableObject<Env> {
   public override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
