@@ -16,8 +16,8 @@ import type { Env } from "./env.js";
 
 export const PROJECTION_EXECUTION_PROFILE: ProjectionExecutionProfile = {
   projector_profile: "structural-markdown-v1",
-  managed_instance_id: "private-prose-g1",
-  managed_generation: "g1-qwen3-2026-08-28",
+  managed_instance_id: "private-prose-g2",
+  managed_generation: "g2-qwen3-2026-09-03",
   managed_generation_active: false,
   maximum_markdown_bytes: 4 * 1024 * 1024,
   maximum_synchronous_items: 64,
