@@ -1,0 +1,58 @@
+name: er00-main-push-ci-sync
+
+on:
+  push:
+    branches:
+      - agent/ER-00-main-push-ci-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er00-main-push-ci-sync
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er00-main-ci-synced]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-00-main-push-ci-20260904
+          fetch-depth: 0
+      - name: Enable independent post-merge verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path(".github/workflows/ci.yml")
+          text = path.read_text(encoding="utf-8")
+          old = '''on:
+            pull_request:
+            workflow_dispatch:
+          '''
+          new = '''on:
+            pull_request:
+            push:
+              branches:
+                - main
+            workflow_dispatch:
+          '''
+          if text.count(old) != 1:
+              raise SystemExit("CI trigger anchor missing or ambiguous")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          git rm -- .github/workflows/er00-main-push-ci-sync.yml
+          git diff --check
+      - name: Commit CI trigger correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-00: verify every main push [er00-main-ci-synced]"
+          git push origin HEAD:agent/ER-00-main-push-ci-20260904
