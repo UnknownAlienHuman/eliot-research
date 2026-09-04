@@ -48,6 +48,38 @@ jobs:
           )
           if text.count(old) != 1:
               raise SystemExit("manifest authorization anchor missing or ambiguous")
+          text = text.replace(old, new)
+
+          old = "    async read(rawBinding, rawExchangeId, rawIdempotencyKey) {\n"
+          new = (
+              "    async read(\n"
+              "      rawBinding: FederationAuthorityBinding,\n"
+              "      rawExchangeId: string,\n"
+              "      rawIdempotencyKey: string,\n"
+              "    ) {\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit("read signature anchor missing or ambiguous")
+          text = text.replace(old, new)
+
+          old = (
+              "    async cancel(\n"
+              "      rawBinding,\n"
+              "      rawExchangeId,\n"
+              "      rawIdempotencyKey,\n"
+              "      rawReason,\n"
+              "    ) {\n"
+          )
+          new = (
+              "    async cancel(\n"
+              "      rawBinding: FederationAuthorityBinding,\n"
+              "      rawExchangeId: string,\n"
+              "      rawIdempotencyKey: string,\n"
+              "      rawReason: string,\n"
+              "    ) {\n"
+          )
+          if text.count(old) != 1:
+              raise SystemExit("cancel signature anchor missing or ambiguous")
           authority.write_text(text.replace(old, new), encoding="utf-8")
 
           codec = Path("packages/cloudflare-federation/src/federation-d1-codec.ts")
@@ -63,6 +95,10 @@ jobs:
               "    status.transport_state === \"CANCELLED\" && cancellationReason !== null\n"
               "      ? await federationCancellationReceiptRef(jobId, cancellationReason)\n"
               "      : null;\n"
+              "  const terminalWithoutReceipt =\n"
+              "    (status.transport_state === \"COMPLETED\" ||\n"
+              "      status.transport_state === \"FAILED\") &&\n"
+              "    status.terminal_receipt_ref === undefined;\n"
               "  const invalid = status.transport_state === \"CANCELLED\"\n"
               "    ? status.completion_disposition !== \"CANCELLED\" ||\n"
               "      observed !== \"CANCELLED\" ||\n"
@@ -76,6 +112,7 @@ jobs:
               "      cancelledAt !== null ||\n"
               "      status.cancellation_receipt_ref !== undefined ||\n"
               "      (active && status.terminal_receipt_ref !== undefined) ||\n"
+              "      terminalWithoutReceipt ||\n"
               "      ((active || status.transport_state === \"FAILED\") &&\n"
               "        (status.completion_disposition !== null ||\n"
               "          observed !== null ||\n"
@@ -100,5 +137,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "ER-41: fence manifest revision and simplify terminal validation [er41-runtime-fixed]"
+          git commit -m "ER-41: fence manifest revision and terminal receipts [er41-runtime-fixed]"
           git push origin HEAD:agent/ER-41-cloudflare-federation-runtime-20260904
