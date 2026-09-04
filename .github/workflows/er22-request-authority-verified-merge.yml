@@ -1,0 +1,78 @@
+name: er22-request-authority-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-22-federation-request-authority-20260904
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: er22-request-authority-verified-merge
+  cancel-in-progress: false
+
+jobs:
+  verify-and-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-request-authority-merge-gate]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/ER-22-federation-request-authority-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-federation-request-authority-20260904
+          fetch-depth: 0
+      - name: Finalize the candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then
+            echo "no open PR for $BRANCH"
+            exit 0
+          fi
+          rm -f \
+            .github/workflows/er22-federation-request-authority-sync.yml \
+            .github/workflows/er22-request-authority-verified-merge.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          else
+            git commit -m "ER-22: finalize request authority fence [er22-request-authority-merge-gate]"
+            git push origin HEAD:"$BRANCH"
+            echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          fi
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+      - name: Require verify and rust on the exact candidate
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 120); do
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+            [[ "$head_sha" == "$CANDIDATE_SHA" ]] || { echo "PR head moved" >&2; exit 1; }
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            [[ "$verify" == success && "$rust" == success ]] && exit 0
+            case "$verify/$rust" in *failure*|*cancelled*|*timed_out*|*action_required*|*startup_failure*|*stale*) exit 1;; esac
+            sleep 8
+          done
+          exit 1
+      - name: Merge the exact green head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-22: bind every federation request authority to the signed manifest (#$PR_NUMBER)" \
+            --body "Require progress, result-schema and optional export authorities in the exact signed manifest before job reservation. Exact head passed verify and rust."
