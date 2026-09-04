@@ -61,7 +61,7 @@ function parseDocumentOwnedPaths(packetId, documentName, markdown) {
   }
   if (headingIndexes.length !== 1) {
     errors.push(
-      `${packetId}: ${documentName} must contain exactly one \"## Owned paths\" heading`,
+      `${packetId}: ${documentName} must contain exactly one "## Owned paths" heading`,
     );
     return null;
   }
