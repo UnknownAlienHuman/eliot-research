@@ -125,7 +125,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm lint
           pnpm typecheck
-          pnpm --filter @eliotr/cloudflare-federation test
+          pnpm exec vitest run packages/cloudflare-federation --reporter=verbose
           node scripts/check-budgets.mjs
           node scripts/check-work-packets.mjs
           git diff --check
