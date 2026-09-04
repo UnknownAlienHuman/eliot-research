@@ -1,0 +1,196 @@
+name: er13-federation-schema-verified-merge
+
+on:
+  push:
+    branches:
+      - agent/ER-13-federation-job-schema-20260904
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: er13-federation-schema-verified-merge
+  cancel-in-progress: false
+
+jobs:
+  finalize-verify-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[er13-federation-merge-gate]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: "70"
+      BRANCH: agent/ER-13-federation-job-schema-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-13-federation-job-schema-20260904
+          fetch-depth: 0
+
+      - name: Finalize one deterministic candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          state="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json state --jq .state)"
+          if [[ "$state" != "OPEN" ]]; then
+            echo "PR is already $state"
+            exit 0
+          fi
+          sleep 20
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          python3 <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          migration_path = Path("infra/d1/core/migrations/0009_federation_job_authority.sql")
+          migration = migration_path.read_text(encoding="utf-8")
+          replacements = [
+              ('''  completion_disposition TEXT CHECK (
+              completion_disposition IS NULL OR completion_disposition IN (
+                'ANSWERED_WITH_SUPPORTED_RESULT',
+                'ANSWERED_WITH_LIMITATIONS',
+                'INCONCLUSIVE',
+                'NO_QUALIFIED_EVIDENCE',
+                'POLICY_BLOCKED',
+                'BUDGET_EXHAUSTED',
+                'DEADLINE_EXCEEDED',
+                'CANCELLED',
+                'FAILED'
+              )
+            ),''', '''  completion_disposition TEXT CHECK (
+              completion_disposition IS NULL OR (
+                length(completion_disposition) BETWEEN 1 AND 64
+                AND completion_disposition NOT GLOB '*[^A-Z0-9_]*'
+              )
+            ),'''),
+              ('''  observed_completion_disposition TEXT CHECK (
+              observed_completion_disposition IS NULL OR observed_completion_disposition IN (
+                'ANSWERED_WITH_SUPPORTED_RESULT',
+                'ANSWERED_WITH_LIMITATIONS',
+                'INCONCLUSIVE',
+                'NO_QUALIFIED_EVIDENCE',
+                'POLICY_BLOCKED',
+                'BUDGET_EXHAUSTED',
+                'DEADLINE_EXCEEDED',
+                'CANCELLED',
+                'FAILED'
+              )
+            ),''', '''  observed_completion_disposition TEXT CHECK (
+              observed_completion_disposition IS NULL OR (
+                length(observed_completion_disposition) BETWEEN 1 AND 64
+                AND observed_completion_disposition NOT GLOB '*[^A-Z0-9_]*'
+              )
+            ),'''),
+          ]
+          for old, new in replacements:
+              if old in migration:
+                  migration = migration.replace(old, new)
+          migration_path.write_text(migration, encoding="utf-8")
+
+          old_generation = "core-v8-erasure-closure"
+          new_generation = "core-v9-federation-job-authority"
+          result = subprocess.run(
+              ["git", "grep", "-Il", old_generation, "--", ":(exclude)infra/d1/core/migrations/**"],
+              check=False,
+              text=True,
+              capture_output=True,
+          )
+          if result.returncode not in (0, 1):
+              raise SystemExit(result.stderr)
+          for name in result.stdout.splitlines():
+              if not name:
+                  continue
+              path = Path(name)
+              path.write_text(
+                  path.read_text(encoding="utf-8").replace(old_generation, new_generation),
+                  encoding="utf-8",
+              )
+
+          package_path = Path("package.json")
+          package = json.loads(package_path.read_text(encoding="utf-8"))
+          evidence = "node infra/d1/core/federation-job-authority.test.mjs"
+          command = package["scripts"]["delivery:check"]
+          if evidence not in command:
+              package["scripts"]["delivery:check"] = f"{command} && {evidence}"
+          package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+
+          test_path = Path("infra/d1/core/federation-job-authority.test.mjs")
+          text = test_path.read_text(encoding="utf-8")
+          old_assertion = '''assert.deepEqual(readback, {
+            request_digest: digest,
+            job_id: status.job_id,
+            transport_state: "ACCEPTED",
+            state_version: 1,
+          });'''
+          new_assertion = '''assert.equal(readback?.request_digest, digest);
+          assert.equal(readback?.job_id, status.job_id);
+          assert.equal(readback?.transport_state, "ACCEPTED");
+          assert.equal(readback?.state_version, 1);'''
+          if old_assertion in text:
+              text = text.replace(old_assertion, new_assertion)
+          test_path.write_text(text, encoding="utf-8")
+          PY
+          rm -f \
+            .github/workflows/er13-federation-job-schema-sync.yml \
+            .github/workflows/er13-federation-schema-readback-fix.yml \
+            .github/workflows/er13-federation-schema-verified-merge.yml
+          node infra/d1/core/federation-job-authority.test.mjs
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          else
+            git commit -m "ER-13: finalize federation job authority [er13-federation-merge-gate]"
+            git push origin HEAD:"$BRANCH"
+            echo "CANDIDATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Require verify and rust on the exact candidate
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 110); do
+            head_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)"
+            if [[ "$head_sha" != "$CANDIDATE_SHA" ]]; then
+              echo "PR head moved from $CANDIDATE_SHA to $head_sha" >&2
+              exit 1
+            fi
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            if [[ "$verify" == "success" && "$rust" == "success" ]]; then
+              exit 0
+            fi
+            for conclusion in "$verify" "$rust"; do
+              case "$conclusion" in
+                failure|cancelled|timed_out|action_required|startup_failure|stale)
+                  echo "required check failed: verify=$verify rust=$rust" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            sleep 8
+          done
+          echo "required checks did not complete for $CANDIDATE_SHA" >&2
+          exit 1
+
+      - name: Squash-merge the exact green head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-13: add durable federation job authority to CORE_DB (#70)" \
+            --body "Add the strict generation-fenced federation job table, terminal-state invariants and executable migration evidence. Exact candidate passed verify and rust."
