@@ -38,6 +38,9 @@ function providerReadback() {
   if (mode === "metadata-drift") {
     readback.custom_metadata[0].field_name = "source_token";
   }
+  if (mode === "metadata-shape-drift") {
+    readback.custom_metadata[0].forged_authority = true;
+  }
   if (mode === "cache-drift") readback.cache = true;
   return readback;
 }
@@ -136,12 +139,16 @@ try {
   expectDrift(await runProvisioner(), "custom_metadata");
   assert.equal(mutations, 0, "metadata drift path mutated provider state");
 
+  mode = "metadata-shape-drift";
+  expectDrift(await runProvisioner(), "custom_metadata");
+  assert.equal(mutations, 0, "metadata shape drift path mutated provider state");
+
   mode = "cache-drift";
   expectDrift(await runProvisioner(), "cache");
   assert.equal(mutations, 0, "cache drift path mutated provider state");
 
   console.log(
-    "AI Search provisioning readback: PASS (compatible variants normalized; metadata/cache drift rejected before mutation).",
+    "AI Search provisioning readback: PASS (compatible variants normalized; metadata value/shape and cache drift rejected before mutation).",
   );
 } finally {
   await new Promise((resolveClose, rejectClose) => {
