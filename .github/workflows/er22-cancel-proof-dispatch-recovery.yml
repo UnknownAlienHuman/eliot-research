@@ -1,0 +1,78 @@
+name: er22-cancel-proof-dispatch-recovery
+
+on:
+  push:
+    branches:
+      - agent/ER-22-cancelled-authority-proof-20260904
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: er22-cancel-proof-dispatch-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover-verify-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[dispatch-recovery]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/ER-22-cancelled-authority-proof-20260904
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-cancelled-authority-proof-20260904
+          fetch-depth: 0
+      - name: Finalize and dispatch exact-head CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then exit 0; fi
+          grep -F 'cancelled transport lacks exact cancellation authority' apps/eliotr-core/src/federation-service.ts
+          grep -F 'cancellation_receipt_ref === undefined' apps/eliotr-core/src/federation-service.ts
+          rm -f \
+            .github/workflows/er22-cancelled-authority-proof-sync.yml \
+            .github/workflows/er22-cancelled-authority-proof-typefix.yml \
+            .github/workflows/er22-cancel-proof-verified-merge.yml \
+            .github/workflows/er22-cancel-proof-dispatch-recovery.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ER-22: finalize cancellation proof [dispatch-recovery]"
+            git push origin HEAD:"$BRANCH"
+          fi
+          CANDIDATE_SHA="$(git rev-parse HEAD)"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+      - name: Require exact-head checks
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 180); do
+            [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)" == "$CANDIDATE_SHA" ]] || exit 1
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            [[ "$verify" == success && "$rust" == success ]] && exit 0
+            case "$verify/$rust" in *failure*|*cancelled*|*timed_out*|*action_required*|*startup_failure*|*stale*) exit 1;; esac
+            sleep 8
+          done
+          exit 1
+      - name: Merge exact green head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-22: require exact cancellation authority before normalization (#$PR_NUMBER)" \
+            --body "Cancelled federation records require declared and observed CANCELLED plus a cancellation receipt. Exact head passed explicitly dispatched verify and rust."
