@@ -4,12 +4,11 @@
     "id": "ER-41",
     "depends_on": ["ER-13", "ER-22", "ER-24"],
     "owned_paths": [
-      "apps/eliotr-core/src/federation-d1-codec.ts",
       "apps/eliotr-core/src/federation-d1-authority.ts",
-      "apps/eliotr-core/src/federation-d1-authority.test.ts",
+      "tests/federation-d1-authority.test.ts",
       "docs/agent-work/ER-41-federation-d1-runtime.md"
     ],
-    "mandatory_negative_case": "Lose reservation and cancellation acknowledgements, reconcile each through exact D1 readback without a second mutation, then reject idempotency payload substitution.",
+    "mandatory_negative_case": "Lose manifest, reservation and cancellation acknowledgements, reconcile each through exact D1 readback without a second mutation, reject idempotency payload substitution, and deny a foreign authority binding without disclosing its digest.",
     "document": "ER-41-federation-d1-runtime.md",
     "max_package_source_lines": 10000
   }
