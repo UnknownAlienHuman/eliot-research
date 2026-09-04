@@ -1,0 +1,74 @@
+name: er26-ai-search-provisioner-test-finalize
+
+on:
+  push:
+    branches:
+      - agent/ER-26-ai-search-readback-parity-clean-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er26-ai-search-provisioner-test-finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[er26-fixture-finalized]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-26-ai-search-readback-parity-clean-20260904
+          fetch-depth: 0
+
+      - name: Finalize generation-independent fixture and remove staging workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/test-cloudflare-provisioners.mjs")
+          text = path.read_text(encoding="utf-8")
+          marker = "const desiredAiSearchInstanceId = desiredAiSearch.instances[0]?.id;"
+          if marker not in text:
+              anchor = 'const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");\n'
+              insertion = '''const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");
+          const desiredAiSearch = JSON.parse(await readFile(
+            resolve(repositoryRoot, "infra/ai-search/instances.json"),
+            "utf8",
+          ));
+          const desiredAiSearchInstanceId = desiredAiSearch.instances[0]?.id;
+          assert.equal(typeof desiredAiSearchInstanceId, "string");
+          '''
+              if text.count(anchor) != 1:
+                  raise SystemExit("desired-state insertion anchor missing or ambiguous")
+              text = text.replace(anchor, insertion)
+          text = text.replace(
+              'state.aiInstances.set("private-prose-g1", {',
+              'state.aiInstances.set(desiredAiSearchInstanceId, {',
+          ).replace(
+              '    id: "private-prose-g1",',
+              '    id: desiredAiSearchInstanceId,',
+          )
+          if 'private-prose-g1' in text:
+              raise SystemExit("legacy private-prose-g1 fixture remains")
+          path.write_text(text, encoding="utf-8")
+          PY
+          git rm -f --ignore-unmatch -- \
+            .github/workflows/er26-ai-search-provisioner-test-sync.yml \
+            .github/workflows/er26-ai-search-provisioner-test-sync-v2.yml \
+            .github/workflows/er26-ai-search-provisioner-test-finalize.yml
+          git diff --check
+
+      - name: Commit finalized fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-26: finalize AI Search provisioner fixtures [er26-fixture-finalized]"
+          git push origin HEAD:agent/ER-26-ai-search-readback-parity-clean-20260904
