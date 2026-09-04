@@ -21,6 +21,7 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const ARTIFACT_KEYS = new Set(["namespace", "registry", "revision", "schema"]);
 const SNAPSHOT_KEYS = new Set(["artifact", "artifact_sha256"]);
 const REGISTRY_KEYS = new Set(["active_head_generation", "generations"]);
@@ -116,6 +117,13 @@ function digest(value: unknown, label: string): string {
   return value;
 }
 
+function modelToken(value: unknown, label: string): string {
+  if (typeof value !== "string" || !MODEL_TOKEN.test(value)) {
+    readbackFailure(`${label} is not a bounded model token`);
+  }
+  return value;
+}
+
 function nonNegativeInteger(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     readbackFailure(`${label} must be a non-negative safe integer`);
@@ -192,7 +200,7 @@ function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
     ["and", "or"] as const,
   );
   const embeddingModel = Object.hasOwn(value, "embedding_model")
-    ? identifier(value.embedding_model, `${label}.embedding_model`)
+    ? modelToken(value.embedding_model, `${label}.embedding_model`)
     : undefined;
   const profile: AiSearchInstanceProfile = Object.freeze({
     id: identifier(value.id, `${label}.id`),
