@@ -250,13 +250,28 @@ async function loadDesiredState(path) {
 }
 
 async function loadCloudflareAiModule() {
+  const moduleUrl = (name) =>
+    new URL(`../packages/cloudflare-ai/dist/${name}.js`, import.meta.url);
   try {
-    return await import(
-      new URL("../packages/cloudflare-ai/dist/index.js", import.meta.url)
-    );
+    const [profile, generation, registry, store, primary] = await Promise.all([
+      import(moduleUrl("ai-search-profile")),
+      import(moduleUrl("ai-search-generation")),
+      import(moduleUrl("ai-search-generation-registry")),
+      import(moduleUrl("ai-search-generation-registry-d1")),
+      import(moduleUrl("ai-search-primary-profile")),
+    ]);
+    return Object.freeze({
+      ...profile,
+      ...generation,
+      ...registry,
+      ...store,
+      ...primary,
+    });
   } catch (cause) {
     throw new OperatorInputError(
-      "@eliotr/cloudflare-ai is not built; run `pnpm exec tsc -b packages/cloudflare-ai/tsconfig.json --pretty false` first",
+      `@eliotr/cloudflare-ai operator modules are unavailable; run ` +
+        "`pnpm exec tsc -b packages/cloudflare-ai/tsconfig.json --pretty false --force` first. " +
+        `Runtime import failed: ${errorMessage(cause)}`,
       { cause },
     );
   }
