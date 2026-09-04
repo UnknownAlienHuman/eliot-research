@@ -1,0 +1,67 @@
+name: er22-cancelled-authority-proof-typefix
+
+on:
+  push:
+    branches:
+      - agent/ER-22-cancelled-authority-proof-20260904
+
+permissions:
+  contents: write
+
+concurrency:
+  group: er22-cancelled-authority-proof-typefix
+  cancel-in-progress: false
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[er22-cancel-typefixed]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-cancelled-authority-proof-20260904
+          fetch-depth: 0
+      - name: Remove the optional receipt without assigning undefined
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 10
+          git fetch origin agent/ER-22-cancelled-authority-proof-20260904
+          git reset --hard origin/agent/ER-22-cancelled-authority-proof-20260904
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path("apps/eliotr-core/src/federation-service.test.ts")
+          text = path.read_text(encoding="utf-8")
+          old = '''    const missingReceipt: FederationJobRecord = {
+              request_digest: DIGEST,
+              status: {
+                ...status("CANCELLED", "CANCELLED"),
+                cancellation_receipt_ref: undefined,
+              },
+              observed_completion_disposition: "CANCELLED",
+              result: null,
+            };'''
+          new = '''    const {
+              cancellation_receipt_ref: _cancellationReceipt,
+              ...statusWithoutCancellationReceipt
+            } = status("CANCELLED", "CANCELLED");
+            const missingReceipt: FederationJobRecord = {
+              request_digest: DIGEST,
+              status: statusWithoutCancellationReceipt,
+              observed_completion_disposition: "CANCELLED",
+              result: null,
+            };'''
+          if old not in text:
+              raise SystemExit("cancellation receipt type-fix anchor missing")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+          rm -f \
+            .github/workflows/er22-cancelled-authority-proof-sync.yml \
+            .github/workflows/er22-cancelled-authority-proof-typefix.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ER-22: keep optional cancellation receipt type-exact [er22-cancel-typefixed]"
+          git push origin HEAD:agent/ER-22-cancelled-authority-proof-20260904
