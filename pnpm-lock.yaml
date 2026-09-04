@@ -41,6 +41,9 @@ importers:
 
   apps/eliotr-core:
     dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-ai
       '@eliotr/cloudflare-erasure':
         specifier: workspace:*
         version: link:../../packages/cloudflare-erasure

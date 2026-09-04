@@ -13,6 +13,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
     "@eliotr/cloudflare-erasure": "workspace:*",
     "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/cloudflare-projection": "workspace:*",

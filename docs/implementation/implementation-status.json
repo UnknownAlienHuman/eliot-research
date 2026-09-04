@@ -18,7 +18,9 @@
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
-      "owner_packets": ["ER-24"],
+      "owner_packets": [
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable",
       "completion_evidence": [
@@ -31,7 +33,10 @@
       "id": "implemented-002",
       "path": "apps/eliotr-core/src/http.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.",
-      "owner_packets": ["ER-21", "ER-24"],
+      "owner_packets": [
+        "ER-21",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable",
       "completion_evidence": [
@@ -44,7 +49,10 @@
       "id": "implemented-003",
       "path": "apps/eliotr-core/src/queue.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.",
-      "owner_packets": ["ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable projection acceptance/execution and ACK only after terminal receipt settlement",
       "completion_evidence": [
@@ -57,7 +65,11 @@
       "id": "implemented-004",
       "path": "apps/eliotr-core/src/scheduled.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation requires remote Queue send/readback receipts.",
-      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "scheduled handler leases a bounded D1 outbox batch, sends stable Queue envelopes and records exact delivered/retry/dead-letter settlement",
       "completion_evidence": [
@@ -70,7 +82,11 @@
       "id": "implemented-005",
       "path": "apps/eliotr-core/src/projection-delivery-handler.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.",
-      "owner_packets": ["ER-13", "ER-15", "ER-24"],
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "admitted LIVE source revisions create one fenced PROJECTION job acceptance and an ACCEPTED receipt before ER-38 execution",
       "completion_evidence": [
@@ -83,7 +99,11 @@
       "id": "implemented-006",
       "path": "apps/eliotr-core/src/gemini-mcp.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
-      "owner_packets": ["ER-17", "ER-24", "ER-36"],
+      "owner_packets": [
+        "ER-17",
+        "ER-24",
+        "ER-36"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "signed gemini-spark service identity reaches a stateless four-tool MCP boundary for status, catalog, Google planning and candidate-only receipt validation",
       "completion_evidence": [
@@ -96,7 +116,14 @@
       "id": "implemented-007",
       "path": "apps/eliotr-core/src/ingest-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
-      "owner_packets": ["ER-13", "ER-14", "ER-21", "ER-24", "ER-29", "ER-37"],
+      "owner_packets": [
+        "ER-13",
+        "ER-14",
+        "ER-21",
+        "ER-24",
+        "ER-29",
+        "ER-37"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority",
       "completion_evidence": [
@@ -109,11 +136,19 @@
       "id": "implemented-008",
       "path": "apps/eliotr-core/src/projection-execution-handler.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-38 projection execution requires remote R2/D1 Search/AI Search receipts.",
-      "owner_packets": ["ER-05", "ER-06", "ER-15", "ER-16", "ER-24", "ER-38"],
+      "owner_packets": [
+        "ER-05",
+        "ER-06",
+        "ER-15",
+        "ER-16",
+        "ER-24",
+        "ER-38"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "pinned LIVE SourceRevision bytes are deterministically projected, immutably materialized, activated in guarded D1 Search generations and uploaded to managed AI Search; semantic readiness requires exact item readback and an explicitly promoted managed generation",
+      "behavior": "pinned LIVE SourceRevision bytes are deterministically projected, immutably materialized, activated in guarded D1 Search generations and uploaded to managed AI Search; semantic readiness requires exact item readback plus an exact ACTIVE primary-generation record from the SEARCH_DB generation registry, never an environment-variable promotion",
       "completion_evidence": [
         "UTF-8, item-limit, shadow-activation and provider-readback negative tests",
+        "SEARCH_DB active-head, absent-head and immutable-profile negative tests",
         "SQLite projection activation and terminal guard fixture",
         "remote R2, D1 Search, AI Search and Queue replay receipts"
       ]
@@ -122,7 +157,9 @@
       "id": "pending-002",
       "path": "apps/eliotr-core/src/erasure-coordinator.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-28 exact erasure coordinator",
-      "owner_packets": ["ER-28"],
+      "owner_packets": [
+        "ER-28"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "generation-fenced exact dependency closure quarantines subjects, verifies absence across every requested location, records non-revealing purge ledger entries, invalidates dependents, and blocks rather than claiming subset completion",
       "completion_evidence": [
@@ -136,7 +173,9 @@
       "id": "pending-003",
       "path": "apps/eliotr-core/src/federation-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary requires ER-24 composition and retained boundary receipts.",
-      "owner_packets": ["ER-22"],
+      "owner_packets": [
+        "ER-22"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "authenticated and manifest-fenced federation service validates strict requests, maps durable idempotent job reservations, exposes bounded bundle/range/change reads, and reconciles public completion dispositions to the observed internal result without client canonical-write authority",
       "completion_evidence": [
@@ -149,7 +188,9 @@
       "id": "pending-007",
       "path": "apps/eliotr-core/src/navigation-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-31 Corpus Lens navigation requires persisted D1 artifacts and current ScopeSnapshot receipts.",
-      "owner_packets": ["ER-31"],
+      "owner_packets": [
+        "ER-31"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "strict current-snapshot readback gates deterministic bounded orientation, explicit omission accounting and Atlas-to-card-to-map-to-section expansion; derived navigation remains non-evidentiary and an EvidenceHandle remains publication-ineligible until exact resolution",
       "completion_evidence": [
@@ -163,7 +204,9 @@
       "id": "pending-008",
       "path": "apps/eliotr-core/src/scope-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.",
-      "owner_packets": ["ER-30"],
+      "owner_packets": [
+        "ER-30"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "strict temporal memberships and deterministic scope algebra produce immutable digest-bound snapshots; persistence accepts created or exact replay with strict readback, and currentness fails closed on expiry, persistence drift, participant, membership, owner, member-policy, policy, disclosure, purge, fence or deny changes",
       "completion_evidence": [
@@ -177,7 +220,14 @@
       "id": "implemented-009",
       "path": "apps/eliotr-core/src/evidence-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07/ER-11 exact evidence requires live D1/R2 range readback receipts.",
-      "owner_packets": ["ER-07", "ER-11", "ER-19", "ER-21", "ER-24", "ER-39"],
+      "owner_packets": [
+        "ER-07",
+        "ER-11",
+        "ER-19",
+        "ER-21",
+        "ER-24",
+        "ER-39"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "strict locator or existing handle resolution reopens the pinned admitted SourceRevision under an authorized frozen ScopeSnapshot, verifies checksum-bound R2 byte ranges, persists immutable handles and resolution receipts, invalidates stale handles, and derives citation-set receipts for context/output gates",
       "completion_evidence": [

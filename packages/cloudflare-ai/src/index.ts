@@ -1,4 +1,5 @@
 export * from "./ai-search-profile.js";
+export * from "./ai-search-primary-profile.js";
 export * from "./ai-search-generation.js";
 export * from "./ai-search-generation-registry-contract.js";
 export * from "./ai-search-generation-registry-codec.js";

@@ -97,3 +97,16 @@ ER-38 now consumes ER-16's shared `projectionMetadata` constructor instead of ma
 provider shape. The writer rejects source/generation drift before upload, requires exact five-field
 metadata on item-info readback, and includes the read-back metadata in the immutable managed receipt
 digest. This remains `IMPLEMENTED_NOT_LIVE`; provider calls in tests are fixtures.
+
+
+## Active managed-generation authority
+
+Projection execution targets the immutable primary g2 AI Search instance. The managed
+channel becomes `READY` only when the canonical SEARCH_DB generation registry names that
+exact generation as its active head and the retained ACTIVE record has the exact immutable
+profile. An absent registry, another active generation, or an unpromoted g2 record keeps the
+managed channel in shadow/degraded state. Environment variables cannot promote a generation.
+
+Registry composition is deterministic and `IMPLEMENTED_NOT_LIVE`. Remote D1 migration,
+AI Search indexing/readback, T2/T3 golden-set promotion and rollback receipts remain
+`NOT_EXECUTED`.

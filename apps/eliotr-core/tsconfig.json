@@ -16,7 +16,7 @@
   ],
   "references": [
     {
-      "path": "../../packages/contracts"
+      "path": "../../packages/cloudflare-ai"
     },
     {
       "path": "../../packages/cloudflare-erasure"
@@ -25,28 +25,31 @@
       "path": "../../packages/cloudflare-evidence"
     },
     {
-      "path": "../../packages/domain"
-    },
-    {
-      "path": "../../packages/policy"
-    },
-    {
-      "path": "../../packages/retrieval"
-    },
-    {
-      "path": "../../packages/research"
-    },
-    {
-      "path": "../../packages/platform-cloudflare"
-    },
-    {
       "path": "../../packages/cloudflare-projection"
+    },
+    {
+      "path": "../../packages/contracts"
+    },
+    {
+      "path": "../../packages/domain"
     },
     {
       "path": "../../packages/google-drive-exchange"
     },
     {
       "path": "../../packages/interfaces"
+    },
+    {
+      "path": "../../packages/platform-cloudflare"
+    },
+    {
+      "path": "../../packages/policy"
+    },
+    {
+      "path": "../../packages/research"
+    },
+    {
+      "path": "../../packages/retrieval"
     }
   ]
 }
