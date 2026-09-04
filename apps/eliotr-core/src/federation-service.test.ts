@@ -17,7 +17,9 @@ import {
 
 const NOW = Date.parse("2026-09-01T20:00:00.000Z");
 const FUTURE = "2026-09-02T20:00:00.000Z";
+const PAST = "2026-08-31T20:00:00.000Z";
 const DIGEST = "a".repeat(64);
+const encoder = new TextEncoder();
 
 function ref(id: string, revision = 1): VersionedRef {
   return { id, revision };
@@ -27,6 +29,31 @@ const scopeRef = ref("scope-snapshot");
 const manifestRef = ref("allowed-reference-manifest");
 const allowedHandle = ref("evidence-handle");
 const bundleRef = ref("federation-bundle");
+const allowedUses = [
+  "federation.submit",
+  "federation.status",
+  "federation.result",
+  "federation.cancel",
+  "federation.bundle.read",
+  "federation.bundle.manifest",
+  "federation.changes",
+] as const;
+
+function canonical(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  const record = value as Readonly<Record<string, unknown>>;
+  return `{${Object.keys(record).sort().map(
+    (key) => `${JSON.stringify(key)}:${canonical(record[key])}`,
+  ).join(",")}}`;
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 function request(overrides: Partial<FederationRequest> = {}): FederationRequest {
   return {
@@ -75,7 +102,10 @@ function status(
   };
 }
 
-function bundle(disposition: CompletionDisposition = "ANSWERED_WITH_SUPPORTED_RESULT"): FederationEvidenceBundle {
+function bundle(
+  disposition: CompletionDisposition = "ANSWERED_WITH_SUPPORTED_RESULT",
+  overrides: Partial<FederationEvidenceBundle> = {},
+): FederationEvidenceBundle {
   return {
     protocol: "eliotr.federation.v1",
     exchange_id: "exchange-1",
@@ -124,6 +154,7 @@ function bundle(disposition: CompletionDisposition = "ANSWERED_WITH_SUPPORTED_RE
     retention_ref: "retention-1",
     expires_at: FUTURE,
     unsupported_precision: [],
+    ...overrides,
   };
 }
 
@@ -139,8 +170,11 @@ function record(
   };
 }
 
-function manifest(allowedUses: readonly string[]): AllowedReferenceManifest {
-  return {
+async function manifest(
+  uses: readonly string[] = allowedUses,
+  overrides: Partial<Omit<AllowedReferenceManifest, "manifest_digest">> = {},
+): Promise<AllowedReferenceManifest> {
+  const payload: Omit<AllowedReferenceManifest, "manifest_digest"> = {
     manifest_ref: manifestRef,
     scope_snapshot_ref: scopeRef,
     allowed_source_revision_refs: [],
@@ -151,18 +185,28 @@ function manifest(allowedUses: readonly string[]): AllowedReferenceManifest {
     provider_and_policy_generations: {
       "client-principal": "client-credential-generation-1",
       "server-principal": "server-credential-generation-1",
+      "privacy-policy-1": "privacy-generation-1",
+      "disclosure-policy-1": "disclosure-generation-1",
+      "retention-policy-1": "retention-generation-1",
+      "license-policy-1": "license-generation-1",
+      "residency-profile-1": "residency-generation-1",
+      "budget-1": "budget-generation-1",
+      "stop-rule-1": "stop-generation-1",
     },
     stale_or_revoked_entries: [],
     permitted_acquisition_or_expansion_routes: [],
     disclosure_ceiling: "disclosure-ceiling-1",
-    allowed_use: [...allowedUses],
+    allowed_use: [...uses],
     expires_at: FUTURE,
-    manifest_digest: DIGEST,
     client_fence_ref: "client-fence-1",
+    ...overrides,
   };
+  return { ...payload, manifest_digest: await sha256(canonical(payload)) };
 }
 
-function context(overrides: Partial<FederationAuthenticatedContext> = {}): FederationAuthenticatedContext {
+function context(
+  overrides: Partial<FederationAuthenticatedContext> = {},
+): FederationAuthenticatedContext {
   return {
     request: new Request("https://research.example/federation"),
     principal_ref: "client-principal",
@@ -177,17 +221,12 @@ function context(overrides: Partial<FederationAuthenticatedContext> = {}): Feder
   };
 }
 
+type ManifestFactory = () => Promise<AllowedReferenceManifest>;
+
 function dependencies(
   jobRecord: FederationJobRecord = record(),
-  allowedUses: readonly string[] = [
-    "federation.submit",
-    "federation.status",
-    "federation.result",
-    "federation.cancel",
-    "federation.bundle.read",
-    "federation.bundle.manifest",
-    "federation.changes",
-  ],
+  uses: readonly string[] = allowedUses,
+  manifestFactory: ManifestFactory = () => manifest(uses),
 ): FederationServiceDependencies {
   return {
     identity: {
@@ -215,7 +254,7 @@ function dependencies(
         result: null,
       })),
     },
-    manifests: { get: vi.fn(async () => manifest(allowedUses)) },
+    manifests: { get: vi.fn(manifestFactory) },
     bundles: {
       readAuthorizedManifest: vi.fn(async () => bundle()),
       readAuthorizedBytes: vi.fn(async () => new ReadableStream<Uint8Array>({
@@ -268,17 +307,137 @@ describe("ER-22 federation service", () => {
     });
   });
 
+  it("rejects a tampered manifest before invoking durable job authority", async () => {
+    const signed = await manifest();
+    const tampered: AllowedReferenceManifest = {
+      ...signed,
+      allowed_evidence_handle_refs: [ref("forged-handle")],
+    };
+    const input = dependencies(record(), allowedUses, async () => tampered);
+    const service = createFederationService(input);
+
+    await expectCode(
+      service.submit(context(), request({ allowed_input_handle_refs: [ref("forged-handle")] })),
+      "FEDERATION_MANIFEST_DIGEST_MISMATCH",
+    );
+    expect(input.jobs.reserve).not.toHaveBeenCalled();
+  });
+
+  it("rejects revoked handles and policy references outside the signed manifest", async () => {
+    const revoked = dependencies(
+      record(),
+      allowedUses,
+      () => manifest(allowedUses, { stale_or_revoked_entries: [allowedHandle.id] }),
+    );
+    await expectCode(
+      createFederationService(revoked).submit(context(), request()),
+      "FEDERATION_REFERENCE_DENIED",
+    );
+
+    const generations = (await manifest()).provider_and_policy_generations;
+    const { "budget-1": _budgetGeneration, ...withoutBudget } = generations;
+    const missingBudget = dependencies(
+      record(),
+      allowedUses,
+      () => manifest(allowedUses, { provider_and_policy_generations: withoutBudget }),
+    );
+    await expectCode(
+      createFederationService(missingBudget).submit(context(), request()),
+      "FEDERATION_REFERENCE_DENIED",
+    );
+  });
+
+  it("never strengthens conflicting completion claims and rejects failed terminal claims", async () => {
+    const conflicting: FederationJobRecord = {
+      request_digest: DIGEST,
+      status: status("COMPLETED", "INCONCLUSIVE"),
+      observed_completion_disposition: "ANSWERED_WITH_SUPPORTED_RESULT",
+      result: bundle(),
+    };
+    const service = createFederationService(dependencies(conflicting));
+    await expect(service.status(context(), "exchange-1", "idempotency-1")).resolves.toMatchObject({
+      transport_state: "COMPLETED",
+      completion_disposition: "INCONCLUSIVE",
+    });
+    await expect(service.result(context(), "exchange-1", "idempotency-1")).resolves.toMatchObject({
+      completion_disposition: "INCONCLUSIVE",
+      coverage_receipt: { terminal_disposition: "INCONCLUSIVE" },
+    });
+
+    const failed: FederationJobRecord = {
+      request_digest: DIGEST,
+      status: status("FAILED", "ANSWERED_WITH_SUPPORTED_RESULT"),
+      observed_completion_disposition: "ANSWERED_WITH_SUPPORTED_RESULT",
+      result: null,
+    };
+    await expectCode(
+      createFederationService(dependencies(failed)).status(
+        context(),
+        "exchange-1",
+        "idempotency-1",
+      ),
+      "FEDERATION_AUTHORITY_INVALID",
+    );
+  });
+
+  it("rejects expired or wrong-scope evidence bundles", async () => {
+    const base = dependencies();
+    const wrongScope: FederationServiceDependencies = {
+      ...base,
+      bundles: {
+        ...base.bundles,
+        readAuthorizedManifest: vi.fn(async () => bundle(
+          "ANSWERED_WITH_SUPPORTED_RESULT",
+          {
+            coverage_receipt: {
+              ...bundle().coverage_receipt,
+              frozen_scope_snapshot_ref: ref("other-scope"),
+            },
+          },
+        )),
+      },
+    };
+    await expectCode(
+      createFederationService(wrongScope).readBundleManifest(context(), bundleRef),
+      "FEDERATION_SCOPE_MISMATCH",
+    );
+
+    const expired: FederationServiceDependencies = {
+      ...base,
+      bundles: {
+        ...base.bundles,
+        readAuthorizedManifest: vi.fn(async () => bundle(
+          "ANSWERED_WITH_SUPPORTED_RESULT",
+          { expires_at: PAST },
+        )),
+      },
+    };
+    await expectCode(
+      createFederationService(expired).readBundleManifest(context(), bundleRef),
+      "FEDERATION_BUNDLE_EXPIRED",
+    );
+  });
+
   it("fails closed on unknown request, scope, security and budget fields", async () => {
     const service = createFederationService(dependencies());
     const base = request();
 
-    await expectCode(service.submit(context(), { ...base, unexpected: true } as FederationRequest), "FEDERATION_REQUEST_INVALID");
+    await expectCode(
+      service.submit(context(), { ...base, unexpected: true } as FederationRequest),
+      "FEDERATION_REQUEST_INVALID",
+    );
     await expectCode(service.submit(context(), {
       ...base,
       scope_expression: { kind: "PROJECT", project_id: "project-1", bypass: true },
     } as FederationRequest), "FEDERATION_REQUEST_INVALID");
-    await expectCode(service.submit(context(), { ...base, privacy_override: true } as FederationRequest), "FEDERATION_REQUEST_INVALID");
-    await expectCode(service.submit(context(), { ...base, budget_override: { unlimited: true } } as FederationRequest), "FEDERATION_REQUEST_INVALID");
+    await expectCode(
+      service.submit(context(), { ...base, privacy_override: true } as FederationRequest),
+      "FEDERATION_REQUEST_INVALID",
+    );
+    await expectCode(
+      service.submit(context(), { ...base, budget_override: { unlimited: true } } as FederationRequest),
+      "FEDERATION_REQUEST_INVALID",
+    );
   });
 
   it("rejects references and scopes outside the exact AllowedReferenceManifest", async () => {
@@ -287,15 +446,27 @@ describe("ER-22 federation service", () => {
     await expectCode(service.submit(context(), request({
       allowed_input_handle_refs: [ref("not-allowed")],
     })), "FEDERATION_REFERENCE_DENIED");
-    await expectCode(service.changes(context(), "cursor-1", [ref("other-scope")]), "FEDERATION_REFERENCE_DENIED");
+    await expectCode(
+      service.changes(context(), "cursor-1", [ref("other-scope")]),
+      "FEDERATION_REFERENCE_DENIED",
+    );
   });
 
   it("binds every call to the authenticated peer, server generation and client fence", async () => {
     const service = createFederationService(dependencies());
 
-    await expectCode(service.submit(context({ client_fence_ref: "stale-fence" }), request()), "FEDERATION_CLIENT_FENCE_MISMATCH");
-    await expectCode(service.submit(context({ server_credential_generation: "stale-server" }), request()), "FEDERATION_SERVER_IDENTITY_MISMATCH");
-    await expectCode(service.submit(context(), request({ requester_principal_ref: "other-client" })), "FEDERATION_REQUEST_BINDING_MISMATCH");
+    await expectCode(
+      service.submit(context({ client_fence_ref: "stale-fence" }), request()),
+      "FEDERATION_CLIENT_FENCE_MISMATCH",
+    );
+    await expectCode(
+      service.submit(context({ server_credential_generation: "stale-server" }), request()),
+      "FEDERATION_SERVER_IDENTITY_MISMATCH",
+    );
+    await expectCode(
+      service.submit(context(), request({ requester_principal_ref: "other-client" })),
+      "FEDERATION_REQUEST_BINDING_MISMATCH",
+    );
   });
 
   it("surfaces an idempotency conflict instead of starting duplicate work", async () => {
@@ -312,12 +483,30 @@ describe("ER-22 federation service", () => {
     };
     const service = createFederationService(input);
 
-    await expectCode(service.submit(context(), request()), "FEDERATION_IDEMPOTENCY_CONFLICT");
+    await expectCode(
+      service.submit(context(), request()),
+      "FEDERATION_IDEMPOTENCY_CONFLICT",
+    );
   });
 
-  it("validates bounded ranges and exposes no reverse canonical-write operation", async () => {
-    const service = createFederationService(dependencies());
+  it("strictly validates change pages, bounded ranges, and the read-only surface", async () => {
+    const base = dependencies();
+    const malformed: FederationServiceDependencies = {
+      ...base,
+      changes: {
+        readAuthorized: vi.fn(async () => ({
+          next_cursor: "cursor-2",
+          changed_refs: [],
+          unexpected: true,
+        } as never)),
+      },
+    };
+    await expectCode(
+      createFederationService(malformed).changes(context(), "cursor-1", [scopeRef]),
+      "FEDERATION_AUTHORITY_INVALID",
+    );
 
+    const service = createFederationService(base);
     await expectCode(service.readBundle(context(), bundleRef, {
       start: 0,
       endExclusive: 8 * 1024 * 1024 + 1,
