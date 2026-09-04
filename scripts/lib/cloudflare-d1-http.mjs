@@ -1,7 +1,11 @@
+import { URL } from "node:url";
+import { TextEncoder } from "node:util";
+
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u;
 const MAX_SQL_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
+const UTF8 = new TextEncoder();
 
 export class CloudflareD1HttpError extends Error {
   constructor(code, message, options = {}) {
@@ -34,6 +38,9 @@ function apiUrl(value) {
   if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) {
     fail("D1_HTTP_INPUT_INVALID", "Cloudflare API base URL must use HTTPS outside loopback tests");
   }
+  if (parsed.username.length > 0 || parsed.password.length > 0) {
+    fail("D1_HTTP_INPUT_INVALID", "Cloudflare API base URL must not contain credentials");
+  }
   parsed.pathname = parsed.pathname.replace(/\/$/u, "");
   parsed.search = "";
   parsed.hash = "";
@@ -56,7 +63,7 @@ function sqlText(value) {
   if (
     typeof value !== "string" ||
     value.trim().length < 1 ||
-    new TextEncoder().encode(value).byteLength > MAX_SQL_BYTES
+    UTF8.encode(value).byteLength > MAX_SQL_BYTES
   ) {
     fail("D1_HTTP_INPUT_INVALID", "D1 SQL is empty or exceeds 64 KiB");
   }
@@ -79,12 +86,24 @@ function exactObject(value, label) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail("D1_HTTP_RESPONSE_INVALID", `${label} must be an object`);
   }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    fail("D1_HTTP_RESPONSE_INVALID", `${label} must be a plain object`);
+  }
   return value;
 }
 
 async function boundedResponseText(response) {
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_RESPONSE_BYTES) {
+  let text;
+  try {
+    text = await response.text();
+  } catch (cause) {
+    fail("D1_HTTP_TRANSPORT_FAILED", "Cloudflare D1 response body could not be read", {
+      status: response.status,
+      cause,
+    });
+  }
+  if (UTF8.encode(text).byteLength > MAX_RESPONSE_BYTES) {
     fail("D1_HTTP_RESPONSE_INVALID", "Cloudflare D1 response exceeds 1 MiB", {
       status: response.status,
     });
@@ -140,6 +159,9 @@ export function createCloudflareD1HttpDatabase(options) {
   if (typeof fetchImpl !== "function") {
     fail("D1_HTTP_INPUT_INVALID", "fetch implementation is unavailable");
   }
+  if (typeof globalThis.AbortSignal?.timeout !== "function") {
+    fail("D1_HTTP_INPUT_INVALID", "AbortSignal.timeout is unavailable");
+  }
   const timeoutMs = options?.timeout_ms ?? DEFAULT_TIMEOUT_MS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120_000) {
     fail("D1_HTTP_INPUT_INVALID", "D1 HTTP timeout must be an integer in [1, 120000]");
@@ -161,7 +183,7 @@ export function createCloudflareD1HttpDatabase(options) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ sql: statement, params: values }),
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: globalThis.AbortSignal.timeout(timeoutMs),
       });
     } catch (cause) {
       fail("D1_HTTP_TRANSPORT_FAILED", "Cloudflare D1 query transport failed", { cause });
