@@ -13,6 +13,10 @@ const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.d
 const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
 const canonicalConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc");
 const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");
+const aiSearchDesired = JSON.parse(await readFile(
+  resolve(repositoryRoot, "infra/ai-search/instances.json"),
+  "utf8",
+));
 const backupRoot = resolve(repositoryRoot, `.eliotr-provisioner-test-backup-${process.pid}`);
 const backupGeneratedConfigPath = resolve(backupRoot, "wrangler.deploy.jsonc");
 const backupStateDirectory = resolve(backupRoot, "state");
@@ -275,17 +279,12 @@ try {
 
   // Immutable AI Search drift fails in both plan and apply modes before mutation.
   reset();
-  state.aiNamespace = { id: "namespace-1", name: "eliotr" };
-  state.aiInstances.set("private-prose-g1", {
-    id: "private-prose-g1",
+  state.aiNamespace = { id: "namespace-1", name: aiSearchDesired.namespace };
+  const driftSpec = aiSearchDesired.instances[0];
+  assert(driftSpec, "AI Search desired state must contain an instance");
+  state.aiInstances.set(driftSpec.id, {
+    ...structuredClone(driftSpec.create),
     embedding_model: "@cf/incompatible/model",
-    index_method: { vector: true, keyword: true },
-    fusion_method: "rrf",
-    indexing_options: { keyword_tokenizer: "porter" },
-    retrieval_options: { keyword_match_mode: "and" },
-    max_num_results: 50,
-    reranking: true,
-    reranking_model: "@cf/baai/bge-reranker-base",
   });
   expectFail(await run("scripts/provision-ai-search.mjs", ["--check-only"]), "AI Search drift check-only");
   expectFail(await run("scripts/provision-ai-search.mjs"), "AI Search drift apply");
