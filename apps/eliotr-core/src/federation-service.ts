@@ -21,6 +21,7 @@ import type {
   FederationChangePage,
 } from "@eliotr/interfaces";
 import { federationScopeExceedsDepth } from "./federation-scope-limits.js";
+import { federationRequestAuthorityRefs } from "./federation-request-authorities.js";
 const MAX_REQUEST_BYTES = 256 * 1024;
 const MAX_QUESTION_BYTES = 32 * 1024;
 const MAX_EXPECTED_RESULT_BYTES = 16 * 1024;
@@ -300,15 +301,7 @@ function assertAuthorizedRequestRefs(
   manifest: AllowedReferenceManifest,
   request: FederationRequest,
 ): void {
-  const authorityRefs = [
-    request.privacy_policy_ref,
-    request.disclosure_policy_ref,
-    request.retention_policy_ref,
-    request.license_policy_ref,
-    request.residency_profile_ref,
-    request.budget_ref,
-    request.stop_rule_ref,
-  ];
+  const authorityRefs = federationRequestAuthorityRefs(request);
   for (const ref of authorityRefs) {
     if (!Object.prototype.hasOwnProperty.call(manifest.provider_and_policy_generations, ref) ||
         isRevoked(manifest, ref)) {

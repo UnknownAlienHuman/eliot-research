@@ -444,6 +444,7 @@
         "packages/interfaces/src/federation-api.ts",
         "apps/eliotr-core/src/federation-service.ts",
         "apps/eliotr-core/src/federation-scope-limits.ts",
+        "apps/eliotr-core/src/federation-request-authorities.ts",
         "apps/eliotr-core/src/federation-service.test.ts"
       ],
       "mandatory_negative_case": "Complete transport with an inconclusive research result and prove status is COMPLETED + INCONCLUSIVE, not ANSWERED_WITH_SUPPORTED_RESULT.",

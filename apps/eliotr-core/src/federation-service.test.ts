@@ -204,6 +204,8 @@ async function manifest(
       "residency-profile-1": "residency-generation-1",
       "budget-1": "budget-generation-1",
       "stop-rule-1": "stop-generation-1",
+      "progress-contract-1": "progress-generation-1",
+      "result-schema-1": "result-schema-generation-1",
     },
     stale_or_revoked_entries: [],
     permitted_acquisition_or_expansion_routes: [],
@@ -335,7 +337,7 @@ describe("ER-22 federation service", () => {
     expect(input.jobs.reserve).not.toHaveBeenCalled();
   });
 
-  it("rejects revoked handles and policy references outside the signed manifest", async () => {
+  it("rejects revoked or undeclared execution authorities before reservation", async () => {
     const revoked = dependencies(
       record(),
       allowedUses,
@@ -357,6 +359,47 @@ describe("ER-22 federation service", () => {
       createFederationService(missingBudget).submit(context(), request()),
       "FEDERATION_REFERENCE_DENIED",
     );
+    expect(missingBudget.jobs.reserve).not.toHaveBeenCalled();
+
+    const { "progress-contract-1": _progressGeneration, ...withoutProgress } =
+      generations;
+    const missingProgress = dependencies(
+      record(),
+      allowedUses,
+      () => manifest(allowedUses, {
+        provider_and_policy_generations: withoutProgress,
+      }),
+    );
+    await expectCode(
+      createFederationService(missingProgress).submit(context(), request()),
+      "FEDERATION_REFERENCE_DENIED",
+    );
+    expect(missingProgress.jobs.reserve).not.toHaveBeenCalled();
+
+    const { "result-schema-1": _resultSchemaGeneration, ...withoutResultSchema } =
+      generations;
+    const missingResultSchema = dependencies(
+      record(),
+      allowedUses,
+      () => manifest(allowedUses, {
+        provider_and_policy_generations: withoutResultSchema,
+      }),
+    );
+    await expectCode(
+      createFederationService(missingResultSchema).submit(context(), request()),
+      "FEDERATION_REFERENCE_DENIED",
+    );
+    expect(missingResultSchema.jobs.reserve).not.toHaveBeenCalled();
+
+    const undeclaredExport = dependencies();
+    await expectCode(
+      createFederationService(undeclaredExport).submit(
+        context(),
+        request({ export_manifest_ref: "export-manifest-1" }),
+      ),
+      "FEDERATION_REFERENCE_DENIED",
+    );
+    expect(undeclaredExport.jobs.reserve).not.toHaveBeenCalled();
   });
 
   it("never strengthens conflicting completion claims and rejects failed terminal claims", async () => {
