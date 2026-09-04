@@ -92,6 +92,9 @@ function stable(value) {
   return value;
 }
 function equal(left, right) { return JSON.stringify(stable(left)) === JSON.stringify(stable(right)); }
+function errorDescription(error) {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const comparedPaths = [
   "type", "source", "id", "ai_gateway_id", "embedding_model", "index_method",
@@ -128,8 +131,9 @@ async function reconcileCreate(path, spec, createError) {
     observed = await request("GET", path, undefined, true);
   } catch (readError) {
     throw new Error(
-      `AI Search create for ${spec.id} has an unknown effect; authoritative readback failed and no second create was attempted`,
-      { cause: new AggregateError([createError, readError], "create and reconciliation failed") },
+      `AI Search create for ${spec.id} has an unknown effect; authoritative readback failed and no second create was attempted. ` +
+      `Initial create failure: ${errorDescription(createError)}`,
+      { cause: readError },
     );
   }
   if (observed === null) {
@@ -142,8 +146,9 @@ async function reconcileCreate(path, spec, createError) {
     assertExactInstance(spec, observed, "post-create readback");
   } catch (readbackError) {
     throw new Error(
-      `AI Search create for ${spec.id} has an unknown effect and post-create readback is not exact; no second create was attempted`,
-      { cause: new AggregateError([createError, readbackError], "create acknowledgement and readback disagree") },
+      `AI Search create for ${spec.id} has an unknown effect and post-create readback is not exact; no second create was attempted. ` +
+      `Initial create failure: ${errorDescription(createError)}`,
+      { cause: readbackError },
     );
   }
   return observed;
