@@ -1,7 +1,8 @@
 import type { Env } from "./env.js";
 
 export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v8-erasure-closure" as const;
-export const REQUIRED_SEARCH_SCHEMA_GENERATION = "search-v3-erasure-invalidation" as const;
+export const REQUIRED_SEARCH_SCHEMA_GENERATION =
+  "search-v4-ai-search-generation-registry" as const;
 
 export interface ReadinessReport {
   readonly ready: boolean;
