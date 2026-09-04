@@ -1,0 +1,85 @@
+name: er22-reference-admission-dispatch-recovery
+
+on:
+  push:
+    branches:
+      - agent/ER-22-federation-reference-admission-20260904
+
+permissions:
+  actions: write
+  checks: read
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: er22-reference-admission-dispatch-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover-dispatch-merge:
+    if: ${{ !contains(github.event.head_commit.message, '[dispatch-recovery]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BRANCH: agent/ER-22-federation-reference-admission-20260904
+      FINAL_MARKER: "[er22-reference-admission-merge-gate]"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/ER-22-federation-reference-admission-20260904
+          fetch-depth: 0
+      - name: Wait for finalized product candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --state open --json number --jq '.[0].number')"
+          if [[ -z "$PR_NUMBER" || "$PR_NUMBER" == "null" ]]; then exit 0; fi
+          for _ in $(seq 1 540); do
+            SHA="$(gh api "/repos/$GITHUB_REPOSITORY/branches/$BRANCH" --jq .commit.sha)"
+            MESSAGE="$(gh api "/repos/$GITHUB_REPOSITORY/commits/$SHA" --jq .commit.message)"
+            [[ "$MESSAGE" == *"$FINAL_MARKER"* ]] && break
+            sleep 8
+          done
+          [[ "$MESSAGE" == *"$FINAL_MARKER"* ]] || { echo "finalizer marker not observed" >&2; exit 1; }
+          git fetch origin "$BRANCH"
+          git reset --hard "origin/$BRANCH"
+          test -f apps/eliotr-core/src/federation-d1-reference-admission.ts
+          grep -F 'createD1FederationReferenceAuthorityStore' apps/eliotr-core/src/federation-d1-reference-admission.ts
+          rm -f \
+            .github/workflows/er22-reference-admission-verified-merge.yml \
+            .github/workflows/er22-reference-admission-dispatch-recovery.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ER-22: finalize federation reference admission [dispatch-recovery]"
+            git push origin HEAD:"$BRANCH"
+          fi
+          CANDIDATE_SHA="$(git rev-parse HEAD)"
+          gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+          echo "PR_NUMBER=$PR_NUMBER" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA" >> "$GITHUB_ENV"
+      - name: Require exact-head checks
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in $(seq 1 280); do
+            [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)" == "$CANDIDATE_SHA" ]] || exit 1
+            checks="$(gh api --paginate "/repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA/check-runs?per_page=100")"
+            verify="$(jq -r '[.check_runs[] | select(.name == "verify")][-1].conclusion // "PENDING"' <<<"$checks")"
+            rust="$(jq -r '[.check_runs[] | select(.name == "rust")][-1].conclusion // "PENDING"' <<<"$checks")"
+            [[ "$verify" == success && "$rust" == success ]] && exit 0
+            case "$verify/$rust" in *failure*|*cancelled*|*timed_out*|*action_required*|*startup_failure*|*stale*) exit 1;; esac
+            sleep 8
+          done
+          exit 1
+      - name: Merge exact green head
+        if: ${{ env.CANDIDATE_SHA != '' }}
+        shell: bash
+        run: |
+          gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --squash --delete-branch \
+            --match-head-commit "$CANDIDATE_SHA" \
+            --subject "ER-22: add immutable federation reference admission (#$PR_NUMBER)" \
+            --body "Immutable create/replay and lost-ack reconciliation for ScopeSnapshot and manifest authority; exact head passed explicitly dispatched verify and rust."
