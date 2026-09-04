@@ -72,14 +72,24 @@ function parseDocumentOwnedPaths(packetId, documentName, markdown) {
     const line = lines[index];
     if (/^##(?:\s|$)/u.test(line)) break;
     if (line.trim() === "") continue;
+
     const match = /^- `([^`]+)`$/u.exec(line);
-    if (match === null) {
+    if (match !== null) {
+      paths.push(match[1]);
+      continue;
+    }
+
+    if (line.startsWith("- ") || paths.length === 0) {
       errors.push(
         `${packetId}: ${documentName}:${index + 1} has malformed owned-path entry`,
       );
       continue;
     }
-    paths.push(match[1]);
+
+    // Packet documents may explain cross-packet handoffs directly after the
+    // bullet block. Once at least one exact path was parsed, ordinary prose
+    // terminates the machine-readable owned-path section.
+    break;
   }
 
   if (paths.length === 0) {
