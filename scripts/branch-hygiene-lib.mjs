@@ -8,6 +8,18 @@ function parseTimestamp(value, label) {
   return timestamp;
 }
 
+function branchNameSet(values, label) {
+  if (!Array.isArray(values)) throw new Error(`${label} must be an array`);
+  const output = new Set();
+  for (const value of values) {
+    if (typeof value !== "string" || value.length === 0) {
+      throw new Error(`${label} entries must be non-empty strings`);
+    }
+    output.add(value);
+  }
+  return output;
+}
+
 export function validateBranchHygieneConfig(raw) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw new Error("branch hygiene config must be an object");
@@ -53,11 +65,17 @@ export function classifyBranch(branch, context) {
   if (typeof branch?.name !== "string" || branch.name.length === 0) {
     throw new Error("branch name is required");
   }
+  if (typeof branch.sha !== "string" || branch.sha.length === 0) {
+    throw new Error(`branch ${branch.name} sha is required`);
+  }
   if (branch.name === context.config.default_branch) {
     return { action: "PRESERVE", reason: "DEFAULT_BRANCH" };
   }
   if (context.openPrHeads.has(branch.name)) {
     return { action: "PRESERVE", reason: "OPEN_PULL_REQUEST" };
+  }
+  if (context.closedPrHeads.has(branch.name)) {
+    return { action: "DELETE", reason: "CLOSED_PULL_REQUEST" };
   }
 
   const updatedAt = parseTimestamp(branch.updated_at, `branch ${branch.name} updated_at`);
@@ -79,38 +97,86 @@ export function classifyBranch(branch, context) {
   return { action: "PRESERVE", reason: "RECENT_UNMERGED_BRANCH" };
 }
 
-export function planBranchCleanup({ branches, open_pr_heads, now_ms, config: rawConfig }) {
+function newestFirst(left, right) {
+  const timestampDifference =
+    parseTimestamp(right.updated_at, `branch ${right.name} updated_at`) -
+    parseTimestamp(left.updated_at, `branch ${left.name} updated_at`);
+  return timestampDifference === 0
+    ? left.name.localeCompare(right.name)
+    : timestampDifference;
+}
+
+export function planBranchCleanup({
+  branches,
+  open_pr_heads,
+  closed_pr_heads = [],
+  now_ms,
+  config: rawConfig,
+}) {
   const config = validateBranchHygieneConfig(rawConfig);
   if (!Array.isArray(branches)) throw new Error("branches must be an array");
-  if (!Array.isArray(open_pr_heads)) throw new Error("open_pr_heads must be an array");
-  const openPrHeads = new Set(open_pr_heads);
+  if (!Number.isSafeInteger(now_ms) || now_ms < 0) {
+    throw new Error("now_ms must be a non-negative safe integer");
+  }
+  const openPrHeads = branchNameSet(open_pr_heads, "open_pr_heads");
+  const closedPrHeads = branchNameSet(closed_pr_heads, "closed_pr_heads");
   const seen = new Set();
-  const decisions = [];
+  const provisional = [];
 
   for (const branch of branches) {
     if (seen.has(branch.name)) throw new Error(`duplicate branch: ${branch.name}`);
     seen.add(branch.name);
-    decisions.push({
+    provisional.push({
       name: branch.name,
+      sha: branch.sha,
       updated_at: branch.updated_at,
-      ...classifyBranch(branch, { config, openPrHeads, now_ms }),
+      ...classifyBranch(branch, { config, openPrHeads, closedPrHeads, now_ms }),
     });
   }
 
   if (!seen.has(config.default_branch)) {
     throw new Error(`default branch ${config.default_branch} is absent`);
   }
-  const remaining = decisions.filter((item) => item.action === "PRESERVE" && item.name !== config.default_branch);
-  if (remaining.length > config.max_non_default_branches) {
-    throw new Error(
-      `branch ceiling exceeded after cleanup: ${remaining.length} > ${config.max_non_default_branches}`,
-    );
-  }
+
+  const fixedNonDefault = provisional.filter(
+    (item) =>
+      item.name !== config.default_branch &&
+      item.action === "PRESERVE" &&
+      item.reason !== "RECENT_UNMERGED_BRANCH",
+  );
+  const recent = provisional
+    .filter((item) => item.reason === "RECENT_UNMERGED_BRANCH")
+    .sort(newestFirst);
+  const recentCapacity = Math.max(
+    0,
+    config.max_non_default_branches - fixedNonDefault.length,
+  );
+  const recentToPreserve = new Set(
+    recent.slice(0, recentCapacity).map((item) => item.name),
+  );
+  const decisions = provisional.map((item) =>
+    item.reason === "RECENT_UNMERGED_BRANCH" &&
+    !recentToPreserve.has(item.name)
+      ? {
+          ...item,
+          action: "DELETE",
+          reason: "QUARANTINE_CEILING_EVICTION",
+        }
+      : item,
+  );
+  const deleteItems = decisions.filter((item) => item.action === "DELETE");
+  const preserveItems = decisions.filter((item) => item.action === "PRESERVE");
+  const projectedNonDefault = preserveItems.filter(
+    (item) => item.name !== config.default_branch,
+  ).length;
 
   return Object.freeze({
     config,
     decisions: Object.freeze(decisions),
-    delete: Object.freeze(decisions.filter((item) => item.action === "DELETE")),
-    preserve: Object.freeze(decisions.filter((item) => item.action === "PRESERVE")),
+    delete: Object.freeze(deleteItems),
+    preserve: Object.freeze(preserveItems),
+    projected_non_default_branches: projectedNonDefault,
+    ceiling_satisfied:
+      projectedNonDefault <= config.max_non_default_branches,
   });
 }
