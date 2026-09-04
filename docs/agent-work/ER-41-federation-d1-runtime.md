@@ -13,6 +13,7 @@ acknowledgements.
 
 ## Owned paths
 
+- `apps/eliotr-core/src/federation-d1-codec.ts`
 - `apps/eliotr-core/src/federation-d1-authority.ts`
 - `apps/eliotr-core/src/federation-d1-authority.test.ts`
 - `docs/agent-work/ER-41-federation-d1-runtime.md`
