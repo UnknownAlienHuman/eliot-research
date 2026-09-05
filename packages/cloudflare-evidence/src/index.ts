@@ -5,3 +5,4 @@ export * from "./content-store.js";
 export * from "./resolver.js";
 export * from "./registry.js";
 export * from "./citation-registry.js";
+export * from "./scope-store.js";

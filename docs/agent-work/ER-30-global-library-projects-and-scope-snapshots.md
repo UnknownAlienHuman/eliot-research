@@ -16,6 +16,10 @@ outside the paths below.
 - `packages/domain/src/project-membership.test.ts`
 - `apps/eliotr-core/src/scope-service.ts`
 - `apps/eliotr-core/src/scope-service.test.ts`
+- `packages/domain/src/scope/snapshot-identity.ts`
+- `packages/domain/src/scope/snapshot-identity.test.ts`
+- `apps/eliotr-core/src/scope-persistence.test.ts`
+- `apps/eliotr-core/src/sql-fixture.d.ts`
 
 ## Read only
 
@@ -87,7 +91,19 @@ The exact branch must pass repository CI, including ESLint, strict TypeScript, d
 implementation-status validation, package boundaries, source budgets, Worker dry-run and the unchanged
 Rust verification job.
 
-Live D1 composition, principal grants and retained deployed readback/invalidation receipts are
-`NOT EXECUTED`; ER-24 owns that follow-up. No schema migration or backfill is required because the
-existing `project_source_membership` and `scope_snapshot` tables already carry the required authority
-fields.
+D1 snapshot persistence is composed by `createD1ScopeService` with the ER-39-owned store in
+`packages/cloudflare-evidence`. Its insert/replay/lost-ACK path reads exact canonical rows back; it never
+updates an existing snapshot, revives invalidated state, or creates a principal grant. The freezer and
+evidence reader share the versioned identity payload from `scope/snapshot-identity.ts`. Both hashes
+include `eliotr.scope-snapshot.v1`; protocol-less legacy digests are rejected, not silently rewritten.
+The local Workers integration test executes the committed scope/grant DDL in Miniflare D1 and exercises
+freeze -> persistence -> evidence load/authorization, replay, lost ACK, revocation, expiry and corruption.
+Mutable membership/policy observations in that test are explicit fixtures, not live authority receipts.
+
+No SQL migration is required. Previously persisted protocol-less or non-content-addressed snapshots
+must be invalidated and re-frozen under current authorized policy; do not transplant their grants,
+rewrite their digests in place, or weaken the reader to accept both constructions.
+
+ER-24 still owns production atom/policy resolver wiring, principal-grant issuance, HTTP/retrieval
+composition and retained deployed readback/invalidation receipts. Those gates remain `NOT_EXECUTED`;
+this change does not enable `research.orient` or claim complete scope/retrieval production readiness.

@@ -623,7 +623,11 @@
         "packages/domain/src/project-membership.ts",
         "packages/domain/src/project-membership.test.ts",
         "apps/eliotr-core/src/scope-service.ts",
-        "apps/eliotr-core/src/scope-service.test.ts"
+        "apps/eliotr-core/src/scope-service.test.ts",
+        "packages/domain/src/scope/snapshot-identity.ts",
+        "packages/domain/src/scope/snapshot-identity.test.ts",
+        "apps/eliotr-core/src/scope-persistence.test.ts",
+        "apps/eliotr-core/src/sql-fixture.d.ts"
       ],
       "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
       "document": "ER-30-global-library-projects-and-scope-snapshots.md",

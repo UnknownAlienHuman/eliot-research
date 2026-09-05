@@ -205,3 +205,5 @@ export function inspectScopeExpression(expression: ScopeExpression): ScopeExpres
     selected_source_count: selectedSourceCount,
   };
 }
+
+export * from "./scope/snapshot-identity.js";

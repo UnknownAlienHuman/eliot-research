@@ -239,12 +239,13 @@
         "ER-30"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "strict temporal memberships and deterministic scope algebra produce immutable digest-bound snapshots; persistence accepts created or exact replay with strict readback, and currentness fails closed on expiry, persistence drift, participant, membership, owner, member-policy, policy, disclosure, purge, fence or deny changes",
+      "behavior": "strict temporal memberships and deterministic scope algebra produce immutable digest-bound snapshots; createD1ScopeService composes primary D1 created/exact-replay/lost-ACK persistence with protocol-bound identity shared by the evidence reader; invalidated rows cannot be revived; currentness fails closed on expiry, persistence drift, participant, membership, owner, member-policy, policy, disclosure, purge, fence or deny changes; production atom/policy authority, grant issuance and retrieval wiring remain uncomposed",
       "completion_evidence": [
         "packages/domain/src/project-membership.test.ts temporal many-to-many, half-open interval, offset-order and collision-negative cases",
         "apps/eliotr-core/src/scope-service.test.ts deterministic persistence/readback, strict resource and authority-output negative cases",
+        "apps/eliotr-core/src/scope-persistence.test.ts local Miniflare D1 freezer-to-evidence round trip, no implicit grant, replay, lost ACK, invalidation, expiry, revoked credentials, malformed rows and unavailable storage",
         "mandatory purge-after-freeze case proves an old snapshot cannot pass requireCurrent",
-        "ER-24 remote D1 composition, principal grants and deployed invalidation receipts NOT EXECUTED"
+        "ER-24 production atom/policy authority, principal grants, retrieval composition and deployed invalidation receipts NOT EXECUTED"
       ]
     },
     {
@@ -264,6 +265,7 @@
       "completion_evidence": [
         "forged preview, scope, purge, UTF-8 and digest negative tests",
         "SQLite guard and invalidation fixture",
+        "actual ScopeService snapshot persists in local D1 and passes the production evidence loader with shared protocol-bound identity; legacy or corrupt rows fail closed",
         "live Access, remote D1 Core/Search, R2 conditional range and citation/output receipts"
       ]
     }

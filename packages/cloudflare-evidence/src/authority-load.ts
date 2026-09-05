@@ -1,11 +1,10 @@
+import { readD1ScopeSnapshot, ScopePersistenceError } from "./scope-store.js";
 import {
   EvidenceHandleSchema,
   LocatorCandidateSchema,
-  ScopeSnapshotSchema,
   SourceAdmissionDecisionSchema,
   type EvidenceHandle,
   type LocatorCandidate,
-  type ScopeSnapshot,
   type SourceAdmissionDecision,
   type VersionedRef,
 } from "@eliotr/contracts";
@@ -26,24 +25,6 @@ import {
   type ScopeAuthority,
   type ScopeAuthorization,
 } from "./types.js";
-
-interface ScopeRow {
-  readonly snapshot_id: unknown;
-  readonly revision: unknown;
-  readonly resolved_scope_expression_json: unknown;
-  readonly participant_generations_json: unknown;
-  readonly member_source_revision_refs_json: unknown;
-  readonly source_owner_generations_json: unknown;
-  readonly policy_authority_ref: unknown;
-  readonly disclosure_closure_digest: unknown;
-  readonly purge_ledger_revision: unknown;
-  readonly client_fence_ref: unknown;
-  readonly snapshot_digest: unknown;
-  readonly created_at: unknown;
-  readonly expires_at: unknown;
-  readonly invalidated_at: unknown;
-  readonly invalidation_reason: unknown;
-}
 
 interface GrantRow {
   readonly authorization_receipt_ref: unknown;
@@ -142,67 +123,17 @@ function identifierArray(value: unknown, label: string): readonly string[] {
   return values;
 }
 
-function scopeDigestPayload(snapshot: ScopeSnapshot): unknown {
-  const { digest: _digest, ...payload } = snapshot;
-  return payload;
-}
-
 export async function loadScopeAuthority(
   database: D1Database,
   ref: VersionedRef,
 ): Promise<ScopeAuthority | null> {
-  const row = await database.prepare(
-    "SELECT snapshot_id, revision, resolved_scope_expression_json, participant_generations_json, " +
-    "member_source_revision_refs_json, source_owner_generations_json, policy_authority_ref, " +
-    "disclosure_closure_digest, purge_ledger_revision, client_fence_ref, snapshot_digest, " +
-    "created_at, expires_at, invalidated_at, invalidation_reason FROM scope_snapshot " +
-    "WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
-  ).bind(ref.id, ref.revision).first<ScopeRow>();
-  if (row === null) return null;
-  let snapshot: ScopeSnapshot;
-  try {
-    snapshot = ScopeSnapshotSchema.parse({
-      snapshot_id: row.snapshot_id,
-      revision: row.revision,
-      resolved_scope_expression: parseCanonicalJson(
-        row.resolved_scope_expression_json,
-        "resolved scope expression",
-      ),
-      participant_generations: parseCanonicalJson(
-        row.participant_generations_json,
-        "participant generations",
-      ),
-      member_source_revision_refs: parseCanonicalJson(
-        row.member_source_revision_refs_json,
-        "scope member revisions",
-      ),
-      source_owner_generations: parseCanonicalJson(
-        row.source_owner_generations_json,
-        "scope owner generations",
-      ),
-      policy_authority_ref: row.policy_authority_ref,
-      disclosure_closure_digest: row.disclosure_closure_digest,
-      purge_ledger_revision: row.purge_ledger_revision,
-      ...(row.client_fence_ref === null ? {} : { client_fence_ref: row.client_fence_ref }),
-      digest: row.snapshot_digest,
-      created_at: row.created_at,
-      expires_at: row.expires_at,
-    });
-  } catch (cause) {
-    fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot failed strict decoding", { cause });
+  try { return await readD1ScopeSnapshot(database, ref.id, ref.revision); }
+  catch (cause) {
+    if (cause instanceof ScopePersistenceError) {
+      fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot failed integrity validation", { cause });
+    }
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "ScopeSnapshot authority read is unavailable", { retryable: true, cause });
   }
-  if (await evidenceSha256(scopeDigestPayload(snapshot)) !== snapshot.digest) {
-    fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot digest mismatch");
-  }
-  return {
-    snapshot,
-    invalidated_at: row.invalidated_at === null
-      ? null
-      : assertEvidenceIso(row.invalidated_at, "scope invalidated_at"),
-    invalidation_reason: row.invalidation_reason === null
-      ? null
-      : assertEvidenceIdentifier(row.invalidation_reason, "scope invalidation reason"),
-  };
 }
 
 export async function authorizeScopeAuthority(

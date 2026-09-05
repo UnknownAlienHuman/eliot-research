@@ -1,10 +1,12 @@
+import { createD1ScopeSnapshotStore } from "@eliotr/cloudflare-evidence";
 import {
   IdentifierSchema, PositiveIntegerSchema, ScopeExpressionSchema, ScopeSnapshotSchema, Sha256Schema,
   type ScopeExpression, type ScopeSnapshot,
 } from "@eliotr/contracts";
 import {
   inspectScopeExpression, normalizeScopeExpression, resolveDeterministicScopeSnapshotDraft,
-  scopeExpressionAtoms, scopeExpressionIdentity, type DeterministicScopeAtom,
+  scopeExpressionAtoms, scopeExpressionIdentity, scopeSnapshotIdentityPayload, scopeSnapshotDigestPayload,
+  type DeterministicScopeAtom,
   type DeterministicScopeAtomResolution, type DeterministicScopeMember,
 } from "@eliotr/domain";
 
@@ -19,7 +21,6 @@ const MAX_CANONICAL_BYTES = 2 * 1024 * 1024;
 const MAX_RESOLUTION_MEMBER_ROWS = 200_000;
 const MAX_DATE_MS = 8_640_000_000_000_000;
 const MEMBER_POLICY_CLOSURE_PARTICIPANT = "member-policy-closure";
-const SNAPSHOT_PROTOCOL = "eliotr.scope-snapshot.v1";
 
 export class ScopeServiceError extends Error {
   public readonly code: string;
@@ -355,11 +356,11 @@ function snapshotMaterial(snapshot: ScopeSnapshot): Omit<ScopeSnapshot, "snapsho
 async function expectedSnapshotIdentity(
   material: Omit<ScopeSnapshot, "snapshot_id" | "digest">,
 ): Promise<Pick<ScopeSnapshot, "snapshot_id" | "digest">> {
-  const identityMaterial = { protocol: SNAPSHOT_PROTOCOL, ...material };
+  const identityMaterial = scopeSnapshotIdentityPayload(material);
   const identityJson = canonicalJson(identityMaterial);
   requireCanonicalSize(identityJson);
   const snapshotId = `scope-${(await sha256Hex(identityJson)).slice(0, 48)}`;
-  const digestJson = canonicalJson({ snapshot_id: snapshotId, ...identityMaterial });
+  const digestJson = canonicalJson(scopeSnapshotDigestPayload({ snapshot_id: snapshotId, ...material }));
   requireCanonicalSize(digestJson);
   return { snapshot_id: snapshotId, digest: await sha256Hex(digestJson) };
 }
@@ -555,4 +556,19 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
       return ScopeSnapshotSchema.parse(snapshot);
     },
   };
+}
+
+/** Compose real snapshot storage without inventing a principal or mutable policy authority. */
+export function createD1ScopeService(
+  database: D1Database,
+  authority: Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure">,
+  options: ScopeServiceOptions = {},
+): ScopeService {
+  const storage = createD1ScopeSnapshotStore(database);
+  return createScopeService({
+    resolveAtom: (atom, observedAt) => authority.resolveAtom(atom, observedAt),
+    resolveAuthorityClosure: (request) => authority.resolveAuthorityClosure(request),
+    persistSnapshot: (snapshot) => storage.persistSnapshot(snapshot),
+    readSnapshot: (id, revision) => storage.readSnapshot(id, revision),
+  }, options);
 }
