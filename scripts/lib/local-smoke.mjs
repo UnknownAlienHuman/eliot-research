@@ -1,59 +1,9 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
-import { createServer } from "node:net";
 import { resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { devArguments, executeLocal, localEnvironment, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./local-launch.mjs";
-import { readDeploymentJson } from "./deployment-verification.mjs";
+import { executeLocal, prepareLocal, ROOT, wranglerArgs } from "./local-launch.mjs";
+import { startLocalWorker } from "./local-worker.mjs";
 
-async function vacantPort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const port = server.address().port;
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return port;
-}
-
-async function start(paths) {
-  const port = await vacantPort();
-  const child = spawn(process.execPath, devArguments(paths, port), {
-    cwd: ROOT, env: localEnvironment(), stdio: ["ignore", "pipe", "pipe"], shell: false,
-  });
-  // Drain, but never retain or reflect possible credentials from Wrangler diagnostics.
-  child.stdout.resume(); child.stderr.resume();
-  let spawnError;
-  child.on("error", (error) => { spawnError = error; });
-  const closed = new Promise((resolve) => child.once("close", resolve));
-  let stopped = false;
-  const stop = async () => {
-    if (stopped) return;
-    stopped = true;
-    signalLocalProcess(child);
-    let timer;
-    try {
-      await Promise.race([closed, new Promise((_, reject) => {
-        timer = setTimeout(() => {
-          try { signalLocalProcess(child, "SIGKILL"); } catch { /* Report the bounded shutdown failure below. */ }
-          reject(new Error("Local Worker did not close within the shutdown deadline"));
-        }, 8000);
-      })]);
-    } finally { clearTimeout(timer); }
-  };
-  try {
-    const origin = `http://127.0.0.1:${port}`;
-    for (let i = 0; i < 120; i += 1) {
-      if (spawnError || child.exitCode !== null) throw new Error("Local Worker exited before HTTP readiness");
-      try {
-        const { data } = await readDeploymentJson(`${origin}/healthz`, {}, { timeoutMs: 500 });
-        assert.equal(data.ready, true);
-        assert.equal(data.deployment_generation, paths.generation);
-        return { origin, stop };
-      } catch { await delay(250); }
-    }
-    throw new Error("Local Worker did not become ready with both migrated databases");
-  } catch (error) { await stop(); throw error; }
-}
 
 function query(paths, binding, sql) {
   const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { capture: true });
@@ -111,14 +61,14 @@ export async function smokeLocal() {
     const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
     const migrations = await verifyMigrations(paths);
     query(paths, "CORE_DB", "INSERT INTO schema_state VALUES ('local-smoke','preserved','2026-09-05T00:00:00Z')");
-    running = await start(paths);
+    running = await startLocalWorker(paths);
     await verifyHttp(running.origin);
     await running.stop(); running = undefined;
     // A second prepare applies no duplicate migration and preserves existing local data.
     await prepareLocal({ stateDirectory: directory, log: () => {} });
     assert.deepEqual(await verifyMigrations(paths), migrations);
     assert.deepEqual(query(paths, "CORE_DB", "SELECT value FROM schema_state WHERE key='local-smoke'"), [{ value: "preserved" }]);
-    running = await start(paths);
+    running = await startLocalWorker(paths);
     await verifyHttp(running.origin);
     return { protocol: "eliotr.local-launch-smoke.v1", state: "PASS", migrations,
       pwa_and_bundled_asset: "PASS", unsigned_and_forged_access_denied: "PASS",

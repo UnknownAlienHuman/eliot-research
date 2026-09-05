@@ -47,22 +47,68 @@ owner session or a populated corpus. `pnpm test:local-launch` runs isolation/ord
 
 ## Authentication and initial authority
 
-The current authentication boundary expects a **valid signed Cloudflare Access assertion** in
-`Cf-Access-Jwt-Assertion`, with the exact issuer/audience configured in
-`.eliotr-state/local/.dev.vars`. Only unique double-quoted, single-line `ACCESS_TEAM_DOMAIN`,
-`ACCESS_AUDIENCE` and `ACCESS_SERVICE_PRINCIPALS` assignments are permitted there; provider/deployment
-settings are rejected before any subprocess. Existing local settings are never overwritten. Raw service-token
-headers, an unsigned owner header and an arbitrary cookie are not accepted. A direct localhost browser
-does not receive Cloudflare edge assertion injection: an interactive local owner-session bridge is
-still pending. Do not work around that by weakening production authentication.
+Run `pnpm local:owner` instead of `local:dev` for a browser session. On first use it asks for an
+**already configured** Access application HTTPS origin, the team origin and application AUD tag, and
+stores only these non-secret settings in ignored `.eliotr-state/local/owner.json`. It reconciles the
+local `.dev.vars` without silently replacing a different existing issuer/audience. Install the official
+`cloudflared` executable on PATH first. This does not create an Access application, Tunnel or deployed
+Worker; the account's Access setup is a prerequisite, not an application development environment.
 
-Sources must first be admitted by the existing governed ingest path. `scope_read_policy` requires an
-explicit operator-installed row for each source namespace and signed owner principal: `owner_pwa`,
-policy identity and positive generation, canonical allowed-use JSON containing `research`, matching
-disclosure ceiling, `ACTIVE`, and finite expiry. Upload/admission permissions never create this row.
-The orientation operation derives only an exact scoped grant from it; the grant cannot outlive the
-policy or frozen scope. A UI/operator command for initial read-policy provisioning remains launch work;
-integration fixtures install controlled policies in disposable D1, not in a remote account.
+The CLI runs `cloudflared access login --quiet` and `cloudflared access token --app=...`. Cloudflared
+owns its ordinary local token cache. The application captures the JWT without printing it, and checks
+it through `GET /api/v1/system/session` on the actual local Worker. That read-only owner route verifies
+the existing signature, issuer, audience, token class and expiry before returning identity; it does not
+instantiate application services or read D1. Service tokens cannot enter an owner session.
+
+Open the one-time local link printed by the launcher within **60 seconds** and press **Open Eliot**.
+Its fragment is removed from browser history before pairing. The browser receives an opaque host-only,
+HttpOnly, SameSite=Strict cookie, never the JWT. The loopback bridge forwards the captured assertion to
+one fixed local Worker origin; the Worker still authenticates every protected request. Sessions last
+no longer than 15 minutes or the JWT lifetime. Sign out at `/__local/` or stop the launcher with Ctrl+C;
+restart `pnpm local:owner` to sign in again. The local cookie uses loopback HTTP, not production TLS.
+Do not expose this developer tool through a tunnel or bind it to a public interface.
+
+Host/Origin/Fetch Metadata guards reject cross-origin and cross-port requests; incoming credential
+headers cannot replace the stored assertion. Upstream redirects are never followed. Requests/responses,
+concurrency and deadlines are bounded; WebSocket forwarding is intentionally unavailable. A logout or
+expiry racing a response discards its body. The production Worker has no local authentication bypass.
+
+### Explicit read-policy setup
+
+Login alone never grants source access. After normal governed source/namespace admission, create a
+local operator command file with the **actual namespace**, allowed uses, disclosure ceiling matching
+the admitted source policy, and an explicit future UTC expiry (at most seven days). For example:
+
+```json
+{
+  "action": "GRANT",
+  "namespace": "YOUR-ADMITTED-NAMESPACE",
+  "expected_generation": 0,
+  "allowed_use": ["research"],
+  "disclosure": "private",
+  "expires_at": "REPLACE-WITH-FUTURE-UTC-ISO-TIMESTAMP"
+}
+```
+
+Run `pnpm local:owner --policy path/to/local-policy.json`. The launcher authenticates first, derives the
+principal from the verified Worker response, applies only that explicit local policy, reads the exact
+result back and then opens the browser session. The command cannot nominate another principal or write
+to remote D1. A grant requires an existing active namespace; the `--policy` option is a trusted local
+OS-operator action, never a browser or remotely exposed grant API.
+
+`expected_generation: 0` creates an absent policy. To renew/change one, explicitly supply its current
+generation from the returned policy receipt; the next generation is a compare-and-swap. An exact replay
+returns the same record. A stale command cannot broaden or revive a revoked policy. To revoke:
+
+```json
+{"action":"REVOKE","namespace":"YOUR-ADMITTED-NAMESPACE","expected_generation":1}
+```
+
+Use the same `--policy` entrypoint. Revocation advances the generation and invokes the existing D1
+scope/result invalidation triggers. Re-granting requires an explicit new command with that higher
+generation. A lost write acknowledgement is reconciled once by readback, never by blindly repeating a
+mutation. `LOCAL_POLICY_SETTLEMENT_UNCERTAIN` requires inspection/reconciliation, not a new guessed
+generation. Source acquisition, admission and full query/research products remain separate launch work.
 
 For an already configured local authorized request, the body is:
 
@@ -117,3 +163,14 @@ integration case calls the real PWA transport, decoder and renderer through that
 concurrent/restart replay, lost acknowledgements, cancellation, grant/policy races, malformed inputs,
 64/65-source bounds and real D1 batch rollback. These are not browser automation, signed-JWT end-to-end
 qualification, remote Cloudflare latency measurements or live provider receipts.
+
+Owner-session regressions run with `pnpm test:local-owner` on both Linux and Windows. They exercise a
+real Node loopback bridge with a controlled upstream, exact CLI arguments/configuration, source-policy
+CAS on the committed SQLite migration chain, and negative session races. Workers tests separately use
+actual RSA signatures with controlled JWKS for the real Access verifier and session endpoint. The
+existing `local:smoke` still boots the actual Worker and built PWA twice. These are not a real identity
+provider login, production Access revocation measurement or graphical browser-automation receipt.
+
+CLI protocol reference, checked 2026-09-05: Cloudflare, “Connect through Cloudflare Access using a CLI”
+(updated 2026-04-17), https://developers.cloudflare.com/cloudflare-one/tutorials/cli/ ; CLI flag source:
+https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/access/cmd.go .

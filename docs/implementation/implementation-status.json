@@ -69,11 +69,12 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable; strict idempotent owner orientation and trace dispatch execute the real application, not unavailable fallbacks",
+      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable; strict idempotent owner orientation and trace dispatch execute the real application, not unavailable fallbacks Owner-only system/session returns the verified Access identity and expiry before application composition; the local browser bridge consumes it without an auth bypass.",
       "completion_evidence": [
         "HTTP and multipart negative tests",
         "runtime prototype tests",
-        "live owner and service-principal Access receipts"
+        "live owner and service-principal Access receipts",
+        "Local real-RSA/controlled-JWKS owner-session positive and negative tests; actual user IdP login NOT_EXECUTED."
       ]
     },
     {

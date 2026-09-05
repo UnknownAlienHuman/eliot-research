@@ -211,5 +211,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify local isolation and command ordering
         run: pnpm test:local-launch
+      - name: Verify owner session and explicit local policy setup
+        run: pnpm test:local-owner
       - name: Boot actual Worker with full local migrations, then restart
         run: pnpm local:smoke

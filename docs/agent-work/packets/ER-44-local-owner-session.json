@@ -1,0 +1,26 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-44",
+    "depends_on": [
+      "ER-21",
+      "ER-24",
+      "ER-26",
+      "ER-43"
+    ],
+    "owned_paths": [
+      "scripts/local-owner.mjs",
+      "scripts/lib/local-owner-config.mjs",
+      "scripts/lib/local-owner-login.mjs",
+      "scripts/lib/local-owner-bridge.mjs",
+      "scripts/lib/local-read-policy.mjs",
+      "scripts/lib/local-worker.mjs",
+      "scripts/test-local-owner.mjs",
+      "scripts/test-local-read-policy.mjs",
+      "apps/eliotr-core/test/owner-session.test.ts"
+    ],
+    "mandatory_negative_case": "Reject forged/service identities, cross-origin/Host attacks, pairing replay and credential substitution; revoke local session during a read; reject stale policy CAS without a second mutation.",
+    "document": "ER-44-local-owner-session.md",
+    "max_package_source_lines": 10000
+  }
+}

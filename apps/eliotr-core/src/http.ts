@@ -558,6 +558,16 @@ export async function handleHttp(
     const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
     const identity = await verifier.verify(request);
     const context = authorize(request, resolved.match.route, identity);
+    if (resolved.match.route.operation === "system.session") {
+      requireNoQuery(url);
+      return apiResult(request, env, {
+        protocol: "eliotr.owner-session.v1",
+        principal_ref: context.principal_ref,
+        client_class: context.client_class,
+        credential_generation: context.credential_generation,
+        expires_at: identity.expires_at,
+      });
+    }
     const factory = dependencies.applicationFactory ?? createApplication;
     const application = factory({ env, executionContext });
     return await dispatch(request, env, application, context, resolved.match, url);

@@ -45,7 +45,7 @@
     "cf:provision:gateways": "node scripts/provision-ai-gateways.mjs",
     "cf:provision:access": "node scripts/provision-cloudflare-access.mjs",
     "cf:deploy": "node scripts/deploy-cloudflare.mjs",
-    "test:provisioners": "node scripts/test-access-runtime-config.mjs && node scripts/test-access-runtime-preflight.mjs && node scripts/test-foundation-receipt-schema.mjs && node scripts/run-provisioner-tests.mjs",
+    "test:provisioners": "node scripts/test-access-runtime-config.mjs && node scripts/test-access-runtime-preflight.mjs && node scripts/test-foundation-receipt-schema.mjs && node scripts/run-provisioner-tests.mjs && pnpm test:local-owner",
     "check:implementation-status": "node scripts/check-implementation-status.mjs",
     "evidence:check": "node scripts/check-evidence-resolution.mjs",
     "erasure:check": "node scripts/check-erasure-closure.mjs",
@@ -53,7 +53,9 @@
     "local:dev": "node scripts/local-runtime.mjs --dev",
     "launch:code": "node scripts/check-launch-code.mjs",
     "local:smoke": "node scripts/local-runtime.mjs --smoke",
-    "test:local-launch": "node scripts/test-local-runtime.mjs"
+    "test:local-launch": "node scripts/test-local-runtime.mjs",
+    "local:owner": "node scripts/local-owner.mjs",
+    "test:local-owner": "node --test scripts/test-local-owner.mjs scripts/test-local-read-policy.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",
