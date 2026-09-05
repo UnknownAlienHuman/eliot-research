@@ -31,6 +31,12 @@ ResearchWorkflow: returns IMPLEMENTATION_PENDING / INCONCLUSIVE; no governed res
 ResearchSession Durable Object: exposes only pending status; no authoritative session state or WebSocket loop
 ```
 
+### `IN_PROGRESS`
+
+Required ChatGPT Drive Exchange: ER-19's interface-only reconciliation is now explicitly registered.
+The cursor/REST/OAuth/result-publication loop must be implemented, not just live-tested. Optional
+Gemini MCP planning and self-reported observation validation cannot satisfy that requirement.
+
 ### `IMPLEMENTED_NOT_LIVE`
 
 ```text
@@ -44,7 +50,7 @@ Queue inbox deduplication, ACK and projection-job acceptance
 deterministic projection execution and managed-generation readiness logic
 exact EvidenceHandle, citation and output gating
 exact erasure closure and non-revealing purge ledger
-Gemini Spark MCP planning/catalog and Google orchestration boundary
+optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
 ```
 
 ### Product operations still unavailable at composition time
@@ -110,3 +116,9 @@ checks and a source/session-bound cursor. The panel shows per-channel records fr
 `RECORDED_ONLY`, including absent records and recorded failure/staleness reasons. It never promotes a
 channel, assesses an active index or resolves evidence. #98 still tracks active-readiness assessment,
 project workflows, failure UI and the complete real-storage browser lifecycle; live gates are unchanged.
+
+The launch-code gate also rejects explicitly disabled mandatory slices, independently of unavailable
+method names or registry states. It parses the composition, ignores comment/string examples and fails
+on missing, duplicate or dynamic disabled-slice declarations. This is a negative gate, not a proof that
+all canonical requirements have been implemented. Raw-file conversion and the real-storage browser
+loop remain open in `canonical-alignment.md` and #98.

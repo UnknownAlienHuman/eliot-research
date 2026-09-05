@@ -46,6 +46,25 @@
       ]
     },
     {
+      "id": "pending-drive-exchange",
+      "path": "packages/google-drive-exchange/src/reconciler.ts",
+      "sentinel": "IN_PROGRESS: ER-19 required ChatGPT Drive Exchange has ports only; durable reconciliation and tamper audit are not implemented.",
+      "owner_packets": [
+        "ER-18",
+        "ER-19",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IN_PROGRESS",
+      "behavior": "Required Day-0 ChatGPT Google Drive Exchange is unfinished: cursor/reconciler/result-publisher ports do not execute the leased changes/ID-hash audit/frozen R2/D1 ContributionIntent/result readback loop. The optional Gemini MCP planner and its self-reported observations do not implement or replace this path.",
+      "completion_evidence": [
+        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
+        "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
+        "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
+      ]
+    },
+    {
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
@@ -139,12 +158,13 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Signed gemini-spark identity reaches bounded status, Google planning and candidate-only receipt validation. Unscoped catalog access is withheld from discovery and direct execution until an explicit service-scope policy adapter is composed.",
+      "behavior": "Optional signed Gemini service MCP exposes status, no-effect planning and bounded v1 self-reported observation checks; target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance, write-precondition proof or the required ChatGPT Drive Exchange. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
         "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
-        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited."
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
+        "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]
     },
     {

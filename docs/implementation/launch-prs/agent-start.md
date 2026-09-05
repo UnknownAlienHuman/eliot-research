@@ -14,7 +14,7 @@ current main. Do not create a competing variant branch or force-reset someone el
 | Existing PR | First bounded task | Scope and integration boundary |
 |---|---|---|
 | **#90 Retrieval** | Audit existing locator decoding, then implement one missing local D1 exact/lexical lane with its actual projection input and negative tests. | ER-06/07/16/39. Inspect `packages/retrieval/src/lanes.ts`, `packages/cloudflare-ai/src/ai-search-managed-read.ts`, `packages/platform-cloudflare/src/ai-search.ts`, existing projection delivery and evidence ports. No PWA/import edits in parallel with #98; shared Worker composition and migrations require the integrator. |
-| **#95 Google** | G1: verify the currently selected transport and its bounded experiment contract. Then one missing adapter/reconciliation checkpoint within that selected path, with recorded failure tests. | ER-18/19/20/36. `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` is the current profile, not permission to activate a second Drive/OAuth pipeline. Do not independently implement an unused alternative just because `cursor.ts`/`reconciler.ts` are only interfaces. Document the supported active path and expiry before its next change. No source grants, owner impersonation or remote account calls. |
+| **#95 Google** | G1: implement the required ChatGPT Drive Exchange, starting with one leased-cursor/freeze/reconciliation adapter and its lost-ACK/tamper tests. | ER-18/19/20. Read ELIOT_RESEARCH §§12.3–12.12 and ADR-0003 first. The existing `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects an optional Gemini helper, not a replacement for ChatGPT Drive. Reuse the existing exchange contracts/serializer; implement the missing ports locally. ER-36 remains a separate candidate-only service surface; no owner impersonation, new ChatGPT write transport or account calls. |
 | **#97 Rust** | Audit/reuse existing M2 shadow primitives and add parity for one uncovered identity family, starting with the new ER-44 initial namespace-owner token. | ER-00/01/02/03/44. Existing code is in `crates/eliotr-canonical/src/{canonical_json,sha256,generation,stable_id,residency_key}.rs` and `crates/eliotr-test-vectors`. Do not rewrite these or promote a family before real TS/native/Wasm differential acceptance. Shared runtime/ABI integration belongs to ER-24. |
 
 If a candidate task needs a shared file already claimed elsewhere, narrow it to independent tests or
@@ -35,14 +35,20 @@ The full #90 result/trace/HTTP/evidence-viewer checkpoints follow sequentially a
 
 ### #95 first-task acceptance
 
-Read the active profile and ER-36/18/19/20 contracts, including experiment expiry. Verify current official
-provider API/CLI behavior when it affects code; record exact versions and scope. Choose one active
-transport; an expired experiment or a missing authority adapter is an explicit block, not permission to
-fall back to a second service. The first implementation must consume only frozen candidate observations
-and reject identity/hash/generation drift, lost acknowledgement and historical tampering as applicable.
-`eliotr_catalog` is intentionally withheld until service-scoped read grants and post-read currentness
-are implemented: never label a service principal `owner_pwa` to make the old path work. Coordinate its
-Worker wiring with ER-24 rather than editing the same composition root as #90.
+The canonical Day-0 ChatGPT path is Google Drive Exchange, with fixed exchange assets, atomic Sheets
+append, leased change cursors, bounded ID/hash audit, immutable R2 freeze, D1 ContributionIntent,
+result publication/readback and the narrow offline OAuth lifecycle. `cursor.ts`, `reconciler.ts`,
+`port.ts` and `result-publisher.ts` interfaces are unfinished implementation, not unused alternatives.
+Implement one existing ER-18/19/20 port at a time with recorded provider responses and actual local
+storage failure/replay tests. Verify current official API behavior where an adapter depends on it.
+
+The optional ER-36 Gemini service planner is not the ChatGPT write transport. Its caller-supplied v1
+plan and receipt prove neither original issuance nor Google readback/effects. The current mutual-
+exclusion guard remains: do not enable another writer to bypass it. Production integration must select
+only one qualified ChatGPT write transport under §12.12; no accepted ADR currently replaces Drive.
+An expired experiment blocks that path; it does not authorize an undocumented substitute.
+`eliotr_catalog` stays withheld until explicit service-scope grants and post-read currentness exist.
+Never relabel a service principal `owner_pwa`. Serialize shared Worker wiring with ER-24.
 
 ### #97 existing code is not full M2 completion
 
@@ -55,13 +61,15 @@ preimage specification and actual initializer/reference function, not two copied
 
 Add current valid/invalid and max+1 vectors, including Unicode/prototype-shaped keys where that family
 allows them, and run identical inputs through TS/native/Wasm. Keep unsupported product families and
-M3–M7 promotion open. No promoted runtime authority, competing TS cache or ABI change merely because
+M3–M7 open. Normative §10 names M5 Wasm/differential shadow, M6 per-family authority promotion,
+and M7 removal of superseded TypeScript; do not relabel M6 as shadow or combine M6/M7 acceptance. No promoted runtime authority, competing TS cache or ABI change merely because
 one helper passes parity. Run every pinned Rust gate, applicable deep checks and the existing Worker gates.
 
 ## Subsequent dependency waves
 
 - **#98 Library remainder:** known-ID reload recovery and read-only exact-folder discovery are implemented.
-  Remaining work is revision/readiness/project views, failure UI and the complete clean browser/storage loop.
+  Revision history/RECORDED_ONLY channel metadata also exists. Remaining work includes raw-file managed
+  conversion/qualification (§4.1), active-readiness/project workflows, failure UI and the complete clean browser/storage loop.
   Claim one of these before handing it to another UI agent. Do not reopen #89 as a competing queue.
 - **#91 structural Lens** follows #90 exact opening. **#92 governed research** follows #90; #91 is needed
   only for protocols actually using structural navigation. They must not independently change shared UI.
