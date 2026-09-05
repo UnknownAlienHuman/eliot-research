@@ -29,7 +29,7 @@ There are three separate milestones:
 
 ### Still off-account work, not a Cloudflare excuse
 
-#89 merged a tested checkpoint; #98 retains revision/readiness/project workflows, remaining failure UI
+#89 merged a tested checkpoint; #98 retains active-readiness/project workflows, remaining failure UI
 and the complete empty-setup -> import -> Library -> Lens browser/storage loop. Known-ID reload recovery
 and read-only exact-folder discovery of lost IDs are implemented without browser persistence. The initializer
 supports only a local absent immutable-import namespace. A governed remote setup adapter must be
@@ -96,6 +96,12 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
       reservations and policy withdrawal must disclose no recovery key or start a replacement import.
 - [ ] Test read-policy withdrawal, owner rotation, expired/foreign cursors and ungranted service tokens.
       Report R2 delivery, canonical admission, Queue delivery and index readiness separately.
+
+- [ ] Verify the owner Library revision endpoint against multiple real admitted revisions. Deny foreign,
+      purged, expired and old-owner histories; race head/policy withdrawal with pagination. The existing
+      screen declares RECORDED_ONLY: compare its recorded channel generation/receipt with independent
+      active D1 Search/AI Search readback. Never infer live indexing or exact evidence from a stored
+      `ready` row. The history GET must not create grants, mutate indexes or trigger provider calls.
 
 ### #90 — Retrieval and evidence (ER-06/07/16/38/39; ER-24/27)
 

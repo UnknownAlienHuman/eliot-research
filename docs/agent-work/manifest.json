@@ -512,7 +512,9 @@
         "apps/eliotr-core/src/catalog-service.ts",
         "apps/eliotr-core/src/catalog-service.test.ts",
         "apps/eliotr-core/src/catalog-queries.ts",
-        "apps/eliotr-core/test/catalog-http.test.ts"
+        "apps/eliotr-core/test/catalog-http.test.ts",
+        "apps/eliotr-core/src/source-revisions.ts",
+        "apps/eliotr-core/test/source-revisions.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -527,6 +529,7 @@
       "owned_paths": [
         "apps/eliotr-pwa/**",
         "tests/library.test.ts",
+        "tests/source-revisions.test.ts",
         "tests/bundle-recovery.test.ts",
         "scripts/test-library-browser.mjs",
         "scripts/lib/browser-import-fixture.mjs"

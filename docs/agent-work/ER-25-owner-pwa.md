@@ -14,6 +14,7 @@ outside the paths below.
 - `apps/eliotr-pwa/**`
 
 - `tests/library.test.ts`
+- `tests/source-revisions.test.ts`
 - `tests/bundle-recovery.test.ts`
 - `scripts/test-library-browser.mjs`
 - `scripts/lib/browser-import-fixture.mjs`
@@ -123,3 +124,17 @@ Absent and foreign operations share 404, and denied/changed/expired input cannot
 The connected UI requires explicit continuation after discovery, never silently retries, and persists
 no private browser data. No migration, canonical identity change, new state family or deployment occurs.
 Remaining Library acceptance stays in #98; remote probes remain in the existing Cloudflare handoff.
+
+## Library revision-history integration
+
+The Library's **Versions and readiness** panel uses the owner-only revision reader (ER-21/24), not
+source payload reads or a browser index. It shows authorized immutable revision metadata, current-head
+identity and existing channel observations with timestamps/generations/receipt references. Missing
+channels say **Not recorded**. The persistent **Recorded states only** notice prevents treating a
+stored `ready` row as verification of an active index or exact evidence.
+
+Pages replace prior metadata; refresh, parent page changes, authorization loss, offline and disposal
+clear private state and cancel late responses. Unknown fields, duplicate/out-of-order rows, unexpected
+channels, foreign revisions and deployment drift fail strict decoding. No browser persistence, source
+policy or grant is added. Unit tests and the built-PWA controlled-HTTP Chrome fixture complement actual
+Worker/D1 tests; they do not close the complete real-storage browser lifecycle in #98.

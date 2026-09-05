@@ -53,10 +53,12 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API.",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API. Owner-only revision history now reuses the catalog read fence and independently validates historical admissions; per-channel metadata is explicitly RECORDED_ONLY, never active index/evidence qualification.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
+        "apps/eliotr-core/test/source-revisions.test.ts: bounded actual D1/HTTP history, recorded readiness, cursor and withdrawal/purge/expiry negatives",
+        "tests/source-revisions.test.ts and built-PWA Chromium fixture: strict decoding, source/generation binding, pagination and private-state clearing",
         "live Access and remote D1 receipts"
       ]
     },

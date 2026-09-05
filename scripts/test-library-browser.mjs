@@ -26,6 +26,15 @@ const orientation = () => {
     coverage_method: "frozen_scope_order", degraded_source_revision_refs: [], missing_source_classes: [], contradiction_refs: [],
     centrality: [], recommended_reading_routes: [], navigation_authority: "NAVIGATION_ONLY" } });
 };
+const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.source-revisions.v1",
+  source_id: sourceId, head_revision_ref: "revision-1", readiness_basis: "RECORDED_ONLY", observed_at: "2026-09-05T12:00:00.000Z",
+  revisions: [{ source_revision_ref: older ? "revision-older" : "revision-1", content_sha256: "a".repeat(64),
+    captured_at: older ? "2026-08-01T12:00:00.000Z" : "2026-09-01T12:00:00.000Z",
+    admitted_at: older ? "2026-08-02T12:00:00.000Z" : "2026-09-02T12:00:00.000Z",
+    quality_state: "standard", currentness_state: "unknown", readiness: older ? [] : [{
+      source_revision_ref: "revision-1", channel: "semantic_ready", state: "degraded", reason_codes: ["AI_SEARCH_UNAVAILABLE"],
+      observed_at: "2026-09-02T12:00:00.000Z" }] }], ...(older ? {} : { next_cursor: "olderFixture" }) });
+let revisionMode = "normal"; let pendingRevision;
 let mode = "normal"; let pending; let browser; let socket; let closing;
 const requests = []; const posted = []; const errors = [];
 const importing = browserImportFixture();
@@ -37,6 +46,14 @@ const server = createServer((request, response) => {
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/health") return json(envelope({ ready: true, deployment_generation: "browser-fixture",
       core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() }));
+    if (url.pathname === "/api/v1/library/revisions") {
+      assert.equal(request.method, "GET"); assert.equal(url.searchParams.get("limit"), "10");
+      const value = revisionPage(url.searchParams.get("source_id"), url.searchParams.has("cursor"));
+      if (revisionMode === "denied") { response.statusCode = 403; response.end("malformed denial"); return; }
+      if (revisionMode === "delayed") { pendingRevision = () => json(value); return; }
+      if (revisionMode === "drift") return json({ ...value, deployment_generation: "changed" });
+      return json(value);
+    }
     if (url.pathname === "/api/v1/research/catalog") {
       requests.push(url.search);
       assert.equal(url.searchParams.get("limit"), "20");
@@ -130,6 +147,26 @@ try {
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
   assert.equal(await evaluate('document.querySelectorAll("#library img").length'), 0);
   assert.equal(await evaluate('Boolean(window.attacked)'), false);
+  await click("#library [data-versions]");
+  await wait('document.querySelector("[data-revisions-result]")?.textContent.includes("Current head")', "Revision history");
+  assert.ok(await evaluate('document.querySelector("[data-revisions-result]").textContent.includes("AI_SEARCH_UNAVAILABLE")'));
+  assert.ok(await evaluate('document.querySelector("[data-revisions-result]").textContent.includes("Not recorded")'));
+  await click("#library [data-revisions-next]");
+  await wait('document.querySelector("[data-revisions-result]")?.textContent.includes("revision-older")', "Older revision page");
+  assert.equal(await evaluate('document.querySelector("[data-revisions-result]").textContent.includes("Current head")'), false);
+  revisionMode = "drift"; await click("#library [data-revisions-first]");
+  await wait('document.querySelector("[data-library-versions]")?.textContent.includes("CATALOG_GENERATION_CHANGED")', "Revision generation drift");
+  assert.equal(await evaluate('document.querySelector("[data-revisions-result]").textContent'), "");
+  revisionMode = "denied"; await click("#library [data-revisions-first]");
+  await wait('document.querySelector("#library").textContent.includes("Authorization changed")', "Revision authorization clearing");
+  assert.equal(await evaluate('document.querySelector("[data-library-versions]").textContent'), "");
+  revisionMode = "normal"; await click("#library [data-first]");
+  await wait('Boolean(document.querySelector("#library [data-versions]"))', "Reload Library after revision denial");
+  revisionMode = "delayed"; await click("#library [data-versions]");
+  await until(() => Boolean(pendingRevision), "Pending revision HTTP read");
+  await click("#library [data-first]"); revisionMode = "normal"; pendingRevision(); pendingRevision = undefined;
+  await wait('Boolean(document.querySelector("#library [data-source]"))', "Parent refresh cancels old revision panel");
+  assert.equal(await evaluate('document.querySelector("[data-library-versions]").textContent'), "");
   await click("#library [data-next]");
   await wait('document.querySelector("#library").textContent.includes("English source")', "Library next page");
   assert.ok(requests.some((query) => query.includes("cursor=nextFixture")));

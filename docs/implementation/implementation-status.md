@@ -102,3 +102,11 @@ local fixture or Wrangler dry-run
 
 Only a retained receipt and exact readback may advance the relevant state. The repository is under active
 implementation and CI is enabled, but no production-ready declaration exists.
+
+## Authorized revision history
+
+The owner Library now reads permitted admitted revision history through the same catalog/source-policy
+checks and a source/session-bound cursor. The panel shows per-channel records from D1 Core, explicitly
+`RECORDED_ONLY`, including absent records and recorded failure/staleness reasons. It never promotes a
+channel, assesses an active index or resolves evidence. #98 still tracks active-readiness assessment,
+project workflows, failure UI and the complete real-storage browser lifecycle; live gates are unchanged.

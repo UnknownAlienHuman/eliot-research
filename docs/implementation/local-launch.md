@@ -308,3 +308,26 @@ the same as known-ID recovery; it never grants new rights. Missing and foreign o
 as a fallback. The original folder and persistent server D1/R2 state are required; discovery is not a
 history browser or a way to recover erased state. The full setup/import/Library/Lens browser flow and
 revision/readiness/project views remain open in #98.
+
+## Versions and recorded readiness
+
+In **Library**, choose **Versions and readiness** on a visible source. The panel shows up to ten
+permitted versions per page, the current head, capture/admission times, content SHA-256, quality and
+recorded currentness. **Older versions** replaces the page; **Refresh versions** starts a fresh read.
+Only admitted LIVE revisions authorized under the current owner/read policy are returned. Historical
+ownership or a guessed source ID never grants access; hidden versions and their counts are not shown.
+
+Each of the ten existing channels shows its stored state, observation timestamp, reasons and optional
+generation/receipt reference. **Not recorded** means no channel row exists; it is not `not_requested`.
+The panel always says **Recorded states only**: an old `ready` record does not prove that today's index
+has that revision, the full source is covered, or an exact evidence handle can be opened. Active index
+readback and evidence qualification remain separate retrieval work. No remote probe runs on page open.
+
+The owner-only API is `GET /api/v1/library/revisions?source_id=...&limit=10`; subsequent pages use the
+returned cursor. Standard envelope generation and source identity are checked. Cursor reuse after a
+head/policy change, expiry, different identity or deployment fails; refresh rather than silently changing
+scope. Stored malformed metadata fails, not a successful empty history. Private state clears on parent
+navigation, auth failure, offline and disposal; stale requests cannot refill a cleared panel.
+
+This closes the metadata-history portion of #98 L4a, not active readiness assessment, project editing
+or the complete setup/import/Library/Lens browser lifecycle. No schema migration or new privilege is needed.
