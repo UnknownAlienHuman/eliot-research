@@ -48,7 +48,7 @@
     {
       "id": "pending-drive-exchange",
       "path": "packages/google-drive-exchange/src/reconciler.ts",
-      "sentinel": "IN_PROGRESS: ER-19 required ChatGPT Drive Exchange has ports only; durable reconciliation and tamper audit are not implemented.",
+      "sentinel": "IN_PROGRESS: ER-19 durable Drive cursor reconciliation and tamper audit are not implemented.",
       "owner_packets": [
         "ER-18",
         "ER-19",
@@ -56,9 +56,9 @@
         "ER-24"
       ],
       "state": "IN_PROGRESS",
-      "behavior": "Required Day-0 ChatGPT Google Drive Exchange is unfinished: cursor/reconciler/result-publisher ports do not execute the leased changes/ID-hash audit/frozen R2/D1 ContributionIntent/result readback loop. The optional Gemini MCP planner and its self-reported observations do not implement or replace this path.",
+      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Bounded Sheet/changes REST and contribution guards exist, but OAuth/vault, durable leased cursor/ID-hash audit, frozen R2/D1 ContributionIntent, Doc publication/export and runtime composition are not implemented. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
-        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
         "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
         "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
@@ -320,6 +320,23 @@
         "Actual PWA API/decoder/rendering against Worker integration",
         "Replay/lost ACK/revocation/expiry and atomic batch rollback cases",
         "Remote Access, D1 and browser session qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-drive-sheet-rest",
+      "path": "packages/google-drive-exchange/src/sheet-port.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 bounded Exchange Sheet/changes REST subset; OAuth, Doc publication and durable cursor composition remain unfinished.",
+      "owner_packets": [
+        "ER-18",
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Five fixed-generation Drive/Sheets REST methods with trusted per-request credential lease/currentness, numeric bounded ranges, exact metadata, ERC-only append guards, bounded stream deadlines and no automatic retries. HTTP receipts and raw cells remain transport observations. No Worker activation or complete connector is claimed.",
+      "completion_evidence": [
+        "contribution-boundary.test.ts: seven baseline failure groups reproduced and rejected; existing v1 sixteen/five-column serialization round-trips.",
+        "sheet-port.test.ts: fixed resource/lease/range bindings, valid and malformed provider JSON, deadline/body/request budgets, cancellation, revocation, no secret reflection and uncertain append outcomes.",
+        "Actual serializer -> bounded numeric range readback -> strict contribution assembly uses controlled Google HTTP fixtures; not a real account or canonical admission receipt.",
+        "OAuth/vault/generation/cursor/freeze/publication/composition and complete local-storage/browser acceptance remain required; live Google/Cloudflare NOT_EXECUTED."
       ]
     }
   ]

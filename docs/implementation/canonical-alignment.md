@@ -17,7 +17,9 @@ The canonical documents have not been changed to accommodate incomplete code.
 
 ## Next implementation boundaries
 
-- **#95 / ER-18/19/20:** implement actual Drive adapters, one state family at a time. The optional
+- **#95 / ER-18/19/20:** continue Drive OAuth/durable-cursor/Doc-publication adapters, one state family at a time. Five
+  bounded Sheet/changes REST methods and strict contribution guards now exist (`drive-rest.md`), but
+  they neither complete the required exchange nor replace its missing canonical admission loop. The optional
   ER-36 observation validator cannot become their source, identity or cursor authority.
 - **#98 / ER-05/14/29/24/25:** raw-file managed conversion plus active readiness, projects, failure UI
   and the complete authenticated browser + local D1/R2 lifecycle. The current normalized importer,

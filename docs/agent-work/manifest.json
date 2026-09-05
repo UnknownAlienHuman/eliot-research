@@ -380,7 +380,9 @@
         "packages/google-drive-exchange/src/drive.test.ts",
         "packages/google-drive-exchange/package.json",
         "packages/google-drive-exchange/tsconfig.json",
-        "packages/google-drive-exchange/AGENTS.md"
+        "packages/google-drive-exchange/AGENTS.md",
+        "packages/google-drive-exchange/src/contribution-boundary.test.ts",
+        "packages/google-drive-exchange/src/drive-test-fixture.ts"
       ],
       "mandatory_negative_case": "Build a request above 128 KiB or with six parts and prove serializer rejects before Drive call.",
       "document": "ER-18-drive-exchange-protocol-and-provisioner.md",
@@ -411,7 +413,12 @@
       "owned_paths": [
         "packages/google-drive-exchange/src/port.ts",
         "packages/google-drive-exchange/src/token-vault.ts",
-        "packages/google-drive-exchange/src/result-publisher.ts"
+        "packages/google-drive-exchange/src/result-publisher.ts",
+        "packages/google-drive-exchange/src/rest-transport.ts",
+        "packages/google-drive-exchange/src/sheet-ranges.ts",
+        "packages/google-drive-exchange/src/sheet-port.ts",
+        "packages/google-drive-exchange/src/sheet-port.test.ts",
+        "docs/implementation/drive-rest.md"
       ],
       "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
       "document": "ER-20-google-oauth-port-and-result-publication.md",
