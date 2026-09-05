@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -72,17 +72,28 @@ try {
   await access(resolve(dist, "index.html"));
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = spawn(await executable(), ["--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
+  const binary = await executable();
+  const version = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 5000, shell: false });
+  console.log(`Browser executable: ${binary}; version: ${(version.stdout ?? "").trim().slice(0, 256)}`);
+  let startupError; let startupLog = "";
+  browser = spawn(binary, ["--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
     "--disable-background-networking", "--disable-component-update", "--disable-extensions", "--no-first-run",
     "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${temporary}`, "about:blank"],
-  { stdio: "ignore", shell: false });
+  { stdio: ["ignore", "ignore", "pipe"], shell: false });
+  // Only the fresh about:blank process startup is retained; never log application responses.
+  const onStartupLog = (chunk) => { startupLog = (startupLog + chunk.toString("utf8")).slice(-8192); };
+  browser.stderr.on("data", onStartupLog);
   closing = new Promise((resolve) => browser.once("close", resolve));
-  browser.once("error", (error) => errors.push(error.message));
+  browser.once("error", (error) => { startupError = error.code ?? "SPAWN_FAILED"; });
   let port;
-  await until(async () => {
-    if (browser.exitCode !== null) throw new Error("Chromium exited before DevTools startup");
-    try { port = Number((await readFile(resolve(temporary, "DevToolsActivePort"), "utf8")).split("\n")[0]); return port > 0; } catch { return false; }
-  }, "DevTools startup");
+  try {
+    await until(async () => {
+      if (startupError || browser.exitCode !== null || browser.signalCode !== null) throw new Error("Chromium exited before DevTools startup");
+      try { port = Number((await readFile(resolve(temporary, "DevToolsActivePort"), "utf8")).split("\n")[0]); return Number.isInteger(port) && port > 0 && port <= 65535; } catch { return false; }
+    }, "DevTools startup");
+  } catch (error) {
+    throw new Error(`${error.message}; exit=${browser.exitCode}; signal=${browser.signalCode}; spawn=${startupError ?? "ok"}; startup diagnostics:\n${startupLog}`, { cause: error });
+  } finally { browser.stderr.removeListener("data", onStartupLog); browser.stderr.resume(); }
   const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: globalThis.AbortSignal.timeout(5000) })).json();
   const target = targets.find((item) => item.type === "page"); assert.ok(target);
   socket = new globalThis.WebSocket(target.webSocketDebuggerUrl);
