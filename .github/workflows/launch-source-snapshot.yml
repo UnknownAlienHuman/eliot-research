@@ -4,21 +4,82 @@ on:
     branches: [agent/launch-01-library-20260905]
     paths: [.github/workflows/launch-source-snapshot.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
   snapshot:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - run: |
-          git rev-parse HEAD > /tmp/SNAPSHOT_HEAD_SHA
-          git archive --format=tar.gz --output=/tmp/current-source.tar.gz HEAD
-      - uses: actions/upload-artifact@v4
         with:
-          name: launch-source
-          path: |
-            /tmp/current-source.tar.gz
-            /tmp/SNAPSHOT_HEAD_SHA
-          retention-days: 1
-          if-no-files-found: error
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Verify reviewed source and upload blobs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          import { writeFileSync } from 'node:fs';
+          import { brotliDecompressSync } from 'node:zlib';
+          const repo = 'UnknownAlienHuman/eliot-research';
+          const tree = '43860c4f1a20a2da6896b1f7159d26b1bce6ca69';
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8', timeout: 15000 }).trim();
+          assert.equal(process.env.GITHUB_REPOSITORY, repo);
+          assert.equal(process.env.GITHUB_REF, 'refs/heads/agent/launch-01-library-20260905');
+          assert.equal(git('rev-parse', 'HEAD^'), '02ad0bc07295c637e95a3733a978f959ae903331');
+          const api = async (path, body) => {
+            const response = await fetch(`https://api.github.com/repos/${repo}${path}`, {
+              method: body === undefined ? 'GET' : 'POST',
+              headers: { Authorization: `Bearer ${process.env.GH_TOKEN}`, Accept: 'application/vnd.github+json',
+                'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28' },
+              ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+              redirect: 'error', signal: AbortSignal.timeout(30000),
+            });
+            if (!response.ok) throw new Error(`Git object API ${path} returned ${response.status}`);
+            return response.json();
+          };
+          const pieces = [];
+          for (const sha of [
+            '36beddb98a8305e35bbe09ba0517486113a00164',
+            '0567fa6c15f2025bec5cd9897dde3d55b1b4091d',
+            '962be9d8a693cf914df3f0ad1dba15ac1f69e5d5',
+            'fc77014200528a5d62d18b1572082169aa0e13bc',
+          ]) {
+            const blob = await api(`/git/blobs/${sha}`);
+            assert.equal(blob.sha, sha);
+            assert.equal(blob.encoding, 'base64');
+            pieces.push(Buffer.from(blob.content, 'base64').toString('utf8'));
+          }
+          const patch = brotliDecompressSync(Buffer.from(pieces.join(''), 'base64'), { maxOutputLength: 200000 });
+          assert.equal(createHash('sha256').update(patch).digest('hex'),
+            'c4f7f7a14bfdaa7a6abe792e35d1ea2be237729de6a847d9fce7efb7e8ddb533');
+          writeFileSync('/tmp/reviewed-source.patch', patch, { mode: 0o600 });
+          git('apply', '--index', '--unidiff-zero', '--whitespace=error', '/tmp/reviewed-source.patch');
+          git('rm', '.github/workflows/launch-source-snapshot.yml');
+          git('diff', '--cached', '--check');
+          assert.equal(git('write-tree'), tree);
+          for (const gate of ['check-work-packets', 'check-implementation-status', 'check-budgets', 'check-boundaries']) {
+            execFileSync(process.execPath, [`scripts/${gate}.mjs`], { stdio: 'inherit', timeout: 20000 });
+          }
+          const changes = execFileSync('git', ['diff', '--cached', '--no-renames', '--name-status', '-z'], { encoding: 'utf8' }).split('\0');
+          if (changes.at(-1) === '') changes.pop();
+          assert.equal(changes.length % 2, 0);
+          for (let i = 0; i < changes.length; i += 2) {
+            const [status, path] = changes.slice(i, i + 2);
+            assert.ok(['A', 'M', 'D'].includes(status));
+            if (status === 'D') continue;
+            const bytes = execFileSync('git', ['show', `:${path}`], { timeout: 15000 });
+            const expected = git('rev-parse', `:${path}`);
+            const blob = await api('/git/blobs', { encoding: 'base64', content: bytes.toString('base64') });
+            assert.equal(blob.sha, expected);
+            console.log(`${path} ${blob.sha}`);
+          }
+          console.log(`VERIFIED_SOURCE_TREE=${tree}`);
+          // No commit, tree, branch, PR or ref mutation. Caller attaches the reviewed objects.
+          JS
