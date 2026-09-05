@@ -1,5 +1,6 @@
 import { type BundleAdmissionReceipt } from "@eliotr/contracts";
 import { ApiRequestError, requestApi } from "./api.js";
+import { readBundleRecovery, type RecoveredImport } from "./bundle-recovery-api.js";
 import { type BrowserBundle, checkCancelled, bundleInputError } from "./bundle-input.js";
 import { decodePrepared, importCall, importIdentifier, importOpaque, importMismatch, importRecord, importTime, receiptFor,
   readImportStatus, type ImportIdentity, type ImportTransport, type PreparedImport } from "./bundle-import-api.js";
@@ -15,7 +16,7 @@ interface FileCheckpoint {
   readonly parts: { part_number: number; size_bytes: number; etag: string }[];
   completed: boolean;
 }
-interface AttemptCheckpoint { prepared?: PreparedImport; readonly files: Map<string, FileCheckpoint>; }
+interface AttemptCheckpoint { prepared?: PreparedImport; readonly files: Map<string, FileCheckpoint>; readonly recovered?: RecoveredImport; }
 export interface BrowserBundleImport {
   readonly canResume: boolean;
   run(options?: ImportOptions): Promise<BundleAdmissionReceipt | null>;
@@ -24,12 +25,25 @@ export interface BrowserBundleImport {
 
 /** Explicit same-tab continuation. No timer/retry, private offline storage or new operation identity. */
 export function createBrowserBundleImport(input: BrowserBundle, idempotencyKey: string): BrowserBundleImport {
+  return createAttempt(input, idempotencyKey);
+}
+
+/** Explicit recovery by operation ID after reload/sign-in; no source bytes or tokens in local storage. */
+export async function recoverBrowserBundleImport(input: BrowserBundle, operationId: string,
+  options: Pick<ImportOptions, "signal" | "transport"> = {}): Promise<BrowserBundleImport> {
+  const frozen: BrowserBundle = { manifest: structuredClone(input.manifest), hashes: { ...input.hashes },
+    files: input.files.map(({ path, blob }) => ({ path, blob: new Blob([blob]) })), totalBytes: input.totalBytes };
+  const recovered = await readBundleRecovery(frozen, operationId, options.signal, options.transport);
+  return createAttempt(frozen, recovered.key, recovered);
+}
+
+function createAttempt(input: BrowserBundle, idempotencyKey: string, recovered?: RecoveredImport): BrowserBundleImport {
   importIdentifier(idempotencyKey);
   // Metadata is copied as well as bytes: later caller edits cannot change an upload slot on resume.
   let bundle: BrowserBundle | undefined = { manifest: structuredClone(input.manifest), hashes: { ...input.hashes },
     files: input.files.map(({ path, blob }) => ({ path, blob: new Blob([blob]) })), totalBytes: input.totalBytes };
-  const checkpoint: AttemptCheckpoint = { files: new Map() };
-  let inFlight = false; let attempted = false; let terminal = false; let controller: AbortController | undefined;
+  const checkpoint: AttemptCheckpoint = { files: new Map(), ...(recovered ? { recovered } : {}) };
+  let inFlight = false; let attempted = recovered !== undefined; let terminal = false; let controller: AbortController | undefined;
   const dispose = () => { controller?.abort(); bundle = undefined; checkpoint.files.clear(); delete checkpoint.prepared; terminal = true; };
   return {
     get canResume() { return attempted && !inFlight && !terminal && bundle !== undefined; },
@@ -65,11 +79,20 @@ async function executeAttempt(bundle: BrowserBundle, idempotencyKey: string, che
   const transport = options.transport ?? requestApi;
   const signal = options.signal;
   importIdentifier(idempotencyKey); checkCancelled(signal);
-  let sent = [...checkpoint.files.values()].reduce((sum, file) => sum + file.parts.reduce((n, part) => n + part.size_bytes, 0), 0);
+  let sent = [...checkpoint.files.entries()].reduce((sum, [path, file]) => sum + (file.completed
+    ? bundle.files.find((candidate) => candidate.path === path)?.blob.size ?? 0
+    : file.parts.reduce((n, part) => n + part.size_bytes, 0)), 0);
   const progress = (phase: string) => options.onProgress?.({ phase, bytes: sent, total: bundle.totalBytes });
   const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(body), ...(signal ? { signal } : {}) });
   let prepared = checkpoint.prepared;
+  if (!prepared && checkpoint.recovered) {
+    const recovered = checkpoint.recovered;
+    options.onIdentity?.({ ...recovered.identity });
+    const observed = await readImportStatus(recovered.identity, signal, transport, recovered.session);
+    if (observed.receipt) return observed.receipt;
+    if (["REJECTED", "QUARANTINED"].includes(observed.state)) { progress(observed.state); return null; }
+  }
   if (prepared) {
     progress("Reconciling durable status before continuation");
     const observed = await readImportStatus(prepared.identity, signal, transport, prepared.session);
@@ -84,6 +107,11 @@ async function executeAttempt(bundle: BrowserBundle, idempotencyKey: string, che
     }
     const response = await importCall("/api/v1/ingest/bundles/prepare", prepareRequest, transport);
     prepared = decodePrepared(response.data, bundle, response.generation);
+    if (checkpoint.recovered && (prepared.identity.operation !== checkpoint.recovered.identity.operation ||
+        prepared.identity.manifestDigest !== checkpoint.recovered.identity.manifestDigest ||
+        prepared.identity.sourceRevision !== checkpoint.recovered.identity.sourceRevision ||
+        prepared.identity.generation !== checkpoint.recovered.identity.generation ||
+        checkpoint.recovered.session !== undefined && prepared.session !== checkpoint.recovered.session)) importMismatch();
     checkpoint.prepared = prepared;
   }
   options.onIdentity?.({ ...prepared.identity });
@@ -107,6 +135,22 @@ async function executeAttempt(bundle: BrowserBundle, idempotencyKey: string, che
     checkpoint.files.set(file.path, saved);
     if (saved.completed) continue;
     const parts = saved.parts;
+    const complete = async (knownParts: FileCheckpoint["parts"]) => {
+      const result = await importCall(`${base}/files/complete`, json({ multipart_session_ref: prepared.session,
+        path: file.path, parts: knownParts }), transport, identity.generation);
+      const row = importRecord(result.data, ["operation_id", "multipart_session_ref", "path", "sha256", "size_bytes", "etag", "completed_at"]);
+      checkBinding(row, file.path);
+      if (row.sha256 !== bundle.hashes[file.path] || row.size_bytes !== file.blob.size) importMismatch();
+      importOpaque(row.etag); importTime(row.completed_at); saved.completed = true;
+    };
+    if (checkpoint.recovered && parts.length === 0) {
+      // Empty parts can only reopen an already materialized file and repair its lost receipt.
+      // The one explicit NOT_COMPLETED result permits re-uploading the same original slots.
+      try { await complete([]); sent += file.blob.size; progress("Reconciled existing file"); continue; }
+      catch (error) {
+        if (!(error instanceof ApiRequestError) || error.code !== "STAGING_FILE_NOT_COMPLETED") throw error;
+      }
+    }
     const acknowledged = parts.reduce((sum, part) => sum + part.size_bytes, 0);
     // An unacknowledged part is resent only on explicit run(), with the same slot and frozen bytes.
     // A complete-file ACK loss retries completeFile with the same known parts, never uploads to a closed multipart.
@@ -124,13 +168,7 @@ async function executeAttempt(bundle: BrowserBundle, idempotencyKey: string, che
       sent += part.size; progress("Uploading verified bytes");
     }
     current();
-    const result = await importCall(`${base}/files/complete`, json({ multipart_session_ref: prepared.session,
-      path: file.path, parts }), transport, identity.generation);
-    const row = importRecord(result.data, ["operation_id", "multipart_session_ref", "path", "sha256", "size_bytes", "etag", "completed_at"]);
-    checkBinding(row, file.path);
-    if (row.sha256 !== bundle.hashes[file.path] || row.size_bytes !== file.blob.size) importMismatch();
-    importOpaque(row.etag); importTime(row.completed_at);
-    saved.completed = true;
+    await complete(parts);
   }
   current(); progress("Checking admission and canonical readback");
   const committed = await importCall("/api/v1/ingest/bundles/commit", json({ operation_id: identity.operation,

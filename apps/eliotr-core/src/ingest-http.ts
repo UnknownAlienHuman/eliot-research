@@ -174,8 +174,8 @@ async function completeRequest(
 ): Promise<CompleteBundleFileRequest> {
   const input = await jsonBody(request, maximumBytes);
   exactKeys(input, ["multipart_session_ref", "path", "parts"], "file completion request");
-  if (!Array.isArray(input.parts) || input.parts.length < 1 || input.parts.length > MAX_PART_COUNT) {
-    fail("INGEST_PART_SET_INVALID", 400, "parts must be a bounded non-empty array");
+  if (!Array.isArray(input.parts) || input.parts.length > MAX_PART_COUNT) {
+    fail("INGEST_PART_SET_INVALID", 400, "parts must be a bounded array; empty means existing-file reconciliation only");
   }
   const parts = input.parts.map((raw, index) => {
     const part = record(raw, `parts[${index}]`);
@@ -261,6 +261,9 @@ export async function dispatchIngestOperation(
     case "ingest.bundle.commit":
       exactQuery(url, []);
       return owner.commitBundle(context, await commitRequest(request, maximumBytes));
+    case "ingest.bundle.recovery":
+      exactQuery(url, []);
+      return owner.getBundleRecovery(context, identifier(params.operation_id, "operation_id"));
     case "ingest.bundle.status":
       exactQuery(url, []);
       return owner.getBundleStatus(

@@ -158,7 +158,7 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Cross-session recovery, revision/readiness views and the full populated browser loop remain open.",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Missing-ID discovery, revision/readiness/project views and the full initial populated browser loop remain open in #98.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
@@ -168,7 +168,10 @@
         "scripts/test-local-namespace.mjs guarded initialization, lost-ACK, exact replay, policy-only restart and no owner resurrection",
         "apps/eliotr-core/test/namespace-bootstrap.test.ts controlled RSA-signed owner -> actual D1 initializer -> real HTTP/R2 admission, without read grants",
         "apps/eliotr-core/test/bundle-import-http.test.ts lost part/file/commit ACK continuation, policy withdrawal and transaction-time policy substitution rollback",
-        "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification"
+        "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification",
+        "tests/bundle-recovery.test.ts exact-file recovery metadata, generation/auth/cancellation and no implicit mutation",
+        "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
+        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open"
       ]
     },
     {

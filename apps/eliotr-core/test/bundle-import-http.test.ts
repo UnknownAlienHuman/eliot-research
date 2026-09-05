@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalDigest, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
-import { createBrowserBundleImport, importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";
+import { createBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../eliotr-pwa/src/bundle-import.js";
 import { type ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
@@ -186,6 +186,92 @@ describe("actual PWA import protocol through Worker/D1/R2", () => {
     expect(await delta("source_revision")).toBe(0); expect(await delta("outbox")).toBe(0);
     expect(await db.prepare("SELECT COUNT(*) AS n FROM source WHERE source_namespace_id=?1").bind(namespace).first("n")).toBe(0);
     expect(await db.prepare("SELECT state FROM bundle_ingest_operation WHERE source_namespace_id=?1").bind(namespace).first("state")).toBe("AUTHORIZED");
+  });
+
+  it.each(["part-before", "part-after", "complete-before", "complete-after", "commit-before", "commit-after"])(
+    "recovers %s after discarding every browser checkpoint with no new identity", async (fault) => {
+      await setup(); const bundle = await input(); let injected = false; let operationId = "";
+      const interrupted: ImportTransport = async (path, init) => {
+        const kind = path.includes("/parts/") ? "part" : path.endsWith("/files/complete") ? "complete" :
+          path.endsWith("/commit") ? "commit" : "other";
+        if (!injected && fault === `${kind}-before`) { injected = true; throw new Error("interrupted"); }
+        const result = await transport(path, init);
+        if (!injected && fault === `${kind}-after`) { injected = true; throw new Error("lost response"); }
+        return result;
+      };
+      const attempt = createBrowserBundleImport(bundle, `restart-${namespace}`);
+      await expect(attempt.run({ transport: interrupted, onIdentity: (id) => { operationId = id.operation; } })).rejects.toThrow();
+      attempt.dispose();
+      const selectedAgain = await prepareBrowserBundle(bundle.files);
+      const calls: { path: string; method: string }[] = [];
+      const restored = await recoverBrowserBundleImport(selectedAgain, operationId, { transport: async (path, init) => {
+        calls.push({ path, method: init?.method ?? "GET" }); return transport(path, init);
+      } });
+      expect(calls).toEqual([{ path: `/api/v1/ingest/bundles/${operationId}/recovery`, method: "GET" }]);
+      expect((await restored.run({ transport }))?.decision).toBe("ADMITTED");
+      expect(await delta("bundle_ingest_operation")).toBe(1);
+      expect(await delta("source_revision")).toBe(1); expect(await delta("outbox")).toBe(1);
+      expect(await delta("scope_read_policy")).toBe(0);
+      restored.dispose();
+    });
+
+  it("repairs a lost file-completion receipt from exact R2 bytes, without invented multipart ETags", async () => {
+    await setup(); const bundle = await input(); let operationId = ""; let injected = false;
+    const attempt = createBrowserBundleImport(bundle, `receipt-${namespace}`);
+    await expect(attempt.run({ onIdentity: (id) => { operationId = id.operation; }, transport: async (path, init) => {
+      const result = await transport(path, init);
+      if (!injected && path.endsWith("/files/complete")) {
+        injected = true;
+        const body = JSON.parse(String(init?.body)) as { multipart_session_ref: string; path: string };
+        await runtime.WORK_BUCKET.delete(`staging/session/${body.multipart_session_ref}/completed/${await sha256Utf8(body.path)}.json`);
+        throw new Error("lost receipt write");
+      }
+      return result;
+    } })).rejects.toThrow("lost receipt write");
+    attempt.dispose();
+    const restored = await recoverBrowserBundleImport(await prepareBrowserBundle(bundle.files), operationId, { transport });
+    const parts: string[] = [];
+    expect((await restored.run({ transport: async (path, init) => {
+      if (path.includes("/parts/")) parts.push(new URL(path, "https://local.invalid").searchParams.get("path") ?? "");
+      return transport(path, init);
+    } }))?.decision).toBe("ADMITTED");
+    expect(parts).not.toContain(bundle.files[0]?.path);
+    expect(await delta("source_revision")).toBe(1);
+  });
+
+  it("denies changed files and revoked recovery without any mutation", async () => {
+    await setup(); const bundle = await input(); let operationId = "";
+    const attempt = createBrowserBundleImport(bundle, `denied-recovery-${namespace}`);
+    await expect(attempt.run({ onIdentity: (id) => { operationId = id.operation; }, transport: async (path, init) => {
+      if (path.includes("/parts/")) throw new Error("stop"); return transport(path, init);
+    } })).rejects.toThrow("stop");
+    attempt.dispose();
+    const calls: string[] = [];
+    await expect(recoverBrowserBundleImport({ ...bundle, hashes: { ...bundle.hashes, "content.md": "a".repeat(64) } }, operationId,
+      { transport: async (path, init) => { calls.push(path); return transport(path, init); } }))
+      .rejects.toMatchObject({ code: "BUNDLE_RECOVERY_FILES_CHANGED" });
+    expect(calls).toHaveLength(1);
+    await db.prepare("UPDATE source_admission_policy SET authorized_principal_refs_json='[\"revoked\"]' WHERE source_namespace_id=?1").bind(namespace).run();
+    await expect(recoverBrowserBundleImport(bundle, operationId, { transport })).rejects.toMatchObject({ status: 403 });
+    expect(await delta("bundle_ingest_operation")).toBe(1); expect(await delta("source_revision")).toBe(0);
+  });
+
+  it("does not disclose recovery metadata to a foreign principal or an unsigned caller", async () => {
+    await setup(); const bundle = await input(); let operationId = "";
+    const attempt = createBrowserBundleImport(bundle, "private-recovery-key");
+    await expect(attempt.run({ onIdentity: (id) => { operationId = id.operation; }, transport: async (path, init) => {
+      if (path.includes("/parts/")) throw new Error("stop"); return transport(path, init);
+    } })).rejects.toThrow("stop"); attempt.dispose();
+    const path = `/api/v1/ingest/bundles/${operationId}/recovery`;
+    const foreign = await handleHttp(new Request(`https://research.example${path}`), runtime, {} as ExecutionContext,
+      { accessVerifier: { async verify() { return { principal_ref: "foreign-owner", credential_generation: "credential-1",
+        authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3600000).toISOString() }; } } });
+    expect(foreign.status).toBe(404);
+    const text = await foreign.text(); expect(text).not.toContain("private-recovery-key"); expect(text).not.toContain(bundle.hashes["content.md"]);
+    const unsigned = await handleHttp(new Request(`https://research.example${path}`), runtime, {} as ExecutionContext);
+    expect(unsigned.status).toBe(401);
+    await expect(transport(`${path}?include=credentials`)).rejects.toMatchObject({ status: 400 });
+    expect(await delta("bundle_ingest_operation")).toBe(1); expect(await delta("source_revision")).toBe(0);
   });
 
 });

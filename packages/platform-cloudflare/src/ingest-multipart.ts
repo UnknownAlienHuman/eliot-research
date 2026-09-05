@@ -149,6 +149,11 @@ export async function completeStagedFile(input: {
 
   if (prior !== null) {
     expectedSize = prior.size_bytes;
+  } else if (input.parts.length === 0) {
+    // Recover a lost completion receipt without invented ETags or another multipart effect.
+    if (object === null) fail("STAGING_FILE_NOT_COMPLETED", "No materialized file to reconcile");
+    assertSafeInteger(object.size, "materialized file size", 1, session.total_bytes);
+    expectedSize = object.size;
   } else {
     const completed = validateCompletedParts(session, input.parts);
     expectedSize = completed.size;

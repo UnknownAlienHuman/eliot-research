@@ -527,6 +527,7 @@
       "owned_paths": [
         "apps/eliotr-pwa/**",
         "tests/library.test.ts",
+        "tests/bundle-recovery.test.ts",
         "scripts/test-library-browser.mjs",
         "scripts/lib/browser-import-fixture.mjs"
       ],

@@ -17,9 +17,10 @@ This index groups existing work packets; it does not create duplicate authority 
 | 09 Rust authority | 09-rust.md | parallel by stable family; integrate current TS tests |
 
 Each plan is introduced in its own draft PR under this directory, so not-yet-merged plans are found
-on the corresponding PR branch. Only topic 01 is initially selected for implementation; the others
-are queued and unclaimed. Implement one bounded checkpoint per commit with a negative test.
-Do not merge a theme while mandatory code remains pending. Do not label code-only/local results
+on the corresponding PR branch. #89 is merged as an explicitly requested tested checkpoint; unfinished Library work is in #98.
+The initial parallel local tasks and remaining dependencies are in [agent-start.md](agent-start.md). Implement one bounded checkpoint per commit with a negative test.
+Do not merge a theme as complete while mandatory code remains pending. An explicitly owner-authorized
+checkpoint merge must preserve its unchecked acceptance and linked open follow-up issue. Do not label code-only/local results
 LIVE_QUALIFIED. First complete staging trial and production release are separate gates, governed by
 `../production-readiness-plan.md`. Optional Slice 7 is not added to this series.
 
@@ -56,5 +57,5 @@ integrated family's existing canonical bytes and schema rules before per-family 
 [cloudflare-handoff.md](cloudflare-handoff.md) assigns concrete account-only work to the existing
 #89–#97 PRs, including target approval, prerequisites, exact observations, negative cases and redacted
 receipts. No additional queue branches are needed. The current status is BLOCKED by mandatory code;
-initial local namespace setup and same-tab resume do not finish Library, retrieval or research.
+local namespace setup and known-operation reload recovery do not finish Library, retrieval or research.
 The account agent must not mistake unfinished local code for a credential-dependent test.

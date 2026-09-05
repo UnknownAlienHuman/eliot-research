@@ -14,6 +14,7 @@ outside the paths below.
 - `apps/eliotr-pwa/**`
 
 - `tests/library.test.ts`
+- `tests/bundle-recovery.test.ts`
 - `scripts/test-library-browser.mjs`
 - `scripts/lib/browser-import-fixture.mjs`
 
@@ -90,3 +91,20 @@ No new read grant, source policy, migration or evidence authority is introduced.
 one Chromium fixture step in CI and the root `test:library-browser` command. Existing owners stay intact.
 The browser test runs the built PWA against a controlled HTTP fixture, not a live IdP or complete
 import-to-evidence product. Actual catalog/source authority is tested separately on Workers/D1.
+
+## Launch 01 known-operation recovery integration
+
+Issue #98 retains unfinished Library acceptance after the owner's explicit checkpoint merge of #89.
+ER-25 adds the recovery field and strict decoder under its existing PWA paths. ER-21 delegates only
+`owner-api.ts`, `routes.ts` and `ingest-http.ts` for the bounded authenticated recovery GET;
+ER-29 delegates the corresponding `ingest-service.ts` reader; ER-14 delegates existing-file-only empty
+completion reconciliation in `ingest-multipart.ts` and its typed error in `ingest-validation.ts`.
+The existing `test/bundle-import-http.test.ts` owner delegates the exact HTTP/D1/R2 recovery negatives.
+No migration, source identity, policy owner, provider configuration or deployment gate changes.
+
+Recovery requires the original operation ID and reselected exact files; it creates no fresh reservation.
+An empty completion list may only read back an existing staged object/receipt and repair the original
+receipt, never call R2 multipart completion with fabricated parts. Missing output is an explicit typed
+result; only then may the user resend the original incomplete file. No private browser persistence,
+credential field or implicit grant. Keep missing-ID discovery and the complete initial browser/storage
+lifecycle open; a terminal-replay browser test does not cover every partial-upload interruption.

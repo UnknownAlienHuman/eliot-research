@@ -1,6 +1,7 @@
 # Launch 01 — Source ingest and owner Library
 
-Status: draft; implementation starts here. Baseline: main@92118fa. No launch/product completion claim.
+Status: #89 checkpoint merged into main as `5d7ea2a` at the owner's explicit request.
+Unfinished L2/L4/L6 acceptance is tracked by #98; this is not Launch 01 completion.
 Owners: ER-25 UI, ER-21 transport, ER-13/14/29/37 ingest. Integration: ER-24 composition and ER-26 local setup.
 Read `../local-launch.md`, `../gap-register.md`, the named packets, `packages/interfaces/src/owner-api.ts`,
 `apps/eliotr-core/src/ingest-http.ts`, `ingest-service.ts`, and `packages/contracts/src/normalized-bundle.ts`.
@@ -76,7 +77,7 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 under ER-25. This integration permission does not permit parallel edits to those files.
 
 The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Durable cross-session resume, full revision/readiness views and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not merge this draft as a
+aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery is implemented; missing-ID discovery, full revision/readiness views and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
 finished Library product or upload it to Cloudflare for continued development.
 
 
@@ -96,8 +97,8 @@ Separate Workers/D1 tests run the real catalog -> PWA decoder -> orientation pat
 corruption, current membership, borrowed cursors, database failure and time-only expiry.
 
 The real MCP catalog previously reused the unscoped reader. It now rejects calls before D1 and is hidden
-from discovery until Launch 07 supplies explicit service-scope read authority. Keep this draft open:
-cross-session upload recovery, revision/readiness views and the full populated browser import-to-evidence
+from discovery until Launch 07 supplies explicit service-scope read authority. Keep #98 open:
+missing-ID recovery, revision/readiness views and the full populated browser import-to-evidence
 loop still need off-account implementation and acceptance. Real IdP testing is a separate live gate.
 
 
@@ -113,7 +114,7 @@ Same-tab Resume retains the original bytes, operation key, prepared session and 
 It reads durable status before continuing; a committed result needs no new upload. Unknown part or
 complete acknowledgements repeat only the same explicit slot/parts; no automatic retry or new identity
 is introduced. A page exit, offline event, sign-out or denied response clears private in-memory state.
-**Cross-session continuation is still open**, and L2/L6 are not marked complete by this checkpoint.
+Known-operation cross-session continuation is implemented below; L2/L6 retain their remaining acceptance.
 
 Continuation and promotion re-read the current namespace owner and exact admission-policy bytes. The
 final D1 source/head/outbox batch also guards those bytes, so policy substitution after precheck rolls
@@ -128,4 +129,29 @@ specified in ER-44 and must join Launch 09 differential vectors before authority
 
 Cloudflare agent work is assigned in [cloudflare-handoff.md](cloudflare-handoff.md), with separate
 checklists in #89–#97. A missing account does not block the unfinished local Library/revision/browser
-work. This PR stays draft until that code acceptance passes.
+work. Issue #98 stays open until the remaining code acceptance passes.
+
+
+## Known-operation recovery after reload
+
+The owner reselects the exact normalized folder and enters the retained operation ID. The protected
+`GET /api/v1/ingest/bundles/:operation_id/recovery` returns `eliotr.ingest-recovery.v1` with the original
+reservation key, file hashes, byte total, canonical manifest digest and current status. Principal,
+current ownership and admission-policy checks are identical to status reads; unknown/foreign operations
+reveal no recovery metadata. The browser compares every file hash and byte total before any mutation.
+It rechecks status/generation and uses the existing identity; terminal receipts need no upload or commit.
+
+With `parts: []`, existing file completion is reconciliation-only: verify the exact materialized object
+and completion receipt, or repair a lost receipt from verified bytes. No multipart completion is invoked
+with empty/invented parts. `STAGING_FILE_NOT_COMPLETED` alone permits explicitly resending the original
+incomplete-file slots; other failures block. Current policy is still checked at final D1 admission.
+No automatic retry, browser credential/source persistence, new migration or canonical identity change.
+
+Tests cover before/after part, completion and commit loss across discarded client state in real local
+Workers/D1/R2, lost completion-receipt repair, changed files, policy withdrawal and foreign/unsigned
+recovery. The built-PWA Chromium test reloads, reselects files and reopens an admitted operation using
+only authenticated-read-shaped fixture calls. Its HTTP backend is controlled; it does not qualify the
+full real-storage browser lifecycle or live Access.
+
+A lost prepare response with no retained operation ID is not automatically discoverable. This limitation,
+full revision/readiness/project editing and the clean initial-setup browser loop remain in #98.

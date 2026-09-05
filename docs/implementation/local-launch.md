@@ -264,8 +264,8 @@ Only an unacknowledged prepare is explicitly repeated using its identical frozen
 continuations are rejected; no background retry is scheduled.
 
 Stopping cancels future requests, not already committed effects. Reload, offline, sign-out and page exit
-clear private checkpoints. Durable cross-session partial-upload recovery is still open and is **not a
-Cloudflare-only task**. Complete it locally before marking L2/L6 done. File completion and final admission
+clear private checkpoints. Known-operation recovery after reload is available below. Missing-ID discovery and the complete
+initial-setup browser/storage loop remain local work in #98; L2/L6 are not fully complete. File completion and final admission
 rehash the canonical bytes; a UI checkpoint does not establish integrity or search readiness.
 
 The continuation tests also cover withdrawal after reservation. Current ACTIVE owner, policy revision,
@@ -275,3 +275,22 @@ edit racing that batch rolls back canonical admission. Already staged R2 objects
 and remain governed by staging cleanup/erasure, not an improvised rollback delete.
 
 Cloudflare agent work and exact remote evidence requirements: [`launch-prs/cloudflare-handoff.md`](launch-prs/cloudflare-handoff.md).
+
+
+## Recover after closing the tab or restarting the local server
+
+Keep the operation ID displayed by the importer. After signing in again, open the import panel,
+reselect the **exact original normalized folder**, enter the ID in **Existing operation ID (recovery
+only)** and submit. The original file hashes and byte total must match the current authenticated server
+reservation. A wrong folder, expired upload, revoked policy, different principal or changed deployment
+cannot silently start a replacement import. No token, source bytes or resume secret is stored in
+localStorage/sessionStorage. The operation ID is a lookup reference, not a read grant.
+
+The same reservation key is recovered server-side. Already materialized files are hash/readback
+verified; missing completion receipts can be reconstructed from those bytes. Incomplete files may
+resend original parts under their existing upload ID. An already admitted operation is read back without
+another upload or commit. This works with persistent local D1/R2 state across restarts, not after deleting
+that state. Unknown outcomes still require explicit user continuation, not background retry.
+
+If the prepare reply was lost before the ID was retained, this UI cannot yet discover it. Do not guess
+an ID or assume a new import is the same operation; that recovery-discovery case remains in #98.

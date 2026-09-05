@@ -29,8 +29,8 @@ There are three separate milestones:
 
 ### Still off-account work, not a Cloudflare excuse
 
-#89 still needs durable cross-session upload recovery, revision/readiness/project workflows and the
-complete empty-setup -> import -> Library -> Lens browser/storage loop. Its initializer currently
+#89 merged a tested checkpoint; #98 retains missing-operation-ID discovery, revision/readiness/project workflows and the
+complete empty-setup -> import -> Library -> Lens browser/storage loop. Known-operation reload recovery is implemented without browser persistence. Its initializer currently
 supports only a local absent immutable-import namespace. A governed remote setup adapter must be
 implemented/tested before a staging agent can use it; copying fixture SQL is not that adapter.
 #90–#97 still require the code checklists in their PRs. Implement live probe runners, their missing-input

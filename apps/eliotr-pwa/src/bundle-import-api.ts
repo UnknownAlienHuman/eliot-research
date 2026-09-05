@@ -87,7 +87,10 @@ export async function readImportStatus(identity: ImportIdentity, signal?: AbortS
   transport: ImportTransport = requestApi, session?: string): Promise<ImportStatus> {
   const result = await importCall(`/api/v1/ingest/bundles/${encodeURIComponent(identity.operation)}`,
     { ...(signal ? { signal } : {}) }, transport, identity.generation);
-  const row = importRecord(result.data, ["operation_id", "state", "source_revision_ref", "expires_at", "updated_at"],
+  return decodeImportStatus(result.data, identity, session);
+}
+export function decodeImportStatus(value: unknown, identity: ImportIdentity, session?: string): ImportStatus {
+  const row = importRecord(value, ["operation_id", "state", "source_revision_ref", "expires_at", "updated_at"],
     ["staging_session_ref", "qualification_report_ref", "decision_receipt_ref", "promotion_receipt_ref", "receipt"]);
   if (row.operation_id !== identity.operation || row.source_revision_ref !== identity.sourceRevision ||
       !["PREPARING", "UPLOAD_REQUIRED", "VERIFIED", "AUTHORIZED", "PROMOTED", "COMMITTED", "QUARANTINED", "REJECTED"].includes(String(row.state))) importMismatch();

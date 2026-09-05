@@ -160,6 +160,25 @@ try {
   assert.equal(await evaluate('document.querySelector("[data-resume]").disabled'), true);
   await click("[data-status]");
   await wait('document.querySelector("input[name=bundle]").closest("details").textContent.includes("COMMITTED")', "Import durable status");
+  // Reload loses every in-memory checkpoint. An explicit operation ID and reselected folder
+  // recover the durable receipt without another prepare/part/commit mutation.
+  const beforeReload = importing.calls.length;
+  await cdp("Page.reload");
+  await wait('Boolean(document.querySelector("#library [data-source]"))', "Library after reload");
+  await evaluate(`(() => {
+    const transfer = new DataTransfer();
+    for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
+    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    const recovery = document.querySelector('input[name="recovery"]'); recovery.value = "ingest-browser";
+    input.dispatchEvent(new Event("change", { bubbles: true })); input.closest("form").requestSubmit();
+  })()`);
+  await wait('document.querySelector("input[name=bundle]").closest("details").querySelector("[role=status]").textContent.startsWith("ADMITTED:")', "Reload recovery");
+  assert.equal(importing.calls[beforeReload].path, "/api/v1/ingest/bundles/ingest-browser/recovery");
+  assert.ok(importing.calls.slice(beforeReload).every((call) => call.method === "GET"));
+  assert.deepEqual(await evaluate('Object.keys(localStorage)'), []);
+  assert.deepEqual(await evaluate('Object.keys(sessionStorage)'), []);
+  await click("#library [data-source]");
+  await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Lens after reload");
   // Badly formatted 403 still clears every private panel, before parsing an error body.
   mode = "denied"; await click("#library [data-first]");
   await wait('document.querySelector("#library [role=status]").textContent.includes("Authorization changed")', "Access denial");
@@ -180,7 +199,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation import continuation/status, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload recovery, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {
