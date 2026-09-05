@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { decodeSourceRevisions, readSourceRevisionsPage } from "../apps/eliotr-pwa/src/source-revisions-api.js";
+import { requestApi } from "../apps/eliotr-pwa/src/api.js";
 import { renderSourceRevisions } from "../apps/eliotr-pwa/src/source-revisions-panel.js";
 const envelope = () => ({ deployment_generation: "deploy-1", trace_id: "trace-1", data: {
   protocol: "eliotr.source-revisions.v1", source_id: "source-1", head_revision_ref: "revision-2", readiness_basis: "RECORDED_ONLY",
@@ -79,6 +80,21 @@ describe("source history PWA boundary", () => {
     await expect(readSourceRevisionsPage("bad source", "deploy-1")).rejects.toThrow();
     await expect(readSourceRevisionsPage("source-1", "deploy-1", "bad=c")).rejects.toThrow();
     expect(fetched).toHaveBeenCalledTimes(1);
+  });
+  it("accepts literal double dots in a valid source ID, not as a parent path", async () => {
+    const source = "source..revision"; const data = envelope(); data.data.source_id = source;
+    const fetched = vi.fn(async () => Response.json(data)); vi.stubGlobal("fetch", fetched);
+    expect((await readSourceRevisionsPage(source, "deploy-1")).source_id).toBe(source);
+    expect(fetched).toHaveBeenCalledOnce();
+  });
+  it("rejects URL origin and path normalization tricks before fetch", async () => {
+    const fetched = vi.fn(); vi.stubGlobal("fetch", fetched);
+    for (const path of ["https://other.example/api/v1/library/revisions", "//other.example/api/v1/library/revisions",
+      "/api/v1/../private", "/api/v1/%2e%2e/private", "/api/v1/./private", "/api/v1/%2E/private",
+      "/api/v1/library/revisions#fragment", "/api/v1/library/\nrevisions", "/api/v1/library\\revisions"]) {
+      await expect(requestApi(path)).rejects.toMatchObject({ code: "API_PATH_INVALID" });
+    }
+    expect(fetched).not.toHaveBeenCalled();
   });
   it("rejects cursor loops, typed denial, redirects and HTML without fallback", async () => {
     vi.stubGlobal("fetch", async () => Response.json({ ...envelope(), data: { ...envelope().data, next_cursor: "cursor" } }));
