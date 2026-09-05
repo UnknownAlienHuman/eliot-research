@@ -37,6 +37,11 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
 
+- `apps/eliotr-core/src/catalog-service.ts`
+- `apps/eliotr-core/src/catalog-service.test.ts`
+- `apps/eliotr-core/src/catalog-queries.ts`
+- `apps/eliotr-core/test/catalog-http.test.ts`
+
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
 
@@ -143,3 +148,11 @@ See [`local-launch.md`](../implementation/local-launch.md). The owner metadata o
 routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
 and live qualification remain separate gates. The integration library replaces moved core service
 implementations, rather than duplicating them. No new service or production language is introduced.
+
+
+The owner catalog now shares the current namespace/admission read-policy authority used by orientation.
+Only admitted readable LIVE heads are listed; a project needs a readable active-member witness.
+Opaque v2 navigation cursors bind principal, credential, deployment, project, authority epoch and expiry.
+A cursor is not an access grant; SQL candidates and current authority are rechecked on every page.
+Legacy cursors require refreshing the first page. The primary D1 epoch and temporal frontier are
+rechecked before returning titles. MCP cannot impersonate the owner catalog.

@@ -129,3 +129,12 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 results, live receipts (or `NOT EXECUTED`), and follow-up owner packets. Do not mark the entire ingest
 slice complete while D1 admission, outbox, Queue, projection, or live R2 gates remain open.
+
+
+## Launch 01 continuation integration
+
+The existing `ingest-test-fixture.ts` owns one shared staging-port constructor used by both staging test
+suites. It removes repeated setup, not cases or assertions; denial, altered clocks and expiry remain
+explicit caller overrides. This keeps the same tests and package budget without exempting test files,
+increasing limits or introducing a second storage implementation. ER-37 retains current admission-policy
+checks; browser checkpoints do not replace this R2 adapter's byte/metadata verification.

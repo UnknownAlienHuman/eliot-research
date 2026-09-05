@@ -508,7 +508,11 @@
         "apps/eliotr-core/test/orientation-fixture.ts",
         "apps/eliotr-core/test/orientation-http.test.ts",
         "apps/eliotr-core/test/orientation-resilience.test.ts",
-        "apps/eliotr-core/vitest.config.ts"
+        "apps/eliotr-core/vitest.config.ts",
+        "apps/eliotr-core/src/catalog-service.ts",
+        "apps/eliotr-core/src/catalog-service.test.ts",
+        "apps/eliotr-core/src/catalog-queries.ts",
+        "apps/eliotr-core/test/catalog-http.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -521,7 +525,11 @@
         "ER-24"
       ],
       "owned_paths": [
-        "apps/eliotr-pwa/**"
+        "apps/eliotr-pwa/**",
+        "tests/library.test.ts",
+        "tests/bundle-recovery.test.ts",
+        "scripts/test-library-browser.mjs",
+        "scripts/lib/browser-import-fixture.mjs"
       ],
       "mandatory_negative_case": "Simulate Drive/model outage and prove core library/retrieval UI remains usable with explicit degraded status.",
       "document": "ER-25-owner-pwa.md",

@@ -81,6 +81,8 @@ jobs:
         run: pnpm check:implementation-status
       - name: Build PWA
         run: pnpm build:pwa
+      - name: Test built Library in Chromium with controlled HTTP fixtures
+        run: pnpm test:library-browser
       - name: Prepare clean local PWA and both D1 stores
         run: pnpm local:prepare
       - name: Generate Cloudflare binding types

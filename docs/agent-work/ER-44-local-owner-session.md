@@ -21,6 +21,12 @@ or hand-writing SQL. Preserve the production verifier and keep source policy ind
 - `scripts/test-local-read-policy.mjs`
 - `apps/eliotr-core/test/owner-session.test.ts`
 
+- `scripts/lib/local-sql.mjs`
+- `scripts/lib/local-namespace.mjs`
+- `scripts/lib/local-namespace.d.mts`
+- `scripts/test-local-namespace.mjs`
+- `apps/eliotr-core/test/namespace-bootstrap.test.ts`
+
 ## Integration permission
 
 ER-21 retains the route registry; ER-24 retains HTTP dispatch. Add only the read-only owner session
@@ -49,3 +55,25 @@ The trusted local OS operator can change local policies; this is not a remote gr
 Run `pnpm test:local-owner`, Workers `test/owner-session.test.ts`, the full repository checks and
 `pnpm local:smoke`. Node tests use a controlled loopback upstream; Workers tests use real RSA signatures
 and controlled JWKS. These layers do not constitute a live IdP login or a browser-automation receipt.
+
+## Launch 01 initial import namespace
+
+`--initialize-namespace` accepts an explicit local OS operator intent only after the existing Worker
+verifies an owner Access assertion. The narrow v1 profile creates a NEW `eliotr`-owned namespace for
+`immutable_import`, ownership/policy revision 1, from expected revision 0. It cannot fence, transfer,
+reactivate or delete existing ownership. No namespace is created by login, browser upload or read grant.
+Policy is staged first, read back exactly, then the ownership activation is guarded by those exact
+policy bytes. A policy-only interruption has no active ingest owner. A final joined readback checks both
+records. Same intent replays; different owner, incarnation, policy, history or pre-existing lineage fails.
+Read grants remain separate. Policy/source management after initial creation is not added here.
+
+The initial opaque owner token is SHA-256 over UTF-8 JSON of the ordered tuple
+`["eliotr.source-owner.initial.v1", namespace, "eliotr", incarnation, 1, "ACTIVE"]`, prefixed `owner-`.
+Admission policy revision is deliberately a separate axis (ERC29-INV-OWN-002). Launch 09 must preserve
+these exact bytes. The receipt digest binds all ownership/policy fields and the verified principal.
+ER-37 retains admission decisions and permits the real namespace->ingest integration tests; ER-26 retains
+`local-launch.md`; ER-00 adds the new tests to existing `test:local-owner` on Linux and Windows; ER-43 delegates the
+exact initialization/replay case in its existing disposable local smoke (controlled OS-operator identity,
+no browser authentication bypass). No schema
+migration, remote adapter, auth bypass or read capability is introduced. Local initialization/byte parity
+and actual signed-assertion Worker/D1/R2 tests are not a live Access login or remote authority receipt.

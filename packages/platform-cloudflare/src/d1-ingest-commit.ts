@@ -7,6 +7,7 @@ import {
   type SourceAdmissionDecision,
 } from "@eliotr/contracts";
 import { canonicalJson } from "./ingest-validation.js";
+import { CURRENT_INGEST_POLICY_SQL, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
 import type {
   BundlePromotionReceipt,
   CommitAdmittedBundleInput,
@@ -200,6 +201,7 @@ export async function commitAdmittedBundle(
   const operationId = authorityIdentifier(input.operation_id, "operation_id");
   const operation = await loadOperation(operationId);
   if (operation === null) authorityFail("INGEST_AUTHORITY_MISSING", "ingest operation does not exist");
+  await requireCurrentIngestPolicy(database, operation, clock);
   const receipt = validateBundleReceipt(operation, input.promotion_receipt, input.bundle_receipt);
   if (operation.bundle_receipt !== null) return exactTerminal(operation.bundle_receipt, receipt);
   if (
@@ -391,6 +393,8 @@ export async function commitAdmittedBundle(
       "AND o.owner_system_id = b.owner_system_id " +
       "AND o.source_owner_generation = b.source_owner_generation " +
       "AND o.source_admission_policy_revision = b.policy_revision AND o.status = 'ACTIVE') " +
+      "AND EXISTS (SELECT 1 FROM source_admission_policy p JOIN bundle_ingest_operation b ON b.operation_id = ?1 " +
+      "WHERE p.source_namespace_id=b.source_namespace_id AND p.revision=b.policy_revision AND " + CURRENT_INGEST_POLICY_SQL + ") " +
       "AND EXISTS (SELECT 1 FROM source s WHERE s.source_id = ?9 " +
       "AND s.source_namespace_id = ?10 AND s.source_owner_system_id = ?11 " +
       "AND s.source_owner_generation = ?12 AND s.head_rev = ?2) " +

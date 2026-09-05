@@ -8,7 +8,6 @@ import { canonicalJson } from "./ingest-validation.js";
 import { objectResidencyKeyDigest } from "./r2.js";
 import type {
   IngestAdmissionAuthority,
-  IngestAdmissionPolicySnapshot,
   PrepareIngestAuthorityInput,
   PreparedIngestOperation,
   RecordQualificationDecisionInput,
@@ -19,16 +18,14 @@ import {
   authorityIdentifier,
   canonicalDigest,
   decodeOperationRow,
-  decodePolicyRow,
   ingestInputFingerprint,
   normalizePrepareInput,
   stableIngestId,
-  type ActiveOwnerRow,
-  type AdmissionPolicyRow,
   type ExistingSourceRow,
   type IngestOperationRow,
 } from "./d1-ingest-validation.js";
 import { commitAdmittedBundle } from "./d1-ingest-commit.js";
+import { activeOwner, policySnapshot, ensureOwnerAndPolicy, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
 
 const OPERATION_SELECT =
   "SELECT operation_id, principal_ref, origin_authentication_receipt_ref, idempotency_key, " +
@@ -40,7 +37,6 @@ const OPERATION_SELECT =
   "promotion_receipt_ref, state, bundle_receipt_json, bundle_receipt_sha256, " +
   "created_at, updated_at, expires_at FROM bundle_ingest_operation ";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
-
 export interface D1IngestAdmissionDependencies {
   readonly now?: () => number;
   readonly operation_ttl_ms?: number;
@@ -61,43 +57,7 @@ async function readByIdempotency(
   principalRef: string,
   idempotencyKey: string,
 ): Promise<PreparedIngestOperation | null> {
-  return readOperation(
-    database,
-    "WHERE principal_ref = ?1 AND idempotency_key = ?2",
-    principalRef,
-    idempotencyKey,
-  );
-}
-
-async function activeOwner(
-  database: D1Database,
-  namespaceId: string,
-): Promise<ActiveOwnerRow> {
-  const row = await database.prepare(
-    "SELECT source_namespace_id, ownership_record_revision, owner_system_id, " +
-    "source_owner_generation, source_admission_policy_revision, status, cutover_receipt_ref " +
-    "FROM source_namespace_ownership WHERE source_namespace_id = ?1 AND status = 'ACTIVE' " +
-    "ORDER BY ownership_record_revision DESC LIMIT 1",
-  ).bind(namespaceId).first<ActiveOwnerRow>();
-  if (row === null) authorityFail("INGEST_OWNER_NOT_ACTIVE", "source namespace has no active owner");
-  return row;
-}
-
-async function policySnapshot(
-  database: D1Database,
-  namespaceId: string,
-  revision: number,
-): Promise<IngestAdmissionPolicySnapshot> {
-  const row = await database.prepare(
-    "SELECT source_namespace_id, revision, authorized_principal_refs_json, " +
-    "allowed_ownership_modes_json, source_class, assurance_ceiling, instruction_taint, " +
-    "allowed_effects, allowed_use_json, disclosure_ceiling, license_policy_ref, " +
-    "default_storage_policy, default_residency_profile_id, default_retention_policy_id, " +
-    "minimum_quality_state, created_at FROM source_admission_policy " +
-    "WHERE source_namespace_id = ?1 AND revision = ?2 LIMIT 1",
-  ).bind(namespaceId, revision).first<AdmissionPolicyRow>();
-  if (row === null) authorityFail("INGEST_POLICY_DENIED", "active source admission policy is missing");
-  return decodePolicyRow(row);
+  return readOperation(database, "WHERE principal_ref = ?1 AND idempotency_key = ?2", principalRef, idempotencyKey);
 }
 
 async function existingSource(
@@ -108,48 +68,6 @@ async function existingSource(
     "SELECT source_id, source_namespace_id, source_owner_system_id, " +
     "source_owner_generation, ownership_mode, head_rev FROM source WHERE source_id = ?1 LIMIT 1",
   ).bind(sourceId).first<ExistingSourceRow>();
-}
-
-function ensureOwnerAndPolicy(
-  input: Awaited<ReturnType<typeof normalizePrepareInput>>,
-  owner: ActiveOwnerRow,
-  policy: IngestAdmissionPolicySnapshot,
-): void {
-  const manifest = input.manifest;
-  if (
-    owner.source_namespace_id !== manifest.origin.source_namespace_id ||
-    owner.owner_system_id !== manifest.origin.owner_system_id ||
-    owner.source_owner_generation !== manifest.origin.source_owner_generation ||
-    owner.status !== "ACTIVE"
-  ) {
-    authorityFail("INGEST_OWNER_NOT_ACTIVE", "normalized bundle owner generation is not active");
-  }
-  if (
-    typeof owner.source_admission_policy_revision !== "number" ||
-    owner.source_admission_policy_revision !== policy.revision
-  ) {
-    authorityFail("INGEST_POLICY_DENIED", "active owner policy revision is inconsistent");
-  }
-  const cutoverRef = manifest.origin.ownership_cutover_receipt_ref;
-  if (manifest.origin.ownership_mode === "ownership_cutover") {
-    if (typeof owner.cutover_receipt_ref !== "string" || owner.cutover_receipt_ref !== cutoverRef) {
-      authorityFail("INGEST_OWNER_NOT_ACTIVE", "ownership cutover receipt is not bound to the active owner");
-    }
-  } else if (owner.cutover_receipt_ref !== null && cutoverRef !== undefined) {
-    authorityFail("INGEST_OWNER_NOT_ACTIVE", "unexpected ownership cutover receipt");
-  }
-  if (!policy.authorized_principal_refs.includes(input.principal_ref)) {
-    authorityFail("INGEST_POLICY_DENIED", "principal is not authorized by the source admission policy");
-  }
-  if (!policy.allowed_ownership_modes.includes(manifest.origin.ownership_mode)) {
-    authorityFail("INGEST_POLICY_DENIED", "ownership mode is not allowed by the source admission policy");
-  }
-  if (manifest.residency_and_disclosure.disclosure_ceiling !== policy.disclosure_ceiling) {
-    authorityFail("INGEST_POLICY_DENIED", "manifest disclosure ceiling does not match policy");
-  }
-  if (manifest.residency_and_disclosure.allowed_use.some((use) => !policy.allowed_use.includes(use))) {
-    authorityFail("INGEST_POLICY_DENIED", "manifest requests an allowed-use capability outside policy");
-  }
 }
 
 function ensureExistingSource(
@@ -172,13 +90,9 @@ function ensureExistingSource(
   }
   return row.head_rev as string | null;
 }
-
 function exactReplay(existing: PreparedIngestOperation, fingerprint: string): PreparedIngestOperation {
   if (existing.input_fingerprint !== fingerprint) {
-    authorityFail(
-      "INGEST_AUTHORITY_CONFLICT",
-      "principal idempotency identity is already bound to different ingest input",
-    );
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "principal idempotency identity is already bound to different ingest input");
   }
   return existing;
 }
@@ -223,19 +137,16 @@ export function createD1IngestAdmissionAuthority(
       const manifestSha = await canonicalDigest(input.manifest);
       const residencyDigest = await objectResidencyKeyDigest(input.residency_key);
       const policySha = await canonicalDigest(policy);
-      const fingerprint = await ingestInputFingerprint({
+      const fingerprintFor = (head: string | null) => ingestInputFingerprint({
         ...input,
         residency_key_digest: residencyDigest,
-        expected_head_revision_ref: expectedHead,
+        expected_head_revision_ref: head,
         policy_snapshot_sha256: policySha,
       });
       const prior = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-      if (prior !== null) return { disposition: "EXISTING", operation: exactReplay(prior, fingerprint) };
-      const operationId = await stableIngestId(
-        "ingest",
-        input.principal_ref,
-        input.idempotency_key,
-      );
+      if (prior !== null) return { disposition: "EXISTING", operation: exactReplay(prior, await fingerprintFor(prior.expected_head_revision_ref)) };
+      const fingerprint = await fingerprintFor(expectedHead);
+      const operationId = await stableIngestId("ingest", input.principal_ref, input.idempotency_key);
       const candidateId = await stableIngestId("candidate", operationId);
       const createdEpoch = clock();
       if (!Number.isSafeInteger(createdEpoch) || createdEpoch < 0) {
@@ -313,7 +224,7 @@ export function createD1IngestAdmissionAuthority(
         }
       } catch (cause) {
         const raced = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-        if (raced !== null) return { disposition: "EXISTING", operation: exactReplay(raced, fingerprint) };
+        if (raced !== null) return { disposition: "EXISTING", operation: exactReplay(raced, await fingerprintFor(raced.expected_head_revision_ref)) };
         if (cause instanceof IngestAuthorityError) throw cause;
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "ingest prepare authority failed", true, cause);
       }
@@ -366,12 +277,14 @@ export function createD1IngestAdmissionAuthority(
     },
 
     async loadForPrincipal(operationId, principalRef) {
-      return readOperation(
+      const operation = await readOperation(
         database,
         "WHERE operation_id = ?1 AND principal_ref = ?2",
         authorityIdentifier(operationId, "operation_id"),
         authorityIdentifier(principalRef, "principal_ref"),
       );
+      if (operation !== null) await requireCurrentIngestPolicy(database, operation, clock);
+      return operation;
     },
 
     async recordQualificationDecision(input: RecordQualificationDecisionInput) {
@@ -553,6 +466,7 @@ export function createD1IngestAdmissionAuthority(
         ? input.session_id
         : await operationIdForSession(database, input.session_id));
       if (operation === null) return false;
+      await requireCurrentIngestPolicy(database, operation, clock);
       return operation.state === "AUTHORIZED" &&
         operation.staging_session_ref === input.session_id &&
         operation.input_fingerprint === input.input_fingerprint &&
