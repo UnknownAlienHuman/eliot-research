@@ -10,7 +10,7 @@ export function renderOrientation(view: OrientationView): string {
       <p>${escapeHtml(view.maps.find((map) => map.source_revision_ref === card.source_revision_ref)?.unresolved_structure.join(", ") ?? "DOCUMENT_MAP_MISSING")}</p></article>`).join("")}
     <p>Scope: <code>${escapeHtml(view.scope.id)}</code></p><button type="button" data-trace>Inspect trace</button>`;
 }
-export function mountOrientationPanel(element: HTMLElement): () => void {
+export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void } {
   element.innerHTML = `<h2>Corpus Lens</h2><p>Browse admitted source metadata. Requires an explicit owner read policy. No model calls.</p>
     <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
     <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
@@ -53,6 +53,17 @@ export function mountOrientationPanel(element: HTMLElement): () => void {
   };
   const offline = () => { stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
     status.textContent = "Offline. Reload sources after reconnecting; cached authority is not reused."; };
-  window.addEventListener("offline", offline);
-  return () => { stop(); window.removeEventListener("offline", offline); };
+  const denied = () => { offline(); status.textContent = "Authorization changed. Reload after renewing the session/read policy."; };
+  window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
+  let disposed = false;
+  return Object.assign(() => { disposed = true; offline(); window.removeEventListener("offline", offline);
+    window.removeEventListener("eliotr:authorization-cleared", denied); }, {
+    selectSource(id: string) {
+      if (disposed) return;
+      orientationBody([id], "");
+      const sources = element.querySelector<HTMLInputElement>('input[name="sources"]');
+      if (!sources) throw new Error("Source selector is missing");
+      sources.value = id; form.requestSubmit();
+    },
+  });
 }

@@ -13,6 +13,10 @@ outside the paths below.
 
 - `apps/eliotr-pwa/**`
 
+- `tests/library.test.ts`
+- `scripts/test-library-browser.mjs`
+- `scripts/lib/browser-import-fixture.mjs`
+
 ## Read only
 
 - `packages/contracts/**`
@@ -66,3 +70,23 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## Launch 01 integration checkpoint
+
+The connected normalized-bundle import panel and transport live in `apps/eliotr-pwa/src/bundle-*`.
+For this checkpoint ER-25 integrates the narrow ER-21 prepare-digest/opaque-ETag contract additions,
+ER-14 known-length R2 upload fix, ER-37 original-head replay fix and ER-29 prepare output. Existing
+file ownership stays unchanged; the exact scope, failure tests and unfinished Library work are in
+`docs/implementation/launch-prs/01-library.md`. No source-admission or canonicalization authority moves
+to the browser. A validated folder or uploaded file is not an admitted, indexed or readable source.
+
+
+## Launch 01 authorized Library integration
+
+Library transport/pagination, source selection and private-state clearing reuse the existing owner
+catalog and orientation operations. ER-24 owns the catalog/HTTP/composition code and shared scope-authority
+export; ER-36 delegates only the real MCP catalog withholding and its signed-service negative tests.
+No new read grant, source policy, migration or evidence authority is introduced. ER-00 delegates the
+one Chromium fixture step in CI and the root `test:library-browser` command. Existing owners stay intact.
+The browser test runs the built PWA against a controlled HTTP fixture, not a live IdP or complete
+import-to-evidence product. Actual catalog/source authority is tested separately on Workers/D1.

@@ -1,5 +1,5 @@
 import type { NormalizedBundleManifest, ObjectResidencyKey } from "@eliotr/contracts";
-import type { MultipartUploadSession, StagedBundlePort } from "./ingest.js";
+import { createR2StagedBundlePort, type MultipartUploadSession, type R2StagedBundleDependencies, type StagedBundlePort } from "./ingest.js";
 import type { Sha256DigestSink } from "./r2.js";
 
 export interface StoredObject {
@@ -361,4 +361,15 @@ export async function uploadAll(
       etag: part.etag,
     }]);
   }
+}
+
+/** Shared staging harness; callers explicitly override denial, clock and expiry cases. */
+export function stagingTestPort(
+  work: ReturnType<typeof fakeBucket>, evidence: ReturnType<typeof fakeBucket>,
+  overrides: Partial<Omit<R2StagedBundleDependencies, "work_bucket" | "evidence_bucket" | "create_sha256_sink">> = {},
+): StagedBundlePort {
+  return createR2StagedBundlePort({
+    work_bucket: work.binding, evidence_bucket: evidence.binding, create_sha256_sink: testDigestSink,
+    authorize_promotion: async () => true, now: () => Date.parse("2026-08-29T00:00:00Z"), ...overrides,
+  });
 }

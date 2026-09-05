@@ -114,6 +114,7 @@ function duplicatePrepare(operation: PreparedIngestOperation): PrepareBundleUplo
   }
   return {
     operation_id: operation.operation_id,
+    manifest_sha256: operation.manifest_sha256,
     disposition: operation.bundle_receipt.decision === "ADMITTED" ||
       operation.bundle_receipt.decision === "DUPLICATE"
       ? "DUPLICATE"
@@ -179,6 +180,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       if (staged.disposition === "REJECTED" || staged.session === undefined) {
         return {
           operation_id: prepared.operation.operation_id,
+          manifest_sha256: prepared.operation.manifest_sha256,
           disposition: "REJECTED",
           expires_at: prepared.operation.expires_at,
           reason_codes: staged.reason_codes,
@@ -190,6 +192,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       );
       return {
         operation_id: operation.operation_id,
+        manifest_sha256: operation.manifest_sha256,
         disposition: "UPLOAD_REQUIRED",
         multipart_session_ref: staged.session.session_id,
         files: staged.session.uploads.map((upload) => ({

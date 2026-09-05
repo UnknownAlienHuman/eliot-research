@@ -53,6 +53,14 @@ function identifier(value: unknown, label: string): string {
   return value;
 }
 
+function opaqueToken(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+      new TextEncoder().encode(value).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    fail("INGEST_IDENTIFIER_INVALID", 400, `${label} is invalid`);
+  }
+  return value;
+}
+
 function sha256(value: unknown, label: string): string {
   if (typeof value !== "string" || !SHA256.test(value)) {
     fail("INGEST_DIGEST_INVALID", 400, `${label} must be a lowercase SHA-256 digest`);
@@ -175,7 +183,7 @@ async function completeRequest(
     return {
       part_number: positiveInteger(part.part_number, `parts[${index}].part_number`, MAX_PART_COUNT),
       size_bytes: positiveInteger(part.size_bytes, `parts[${index}].size_bytes`, 256 * 1024 * 1024),
-      etag: identifier(part.etag, `parts[${index}].etag`),
+      etag: opaqueToken(part.etag, `parts[${index}].etag`),
     };
   });
   return {

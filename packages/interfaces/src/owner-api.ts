@@ -19,6 +19,8 @@ export interface PreparedBundleFileUpload {
 
 export interface PrepareBundleUploadResult {
   readonly operation_id: string;
+  /** Canonical authority digest to echo at commit; not the uploaded JSON file digest. */
+  readonly manifest_sha256: string;
   readonly disposition: "UPLOAD_REQUIRED" | "DUPLICATE" | "REJECTED";
   readonly multipart_session_ref?: string;
   readonly files?: readonly PreparedBundleFileUpload[];

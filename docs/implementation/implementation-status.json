@@ -53,7 +53,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
@@ -137,11 +137,12 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "signed gemini-spark service identity reaches a stateless four-tool MCP boundary for status, catalog, Google planning and candidate-only receipt validation",
+      "behavior": "Signed gemini-spark identity reaches bounded status, Google planning and candidate-only receipt validation. Unscoped catalog access is withheld from discovery and direct execution until an explicit service-scope policy adapter is composed.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
-        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"
+        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited."
       ]
     },
     {
@@ -157,11 +158,17 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Cross-session recovery, revision/readiness views and the full populated browser loop remain open.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
-        "live Access, R2 multipart/promotion, remote D1 and Queue receipts"
+        "live Access, R2 multipart/promotion, remote D1 and Queue receipts",
+        "tests/bundle-import.test.ts bounded browser input and strict sequential transport negatives",
+        "apps/eliotr-core/test/bundle-import-http.test.ts actual local D1/R2 HTTP import, exact replay, malformed lengths and policy/input fences; no implicit read grants",
+        "scripts/test-local-namespace.mjs guarded initialization, lost-ACK, exact replay, policy-only restart and no owner resurrection",
+        "apps/eliotr-core/test/namespace-bootstrap.test.ts controlled RSA-signed owner -> actual D1 initializer -> real HTTP/R2 admission, without read grants",
+        "apps/eliotr-core/test/bundle-import-http.test.ts lost part/file/commit ACK continuation, policy withdrawal and transaction-time policy substitution rollback",
+        "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification"
       ]
     },
     {
