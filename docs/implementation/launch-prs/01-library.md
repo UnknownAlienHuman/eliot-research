@@ -46,7 +46,7 @@ exact-head CI. Add PWA unit tests and actual Workers integration tests for the a
 browser-level import -> status -> Library -> Lens loop. Representative RU/EN/code/table bundles must
 use exact admitted bytes; no seeded fixture may be described as a real provider receipt.
 
-This PR remains draft until L1–L6 pass. A docs-only diff or green boot test does not close the theme.
+The checkpoint PR is merged; #98 remains open until L1–L6 pass. A docs-only diff or green boot test does not close the theme.
 Update implementation status and gap register for exact changed contours, preserving NOT_EXECUTED live
 receipts. No remote deployment until mandatory launch code is complete. Dependencies: none for initial
 implementation. Topic 02 consumes admitted sources; topic 07 imports through this same boundary.
@@ -77,14 +77,14 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 under ER-25. This integration permission does not permit parallel edits to those files.
 
 The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery is implemented; missing-ID discovery, full revision/readiness views and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
+aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
 finished Library product or upload it to Cloudflare for continued development.
 
 
 ## Authorized Library checkpoint
 
-L4 now has owner-policy-filtered source-head/project pagination and strict PWA decoding. Revision history,
-actual projection-readiness views and project editing remain open. Projects are visible only with a
+L4 has owner-policy-filtered source-head/project pagination, authorized revision history and strict PWA
+decoding. Channel states are recorded-only; active projection-readiness assessment and project editing remain open. Projects are visible only with a
 currently readable admitted source through active membership; hidden and absent project filters both
 return an empty page. Read policies, admission digests, owner generations, purge state and a primary D1
 mutation/time fence are checked before output. v2 cursors bind session/deployment/project and expire;
@@ -98,7 +98,7 @@ corruption, current membership, borrowed cursors, database failure and time-only
 
 The real MCP catalog previously reused the unscoped reader. It now rejects calls before D1 and is hidden
 from discovery until Launch 07 supplies explicit service-scope read authority. Keep #98 open:
-missing-ID recovery, revision/readiness views and the full populated browser import-to-evidence
+active readiness assessment/project editing, remaining failure UI and the full populated browser import-to-evidence
 loop still need off-account implementation and acceptance. Real IdP testing is a separate live gate.
 
 
@@ -153,5 +153,43 @@ recovery. The built-PWA Chromium test reloads, reselects files and reopens an ad
 only authenticated-read-shaped fixture calls. Its HTTP backend is controlled; it does not qualify the
 full real-storage browser lifecycle or live Access.
 
-A lost prepare response with no retained operation ID is not automatically discoverable. This limitation,
-full revision/readiness/project editing and the clean initial-setup browser loop remain in #98.
+## Exact-folder discovery when the operation ID was lost
+
+The connected Find previous upload action posts only manifest, full file hashes and byte total to the
+bounded authenticated `/api/v1/ingest/bundles/discover` endpoint. It reads the existing UNIQUE
+source_revision_ref for the current principal, checks canonical manifest/file identity and rechecks
+current owner/policy after digest computation. It returns the unchanged recovery-v1 envelope with the
+original operation/key/session. No new index, schema, reservation, read grant or R2 action is introduced.
+
+A user must explicitly Resume after discovery. Missing/foreign operations share 404; changed input,
+expired uploads, withdrawn policy and ambiguous reads never trigger a fresh prepare. Browser metadata
+and original bytes are frozen before requests; nothing is persisted to browser storage. Recovery still
+requires the exact reselected folder and existing server state. A PREPARING reservation with no session
+or a lost final commit acknowledgement can reuse the original continuation path.
+
+Tests exercise real Worker/D1/R2 with lost prepare replies, PREPARING state, interrupted part/commit,
+no-write discovery, foreign/unsigned denial, altered metadata/bytes, expiry and withdrawal. A service
+negative forces revocation during discovery's final authority reread. The built-PWA Chromium fixture
+reloads without an ID, discovers read-only, and explicitly resumes terminal reconciliation. Its backend
+is controlled; full initial-setup/partial-upload/browser/storage acceptance remains in #98 along with
+active readiness assessment/project editing. No live Cloudflare qualification is inferred.
+
+## L4a metadata-history checkpoint
+
+The actual Library now opens a read-only, bounded revision page for a visible source. The Worker reuses
+catalog policy/admission validation and rechecks the current owner, each historical admission digest,
+purge state and the primary D1 epoch/temporal fence before output. Pages use source/session/credential/
+deployment/expiry-bound cursors; inaccessible versions and their counts are not disclosed.
+
+The panel displays recorded `ChannelReadiness` with original generation, timestamp, receipt and reasons,
+and clearly distinguishes absent records. Every response declares `readiness_basis: RECORDED_ONLY`;
+there is no provider call or fabricated active-index success. A stored `ready` value alone cannot close
+the active-readiness portion of L4a or the exact-query/evidence acceptance in #90.
+
+New Worker/D1 tests cover historical corruption, pagination, hidden heads/versions, stale/foreign cursors,
+authority withdrawal/purge/time races and bounded stored metadata. PWA tests and the built-PWA Chrome
+fixture cover strict decoding, pages, recorded-state rendering, auth/deployment loss and cancelled late
+responses. That browser fixture has controlled HTTP responses; full real-storage lifecycle L6 remains open.
+ER-21 owns additive owner DTO/route, ER-24 the shared read fence/reader/HTTP tests, ER-25 the PWA/test
+integration. Ownership manifest and packet lists are synchronized. No schema, identities, grants,
+provider configuration, evidence authority or release gate changes.

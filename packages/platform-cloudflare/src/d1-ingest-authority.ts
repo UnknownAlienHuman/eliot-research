@@ -117,6 +117,12 @@ export function createD1IngestAdmissionAuthority(
     authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "operation_ttl_ms is outside its allowed range");
   }
 
+  const authorizedRead = async (clause: string, identity: string, principalRef: string) => {
+    const operation = await readOperation(database, clause, identity, authorityIdentifier(principalRef, "principal_ref"));
+    if (operation !== null) await requireCurrentIngestPolicy(database, operation, clock);
+    return operation;
+  };
+
   const authority: IngestAdmissionAuthority = {
     async prepare(rawInput: PrepareIngestAuthorityInput) {
       const input = await normalizePrepareInput(rawInput);
@@ -269,22 +275,18 @@ export function createD1IngestAdmissionAuthority(
     },
 
     async load(operationId) {
-      return readOperation(
-        database,
-        "WHERE operation_id = ?1",
-        authorityIdentifier(operationId, "operation_id"),
-      );
+      return readOperation(database, "WHERE operation_id = ?1", authorityIdentifier(operationId, "operation_id"));
     },
 
     async loadForPrincipal(operationId, principalRef) {
-      const operation = await readOperation(
-        database,
-        "WHERE operation_id = ?1 AND principal_ref = ?2",
-        authorityIdentifier(operationId, "operation_id"),
-        authorityIdentifier(principalRef, "principal_ref"),
-      );
-      if (operation !== null) await requireCurrentIngestPolicy(database, operation, clock);
-      return operation;
+      return authorizedRead("WHERE operation_id = ?1 AND principal_ref = ?2",
+        authorityIdentifier(operationId, "operation_id"), principalRef);
+    },
+
+    async loadBySourceRevisionForPrincipal(sourceRevisionRef, principalRef) {
+      // source_revision_ref is UNIQUE: an indexed point read, not a scan/list of private uploads.
+      return authorizedRead("WHERE source_revision_ref = ?1 AND principal_ref = ?2",
+        authorityIdentifier(sourceRevisionRef, "source_revision_ref"), principalRef);
     },
 
     async recordQualificationDecision(input: RecordQualificationDecisionInput) {

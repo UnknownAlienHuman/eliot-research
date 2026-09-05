@@ -163,10 +163,10 @@ export function optionalSha256(value: unknown, label: string): string | undefine
 }
 export function isoDate(value: unknown, label: string): string {
   const decoded = boundedString(value, label, 128);
-  if (decoded === undefined || Number.isNaN(Date.parse(decoded))) {
-    throw new GeminiMcpToolError("INPUT_INVALID", `${label} must be an ISO date-time`);
+  if (decoded === undefined || !Number.isFinite(Date.parse(decoded)) || new Date(decoded).toISOString() !== decoded) {
+    throw new GeminiMcpToolError("INPUT_INVALID", `${label} must be a canonical ISO date-time`);
   }
-  return new Date(decoded).toISOString();
+  return decoded;
 }
 export function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);

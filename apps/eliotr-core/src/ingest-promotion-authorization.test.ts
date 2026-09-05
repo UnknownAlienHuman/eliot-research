@@ -145,6 +145,7 @@ function authority(current: PreparedIngestOperation) {
     async bindStagingSession() { throw new Error("unused"); },
     async load() { return current; },
     async loadForPrincipal() { return current; },
+    async loadBySourceRevisionForPrincipal() { return current; },
     async recordQualificationDecision() { throw new Error("unused"); },
     async finalizeNonAdmitted() { throw new Error("unused"); },
     authorizePromotion,

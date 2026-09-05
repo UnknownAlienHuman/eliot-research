@@ -1,61 +1,62 @@
 # Launch 09 — Rust deterministic authority M2–M7
 
-Status: eligible local task, unclaimed. Refresh current main and read `agent-start.md` here before
-coding. M1 and narrow M2 shadow primitives already exist; neither is reimplemented. Work proceeds by
-stable family alongside independent themes; final promotion consumes the latest integrated TS vectors.
-Owners ER-00/01/02/03 and affected capability packets; ER-24 owns Wasm/control-plane composition.
-Read `docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md`, current Cargo workspace, toolchain/coverage gates,
-shared vectors and the exact pure domain family being migrated. TypeScript permanently owns Cloudflare
-I/O, transport, PWA and setup; SQL owns D1 schema. Pure Rust has no network/filesystem/provider access.
+Status: eligible local family task, unclaimed. Incorporate current main and read agent-start.md,
+canonical-alignment.md, LANGUAGE_RUNTIME_CONTRACT v1.0 (2026-09-01), Cargo/toolchain/coverage gates,
+shared vectors and the exact owning packet before coding. ER-00/01/02/03 and capability owners retain
+pure-family ownership; ER-24 owns Wasm/control-plane composition. No production authority is promoted
+by this plan. TypeScript owns platform I/O; SQL owns schema; pure Rust has no runtime/provider access.
 
-## Existing M2 scope and first task
+## Existing scope and first bounded task
 
-`crates/eliotr-canonical/src` already contains canonical_json, sha256, generation, stable_id and
-residency_key modules. `crates/eliotr-test-vectors` already exercises canonical-body, owner-cutover,
-residency, stable-ID, ingest and projection identity vectors. Do not duplicate these implementations.
-The canonical-body family supports safe integers, not arbitrary floating-point/exponent JSON. Existing
-shadow helpers are not complete product parity, a promoted kernel or full M2–M7 acceptance.
+M1 and narrow M2 shadow primitives already exist. Reuse eliotr-canonical canonical_json, sha256,
+generation, stable_id and residency_key modules, and the existing canonical-body/owner-cutover/
+residency/stable-ID/ingest/projection test-vector drivers. Do not rewrite them. The canonical-body
+family supports safe integers, not arbitrary floats/exponent syntax. Helpers are not full product parity.
 
-First audit the current families and add the missing ER-44 initial namespace-owner identity parity.
-Use the normative preimage and actual initializer/reference function. Test identical valid, invalid and
-bounded max+1 inputs through TypeScript, native Rust and compiled Wasm. A mismatch must fail, not cause
-stored identity changes or a relaxed validator. Claim one family and exact owned paths before coding.
+Audit family coverage, then add missing ER-44 initial namespace-owner token parity from the actual
+initializer/reference function and normative preimage. Test identical valid, invalid, Unicode/shape
+and max+1 inputs through TypeScript, native Rust and compiled Wasm. A mismatch blocks acceptance;
+do not change stored identities or relax validators to obtain agreement. One family/exact-path claim.
 
-## Small sequential checkpoints
+## Sequential checkpoints — normative §10 phase names
 
-- [ ] K1 / M2a. Audit/reuse bounded canonical JSON. Complete uncovered product families only after
-  identifying their actual schema/numeric domain. Preserve exact UTF-16 key ordering, Unicode, duplicate/
-  unknown-field rules and byte/resource limits. Unknown fields are a schema rule, not blanket JSON rejection.
-- [ ] K2 / M2b. Reuse existing SHA-256/stable-ID/generation primitives; finish current per-family parity,
-  including ER-44 initialization and any uncovered owner/receipt/operation/handle identity. Consume real
-  current TS behavior and explicit limits, not two copied golden implementations.
-- [ ] K3 / M3. Move source lifecycle/owner, scope algebra, policy/disclosure/residency/retention and
-  qualification decisions one family per checkpoint. Inputs contain explicit time and observed state;
-  no implicit clock, randomness, environment or runtime handles.
-- [ ] K4 / M4. Move admission, projection ceilings, evidence/coverage/citation invariants, erasure,
-  federation and research/claim dispositions one family at a time after current TS behavior is integrated.
-  Do not freeze or duplicate obsolete code from a queued theme branch.
-- [ ] K5 / M5. Implement versioned canonical-byte ABI with bounded allocation, typed errors and exact
-  identity/output binding. Test malformed UTF-8, overflow, forged lengths, allocation failures, unknown
-  versions and malformed results at the actual Wasm boundary.
-- [ ] K6 / M6. Run shadow comparisons with content-free mismatch receipts. No duplicate external effects;
-  divergence fails closed. Measure bundle/startup/memory/p50/p95 CPU and define per-family rollback.
-- [ ] K7 / M7. Promote one family after parity/observation acceptance, make Rust the sole authority and
-  remove superseded TS authority. Transport validation may reject earlier but not strengthen/replace the
-  promoted Rust outcome. Update implementation state with the actual owner.
-- [ ] K8. Run complete native/Wasm/Workers user-loop and rollback regressions with promoted code:
-  source -> evidence/research/publication/federation. Record any unexecuted live observation.
+- [ ] K1 / M2a. Complete uncovered canonical serialization families using their actual schema/numeric
+  domain. Preserve exact UTF-16 key ordering, Unicode, duplicate/unknown-field and byte/resource rules.
+  Unknown fields are enforced by the family schema, not blanket rejection by generic JSON parsing.
+- [ ] K2 / M2b. Finish per-family SHA-256/stable-ID/generation parity, including current owner, receipt,
+  operation and handle identities. Use current TS behavior and explicit limits, not two copied goldens.
+- [ ] K3 / M3. Move lifecycle/owner, scope, policy/disclosure/residency/retention and qualification
+  decisions one family per task. Time and observed state are explicit inputs, never implicit runtime I/O.
+- [ ] K4 / M4. Move evidence/coverage/citation, admission/projection, erasure, federation and research
+  dispositions against the latest integrated TS semantics. Do not freeze obsolete planning-branch code.
+- [ ] K5a / M5. Compile the versioned canonical-byte Wasm ABI with bounded allocation, exact operation/
+  schema/digest binding and typed failures. Test UTF-8, forged lengths, overflow, allocation failure,
+  unsupported versions and malformed output at the actual Wasm boundary. Runtime handles never cross it.
+- [ ] K5b / M5. Run differential shadow comparisons and retain content-free mismatches. No duplicate
+  external effects or model billing. Divergence blocks authority promotion. Measure bundle/startup/
+  memory/p50/p95 CPU and establish per-family rollback before switching authority.
+- [ ] K6 / M6. Promote one family only after byte/result/error/identity/disposition parity and required
+  runtime/budget acceptance. Rust becomes the sole decision authority; TS may reject malformed transport
+  earlier but must not strengthen/replace the result. Registry and rollback identify the active owner.
+- [ ] K7 / M7. Remove the superseded TS authority only after the §10.3 removal prerequisites hold:
+  native/Wasm/differential/Workers tests, bundle/startup budgets, explicit Rust owner and rollback.
+  Keep historical fixtures or explicit verification references, not a permanent second production owner.
+- [ ] K8. Complete native/Wasm/Workers user-loop, performance and rollback regressions with promoted
+  code: source -> evidence/research/publication/federation. Identify every unexecuted live observation.
 
-K3/K4 are umbrella lists, not single agent tasks. Split each named family into a bounded crate-focused
-change with its own tests/promotion record. One task/worktree/branch per agent, existing source budgets
-and less than 10k source lines per crate. Shared manifests, vector-driver/ABI exports and Worker composition
-are serialized through their owning integrator; no new language or permanent dual authority.
+The old task labels incorrectly assigned shadow to M6 and combined promotion/removal in M7. The
+canonical phases are M5 Wasm/shadow, M6 promotion, M7 removal; the canonical contract is unchanged.
+K3/K4 remain umbrella lists, not single agent tasks. Split by coherent crate/state family under existing
+600-line/file and 10k-line/crate budgets. Shared manifests/vector exports/ABI/CI/Worker edits belong to
+the integrator. No one-for-one TS rewrite, new language, hidden I/O or permanent dual authority.
 
 ## Completion
 
-Require pinned fmt, Clippy -D warnings, nextest/doctests, deny, coverage, default/self-test Wasm, shared
-vectors, fuzz/property/mutation cases and applicable deep-verification jobs. Require full TS/Workers CI,
-migration/local-boot tests and performance budgets after promotion. Keep draft until all production-
-critical K1–K8 families pass; a compiling canonical helper does not finish M2–M7. Local parity and real
-platform qualification remain separate. Follow `cloudflare-handoff.md`; no partial deployment or first
-production release with superseded TS authority still active.
+Run pinned fmt, Clippy -D warnings, nextest/doctests, deny, coverage, default/self-test Wasm, shared
+vectors and applicable fuzz/property/Miri/mutation checks. Require strict TS/Workers fixtures, full CI,
+local Linux/Windows boot and performance acceptance after promotion. Keep draft until all production-
+critical checkpoints pass. A compiling helper does not finish M2–M7.
+
+Follow cloudflare-handoff.md. Local parity is not a real deployment/performance receipt. No partial
+Cloudflare development, launch-hold bypass or first production release with superseded TS authority
+still active. This task refresh launches no agent and makes no live-qualification claim.
