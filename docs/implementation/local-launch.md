@@ -41,7 +41,7 @@ are disabled, not simulated. This isolated profile does not import or erase stat
 Run `pnpm local:smoke` for a disposable loopback test. It applies every tracked migration, checks both
 migration ledgers and SQLite foreign-key/quick integrity checks, loads the actual PWA JavaScript asset,
 and rejects absent/forged Access assertions. Then it prepares and restarts the Worker, proving a stored
-sentinel and migration history survive. Only the smoke's own temporary state is removed. Native Windows
+sentinel, explicit initial-import namespace and migration history survive. The namespace CLI adapter is exercised with a controlled OS-operator identity; this is not a signed IdP login receipt. Only the smoke's own temporary state is removed. Native Windows
 and Linux CI run the same command. This proves boot, persistence and auth denial, **not** an authenticated
 owner session or a populated corpus. `pnpm test:local-launch` runs isolation/ordering negative fixtures.
 
@@ -174,3 +174,123 @@ provider login, production Access revocation measurement or graphical browser-au
 CLI protocol reference, checked 2026-09-05: Cloudflare, “Connect through Cloudflare Access using a CLI”
 (updated 2026-04-17), https://developers.cloudflare.com/cloudflare-one/tutorials/cli/ ; CLI flag source:
 https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/access/cmd.go .
+
+
+## Authorized Library browsing
+
+The Library shows bounded current source-head and project pages from the owner catalog. Its read policy
+is the same explicit namespace/admission authority used by Corpus Lens; login and import do not grant
+metadata access. A project needs an active readable source witness; empty/unreadable projects are not
+listed. Source selection invokes the existing `research.orient` profile. A displayed source is admitted,
+not necessarily indexed: revision history, projection-readiness panels and project editing remain open.
+The inherited owner scope authority allows at most 64 active namespace policies; this is not an
+unbounded multi-tenant inventory or a performance qualification.
+
+Catalog cursors are version 2 and session/deployment/project-bound; any relevant epoch change or cursor
+expiry requires refreshing the first page. Old v1 cursors are not silently accepted. Navigation cursors
+are not capabilities and do not grant access. Stored sources and schema generations are unchanged.
+An auth denial or login redirect clears private Library/Lens/import state before error-body parsing.
+
+`pnpm build:pwa && pnpm test:library-browser` exercises the built Library in an installed Chromium/Chrome
+with controlled HTTP fixtures. Set `ELIOTR_BROWSER_EXECUTABLE` when the executable is not in the standard
+Linux path. CI uses its standard Linux browser; local managed browser policies are not modified to run
+this test. The test is not a real IdP login or a full normalized-bundle-to-search browser qualification.
+Actual catalog and Library-to-Lens APIs are independently exercised against Workers/D1 integration.
+
+
+## Explicit initial import namespace (Launch 01)
+
+Before the first import, run the local owner command with a reviewed JSON intent:
+
+```text
+pnpm local:owner --initialize-namespace ./local-namespace.json
+```
+
+The command uses the same signed Access login/session verification as `local:owner`. It changes only
+local D1 through the existing `--local`/absolute persistence adapter. It never provisions an account,
+Worker, tunnel or remote namespace. Example intent (replace `created_at` with the current canonical UTC
+time and select actual license/residency/retention policy references; these names do not create policy):
+
+```json
+{
+  "protocol": "eliotr.local-namespace-init.v1",
+  "namespace": "owner-imports",
+  "owner_incarnation_ref": "installation-1",
+  "expected_ownership_revision": 0,
+  "expected_policy_revision": 0,
+  "created_at": "2026-09-05T12:00:00.000Z",
+  "policy": {
+    "allowed_ownership_modes": ["immutable_import"],
+    "source_class": "document",
+    "assurance_ceiling": "QUALIFIED",
+    "instruction_taint": "DATA_ONLY",
+    "allowed_effects": "READ_ONLY",
+    "allowed_use": ["research"],
+    "disclosure_ceiling": "owner-only",
+    "license_policy_ref": "license-1",
+    "default_storage_policy": "NORMALIZED_CLOUD_ONLY",
+    "default_residency_profile_id": "residency-1",
+    "default_retention_policy_id": "retention-1",
+    "minimum_quality_state": "standard"
+  }
+}
+```
+
+The v1 profile is deliberately limited to a NEW `eliotr`-owned immutable-import namespace. Input is
+bounded to 8192 UTF-8 bytes and a creation time no more than seven days old. Initial ownership and policy
+revisions must be exactly zero (absent); the result is revision 1. The signed principal, not a supplied
+`authorized_principal_refs` field, becomes the initial admission principal. A policy-only interrupted
+preparation can resume with the same intent. Existing, retired, fenced, transferred, changed or orphaned
+lineage is not overwritten. The output contains the exact ownership tuple, policy and command digest.
+Use its namespace, `owner_system_id` and `source_owner_generation` when preparing the normalized import
+bundle; do not relabel an already hashed external owner's bundle as a takeover. This namespace does
+not change the external origin's ownership. General ownership cutover and policy lifecycle management
+remain separate governed operations, not flags on this initializer.
+
+Initial policy is written and read back first; ACTIVE ownership is inserted only with an exact policy
+predicate. This is recoverable two-step initialization, **not an atomic two-table transaction**. A final
+joined read checks both records before a successful receipt. `QUALIFIED` is only a ceiling: the actual
+admission path still evaluates the uploaded bytes. No SourceRevision, index, scope or read grant is
+created by initialization. Use the separately documented `--policy` grant when read access is intended.
+
+## Interrupted import in the same browser tab
+
+`Resume same upload` retains one idempotency key, immutable input bytes, acknowledged part receipts and
+completed-file checkpoints only in memory. It first reads the existing operation with current authority.
+A terminal receipt is returned without another commit. An uncertain part can be explicitly resent to
+the same multipart slot with identical bytes; an uncertain file completion repeats the same completion
+request, not an upload to a closed multipart. A prepared operation is not silently replaced by a new key.
+Only an unacknowledged prepare is explicitly repeated using its identical frozen request. Concurrent
+continuations are rejected; no background retry is scheduled.
+
+Stopping cancels future requests, not already committed effects. Reload, offline, sign-out and page exit
+clear private checkpoints. Known-operation recovery after reload is available below. Missing-ID discovery and the complete
+initial-setup browser/storage loop remain local work in #98; L2/L6 are not fully complete. File completion and final admission
+rehash the canonical bytes; a UI checkpoint does not establish integrity or search readiness.
+
+The continuation tests also cover withdrawal after reservation. Current ACTIVE owner, policy revision,
+policy snapshot bytes, allowed principal and expiry are rechecked before principal-bound actions and
+promotion. The final D1 source/head/outbox transaction includes an exact policy predicate, so a policy
+edit racing that batch rolls back canonical admission. Already staged R2 objects are not source success
+and remain governed by staging cleanup/erasure, not an improvised rollback delete.
+
+Cloudflare agent work and exact remote evidence requirements: [`launch-prs/cloudflare-handoff.md`](launch-prs/cloudflare-handoff.md).
+
+
+## Recover after closing the tab or restarting the local server
+
+Keep the operation ID displayed by the importer. After signing in again, open the import panel,
+reselect the **exact original normalized folder**, enter the ID in **Existing operation ID (recovery
+only)** and submit. The original file hashes and byte total must match the current authenticated server
+reservation. A wrong folder, expired upload, revoked policy, different principal or changed deployment
+cannot silently start a replacement import. No token, source bytes or resume secret is stored in
+localStorage/sessionStorage. The operation ID is a lookup reference, not a read grant.
+
+The same reservation key is recovered server-side. Already materialized files are hash/readback
+verified; missing completion receipts can be reconstructed from those bytes. Incomplete files may
+resend original parts under their existing upload ID. An already admitted operation is read back without
+another upload or commit. This works with persistent local D1/R2 state across restarts, not after deleting
+that state. Unknown outcomes still require explicit user continuation, not background retry.
+
+If the prepare reply was lost before the ID was retained, this UI cannot yet discover it. Do not guess
+an ID or assume a new import is the same operation; that recovery-discovery case remains in #98.

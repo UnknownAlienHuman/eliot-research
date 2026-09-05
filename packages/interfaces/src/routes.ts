@@ -17,6 +17,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "PUT", path: "/api/v1/ingest/bundles/:operation_id/parts/:part_number", operation: "ingest.bundle.part.upload", auth: "owner_or_service", maximum_request_bytes: 8388608, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/bundles/:operation_id/files/complete", operation: "ingest.bundle.file.complete", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/bundles/commit", operation: "ingest.bundle.commit", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
+  { method: "GET", path: "/api/v1/ingest/bundles/:operation_id/recovery", operation: "ingest.bundle.recovery", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/ingest/bundles/:operation_id", operation: "ingest.bundle.status", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/orient", operation: "research.orient", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/trace/:ref", operation: "research.trace", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },

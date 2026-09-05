@@ -114,6 +114,7 @@ function duplicatePrepare(operation: PreparedIngestOperation): PrepareBundleUplo
   }
   return {
     operation_id: operation.operation_id,
+    manifest_sha256: operation.manifest_sha256,
     disposition: operation.bundle_receipt.decision === "ADMITTED" ||
       operation.bundle_receipt.decision === "DUPLICATE"
       ? "DUPLICATE"
@@ -146,7 +147,7 @@ function terminalReceipt(
 // IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.
 export function createIngestService(dependencies: IngestServiceDependencies): Pick<
   OwnerApi,
-  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus"
+  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus" | "getBundleRecovery"
 > {
   const clock = dependencies.now ?? Date.now;
   return {
@@ -179,6 +180,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       if (staged.disposition === "REJECTED" || staged.session === undefined) {
         return {
           operation_id: prepared.operation.operation_id,
+          manifest_sha256: prepared.operation.manifest_sha256,
           disposition: "REJECTED",
           expires_at: prepared.operation.expires_at,
           reason_codes: staged.reason_codes,
@@ -190,6 +192,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       );
       return {
         operation_id: operation.operation_id,
+        manifest_sha256: operation.manifest_sha256,
         disposition: "UPLOAD_REQUIRED",
         multipart_session_ref: staged.session.session_id,
         files: staged.session.uploads.map((upload) => ({
@@ -310,6 +313,16 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
         promotion_receipt: promotion,
         bundle_receipt: receipt,
       });
+    },
+
+    async getBundleRecovery(context, operationId) {
+      const operation = await dependencies.authority.loadForPrincipal(operationId, context.principal_ref);
+      requireOperation(operation);
+      // loadForPrincipal verifies the current owner and exact admission policy. No R2 effects,
+      // copied credentials, new reservation, or authority inferred from the supplied operation ID.
+      return { protocol: "eliotr.ingest-recovery.v1", status: status(operation),
+        idempotency_key: operation.idempotency_key, manifest_sha256: operation.manifest_sha256,
+        total_bytes: operation.total_bytes, file_hashes: { ...operation.file_hashes } };
     },
 
     async getBundleStatus(context, operationId) {
