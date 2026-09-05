@@ -14,7 +14,7 @@ current main. Do not create a competing variant branch or force-reset someone el
 | Existing PR | First bounded task | Scope and integration boundary |
 |---|---|---|
 | **#90 Retrieval** | Audit existing locator decoding, then implement one missing local D1 exact/lexical lane with its actual projection input and negative tests. | ER-06/07/16/39. Inspect `packages/retrieval/src/lanes.ts`, `packages/cloudflare-ai/src/ai-search-managed-read.ts`, `packages/platform-cloudflare/src/ai-search.ts`, existing projection delivery and evidence ports. No PWA/import edits in parallel with #98; shared Worker composition and migrations require the integrator. |
-| **#95 Google** | G1: implement the required ChatGPT Drive Exchange, starting with one leased-cursor/freeze/reconciliation adapter and its lost-ACK/tamper tests. | ER-18/19/20. Read ELIOT_RESEARCH §§12.3–12.12 and ADR-0003 first. The existing `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects an optional Gemini helper, not a replacement for ChatGPT Drive. Reuse the existing exchange contracts/serializer; implement the missing ports locally. ER-36 remains a separate candidate-only service surface; no owner impersonation, new ChatGPT write transport or account calls. |
+| **#95 Google** | G2: implement the admitted dedicated-account OAuth lease provider, then durable cursor/freeze/reconciliation. Reuse the implemented Sheet/changes REST subset, not a new client. | ER-18/19/20. Read ELIOT_RESEARCH §§12.3–12.12, ADR-0003 and `../drive-rest.md` first. The existing `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects an optional Gemini helper, not a replacement for ChatGPT Drive. Reuse the existing exchange contracts/serializer; implement the missing ports locally. ER-36 remains a separate candidate-only service surface; no owner impersonation, new ChatGPT write transport or account calls. |
 | **#97 Rust** | Audit/reuse existing M2 shadow primitives and add parity for one uncovered identity family, starting with the new ER-44 initial namespace-owner token. | ER-00/01/02/03/44. Existing code is in `crates/eliotr-canonical/src/{canonical_json,sha256,generation,stable_id,residency_key}.rs` and `crates/eliotr-test-vectors`. Do not rewrite these or promote a family before real TS/native/Wasm differential acceptance. Shared runtime/ABI integration belongs to ER-24. |
 
 If a candidate task needs a shared file already claimed elsewhere, narrow it to independent tests or
@@ -37,10 +37,18 @@ The full #90 result/trace/HTTP/evidence-viewer checkpoints follow sequentially a
 
 The canonical Day-0 ChatGPT path is Google Drive Exchange, with fixed exchange assets, atomic Sheets
 append, leased change cursors, bounded ID/hash audit, immutable R2 freeze, D1 ContributionIntent,
-result publication/readback and the narrow offline OAuth lifecycle. `cursor.ts`, `reconciler.ts`,
-`port.ts` and `result-publisher.ts` interfaces are unfinished implementation, not unused alternatives.
-Implement one existing ER-18/19/20 port at a time with recorded provider responses and actual local
-storage failure/replay tests. Verify current official API behavior where an adapter depends on it.
+result publication/readback and the narrow offline OAuth lifecycle. The five-method Sheet/changes REST subset and strict contribution guards landed on main `c0729c2`.
+Read `../drive-rest.md` and reuse `sheet-port.ts`, `sheet-ranges.ts`, `rest-transport.ts` and the existing
+serializer/parser. The full `GoogleDrivePort` is not implemented: Doc creation/export, provisioning,
+OAuth/vault, durable cursor/freeze/reconciliation and result publication remain required.
+
+The next bounded task is ER-20's admitted OAuth lease provider. Start with the existing
+`packages/google-drive-exchange/src/token-vault.ts`, `packages/contracts/src/drive-exchange.ts`,
+security checklist and canonical §12.8. Bind dedicated subject/email/scopes and connection/generation,
+encrypt refresh tokens, bound access-token lifetime, and persist rotation/revocation/REAUTH_REQUIRED.
+Do not implement `authorize` or `assertCurrent` as a constant success or accept an unverified pasted
+token. Split by state family with recorded OAuth failures and real local persistence; complete the
+leased cursor/freeze/reconciler after this boundary. Verify official API behavior where code depends on it.
 
 The optional ER-36 Gemini service planner is not the ChatGPT write transport. Its caller-supplied v1
 plan and receipt prove neither original issuance nor Google readback/effects. The current mutual-
