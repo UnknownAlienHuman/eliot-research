@@ -1,5 +1,10 @@
 # Cloudflare provision and deploy runbook
 
+**Deployment hold:** `deploy-cloudflare.mjs --confirm-live` rejects registered unfinished mandatory
+product paths before any remote effect. Develop/test locally with [local-launch.md](local-launch.md);
+do not bypass the hold by invoking raw Wrangler deployment. Removing this negative hold still requires
+all normative code, security and live qualification gates.
+
 This runbook deploys one Worker/PWA contour without committing Cloudflare account state. It is safe to
 hand to a deployment agent; no step requires reading the architecture master document.
 

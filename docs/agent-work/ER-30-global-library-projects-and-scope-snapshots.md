@@ -20,6 +20,7 @@ outside the paths below.
 - `packages/domain/src/scope/snapshot-identity.test.ts`
 - `apps/eliotr-core/src/scope-persistence.test.ts`
 - `apps/eliotr-core/src/sql-fixture.d.ts`
+- `packages/cloudflare-navigation/src/scope-service.ts`
 
 ## Read only
 
@@ -104,6 +105,13 @@ No SQL migration is required. Previously persisted protocol-less or non-content-
 must be invalidated and re-frozen under current authorized policy; do not transplant their grants,
 rewrite their digests in place, or weaken the reader to accept both constructions.
 
-ER-24 still owns production atom/policy resolver wiring, principal-grant issuance, HTTP/retrieval
-composition and retained deployed readback/invalidation receipts. Those gates remain `NOT_EXECUTED`;
-this change does not enable `research.orient` or claim complete scope/retrieval production readiness.
+ER-24 now composes real D1 atom/read-policy authority and explicit principal grants for the bounded
+owner metadata orientation route. Wider retrieval/federation integration and deployed readback remain
+open. The scope service lives in `packages/cloudflare-navigation`; the core file only re-exports it.
+
+## Active local-first integration
+
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
+routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
+and live qualification remain separate gates. The integration library replaces moved core service
+implementations, rather than duplicating them. No new service or production language is introduced.

@@ -1,6 +1,6 @@
 import type { Env } from "./env.js";
 
-export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v8-erasure-closure" as const;
+export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v11-owner-orientation" as const;
 export const REQUIRED_SEARCH_SCHEMA_GENERATION =
   "search-v4-ai-search-generation-registry" as const;
 

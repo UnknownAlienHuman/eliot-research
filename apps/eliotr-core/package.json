@@ -16,6 +16,7 @@
     "@eliotr/cloudflare-ai": "workspace:*",
     "@eliotr/cloudflare-erasure": "workspace:*",
     "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-navigation": "workspace:*",
     "@eliotr/cloudflare-projection": "workspace:*",
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",

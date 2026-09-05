@@ -31,7 +31,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 1 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 2 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -261,7 +261,7 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
   const schemaIds = new Set<string>();
 
   for (const module of SCHEMA_MODULES) {
-    const version = FAMILY_VERSIONS[module.family];
+    const familyVersion = FAMILY_VERSIONS[module.family];
     for (const [exportName, candidate] of Object.entries(module.exports).sort(
       ([left], [right]) => compareCodeUnits(left, right),
     )) {
@@ -275,6 +275,9 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
         throw new Error(`duplicate public contract schema export ${exportName}`);
       }
 
+      // Generation 2 admits the real empty purge-ledger frontier without changing existing IDs/digests.
+      const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
+        ? { schema_version: 1, schema_generation: 2 } : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

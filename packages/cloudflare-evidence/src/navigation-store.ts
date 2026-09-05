@@ -19,6 +19,7 @@ export type { D1NavigationStoreInput } from "./navigation-storage-authority.js";
 export type { NavigationArtifactKind, NavigationArtifact } from "./navigation-storage-codec.js";
 export interface D1NavigationStore extends NavigationStore {
   putArtifact(kind: NavigationArtifactKind, artifact: unknown): Promise<"CREATED" | "REPLAY">;
+  putArtifacts(values: readonly { readonly kind: NavigationArtifactKind; readonly artifact: unknown }[]): Promise<void>;
 }
 interface Row {
   readonly artifact_kind: NavigationArtifactKind;
@@ -233,6 +234,64 @@ export function createD1NavigationStore(input: D1NavigationStoreInput): D1Naviga
     return inserted ? "CREATED" : "REPLAY";
   }
 
+  async function putArtifacts(values: readonly { readonly kind: NavigationArtifactKind; readonly artifact: unknown }[]): Promise<void> {
+    if (!Array.isArray(values) || values.length < 1 || values.length > NAVIGATION_BATCH_SIZE) navigationStorageLimit();
+    const artifacts = values.map((value) => parseNavigationArtifact(value.kind, value.artifact));
+    const identities = artifacts.map(navigationArtifactIdentity);
+    const slots = values.map((value, index) => ({ kind: value.kind, subject_id: identities[index]?.subject_id,
+      subject_revision: identities[index]?.subject_revision }));
+    if (new Set(slots.map((slot) => JSON.stringify(slot))).size !== slots.length) navigationStorageFailure("duplicate batch slot");
+    const bodies = artifacts.map((artifact) => navigationStorageJson(artifact));
+    const bindings = await checkArtifacts(artifacts);
+    const digests = await Promise.all(bodies.map(digest));
+    let bytes = 0;
+    for (let i = 0; i < values.length; i += 1) {
+      const body = bodies[i]; const binding = bindings[i];
+      if (body === undefined || binding === undefined) navigationStorageFailure("missing batch body/binding");
+      const size = evidenceUtf8Bytes(body).byteLength + evidenceUtf8Bytes(binding).byteLength;
+      if (size > NAVIGATION_ROW_BYTES) navigationStorageLimit();
+      bytes += size;
+    }
+    if (bytes > NAVIGATION_READ_BYTES) navigationStorageLimit();
+    const readback = async () => {
+      const rows = await fetchRows("EXISTS (SELECT 1 FROM json_each(?3) x WHERE " +
+        "json_extract(x.value,'$.kind')=artifact_kind AND json_extract(x.value,'$.subject_id')=subject_id " +
+        "AND json_extract(x.value,'$.subject_revision')=subject_revision)", [JSON.stringify(slots)], values.length);
+      for (const row of rows) {
+        const index = slots.findIndex((slot) => slot.kind === row.artifact_kind && slot.subject_id === row.subject_id &&
+          slot.subject_revision === row.subject_revision);
+        if (index < 0 || row.body_json !== bodies[index] || row.body_digest !== digests[index] ||
+            row.source_bindings_json !== bindings[index]) navigationStorageFailure("immutable batch slot conflicts");
+        await decode(row);
+      }
+      await checkArtifacts(artifacts);
+      await authority.current();
+      return rows.length === values.length;
+    };
+    if (await readback()) return;
+    const grant = await authority.current(); const timestamp = authority.timestamp();
+    const statements = values.map((value, index) => {
+      const identity = identities[index]; const body = bodies[index]; const binding = bindings[index]; const hash = digests[index];
+      if (!identity || body === undefined || binding === undefined || hash === undefined) navigationStorageFailure("batch identity missing");
+      return db.prepare("INSERT INTO navigation_artifact (scope_snapshot_id,scope_snapshot_revision,artifact_kind,subject_id,subject_revision," +
+        "artifact_id,artifact_revision,body_digest,body_json,source_bindings_json,created_at) " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 FROM scope_access_grant g JOIN scope_snapshot s " +
+        "ON s.snapshot_id=g.snapshot_id AND s.revision=g.snapshot_revision " +
+        "WHERE g.snapshot_id=?1 AND g.snapshot_revision=?2 AND g.authorization_receipt_ref=?12 " +
+        "AND g.principal_ref=?13 AND g.client_class=?14 AND g.credential_generation=?15 AND g.state='ACTIVE' " +
+        "AND julianday(g.expires_at)>julianday(?11) AND s.invalidated_at IS NULL AND julianday(s.expires_at)>julianday(?11) " +
+        "AND s.snapshot_digest=?16 AND g.policy_authority_ref=s.policy_authority_ref AND g.allowed_use_json=?17 " +
+        "AND g.disclosure_ceiling=?18 ON CONFLICT DO NOTHING")
+        .bind(...scopeValues, value.kind, identity.subject_id, identity.subject_revision, identity.ref.id, identity.ref.revision,
+          hash, body, binding, timestamp, grant.authorization_receipt_ref, authority.access.principal_ref,
+          authority.access.client_class, authority.access.credential_generation, scope.digest,
+          JSON.stringify(grant.allowed_use), grant.disclosure_ceiling);
+    });
+    try { await db.batch(statements); }
+    catch { if (await readback()) return; navigationStorageFailure("navigation batch unresolved; no retry"); }
+    if (!await readback()) navigationStorageFailure("navigation batch lacks exact readback");
+  }
+
   async function getEvidenceHandleForSection(request: SectionEvidenceHandleRequest): Promise<EvidenceHandle | null> {
     reference(request.scope_snapshot_ref); assertEvidenceIdentifier(request.section_ref, "navigation section");
     if (!sameVersionedRef(request.scope_snapshot_ref, { id: scope.snapshot_id, revision: scope.revision })) {
@@ -283,6 +342,7 @@ export function createD1NavigationStore(input: D1NavigationStoreInput): D1Naviga
   };
   return {
     putArtifact: guarded(putArtifact),
+    putArtifacts: guarded(putArtifacts),
     requireCurrentScopeSnapshot: guarded(async (requested: ScopeSnapshot) => {
       await authority.current(requested); return JSON.parse(JSON.stringify(scope)) as ScopeSnapshot;
     }),

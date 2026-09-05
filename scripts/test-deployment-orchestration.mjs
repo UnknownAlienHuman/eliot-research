@@ -22,7 +22,7 @@ function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   let reads = 0;
-  const options = { confirmLive: true, environment, now: () => now, log: () => {},
+  const options = { confirmLive: true, verifyCode: async () => {}, environment, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");

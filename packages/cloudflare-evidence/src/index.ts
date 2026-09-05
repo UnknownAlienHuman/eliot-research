@@ -7,3 +7,4 @@ export * from "./registry.js";
 export * from "./citation-registry.js";
 export * from "./scope-store.js";
 export * from "./navigation-store.js";
+export { loadSourceAuthorities } from "./authority-load.js";

@@ -23,6 +23,19 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
+- `packages/cloudflare-navigation/src/index.ts`
+- `packages/cloudflare-navigation/src/orientation-authority.ts`
+- `packages/cloudflare-navigation/src/orientation-currentness.test.ts`
+- `packages/cloudflare-navigation/src/orientation-currentness.ts`
+- `packages/cloudflare-navigation/src/orientation-input.ts`
+- `packages/cloudflare-navigation/src/orientation-materialization.ts`
+- `packages/cloudflare-navigation/src/orientation-service.ts`
+- `packages/cloudflare-navigation/src/orientation-storage.ts`
+- `apps/eliotr-core/test/orientation-boundaries.test.ts`
+- `apps/eliotr-core/test/orientation-fixture.ts`
+- `apps/eliotr-core/test/orientation-http.test.ts`
+- `apps/eliotr-core/test/orientation-resilience.test.ts`
+- `apps/eliotr-core/vitest.config.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -86,7 +99,7 @@ Queue delivery
 projection items, persist D1 Search state, upload/read back the managed index and update channel-specific
 readiness before projection success can be claimed.
 
-Unsupported ingest HTTP composition, full research execution, federation, Wiki, Drive and erasure remain
+Full research/query execution, federation, Wiki, Drive and erasure remain
 typed unavailable or fail-closed.
 
 ## Acceptance
@@ -123,3 +136,10 @@ pnpm check:implementation-status
 
 Live owner JWT, Gemini service token, remote D1, Queue duplicate/DLQ, deployed Worker, Google readback and
 WebSocket receipts remain `NOT_EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
+
+## Active local-first integration
+
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
+routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
+and live qualification remain separate gates. The integration library replaces moved core service
+implementations, rather than duplicating them. No new service or production language is introduced.

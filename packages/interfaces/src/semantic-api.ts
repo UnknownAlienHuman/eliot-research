@@ -6,7 +6,7 @@ import type {
   ScopeExpression,
   VersionedRef,
 } from "@eliotr/contracts";
-import type { EvidencePack } from "@eliotr/retrieval";
+import type { EvidencePack, OrientationResult } from "@eliotr/retrieval";
 import type { ResearchRunResult } from "@eliotr/research";
 import type { AuthenticatedRequestContext } from "./http.js";
 
@@ -45,6 +45,8 @@ export interface QueryRequest {
   readonly max_results: number;
 }
 export interface QueryResult {
+  /** Present only for ORIENT; navigation is never publication evidence. */
+  readonly navigation?: OrientationResult;
   readonly evidence_pack: EvidencePack;
   readonly answer_candidate_ref?: string;
   readonly trace_ref: VersionedRef;

@@ -5,11 +5,15 @@
     "noEmit": true,
     "incremental": true,
     "rootDir": "../../../..",
-    "tsBuildInfoFile": "../dist/.navigation-tests.tsbuildinfo"
+    "tsBuildInfoFile": "../dist/.navigation-tests.tsbuildinfo",
+    "types": [
+      "@cloudflare/workers-types",
+      "@cloudflare/vitest-plugin/types"
+    ]
   },
   "include": [
     "../src/**/*.ts",
-    "navigation*.ts"
+    "*.ts"
   ],
   "exclude": [
     "../src/worker-configuration.d.ts"
@@ -50,6 +54,12 @@
     },
     {
       "path": "../../../packages/retrieval"
+    },
+    {
+      "path": "../../../packages/cloudflare-navigation"
+    },
+    {
+      "path": "../../eliotr-pwa"
     }
   ]
 }

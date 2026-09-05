@@ -48,6 +48,9 @@
     },
     {
       "path": "apps/eliotr-core"
+    },
+    {
+      "path": "packages/cloudflare-navigation"
     }
   ]
 }

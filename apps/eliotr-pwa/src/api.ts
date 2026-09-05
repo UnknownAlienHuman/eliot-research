@@ -206,7 +206,7 @@ export function decodeSystemHealthEnvelope(value: unknown): SystemHealth {
   };
 }
 
-function decodeApiProblem(value: unknown, fallbackStatus: number): ApiRequestError {
+export function decodeApiProblem(value: unknown, fallbackStatus: number): ApiRequestError {
   if (!isRecord(value)) {
     return new ApiRequestError({
       status: fallbackStatus,
@@ -271,24 +271,66 @@ function decodeApiProblem(value: unknown, fallbackStatus: number): ApiRequestErr
   }
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+/** Authenticated same-origin transport; the deadline includes streaming body consumption. */
+export async function requestApi(path: string, init: RequestInit = {}): Promise<unknown> {
+  if (!path.startsWith("/api/v1/") || path.includes("\\") || path.includes("..")) {
+    throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
+  }
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  init.signal?.addEventListener("abort", abort, { once: true });
+  if (init.signal?.aborted) abort();
+  const timeout = setTimeout(abort, 30000);
+  let rejectAbort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    rejectAbort = () => reject(new Error("API request cancelled"));
+    controller.signal.addEventListener("abort", rejectAbort, { once: true });
+    if (controller.signal.aborted) rejectAbort();
+  });
+  const bounded = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, cancelled]);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    return await response.json() as unknown;
-  } catch {
-    throw new ApiRequestError({
-      status: response.status,
-      code: "MALFORMED_JSON_RESPONSE",
-      message: "API response is not valid JSON",
-      retryable: response.status >= 500,
-    });
+    const response = await bounded(fetch(path, { ...init, signal: controller.signal, redirect: "manual",
+      credentials: "same-origin", cache: "no-store", headers: { accept: "application/json", ...init.headers } }));
+    if (response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400)) {
+      throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
+    }
+    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json" || !response.body) {
+      throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected an authenticated JSON API response" });
+    }
+    const length = response.headers.get("content-length");
+    if (length !== null && (!/^[0-9]+$/u.test(length) || Number(length) > 512 * 1024)) {
+      throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "API response exceeds its byte budget" });
+    }
+    reader = response.body.getReader();
+    const chunks: Uint8Array[] = []; let size = 0; let count = 0;
+    while (true) {
+      const next = await bounded(reader.read()); if (next.done) break;
+      size += next.value.byteLength;
+      if (++count > 4096 || size > 512 * 1024) {
+        throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "API response exceeds its byte budget" });
+      }
+      chunks.push(next.value);
+    }
+    const bytes = new Uint8Array(size); let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    let value: unknown;
+    try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
+    catch { throw new ApiRequestError({ status: 502, code: "MALFORMED_JSON_RESPONSE", message: "API response is not valid UTF-8 JSON" }); }
+    if (!response.ok) throw decodeApiProblem(value, response.status);
+    if (response.status !== 200) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
+    return value;
+  } catch (error) {
+    if (error instanceof ApiRequestError) throw error;
+    throw new ApiRequestError({ status: 503, code: controller.signal.aborted ? "API_REQUEST_ABORTED" : "API_UNREACHABLE",
+      message: "Request interrupted; retry with the same inputs", retryable: true });
+  } finally {
+    clearTimeout(timeout); init.signal?.removeEventListener("abort", abort);
+    if (rejectAbort) controller.signal.removeEventListener("abort", rejectAbort);
+    controller.abort(); if (reader) void reader.cancel().catch(() => {});
   }
 }
 
 export async function getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {
-  const init: RequestInit = { headers: { accept: "application/json" } };
-  if (signal !== undefined) init.signal = signal;
-  const response = await fetch("/api/v1/system/health", init);
-  const value = await responseJson(response);
-  if (!response.ok) throw decodeApiProblem(value, response.status);
-  return decodeSystemHealthEnvelope(value);
+  return decodeSystemHealthEnvelope(await requestApi("/api/v1/system/health", signal ? { signal } : {}));
 }

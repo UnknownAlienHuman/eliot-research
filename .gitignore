@@ -34,3 +34,5 @@ Thumbs.db
 
 .eliotr-state/
 apps/eliotr-core/wrangler.deploy.jsonc
+
+apps/eliotr-core/wrangler.local.jsonc

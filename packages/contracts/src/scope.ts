@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IdentifierSchema, IsoDateTimeSchema, PositiveIntegerSchema, Sha256Schema } from "./common.js";
+import { IdentifierSchema, IsoDateTimeSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema } from "./common.js";
 
 export type ScopeExpression =
   | { kind: "GLOBAL_LIBRARY" }
@@ -27,7 +27,7 @@ export const ScopeSnapshotSchema = z.object({
   source_owner_generations: z.record(IdentifierSchema, IdentifierSchema),
   policy_authority_ref: IdentifierSchema,
   disclosure_closure_digest: Sha256Schema,
-  purge_ledger_revision: PositiveIntegerSchema,
+  purge_ledger_revision: NonNegativeIntegerSchema,
   client_fence_ref: IdentifierSchema.optional(),
   digest: Sha256Schema,
   created_at: IsoDateTimeSchema,

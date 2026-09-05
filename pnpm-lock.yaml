@@ -50,6 +50,9 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
+      '@eliotr/cloudflare-navigation':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-navigation
       '@eliotr/cloudflare-projection':
         specifier: workspace:*
         version: link:../../packages/cloudflare-projection
@@ -139,6 +142,27 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/cloudflare-navigation:
+    dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+      '@eliotr/retrieval':
+        specifier: workspace:*
+        version: link:../retrieval
 
   packages/cloudflare-projection:
     dependencies:

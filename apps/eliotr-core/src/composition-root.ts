@@ -1,3 +1,4 @@
+import { createOrientationApi, ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type {
   ApplicationLifecycle,
   FederationApi,
@@ -48,7 +49,7 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE"],
+    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA"],
     disabled_slices: [
       "RETRIEVAL",
       "RESEARCH",
@@ -57,6 +58,9 @@ function capabilities(env: Env): Record<string, unknown> {
       "DRIVE_EXCHANGE",
       "ERASURE",
     ],
+    orientation_profile: ORIENTATION_PROFILE,
+    orientation_max_sources: 64,
+    orientation_max_results: 16,
     routes: ROUTES,
     exact_evidence_resolution_required: true,
     transport_completion_is_research_completion: false,
@@ -66,16 +70,17 @@ function capabilities(env: Env): Record<string, unknown> {
 
 function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
+  const orientation = createOrientationApi(env);
   return {
     catalog: (_context, request) => readCatalog(env.CORE_DB, request),
-    orient: () => unavailable("research.orient"),
+    orient: (context, request) => orientation.orient(context, request),
     query: () => unavailable("research.query"),
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: () => unavailable("research.run"),
     artifact: () => unavailable("research.artifact"),
     proposeWiki: () => unavailable("research.wiki.propose"),
-    trace: () => unavailable("research.trace"),
+    trace: (context, ref) => orientation.trace(context, ref),
     changes: () => unavailable("research.changes"),
   };
 }

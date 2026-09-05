@@ -37,7 +37,7 @@
     "check:affected": "pnpm contracts:check && pnpm boundaries:check && pnpm boundaries:negative && pnpm budgets:check && pnpm work-packets:check && pnpm branch-hygiene:check && pnpm delivery:check && pnpm ingest:check && pnpm projection:check && pnpm evidence:check && pnpm erasure:check && pnpm gemini:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:implementation-status && pnpm rust:check",
     "work-packets:check": "node scripts/check-work-packets.mjs",
     "cf:types": "pnpm --filter @eliotr/core cf:types",
-    "cf:dev": "pnpm --filter @eliotr/core dev",
+    "cf:dev": "node scripts/local-runtime.mjs --dev",
     "cf:dry-run": "pnpm build:pwa && pnpm --filter @eliotr/core deploy:dry-run",
     "cf:preflight:remote": "node scripts/provision-cloudflare-core.mjs --check-only && node scripts/provision-ai-search.mjs --check-only && node scripts/provision-ai-gateways.mjs --check-only && node scripts/provision-cloudflare-access.mjs --check-only",
     "cf:provision:core": "node scripts/provision-cloudflare-core.mjs",
@@ -48,7 +48,10 @@
     "test:provisioners": "node scripts/test-access-runtime-config.mjs && node scripts/test-access-runtime-preflight.mjs && node scripts/test-foundation-receipt-schema.mjs && node scripts/run-provisioner-tests.mjs",
     "check:implementation-status": "node scripts/check-implementation-status.mjs",
     "evidence:check": "node scripts/check-evidence-resolution.mjs",
-    "erasure:check": "node scripts/check-erasure-closure.mjs"
+    "erasure:check": "node scripts/check-erasure-closure.mjs",
+    "local:prepare": "node scripts/local-runtime.mjs --prepare",
+    "local:dev": "node scripts/local-runtime.mjs --dev",
+    "launch:code": "node scripts/check-launch-code.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

@@ -53,7 +53,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
@@ -69,7 +69,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable",
+      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable; strict idempotent owner orientation and trace dispatch execute the real application, not unavailable fallbacks",
       "completion_evidence": [
         "HTTP and multipart negative tests",
         "runtime prototype tests",
@@ -217,36 +217,35 @@
     },
     {
       "id": "pending-007",
-      "path": "apps/eliotr-core/src/navigation-service.ts",
+      "path": "packages/cloudflare-navigation/src/navigation-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-31 persisted Corpus Lens requires production scope composition and live D1 receipts.",
       "owner_packets": [
         "ER-31"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded immutable D1 SourceCard/DocumentMap/ProjectAtlas storage and request-scoped navigation composition verify v1 identities, exact source/residency authority, current snapshots and principal grants before/after reads; replay and lost ACK reconcile through readback; purge removes dependent bodies; public orient/query and automatic materialization remain unavailable",
+      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; full structural/Atlas materialization and live conformance remain open",
       "completion_evidence": [
-        "packages/retrieval/src/navigation-identity.test.ts fixed v1 UTF-8 identity and unknown-field cases",
-        "packages/cloudflare-evidence/src/navigation-storage-codec.test.ts bounded canonical JSON and hidden-state rejection",
-        "apps/eliotr-core/test/navigation-persistence.test.ts local Workers/D1 card-map-Atlas-section, exact replay, lost ACK, mutation/read races, corruption, purge and non-publication cases",
-        "pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json strict integration fixture typecheck",
-        "public ER-24 API/current policy/grant/materialization composition and remote D1/Access/R2 receipts NOT_EXECUTED"
+        "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
+        "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
+        "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
+        "Full structural/Atlas navigation, R2 source-span expansion and remote live receipts NOT_EXECUTED"
       ]
     },
     {
       "id": "pending-008",
-      "path": "apps/eliotr-core/src/scope-service.ts",
+      "path": "packages/cloudflare-navigation/src/scope-service.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.",
       "owner_packets": [
         "ER-30"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "strict temporal memberships and deterministic scope algebra produce immutable digest-bound snapshots; createD1ScopeService composes primary D1 created/exact-replay/lost-ACK persistence with protocol-bound identity shared by the evidence reader; invalidated rows cannot be revived; currentness fails closed on expiry, persistence drift, participant, membership, owner, member-policy, policy, disclosure, purge, fence or deny changes; production atom/policy authority, grant issuance and retrieval wiring remain uncomposed",
+      "behavior": "Scope freezer is composed with real D1 namespace read policies, source admission/ownership, project/tag membership and purge frontier for owner metadata orientation; explicit grants, temporal expiry and request-local mutation-fenced currentness are enforced",
       "completion_evidence": [
-        "packages/domain/src/project-membership.test.ts temporal many-to-many, half-open interval, offset-order and collision-negative cases",
-        "apps/eliotr-core/src/scope-service.test.ts deterministic persistence/readback, strict resource and authority-output negative cases",
-        "apps/eliotr-core/src/scope-persistence.test.ts local Miniflare D1 freezer-to-evidence round trip, no implicit grant, replay, lost ACK, invalidation, expiry, revoked credentials, malformed rows and unavailable storage",
-        "mandatory purge-after-freeze case proves an old snapshot cannot pass requireCurrent",
-        "ER-24 production atom/policy authority, principal grants, retrieval composition and deployed invalidation receipts NOT EXECUTED"
+        "apps/eliotr-core/test/scope-persistence.test.ts",
+        "apps/eliotr-core/test/orientation-http.test.ts empty purge ledger at revision zero and authorization",
+        "apps/eliotr-core/test/orientation-resilience.test.ts read-policy/grant withdrawal and membership invalidation",
+        "packages/cloudflare-navigation/src/orientation-currentness.test.ts mutation/time fence",
+        "Deployed principal grants and remote invalidation receipts NOT_EXECUTED"
       ]
     },
     {
@@ -268,6 +267,22 @@
         "SQLite guard and invalidation fixture",
         "actual ScopeService snapshot persists in local D1 and passes the production evidence loader with shared protocol-bound identity; legacy or corrupt rows fail closed",
         "live Access, remote D1 Core/Search, R2 conditional range and citation/output receipts"
+      ]
+    },
+    {
+      "id": "implemented-010",
+      "path": "packages/cloudflare-navigation/src/orientation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner metadata orientation requires retained deployed D1/Access receipts.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner HTTP/PWA orientation automatically freezes a real authorized D1 scope, issues a read-policy-bound grant, materializes immutable metadata cards/maps, persists exact idempotent result/trace and rechecks currentness; no provider calls or fabricated evidence",
+      "completion_evidence": [
+        "Clean migration-to-HTTP-to-trace integration tests",
+        "Actual PWA API/decoder/rendering against Worker integration",
+        "Replay/lost ACK/revocation/expiry and atomic batch rollback cases",
+        "Remote Access, D1 and browser session qualification NOT_EXECUTED"
       ]
     }
   ]

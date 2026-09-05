@@ -3,7 +3,7 @@
   "repository": "UnknownAlienHuman/eliot-research",
   "baseline_commit": "ec21df807a6ee10e4b2b35283224ff172a077cf8",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
-  "generated_at": "2026-09-04T16:20:00Z",
+  "generated_at": "2026-09-05T05:30:00Z",
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
@@ -52,7 +52,10 @@
         "docs/implementation/toolchain.md",
         "docs/implementation/production-readiness-plan.md",
         "docs/implementation/gap-register.md",
-        "scripts/check-implementation-status.mjs"
+        "scripts/check-implementation-status.mjs",
+        "packages/cloudflare-navigation/package.json",
+        "packages/cloudflare-navigation/tsconfig.json",
+        "packages/cloudflare-navigation/AGENTS.md"
       ],
       "mandatory_negative_case": "Inject a forbidden Node import and malformed shared vector metadata; prove both real gates fail closed.",
       "document": "ER-00-workspace-and-verification-gates.md",
@@ -492,7 +495,20 @@
         "apps/eliotr-core/src/readiness.ts",
         "apps/eliotr-core/src/research-session.ts",
         "apps/eliotr-core/src/index.test.ts",
-        "apps/eliotr-core/wrangler.jsonc"
+        "apps/eliotr-core/wrangler.jsonc",
+        "packages/cloudflare-navigation/src/index.ts",
+        "packages/cloudflare-navigation/src/orientation-authority.ts",
+        "packages/cloudflare-navigation/src/orientation-currentness.test.ts",
+        "packages/cloudflare-navigation/src/orientation-currentness.ts",
+        "packages/cloudflare-navigation/src/orientation-input.ts",
+        "packages/cloudflare-navigation/src/orientation-materialization.ts",
+        "packages/cloudflare-navigation/src/orientation-service.ts",
+        "packages/cloudflare-navigation/src/orientation-storage.ts",
+        "apps/eliotr-core/test/orientation-boundaries.test.ts",
+        "apps/eliotr-core/test/orientation-fixture.ts",
+        "apps/eliotr-core/test/orientation-http.test.ts",
+        "apps/eliotr-core/test/orientation-resilience.test.ts",
+        "apps/eliotr-core/vitest.config.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -543,7 +559,12 @@
         "scripts/lib/deployment-verification.mjs",
         "scripts/test-deployment-verification.mjs",
         "scripts/test-deployment-orchestration.mjs",
-        "docs/implementation/deployment-audit-2026-09-04.md"
+        "docs/implementation/deployment-audit-2026-09-04.md",
+        "scripts/check-launch-code.mjs",
+        "scripts/test-launch-code.mjs",
+        "scripts/local-runtime.mjs",
+        "scripts/test-local-runtime.mjs",
+        "docs/implementation/local-launch.md"
       ],
       "mandatory_negative_case": "Seed mocked Cloudflare APIs with an incompatible immutable AI Search profile and an unexpected Access policy; prove every check-only/apply path exits nonzero before any mutation.",
       "document": "ER-26-cloudflare-provisioning-and-deployment.md",
@@ -627,7 +648,8 @@
         "packages/domain/src/scope/snapshot-identity.ts",
         "packages/domain/src/scope/snapshot-identity.test.ts",
         "apps/eliotr-core/src/scope-persistence.test.ts",
-        "apps/eliotr-core/src/sql-fixture.d.ts"
+        "apps/eliotr-core/src/sql-fixture.d.ts",
+        "packages/cloudflare-navigation/src/scope-service.ts"
       ],
       "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
       "document": "ER-30-global-library-projects-and-scope-snapshots.md",
@@ -654,7 +676,8 @@
         "apps/eliotr-core/src/navigation-persistence.ts",
         "apps/eliotr-core/test/navigation-fixture.ts",
         "apps/eliotr-core/test/navigation-persistence.test.ts",
-        "apps/eliotr-core/test/tsconfig.json"
+        "apps/eliotr-core/test/tsconfig.json",
+        "packages/cloudflare-navigation/src/navigation-service.ts"
       ],
       "mandatory_negative_case": "Generate a plausible Atlas claim with no supporting source span and prove it remains navigation only and cannot support publication.",
       "document": "ER-31-corpus-lens-navigation.md",

@@ -693,10 +693,10 @@
     {
       "export_name": "InvestigationSchema",
       "family": "research",
-      "json_schema_sha256": "f32d190c958d6c6a572e771302903c97def9d2539bd2901aeccf9ede686e1bc1",
+      "json_schema_sha256": "09720a4c26359e04581a813414f359f799522172915f19c9081302e18c82c222",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:investigation:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:investigation:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1053,10 +1053,10 @@
     {
       "export_name": "RetrievalTraceSchema",
       "family": "retrieval",
-      "json_schema_sha256": "050a122d2321ef67fb3482f50cfdfed19392aa0555a3aa14ae6e9b573a68d4f5",
+      "json_schema_sha256": "7f79d995446c279904210baa2c33cebbab06d0eaa845f35c20f76c9d75a13e4b",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1083,10 +1083,10 @@
     {
       "export_name": "ScopeSnapshotSchema",
       "family": "scope",
-      "json_schema_sha256": "57093c4bf3b2adf5f8ca4b0ba8de14c356281fb680edb7da7381406681c998de",
+      "json_schema_sha256": "46e312adf104db6be290fa167e8c13ed8a67baff33440cf245313cd3e394b760",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1293,6 +1293,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 1,
+  "registry_generation": 2,
   "schema_count": 129
 }

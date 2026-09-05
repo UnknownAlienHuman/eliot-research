@@ -598,3 +598,12 @@ The immediate sequence from the current baseline is:
 
 The Rust migration and remaining product code may proceed in parallel, but neither track may be omitted
 from the final production declaration.
+
+## Local-first launch checkpoint — 2026-09-05
+
+The active owner metadata orientation/trace loop is implemented through PWA -> HTTP -> explicit D1
+read policy -> frozen scope/grant -> immutable navigation -> durable result/trace. This does not close
+the full query, investigation, federation, Wiki, Rust promotion or live launch gates above.
+`local:prepare` builds assets and applies both local migration streams; `local:dev` is loopback-only.
+The deploy orchestrator now rejects known pending mandatory product paths before any remote effect.
+This negative guard is not a substitute for complete source audit or T0–T6 exit evidence.

@@ -1,5 +1,9 @@
 # ELIOT Research
 
+**Current runnable slice:** owner metadata Corpus Lens and durable trace via the PWA/API.
+[Local preparation and current launch limits](docs/implementation/local-launch.md).
+Full research/query/Wiki launch remains blocked; do not deploy unfinished slices to Cloudflare.
+
 **Pluggable external research federation for ELIOT Memory OS.**
 
 > **Status: active implementation; not production-ready.** The authoritative standalone contract is

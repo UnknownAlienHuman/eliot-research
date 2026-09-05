@@ -32,7 +32,7 @@ function databaseFixture(input: {
         async first<T>() {
           if (sql.includes("schema_state")) {
             return {
-              value: input.schemaGeneration ?? "core-v8-erasure-closure",
+              value: input.schemaGeneration ?? "core-v11-owner-orientation",
             } as T;
           }
           if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;

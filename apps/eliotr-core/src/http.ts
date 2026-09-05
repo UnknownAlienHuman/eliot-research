@@ -1,3 +1,5 @@
+import { OrientationError, ScopeServiceError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
+import { NavigationError } from "@eliotr/retrieval";
 import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import type {
   ApiProblem,
@@ -331,6 +333,21 @@ async function dispatch(
         await application.services.semantic.catalog(context, parseCatalogRequest(url)),
       );
     }
+    case "research.orient": {
+      requireNoQuery(url);
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      return apiResult(request, env, await application.services.semantic.orient(context,
+        await readOrientationRequest(request, match.route.maximum_request_bytes)));
+    }
+    case "research.trace": {
+      requireNoQuery(url);
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      const ref = match.params.ref;
+      if (ref === undefined) throw new OrientationError("ORIENTATION_TRACE_INVALID", 400);
+      return apiResult(request, env, await application.services.semantic.trace(context, { id: ref, revision: 1 }));
+    }
     case "research.verify": {
       const blocked = await requireApplicationReady(request, application);
       if (blocked !== null) return blocked;
@@ -422,6 +439,10 @@ function mapIngestStorageError(request: Request, error: IngestStorageError): Res
 }
 
 function mapError(request: Request, error: unknown): Response {
+  if (error instanceof OrientationError) return problem(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
+  if (error instanceof ScopeServiceError) return problem(request, 409, error.code, "Current scope authority could not be established", false);
+  if (error instanceof NavigationError) return problem(request, error.code === "NAVIGATION_LIMIT_EXCEEDED" ? 413 : 409,
+    error.code, "Navigation is unavailable under the current scope", false);
   if (error instanceof AccessVerificationError) {
     const unavailable = error.code === "ACCESS_CONFIG_INVALID" ||
       error.code === "ACCESS_JWKS_UNAVAILABLE" ||

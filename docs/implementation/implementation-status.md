@@ -50,12 +50,10 @@ Gemini Spark MCP planning/catalog and Google orchestration boundary
 ### Product operations still unavailable at composition time
 
 ```text
-research.orient
 research.query
 research.run
 research.artifact
 research.wiki.propose
-research.trace
 research.changes
 federation.submit
 federation.status
@@ -66,10 +64,12 @@ federation.bundle.manifest
 federation.changes
 ```
 
-`research.orient` remains unavailable in the active Worker generation. The D1 navigation store and
-`createD1NavigationService` are implemented and exercised in local Workers/D1. ER-24 still must supply
-production membership/policy observations and grant issuance, automatic materialization and the public
-QueryResult/evidence/trace adapter. Local composition is not route enablement or live qualification.
+`research.orient` is active for `ORIENT`/`E0`, the fixed `orientation-metadata-v1` budget, an empty
+literal list, and owner principals with explicit namespace read policies. It freezes real D1 scope,
+batches metadata-only cards/maps and persists an idempotent result and trace. `research.trace` reads
+only these exact owner-authorized traces. No semantic ranking, exact source-span evidence or full
+Atlas materialization is implied. The PWA Corpus Lens panel uses this API rather than sample data.
+See [local-launch.md](local-launch.md) for limits, setup and remaining launch gates.
 
 Some unavailable operations are not separate status markers because they are composition outputs of the
 owned service/workflow packets. They remain release blockers and are enumerated in the gap register and

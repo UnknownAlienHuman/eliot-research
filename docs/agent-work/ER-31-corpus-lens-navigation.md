@@ -19,13 +19,13 @@ outside the paths below.
 - `packages/retrieval/src/navigation.test.ts`
 - `apps/eliotr-core/src/navigation-service.ts`
 - `apps/eliotr-core/src/navigation-service.test.ts`
-
 - `packages/retrieval/src/navigation-identity.ts`
 - `packages/retrieval/src/navigation-identity.test.ts`
 - `apps/eliotr-core/src/navigation-persistence.ts`
 - `apps/eliotr-core/test/navigation-fixture.ts`
 - `apps/eliotr-core/test/navigation-persistence.test.ts`
 - `apps/eliotr-core/test/tsconfig.json`
+- `packages/cloudflare-navigation/src/navigation-service.ts`
 
 ## Read only
 
@@ -107,6 +107,15 @@ about omitted sources. Snapshot/handle readback failures never become a missing-
 expansion returns only an existing exact-range handle candidate; independent R2 evidence resolution
 is still mandatory for publication.
 
-Public `research.orient`/`research.query`, production membership/policy observations, grant issuance,
-and automatic artifact materialization are not enabled by this storage change. ER-24 must compose them
-with the frozen-scope and evidence/trace contracts; remote D1, Access and R2 qualification remains open.
+ER-24 now composes public owner `research.orient` and orientation `research.trace` with real D1
+read policies, membership observations, explicit grant issuance and automatic metadata card/map
+materialization. Full structural/Atlas generation, `research.query`, and remote D1/Access/R2
+qualification remain open. The navigation service lives in `packages/cloudflare-navigation`; the core
+file is a compatibility re-export, not duplicate authority.
+
+## Active local-first integration
+
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
+routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
+and live qualification remain separate gates. The integration library replaces moved core service
+implementations, rather than duplicating them. No new service or production language is introduced.

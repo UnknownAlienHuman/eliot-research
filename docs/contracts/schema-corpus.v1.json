@@ -1,7 +1,7 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 1,
+  "registry_generation": 2,
   "schema_count": 129,
   "schemas": [
     {
@@ -7182,7 +7182,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:research:investigation:v1:g1",
+        "$id": "urn:eliotr:contracts:research:investigation:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -7372,7 +7372,9 @@
                 "$ref": "#/$defs/__schema1"
               },
               "purge_ledger_revision": {
-                "$ref": "#/$defs/__schema2"
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               },
               "resolved_scope_expression": {
                 "$ref": "#/$defs/__schema3"
@@ -7466,13 +7468,13 @@
         "title": "Investigation",
         "type": "object",
         "x-eliotr-family": "research",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:investigation:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:investigation:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -10546,7 +10548,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g1",
+        "$id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -10719,7 +10721,9 @@
                 "$ref": "#/$defs/__schema0"
               },
               "purge_ledger_revision": {
-                "$ref": "#/$defs/__schema1"
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
               },
               "resolved_scope_expression": {
                 "$ref": "#/$defs/__schema2"
@@ -10799,13 +10803,13 @@
         "title": "RetrievalTrace",
         "type": "object",
         "x-eliotr-family": "retrieval",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -11050,11 +11054,6 @@
             "type": "string"
           },
           "__schema1": {
-            "exclusiveMinimum": 0,
-            "maximum": 9007199254740991,
-            "type": "integer"
-          },
-          "__schema2": {
             "oneOf": [
               {
                 "additionalProperties": false,
@@ -11153,10 +11152,10 @@
                     "type": "string"
                   },
                   "left": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema1"
                   },
                   "right": {
-                    "$ref": "#/$defs/__schema2"
+                    "$ref": "#/$defs/__schema1"
                   }
                 },
                 "required": [
@@ -11168,17 +11167,17 @@
               }
             ]
           },
-          "__schema3": {
+          "__schema2": {
             "pattern": "^[a-f0-9]{64}$",
             "type": "string"
           },
-          "__schema4": {
+          "__schema3": {
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1",
+        "$id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -11186,16 +11185,16 @@
             "$ref": "#/$defs/__schema0"
           },
           "created_at": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema3"
           },
           "digest": {
-            "$ref": "#/$defs/__schema3"
+            "$ref": "#/$defs/__schema2"
           },
           "disclosure_closure_digest": {
-            "$ref": "#/$defs/__schema3"
+            "$ref": "#/$defs/__schema2"
           },
           "expires_at": {
-            "$ref": "#/$defs/__schema4"
+            "$ref": "#/$defs/__schema3"
           },
           "member_source_revision_refs": {
             "items": {
@@ -11216,13 +11215,17 @@
             "$ref": "#/$defs/__schema0"
           },
           "purge_ledger_revision": {
-            "$ref": "#/$defs/__schema1"
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
           },
           "resolved_scope_expression": {
-            "$ref": "#/$defs/__schema2"
+            "$ref": "#/$defs/__schema1"
           },
           "revision": {
-            "$ref": "#/$defs/__schema1"
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
           },
           "snapshot_id": {
             "$ref": "#/$defs/__schema0"
@@ -11254,13 +11257,13 @@
         "title": "ScopeSnapshot",
         "type": "object",
         "x-eliotr-family": "scope",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },

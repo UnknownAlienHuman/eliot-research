@@ -1,0 +1,24 @@
+{
+  "name": "@eliotr/cloudflare-navigation",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --root ../.. packages/cloudflare-navigation --reporter=verbose"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
+    "@eliotr/interfaces": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/retrieval": "workspace:*"
+  }
+}

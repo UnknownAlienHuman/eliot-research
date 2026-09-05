@@ -17,7 +17,7 @@ for (const name of readdirSync(resolve(root, "infra/d1/search/migrations"))
   search.exec(readFileSync(resolve(root, "infra/d1/search/migrations", name), "utf8"));
 }
 assert.equal(core.prepare("SELECT value FROM schema_state WHERE key='schema_generation'").get().value,
-  "core-v8-erasure-closure");
+  "core-v11-owner-orientation");
 assert.equal(search.prepare("SELECT value FROM schema_state WHERE key='schema_generation'").get().value,
   "search-v4-ai-search-generation-registry");
 const strict = new Map(core.prepare("PRAGMA table_list").all().map((row) => [row.name, row.strict]));

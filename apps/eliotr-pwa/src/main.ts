@@ -1,5 +1,6 @@
 import "./styles.css";
 import { getSystemHealth, type SystemHealth } from "./api.js";
+import { mountOrientationPanel } from "./orientation-panel.js";
 import { escapeHtml } from "./html.js";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -19,14 +20,9 @@ function displayText(
   return escapeHtml(value ?? fallback);
 }
 
-function blockingReasons(health: SystemHealth | null): string {
-  const reasons = health?.blocking_reason_codes ?? [];
-  return reasons.length === 0
-    ? "No schema blockers reported"
-    : reasons.map(escapeHtml).join(", ");
-}
-
+let unmount: (() => void) | undefined;
 function render(health: SystemHealth | null): void {
+  unmount?.();
   app.innerHTML = `
     <header class="topbar">
       <div><strong>Eliot Research</strong><span class="generation">${displayText(health?.deployment_generation, "unknown generation")}</span></div>
@@ -35,15 +31,10 @@ function render(health: SystemHealth | null): void {
     <main class="workspace">
       <aside class="panel panel--corpus">
         <h2>Corpus</h2>
-        <nav>${["Projects", "Sources", "Corpus Lens", "Research Wiki", "Reports"].map((item) => `<button disabled>${item}</button>`).join("")}</nav>
+        <nav>${["Projects", "Sources", "Research Wiki", "Reports"].map((item) => `<button disabled>${item}</button>`).join("")}</nav>
       </aside>
       <section class="panel panel--investigation">
-        <div class="panel-title"><h2>Investigation</h2><span>durable research ledger</span></div>
-        <div class="empty-state">
-          <strong>Implementation scaffold is active.</strong>
-          <p>Research routes remain fail-closed until their work packets pass T0–T5.</p>
-          <code>${blockingReasons(health)}</code>
-        </div>
+        <div id="corpus-lens"></div>
       </section>
       <aside class="panel panel--evidence">
         <h2>Evidence</h2>
@@ -56,6 +47,8 @@ function render(health: SystemHealth | null): void {
       </aside>
     </main>
   `;
+  const lens = app.querySelector<HTMLElement>("#corpus-lens");
+  if (lens) unmount = mountOrientationPanel(lens);
 }
 
 render(null);

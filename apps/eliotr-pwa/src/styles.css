@@ -19,3 +19,10 @@ nav button { text-align: left; border: 1px solid #303641; background: #1a1e25; c
 .empty-state code { display: block; padding: 10px; background: #0e1014; color: #d7dce5; border-radius: 6px; }
 dl { display: grid; grid-template-columns: 110px 1fr; gap: 12px; font-size: 13px; }
 dt { color: #7f899a; } dd { margin: 0; word-break: break-word; }
+
+form label { display: grid; gap: 0.4rem; margin-bottom: 1rem; }
+form input { width: 100%; padding: 0.65rem; color: inherit; background: transparent; border: 1px solid #556; border-radius: 4px; }
+.source-card { margin: 1rem 0; padding: 0.75rem; border: 1px solid #556; border-radius: 6px; overflow-wrap: anywhere; }
+.source-card h3 { margin-top: 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 32rem; overflow: auto; }
+code { overflow-wrap: anywhere; }

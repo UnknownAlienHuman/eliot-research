@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 
+import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
 const deployConfig = "wrangler.deploy.jsonc";
@@ -38,10 +40,12 @@ async function saveReceipt(receipt) {
 /** Effects are explicit so failure ordering can be tested without Cloudflare credentials. */
 export async function deployCloudflare({ confirmLive = false, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
-  save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log } = {}) {
+  save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
+  verifyCode = assertLaunchCodeComplete } = {}) {
   const env = { ...environment };
   let input;
   if (confirmLive) {
+    await verifyCode();
     env.ELIOTR_ENVIRONMENT ??= "production";
     if (!env.ELIOTR_DEPLOYMENT_GENERATION) {
       const revision = captureCommand("git", ["rev-parse", "--short=12", "HEAD"], root, env);

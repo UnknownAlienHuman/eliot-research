@@ -33,11 +33,15 @@ retrieval, authentication semantics, or database schemas.
 - `infra/cloudflare/README.md`
 - `docs/implementation/cloudflare-runbook.md`
 - `docs/adr/0005-hostname-access-for-websocket.md`
-
 - `scripts/lib/deployment-verification.mjs`
 - `scripts/test-deployment-verification.mjs`
 - `scripts/test-deployment-orchestration.mjs`
 - `docs/implementation/deployment-audit-2026-09-04.md`
+- `scripts/check-launch-code.mjs`
+- `scripts/test-launch-code.mjs`
+- `scripts/local-runtime.mjs`
+- `scripts/test-local-runtime.mjs`
+- `docs/implementation/local-launch.md`
 
 ## Read only
 
@@ -110,3 +114,10 @@ The PR must state desired-state generation impact, migration/backfill impact, ex
 negative-case result, real receipts (or `NOT_EXECUTED`), and any follow-up packet. Do not mark this
 packet complete with placeholders, committed account IDs, TODO authority paths, mocked live gates, or a
 stronger disposition than observed.
+
+## Active local-first integration
+
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
+routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
+and live qualification remain separate gates. The integration library replaces moved core service
+implementations, rather than duplicating them. No new service or production language is introduced.

@@ -21,6 +21,7 @@ export default tseslint.config(
   {
     ignores: [
       "**/dist/**",
+      "**/dist-types/**",
       "**/.wrangler/**",
       "**/worker-configuration.d.ts",
       "coverage/**",

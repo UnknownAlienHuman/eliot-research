@@ -1547,8 +1547,47 @@
       "schema_id": "urn:eliotr:contracts:publication:wiki-page-type:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "InvestigationSchema",
+      "family": "research",
+      "json_schema_sha256": "09720a4c26359e04581a813414f359f799522172915f19c9081302e18c82c222",
+      "kind": "OBJECT",
+      "note": "Admit purge-ledger revision 0 for an empty authoritative ledger, matching D1 and backup contracts. Existing positive revisions and canonical identity bytes are unchanged. Consumers accepting generation 2 must update before receiving the new zero frontier.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:research:investigation:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:research:investigation:v1:g1"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "RetrievalTraceSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "7f79d995446c279904210baa2c33cebbab06d0eaa845f35c20f76c9d75a13e4b",
+      "kind": "OBJECT",
+      "note": "Admit purge-ledger revision 0 for an empty authoritative ledger, matching D1 and backup contracts. Existing positive revisions and canonical identity bytes are unchanged. Consumers accepting generation 2 must update before receiving the new zero frontier.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:retrieval:retrieval-trace:v1:g1"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "ScopeSnapshotSchema",
+      "family": "scope",
+      "json_schema_sha256": "46e312adf104db6be290fa167e8c13ed8a67baff33440cf245313cd3e394b760",
+      "kind": "OBJECT",
+      "note": "Admit purge-ledger revision 0 for an empty authoritative ledger, matching D1 and backup contracts. Existing positive revisions and canonical identity bytes are unchanged. Consumers accepting generation 2 must update before receiving the new zero frontier.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 1
+  "registry_generation": 2
 }
