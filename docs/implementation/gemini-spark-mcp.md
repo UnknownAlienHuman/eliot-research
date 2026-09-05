@@ -16,7 +16,7 @@ Gemini CLI Streamable HTTP POST https://<MCP_HOSTNAME>/mcp
 → exact service-token Client ID from JWT common_name
 → internal logical principal gemini-spark
 → MCP protocol/version/body validation
-→ four-tool allow-list
+→ authorized subset of the four-tool contract allow-list
 → bounded result
 ```
 
@@ -82,3 +82,12 @@ or Workspace permissions; those remain independent live preconditions.
 - direct Gemini sync is rejected while Drive Exchange owns the transport;
 - digest-mismatching readback remains `OBSERVED_MISMATCH`;
 - settings/setup output cannot contain service-token values.
+
+
+### Service catalog authorization
+
+The real Worker currently advertises three tools: status, Google sync planning and receipt validation.
+The `eliotr_catalog` contract remains defined, but it is not advertised or executable without an explicit
+service-scope read-policy adapter. Direct calls return `MCP_CATALOG_SCOPE_REQUIRED` before D1 access.
+A signed Client ID alone is not a namespace grant; mapping it to `owner_pwa` is prohibited. Launch 07
+must implement and test service-scope authorization before restoring catalog discovery.

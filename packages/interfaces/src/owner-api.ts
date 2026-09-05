@@ -19,6 +19,8 @@ export interface PreparedBundleFileUpload {
 
 export interface PrepareBundleUploadResult {
   readonly operation_id: string;
+  /** Canonical authority digest to echo at commit; not the uploaded JSON file digest. */
+  readonly manifest_sha256: string;
   readonly disposition: "UPLOAD_REQUIRED" | "DUPLICATE" | "REJECTED";
   readonly multipart_session_ref?: string;
   readonly files?: readonly PreparedBundleFileUpload[];
@@ -50,6 +52,7 @@ export interface CompleteBundleFileRequest {
   readonly operation_id: string;
   readonly multipart_session_ref: string;
   readonly path: string;
+  /** An empty list reconciles an already materialized file; it cannot complete a missing object. */
   readonly parts: readonly {
     readonly part_number: number;
     readonly size_bytes: number;
@@ -94,7 +97,18 @@ export interface BundleIngestStatus {
   readonly updated_at: string;
 }
 
+/** Authenticated recovery metadata; never an access grant or browser-persisted source copy. */
+export interface BundleIngestRecovery {
+  readonly protocol: "eliotr.ingest-recovery.v1";
+  readonly status: BundleIngestStatus;
+  readonly idempotency_key: string;
+  readonly manifest_sha256: string;
+  readonly total_bytes: number;
+  readonly file_hashes: Readonly<Record<string, string>>;
+}
+
 export interface OwnerApi {
+  getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
   prepareBundle(
     context: AuthenticatedRequestContext,
     request: PrepareBundleUploadRequest,

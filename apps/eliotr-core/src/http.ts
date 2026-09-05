@@ -494,7 +494,7 @@ function mapError(request: Request, error: unknown): Response {
     return problem(request, 409, error.code, "Exact evidence authority conflicts with current state", false);
   }
   if (error instanceof CatalogInputError) {
-    return problem(request, 400, error.code, error.message, false);
+    return problem(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof CapabilityUnavailableError) {
     return problem(
