@@ -40,13 +40,14 @@ OAuth login, real Google append or canonical D1/R2 lifecycle. Read drive-rest.md
 - [ ] G1b / ER-20. Remaining operation-specific REST methods, including native Doc delivery/export and
   provisioning readback, with exact resource/identity/budget/failure handling. No fake port methods.
 - [ ] G2 / ER-20. Next bounded task: admitted dedicated-account OAuth lease provider. Read canonical
-  §12.8 and existing oauth.ts/connection schemas before coding. Use narrow openid/email/drive.file,
-  offline authorization, exact subject/email/scope verification, encrypted refresh-token storage,
-  short-lived access-token cache, rotation/revocation/expiry and durable REAUTH_REQUIRED. Implement
-  state/PKCE/nonce and reconnect negatives as required by the selected reviewed OAuth flow. Bind the
-  resulting lease to the exact D1 connection/generation; rejection must happen before the REST fetch.
-  Never satisfy authorize/assertCurrent with a constant success, unverified pasted token or raw secret
-  fixture. Use controlled OAuth replies and real local persistence, then genuine account tests later.
+  §12.8, existing token-vault.ts and packages/contracts/src/drive-exchange.ts before coding. Use narrow
+  openid/email/drive.file, offline authorization, exact subject/email/scope verification, encrypted
+  refresh-token storage, short-lived access-token cache, rotation/revocation/expiry and durable
+  REAUTH_REQUIRED. Implement state/PKCE/nonce and reconnect negatives as required by the selected
+  reviewed OAuth flow. Bind the resulting lease to the exact D1 connection/generation; rejection must
+  happen before the REST fetch. Never satisfy authorize/assertCurrent with a constant success,
+  unverified pasted token or raw secret fixture. Use controlled OAuth replies and real local
+  persistence, then genuine account tests later.
 - [ ] G3 / ER-18. Fixed exchange folder/native Sheet/numeric tab schema and immutable generation
   provisioning. One atomic ChatGPT REQUESTS/PAYLOAD_PARTS append, exact readback and idempotency.
   Complete draining-generation delivery under explicit ownership; no silent switch to another Sheet.
