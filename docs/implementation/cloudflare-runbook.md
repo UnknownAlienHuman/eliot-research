@@ -33,7 +33,7 @@ ELIOTR_CUSTOM_DOMAIN               required: 1 for Custom Domain only; 0 for wor
 ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
                                     optional explicit allow-list for reviewed service policies
 ELIOTR_ACCESS_SMOKE_COOKIE         optional CF_Authorization value for authenticated HTTP smoke
-ELIOTR_SMOKE_BASE_URL              optional; defaults to https://ELIOTR_ACCESS_HOSTNAME
+ELIOTR_SMOKE_BASE_URL              optional; must equal https://ELIOTR_ACCESS_HOSTNAME (optional trailing slash)
 ```
 
 Google credentials, provider keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with
@@ -49,8 +49,9 @@ pnpm cf:preflight:remote
 pnpm cf:deploy -- --confirm-live
 ```
 
-Until ER-00 has committed `pnpm-lock.yaml`, use `pnpm install --no-frozen-lockfile` once and commit the
-result in the workspace packet before allowing CI or deployment agents to continue.
+`pnpm-lock.yaml` is committed. Always use the frozen lockfile; dependency repair is a separate reviewed
+change. `pnpm check` also invokes the pinned Rust gates from `LANGUAGE_RUNTIME_CONTRACT.md`; install that
+toolchain and the pinned Cargo tools before running it locally.
 
 `cf:preflight:remote` performs only GET/readback operations. `cf:deploy` repeats local gates, repeats the
 remote preflight, then performs create-or-verify provisioning. It writes the account-specific
@@ -63,7 +64,9 @@ Git.
 
 The provisioner lists by exact database name, rejects duplicates/jurisdiction drift and injects returned
 UUIDs into the generated config. The deployer applies both additive migration streams before exposing the
-new Worker generation. Do not depend on Wrangler's automatic D1 config mutation.
+new Worker generation. The exact generated config is identity-validated and dry-run before either remote
+migration stream. Its digest is rechecked between release steps; drift stops the next effect. Do not
+depend on Wrangler's automatic D1 config mutation.
 
 ### R2
 
@@ -106,9 +109,26 @@ Never combine destructive DDL, code cutover and irreversible backfill into one r
 
 ## Receipts and post-deploy gates
 
-A successful deploy writes `cloudflare-deployment-receipt.json`. It verifies Worker readback and the
-`ResearchSession` declarative Durable Object export. Authenticated HTTP smoke runs only when an Access
-cookie is supplied. All deeper T4/T6 gates remain explicit `NOT_EXECUTED` until ER-27 performs real:
+A successful deploy atomically writes `cloudflare-deployment-receipt.json`. Before provisioning mutations,
+a previous receipt is moved to `cloudflare-deployment-receipt.json.previous`; a failed attempt does not
+leave the previous PASS at the current receipt path. The previous file is historical evidence, not a
+statement about the current environment.
+
+Worker inventory readback checks the expected compatibility date, static assets and `ResearchSession`
+export. This bounded observation is **not** attestation of every binding or the exact deployed code
+version. A large/ambiguous inventory fails closed rather than claiming a matching deployment.
+
+Authenticated HTTP smoke runs only with an Access cookie. Both `/healthz` and the capabilities envelope
+must report the expected deployment generation; health must be ready and timestamped within two minutes.
+Capabilities must retain exact-evidence and honest-completion invariants. HTML login/PWA fallback pages,
+redirects, conflicting slices, invalid JSON, oversized bodies and timeouts fail. Cookies go only to the
+exact configured HTTPS Access origin. Each request has a 15-second connection-plus-body deadline and a
+64 KiB body limit; API inventory readback is bounded to 1 MiB. Response bodies and credentials never enter
+error messages or receipts. Keep the operator clock synchronized.
+
+The generated configuration owns plaintext runtime variables. Deployment does not use `--keep-vars`;
+Wrangler preserves secrets independently. Product readiness is not inferred from smoke success.
+All deeper T4/T6 gates remain explicit `NOT_EXECUTED` until ER-27 performs real:
 
 - D1 write/readback;
 - R2 immutable put/readback;

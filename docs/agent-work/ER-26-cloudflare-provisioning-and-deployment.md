@@ -34,6 +34,11 @@ retrieval, authentication semantics, or database schemas.
 - `docs/implementation/cloudflare-runbook.md`
 - `docs/adr/0005-hostname-access-for-websocket.md`
 
+- `scripts/lib/deployment-verification.mjs`
+- `scripts/test-deployment-verification.mjs`
+- `scripts/test-deployment-orchestration.mjs`
+- `docs/implementation/deployment-audit-2026-09-04.md`
+
 ## Read only
 
 - `apps/eliotr-core/wrangler.jsonc`

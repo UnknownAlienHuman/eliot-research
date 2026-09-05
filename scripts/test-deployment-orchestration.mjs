@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
@@ -24,7 +26,8 @@ function harness(overrides = {}) {
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
-      assert.ok(cwd.endsWith(args.includes("--config") ? "apps/eliotr-core" : "eliot-research"));
+      assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
+        args.includes("--config") ? "apps/eliotr-core" : "."));
       if (name === overrides.failCommand) throw new Error("injected command failure");
     },
     archive: async () => { calls.push("archive"); },
