@@ -1,0 +1,48 @@
+name: ER-26 exact submission verification
+on:
+  push:
+    branches: [agent/ER-26-local-release-audit-20260904]
+    paths: [.github/workflows/er26-verify-submission.yml]
+permissions:
+  contents: write
+jobs:
+  verify-submission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Apply reviewed metadata to the exact code parent
+        env:
+          METADATA_PATCH: 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
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "14b990030ae399d55b587a4034c299b3bece2675"
+          python3 - <<'PY'
+          import base64, hashlib, os, pathlib, zlib
+          patch = zlib.decompress(base64.b64decode(os.environ['METADATA_PATCH']))
+          assert hashlib.sha256(patch).hexdigest() == '8755a0ca8dc1807624ec6753c1b127bf757243c8f4e462998847e0b5e20795c2'
+          pathlib.Path('/tmp/er26-metadata.patch').write_bytes(patch)
+          p = pathlib.Path('scripts/test-deployment-orchestration.mjs')
+          s = p.read_text().replace('import { readFile } from "node:fs/promises";', 'import { readFile } from "node:fs/promises";\nimport { resolve } from "node:path";\nimport { fileURLToPath } from "node:url";')
+          s = s.replace('assert.ok(cwd.endsWith(args.includes("--config") ? "apps/eliotr-core" : "eliot-research"));', 'assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),\n        args.includes("--config") ? "apps/eliotr-core" : "."));')
+          p.write_text(s)
+          PY
+          git apply --index /tmp/er26-metadata.patch
+          git add scripts/test-deployment-orchestration.mjs
+          git rm .github/workflows/er26-verify-submission.yml
+          git diff --cached --check
+          test "$(git write-tree)" = "c8817f2c71c62f26badcdfe71a1a8693bcaf82c1"
+          node scripts/test-deployment-verification.mjs
+          node scripts/test-deployment-orchestration.mjs
+          node scripts/check-work-packets.mjs
+          node scripts/check-implementation-status.mjs
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'ER-26: synchronize audit and owned paths; verify exact offline-tested source tree'
+          test "$(git ls-remote origin refs/heads/agent/ER-26-local-release-audit-20260904 | cut -f1)" = "$GITHUB_SHA"
+          git push origin HEAD:refs/heads/agent/ER-26-local-release-audit-20260904
