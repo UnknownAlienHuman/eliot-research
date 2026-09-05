@@ -1,0 +1,26 @@
+name: revision-review-source
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/revision-review-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - run: |
+          git rev-parse HEAD > /tmp/SNAPSHOT_HEAD_SHA
+          git archive --format=tar.gz --output=/tmp/source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: revision-source
+          path: |
+            /tmp/source.tar.gz
+            /tmp/SNAPSHOT_HEAD_SHA
+          retention-days: 1
+          if-no-files-found: error
