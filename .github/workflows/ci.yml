@@ -163,3 +163,29 @@ jobs:
           test -f fuzz/Cargo.lock
           cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
           test -z "$(git status --porcelain -- fuzz/Cargo.lock)"
+
+  windows-tooling:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exercise native Windows checkout line endings
+        run: git config --global core.autocrlf true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Verify package boundaries on Windows
+        run: node scripts/check-boundaries.mjs
+      - name: Verify source budgets on Windows
+        run: node scripts/check-budgets.mjs
+      - name: Prove portable checkout and negative gates on Windows
+        run: node scripts/test-boundary-negative.mjs
+      - name: Verify deployment HTTP guards on Windows
+        run: node scripts/test-deployment-verification.mjs
+      - name: Verify deployment ordering on Windows
+        run: node scripts/test-deployment-orchestration.mjs
+      - name: Prove test fixtures leave the checkout unchanged
+        run: |
+          $changes = git status --porcelain --untracked-files=all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($changes) { Write-Error "Tests changed the checkout: $changes"; exit 1 }

@@ -1,7 +1,8 @@
 import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SOURCE_ROOTS = ["packages", "apps"];
 const FORBIDDEN_IMPORTS = [
   "langchain",
@@ -74,8 +75,12 @@ async function walk(dir) {
   return out;
 }
 
+function projectPath(file) {
+  return relative(ROOT, file).split(sep).join("/");
+}
+
 function ownerFor(file) {
-  const normalized = relative(ROOT, file).split(sep).join("/");
+  const normalized = projectPath(file);
   return [...PACKAGE_RULES.keys()].find((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
 }
 
@@ -93,12 +98,12 @@ for (const sourceRoot of SOURCE_ROOTS) {
     const source = await readFile(file, "utf8");
     for (const specifier of importsOf(source)) {
       if (FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
-        errors.push(`${relative(ROOT, file)} imports forbidden module ${specifier}`);
+        errors.push(`${projectPath(file)} imports forbidden module ${specifier}`);
       }
       if (!specifier.startsWith("@eliotr/")) continue;
       const allowed = PACKAGE_RULES.get(owner);
       if (!allowed?.has(specifier)) {
-        errors.push(`${relative(ROOT, file)} violates dependency direction with ${specifier}`);
+        errors.push(`${projectPath(file)} violates dependency direction with ${specifier}`);
       }
     }
   }

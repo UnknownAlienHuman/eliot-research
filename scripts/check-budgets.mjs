@@ -1,7 +1,8 @@
 import { readFile, readdir, stat } from "node:fs/promises";
-import { extname, join, relative } from "node:path";
+import { extname, join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PACKAGE_ROOTS = ["packages", "apps"];
 const MAX_FILE_LINES = 600;
 const MAX_PACKAGE_SOURCE_LINES = 10_000;
@@ -35,7 +36,7 @@ for (const rootName of PACKAGE_ROOTS) {
       const fileLines = text.split("\n").length;
       lines += fileLines;
       bytes += Buffer.byteLength(text);
-      if (fileLines > MAX_FILE_LINES) errors.push(`${relative(ROOT, file)} has ${fileLines} lines (max ${MAX_FILE_LINES})`);
+      if (fileLines > MAX_FILE_LINES) errors.push(`${relative(ROOT, file).split(sep).join("/")} has ${fileLines} lines (max ${MAX_FILE_LINES})`);
     }
     if (lines > MAX_PACKAGE_SOURCE_LINES) errors.push(`${rootName}/${entry.name} has ${lines} source lines (max ${MAX_PACKAGE_SOURCE_LINES})`);
     if (`${rootName}/${entry.name}` === "apps/eliotr-core" && bytes > MAX_WORKER_SOURCE_BYTES) errors.push(`Worker source is ${bytes} bytes (max ${MAX_WORKER_SOURCE_BYTES})`);
