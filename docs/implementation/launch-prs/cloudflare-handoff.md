@@ -152,6 +152,13 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
 
 ### #95 — Required ChatGPT Drive Exchange and optional Gemini MCP (ER-18/19/20/36; ER-17/26/27)
 
+The Sheet/changes REST subset and v1 contribution guards are implemented in `../drive-rest.md`.
+They do not complete OAuth, durable reconciliation, result publication or runtime activation. At the
+real-account gate verify numeric filters/default/omitted fields, exact parent ownership, 401 handling,
+unknown append outcomes and that ERC cannot write ChatGPT REQUESTS/PAYLOAD_PARTS. An HTTP 200
+requires subsequent exact-row readback; `writtenAt` is only a local observation.
+
+
 - [ ] Implement and locally test the mandatory Drive adapters BEFORE accessing an account. Canonical
       §§12.3–12.12 and ADR-0003 still select Drive for Day-0 ChatGPT. The Gemini MCP flag/helper is not
       a qualified replacement; one active ChatGPT write transport only. Do not equate an interface,

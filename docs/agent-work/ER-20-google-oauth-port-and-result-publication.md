@@ -14,6 +14,11 @@ outside the paths below.
 - `packages/google-drive-exchange/src/port.ts`
 - `packages/google-drive-exchange/src/token-vault.ts`
 - `packages/google-drive-exchange/src/result-publisher.ts`
+- `packages/google-drive-exchange/src/rest-transport.ts`
+- `packages/google-drive-exchange/src/sheet-ranges.ts`
+- `packages/google-drive-exchange/src/sheet-port.ts`
+- `packages/google-drive-exchange/src/sheet-port.test.ts`
+- `docs/implementation/drive-rest.md`
 
 ## Read only
 
