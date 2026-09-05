@@ -1,7 +1,7 @@
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import type { ScopeSnapshotPersistence } from "@eliotr/domain";
 import {
-  SCOPE_COLUMNS, canonicalScopeStorageJson, decodeStoredScopeRow, scopePersistenceFailure,
+  SCOPE_COLUMNS, boundedScopeValue, canonicalScopeStorageJson, decodeStoredScopeRow, scopePersistenceFailure,
   scopeStorageValues, validateScopeStorageRef, validateStoredScope, type StoredScopeRecord,
 } from "./scope-codec.js";
 
@@ -37,6 +37,10 @@ export function createD1ScopeSnapshotStore(database: D1Database): ScopeSnapshotP
     },
     async persistSnapshot(value) {
       const scope = await validateStoredScope(value);
+      const values = scopeStorageValues(scope);
+      // Validate the encoded row with the reader's ceiling BEFORE the first SQL effect.
+      // A hash payload alone omits the digest, SQL column names and invalidation metadata.
+      boundedScopeValue(Object.fromEntries(SCOPE_COLUMNS.split(", ").map((column, index) => [column, values[index]])));
       const prior = await read(scope);
       if (prior !== null) return matches(prior, scope) ? "REPLAY" : "CONFLICT";
       let inserted: { snapshot_id: string } | null;
@@ -45,7 +49,7 @@ export function createD1ScopeSnapshotStore(database: D1Database): ScopeSnapshotP
           `INSERT INTO scope_snapshot (${SCOPE_COLUMNS}) ` +
           "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) " +
           "ON CONFLICT DO NOTHING RETURNING snapshot_id",
-        ).bind(...scopeStorageValues(scope)).first<{ snapshot_id: string }>();
+        ).bind(...values).first<{ snapshot_id: string }>();
       } catch {
         // Lost ACK is uncertain. Reconcile against exact durable bytes, never assume rollback/success.
         const settled = await read(scope);
