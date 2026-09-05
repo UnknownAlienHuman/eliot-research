@@ -1,6 +1,6 @@
 import { type BundleAdmissionReceipt } from "@eliotr/contracts";
 import { ApiRequestError, requestApi } from "./api.js";
-import { readBundleRecovery, type RecoveredImport } from "./bundle-recovery-api.js";
+import { discoverBundleRecovery, readBundleRecovery, type RecoveredImport } from "./bundle-recovery-api.js";
 import { type BrowserBundle, checkCancelled, bundleInputError } from "./bundle-input.js";
 import { decodePrepared, importCall, importIdentifier, importOpaque, importMismatch, importRecord, importTime, receiptFor,
   readImportStatus, type ImportIdentity, type ImportTransport, type PreparedImport } from "./bundle-import-api.js";
@@ -35,6 +35,15 @@ export async function recoverBrowserBundleImport(input: BrowserBundle, operation
     files: input.files.map(({ path, blob }) => ({ path, blob: new Blob([blob]) })), totalBytes: input.totalBytes };
   const recovered = await readBundleRecovery(frozen, operationId, options.signal, options.transport);
   return createAttempt(frozen, recovered.key, recovered);
+}
+
+/** Discovery alone is read-only. The caller must explicitly run the recovered original operation. */
+export async function discoverBrowserBundleImport(input: BrowserBundle,
+  options: Pick<ImportOptions, "signal" | "transport"> = {}): Promise<{ attempt: BrowserBundleImport; identity: ImportIdentity }> {
+  const frozen: BrowserBundle = { manifest: structuredClone(input.manifest), hashes: { ...input.hashes },
+    files: input.files.map(({ path, blob }) => ({ path, blob: new Blob([blob]) })), totalBytes: input.totalBytes };
+  const recovered = await discoverBundleRecovery(frozen, options.signal, options.transport);
+  return { attempt: createAttempt(frozen, recovered.key, recovered), identity: { ...recovered.identity } };
 }
 
 function createAttempt(input: BrowserBundle, idempotencyKey: string, recovered?: RecoveredImport): BrowserBundleImport {

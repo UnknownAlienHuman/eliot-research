@@ -83,6 +83,7 @@ export interface IngestAdmissionAuthority {
   bindStagingSession(operationId: string, stagingSessionRef: string): Promise<PreparedIngestOperation>;
   load(operationId: string): Promise<PreparedIngestOperation | null>;
   loadForPrincipal(operationId: string, principalRef: string): Promise<PreparedIngestOperation | null>;
+  loadBySourceRevisionForPrincipal(sourceRevisionRef: string, principalRef: string): Promise<PreparedIngestOperation | null>;
   recordQualificationDecision(input: RecordQualificationDecisionInput): Promise<PreparedIngestOperation>;
   finalizeNonAdmitted(operationId: string, receipt: BundleAdmissionReceipt): Promise<BundleAdmissionReceipt>;
   authorizePromotion(input: BundlePromotionAuthorization, admissionReceiptRef: string): Promise<boolean>;

@@ -11,6 +11,9 @@ export interface PrepareBundleUploadRequest {
   readonly idempotency_key: string;
 }
 
+/** Read-only exact-folder lookup. A missing operation must never allocate a new reservation. */
+export type DiscoverBundleUploadRequest = Omit<PrepareBundleUploadRequest, "idempotency_key">;
+
 export interface PreparedBundleFileUpload {
   readonly path: string;
   readonly expected_sha256: string;
@@ -108,6 +111,7 @@ export interface BundleIngestRecovery {
 }
 
 export interface OwnerApi {
+  discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
   prepareBundle(
     context: AuthenticatedRequestContext,

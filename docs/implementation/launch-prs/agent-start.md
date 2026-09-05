@@ -60,8 +60,8 @@ one helper passes parity. Run every pinned Rust gate, applicable deep checks and
 
 ## Subsequent dependency waves
 
-- **#98 Library remainder:** current coordinator finishes known-operation recovery tests, missing-ID
-  recovery discovery, revision/readiness/project views and the complete clean browser/storage loop.
+- **#98 Library remainder:** known-ID reload recovery and read-only exact-folder discovery are implemented.
+  Remaining work is revision/readiness/project views, failure UI and the complete clean browser/storage loop.
   Claim one of these before handing it to another UI agent. Do not reopen #89 as a competing queue.
 - **#91 structural Lens** follows #90 exact opening. **#92 governed research** follows #90; #91 is needed
   only for protocols actually using structural navigation. They must not independently change shared UI.

@@ -179,11 +179,38 @@ try {
   assert.deepEqual(await evaluate('Object.keys(sessionStorage)'), []);
   await click("#library [data-source]");
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Lens after reload");
+  // Another reload, this time without any retained operation ID. Discovery is read-only
+  // despite using POST for private exact-folder metadata; continuation remains an explicit click.
+  await cdp("Page.reload");
+  await wait('Boolean(document.querySelector("[data-discover]"))', "Discovery after reload");
+  await evaluate(`(() => {
+    const transfer = new DataTransfer();
+    for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
+    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  })()`);
+  assert.equal(await evaluate('document.querySelector("input[name=recovery]").value'), "");
+  const beforeDiscovery = importing.calls.length;
+  await click("[data-discover]");
+  await wait('document.querySelector("[data-identity]").textContent.includes("ingest-browser") && !document.querySelector("[data-resume]").disabled', "Discovery without ID");
+  assert.deepEqual(importing.calls.slice(beforeDiscovery), [{ path: "/api/v1/ingest/bundles/discover", method: "POST" }]);
+  assert.equal(await evaluate('document.querySelector("input[name=recovery]").value'), "ingest-browser");
+  const afterDiscovery = importing.calls.length;
+  await click("[data-resume]");
+  await wait('document.querySelector("input[name=bundle]").closest("details").querySelector("[role=status]").textContent.startsWith("ADMITTED:")', "Reconcile discovered operation");
+  assert.ok(importing.calls.slice(afterDiscovery).every((call) => call.method === "GET"));
+  assert.deepEqual(await evaluate('Object.keys(localStorage)'), []);
+  assert.deepEqual(await evaluate('Object.keys(sessionStorage)'), []);
+  await wait('Boolean(document.querySelector("#library [data-source]"))', "Library after discovery reload");
+  await click("#library [data-source]");
+  await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Lens before denial");
   // Badly formatted 403 still clears every private panel, before parsing an error body.
   mode = "denied"; await click("#library [data-first]");
   await wait('document.querySelector("#library [role=status]").textContent.includes("Authorization changed")', "Access denial");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.equal(await evaluate('document.querySelector("#corpus-lens [data-result]").textContent'), "");
+  assert.equal(await evaluate('document.querySelector("[data-identity]").textContent'), "");
+  assert.equal(await evaluate('document.querySelector("input[name=recovery]").value'), "");
   mode = "normal"; await click("#library [data-first]");
   await wait('Boolean(document.querySelector("#library [data-source]"))', "Recovery first page");
   mode = "drift"; await click("#library [data-next]");
@@ -199,7 +226,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload recovery, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {

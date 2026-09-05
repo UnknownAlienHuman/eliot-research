@@ -102,9 +102,24 @@ completion reconciliation in `ingest-multipart.ts` and its typed error in `inges
 The existing `test/bundle-import-http.test.ts` owner delegates the exact HTTP/D1/R2 recovery negatives.
 No migration, source identity, policy owner, provider configuration or deployment gate changes.
 
-Recovery requires the original operation ID and reselected exact files; it creates no fresh reservation.
+Known-ID recovery requires the original operation ID and reselected exact files; it creates no fresh reservation.
 An empty completion list may only read back an existing staged object/receipt and repair the original
 receipt, never call R2 multipart completion with fabricated parts. Missing output is an explicit typed
 result; only then may the user resend the original incomplete file. No private browser persistence,
-credential field or implicit grant. Keep missing-ID discovery and the complete initial browser/storage
-lifecycle open; a terminal-replay browser test does not cover every partial-upload interruption.
+credential field or implicit grant. Keep the complete initial browser/storage lifecycle open; a
+terminal-replay browser test does not cover every partial-upload interruption.
+
+## Launch 01 exact-folder discovery integration
+
+Issue #98's missing-ID checkpoint adds a bounded read-only POST, not a new source lookup authority.
+ER-37 delegates `d1-ingest-types.ts` and `d1-ingest-authority.ts` for an exact unique source-revision /
+principal read using the existing current-policy guard. ER-21 delegates `owner-api.ts`, `routes.ts` and
+`ingest-http.ts`; ER-29 delegates the service comparison/final authority reread and existing unit tests.
+The existing HTTP integration owner delegates discovery/continuation tests in `bundle-import-http.test.ts`.
+ER-25 uses existing PWA/recovery/browser fixture paths; shared files remain serialized by the integrator.
+
+Discover returns only the already reserved v1 identity after exact canonical manifest/file/byte checks.
+Absent and foreign operations share 404, and denied/changed/expired input cannot create a replacement.
+The connected UI requires explicit continuation after discovery, never silently retries, and persists
+no private browser data. No migration, canonical identity change, new state family or deployment occurs.
+Remaining Library acceptance stays in #98; remote probes remain in the existing Cloudflare handoff.

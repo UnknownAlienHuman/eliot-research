@@ -29,8 +29,9 @@ There are three separate milestones:
 
 ### Still off-account work, not a Cloudflare excuse
 
-#89 merged a tested checkpoint; #98 retains missing-operation-ID discovery, revision/readiness/project workflows and the
-complete empty-setup -> import -> Library -> Lens browser/storage loop. Known-operation reload recovery is implemented without browser persistence. Its initializer currently
+#89 merged a tested checkpoint; #98 retains revision/readiness/project workflows, remaining failure UI
+and the complete empty-setup -> import -> Library -> Lens browser/storage loop. Known-ID reload recovery
+and read-only exact-folder discovery of lost IDs are implemented without browser persistence. The initializer
 supports only a local absent immutable-import namespace. A governed remote setup adapter must be
 implemented/tested before a staging agent can use it; copying fixture SQL is not that adapter.
 #90–#97 still require the code checklists in their PRs. Implement live probe runners, their missing-input
@@ -89,6 +90,10 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
       the admission policy between stages and race a policy change with final commit; no source/head/
       outbox may become visible under the stale policy. Reconcile leftover staging through governed
       cleanup, never by deleting an unconfirmed canonical object.
+- [ ] Lose the prepare response before retaining its operation ID; rediscover by exact reselected folder
+      under the same signed principal, then explicitly continue the original operation. Discovery must
+      change no D1/R2 state. Missing/foreign lookups both return 404; changed bytes/metadata, expired
+      reservations and policy withdrawal must disclose no recovery key or start a replacement import.
 - [ ] Test read-policy withdrawal, owner rotation, expired/foreign cursors and ungranted service tokens.
       Report R2 delivery, canonical admission, Queue delivery and index readiness separately.
 

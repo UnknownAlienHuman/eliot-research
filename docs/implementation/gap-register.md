@@ -26,7 +26,7 @@ production definition and final exit evidence are specified in
 | P1 | Drive cursor/OAuth/tamper flow remains non-live | ER-18, ER-19, ER-20, ER-26 | disposable append/import/readback/reconnect + historical-row tamper fixture |
 | P2 | Local preparation, signed Access browser bridge and explicit read-policy setup are implemented; live owner login is not yet qualified | ER-00, ER-26 | real owner/IdP session and current namespace-policy receipt, no auth bypass; `local-launch.md` |
 | P2 | Backup/restore export exists only as design contour | ER-34 | clean-account restore with purge ledger applied before payload exposure |
-| P2 | PWA has authorized Library-to-Lens and same-tab/known-operation reload import recovery; missing-ID discovery, revision/readiness/project views and the full setup-to-import browser loop remain incomplete (#98) | ER-25 | browser session/reconnect and full owner-loop tests with degraded dependencies |
+| P2 | PWA has authorized Library-to-Lens, same-tab/reload recovery and read-only exact-folder discovery of lost operation IDs; revision/readiness/project views, remaining failure UI and the full setup-to-import browser/storage loop remain incomplete (#98) | ER-25 | browser session/reconnect and full owner-loop tests with degraded dependencies |
 | P2 | T2/T3 corpus is too small for generation promotion | ER-31, ER-32 | real RU/EN/code cases and adjudicated regression thresholds |
 | P2 | T6 workload profile has not been measured | ER-35 | 5/20/50 readers, D1 contention, index throughput, cost and p95 receipts |
 

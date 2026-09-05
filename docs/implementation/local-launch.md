@@ -264,9 +264,10 @@ Only an unacknowledged prepare is explicitly repeated using its identical frozen
 continuations are rejected; no background retry is scheduled.
 
 Stopping cancels future requests, not already committed effects. Reload, offline, sign-out and page exit
-clear private checkpoints. Known-operation recovery after reload is available below. Missing-ID discovery and the complete
-initial-setup browser/storage loop remain local work in #98; L2/L6 are not fully complete. File completion and final admission
-rehash the canonical bytes; a UI checkpoint does not establish integrity or search readiness.
+clear private checkpoints. Recovery after reload is available below, including discovery from the original
+folder when the ID was lost. The full initial-setup browser/storage loop and remaining failure UI stay
+open in #98. File completion and final admission rehash the canonical bytes; a UI checkpoint does not
+establish integrity or search readiness.
 
 The continuation tests also cover withdrawal after reservation. Current ACTIVE owner, policy revision,
 policy snapshot bytes, allowed principal and expiry are rechecked before principal-bound actions and
@@ -292,5 +293,18 @@ resend original parts under their existing upload ID. An already admitted operat
 another upload or commit. This works with persistent local D1/R2 state across restarts, not after deleting
 that state. Unknown outcomes still require explicit user continuation, not background retry.
 
-If the prepare reply was lost before the ID was retained, this UI cannot yet discover it. Do not guess
-an ID or assume a new import is the same operation; that recovery-discovery case remains in #98.
+When the ID or prepare response was lost, reselect the original folder and click **Find previous upload
+from folder** instead. This performs only a bounded, read-only discovery request. It displays the original
+operation ID and enables **Resume same upload**; it does not upload, complete a file or commit anything
+until that explicit continuation. Even a reservation left in PREPARING before R2 session creation can
+be recovered under the original key. A committed operation is reconciled without another revision.
+
+Discovery uses `POST /api/v1/ingest/bundles/discover` with only `manifest`, `file_hashes` and `total_bytes`.
+Metadata is not put in query parameters. The server point-reads the existing unique source revision for
+the authenticated principal, compares the canonical manifest digest and complete file/byte bindings,
+and rechecks current ownership/admission policy after hashing. The returned v1 recovery envelope is
+the same as known-ID recovery; it never grants new rights. Missing and foreign operations both return
+404; changed files/metadata, expired uploads or withdrawn authority are rejected. Nothing is created
+as a fallback. The original folder and persistent server D1/R2 state are required; discovery is not a
+history browser or a way to recover erased state. The full setup/import/Library/Lens browser flow and
+revision/readiness/project views remain open in #98.

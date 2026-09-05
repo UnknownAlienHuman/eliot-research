@@ -158,7 +158,7 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Missing-ID discovery, revision/readiness/project views and the full initial populated browser loop remain open in #98.",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
@@ -171,7 +171,11 @@
         "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification",
         "tests/bundle-recovery.test.ts exact-file recovery metadata, generation/auth/cancellation and no implicit mutation",
         "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
-        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open"
+        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open",
+        "apps/eliotr-core/test/bundle-import-http.test.ts read-only exact-folder discovery after lost prepare/commit replies and PREPARING state; missing/foreign denial, altered metadata/bytes, expiry and policy withdrawal",
+        "apps/eliotr-core/src/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
+        "tests/bundle-recovery.test.ts exact discovery transport, bounded metadata, frozen input, cancellation and no fallback mutation",
+        "scripts/test-library-browser.mjs built PWA reload without operation ID -> read-only discovery -> explicit continuation; controlled HTTP backend, not complete real-storage browser qualification"
       ]
     },
     {
