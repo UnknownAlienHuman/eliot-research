@@ -113,7 +113,7 @@ No bootstrap or dry-run command authorizes a live deployment.
 
 | Command | Meaning |
 |---|---|
-| `pnpm boundaries:negative` | Inject a forbidden Node import and prove the package gate rejects it. |
+| `pnpm boundaries:negative` | Prove boundary/budget gates on space/Unicode/#/% checkout paths; reject forbidden imports, unregistered pending state and work-packet drift. |
 | `pnpm rust:boundaries` | Enforce pure-core dependency/runtime exclusions and synthetic negatives. |
 | `pnpm rust:vectors` | Parse and execute the bounded committed corpus through the TypeScript reference. |
 | `pnpm rust:fmt` | Check `rustfmt` without mutation. |
@@ -128,6 +128,20 @@ No bootstrap or dry-run command authorizes a live deployment.
 `.github/workflows/rust-deep-verification.yml` additionally runs pinned Miri, fuzz and mutation jobs on a
 weekly schedule or explicit dispatch. A scheduled gate failure remains a failure; it is never converted
 to `NOT EXECUTED`.
+
+## Windows verification scope
+
+The `windows-tooling` CI job runs the real boundary and source-budget checks, their negative fixtures,
+and deployment HTTP/ordering tests on a native Windows runner with CRLF checkout line endings. A
+synthetic checkout uses spaces, Cyrillic, Japanese, `#` and `%`, and invokes the gate from an unrelated
+working directory. Filesystem roots use `fileURLToPath`, not URL `pathname`; diagnostics use repository
+`/` separators. Fixture edits are restored byte-for-byte and CI rejects a dirty checkout.
+
+This closes portability of these Node tooling checks, not the complete local startup or live platform
+path. The bootstrap example above uses Bash syntax; PowerShell must adapt line continuations and output
+redirection. Building the PWA, applying both local D1 migration streams, authenticating and configuring
+remote-only bindings are still required before a usable local application session. Linux remains the
+full TypeScript/Worker/Rust verification runner; no Windows Rust/Worker qualification is implied.
 
 ## Upgrade rule
 
