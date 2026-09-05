@@ -193,3 +193,23 @@ jobs:
           $changes = git status --porcelain --untracked-files=all
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($changes) { Write-Error "Tests changed the checkout: $changes"; exit 1 }
+
+  local-launch:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Verify local isolation and command ordering
+        run: pnpm test:local-launch
+      - name: Boot actual Worker with full local migrations, then restart
+        run: pnpm local:smoke

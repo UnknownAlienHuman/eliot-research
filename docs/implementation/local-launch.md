@@ -31,19 +31,27 @@ pnpm local:dev
 
 `local:prepare` builds the actual PWA and applies **all** committed Core/Search migrations to local D1.
 `local:dev` repeats this idempotent preparation and binds the one Worker to `127.0.0.1:8787`. Generated
-`apps/eliotr-core/wrangler.local.jsonc` and `.eliotr-state/local/` are ignored. There are no remote
-AI Search bindings, schedules, resource provisioning or deployment in this command. Real Access
-configuration is preserved; API authentication is never disabled. External provider features are not
-simulated as working.
+`.eliotr-state/local/wrangler.json` and `.eliotr-state/local/state/` are ignored. The config is
+allowlisted; remote bindings, credentials, environment selectors and parent dotenv files cannot leak
+into local preparation. Local resources use separate names and one absolute persistence path.
+Only explicit local Access settings are accepted; authentication is never disabled. External providers
+are disabled, not simulated. This isolated profile does not import or erase state from the earlier
+`wrangler.local.jsonc` profile; that old state remains untouched.
 
-The empty-store smoke is: `/healthz` returns ready, `/` serves the built PWA, and a protected API without
-an Access assertion returns `401 ACCESS_JWT_MISSING`. This proves local runtime/schema setup, **not** an
-authenticated owner session or a populated corpus.
+Run `pnpm local:smoke` for a disposable loopback test. It applies every tracked migration, checks both
+migration ledgers and SQLite foreign-key/quick integrity checks, loads the actual PWA JavaScript asset,
+and rejects absent/forged Access assertions. Then it prepares and restarts the Worker, proving a stored
+sentinel and migration history survive. Only the smoke's own temporary state is removed. Native Windows
+and Linux CI run the same command. This proves boot, persistence and auth denial, **not** an authenticated
+owner session or a populated corpus. `pnpm test:local-launch` runs isolation/ordering negative fixtures.
 
 ## Authentication and initial authority
 
 The current authentication boundary expects a **valid signed Cloudflare Access assertion** in
-`Cf-Access-Jwt-Assertion`, with the exact issuer/audience configured in `.dev.vars`. Raw service-token
+`Cf-Access-Jwt-Assertion`, with the exact issuer/audience configured in
+`.eliotr-state/local/.dev.vars`. Only unique double-quoted, single-line `ACCESS_TEAM_DOMAIN`,
+`ACCESS_AUDIENCE` and `ACCESS_SERVICE_PRINCIPALS` assignments are permitted there; provider/deployment
+settings are rejected before any subprocess. Existing local settings are never overwritten. Raw service-token
 headers, an unsigned owner header and an arbitrary cookie are not accepted. A direct localhost browser
 does not receive Cloudflare edge assertion injection: an interactive local owner-session bridge is
 still pending. Do not work around that by weakening production authentication.

@@ -51,7 +51,9 @@
     "erasure:check": "node scripts/check-erasure-closure.mjs",
     "local:prepare": "node scripts/local-runtime.mjs --prepare",
     "local:dev": "node scripts/local-runtime.mjs --dev",
-    "launch:code": "node scripts/check-launch-code.mjs"
+    "launch:code": "node scripts/check-launch-code.mjs",
+    "local:smoke": "node scripts/local-runtime.mjs --smoke",
+    "test:local-launch": "node scripts/test-local-runtime.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

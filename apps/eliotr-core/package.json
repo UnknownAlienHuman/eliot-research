@@ -7,10 +7,10 @@
     "build": "wrangler deploy --dry-run --minify --outdir dist",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "dev": "wrangler dev",
+    "dev": "node ../../scripts/local-runtime.mjs --dev",
     "cf:types": "wrangler types --env-interface CloudflareEnv src/worker-configuration.d.ts",
     "deploy:dry-run": "wrangler deploy --dry-run --minify --outdir dist",
-    "deploy": "wrangler deploy"
+    "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
   },
   "dependencies": {
     "@eliotr/cloudflare-ai": "workspace:*",
