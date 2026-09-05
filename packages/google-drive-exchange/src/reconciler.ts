@@ -18,6 +18,7 @@ export interface ReconciliationDependencies {
   readonly contributionIntents: ContributionIntentPort;
 }
 
+// IN_PROGRESS: ER-19 required ChatGPT Drive Exchange has ports only; durable reconciliation and tamper audit are not implemented.
 export interface DriveReconciler {
   poll(generation: ExchangeGeneration, leaseOwner: string, nowEpochMs: number): Promise<{ imported: number; duplicates: number; tampered: number; incomplete: number }>;
   auditHistoricalRows(generation: ExchangeGeneration): Promise<{ checked: number; tampered: number; missing: number }>;

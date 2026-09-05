@@ -46,6 +46,25 @@
       ]
     },
     {
+      "id": "pending-drive-exchange",
+      "path": "packages/google-drive-exchange/src/reconciler.ts",
+      "sentinel": "IN_PROGRESS: ER-19 required ChatGPT Drive Exchange has ports only; durable reconciliation and tamper audit are not implemented.",
+      "owner_packets": [
+        "ER-18",
+        "ER-19",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IN_PROGRESS",
+      "behavior": "Required Day-0 ChatGPT Google Drive Exchange is unfinished: cursor/reconciler/result-publisher ports do not execute the leased changes/ID-hash audit/frozen R2/D1 ContributionIntent/result readback loop. The optional Gemini MCP planner and its self-reported observations do not implement or replace this path.",
+      "completion_evidence": [
+        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
+        "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
+        "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
+      ]
+    },
+    {
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
@@ -53,10 +72,12 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API.",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API. Owner-only revision history now reuses the catalog read fence and independently validates historical admissions; per-channel metadata is explicitly RECORDED_ONLY, never active index/evidence qualification.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
+        "apps/eliotr-core/test/source-revisions.test.ts: bounded actual D1/HTTP history, recorded readiness, cursor and withdrawal/purge/expiry negatives",
+        "tests/source-revisions.test.ts and built-PWA Chromium fixture: strict decoding, source/generation binding, pagination and private-state clearing",
         "live Access and remote D1 receipts"
       ]
     },
@@ -137,12 +158,13 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Signed gemini-spark identity reaches bounded status, Google planning and candidate-only receipt validation. Unscoped catalog access is withheld from discovery and direct execution until an explicit service-scope policy adapter is composed.",
+      "behavior": "Optional signed Gemini service MCP exposes status, no-effect planning and bounded v1 self-reported observation checks; target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance, write-precondition proof or the required ChatGPT Drive Exchange. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
         "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
-        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited."
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
+        "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]
     },
     {
@@ -158,7 +180,7 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Missing-ID discovery, revision/readiness/project views and the full initial populated browser loop remain open in #98.",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
@@ -171,7 +193,11 @@
         "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification",
         "tests/bundle-recovery.test.ts exact-file recovery metadata, generation/auth/cancellation and no implicit mutation",
         "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
-        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open"
+        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open",
+        "apps/eliotr-core/test/bundle-import-http.test.ts read-only exact-folder discovery after lost prepare/commit replies and PREPARING state; missing/foreign denial, altered metadata/bytes, expiry and policy withdrawal",
+        "apps/eliotr-core/src/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
+        "tests/bundle-recovery.test.ts exact discovery transport, bounded metadata, frozen input, cancellation and no fallback mutation",
+        "scripts/test-library-browser.mjs built PWA reload without operation ID -> read-only discovery -> explicit continuation; controlled HTTP backend, not complete real-storage browser qualification"
       ]
     },
     {

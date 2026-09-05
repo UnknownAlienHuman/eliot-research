@@ -29,8 +29,11 @@ There are three separate milestones:
 
 ### Still off-account work, not a Cloudflare excuse
 
-#89 merged a tested checkpoint; #98 retains missing-operation-ID discovery, revision/readiness/project workflows and the
-complete empty-setup -> import -> Library -> Lens browser/storage loop. Known-operation reload recovery is implemented without browser persistence. Its initializer currently
+#89 merged a tested checkpoint; #98 retains active-readiness/project workflows, remaining failure UI
+and the complete empty-setup -> import -> Library -> Lens browser/storage loop. The raw-file managed
+conversion -> qualification -> projection path required by §4.1 is also ordinary missing code, not a
+post-deployment enhancement; normalized-folder ingest alone does not satisfy it. Known-ID reload recovery
+and read-only exact-folder discovery of lost IDs are implemented without browser persistence. The initializer
 supports only a local absent immutable-import namespace. A governed remote setup adapter must be
 implemented/tested before a staging agent can use it; copying fixture SQL is not that adapter.
 #90–#97 still require the code checklists in their PRs. Implement live probe runners, their missing-input
@@ -89,8 +92,18 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
       the admission policy between stages and race a policy change with final commit; no source/head/
       outbox may become visible under the stale policy. Reconcile leftover staging through governed
       cleanup, never by deleting an unconfirmed canonical object.
+- [ ] Lose the prepare response before retaining its operation ID; rediscover by exact reselected folder
+      under the same signed principal, then explicitly continue the original operation. Discovery must
+      change no D1/R2 state. Missing/foreign lookups both return 404; changed bytes/metadata, expired
+      reservations and policy withdrawal must disclose no recovery key or start a replacement import.
 - [ ] Test read-policy withdrawal, owner rotation, expired/foreign cursors and ungranted service tokens.
       Report R2 delivery, canonical admission, Queue delivery and index readiness separately.
+
+- [ ] Verify the owner Library revision endpoint against multiple real admitted revisions. Deny foreign,
+      purged, expired and old-owner histories; race head/policy withdrawal with pagination. The existing
+      screen declares RECORDED_ONLY: compare its recorded channel generation/receipt with independent
+      active D1 Search/AI Search readback. Never infer live indexing or exact evidence from a stored
+      `ready` row. The history GET must not create grants, mutate indexes or trigger provider calls.
 
 ### #90 — Retrieval and evidence (ER-06/07/16/38/39; ER-24/27)
 
@@ -137,16 +150,29 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
       competing head updates. Verify section copy-on-write, changes/trace cursor binding, lost-ACK replay
       and dependent output invalidation. A draft rendered successfully is not a published report.
 
-### #95 — Google transport (ER-18/19/20/36; ER-17/26/27)
+### #95 — Required ChatGPT Drive Exchange and optional Gemini MCP (ER-18/19/20/36; ER-17/26/27)
 
-- [ ] Verify the selected single transport against current official APIs using disposable approved
-      Workspace/Drive/gcloud assets. Keep origin/cursor/schema-generation and exact append/readback
-      identities; import candidates only through the canonical admission path.
-- [ ] Test reconnect, credential rotation/revocation, historical-row tamper, reordered/missing rows and
-      lost ACK. Service tokens never impersonate `owner_pwa` or grant catalog/source access. Keep the
-      current MCP catalog withheld until explicit service-scoped authorization is implemented/tested.
-- [ ] Retain real initialize/list/call and candidate reconciliation evidence without raw credentials,
-      private rows or response content in logs. Provider success does not establish Eliot authority.
+- [ ] Implement and locally test the mandatory Drive adapters BEFORE accessing an account. Canonical
+      §§12.3–12.12 and ADR-0003 still select Drive for Day-0 ChatGPT. The Gemini MCP flag/helper is not
+      a qualified replacement; one active ChatGPT write transport only. Do not equate an interface,
+      serializer or self-reported Gemini observation with the complete exchange.
+- [ ] Qualify the exact dedicated subject/account, native Sheet/file and numeric tab IDs, exchange
+      generation, narrow offline drive.file token lifecycle and approved scopes. Demonstrate one
+      atomic REQUESTS/PAYLOAD_PARTS append through the actual ChatGPT action, then exact readback.
+      Historical connector observations do not qualify today's account/action. Keep secrets out of git.
+- [ ] Verify leased changes replay, exact file-ID filtering, bounded ID-column/range reads, R2 freeze,
+      idempotent D1 ContributionIntent and cursor commit only after reconciliation. Reorder/edit/delete
+      historical rows, drop notifications and interrupt each ACK; detect tampering without duplicate
+      canonical admission. OAuth invalid_grant stops only this transport with REAUTH_REQUIRED.
+- [ ] Publish result Doc/RESULTS after the canonical artifact and terminal D1 receipt; read back exact
+      metadata/rows. Failure of the delivery copy must leave the canonical artifact available.
+- [ ] Qualify optional Gemini MCP separately only when explicitly selected. Use its exact signed service
+      identity; no owner impersonation or ungranted catalog reads. v1 receipt checks are bounded,
+      self-reported consistency only, not proof of plan issuance, provider state or honored write CAS.
+      Read observations bind resource ID/digest/revision and time; unsupported/unbound checks stay
+      unverified. Future/expired observations or changed plan descriptors cannot be accepted as a match.
+- [ ] Retain real Drive action/readback/freeze/reconciliation and, when applicable, Access/MCP receipts
+      separately. Never use a generic `OBSERVED_MATCH` as T4 or canonical admission evidence.
 
 ### #96 — Erasure / recovery / operations (ER-28/33/34/35; ER-26/27)
 
@@ -161,6 +187,9 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
       index throughput, actual cost and spend-stop/overload behavior. Do not relax thresholds to pass.
 
 ### #97 — Promoted Rust kernel (ER-00/01/02/03 and each family; ER-24/27)
+
+Use LANGUAGE_RUNTIME_CONTRACT §10 phases: M5 Wasm + differential shadow, M6 authority promotion,
+M7 removal of superseded TypeScript. These are separate acceptance decisions, not renamed milestones.
 
 - [ ] On the complete Worker, verify promoted family/ABI/build identity and exact parity fixtures,
       including initial owner tokens introduced by #89. No permanent second TS decision authority.

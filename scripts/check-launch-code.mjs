@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const require = createRequire(import.meta.url);
+// ELIOT_RESEARCH §§0, 12.12, 18–19: optional integrations cannot replace these products.
+const requiredSlices = new Set(["RETRIEVAL", "RESEARCH", "FEDERATION", "WIKI", "DRIVE_EXCHANGE", "ERASURE"]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Negative release gate, not a completeness proof or replacement for retained live conformance. */
 export function launchCodeBlockers(registry, composition) {
@@ -17,7 +21,36 @@ export function launchCodeBlockers(registry, composition) {
     }
     if (["SCAFFOLD_FAIL_CLOSED", "IN_PROGRESS"].includes(entry.state)) blockers.push(`${entry.id}: ${entry.path}`);
   }
-  for (const match of composition.matchAll(/unavailable\(\s*["']([^"']+)["']\s*\)/gu)) blockers.push(match[1]);
+  // Load the already pinned compiler only when checking a release, not at module import.
+  // Parsing excludes comments/string examples and refuses dynamic declarations instead of guessing.
+  const ts = require("typescript");
+  const source = ts.createSourceFile("composition-root.ts", composition, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  if (source.parseDiagnostics.length) throw new Error("Launch composition cannot be parsed");
+  let declarations = 0;
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "unavailable") {
+      if (node.arguments.length !== 1 || !ts.isStringLiteral(node.arguments[0])) {
+        throw new Error("Dynamic unavailable operation requires launch-gate review");
+      }
+      blockers.push(node.arguments[0].text);
+    }
+    if (ts.isPropertyAssignment(node) &&
+        (ts.isIdentifier(node.name) || ts.isStringLiteral(node.name)) && node.name.text === "disabled_slices") {
+      declarations += 1;
+      if (!ts.isArrayLiteralExpression(node.initializer)) throw new Error("Dynamic disabled slices require launch-gate review");
+      const seen = new Set();
+      for (const item of node.initializer.elements) {
+        if (!ts.isStringLiteral(item) || !/^[A-Z][A-Z0-9_]{0,63}$/u.test(item.text) || seen.has(item.text)) {
+          throw new Error("Invalid or duplicate disabled slice");
+        }
+        seen.add(item.text);
+        if (requiredSlices.has(item.text)) blockers.push(`disabled required slice: ${item.text}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  if (declarations !== 1) throw new Error("Expected exactly one explicit disabled_slices declaration");
   return [...new Set(blockers)].sort();
 }
 export async function assertLaunchCodeComplete() {

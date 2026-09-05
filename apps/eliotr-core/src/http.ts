@@ -6,6 +6,7 @@ import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
   CatalogRequest,
+  SourceRevisionsRequest,
   RouteDefinition,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
@@ -294,6 +295,22 @@ function parseCatalogRequest(url: URL): CatalogRequest {
   };
 }
 
+function parseSourceRevisionsRequest(url: URL): SourceRevisionsRequest {
+  for (const key of url.searchParams.keys()) {
+    if (!["source_id", "cursor", "limit"].includes(key)) {
+      throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400, "Revision query contains an unknown parameter");
+    }
+  }
+  const sourceId = singleQueryValue(url, "source_id");
+  const cursor = singleQueryValue(url, "cursor");
+  const rawLimit = singleQueryValue(url, "limit");
+  if (sourceId === undefined || (rawLimit !== undefined && !/^(?:[1-9]|10)$/u.test(rawLimit))) {
+    throw new HttpRequestError("SOURCE_REVISIONS_INPUT_INVALID", 400, "Source and a limit in [1, 10] are required");
+  }
+  return { source_id: sourceId, limit: rawLimit === undefined ? 10 : Number(rawLimit),
+    ...(cursor === undefined ? {} : { cursor }) };
+}
+
 async function requireApplicationReady(
   request: Request,
   application: ApplicationLifecycle,
@@ -324,6 +341,11 @@ async function dispatch(
     case "system.capabilities":
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
+    case "library.source.revisions": {
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
+    }
     case "research.catalog": {
       const blocked = await requireApplicationReady(request, application);
       if (blocked !== null) return blocked;

@@ -1,5 +1,8 @@
 import type {
   BundleAdmissionReceipt,
+  ChannelReadiness,
+  SourceCurrentness,
+  SourceRevision,
   NormalizedBundleManifest,
 } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "./http.js";
@@ -10,6 +13,9 @@ export interface PrepareBundleUploadRequest {
   readonly file_hashes: Readonly<Record<string, string>>;
   readonly idempotency_key: string;
 }
+
+/** Read-only exact-folder lookup. A missing operation must never allocate a new reservation. */
+export type DiscoverBundleUploadRequest = Omit<PrepareBundleUploadRequest, "idempotency_key">;
 
 export interface PreparedBundleFileUpload {
   readonly path: string;
@@ -107,7 +113,33 @@ export interface BundleIngestRecovery {
   readonly file_hashes: Readonly<Record<string, string>>;
 }
 
+/** Owner UI metadata only; not a query, evidence grant or index validation receipt. */
+export interface SourceRevisionsRequest {
+  readonly source_id: string;
+  readonly limit: number;
+  readonly cursor?: string;
+}
+export interface SourceRevisionsResult {
+  readonly protocol: "eliotr.source-revisions.v1";
+  readonly source_id: string;
+  readonly head_revision_ref: string;
+  readonly observed_at: string;
+  readonly readiness_basis: "RECORDED_ONLY";
+  readonly revisions: readonly {
+    readonly source_revision_ref: string;
+    readonly content_sha256: string;
+    readonly captured_at: string;
+    readonly admitted_at: string;
+    readonly quality_state: SourceRevision["quality_state"];
+    readonly currentness_state: SourceCurrentness["observation_freshness"];
+    readonly readiness: readonly ChannelReadiness[];
+  }[];
+  readonly next_cursor?: string;
+}
+
 export interface OwnerApi {
+  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
+  discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
   prepareBundle(
     context: AuthenticatedRequestContext,

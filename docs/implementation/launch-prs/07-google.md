@@ -1,39 +1,72 @@
-# Launch 07 — Drive and selected Google transport
+# Launch 07 — Required ChatGPT Drive Exchange; optional Gemini service
 
-Status: queued draft, unclaimed. Dependency: #89 for canonical import/admission. Owners ER-18/19/20/36,
-ER-17 Access and ER-24/26 composition/setup; ER-25 narrow connector-status UI integration.
-Read their packets, `packages/google-drive-exchange`, `apps/eliotr-core/src/gemini-mcp.ts`, existing
-Google schemas/provisioners and the architecture's external-transport experiment limits.
+Status: unfinished draft. Read current main, canonical-alignment.md, agent-start.md and the exact
+ER-18/19/20 packet before claiming one bounded task. #89's merged normalized-ingest checkpoint is
+available; #98 retains Library acceptance. ER-17/24/26 own auth/composition/setup; ER-25 owns UI.
 
-## Small sequential checkpoints
+## Canonical decision — not a transport choice for an implementing agent
 
-- [ ] G1. Audit the actual selected transport/profile and choose exactly one active production owner.
-  Preserve the other disabled; do not add another SDK/MCP daemon or silently broaden an experiment.
-  Verify current official API/CLI behavior before adapting pinned integration code.
-- [ ] G2. Complete exact schema provisioning and generation activation with intent, attempt, receipt,
-  readback and reconciliation. A successful Google HTTP response is transport observation only.
-- [ ] G3. Implement bounded append/export/import using stable IDs/hashes, never row positions. Freeze
-  exact candidate bytes in canonical storage and send import through #89 admission; Google cannot grant
-  scope membership, overwrite canonical evidence or promote itself into trusted research state.
-- [ ] G4. Finish cursor reconciliation, reconnect and historical-row tamper detection. Retry/lost ACK,
-  reordered/deleted/edited rows and revision drift must not duplicate canonical import or hide gaps.
-- [ ] G5. Implement secure credential lifecycle: encrypted refresh-token storage where applicable,
-  revocation/rotation/expiry and explicit REAUTH_REQUIRED without deleting canonical artifacts. Keep
-  secrets/content out of logs and client errors. External side effects still require ordinary approval.
-- [ ] G6. Wire connector state and allowed owner workflows; test MCP initialize/list/call and exact
-  principal/client-ID boundaries, no browser-originated service-token escalation or reverse authority.
-- [ ] G7. Add local deterministic and recorded transport regressions, RU/EN/code/table round-trip and
-  outage/reconnect/cursor/tamper negatives; prepare disposable real Workspace/Drive/gcloud readback
-  scripts for the complete staging trial without executing or claiming them during implementation.
+ELIOT_RESEARCH v29.1 (2026-08-28) §§12.3–12.12, §13.4, §15.1 and accepted ADR-0003 require
+Google Drive Exchange for Day-0 and first production ChatGPT use. A future qualified native app may
+REPLACE it; two simultaneous ChatGPT write transports are forbidden. No accepted ADR substitutes
+Gemini MCP for Drive. The earlier plan/agent-start text conflated these distinct client surfaces.
 
-One bounded adapter/cursor/schema checkpoint plus a negative test per commit. Existing ER ownership
-and public protocol generations remain authoritative. Dependencies on external credentials must be
-reported as unmet setup, not replaced with mock success. No full Google SDK in the Worker.
+The current GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp enables only an optional ER-36 no-effect planner
+and self-reported observation checker. It does not implement ChatGPT exchange. The existing
+mutual-exclusion guard remains; do not bypass it or invent a second writer. Implement the canonical
+Drive adapters rather than declaring their unfinished cursor/REST/result interfaces unnecessary.
+Use the existing exchange contracts, serializer and contribution parser, not a parallel protocol.
 
-## Completion
+## Sequential, independently tested checkpoints
 
-All selected transport code and owner flows work locally with controlled external boundaries; record
-that test scope exactly. Require repository/Rust gates, strict Worker tests, local boot and exact-head
-CI. Keep draft until G1–G7 code checks pass. Actual account mutations, OAuth reconnect and signed MCP
-receipts remain NOT_EXECUTED until the complete authorized staging trial. Update status/gaps and retain
-one transport owner. No partial Cloudflare development deployment.
+- [ ] G1 / ER-20. Implement one bounded fetch-based Drive/Sheets/Docs REST adapter at a time behind
+  GoogleDrivePort. Verify current official API semantics and exact account/file/project bindings;
+  reject redirects, excess bytes, malformed replies and uncertain outcomes. No large SDK or daemon.
+- [ ] G2 / ER-20. Narrow drive.file + offline OAuth, dedicated subject/email validation, encrypted
+  refresh-token vault, short-lived access token cache, rotation/revocation/expiry and REAUTH_REQUIRED.
+  Testing-mode expiry cannot be production-ready. Tests use controlled tokens without logging them.
+- [ ] G3 / ER-18. Fixed exchange folder/native Sheet/numeric tab schema and immutable generation
+  provisioning. One atomic REQUESTS/PAYLOAD_PARTS appendCells batch, exact readback and idempotency.
+  Keep existing byte/part limits. Schema changes create shadow generations; never mutate active schema.
+- [ ] G4 / ER-19. Leased changes.list cursor replay, exact file-ID filtering, bounded ID-column/range
+  scans, canonicalized R2 freeze and D1 ContributionIntent reconciliation. Commit the cursor ONLY after
+  successful reconciliation. Missing payload parts cannot start jobs. A lost notification or ACK must
+  not lose work or duplicate admission. Rows/positions are navigation, never identity.
+- [ ] G5 / ER-19. Historical ID/hash audit catches edited, reordered, missing and duplicate rows as
+  applicable. Preserve frozen canonical bytes; mutable Google history is diagnostic, not evidence.
+  Test partial reconciliation, lease expiry, concurrent workers and restart using actual local storage.
+- [ ] G6 / ER-20. Publish delivery Doc/RESULTS only after canonical artifact and terminal D1 receipt.
+  Read back exact row/metadata. invalid_grant or lost publication ACK leaves the canonical artifact
+  available and reconciles the same delivery intent; do not create a new effect to hide uncertainty.
+- [ ] G7 / ER-24/25. Compose the required exchange and connector-status/reauth flows. Source payloads
+  use existing governed source admission; ordinary exchange commands still require typed contribution
+  reconciliation, not automatic reinterpretation as normalized bundles. No Drive-derived source grants.
+- [ ] G8 / ER-27. Complete local recorded-provider + real D1/R2 lifecycle and failure tests; prepare
+  bounded, redacted probe runners for genuine account/action/append/readback/reconnect qualification.
+  A serializer test or generic observation match is not this lifecycle.
+
+G1–G8 are bounded checkpoints, not one agent-sized task each when multiple state families are involved.
+Split further by port method/state family. Register shared migrations/exports/CI/composition edits with
+the integrator; do not overlap #90/#98 or add permanent duplicate authority. TypeScript owns I/O, SQL
+owns transaction constraints, and deterministic decisions follow the language migration contract.
+
+## Optional ER-36 Gemini surface
+
+The corrected v1 validator checks declared target, read revision, digest, time and plan descriptors,
+but caller-supplied plans are unsigned and receipts are self-reports. It does not prove original
+issuance, consent, actual Google readback or a write precondition. Unbound identities/digests, unsupported
+Cloud/Calendar/Gmail typed state and mutation CAS evidence remain explicitly unverified. Only a reviewed
+versioned operation-specific adapter may close those gaps; no extra authority inferred from status text.
+The service catalog remains withheld until explicit service-scope grants and revocation tests exist.
+Never relabel a service as owner_pwa. Qualify optional Access/MCP separately when explicitly selected.
+
+## Completion and Cloudflare handoff
+
+Require exact-head full repository/Rust CI, strict Worker fixtures, local Linux/Windows boot, actual
+storage replay/tamper tests and the prescribed browser user loop. Drive remains IN_PROGRESS until its
+code is executable, not IMPLEMENTED_NOT_LIVE merely because interfaces compile. Keep this PR draft.
+
+Read cloudflare-handoff.md shared preflight and #95 section. Real dedicated-account ChatGPT actions,
+OAuth reconnect and exact Google readbacks remain NOT_EXECUTED until complete mandatory application
+code/Rust promotion and approved target isolation. Missing adapters and probe runners are off-account
+work. No partial Cloudflare deployment, launch-hold bypass, secret logging or provider-success authority.

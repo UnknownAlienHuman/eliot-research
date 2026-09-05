@@ -273,7 +273,12 @@ export function decodeApiProblem(value: unknown, fallbackStatus: number): ApiReq
 
 /** Authenticated same-origin transport; the deadline includes streaming body consumption. */
 export async function requestApi(path: string, init: RequestInit = {}): Promise<unknown> {
-  if (!path.startsWith("/api/v1/") || path.includes("\\") || path.includes("..")) {
+  // Check the pathname, not dots in a valid identifier/query. Reject URL normalization
+  // (including encoded parent segments) before attaching same-origin credentials.
+  let unchangedPath = false;
+  try { unchangedPath = new URL(path, "https://local.invalid").pathname === path.split("?")[0]; }
+  catch { /* The typed rejection below covers malformed URLs. */ }
+  if (!path.startsWith("/api/v1/") || /[\\#\u0000-\u0020\u007f]/u.test(path) || !unchangedPath) {
     throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
   }
   const controller = new AbortController();
