@@ -1,5 +1,5 @@
 import { readFile, appendFile } from "node:fs/promises";
-import { planBranchCleanup } from "./branch-hygiene-lib.mjs";
+import { branchCeiling, planBranchCleanup } from "./branch-hygiene-lib.mjs";
 
 const repository = process.env.GITHUB_REPOSITORY;
 const token = process.env.GITHUB_TOKEN;
@@ -159,8 +159,11 @@ if (!remaining.includes(config.default_branch)) {
 const nonDefault = remaining.filter(
   (name) => name !== config.default_branch,
 );
-const actualCeilingSatisfied =
-  nonDefault.length <= config.max_non_default_branches;
+const finalOpenHeads = pullRequestHeads(await paged(
+  `/repos/${repository}/pulls?state=open&sort=updated&direction=desc`,
+), "open");
+const ceiling = branchCeiling(remaining, finalOpenHeads, config);
+const actualCeilingSatisfied = ceiling.satisfied;
 
 const summary = [
   "# Eliot Research branch hygiene",
@@ -171,7 +174,9 @@ const summary = [
   `- already absent: **${alreadyAbsent.length}**`,
   `- skipped after recheck: **${skipped.length}**`,
   `- remaining non-default branches: **${nonDefault.length}**`,
-  `- ceiling: **${config.max_non_default_branches}**`,
+  `- reserved open launch PR branches: **${ceiling.reserved}**`,
+  `- counted non-default branches: **${ceiling.counted}**`,
+  `- ceiling (excluding exact open reservations): **${config.max_non_default_branches}**`,
   `- projected ceiling satisfied: **${plan.ceiling_satisfied}**`,
   `- actual ceiling satisfied: **${actualCeilingSatisfied}**`,
   "",
@@ -203,7 +208,7 @@ console.log(summary);
 
 if (!actualCeilingSatisfied) {
   throw new Error(
-    `branch ceiling still exceeded: ${nonDefault.length} > ` +
+    `branch ceiling still exceeded: ${ceiling.counted} > ` +
     `${config.max_non_default_branches}`,
   );
 }

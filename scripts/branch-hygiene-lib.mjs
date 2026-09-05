@@ -31,6 +31,7 @@ export function validateBranchHygieneConfig(raw) {
     "ttl_hours",
     "bootstrap_delete_before",
     "preserve_open_pull_requests",
+    "reserved_open_pr_heads",
   ]);
   for (const key of Object.keys(raw)) {
     if (!allowed.has(key)) throw new Error(`unknown branch hygiene field: ${key}`);
@@ -51,7 +52,15 @@ export function validateBranchHygieneConfig(raw) {
   if (raw.preserve_open_pull_requests !== true) {
     throw new Error("open pull requests must be preserved");
   }
+  const reserved = raw.reserved_open_pr_heads ?? [];
+  const reservedSet = branchNameSet(reserved, "reserved_open_pr_heads");
+  if (reserved.length > 9 || reservedSet.size !== reserved.length ||
+      reserved.some((name) => name === raw.default_branch ||
+        !/^agent\/launch-[0-9]{2}-[a-z-]+-20260905$/u.test(name))) {
+    throw new Error("reserved_open_pr_heads must name at most nine unique launch PR branches");
+  }
   return Object.freeze({
+    reserved_open_pr_heads: Object.freeze([...reserved]),
     protocol: raw.protocol,
     default_branch: raw.default_branch,
     max_non_default_branches: raw.max_non_default_branches,
@@ -59,6 +68,18 @@ export function validateBranchHygieneConfig(raw) {
     bootstrap_delete_before: raw.bootstrap_delete_before,
     preserve_open_pull_requests: true,
   });
+}
+
+/** Exact owner-approved planning reservations count only while their PR is open. */
+export function branchCeiling(branchNames, openPrHeads, rawConfig) {
+  const config = validateBranchHygieneConfig(rawConfig);
+  const open = branchNameSet(openPrHeads, "open_pr_heads");
+  const reserved = new Set(config.reserved_open_pr_heads);
+  const nonDefault = [...branchNameSet(branchNames, "branches")].filter((name) => name !== config.default_branch);
+  const exempt = nonDefault.filter((name) => reserved.has(name) && open.has(name));
+  const counted = nonDefault.length - exempt.length;
+  return { total: nonDefault.length, reserved: exempt.length, counted,
+    satisfied: counted <= config.max_non_default_branches };
 }
 
 export function classifyBranch(branch, context) {
@@ -149,7 +170,9 @@ export function planBranchCleanup({
     .sort(newestFirst);
   const recentCapacity = Math.max(
     0,
-    config.max_non_default_branches - fixedNonDefault.length,
+    config.max_non_default_branches - branchCeiling(
+      fixedNonDefault.map((item) => item.name), [...openPrHeads], config,
+    ).counted,
   );
   const recentToPreserve = new Set(
     recent.slice(0, recentCapacity).map((item) => item.name),
@@ -170,13 +193,15 @@ export function planBranchCleanup({
     (item) => item.name !== config.default_branch,
   ).length;
 
+  const ceiling = branchCeiling(preserveItems.map((item) => item.name), [...openPrHeads], config);
   return Object.freeze({
     config,
     decisions: Object.freeze(decisions),
     delete: Object.freeze(deleteItems),
     preserve: Object.freeze(preserveItems),
     projected_non_default_branches: projectedNonDefault,
-    ceiling_satisfied:
-      projectedNonDefault <= config.max_non_default_branches,
+    reserved_open_pr_branches: ceiling.reserved,
+    counted_non_default_branches: ceiling.counted,
+    ceiling_satisfied: ceiling.satisfied,
   });
 }

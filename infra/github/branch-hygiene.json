@@ -4,5 +4,16 @@
   "max_non_default_branches": 5,
   "ttl_hours": 24,
   "bootstrap_delete_before": "2026-09-02T00:00:00.000Z",
-  "preserve_open_pull_requests": true
+  "preserve_open_pull_requests": true,
+  "reserved_open_pr_heads": [
+    "agent/launch-01-library-20260905",
+    "agent/launch-02-retrieval-20260905",
+    "agent/launch-03-corpus-lens-20260905",
+    "agent/launch-04-research-20260905",
+    "agent/launch-05-federation-20260905",
+    "agent/launch-06-wiki-reports-20260905",
+    "agent/launch-07-google-20260905",
+    "agent/launch-08-recovery-20260905",
+    "agent/launch-09-rust-20260905"
+  ]
 }
