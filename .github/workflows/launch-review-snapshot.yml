@@ -1,0 +1,32 @@
+name: launch-review-snapshot
+on:
+  push:
+    branches: [agent/launch-01-library-20260905]
+    paths: [.github/workflows/launch-review-snapshot.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          git rev-parse HEAD > /tmp/SNAPSHOT_HEAD_SHA
+          git archive --format=tar.gz --output=/tmp/source.tar.gz HEAD
+          find . -name node_modules -type d -prune -print0 | tar --null -T - -czf /tmp/dependencies.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launch-review-kit
+          path: |
+            /tmp/source.tar.gz
+            /tmp/dependencies.tar.gz
+            /tmp/SNAPSHOT_HEAD_SHA
+          retention-days: 1
+          if-no-files-found: error
