@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createR2StagedBundlePort } from "./ingest.js";
 import {
   bundleFixture,
   fakeBucket,
-  testDigestSink,
+  stagingTestPort,
   uploadAll,
 } from "./ingest-test-fixture.js";
 
@@ -12,13 +11,7 @@ describe("R2 normalized bundle staging resilience", () => {
     const work = fakeBucket({ throw_after_put_prefix: "staging/session/" });
     const evidence = fakeBucket();
     const fixture = await bundleFixture();
-    const port = createR2StagedBundlePort({
-      work_bucket: work.binding,
-      evidence_bucket: evidence.binding,
-      create_sha256_sink: testDigestSink,
-      authorize_promotion: async () => true,
-      now: () => Date.parse("2026-08-29T00:00:00Z"),
-    });
+    const port = stagingTestPort(work, evidence);
     const input = {
       manifest: fixture.manifest,
       residency_key: fixture.residency,
@@ -38,13 +31,7 @@ describe("R2 normalized bundle staging resilience", () => {
     const work = fakeBucket();
     const evidence = fakeBucket();
     const fixture = await bundleFixture();
-    const port = createR2StagedBundlePort({
-      work_bucket: work.binding,
-      evidence_bucket: evidence.binding,
-      create_sha256_sink: testDigestSink,
-      authorize_promotion: async () => false,
-      now: () => Date.parse("2026-08-29T00:00:00Z"),
-    });
+    const port = stagingTestPort(work, evidence, { authorize_promotion: async () => false });
     const prepared = await port.prepare({
       manifest: fixture.manifest,
       residency_key: fixture.residency,
@@ -65,13 +52,7 @@ describe("R2 normalized bundle staging resilience", () => {
     const work = fakeBucket();
     const evidence = fakeBucket();
     const fixture = await bundleFixture();
-    const port = createR2StagedBundlePort({
-      work_bucket: work.binding,
-      evidence_bucket: evidence.binding,
-      create_sha256_sink: testDigestSink,
-      authorize_promotion: async () => true,
-      now: () => Date.parse("2026-08-29T00:00:00Z"),
-    });
+    const port = stagingTestPort(work, evidence);
     const prepared = await port.prepare({
       manifest: fixture.manifest,
       residency_key: fixture.residency,
@@ -100,13 +81,7 @@ describe("R2 normalized bundle staging resilience", () => {
     const work = fakeBucket();
     const evidence = fakeBucket();
     const fixture = await bundleFixture();
-    const port = createR2StagedBundlePort({
-      work_bucket: work.binding,
-      evidence_bucket: evidence.binding,
-      create_sha256_sink: testDigestSink,
-      authorize_promotion: async () => true,
-      now: () => Date.parse("2026-08-29T00:00:00Z"),
-    });
+    const port = stagingTestPort(work, evidence);
     const prepared = await port.prepare({
       manifest: fixture.manifest,
       residency_key: fixture.residency,

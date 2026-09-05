@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalDigest, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
-import { importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";
+import { createBrowserBundleImport, importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";
 import { type ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
@@ -119,6 +119,73 @@ describe("actual PWA import protocol through Worker/D1/R2", () => {
       .bind(namespace).run();
     await expect(importBrowserBundle(bundle, key, { transport })).rejects.toMatchObject({ code: "INGEST_POLICY_DENIED" });
     expect(await delta("source_revision")).toBe(1);
+  });
+
+  it.each(["part-before", "part-after", "complete-before", "complete-after", "commit-before", "commit-after"])("continues %s failure against actual R2/D1 with one operation and one source revision", async (fault) => {
+    await setup(); const bundle = await input(); let injected = false;
+    const calls: string[] = []; const bodies: Blob[] = [];
+    const broken: ImportTransport = async (path, init) => {
+      calls.push(path);
+      const kind = path.includes("/parts/") ? "part" : path.endsWith("/files/complete") ? "complete" :
+        path.endsWith("/commit") ? "commit" : "other";
+      if (kind === "part") bodies.push(init?.body as Blob);
+      if (!injected && fault === `${kind}-before`) { injected = true; throw new Error("interrupted"); }
+      const value = await transport(path, init);
+      if (!injected && fault === `${kind}-after`) { injected = true; throw new Error("lost acknowledgement"); }
+      return value;
+    };
+    const attempt = createBrowserBundleImport(bundle, `same-tab-${namespace}`);
+    await expect(attempt.run({ transport: broken })).rejects.toThrow();
+    expect(attempt.canResume).toBe(true);
+    const before = calls.length;
+    expect((await attempt.run({ transport: broken }))?.decision).toBe("ADMITTED");
+    expect(calls[before]).toMatch(/^\/api\/v1\/ingest\/bundles\/ingest-/u);
+    expect(calls.filter((path) => path.endsWith("/prepare"))).toHaveLength(1);
+    expect(calls.filter((path) => path.includes("/parts/"))).toHaveLength(bundle.files.length + (fault.startsWith("part-") ? 1 : 0));
+    if (fault.startsWith("part-")) expect(await bodies[0]?.text()).toBe(await bodies[1]?.text());
+    expect(await delta("bundle_ingest_operation")).toBe(1);
+    expect(await delta("source_revision")).toBe(1); expect(await delta("outbox")).toBe(1);
+    expect(await delta("scope_read_policy")).toBe(0);
+    attempt.dispose();
+  });
+  it("refuses continuation after admission policy revocation before any further R2 write", async () => {
+    await setup(); const attempt = createBrowserBundleImport(await input(), "revoked-continuation");
+    await expect(attempt.run({ transport: async (path, init) => {
+      if (path.includes("/parts/")) throw new Error("interrupted"); return transport(path, init);
+    } })).rejects.toThrow("interrupted");
+    await db.prepare("UPDATE source_admission_policy SET authorized_principal_refs_json='[\"revoked-owner\"]' WHERE source_namespace_id=?1").bind(namespace).run();
+    const calls: string[] = [];
+    await expect(attempt.run({ transport: async (path, init) => { calls.push(path); return transport(path, init); } }))
+      .rejects.toMatchObject({ status: 403 });
+    expect(calls).toHaveLength(1); expect(attempt.canResume).toBe(false);
+    expect(await delta("source_revision")).toBe(0);
+  });
+
+  it("rolls back source/head/outbox when the policy changes immediately before the commit batch", async () => {
+    await setup(); const bundle = await input(); let raced = false;
+    const guardedDb = new Proxy(db, { get(target, key) {
+      if (key === "batch") return async (statements: D1PreparedStatement[]) => {
+        const row = await db.prepare("SELECT state FROM bundle_ingest_operation WHERE source_namespace_id=?1").bind(namespace).first<{ state: string }>();
+        if (!raced && row?.state === "AUTHORIZED") {
+          raced = true;
+          await db.prepare("UPDATE source_admission_policy SET license_policy_ref='changed-license' WHERE source_namespace_id=?1").bind(namespace).run();
+        }
+        return target.batch(statements);
+      };
+      const value: unknown = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const racedTransport: ImportTransport = async (path, init) => {
+      const response = await handleHttp(new Request(`https://research.example${path}`, init), { ...runtime, CORE_DB: guardedDb }, {} as ExecutionContext,
+        { accessVerifier: { async verify() { return { principal_ref: owner, credential_generation: "credential-1",
+          authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 3600000).toISOString() }; } } });
+      const value: unknown = await response.json(); if (!response.ok) throw decodeApiProblem(value, response.status); return value;
+    };
+    await expect(importBrowserBundle(bundle, `commit-race-${namespace}`, { transport: racedTransport })).rejects.toThrow();
+    expect(raced).toBe(true);
+    expect(await delta("source_revision")).toBe(0); expect(await delta("outbox")).toBe(0);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM source WHERE source_namespace_id=?1").bind(namespace).first("n")).toBe(0);
+    expect(await db.prepare("SELECT state FROM bundle_ingest_operation WHERE source_namespace_id=?1").bind(namespace).first("state")).toBe("AUTHORIZED");
   });
 
 });

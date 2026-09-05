@@ -527,7 +527,8 @@
       "owned_paths": [
         "apps/eliotr-pwa/**",
         "tests/library.test.ts",
-        "scripts/test-library-browser.mjs"
+        "scripts/test-library-browser.mjs",
+        "scripts/lib/browser-import-fixture.mjs"
       ],
       "mandatory_negative_case": "Simulate Drive/model outage and prove core library/retrieval UI remains usable with explicit degraded status.",
       "document": "ER-25-owner-pwa.md",

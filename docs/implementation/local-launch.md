@@ -41,7 +41,7 @@ are disabled, not simulated. This isolated profile does not import or erase stat
 Run `pnpm local:smoke` for a disposable loopback test. It applies every tracked migration, checks both
 migration ledgers and SQLite foreign-key/quick integrity checks, loads the actual PWA JavaScript asset,
 and rejects absent/forged Access assertions. Then it prepares and restarts the Worker, proving a stored
-sentinel and migration history survive. Only the smoke's own temporary state is removed. Native Windows
+sentinel, explicit initial-import namespace and migration history survive. The namespace CLI adapter is exercised with a controlled OS-operator identity; this is not a signed IdP login receipt. Only the smoke's own temporary state is removed. Native Windows
 and Linux CI run the same command. This proves boot, persistence and auth denial, **not** an authenticated
 owner session or a populated corpus. `pnpm test:local-launch` runs isolation/ordering negative fixtures.
 
@@ -196,3 +196,82 @@ with controlled HTTP fixtures. Set `ELIOTR_BROWSER_EXECUTABLE` when the executab
 Linux path. CI uses its standard Linux browser; local managed browser policies are not modified to run
 this test. The test is not a real IdP login or a full normalized-bundle-to-search browser qualification.
 Actual catalog and Library-to-Lens APIs are independently exercised against Workers/D1 integration.
+
+
+## Explicit initial import namespace (Launch 01)
+
+Before the first import, run the local owner command with a reviewed JSON intent:
+
+```text
+pnpm local:owner --initialize-namespace ./local-namespace.json
+```
+
+The command uses the same signed Access login/session verification as `local:owner`. It changes only
+local D1 through the existing `--local`/absolute persistence adapter. It never provisions an account,
+Worker, tunnel or remote namespace. Example intent (replace `created_at` with the current canonical UTC
+time and select actual license/residency/retention policy references; these names do not create policy):
+
+```json
+{
+  "protocol": "eliotr.local-namespace-init.v1",
+  "namespace": "owner-imports",
+  "owner_incarnation_ref": "installation-1",
+  "expected_ownership_revision": 0,
+  "expected_policy_revision": 0,
+  "created_at": "2026-09-05T12:00:00.000Z",
+  "policy": {
+    "allowed_ownership_modes": ["immutable_import"],
+    "source_class": "document",
+    "assurance_ceiling": "QUALIFIED",
+    "instruction_taint": "DATA_ONLY",
+    "allowed_effects": "READ_ONLY",
+    "allowed_use": ["research"],
+    "disclosure_ceiling": "owner-only",
+    "license_policy_ref": "license-1",
+    "default_storage_policy": "NORMALIZED_CLOUD_ONLY",
+    "default_residency_profile_id": "residency-1",
+    "default_retention_policy_id": "retention-1",
+    "minimum_quality_state": "standard"
+  }
+}
+```
+
+The v1 profile is deliberately limited to a NEW `eliotr`-owned immutable-import namespace. Input is
+bounded to 8192 UTF-8 bytes and a creation time no more than seven days old. Initial ownership and policy
+revisions must be exactly zero (absent); the result is revision 1. The signed principal, not a supplied
+`authorized_principal_refs` field, becomes the initial admission principal. A policy-only interrupted
+preparation can resume with the same intent. Existing, retired, fenced, transferred, changed or orphaned
+lineage is not overwritten. The output contains the exact ownership tuple, policy and command digest.
+Use its namespace, `owner_system_id` and `source_owner_generation` when preparing the normalized import
+bundle; do not relabel an already hashed external owner's bundle as a takeover. This namespace does
+not change the external origin's ownership. General ownership cutover and policy lifecycle management
+remain separate governed operations, not flags on this initializer.
+
+Initial policy is written and read back first; ACTIVE ownership is inserted only with an exact policy
+predicate. This is recoverable two-step initialization, **not an atomic two-table transaction**. A final
+joined read checks both records before a successful receipt. `QUALIFIED` is only a ceiling: the actual
+admission path still evaluates the uploaded bytes. No SourceRevision, index, scope or read grant is
+created by initialization. Use the separately documented `--policy` grant when read access is intended.
+
+## Interrupted import in the same browser tab
+
+`Resume same upload` retains one idempotency key, immutable input bytes, acknowledged part receipts and
+completed-file checkpoints only in memory. It first reads the existing operation with current authority.
+A terminal receipt is returned without another commit. An uncertain part can be explicitly resent to
+the same multipart slot with identical bytes; an uncertain file completion repeats the same completion
+request, not an upload to a closed multipart. A prepared operation is not silently replaced by a new key.
+Only an unacknowledged prepare is explicitly repeated using its identical frozen request. Concurrent
+continuations are rejected; no background retry is scheduled.
+
+Stopping cancels future requests, not already committed effects. Reload, offline, sign-out and page exit
+clear private checkpoints. Durable cross-session partial-upload recovery is still open and is **not a
+Cloudflare-only task**. Complete it locally before marking L2/L6 done. File completion and final admission
+rehash the canonical bytes; a UI checkpoint does not establish integrity or search readiness.
+
+The continuation tests also cover withdrawal after reservation. Current ACTIVE owner, policy revision,
+policy snapshot bytes, allowed principal and expiry are rechecked before principal-bound actions and
+promotion. The final D1 source/head/outbox transaction includes an exact policy predicate, so a policy
+edit racing that batch rolls back canonical admission. Already staged R2 objects are not source success
+and remain governed by staging cleanup/erasure, not an improvised rollback delete.
+
+Cloudflare agent work and exact remote evidence requirements: [`launch-prs/cloudflare-handoff.md`](launch-prs/cloudflare-handoff.md).

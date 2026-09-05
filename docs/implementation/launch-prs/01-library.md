@@ -22,8 +22,9 @@ External normalization remains an explicit input boundary, not a fabricated conv
   admission commit -> durable status. Retain stable request identity during retries; never retry a
   potentially committed mutation blindly. Cancellation stops future calls; an uncertain result requires
   status/readback. ADMITTED is not INDEXED; rejection/quarantine is not success.
-- [ ] L3. Provide explicit namespace/admission-policy initialization using current owner/generation/CAS
-  rules. Existing read-policy grant is separate. Never grant by login, guessed identity or hidden SQL.
+- [x] L3. Provide explicit LOCAL initial immutable-import namespace/admission-policy initialization with
+  absent-state guards and exact replay/readback. Existing read-policy grant is separate. Other ownership
+  modes, policy updates and remote administration are not implemented by this command.
 - [ ] L4. Implement authorized cursor-paginated projects/sources/revision views and readiness. Audit the
   current catalog's principal scope before exposing titles. Reject cross-principal/project cursor reuse;
   do not disclose source metadata excluded by current policy or purge.
@@ -55,7 +56,7 @@ L1 and the initial L2 connected path are implemented: a folder is bounded/valida
 hashed once; the actual owner API performs prepare, sequential multipart upload, file completion,
 admission and final durable status readback. The panel exposes progress, stop-sending and explicit
 status inspection. Admission does not imply read access or search readiness. L2 remains unchecked
-until safe partial-upload resume and its remaining failure/UI coverage are complete. L3, L4 and full L6 remain open; the Library-to-Lens selection below closes L5.
+until safe partial-upload resume and its remaining failure/UI coverage are complete. The local initial-import profile in L3 is implemented below; L4 and full L6 remain open; the Library-to-Lens selection below closes L5.
 
 The prepare response now includes the server's `manifest_sha256`: the canonical authority digest,
 NOT the raw manifest-file checksum. Strict clients require a coordinated update; the new PWA rejects
@@ -75,7 +76,7 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 under ER-25. This integration permission does not permit parallel edits to those files.
 
 The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). Namespace/admission setup, durable cross-session resume, full revision/readiness views and a populated real-IdP browser loop are NOT complete. Do not merge this draft as a
+aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Durable cross-session resume, full revision/readiness views and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not merge this draft as a
 finished Library product or upload it to Cloudflare for continued development.
 
 
@@ -96,5 +97,35 @@ corruption, current membership, borrowed cursors, database failure and time-only
 
 The real MCP catalog previously reused the unscoped reader. It now rejects calls before D1 and is hidden
 from discovery until Launch 07 supplies explicit service-scope read authority. Keep this draft open:
-namespace/admission bootstrap, interrupted upload recovery, revision/readiness views and the full
-populated browser import-to-evidence loop still need implementation and acceptance.
+cross-session upload recovery, revision/readiness views and the full populated browser import-to-evidence
+loop still need off-account implementation and acceptance. Real IdP testing is a separate live gate.
+
+
+## Initial namespace and explicit upload continuation
+
+`pnpm local:owner --initialize-namespace path/to/namespace.json` initializes only an absent ERC-owned
+immutable-import namespace under a Worker-verified owner identity. The full command/profile is in
+`../local-launch.md`. Policy is written and read back before guarded owner activation; an interrupted
+policy-only state cannot admit sources. Exact retries reconcile the same rows. No takeover, owner
+reactivation, broad policy update, read grant, remote target or hidden browser administration exists.
+
+Same-tab Resume retains the original bytes, operation key, prepared session and acknowledged parts.
+It reads durable status before continuing; a committed result needs no new upload. Unknown part or
+complete acknowledgements repeat only the same explicit slot/parts; no automatic retry or new identity
+is introduced. A page exit, offline event, sign-out or denied response clears private in-memory state.
+**Cross-session continuation is still open**, and L2/L6 are not marked complete by this checkpoint.
+
+Continuation and promotion re-read the current namespace owner and exact admission-policy bytes. The
+final D1 source/head/outbox batch also guards those bytes, so policy substitution after precheck rolls
+back canonical admission. R2 staging/promotion alone remains insufficient to create source authority.
+Tests cover lost acknowledgements at all three upload boundaries, no resend of acknowledged parts,
+withdrawal before continuation, and a policy change immediately before the actual D1 transaction.
+
+ER-44 owns the narrow local initializer and signed-owner storage test; ER-37 owns the extracted current
+policy adapter and transaction guard. ER-25 owns the browser in-memory checkpoint and UI fixtures.
+No migration or canonical stored identity rewrite is required. The new initial owner-token family is
+specified in ER-44 and must join Launch 09 differential vectors before authority promotion.
+
+Cloudflare agent work is assigned in [cloudflare-handoff.md](cloudflare-handoff.md), with separate
+checklists in #89–#97. A missing account does not block the unfinished local Library/revision/browser
+work. This PR stays draft until that code acceptance passes.

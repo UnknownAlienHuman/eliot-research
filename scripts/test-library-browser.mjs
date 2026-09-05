@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -27,11 +28,13 @@ const orientation = () => {
 };
 let mode = "normal"; let pending; let browser; let socket; let closing;
 const requests = []; const posted = []; const errors = [];
+const importing = browserImportFixture();
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
+    if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/health") return json(envelope({ ready: true, deployment_generation: "browser-fixture",
       core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() }));
     if (url.pathname === "/api/v1/research/catalog") {
@@ -140,6 +143,23 @@ try {
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Source selection to real Lens transport");
   assert.deepEqual(posted[0].scope_expression, { kind: "SELECTED_SOURCES", source_ids: ["source-1"] });
   assert.equal(posted[0].product, "ORIENT");
+  await evaluate(`(() => {
+    const transfer = new DataTransfer();
+    for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
+    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true })); input.closest("form").requestSubmit();
+  })()`);
+  await wait('Boolean(document.querySelector("[data-resume]") && !document.querySelector("[data-resume]").disabled)', "Explicit import recovery available");
+  assert.equal(importing.calls.filter((call) => call.path.includes("/parts/")).length, 1);
+  const beforeResume = importing.calls.length;
+  await click("[data-resume]");
+  await wait('document.querySelector("input[name=bundle]").closest("details").querySelector("[role=status]").textContent.startsWith("ADMITTED:")', "Same-operation import resume");
+  assert.equal(importing.calls[beforeResume].method, "GET");
+  assert.equal(importing.calls.filter((call) => call.path.endsWith("/prepare")).length, 1);
+  assert.equal(importing.calls.filter((call) => call.path.includes("/parts/")).length, 3);
+  assert.equal(await evaluate('document.querySelector("[data-resume]").disabled'), true);
+  await click("[data-status]");
+  await wait('document.querySelector("input[name=bundle]").closest("details").textContent.includes("COMMITTED")', "Import durable status");
   // Badly formatted 403 still clears every private panel, before parsing an error body.
   mode = "denied"; await click("#library [data-first]");
   await wait('document.querySelector("#library [role=status]").textContent.includes("Authorization changed")', "Access denial");
@@ -160,7 +180,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation import continuation/status, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {

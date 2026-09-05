@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { bundleFixture } from "../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { canonicalDigest } from "../packages/platform-cloudflare/src/d1-ingest-validation.js";
 import { prepareBrowserBundle, selectedBundleFiles, safeBundlePath } from "../apps/eliotr-pwa/src/bundle-input.js";
-import { importBrowserBundle } from "../apps/eliotr-pwa/src/bundle-import.js";
+import { createBrowserBundleImport, importBrowserBundle } from "../apps/eliotr-pwa/src/bundle-import.js";
 import { decodePrepared, readImportStatus, type ImportIdentity, type ImportTransport } from "../apps/eliotr-pwa/src/bundle-import-api.js";
 
 function required<T>(value: T | undefined | null): T {
@@ -20,7 +20,7 @@ async function fixture() {
   const receipt = { operation_id: identity.operation, manifest_sha256: identity.manifestDigest, source_revision_ref: identity.sourceRevision,
     normalized_artifact_ref: "artifact-1", object_residency_key_digest: "a".repeat(64), decision: "ADMITTED",
     reason_codes: [], readback_sha256: "b".repeat(64), committed_at: new Date().toISOString() };
-  const status = { operation_id: identity.operation, source_revision_ref: identity.sourceRevision, state: "COMMITTED",
+  const status = { operation_id: identity.operation, source_revision_ref: identity.sourceRevision, state: "COMMITTED", staging_session_ref: "session-1",
     receipt, expires_at: prepared.expires_at, updated_at: receipt.committed_at };
   const envelope = (data: unknown, generation = identity.generation) => ({ data, trace_id: "trace-1", deployment_generation: generation });
   const calls: { path: string; init: RequestInit }[] = [];
@@ -181,4 +181,70 @@ describe("browser import protocol", () => {
     expect(JSON.parse(String(complete.init.body)).parts.map((part: { part_number: number }) => part.part_number)).toEqual([1, 2]);
   });
 
+});
+
+
+describe("explicit same-tab upload continuation", () => {
+  it.each(["part-before", "part-after", "complete-before", "complete-after", "commit-before", "commit-after", "status"])("recovers %s interruption without a new operation or resending acknowledged bytes", async (failure) => {
+    const f = await fixture(); let failed = false; let committed = false;
+    const sent: { path: string; init?: RequestInit }[] = [];
+    const transport: ImportTransport = async (path, init) => {
+      sent.push({ path, ...(init ? { init } : {}) });
+      const kind = path.includes("/parts/") ? "part" : path.endsWith("/files/complete") ? "complete" :
+        path.endsWith("/commit") ? "commit" : path.endsWith("/prepare") ? "prepare" : "status";
+      if (!failed && failure === `${kind}-before`) { failed = true; throw new Error("interrupted"); }
+      if (kind === "commit") committed = true;
+      const result = kind === "status" && !committed ? f.envelope({ ...f.status, receipt: undefined, state: "UPLOAD_REQUIRED",
+        staging_session_ref: "session-1" }) : await f.transport(path, init);
+      if (!failed && (failure === `${kind}-after` || failure === kind && committed)) { failed = true; throw new Error("interrupted"); }
+      return result;
+    };
+    const attempt = createBrowserBundleImport(f.bundle, "same-operation");
+    await expect(attempt.run({ transport })).rejects.toThrow("interrupted");
+    expect(attempt.canResume).toBe(true);
+    const before = sent.length;
+    expect(await attempt.run({ transport })).toEqual(f.receipt);
+    expect(sent[before]?.path).toBe(`/api/v1/ingest/bundles/${f.identity.operation}`);
+    expect(sent.filter((call) => call.path.endsWith("/prepare"))).toHaveLength(1);
+    expect(sent.filter((call) => call.path.includes("/parts/"))).toHaveLength(f.bundle.files.length + (failure.startsWith("part-") ? 1 : 0));
+    expect(sent.filter((call) => call.path.endsWith("/commit"))).toHaveLength(failure === "commit-before" ? 2 : 1);
+    expect(attempt.canResume).toBe(false);
+  });
+  it("resends an uncertain prepare using the identical frozen request and key", async () => {
+    const f = await fixture(); let first = true; const bodies: string[] = [];
+    const transport: ImportTransport = async (path, init) => {
+      if (path.endsWith("/prepare")) { bodies.push(String(init?.body)); if (first) { first = false; throw new Error("lost prepare"); } }
+      return f.transport(path, init);
+    };
+    const attempt = createBrowserBundleImport(f.bundle, "fixed-key");
+    await expect(attempt.run({ transport })).rejects.toThrow("lost prepare");
+    // The caller's metadata object is not the continuation's authoritative input.
+    (f.bundle.hashes as Record<string, string>)["ignored-new-key"] = "e".repeat(64);
+    expect(await attempt.run({ transport })).toEqual(f.receipt);
+    expect(bodies[1]).toBe(bodies[0]);
+  });
+  it("checks current session/generation/expiry before any resumed mutation", async () => {
+    for (const fields of [{ staging_session_ref: "other" }, { expires_at: "2000-01-01T00:00:00Z" }]) {
+      const f = await fixture(); const attempt = createBrowserBundleImport(f.bundle, "key");
+      await expect(attempt.run({ transport: async (path, init) => {
+        if (path.includes("/parts/")) throw new Error("stop"); return f.transport(path, init);
+      } })).rejects.toThrow("stop");
+      const calls: string[] = [];
+      await expect(attempt.run({ transport: async (path) => { calls.push(path); return f.envelope({ ...f.status,
+        receipt: undefined, state: "UPLOAD_REQUIRED", staging_session_ref: "session-1", ...fields }); } }))
+        .rejects.toMatchObject({ code: "INGEST_RESPONSE_MISMATCH" });
+      expect(calls).toHaveLength(1); expect(attempt.canResume).toBe(false);
+    }
+  });
+  it("prevents concurrent continuation and clears state on explicit disposal", async () => {
+    const f = await fixture(); let release!: () => void;
+    const pause = new Promise<void>((resolve) => { release = resolve; });
+    const attempt = createBrowserBundleImport(f.bundle, "key");
+    const running = attempt.run({ transport: async (path, init) => { await pause; return f.transport(path, init); } });
+    const denied = expect(running).rejects.toMatchObject({ code: "BUNDLE_IMPORT_CANCELLED" });
+    await expect(attempt.run()).rejects.toMatchObject({ code: "BUNDLE_IMPORT_NOT_RESUMABLE" });
+    attempt.dispose(); release(); await denied;
+    expect(attempt.canResume).toBe(false); expect(f.calls).toHaveLength(1);
+    await expect(attempt.run()).rejects.toMatchObject({ code: "BUNDLE_IMPORT_NOT_RESUMABLE" });
+  });
 });

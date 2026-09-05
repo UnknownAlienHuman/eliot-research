@@ -84,7 +84,7 @@ export function decodePrepared(data: unknown, bundle: BrowserBundle, generation:
 }
 export interface ImportStatus { readonly state: string; readonly receipt?: BundleAdmissionReceipt; }
 export async function readImportStatus(identity: ImportIdentity, signal?: AbortSignal,
-  transport: ImportTransport = requestApi): Promise<ImportStatus> {
+  transport: ImportTransport = requestApi, session?: string): Promise<ImportStatus> {
   const result = await importCall(`/api/v1/ingest/bundles/${encodeURIComponent(identity.operation)}`,
     { ...(signal ? { signal } : {}) }, transport, identity.generation);
   const row = importRecord(result.data, ["operation_id", "state", "source_revision_ref", "expires_at", "updated_at"],
@@ -98,5 +98,6 @@ export async function readImportStatus(identity: ImportIdentity, signal?: AbortS
   const receipt = row.receipt === undefined ? undefined : receiptFor(row.receipt, identity);
   if (row.state === "COMMITTED" && (!receipt || !["ADMITTED", "DUPLICATE"].includes(receipt.decision))) importMismatch();
   if (receipt && row.state !== "COMMITTED" && row.state !== receipt.decision) importMismatch();
+  if (session !== undefined && (!receipt && importTime(row.expires_at) <= Date.now() || row.staging_session_ref !== session)) importMismatch();
   return { state: String(row.state), ...(receipt ? { receipt } : {}) };
 }

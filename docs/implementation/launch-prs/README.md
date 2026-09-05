@@ -49,3 +49,12 @@ Topic 07 must not treat a service token as a source grant; its unscoped catalog 
 Topic 08 assembles local code/recovery evidence before the first complete staging trial, then records
 actual live receipts; the two gates must not depend circularly on each other. Topic 09 preserves each
 integrated family's existing canonical bytes and schema rules before per-family Rust promotion.
+
+
+## Cloudflare execution handoff
+
+[cloudflare-handoff.md](cloudflare-handoff.md) assigns concrete account-only work to the existing
+#89–#97 PRs, including target approval, prerequisites, exact observations, negative cases and redacted
+receipts. No additional queue branches are needed. The current status is BLOCKED by mandatory code;
+initial local namespace setup and same-tab resume do not finish Library, retrieval or research.
+The account agent must not mistake unfinished local code for a credential-dependent test.

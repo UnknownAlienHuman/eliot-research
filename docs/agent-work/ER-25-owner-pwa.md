@@ -15,6 +15,7 @@ outside the paths below.
 
 - `tests/library.test.ts`
 - `scripts/test-library-browser.mjs`
+- `scripts/lib/browser-import-fixture.mjs`
 
 ## Read only
 
