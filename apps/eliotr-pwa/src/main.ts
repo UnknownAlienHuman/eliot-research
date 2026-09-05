@@ -1,5 +1,6 @@
 import "./styles.css";
 import { getSystemHealth, type SystemHealth } from "./api.js";
+import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { escapeHtml } from "./html.js";
 
@@ -20,13 +21,11 @@ function displayText(
   return escapeHtml(value ?? fallback);
 }
 
-let unmount: (() => void) | undefined;
 function render(health: SystemHealth | null): void {
-  unmount?.();
   app.innerHTML = `
     <header class="topbar">
       <div><strong>Eliot Research</strong><span class="generation">${displayText(health?.deployment_generation, "unknown generation")}</span></div>
-      ${healthBadge(health)}
+      <span id="health-badge">${healthBadge(health)}</span>
     </header>
     <main class="workspace">
       <aside class="panel panel--corpus">
@@ -34,13 +33,15 @@ function render(health: SystemHealth | null): void {
         <nav>${["Projects", "Sources", "Research Wiki", "Reports"].map((item) => `<button disabled>${item}</button>`).join("")}</nav>
       </aside>
       <section class="panel panel--investigation">
+        <div id="bundle-import"></div>
+        <hr>
         <div id="corpus-lens"></div>
       </section>
       <aside class="panel panel--evidence">
         <h2>Evidence</h2>
         <dl>
-          <dt>Core schema</dt><dd>${displayText(health?.core_schema_generation, "not applied")}</dd>
-          <dt>Search schema</dt><dd>${displayText(health?.search_schema_generation, "not applied")}</dd>
+          <dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "not applied")}</dd>
+          <dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "not applied")}</dd>
           <dt>Coverage</dt><dd>not calculated</dd>
           <dt>Connector</dt><dd>not qualified</dd>
         </dl>
@@ -48,11 +49,23 @@ function render(health: SystemHealth | null): void {
     </main>
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
-  if (lens) unmount = mountOrientationPanel(lens);
+  const importer = app.querySelector<HTMLElement>("#bundle-import");
+  const cleanups = [lens ? mountOrientationPanel(lens) : undefined, importer ? mountBundleImportPanel(importer) : undefined];
+  window.addEventListener("pagehide", () => cleanups.forEach((cleanup) => cleanup?.()), { once: true });
+}
+
+function updateHealth(health: SystemHealth): void {
+  const badge = app.querySelector("#health-badge");
+  if (badge) badge.innerHTML = healthBadge(health);
+  for (const [selector, text] of [[".generation", health.deployment_generation],
+    ["#core-generation", health.core_schema_generation ?? "not applied"],
+    ["#search-generation", health.search_schema_generation ?? "not applied"]] as const) {
+    const node = app.querySelector(selector); if (node) node.textContent = text;
+  }
 }
 
 render(null);
-void getSystemHealth().then(render).catch(() => render({
+void getSystemHealth().then(updateHealth).catch(() => updateHealth({
   ready: false,
   deployment_generation: "unreachable",
   core_schema_generation: null,

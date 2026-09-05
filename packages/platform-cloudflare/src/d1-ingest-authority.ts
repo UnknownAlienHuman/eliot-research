@@ -40,7 +40,6 @@ const OPERATION_SELECT =
   "promotion_receipt_ref, state, bundle_receipt_json, bundle_receipt_sha256, " +
   "created_at, updated_at, expires_at FROM bundle_ingest_operation ";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000;
-
 export interface D1IngestAdmissionDependencies {
   readonly now?: () => number;
   readonly operation_ttl_ms?: number;
@@ -61,12 +60,7 @@ async function readByIdempotency(
   principalRef: string,
   idempotencyKey: string,
 ): Promise<PreparedIngestOperation | null> {
-  return readOperation(
-    database,
-    "WHERE principal_ref = ?1 AND idempotency_key = ?2",
-    principalRef,
-    idempotencyKey,
-  );
+  return readOperation(database, "WHERE principal_ref = ?1 AND idempotency_key = ?2", principalRef, idempotencyKey);
 }
 
 async function activeOwner(
@@ -172,13 +166,9 @@ function ensureExistingSource(
   }
   return row.head_rev as string | null;
 }
-
 function exactReplay(existing: PreparedIngestOperation, fingerprint: string): PreparedIngestOperation {
   if (existing.input_fingerprint !== fingerprint) {
-    authorityFail(
-      "INGEST_AUTHORITY_CONFLICT",
-      "principal idempotency identity is already bound to different ingest input",
-    );
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "principal idempotency identity is already bound to different ingest input");
   }
   return existing;
 }
@@ -223,19 +213,16 @@ export function createD1IngestAdmissionAuthority(
       const manifestSha = await canonicalDigest(input.manifest);
       const residencyDigest = await objectResidencyKeyDigest(input.residency_key);
       const policySha = await canonicalDigest(policy);
-      const fingerprint = await ingestInputFingerprint({
+      const fingerprintFor = (head: string | null) => ingestInputFingerprint({
         ...input,
         residency_key_digest: residencyDigest,
-        expected_head_revision_ref: expectedHead,
+        expected_head_revision_ref: head,
         policy_snapshot_sha256: policySha,
       });
       const prior = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-      if (prior !== null) return { disposition: "EXISTING", operation: exactReplay(prior, fingerprint) };
-      const operationId = await stableIngestId(
-        "ingest",
-        input.principal_ref,
-        input.idempotency_key,
-      );
+      if (prior !== null) return { disposition: "EXISTING", operation: exactReplay(prior, await fingerprintFor(prior.expected_head_revision_ref)) };
+      const fingerprint = await fingerprintFor(expectedHead);
+      const operationId = await stableIngestId("ingest", input.principal_ref, input.idempotency_key);
       const candidateId = await stableIngestId("candidate", operationId);
       const createdEpoch = clock();
       if (!Number.isSafeInteger(createdEpoch) || createdEpoch < 0) {
@@ -313,7 +300,7 @@ export function createD1IngestAdmissionAuthority(
         }
       } catch (cause) {
         const raced = await readByIdempotency(database, input.principal_ref, input.idempotency_key);
-        if (raced !== null) return { disposition: "EXISTING", operation: exactReplay(raced, fingerprint) };
+        if (raced !== null) return { disposition: "EXISTING", operation: exactReplay(raced, await fingerprintFor(raced.expected_head_revision_ref)) };
         if (cause instanceof IngestAuthorityError) throw cause;
         authorityFail("INGEST_SETTLEMENT_UNCERTAIN", "ingest prepare authority failed", true, cause);
       }

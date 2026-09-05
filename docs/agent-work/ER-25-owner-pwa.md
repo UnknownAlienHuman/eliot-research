@@ -66,3 +66,12 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## Launch 01 integration checkpoint
+
+The connected normalized-bundle import panel and transport live in `apps/eliotr-pwa/src/bundle-*`.
+For this checkpoint ER-25 integrates the narrow ER-21 prepare-digest/opaque-ETag contract additions,
+ER-14 known-length R2 upload fix, ER-37 original-head replay fix and ER-29 prepare output. Existing
+file ownership stays unchanged; the exact scope, failure tests and unfinished Library work are in
+`docs/implementation/launch-prs/01-library.md`. No source-admission or canonicalization authority moves
+to the browser. A validated folder or uploaded file is not an admitted, indexed or readable source.

@@ -157,11 +157,13 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority",
+      "behavior": "authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission, immutable promotion and guarded SourceRevision plus outbox commit are composed; non-admitted candidates create no source authority; initial PWA folder import consumes the server canonical manifest digest and reads durable status after upload/commit; Library/setup/resume remain incomplete",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
-        "live Access, R2 multipart/promotion, remote D1 and Queue receipts"
+        "live Access, R2 multipart/promotion, remote D1 and Queue receipts",
+        "tests/bundle-import.test.ts bounded browser input and strict sequential transport negatives",
+        "apps/eliotr-core/test/bundle-import-http.test.ts actual local D1/R2 HTTP import, exact replay, malformed lengths and policy/input fences; no implicit read grants"
       ]
     },
     {
