@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { devArguments, localEnvironment, prepareLocal, ROOT } from "./lib/local-launch.mjs";
+import { devArguments, localEnvironment, prepareLocal, ROOT, signalLocalProcess } from "./lib/local-launch.mjs";
 
 const [argument, ...extra] = process.argv.slice(2);
 const command = new Map([["--prepare", "prepare"], ["--dev", "dev"], ["--smoke", "smoke"]]).get(argument);
@@ -17,7 +17,7 @@ if (!["prepare", "dev", "smoke"].includes(command) || extra.length > 0) {
         const child = spawn(process.execPath, devArguments(paths), {
           cwd: ROOT, env: localEnvironment(), stdio: "inherit", shell: false,
         });
-        const stop = () => child.kill("SIGTERM");
+        const stop = () => signalLocalProcess(child);
         process.once("SIGINT", stop);
         process.once("SIGTERM", stop);
         const code = await new Promise((resolve, reject) => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { devArguments, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, wranglerArgs } from "./lib/local-launch.mjs";
+import { devArguments, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
 
 const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
 const injected = { ...canonical, account_id: "forbidden-account", routes: [{ pattern: "production.example" }],
@@ -61,5 +61,24 @@ try {
   await prepareLocal({ stateDirectory: fresh, log: () => {}, execute: () => {} });
   assert.equal(await readFile(resolve(fresh, ".dev.vars"), "utf8"), "");
 } finally { await rm(directory, { recursive: true, force: true }); }
+
+const child = { pid: 12345, exitCode: null, signalCode: null,
+  kill: () => assert.fail("Windows must terminate the owned tree, not only its wrapper") };
+const signals = [];
+signalLocalProcess(child, "SIGTERM", { platform: "win32", execute: (command, args, options) => {
+  signals.push({ command, args, options }); return { status: 0 };
+} });
+assert.deepEqual(signals[0].args, ["/PID", "12345", "/T", "/F"]);
+assert.equal(signals[0].command, "taskkill.exe");
+assert.equal(signals[0].options.shell, false);
+assert.equal(signals[0].options.timeout, 5000);
+for (const fields of [{ exitCode: 0 }, { signalCode: "SIGTERM" }, { pid: undefined }, { pid: -1 }]) {
+  signalLocalProcess({ ...child, ...fields }, "SIGTERM", { platform: "win32", execute: () => assert.fail("Never target an exited or invalid PID") });
+}
+assert.throws(() => signalLocalProcess(child, "SIGTERM", { platform: "win32", execute: () => ({ status: 1 }) }), /shutdown failed/u);
+let delivered;
+signalLocalProcess({ ...child, kill: (signal) => { delivered = signal; } }, "SIGTERM", { platform: "linux" });
+assert.equal(delivered, "SIGTERM");
+console.log("Owned-process shutdown: PASS (exact Windows PID/tree, no exited PID reuse, POSIX signal)");
 
 console.log("Local runtime isolation, complete migration command ordering and idempotent preparation: PASS");

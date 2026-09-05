@@ -92,6 +92,20 @@ export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), captu
   return result.stdout ?? "";
 }
 
+/** Stop only this launcher-owned process tree, never all Node/Workerd processes. */
+export function signalLocalProcess(child, signal = "SIGTERM", {
+  platform = process.platform, execute = spawnSync,
+} = {}) {
+  if (!Number.isSafeInteger(child.pid) || child.pid <= 0 || child.exitCode !== null || child.signalCode !== null) return;
+  if (platform !== "win32") { child.kill(signal); return; }
+  // Windows kill(SIGTERM) terminates only the wrapper; its CLI/Workerd descendants
+  // otherwise retain SQLite/observability locks after the wrapper's close event.
+  const result = execute("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+    shell: false, windowsHide: true, stdio: "ignore", timeout: 5000,
+  });
+  if (result.error || result.status !== 0) throw new Error("Local Worker process-tree shutdown failed");
+}
+
 export async function prepareLocal({ stateDirectory, execute = executeLocal, log = console.log } = {}) {
   const paths = localPaths(stateDirectory);
   const bytes = await readFile(resolve(CORE, "wrangler.jsonc"), "utf8");

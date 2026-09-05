@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { devArguments, executeLocal, localEnvironment, prepareLocal, ROOT, wranglerArgs } from "./local-launch.mjs";
+import { devArguments, executeLocal, localEnvironment, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./local-launch.mjs";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 
 async function vacantPort() {
@@ -29,9 +29,16 @@ async function start(paths) {
   const stop = async () => {
     if (stopped) return;
     stopped = true;
-    child.kill("SIGTERM");
-    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
-    try { await closed; } finally { clearTimeout(timer); }
+    signalLocalProcess(child);
+    let timer;
+    try {
+      await Promise.race([closed, new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          try { signalLocalProcess(child, "SIGKILL"); } catch { /* Report the bounded shutdown failure below. */ }
+          reject(new Error("Local Worker did not close within the shutdown deadline"));
+        }, 8000);
+      })]);
+    } finally { clearTimeout(timer); }
   };
   try {
     const origin = `http://127.0.0.1:${port}`;
@@ -117,5 +124,5 @@ export async function smokeLocal() {
       pwa_and_bundled_asset: "PASS", unsigned_and_forged_access_denied: "PASS",
       restart_and_idempotent_prepare: "PASS", remote_providers: "NOT_EXECUTED",
       complete_research_product: "NOT_QUALIFIED" };
-  } finally { await running?.stop(); await rm(directory, { recursive: true, force: true }); }
+  } finally { await running?.stop(); await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 }
