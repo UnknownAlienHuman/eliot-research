@@ -1,49 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { readCatalog } from "./catalog-service.js";
-
-function database(rows: {
-  readonly projects?: readonly Record<string, unknown>[];
-  readonly sources?: readonly Record<string, unknown>[];
-}): D1Database {
-  return {
-    prepare(sql: string) {
-      return {
-        bind() {
-          return {
-            async all<T>() {
-              const selected = sql.includes("FROM project")
-                ? rows.projects ?? []
-                : rows.sources ?? [];
-              return { success: true, results: [...selected] as T[] };
-            },
-          };
-        },
-      };
-    },
-  } as unknown as D1Database;
-}
-
-describe("catalog authority decoding", () => {
-  it("fails closed on malformed D1 authority rows", async () => {
-    let error: unknown;
-    try {
-      await readCatalog(database({
-        projects: [{ id: "project-a", title: "bad\u0000title", generation: 1 }],
-      }), { limit: 10 });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error instanceof Error).toBe(true);
-    expect((error as Error).message).toBe("catalog authority returned invalid project title");
-  });
-
-  it("rejects unsafe request identifiers before D1 execution", async () => {
-    let error: unknown;
-    try {
-      await readCatalog(database({}), { project_id: "../other-project", limit: 10 });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toMatchObject({ code: "CATALOG_IDENTIFIER_INVALID" });
-  });
+const context: AuthenticatedRequestContext = { request: new Request("https://research.example/"),
+  principal_ref: "owner", credential_generation: "credential-1", client_class: "owner_pwa", trace_id: "trace-1" };
+const noDatabase = { prepare() { throw new Error("Database must not be accessed"); } } as unknown as D1Database;
+it("rejects malformed identifiers, legacy cursors, invalid limits and service class before SQL", async () => {
+  for (const request of [{ project_id: "../other", limit: 10 }, { limit: 0 }, { limit: 101 },
+    { limit: 10, cursor: btoa(JSON.stringify({ version: 1, project_id: null, source_after: "", project_after: "" })) }]) {
+    await expect(readCatalog(noDatabase, context, request, "deploy-1")).rejects.toMatchObject({ status: 400 });
+  }
+  await expect(readCatalog(noDatabase, { ...context, client_class: "trusted_agent" }, { limit: 10 }, "deploy-1"))
+    .rejects.toMatchObject({ code: "CATALOG_OWNER_REQUIRED", status: 403 });
 });

@@ -55,7 +55,8 @@
     "local:smoke": "node scripts/local-runtime.mjs --smoke",
     "test:local-launch": "node scripts/test-local-runtime.mjs",
     "local:owner": "node scripts/local-owner.mjs",
-    "test:local-owner": "node --test scripts/test-local-owner.mjs scripts/test-local-read-policy.mjs"
+    "test:local-owner": "node --test scripts/test-local-owner.mjs scripts/test-local-read-policy.mjs",
+    "test:library-browser": "node scripts/test-library-browser.mjs"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.1.0",

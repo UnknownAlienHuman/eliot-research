@@ -5,7 +5,7 @@ import {
   type AccessIdentity,
   type AccessVerifier,
 } from "@eliotr/platform-cloudflare";
-import { readCatalog } from "./catalog-service.js";
+import { GeminiMcpToolError } from "./gemini-mcp-tool-common.js";
 import type { Env } from "./env.js";
 import {
   handleGeminiMcpProtocol,
@@ -176,28 +176,24 @@ function serverDependencies(
         blocking_reason_codes: readiness.blocking_reason_codes,
         enabled_surfaces: [
           "system_status",
-          "catalog",
           "google_sync_planning",
         ],
+        disabled_surfaces: [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }],
         google_external_transport: googleTransport(env),
         exact_readback_required: true,
         canonical_mutation_available_through_mcp: false,
       };
     },
-    async catalog(
-      input: {
-        readonly project_id?: string;
-        readonly cursor?: string;
-        readonly limit: number;
-      },
-    ): Promise<unknown> {
-      return readCatalog(env.CORE_DB, input);
+    async catalog(): Promise<never> {
+      // A dedicated Access token proves the caller, not authorization to every owner's library.
+      // The current read-policy schema is owner-only. Never impersonate an owner for a service token.
+      throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "An explicit service catalog scope is required");
     },
   } as const;
   return {
     server_version: "0.1.0",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    listTools: () => GEMINI_MCP_TOOLS,
+    listTools: () => GEMINI_MCP_TOOLS.filter((tool) => tool.name !== "eliotr_catalog"),
     callTool: (name, input, context) =>
       callGeminiMcpTool(toolDependencies, name, input, context),
   };

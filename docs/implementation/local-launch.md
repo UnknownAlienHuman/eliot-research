@@ -174,3 +174,25 @@ provider login, production Access revocation measurement or graphical browser-au
 CLI protocol reference, checked 2026-09-05: Cloudflare, “Connect through Cloudflare Access using a CLI”
 (updated 2026-04-17), https://developers.cloudflare.com/cloudflare-one/tutorials/cli/ ; CLI flag source:
 https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/access/cmd.go .
+
+
+## Authorized Library browsing
+
+The Library shows bounded current source-head and project pages from the owner catalog. Its read policy
+is the same explicit namespace/admission authority used by Corpus Lens; login and import do not grant
+metadata access. A project needs an active readable source witness; empty/unreadable projects are not
+listed. Source selection invokes the existing `research.orient` profile. A displayed source is admitted,
+not necessarily indexed: revision history, projection-readiness panels and project editing remain open.
+The inherited owner scope authority allows at most 64 active namespace policies; this is not an
+unbounded multi-tenant inventory or a performance qualification.
+
+Catalog cursors are version 2 and session/deployment/project-bound; any relevant epoch change or cursor
+expiry requires refreshing the first page. Old v1 cursors are not silently accepted. Navigation cursors
+are not capabilities and do not grant access. Stored sources and schema generations are unchanged.
+An auth denial or login redirect clears private Library/Lens/import state before error-body parsing.
+
+`pnpm build:pwa && pnpm test:library-browser` exercises the built Library in an installed Chromium/Chrome
+with controlled HTTP fixtures. Set `ELIOTR_BROWSER_EXECUTABLE` when the executable is not in the standard
+Linux path. CI uses its standard Linux browser; local managed browser policies are not modified to run
+this test. The test is not a real IdP login or a full normalized-bundle-to-search browser qualification.
+Actual catalog and Library-to-Lens APIs are independently exercised against Workers/D1 integration.

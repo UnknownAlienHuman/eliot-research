@@ -53,7 +53,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
@@ -137,11 +137,12 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "signed gemini-spark service identity reaches a stateless four-tool MCP boundary for status, catalog, Google planning and candidate-only receipt validation",
+      "behavior": "Signed gemini-spark identity reaches bounded status, Google planning and candidate-only receipt validation. Unscoped catalog access is withheld from discovery and direct execution until an explicit service-scope policy adapter is composed.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
-        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts"
+        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited."
       ]
     },
     {

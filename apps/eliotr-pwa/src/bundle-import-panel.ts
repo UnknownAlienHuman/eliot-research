@@ -62,6 +62,7 @@ export function mountBundleImportPanel(element: HTMLElement): () => void {
   };
   const clearPrivate = () => { stop(); identity = undefined; identityText.textContent = ""; inspect.disabled = true;
     input.value = ""; attempted = false; start.disabled = false; status.textContent = "Session interrupted. Private import state cleared; inspect the saved operation before retrying."; };
+  window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate); window.addEventListener("pagehide", clearPrivate);
-  return () => { stop(); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); };
+  return () => { clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); };
 }

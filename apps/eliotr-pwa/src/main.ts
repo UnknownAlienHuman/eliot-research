@@ -1,6 +1,7 @@
 import "./styles.css";
 import { getSystemHealth, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
+import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { escapeHtml } from "./html.js";
 
@@ -29,8 +30,8 @@ function render(health: SystemHealth | null): void {
     </header>
     <main class="workspace">
       <aside class="panel panel--corpus">
-        <h2>Corpus</h2>
-        <nav>${["Projects", "Sources", "Research Wiki", "Reports"].map((item) => `<button disabled>${item}</button>`).join("")}</nav>
+        <div id="library"></div>
+        <nav>${["Research Wiki", "Reports"].map((item) => `<button disabled>${item}</button>`).join("")}</nav>
       </aside>
       <section class="panel panel--investigation">
         <div id="bundle-import"></div>
@@ -50,7 +51,10 @@ function render(health: SystemHealth | null): void {
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
-  const cleanups = [lens ? mountOrientationPanel(lens) : undefined, importer ? mountBundleImportPanel(importer) : undefined];
+  const orientation = lens ? mountOrientationPanel(lens) : undefined;
+  const library = app.querySelector<HTMLElement>("#library");
+  const cleanups = [orientation, importer ? mountBundleImportPanel(importer) : undefined,
+    library ? mountLibraryPanel(library, (id) => orientation?.selectSource(id)) : undefined];
   window.addEventListener("pagehide", () => cleanups.forEach((cleanup) => cleanup?.()), { once: true });
 }
 
@@ -64,6 +68,7 @@ function updateHealth(health: SystemHealth): void {
   }
 }
 
+window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
 render(null);
 void getSystemHealth().then(updateHealth).catch(() => updateHealth({
   ready: false,

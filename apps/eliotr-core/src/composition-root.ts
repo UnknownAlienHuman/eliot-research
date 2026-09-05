@@ -72,7 +72,7 @@ function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
   return {
-    catalog: (_context, request) => readCatalog(env.CORE_DB, request),
+    catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
     query: () => unavailable("research.query"),
     open: (context, ref, range) => evidence.open(context, ref, range),

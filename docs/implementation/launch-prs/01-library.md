@@ -27,7 +27,7 @@ External normalization remains an explicit input boundary, not a fabricated conv
 - [ ] L4. Implement authorized cursor-paginated projects/sources/revision views and readiness. Audit the
   current catalog's principal scope before exposing titles. Reject cross-principal/project cursor reuse;
   do not disclose source metadata excluded by current policy or purge.
-- [ ] L5. Wire source selection to the existing orientation panel; replace only working navigation buttons.
+- [x] L5. Wire source selection to the existing orientation panel; replace only working navigation buttons.
   Keep all data generation-bound, clear it on logout/offline/policy denial, and avoid private SW caching.
 - [ ] L6. Add a populated clean-local browser loop through actual Worker/D1/R2, restart/replay, lost ACK,
   partial upload, invalid policy/owner, logout race and provider-outage cases. No live Access bypass.
@@ -55,7 +55,7 @@ L1 and the initial L2 connected path are implemented: a folder is bounded/valida
 hashed once; the actual owner API performs prepare, sequential multipart upload, file completion,
 admission and final durable status readback. The panel exposes progress, stop-sending and explicit
 status inspection. Admission does not imply read access or search readiness. L2 remains unchecked
-until safe partial-upload resume and its remaining failure/UI coverage are complete. L3–L6 remain open.
+until safe partial-upload resume and its remaining failure/UI coverage are complete. L3, L4 and full L6 remain open; the Library-to-Lens selection below closes L5.
 
 The prepare response now includes the server's `manifest_sha256`: the canonical authority digest,
 NOT the raw manifest-file checksum. Strict clients require a coordinated update; the new PWA rejects
@@ -75,6 +75,26 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 under ER-25. This integration permission does not permit parallel edits to those files.
 
 The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). Namespace/admission setup, durable cross-session resume, full Library
-pagination and a populated real-IdP browser loop are NOT complete. Do not merge this draft as a
+aggregate, 256 KiB metadata). Namespace/admission setup, durable cross-session resume, full revision/readiness views and a populated real-IdP browser loop are NOT complete. Do not merge this draft as a
 finished Library product or upload it to Cloudflare for continued development.
+
+
+## Authorized Library checkpoint
+
+L4 now has owner-policy-filtered source-head/project pagination and strict PWA decoding. Revision history,
+actual projection-readiness views and project editing remain open. Projects are visible only with a
+currently readable admitted source through active membership; hidden and absent project filters both
+return an empty page. Read policies, admission digests, owner generations, purge state and a primary D1
+mutation/time fence are checked before output. v2 cursors bind session/deployment/project and expire;
+they are navigation tokens, not authentication or a frozen corpus denominator.
+
+L5 uses the real PWA Library buttons and existing orientation request, not a duplicated scope resolver.
+Private panels clear on offline/authorization failure and page exit; late responses cannot repopulate
+an obsolete page. The browser regression runs the actual built PWA with controlled HTTP fixtures.
+Separate Workers/D1 tests run the real catalog -> PWA decoder -> orientation path, including revocation,
+corruption, current membership, borrowed cursors, database failure and time-only expiry.
+
+The real MCP catalog previously reused the unscoped reader. It now rejects calls before D1 and is hidden
+from discovery until Launch 07 supplies explicit service-scope read authority. Keep this draft open:
+namespace/admission bootstrap, interrupted upload recovery, revision/readiness views and the full
+populated browser import-to-evidence loop still need implementation and acceptance.
