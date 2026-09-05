@@ -218,17 +218,18 @@
     {
       "id": "pending-007",
       "path": "apps/eliotr-core/src/navigation-service.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-31 Corpus Lens navigation requires persisted D1 artifacts and current ScopeSnapshot receipts.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-31 persisted Corpus Lens requires production scope composition and live D1 receipts.",
       "owner_packets": [
         "ER-31"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "strict current-snapshot readback gates deterministic bounded orientation, explicit omission accounting and Atlas-to-card-to-map-to-section expansion; derived navigation remains non-evidentiary and an EvidenceHandle remains publication-ineligible until exact resolution",
+      "behavior": "bounded immutable D1 SourceCard/DocumentMap/ProjectAtlas storage and request-scoped navigation composition verify v1 identities, exact source/residency authority, current snapshots and principal grants before/after reads; replay and lost ACK reconcile through readback; purge removes dependent bodies; public orient/query and automatic materialization remain unavailable",
       "completion_evidence": [
-        "packages/retrieval/src/navigation.test.ts deterministic SourceCard, DocumentMap and ProjectAtlas generation plus authority-boundary cases",
-        "apps/eliotr-core/src/navigation-service.test.ts currentness, bounded omissions, exact expansion and forged-store-output negative cases",
-        "mandatory plausible Atlas claim without a source span cannot pass requireResolvedEvidenceForPublication",
-        "ER-24 composition, persisted D1 navigation artifacts and remote current-ScopeSnapshot receipts NOT EXECUTED"
+        "packages/retrieval/src/navigation-identity.test.ts fixed v1 UTF-8 identity and unknown-field cases",
+        "packages/cloudflare-evidence/src/navigation-storage-codec.test.ts bounded canonical JSON and hidden-state rejection",
+        "apps/eliotr-core/test/navigation-persistence.test.ts local Workers/D1 card-map-Atlas-section, exact replay, lost ACK, mutation/read races, corruption, purge and non-publication cases",
+        "pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json strict integration fixture typecheck",
+        "public ER-24 API/current policy/grant/materialization composition and remote D1/Access/R2 receipts NOT_EXECUTED"
       ]
     },
     {

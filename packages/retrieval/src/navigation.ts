@@ -1,6 +1,7 @@
 export * from "./navigation-limits.js";
 export * from "./navigation-model.js";
 export {
+  canonicalJson as canonicalNavigationJson,
   evidenceHandleCandidateSupport,
   extractNavigationSections,
   navigationOnlySupport,
@@ -15,3 +16,4 @@ export {
   versionedRefKey,
 } from "./navigation-codec.js";
 export * from "./navigation-builders.js";
+export * from "./navigation-identity.js";

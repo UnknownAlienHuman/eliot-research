@@ -648,7 +648,13 @@
         "packages/retrieval/src/navigation-builders.ts",
         "packages/retrieval/src/navigation.test.ts",
         "apps/eliotr-core/src/navigation-service.ts",
-        "apps/eliotr-core/src/navigation-service.test.ts"
+        "apps/eliotr-core/src/navigation-service.test.ts",
+        "packages/retrieval/src/navigation-identity.ts",
+        "packages/retrieval/src/navigation-identity.test.ts",
+        "apps/eliotr-core/src/navigation-persistence.ts",
+        "apps/eliotr-core/test/navigation-fixture.ts",
+        "apps/eliotr-core/test/navigation-persistence.test.ts",
+        "apps/eliotr-core/test/tsconfig.json"
       ],
       "mandatory_negative_case": "Generate a plausible Atlas claim with no supporting source span and prove it remains navigation only and cannot support publication.",
       "document": "ER-31-corpus-lens-navigation.md",

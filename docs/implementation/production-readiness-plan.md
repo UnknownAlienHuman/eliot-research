@@ -74,7 +74,7 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 
 ### Still unavailable or not composed
 
-- ER-31 Corpus Lens persistence and active Worker composition;
+- ER-31 public Worker API composition and automatic navigation materialization;
 - `research.query`;
 - `research.run` and the governed Research Workflow;
 - Wiki proposal/promotion and dependency tracking;
@@ -278,7 +278,10 @@ D1, R2, Queue, Workflow, provider or model effect.
 - [ ] Keep D1 FTS fallback operational when managed search is degraded.
 - [ ] Recheck owner generation, policy, scope and purge state after retrieval.
 - [x] Implement deterministic orientation without treating top-k as completeness proof.
-- [ ] Persist and compose `research.orient`; implement `research.query`.
+- [x] Persist immutable scope-bound navigation artifacts and provide request-scoped D1 navigation
+      composition with local identity, authorization-race and purge tests.
+- [ ] Compose production scope/policy observations, grant issuance and materialization into public
+      `research.orient`; implement the QueryResult/evidence/trace contract and `research.query`.
 - [x] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.
 
 ### 8.4 Governed Research Workflow — ER-08/ER-09/ER-10

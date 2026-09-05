@@ -1,0 +1,55 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "incremental": true,
+    "rootDir": "../../../..",
+    "tsBuildInfoFile": "../dist/.navigation-tests.tsbuildinfo"
+  },
+  "include": [
+    "../src/**/*.ts",
+    "navigation*.ts"
+  ],
+  "exclude": [
+    "../src/worker-configuration.d.ts"
+  ],
+  "references": [
+    {
+      "path": "../../../packages/cloudflare-ai"
+    },
+    {
+      "path": "../../../packages/cloudflare-erasure"
+    },
+    {
+      "path": "../../../packages/cloudflare-evidence"
+    },
+    {
+      "path": "../../../packages/cloudflare-projection"
+    },
+    {
+      "path": "../../../packages/contracts"
+    },
+    {
+      "path": "../../../packages/domain"
+    },
+    {
+      "path": "../../../packages/google-drive-exchange"
+    },
+    {
+      "path": "../../../packages/interfaces"
+    },
+    {
+      "path": "../../../packages/platform-cloudflare"
+    },
+    {
+      "path": "../../../packages/policy"
+    },
+    {
+      "path": "../../../packages/research"
+    },
+    {
+      "path": "../../../packages/retrieval"
+    }
+  ]
+}

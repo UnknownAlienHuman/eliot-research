@@ -57,6 +57,8 @@ jobs:
         run: pnpm lint
       - name: Typecheck
         run: pnpm typecheck
+      - name: Typecheck navigation integration fixtures
+        run: pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
       - name: Test Cloudflare provisioners
         run: pnpm test:provisioners
       - name: Test contracts

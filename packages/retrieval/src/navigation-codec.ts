@@ -118,7 +118,7 @@ function canonicalizeJsonValue(value: unknown, depth = 0, counter = { nodes: 0 }
   }
   if (Array.isArray(value)) return value.map((item) => canonicalizeJsonValue(item, depth + 1, counter));
   if (!isRecord(value)) fail("NAVIGATION_INPUT_INVALID", "navigation JSON contains a non-JSON value");
-  const output: Record<string, JsonValue> = {};
+  const output: Record<string, JsonValue> = Object.create(null) as Record<string, JsonValue>;
   for (const key of Object.keys(value).sort(compareText)) {
     const item = value[key];
     if (item === undefined) continue;

@@ -20,6 +20,13 @@ outside the paths below.
 - `apps/eliotr-core/src/navigation-service.ts`
 - `apps/eliotr-core/src/navigation-service.test.ts`
 
+- `packages/retrieval/src/navigation-identity.ts`
+- `packages/retrieval/src/navigation-identity.test.ts`
+- `apps/eliotr-core/src/navigation-persistence.ts`
+- `apps/eliotr-core/test/navigation-fixture.ts`
+- `apps/eliotr-core/test/navigation-persistence.test.ts`
+- `apps/eliotr-core/test/tsconfig.json`
+
 ## Read only
 
 - `packages/contracts/src/navigation.ts`
@@ -41,7 +48,7 @@ outside the paths below.
 - Build a hierarchical ProjectAtlas over an immutable ScopeSnapshot with topic, source-family, version,
   period, gap, and reading-route nodes; record contradictions, degradation, centrality, missing source
   classes, represented revisions, omissions, and truncation explicitly.
-- Require an exact current ScopeSnapshot readback before any navigation artifact read.
+- Require exact current ScopeSnapshot and principal-grant readbacks before and after navigation artifact reads.
 - Expose bounded orientation and Atlas → Card → Map → section → EvidenceHandle-candidate expansion.
 - Keep SourceCard, DocumentMap, Atlas, routes, annotations, and unresolved EvidenceHandle candidates
   `NAVIGATION_ONLY`; publication requires independently resolved, LIVE, digest-bound ResolvedEvidence.
@@ -55,8 +62,9 @@ outside the paths below.
 - Malformed, duplicate, cross-source, cross-scope, cyclic, over-limit, authority-bearing, and stale-scope
   inputs fail closed with typed navigation errors.
 - A plausible Atlas claim with no supporting source span is rejected by the publication-support guard.
-- Deterministic unit tests and local runtime smoke pass; persisted D1 artifact, principal, and deployed
-  currentness/evidence receipts are `NOT EXECUTED`.
+- Deterministic, storage-negative and local Workers/D1 integration tests cover persistence, readback,
+  lost ACK, authorization races and purge invalidation. Remote currentness/evidence receipts remain
+  `NOT_EXECUTED`. Local fixtures do not establish live source acquisition or principal-grant issuance.
 
 ## Mandatory negative boundary
 
@@ -71,3 +79,34 @@ ER-24 may compose the service only with a persisted navigation store and the aut
 `ScopeService.requireCurrent` boundary. ER-07/ER-39 remain the exact EvidenceHandle resolution and
 publication/citation authority. `research.query`, Wiki, Artifact Compiler, and live platform qualification
 remain separate packets.
+
+## Persisted navigation profile
+
+ER-39 owns `packages/cloudflare-evidence/src/navigation-store.ts` and its storage/authority helpers;
+ER-13 owns additive migration `0010_navigation_artifacts.sql`; ER-00 owns the CI fixture typecheck.
+`createD1NavigationService` composes the existing deterministic navigation service with that store and
+requires an explicit authoritative `ScopeService.requireCurrent`. The store is pinned to one snapshot,
+principal, client class and credential generation. It never creates a scope grant or substitutes a
+current source head for an admitted revision.
+
+Cards and maps retain their established content-based v1 IDs. Atlas hashes, exact card references,
+source admission, LIVE/purge state, owner generation, content and residency digests are verified on
+write/readback. Snapshot identity is part of every storage key: equal bytes in two scopes never share
+a mutable row. Each `(scope, kind, source/project revision)` slot is immutable; a changed generator
+result requires a freshly authorized snapshot, not overwrite or implicit newest-version selection.
+
+The persisted small-artifact profile admits at most 1,000,000 canonical body bytes, 1,800,000 combined
+body/binding bytes and 4,000,000 bytes in one selected read. Larger artifacts fail explicitly without a
+partial write. Body metadata is checked before payload hydration; source authority uses batches of 64
+and admission JSON is capped at 65,536 bytes per row before hydration. Application code does not load
+the complete corpus. Large/sharded materialization and production workload qualification remain open.
+
+SQL guards block insertion into invalidated/non-LIVE scopes and preserve immutable rows. Purge and
+snapshot invalidation remove all navigation bodies for dependent scopes, including Atlas annotations
+about omitted sources. Snapshot/handle readback failures never become a missing-data success. Section
+expansion returns only an existing exact-range handle candidate; independent R2 evidence resolution
+is still mandatory for publication.
+
+Public `research.orient`/`research.query`, production membership/policy observations, grant issuance,
+and automatic artifact materialization are not enabled by this storage change. ER-24 must compose them
+with the frozen-scope and evidence/trace contracts; remote D1, Access and R2 qualification remains open.

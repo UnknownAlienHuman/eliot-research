@@ -75,3 +75,12 @@ pnpm check:budgets
 ```
 
 Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE_QUALIFIED`.
+
+## Additive navigation schema
+
+`0010_navigation_artifacts.sql` adds ER-31's scope-bound immutable navigation rows, insertion guards
+and dependent-body deletion triggers. It changes no existing source/evidence authority, global schema
+head, outbox semantics or enabled Worker route. Apply it with the other Core migrations before composing
+the navigation service. `check-erasure-closure.mjs` executes the entire migration stream; the ER-31 local
+Workers fixture exercises the actual table and trigger statements. Remote migration/readback is still
+`NOT_EXECUTED`. Rollback disables the consuming code, not destructive rollback of additive tables.

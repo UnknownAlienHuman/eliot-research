@@ -1,3 +1,4 @@
+import { sourceCardIdentity, documentMapIdentity, projectAtlasIdentity } from "./navigation-identity.js";
 import {
   DocumentMapRevisionSchema,
   ProjectAtlasRevisionSchema,
@@ -91,10 +92,9 @@ export async function buildSourceCard(input: SourceCardBuildInput): Promise<Sour
     created_at: input.created_at,
   };
   requireCanonicalSize(body);
-  const digest = await sha256Hex(canonicalJson({ protocol: "eliotr.source-card.v1", ...body }));
   const { source_content_sha256: _sourceContentSha256, ...contractBody } = body;
   return parseSourceCardArtifact(SourceCardSchema.parse({
-    card_ref: { id: `source-card-${digest.slice(0, 48)}`, revision: 1 },
+    card_ref: await sourceCardIdentity(contractBody, source.content_sha256),
     ...contractBody,
   }), source.source_revision_ref);
 }
@@ -181,10 +181,9 @@ export async function buildDocumentMap(input: DocumentMapBuildInput): Promise<Do
     fail("NAVIGATION_ARTIFACT_INVALID", "high-information section is absent from the merged hierarchy");
   }
   requireCanonicalSize(body);
-  const digest = await sha256Hex(canonicalJson({ protocol: "eliotr.document-map.v1", ...body }));
   const { source_content_sha256: _sourceContentSha256, ...contractBody } = body;
   return parseDocumentMapArtifact(DocumentMapRevisionSchema.parse({
-    map_ref: { id: `document-map-${digest.slice(0, 48)}`, revision: 1 },
+    map_ref: await documentMapIdentity(contractBody, source.content_sha256),
     ...contractBody,
   }), source.source_revision_ref);
 }
@@ -541,9 +540,6 @@ export async function buildProjectAtlas(input: ProjectAtlasBuildInput): Promise<
     created_at: input.created_at,
   };
   requireCanonicalSize(draft);
-  const identityDigest = await sha256Hex(canonicalJson({ protocol: "eliotr.project-atlas.identity.v1", ...draft }));
-  const atlasRef = { id: `project-atlas-${identityDigest.slice(0, 48)}`, revision: 1 };
-  const digest = await sha256Hex(canonicalJson({ protocol: "eliotr.project-atlas.v1", atlas_ref: atlasRef, ...draft }));
-  return parseProjectAtlasArtifact(ProjectAtlasRevisionSchema.parse({ atlas_ref: atlasRef, ...draft, digest }));
+  const identity = await projectAtlasIdentity(draft);
+  return parseProjectAtlasArtifact(ProjectAtlasRevisionSchema.parse({ ...identity, ...draft }));
 }
-

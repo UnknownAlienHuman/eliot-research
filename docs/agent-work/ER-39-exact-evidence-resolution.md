@@ -77,3 +77,11 @@ pnpm cf:dry-run
 Local SQLite, fake R2 and Worker tests remain `IMPLEMENTED_NOT_LIVE`. Promotion to `LIVE_QUALIFIED`
 requires deployed Access identity, remote D1 authorization/guard readback, real R2 conditional range
 readback, purge invalidation and an end-to-end citation/output receipt.
+
+## ER-31 navigation storage integration
+
+The package also owns the bounded, immutable D1 navigation store composed by ER-31. Its source loader
+reuses the evidence admission/owner decoder rather than creating a second authority implementation.
+Navigation artifacts and section-handle candidates remain non-evidentiary; no resolver/publication
+checks are bypassed. ER-13's `0010_navigation_artifacts.sql` supplies immutable slots and derived-data
+purge/invalidation triggers. Exact live erasure/restore and public API composition remain separate gates.

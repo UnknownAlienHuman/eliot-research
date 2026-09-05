@@ -232,6 +232,48 @@ export async function loadSourceAuthority(
     "WHERE sr.source_revision_ref = ?1 ORDER BY d.created_at DESC LIMIT 1",
   ).bind(sourceRevisionRef).first<SourceRow>();
   if (row === null) return null;
+  return decodeSourceAuthority(row, nowMs);
+}
+
+export async function loadSourceAuthorities(
+  database: D1Database, refs: readonly string[], nowMs: number,
+): Promise<readonly EvidenceSourceAuthority[]> {
+  if (!Array.isArray(refs) || refs.length > 64 || new Set(refs).size !== refs.length) {
+    fail("EVIDENCE_INPUT_INVALID", "source authority batch exceeds its bound or repeats identities");
+  }
+  refs.forEach((ref) => assertEvidenceIdentifier(ref, "source revision"));
+  if (refs.length === 0) return [];
+  const result = await database.prepare(
+    "SELECT s.source_id, s.source_owner_system_id AS owner_system_id, " +
+    "s.source_namespace_id, sr.source_owner_generation, " +
+    "sr.source_revision_ref, s.title AS source_title, s.source_class, sr.content_sha256, " +
+    "sr.object_residency_key_digest, sr.normalized_artifact_ref, sr.purge_state, " +
+    "o.source_owner_generation AS current_owner_generation, o.status AS owner_status, " +
+    "d.decision_receipt_ref, CASE WHEN length(CAST(d.decision_json AS BLOB)) <= 65536 " +
+    "THEN d.decision_json ELSE NULL END AS decision_json, d.decision_sha256 " +
+    "FROM source_revision sr JOIN source s ON s.source_id = sr.source_id " +
+    "LEFT JOIN source_namespace_ownership o ON o.source_namespace_id = s.source_namespace_id " +
+    "AND o.status = 'ACTIVE' " +
+    "LEFT JOIN source_admission_decision d ON d.source_revision_ref = sr.source_revision_ref " +
+    "AND d.decision = 'ADMITTED' " +
+    "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) " +
+    "AND d.decision_receipt_ref = (SELECT chosen.decision_receipt_ref FROM source_admission_decision chosen " +
+    "WHERE chosen.source_revision_ref = sr.source_revision_ref AND chosen.decision = 'ADMITTED' " +
+    "ORDER BY chosen.created_at DESC, chosen.decision_receipt_ref DESC LIMIT 1) " +
+    "ORDER BY sr.source_revision_ref LIMIT 65",
+  ).bind(JSON.stringify(refs)).all<SourceRow>();
+  if (!result.success || !Array.isArray(result.results)) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "source authority batch unavailable", { retryable: true });
+  }
+  const rows = result.results;
+  if (rows.length > refs.length || new Set(rows.map((row) => row.source_revision_ref)).size !== rows.length ||
+      rows.some((row) => typeof row.source_revision_ref !== "string" || !refs.includes(row.source_revision_ref))) {
+    fail("EVIDENCE_INPUT_INVALID", "source authority batch identity mismatch");
+  }
+  return Promise.all(rows.map((row) => decodeSourceAuthority(row, nowMs)));
+}
+
+async function decodeSourceAuthority(row: SourceRow, nowMs: number): Promise<EvidenceSourceAuthority> {
   const decision = await parseAdmissionDecision(row);
   const ownerGeneration = assertEvidenceIdentifier(
     row.source_owner_generation,

@@ -564,10 +564,20 @@ async function expand(
   }
 }
 
-// IMPLEMENTED_NOT_LIVE: ER-31 Corpus Lens navigation requires persisted D1 artifacts and current ScopeSnapshot receipts.
+// IMPLEMENTED_NOT_LIVE: ER-31 persisted Corpus Lens requires production scope composition and live D1 receipts.
 export function createNavigationService(store: NavigationStore): NavigationService {
   return {
-    orient: (request) => orient(store, request),
-    expand: (request) => expand(store, request),
+    async orient(request) {
+      const pinned = { ...request, scope_snapshot: parseNavigationScopeSnapshot(request.scope_snapshot) };
+      const result = await orient(store, pinned);
+      await requireCurrentScope(store, pinned.scope_snapshot);
+      return result;
+    },
+    async expand(request) {
+      const pinned = { ...request, scope_snapshot: parseNavigationScopeSnapshot(request.scope_snapshot) };
+      const result = await expand(store, pinned);
+      await requireCurrentScope(store, pinned.scope_snapshot);
+      return result;
+    },
   };
 }

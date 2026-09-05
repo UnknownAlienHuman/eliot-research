@@ -35,7 +35,7 @@ ResearchSession Durable Object: exposes only pending status; no authoritative se
 
 ```text
 deterministic immutable ScopeSnapshot persistence/currentness with purge, deny, owner, policy, disclosure, fence and expiry invalidation
-deterministic Corpus Lens SourceCard/DocumentMap/ProjectAtlas orientation with explicit omissions and navigation-only evidence expansion
+immutable D1 Corpus Lens storage and scoped navigation composition with exact identities, current grants, purge invalidation and explicit omissions
 generic federation boundary with strict auth/fence/reference and conservative disposition mapping
 Cloudflare Access-protected HTTP dispatch and owner catalog
 governed normalized-bundle ingest and SourceAdmissionDecision
@@ -66,9 +66,10 @@ federation.bundle.manifest
 federation.changes
 ```
 
-`research.orient` remains unavailable in the active Worker generation until ER-24 supplies a persisted
-navigation store and composes the authoritative current ScopeSnapshot gate. The ER-31 deterministic
-service itself is implemented; this does not imply route composition or live platform qualification.
+`research.orient` remains unavailable in the active Worker generation. The D1 navigation store and
+`createD1NavigationService` are implemented and exercised in local Workers/D1. ER-24 still must supply
+production membership/policy observations and grant issuance, automatic materialization and the public
+QueryResult/evidence/trace adapter. Local composition is not route enablement or live qualification.
 
 Some unavailable operations are not separate status markers because they are composition outputs of the
 owned service/workflow packets. They remain release blockers and are enumerated in the gap register and
