@@ -539,7 +539,11 @@
         "infra/cloudflare/deployment-receipt.schema.json",
         "infra/cloudflare/README.md",
         "docs/implementation/cloudflare-runbook.md",
-        "docs/adr/0005-hostname-access-for-websocket.md"
+        "docs/adr/0005-hostname-access-for-websocket.md",
+        "scripts/lib/deployment-verification.mjs",
+        "scripts/test-deployment-verification.mjs",
+        "scripts/test-deployment-orchestration.mjs",
+        "docs/implementation/deployment-audit-2026-09-04.md"
       ],
       "mandatory_negative_case": "Seed mocked Cloudflare APIs with an incompatible immutable AI Search profile and an unexpected Access policy; prove every check-only/apply path exits nonzero before any mutation.",
       "document": "ER-26-cloudflare-provisioning-and-deployment.md",

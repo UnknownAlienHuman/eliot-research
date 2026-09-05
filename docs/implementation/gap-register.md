@@ -7,6 +7,7 @@ production definition and final exit evidence are specified in
 
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
+| P1 | Deployment HTTP verification and release ordering are implemented but not live-qualified; complete binding/version attestation is still missing | ER-26, ER-27 | retain real generation-bound authenticated smoke, full binding/version readback and failure/redeploy receipts; see `deployment-audit-2026-09-04.md` |
 | P1 | Generic federation boundary is implemented but not wired into the Worker composition root or live-qualified | ER-22, ER-24 | compose authenticated D1/R2 authority ports, expose routes, and retain mutual-auth/idempotency/range/cursor receipts |
 | P1 | Rust deterministic-kernel M1 verification foundation is complete; M2–M7 authority migration remains open | ER-00, ER-01, ER-02, ER-03 and capability owners | M2 canonical identity/serialization parity; M3–M4 deterministic-domain migration; M5–M7 ABI promotion, shadow receipts, promoted Rust authority and superseded TypeScript removal |
 | P1 | Exact erasure closure is implemented but not live-qualified across Cloudflare/provider/offsite paths | ER-28, ER-34 | remote R2/D1/AI Search/offsite deletion, blocked-lock, restart replay and restore purge-ledger receipts |
