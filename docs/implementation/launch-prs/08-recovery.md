@@ -128,8 +128,10 @@ bill cannot be manufactured before it exists; mark its observation pending until
 
 Good result: §19 forbidden counts all 0, accepted citations/exact recall 100%, labelled semantic Recall@20
 initially >=0.90, no knowledge/job loss from rebuildable stores, restore and rollback PASS. Measure §15.8
-catalog/orient <500 ms (excluding client network), exact <800 ms, hybrid <2.5 s, first token <4 s after
-retrieval; record route/index generations and any unmet target, never relax it ad hoc. Compressed Worker
-<=4 MiB, PWA JS <=600 KiB, startup <=400 ms, first-party heap target <=32 MiB. These are repository targets.
+CACHED catalog/orient p95 <500 ms (excluding client network), exact-handle p95 <800 ms, hybrid-locate
+p95 <2.5 s and interactive first token <4 s after retrieval. Emit each target per route/index generation;
+per §15.8 they become acceptance budgets after the live baseline, not an invented cold-cache SLA.
+Record any unmet target and its review; never silently relax it. Compressed Worker <=4 MiB, PWA initial
+JS <=600 KiB gzip, startup <=400 ms, first-party heap target <=32 MiB. These are repository targets.
 Production stays blocked by required failed/missing gates, P0/P1, unresolved citations or blocked erasure
 without review. No theme may mark LIVE_QUALIFIED just because this runbook exists.
