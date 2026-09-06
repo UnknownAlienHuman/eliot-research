@@ -1,11 +1,14 @@
-import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
-import { verifyOwnerTokenReference } from "../crates/eliotr-test-vectors/reference/owner-token.mjs";
-import { verifyScopeSnapshotIdentityReference } from "../crates/eliotr-test-vectors/reference/scope-snapshot-identity.mjs";
-import { verifyScopeSnapshotIdentityDifferential } from "../crates/eliotr-test-vectors/reference/scope-snapshot-identity-differential.mjs";
-import { verifyResidencyKeyReference } from "../crates/eliotr-test-vectors/reference/residency-key.mjs";
-import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
-import { TextDecoder } from "node:util";
+// Self-contained clean-checkout gate: this script rebuilds the exact production
+// contracts+domain `dist` from source BEFORE importing the differential oracle,
+// so CI ordering (no prior build, no pre-existing dist) cannot fail with
+// ERR_MODULE_NOT_FOUND and stale dist can never mask a divergence. The oracle
+// still exercises the actual production Zod schemas/functions byte-for-byte.
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { TextDecoder } from "node:util";
 
 const fixtureUrl = new URL(
   "../crates/eliotr-test-vectors/fixtures/canonical-utf8.v1.txt",
@@ -191,6 +194,208 @@ function assertRejected(name, source, expectedMessage) {
   }
   fail(`${name}: malformed fixture was accepted`);
 }
+
+const REPO_ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const CONTRACTS_DIST = join(REPO_ROOT, "packages", "contracts", "dist");
+const DOMAIN_DIST = join(REPO_ROOT, "packages", "domain", "dist");
+const REQUIRED_DIST_ENTRIES = Object.freeze([
+  join(CONTRACTS_DIST, "common.js"),
+  join(CONTRACTS_DIST, "scope.js"),
+  join(DOMAIN_DIST, "scope", "snapshot-identity.js"),
+]);
+const BUILD_PACKAGES = Object.freeze(["packages/contracts", "packages/domain"]);
+const PINNED_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u;
+
+function readPackageJson(packagePath) {
+  try {
+    return JSON.parse(readFileSync(packagePath, "utf8"));
+  } catch (error) {
+    fail(`rust-vectors gate: cannot read ${packagePath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+function readPinnedVersion(packagePath, field) {
+  const parsed = readPackageJson(packagePath);
+  const version = parsed.dependencies?.[field] ?? parsed.devDependencies?.[field];
+  if (typeof version !== "string" || !PINNED_VERSION.test(version)) {
+    fail(`rust-vectors gate: pinned ${field} version is missing in ${packagePath}`);
+  }
+  return version;
+}
+
+function runGateCommand(binary, args, label, extraEnv, useShell = process.platform === "win32") {
+  console.log(`rust-vectors gate: ${label}: ${[binary, ...args].join(" ")}`);
+  // Windows resolves `.cmd` shims (pnpm/corepack) only via the shell; Linux
+  // keeps exact argv dispatch without a shell. Real binaries (node) never need
+  // the shell, which also avoids quoting spaced install paths.
+  const result = spawnSync(binary, args, {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+    shell: useShell,
+    ...(extraEnv === undefined ? {} : { env: { ...process.env, ...extraEnv } }),
+  });
+  if (result.error) {
+    fail(`rust-vectors gate: ${label} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    fail(`rust-vectors gate: ${label} exited with code ${result.status}`);
+  }
+}
+
+function captureStdout(binary, args) {
+  const result = spawnSync(binary, args, {
+    cwd: REPO_ROOT,
+    stdio: ["ignore", "pipe", "ignore"],
+    shell: process.platform === "win32",
+    encoding: "utf8",
+  });
+  if (result.error || result.status !== 0) return undefined;
+  return typeof result.stdout === "string" ? result.stdout.trim() : undefined;
+}
+
+// The production build needs the workspace install: the `@eliotr/contracts`
+// symlink for `tsc -b`, plus zod/vitest for compile and runtime. All three
+// probes must hold; anything else fails closed into the bootstrap below.
+function workspaceIsInstalled() {
+  return (
+    existsSync(join(REPO_ROOT, "node_modules", ".modules.yaml")) &&
+    existsSync(join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc")) &&
+    existsSync(
+      join(
+        REPO_ROOT,
+        "packages",
+        "domain",
+        "node_modules",
+        "@eliotr",
+        "contracts",
+        "package.json",
+      ),
+    )
+  );
+}
+
+// Ensures the frozen workspace install exists. A bare `tsc -b` cannot work on a
+// clean checkout (no workspace symlinks, no zod/vitest), so the gate performs
+// the same `pnpm install --frozen-lockfile` the verify job runs — pinned via
+// the root `packageManager` field and activated through corepack when needed.
+// Install output lands in git-ignored node_modules only; no tracked file changes.
+function ensureWorkspace() {
+  if (workspaceIsInstalled()) {
+    console.log("rust-vectors gate: frozen workspace dependencies present; reusing the repo toolchain.");
+    return;
+  }
+  const rootPkg = readPackageJson(join(REPO_ROOT, "package.json"));
+  const manager = typeof rootPkg.packageManager === "string" ? rootPkg.packageManager : "";
+  const match = /^pnpm@([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$/u.exec(manager);
+  if (match === null) {
+    fail("rust-vectors gate: root packageManager must pin pnpm (for example pnpm@11.23.0)");
+  }
+  const pinnedPnpm = match[1];
+  if (captureStdout("pnpm", ["--version"]) !== pinnedPnpm) {
+    runGateCommand(
+      "corepack",
+      ["prepare", `pnpm@${pinnedPnpm}`, "--activate"],
+      `activating repo-pinned pnpm@${pinnedPnpm} via corepack`,
+      { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+    );
+  }
+  runGateCommand("pnpm", ["install", "--frozen-lockfile"], "installing frozen workspace dependencies");
+  if (!workspaceIsInstalled()) {
+    fail("rust-vectors gate: workspace install completed but dependencies are still unresolvable");
+  }
+}
+
+// Rebuilds the exact production dist fresh on every run: stale output is
+// removed first so it can never mask a divergence, and the build fails closed.
+function ensureFreshProductionDist() {
+  ensureWorkspace();
+  const typescriptPinned = readPinnedVersion(join(REPO_ROOT, "package.json"), "typescript");
+  for (const distDir of [CONTRACTS_DIST, DOMAIN_DIST]) {
+    rmSync(distDir, { recursive: true, force: true });
+  }
+  console.log("rust-vectors gate: removed stale contracts+domain dist; rebuilding fresh from source.");
+  const localTsc = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
+  if (!existsSync(localTsc)) {
+    fail("rust-vectors gate: workspace install did not provide the repo TypeScript compiler");
+  }
+  runGateCommand(
+    process.execPath,
+    [localTsc, "-b", ...BUILD_PACKAGES],
+    `rebuilding exact production dist with repo typescript@${typescriptPinned}`,
+    undefined,
+    false,
+  );
+  for (const entry of REQUIRED_DIST_ENTRIES) {
+    if (!existsSync(entry)) {
+      fail(`rust-vectors gate: fresh build did not emit ${entry}`);
+    }
+  }
+}
+
+function assertProductionZodPath(modules) {
+  const { IsoDateTimeSchema } = modules[0];
+  const { ScopeSnapshotSchema } = modules[1];
+  const { scopeSnapshotDigestPayload, scopeSnapshotIdentityPayload } = modules[2];
+  if (typeof IsoDateTimeSchema?.safeParse !== "function") {
+    fail("rust-vectors gate: fresh contracts dist does not export IsoDateTimeSchema");
+  }
+  if (typeof ScopeSnapshotSchema?.safeParse !== "function") {
+    fail("rust-vectors gate: fresh contracts dist does not export ScopeSnapshotSchema");
+  }
+  if (
+    typeof scopeSnapshotIdentityPayload !== "function" ||
+    typeof scopeSnapshotDigestPayload !== "function"
+  ) {
+    fail("rust-vectors gate: fresh domain dist does not export the snapshot payload builders");
+  }
+  console.log(
+    "rust-vectors gate: fresh dist built; exercising IsoDateTimeSchema/ScopeSnapshotSchema + scopeSnapshotIdentityPayload/scopeSnapshotDigestPayload from the exact production build.",
+  );
+}
+
+ensureFreshProductionDist();
+const productionModules = [];
+for (const entry of REQUIRED_DIST_ENTRIES) {
+  productionModules.push(await import(pathToFileURL(entry).href));
+}
+assertProductionZodPath(productionModules);
+
+const { verifyCanonicalBodyReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "canonical-body.mjs"),
+  ).href
+);
+const { verifyOwnerTokenReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "owner-token.mjs"),
+  ).href
+);
+const { verifyScopeSnapshotIdentityReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "scope-snapshot-identity.mjs"),
+  ).href
+);
+const { verifyScopeSnapshotIdentityDifferential } = await import(
+  pathToFileURL(
+    join(
+      REPO_ROOT,
+      "crates",
+      "eliotr-test-vectors",
+      "reference",
+      "scope-snapshot-identity-differential.mjs",
+    ),
+  ).href
+);
+const { verifyResidencyKeyReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "residency-key.mjs"),
+  ).href
+);
+const { verifyStableIdReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "stable-id.mjs"),
+  ).href
+);
 
 const source = await readFile(fixtureUrl, "utf8");
 const cases = parseFrame(source);
