@@ -7,7 +7,7 @@ import {
   type LedgerObligation, type LedgerSnapshot,
 } from "./ports.js";
 import {
-  COMMAND_SQL, buildAppendCommand, buildCreateCommand, buildSupersedeCommand, hasCommittedCommand, readCommandFence,
+  COMMAND_SQL, assertAppendMutationMask, assertCanonicalLedgerTimestamp, buildAppendCommand, buildCreateCommand, buildSupersedeCommand, hasCommittedCommand, readCommandFence,
 } from "./ledger-commands.js";
 import type { ResearchRunResult } from "./ports.js";
 export interface LedgerD1Statement {
@@ -141,6 +141,9 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       throwIfCancelled(context);
       const head = parseHead(rawHead);
       const firstEvent = parseEvent(rawEvent);
+      assertCanonicalLedgerTimestamp(head.created_at, "head created_at");
+      assertCanonicalLedgerTimestamp(head.updated_at, "head updated_at");
+      assertCanonicalLedgerTimestamp(firstEvent.created_at, "event created_at");
       if (firstEvent.sequence !== 1 || firstEvent.kind !== "CREATED" || firstEvent.investigation_id !== head.investigation_id) {
         ledgerFail("LEDGER_INPUT_INVALID", "first ledger event must be CREATED sequence 1");
       }
@@ -196,12 +199,15 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       throwIfCancelled(context);
       const head = parseHead(nextHead);
       const parsedEvent = parseEvent(event);
+      assertCanonicalLedgerTimestamp(head.updated_at, "head updated_at");
+      assertCanonicalLedgerTimestamp(parsedEvent.created_at, "event created_at");
       const fastReplay = await appliedAlready(database, head, parsedEvent);
       if (fastReplay !== null) return fastReplay;
       const currentRow = await database.prepare(LEDGER_SQL.selectHead).bind(head.investigation_id).first<HeadRow>();
       if (currentRow === null) ledgerFail("LEDGER_CONFLICT", "unknown investigation ledger");
       const current = decodeHead(currentRow);
       checkAppendShape(head, current, parsedEvent, expectedRevision);
+      assertAppendMutationMask(current, head, parsedEvent);
       const racedReplay = await appliedAlready(database, head, parsedEvent);
       if (racedReplay !== null) return racedReplay;
       const fence = await readCommandFence(database, head);
@@ -234,6 +240,10 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       const oldEvent = parseEvent(rawOldEvent);
       const newHead = parseHead(rawNewHead);
       const newEvent = parseEvent(rawNewEvent);
+      assertCanonicalLedgerTimestamp(oldHead.updated_at, "head updated_at");
+      assertCanonicalLedgerTimestamp(oldEvent.created_at, "event created_at");
+      assertCanonicalLedgerTimestamp(newHead.updated_at, "head updated_at");
+      assertCanonicalLedgerTimestamp(newEvent.created_at, "event created_at");
       if (newHead.revision !== 1 || newHead.event_head !== 1 || newEvent.sequence !== 1 || newEvent.kind !== "CREATED") {
         ledgerFail("LEDGER_INPUT_INVALID", "superseding ledger must start at revision 1 with one CREATED event");
       }

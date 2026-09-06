@@ -387,4 +387,79 @@ describe("atomic ledger commands over committed migrations", () => {
       expect(snap.events.map((event) => event.sequence)).toEqual(snap.events.map((_, index) => index + 1));
     }
   });
+  it("FIX5 P1-A: forged ordinary events cannot mutate any protected family", async () => {
+    const ctx = setup();
+    const input = baseInput();
+    seedHandles(ctx, input);
+    await ctx.service.create(input);
+    ctx.digests.set("payload-x", "c".repeat(64));
+    const snap = await ctx.store.read("inv-c1");
+    if (snap === null) throw new Error("missing ledger");
+    const stamp = nowIso();
+    let tag = 0;
+    const chk = (head: LedgerHead, kind: LedgerEvent["kind"], extra: Partial<LedgerEvent> = {}): LedgerEvent => ({
+      investigation_id: "inv-c1", sequence: 2, event_id: `evt-fix5-${(tag += 1)}`,
+      kind, payload_handle_ref: "payload-x", payload_digest: "c".repeat(64),
+      actor_ref: "principal-1", verifier_ref: null, created_at: stamp, ...extra,
+    });
+    const base: LedgerHead = { ...snap.head, revision: 2, event_head: 2, updated_at: stamp };
+    const evilObl = [{ obligation_id: "obl-1", verifier_ref: "verifier-evil", lane: "confirmatory" as const, metric_ref: "metric-evil", status: "ACCEPTED" as const, exposed: true }];
+    const cases: { name: string; head: LedgerHead; event: LedgerEvent; code: string }[] = [
+      { name: "obligations", head: { ...base, obligations: evilObl }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "oblig-verifier", head: { ...base, obligations: [{ ...snap.head.obligations[0] as LedgerHead["obligations"][number], verifier_ref: "verifier-evil" }] }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "hypotheses", head: { ...base, hypotheses: ["h-evil"] }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "hyp-order", head: { ...base, hypotheses: ["h-1", "h-2"] }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "lane-reg", head: { ...base, lane_registrations: ["lane-evil"] }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "portfolio", head: { ...base, portfolio_ref: "portfolio-evil" }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "debt", head: { ...base, debt_refs: ["debt-evil"] }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "observed", head: { ...base, observed_execution: "evil-obs" }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "status", head: { ...base, status: "CLOSED" }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "supersede-reason", head: { ...base, supersession_reason: "evil" }, event: chk(base, "CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "grade", head: { ...base, evidence_grade: "E3" }, event: chk(base, "CHECKPOINT"), code: "LEDGER_SUPERSESSION_REQUIRED" },
+      { name: "checkpoint-via-accept", head: { ...base, checkpoint_head: 99, obligations: [{ ...snap.head.obligations[0] as LedgerHead["obligations"][number], status: "ACCEPTED" as const }] }, event: chk(base, "OBLIGATION_ACCEPTED", { actor_ref: "verifier-a", verifier_ref: "verifier-a" }), code: "LEDGER_INPUT_INVALID" },
+      { name: "created-kind", head: { ...base }, event: chk(base, "CREATED"), code: "LEDGER_INPUT_INVALID" },
+      { name: "superseded-kind", head: { ...base }, event: chk(base, "SUPERSEDED"), code: "LEDGER_INPUT_INVALID" },
+      { name: "obl-via-observed", head: { ...base, obligations: evilObl, observed_execution: "e", observed_fidelity: "f", observed_assurance: "a" }, event: chk(base, "OBSERVED"), code: "LEDGER_INPUT_INVALID" },
+    ];
+    for (const item of cases) {
+      const before = snapshot(ctx, "inv-c1");
+      const beforeBytes = headBytes(ctx, "inv-c1");
+      const beforeEvents = JSON.stringify(ctx.raw.prepare("SELECT event_id, kind, sequence FROM investigation_ledger_event WHERE investigation_id='inv-c1' ORDER BY sequence").all());
+      const beforeCmds = (ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_command").get() as unknown as { n: number }).n;
+      expect(await codeOf(ctx.store.append(item.head, 1, item.event)), item.name).toBe(item.code);
+      expect(snapshot(ctx, "inv-c1"), `${item.name} rows`).toBe(before);
+      expect(headBytes(ctx, "inv-c1"), `${item.name} head`).toBe(beforeBytes);
+      expect(JSON.stringify(ctx.raw.prepare("SELECT event_id, kind, sequence FROM investigation_ledger_event WHERE investigation_id='inv-c1' ORDER BY sequence").all()), `${item.name} events`).toBe(beforeEvents);
+      expect((ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_command").get() as unknown as { n: number }).n, `${item.name} cmds`).toBe(beforeCmds);
+    }
+  });
+  it("FIX5 P1-B: malformed and noncanonical timestamps fail at both layers with zero effects", async () => {
+    const bad: string[] = ["not-a-date", "", "null", "NULL", "undefined", "2026-13-01T00:00:00.000Z", "2026-02-30T00:00:00.000Z", "2026-09-06T05:00:00+02:00", "2026-09-06T05:00:00Z", "2026-09-06T05:00:00.00Z", "2026-09-06T05:00:00.0000Z", "2026-09-06 05:00:00.000Z", "2026-09-06T24:00:00.000Z", "2026-02-29T00:00:00.000Z"];
+    for (const stamp of bad) {
+      const ctx = setup();
+      const input = baseInput();
+      seedHandles(ctx, input);
+      await ctx.service.create(input);
+      ctx.digests.set("payload-t", "c".repeat(64));
+      const snap = await ctx.store.read("inv-c1");
+      if (snap === null) throw new Error("missing ledger");
+      const before = snapshot(ctx, "inv-c1");
+      const beforeBytes = headBytes(ctx, "inv-c1");
+      const forgedNext: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 3, updated_at: stamp };
+      const forgedEvent: LedgerEvent = { investigation_id: "inv-c1", sequence: 2, event_id: `evt-ts-${bad.indexOf(stamp)}`, kind: "CHECKPOINT", payload_handle_ref: "payload-t", payload_digest: "c".repeat(64), actor_ref: "principal-1", verifier_ref: null, created_at: stamp };
+      expect(await codeOf(ctx.store.append(forgedNext, 1, forgedEvent)), `service:${stamp}`).toBe("LEDGER_INPUT_INVALID");
+      expect(snapshot(ctx, "inv-c1"), `service-rows:${stamp}`).toBe(before);
+      // Raw D1 command insert with every time slot forged: must fail closed too.
+      const good = nowIso();
+      const validNext: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 3, updated_at: good };
+      const validEvent: LedgerEvent = { investigation_id: "inv-c1", sequence: 2, event_id: `evt-raw-${bad.indexOf(stamp)}`, kind: "CHECKPOINT", payload_handle_ref: "payload-t", payload_digest: "c".repeat(64), actor_ref: "principal-1", verifier_ref: null, created_at: good };
+      const fence = await readCommandFence(ctx.d1 as unknown as LedgerCommandDatabase, validNext);
+      const epochRow = await ctx.d1.prepare(COMMAND_SQL.selectEpoch).bind().first<{ generation: number }>();
+      const params = [...buildAppendCommand(validNext, 1, validEvent, fence, epochRow?.generation ?? 1, good).params];
+      for (const col of ["observed_at", "expires_at", "nh_updated_at", "ne_created_at"]) params[COMMAND_COLUMNS.indexOf(col)] = stamp;
+      await expect(ctx.d1.batch([ctx.d1.prepare(COMMAND_SQL.insertCommand).bind(...params)]), `d1:${stamp}`).rejects.toThrow(/LEDGER_INPUT_INVALID/);
+      expect(snapshot(ctx, "inv-c1"), `d1-rows:${stamp}`).toBe(before);
+      expect(headBytes(ctx, "inv-c1"), `d1-head:${stamp}`).toBe(beforeBytes);
+    }
+  });
 });
