@@ -8,6 +8,7 @@
 mod canonical_body;
 mod evaluator;
 mod model;
+mod owner_token;
 mod parser;
 mod residency_key;
 mod stable_id;
@@ -19,6 +20,7 @@ pub use model::{
     MAX_VECTOR_CASES, MAX_VECTOR_FRAME_BYTES, MAX_VECTOR_MAX_BYTES, MAX_VECTOR_PAYLOAD_BYTES,
     VECTOR_PROTOCOL, VECTOR_SCHEMA_GENERATION, VectorSet,
 };
+pub use owner_token::*;
 pub use parser::{VectorParseError, VectorParseErrorKind, parse_vector_set};
 pub use residency_key::*;
 pub use stable_id::*;
