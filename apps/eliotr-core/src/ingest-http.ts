@@ -3,6 +3,7 @@ import type {
   AuthenticatedRequestContext,
   CommitBundleUploadRequest,
   CompleteBundleFileRequest,
+  DiscoverBundleUploadRequest,
   OwnerApi,
   PrepareBundleUploadRequest,
   UploadBundlePartRequest,
@@ -48,6 +49,14 @@ function record(value: unknown, label: string): Record<string, unknown> {
 
 function identifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) {
+    fail("INGEST_IDENTIFIER_INVALID", 400, `${label} is invalid`);
+  }
+  return value;
+}
+
+function opaqueToken(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+      new TextEncoder().encode(value).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) {
     fail("INGEST_IDENTIFIER_INVALID", 400, `${label} is invalid`);
   }
   return value;
@@ -145,9 +154,7 @@ function fileHashes(value: unknown): Readonly<Record<string, string>> {
   return output;
 }
 
-async function prepareRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
-  const input = await jsonBody(request, maximumBytes);
-  exactKeys(input, ["manifest", "total_bytes", "file_hashes", "idempotency_key"], "prepare request");
+function bundleInput(input: Record<string, unknown>): DiscoverBundleUploadRequest {
   let manifest;
   try { manifest = NormalizedBundleManifestSchema.parse(input.manifest); }
   catch (cause) { fail("INGEST_MANIFEST_INVALID", 400, `manifest failed strict validation: ${String(cause)}`); }
@@ -155,8 +162,19 @@ async function prepareRequest(request: Request, maximumBytes: number): Promise<P
     manifest,
     total_bytes: positiveInteger(input.total_bytes, "total_bytes", 50 * 1024 * 1024 * 1024),
     file_hashes: fileHashes(input.file_hashes),
-    idempotency_key: identifier(input.idempotency_key, "idempotency_key"),
   };
+}
+
+async function prepareRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["manifest", "total_bytes", "file_hashes", "idempotency_key"], "prepare request");
+  return { ...bundleInput(input), idempotency_key: identifier(input.idempotency_key, "idempotency_key") };
+}
+
+async function discoveryRequest(request: Request, maximumBytes: number): Promise<DiscoverBundleUploadRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["manifest", "total_bytes", "file_hashes"], "discovery request");
+  return bundleInput(input);
 }
 
 async function completeRequest(
@@ -166,8 +184,8 @@ async function completeRequest(
 ): Promise<CompleteBundleFileRequest> {
   const input = await jsonBody(request, maximumBytes);
   exactKeys(input, ["multipart_session_ref", "path", "parts"], "file completion request");
-  if (!Array.isArray(input.parts) || input.parts.length < 1 || input.parts.length > MAX_PART_COUNT) {
-    fail("INGEST_PART_SET_INVALID", 400, "parts must be a bounded non-empty array");
+  if (!Array.isArray(input.parts) || input.parts.length > MAX_PART_COUNT) {
+    fail("INGEST_PART_SET_INVALID", 400, "parts must be a bounded array; empty means existing-file reconciliation only");
   }
   const parts = input.parts.map((raw, index) => {
     const part = record(raw, `parts[${index}]`);
@@ -175,7 +193,7 @@ async function completeRequest(
     return {
       part_number: positiveInteger(part.part_number, `parts[${index}].part_number`, MAX_PART_COUNT),
       size_bytes: positiveInteger(part.size_bytes, `parts[${index}].size_bytes`, 256 * 1024 * 1024),
-      etag: identifier(part.etag, `parts[${index}].etag`),
+      etag: opaqueToken(part.etag, `parts[${index}].etag`),
     };
   });
   return {
@@ -253,6 +271,12 @@ export async function dispatchIngestOperation(
     case "ingest.bundle.commit":
       exactQuery(url, []);
       return owner.commitBundle(context, await commitRequest(request, maximumBytes));
+    case "ingest.bundle.discover":
+      exactQuery(url, []);
+      return owner.discoverBundle(context, await discoveryRequest(request, maximumBytes));
+    case "ingest.bundle.recovery":
+      exactQuery(url, []);
+      return owner.getBundleRecovery(context, identifier(params.operation_id, "operation_id"));
     case "ingest.bundle.status":
       exactQuery(url, []);
       return owner.getBundleStatus(

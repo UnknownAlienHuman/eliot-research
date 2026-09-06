@@ -1,3 +1,4 @@
+import { canonicalDigest, IngestAuthorityError } from "@eliotr/platform-cloudflare";
 import type {
   AuthenticatedRequestContext,
   OwnerApi,
@@ -152,6 +153,7 @@ function fixture(initial = operation()) {
     },
     async load() { return current; },
     async loadForPrincipal() { return current; },
+    async loadBySourceRevisionForPrincipal() { return current; },
     async recordQualificationDecision(input) {
       events.push("authority.decision");
       current = {
@@ -297,4 +299,23 @@ describe("governed ingest service", () => {
       .rejects.toBeInstanceOf(IngestHttpInputError);
     expect(prepareBundle).not.toHaveBeenCalled();
   });
+  it("rechecks current authorization after exact-folder discovery before exposing the original key", async () => {
+    const f = fixture(operation({ manifest_sha256: await canonicalDigest(manifest) }));
+    const lookup = vi.spyOn(f.authority, "loadBySourceRevisionForPrincipal");
+    const finalRead = vi.spyOn(f.authority, "loadForPrincipal").mockRejectedValue(new IngestAuthorityError("INGEST_POLICY_DENIED", "withdrawn"));
+    const service = createIngestService({ authority: f.authority, stagedBundles: f.staged, admission: f.admission });
+    await expect(service.discoverBundle(context, { manifest, file_hashes: files, total_bytes: 42 })).rejects.toMatchObject({ code: "INGEST_POLICY_DENIED" });
+    expect(lookup).toHaveBeenCalledExactlyOnceWith("revision-1", "principal-1");
+    expect(finalRead).toHaveBeenCalledExactlyOnceWith("ingest-1", "principal-1");
+    expect(f.events).toEqual([]);
+  });
+
+  it("rejects reservation drift on the final discovery read without staging side effects", async () => {
+    const f = fixture(operation({ manifest_sha256: await canonicalDigest(manifest) }));
+    vi.spyOn(f.authority, "loadForPrincipal").mockResolvedValue({ ...f.current, input_fingerprint: A });
+    const service = createIngestService({ authority: f.authority, stagedBundles: f.staged, admission: f.admission });
+    await expect(service.discoverBundle(context, { manifest, file_hashes: files, total_bytes: 42 })).rejects.toMatchObject({ code: "INGEST_RECOVERY_INPUT_MISMATCH" });
+    expect(f.events).toEqual([]);
+  });
+
 });

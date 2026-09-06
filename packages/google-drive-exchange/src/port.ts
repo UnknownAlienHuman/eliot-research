@@ -18,6 +18,7 @@ export interface SheetRange {
 export interface WriteReceipt {
   readonly spreadsheetId: string;
   readonly replies: readonly unknown[];
+  /** Local HTTP acknowledgement observation time; not Google commit time or exact row readback. */
   readonly writtenAt: string;
 }
 
