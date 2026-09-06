@@ -95,7 +95,7 @@ const FAMILY_VERSIONS: Readonly<
   library: { schema_version: 1, schema_generation: 1 },
   model: { schema_version: 1, schema_generation: 1 },
   navigation: { schema_version: 1, schema_generation: 1 },
-  "normalized-bundle": { schema_version: 1, schema_generation: 1 },
+  "normalized-bundle": { schema_version: 1, schema_generation: 2 },
   operations: { schema_version: 1, schema_generation: 1 },
   "owner-cutover": { schema_version: 1, schema_generation: 1 },
   policy: { schema_version: 1, schema_generation: 1 },

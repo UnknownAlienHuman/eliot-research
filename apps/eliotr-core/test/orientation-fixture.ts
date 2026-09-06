@@ -2,8 +2,8 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 import { expect } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
-import { canonicalNormalizedBundleKey, objectResidencyKeyDigest } from "@eliotr/platform-cloudflare";
-import type { SourceAdmissionDecision } from "@eliotr/contracts";
+import { canonicalDigest, canonicalNormalizedBundleKey, objectResidencyKeyDigest } from "@eliotr/platform-cloudflare";
+import { BundleAdmissionReceiptSchema, type SourceAdmissionDecision } from "@eliotr/contracts";
 import type { QueryResult } from "@eliotr/interfaces";
 import type { RetrievalTrace } from "@eliotr/contracts";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
@@ -58,7 +58,7 @@ export async function seedSource(id: string, withPolicy = true) {
     quality: { state: "standard", assurance_ceiling: "ceiling-1", warnings: [] as string[] },
     export: { purpose: "test", receipt_ref: "receipt-1" },
   };
-  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(manifest));
   const manifestSha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", manifestBytes as BufferSource))]
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   const manifestResidencyDigest = await objectResidencyKeyDigest({ ...residencyBase,
@@ -70,6 +70,17 @@ export async function seedSource(id: string, withPolicy = true) {
   if (manifestResidencyDigest === contentResidencyDigest || manifestKey === contentKey) {
     throw new Error("fixture promotion keys must use distinct per-file residency digests");
   }
+  // N1 FIX3: the durable bundle admission receipt persists every promoted
+  // object's exact promotion readback (key, residency digest, digest, size,
+  // media type, ETag + version). The orientation contour reconciles R2 against
+  // this receipt, never against the mutable revision ref alone.
+  const hashesText = `${contentSha}  content.md\n${manifestSha}  manifest.json\n`;
+  const hashesBytes = new TextEncoder().encode(hashesText);
+  const hashesSha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", hashesBytes as BufferSource))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const hashesResidencyDigest = await objectResidencyKeyDigest({ ...residencyBase,
+    content_digest: { algorithm: "sha256", digest: hashesSha } });
+  const hashesKey = await canonicalNormalizedBundleKey(hashesResidencyDigest, identity, "hashes.sha256");
   await insert("source_namespace_ownership", { source_namespace_id: namespace, ownership_record_revision: 1,
     owner_system_id: "eliotr", owner_incarnation_ref: "incarnation-1", source_owner_generation: "owner-gen-1",
     source_admission_policy_revision: 1, status: "ACTIVE", created_at: now });
@@ -100,10 +111,42 @@ export async function seedSource(id: string, withPolicy = true) {
     customMetadata: { eliotr_sha256: contentSha, eliotr_size_bytes: String(markdownBytes.byteLength),
       eliotr_immutable: "true", source_namespace_id: namespace, source_owner_generation: "owner-gen-1",
       admission_receipt_ref: `decision-${id}` } });
-  await evidenceBucket.put(manifestKey, manifestBytes, { httpMetadata: { contentType: "application/json; charset=utf-8" },
+  const contentPut = await evidenceBucket.head(contentKey);
+  const manifestPut = await evidenceBucket.put(manifestKey, manifestBytes, { httpMetadata: { contentType: "application/json; charset=utf-8" },
     customMetadata: { eliotr_sha256: manifestSha, eliotr_size_bytes: String(manifestBytes.byteLength),
       eliotr_immutable: "true", source_namespace_id: namespace, source_owner_generation: "owner-gen-1",
       admission_receipt_ref: `decision-${id}` } });
+  const hashesPut = await evidenceBucket.put(hashesKey, hashesBytes, { httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    customMetadata: { eliotr_sha256: hashesSha, eliotr_size_bytes: String(hashesBytes.byteLength),
+      eliotr_immutable: "true", source_namespace_id: namespace, source_owner_generation: "owner-gen-1",
+      admission_receipt_ref: `decision-${id}` } });
+  if (!contentPut?.etag || !manifestPut?.etag || !hashesPut?.etag) throw new Error("fixture R2 readback lost its ETag");
+  const versionOf = (object: R2Object | null) => {
+    const version = (object as unknown as { version?: unknown } | null)?.version;
+    return typeof version === "string" && version.length > 0 ? { version } : {};
+  };
+  const receipt = BundleAdmissionReceiptSchema.parse({
+    operation_id: `op-${id}`, manifest_sha256: manifestSha, source_revision_ref: ref,
+    normalized_artifact_ref: manifestKey, object_residency_key_digest: contentResidencyDigest,
+    decision: "ADMITTED", reason_codes: [], readback_sha256: await evidenceSha256({ operation: `op-${id}`, ref }),
+    promoted_objects: [
+      { logical_path: "content.md", canonical_key: contentKey, residency_key_digest: contentResidencyDigest,
+        sha256: contentSha, size_bytes: markdownBytes.byteLength, etag: contentPut.etag,
+        ...versionOf(contentPut), content_type: "text/markdown; charset=utf-8" },
+      { logical_path: "hashes.sha256", canonical_key: hashesKey, residency_key_digest: hashesResidencyDigest,
+        sha256: hashesSha, size_bytes: hashesBytes.byteLength, etag: hashesPut.etag,
+        ...versionOf(hashesPut), content_type: "text/plain; charset=utf-8" },
+      { logical_path: "manifest.json", canonical_key: manifestKey, residency_key_digest: manifestResidencyDigest,
+        sha256: manifestSha, size_bytes: manifestBytes.byteLength, etag: manifestPut.etag,
+        ...versionOf(manifestPut), content_type: "application/json; charset=utf-8" },
+    ],
+    committed_at: now,
+  });
+  const receiptJson = canonicalEvidenceJson(receipt);
+  const receiptSha = await canonicalDigest(receipt);
+  await db.prepare("UPDATE bundle_ingest_operation SET bundle_receipt_json=?1, bundle_receipt_sha256=?2, " +
+    "promotion_receipt_ref=?3 WHERE operation_id=?4")
+    .bind(receiptJson, receiptSha, `promotion:fixture-${id}`, `op-${id}`).run();
 }
 export function request(id: string, fields: Record<string, unknown> = {}, key = `request-${id}`) {
   return new Request("https://research.example/api/v1/research/orient", { method: "POST", headers: {

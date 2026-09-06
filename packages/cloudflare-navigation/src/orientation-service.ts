@@ -72,7 +72,7 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     // rebuilding a metadata-only trace that would conflict with the retained structural result.
     const sources = await authority.sources(snapshot.member_source_revision_refs);
     checkpoint();
-    const structural = await materializeStructuralNavigationBatch({ store, snapshot, sources,
+    const structural = await materializeStructuralNavigationBatch({ store, database: env.CORE_DB, snapshot, sources,
       evidence_bucket: env.EVIDENCE_BUCKET, created_at: snapshot.created_at });
     checkpoint();
     if (structural.metadata_only.length > 0) {

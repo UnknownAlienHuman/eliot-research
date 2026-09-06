@@ -3,10 +3,19 @@ import {
   QualificationReportSchema,
   SourceAdmissionDecisionSchema,
   type BundleAdmissionReceipt,
+  type PromotedObjectReadback,
   type QualificationReport,
   type SourceAdmissionDecision,
 } from "@eliotr/contracts";
-import { canonicalJson } from "./ingest-validation.js";
+import { canonicalJson, contentType } from "./ingest-validation.js";
+import { objectResidencyKeyDigest } from "./r2.js";
+import {
+  assertOpaqueToken,
+  assertPath,
+  assertSafeInteger,
+  assertSha256,
+  assertStorageKey,
+} from "./ingest-validation.js";
 import { CURRENT_INGEST_POLICY_SQL, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
 import type {
   BundlePromotionReceipt,
@@ -90,10 +99,37 @@ async function loadQualification(
   );
 }
 
-function validatePromotion(
+function asPromotionField(attempt: () => void, label: string): void {
+  try {
+    attempt();
+  } catch (cause) {
+    authorityFail("INGEST_AUTHORITY_INPUT_INVALID", `${label} is invalid`, false, cause);
+  }
+}
+
+function assertReadbackToken(value: unknown, label: string): void {
+  asPromotionField(() => assertOpaqueToken(value, label), label);
+  if (new TextEncoder().encode(value as string).byteLength > 512) {
+    authorityFail("INGEST_AUTHORITY_INPUT_INVALID", `${label} escapes its readback byte limit`);
+  }
+}
+
+/**
+ * Canonical per-file promotion readbacks. Every promoted object contributes its
+ * exact logical path, canonical R2 key, recomputed per-file residency digest,
+ * content digest/size, canonical media type and the R2 readback identity (ETag
+ * plus version when the bucket issues one). Fields the promotion receipt omits
+ * are derived here from validated authority, never trusted from the caller, so
+ * the durable admission receipt always carries the complete readback set.
+ */
+async function validatePromotion(
   operation: PreparedIngestOperation,
   promotion: BundlePromotionReceipt,
-): { readonly promotionRef: string; readonly contentKey: string } {
+): Promise<{
+  readonly promotionRef: string;
+  readonly contentKey: string;
+  readonly readbacks: readonly PromotedObjectReadback[];
+}> {
   if (
     promotion.protocol !== "eliotr.bundle-promotion.v1" ||
     promotion.session_id !== operation.staging_session_ref ||
@@ -105,18 +141,42 @@ function validatePromotion(
   }
   authoritySha256(promotion.readback_digest, "promotion readback digest");
   authorityIdentifier(promotion.canonical_manifest_ref, "canonical manifest ref");
-  const seen = new Set<string>();
+  const seenPaths = new Set<string>();
+  const seenKeys = new Set<string>();
+  let previousPath: string | null = null;
   let contentKey: string | undefined;
+  const readbacks: PromotedObjectReadback[] = [];
   for (const object of promotion.promoted_objects) {
-    if (seen.has(object.logical_path)) {
-      authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion receipt contains duplicate logical paths");
+    asPromotionField(() => assertPath(object.logical_path, "promoted logical path"), "promoted logical path");
+    asPromotionField(() => assertStorageKey(object.canonical_key, "promoted canonical key"), "promoted canonical key");
+    asPromotionField(() => assertSha256(object.sha256, "promoted object digest"), "promoted object digest");
+    asPromotionField(
+      () => assertSafeInteger(object.size_bytes, "promoted object size", 1, Number.MAX_SAFE_INTEGER),
+      "promoted object size",
+    );
+    assertReadbackToken(object.etag, "promoted object ETag");
+    if (object.version !== undefined) {
+      assertReadbackToken(object.version, "promoted object version");
     }
-    seen.add(object.logical_path);
-    authorityIdentifier(object.logical_path, "promoted logical path");
-    authorityIdentifier(object.canonical_key, "promoted canonical key");
-    authoritySha256(object.sha256, "promoted object digest");
-    if (!Number.isSafeInteger(object.size_bytes) || object.size_bytes < 0) {
-      authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "promoted object size is invalid");
+    if (previousPath !== null && object.logical_path <= previousPath) {
+      authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion receipt is not canonically ordered");
+    }
+    previousPath = object.logical_path;
+    if (seenPaths.has(object.logical_path) || seenKeys.has(object.canonical_key)) {
+      authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion receipt repeats a logical path or key");
+    }
+    seenPaths.add(object.logical_path);
+    seenKeys.add(object.canonical_key);
+    const expectedResidency = await objectResidencyKeyDigest({
+      ...operation.residency_key,
+      content_digest: { algorithm: "sha256", digest: object.sha256 },
+    });
+    if (object.residency_key_digest !== undefined && object.residency_key_digest !== expectedResidency) {
+      authorityFail("INGEST_AUTHORITY_CONFLICT", "promoted residency digest differs from admitted authority");
+    }
+    const expectedMediaType = contentType(object.logical_path);
+    if (object.content_type !== undefined && object.content_type !== expectedMediaType) {
+      authorityFail("INGEST_AUTHORITY_CONFLICT", "promoted media type is not canonical for its path");
     }
     if (object.logical_path === "content.md") {
       if (object.sha256 !== operation.manifest.content.markdown_sha256) {
@@ -124,14 +184,29 @@ function validatePromotion(
       }
       contentKey = object.canonical_key;
     }
+    readbacks.push({
+      logical_path: object.logical_path,
+      canonical_key: object.canonical_key,
+      residency_key_digest: expectedResidency,
+      sha256: object.sha256,
+      size_bytes: object.size_bytes,
+      etag: object.etag,
+      ...(object.version === undefined ? {} : { version: object.version }),
+      content_type: expectedMediaType,
+    });
   }
   for (const required of ["content.md", "manifest.json", "hashes.sha256"]) {
-    if (!seen.has(required)) authorityFail("INGEST_AUTHORITY_CONFLICT", `promotion is missing ${required}`);
+    if (!seenPaths.has(required)) authorityFail("INGEST_AUTHORITY_CONFLICT", `promotion is missing ${required}`);
   }
   if (contentKey === undefined) authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion content object is missing");
+  const manifestEntry = readbacks.find((entry) => entry.logical_path === "manifest.json");
+  if (manifestEntry?.canonical_key !== promotion.canonical_manifest_ref) {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion canonical manifest mapping is inconsistent");
+  }
   return {
     promotionRef: `promotion:${promotion.session_id}:${promotion.readback_digest.slice(0, 24)}`,
     contentKey,
+    readbacks,
   };
 }
 
@@ -139,6 +214,7 @@ function validateBundleReceipt(
   operation: PreparedIngestOperation,
   promotion: BundlePromotionReceipt,
   raw: BundleAdmissionReceipt,
+  canonicalReadbacks: readonly PromotedObjectReadback[],
 ): BundleAdmissionReceipt {
   let receipt: BundleAdmissionReceipt;
   try { receipt = BundleAdmissionReceiptSchema.parse(raw); }
@@ -155,6 +231,22 @@ function validateBundleReceipt(
     receipt.readback_sha256 !== promotion.readback_digest
   ) {
     authorityFail("INGEST_AUTHORITY_CONFLICT", "bundle admission receipt does not match promotion authority");
+  }
+  // The durable receipt must carry every promoted object's exact readback.
+  // Callers built before per-file persistence omit the set; the commit choke
+  // point derives it from the validated promotion instead of trusting caller
+  // bytes. A caller-supplied set must equal the canonical derivation exactly.
+  if (receipt.decision === "ADMITTED" && canonicalReadbacks.length === 0) {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "admitted bundle has no durable promotion readbacks");
+  }
+  if (receipt.promoted_objects === undefined) {
+    const enriched = { ...receipt, promoted_objects: [...canonicalReadbacks] };
+    try { receipt = BundleAdmissionReceiptSchema.parse(enriched); }
+    catch (cause) {
+      authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "canonical promotion readbacks failed strict validation", false, cause);
+    }
+  } else if (canonicalJson(receipt.promoted_objects) !== canonicalJson(canonicalReadbacks)) {
+    authorityFail("INGEST_AUTHORITY_CONFLICT", "bundle admission receipt readbacks differ from promotion authority");
   }
   return receipt;
 }
@@ -202,7 +294,8 @@ export async function commitAdmittedBundle(
   const operation = await loadOperation(operationId);
   if (operation === null) authorityFail("INGEST_AUTHORITY_MISSING", "ingest operation does not exist");
   await requireCurrentIngestPolicy(database, operation, clock);
-  const receipt = validateBundleReceipt(operation, input.promotion_receipt, input.bundle_receipt);
+  const promotion = await validatePromotion(operation, input.promotion_receipt);
+  const receipt = validateBundleReceipt(operation, input.promotion_receipt, input.bundle_receipt, promotion.readbacks);
   if (operation.bundle_receipt !== null) return exactTerminal(operation.bundle_receipt, receipt);
   if (
     operation.state !== "AUTHORIZED" ||
@@ -222,7 +315,6 @@ export async function commitAdmittedBundle(
   ) {
     authorityFail("INGEST_STATE_CONFLICT", "admission or qualification authority does not permit commit");
   }
-  const promotion = validatePromotion(operation, input.promotion_receipt);
   const receiptJson = canonicalJson(receipt);
   const receiptSha = await canonicalDigest(receipt);
   const epoch = clock();
