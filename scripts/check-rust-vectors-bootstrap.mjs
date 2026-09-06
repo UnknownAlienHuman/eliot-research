@@ -55,6 +55,7 @@ export const COREPACK_PREREQUISITE_HINT =
   "repo toolchain per docs/implementation/toolchain.md#bootstrap " +
   "(CI pins Node 22 with `corepack enable` and " +
   "`corepack prepare pnpm@11.23.0 --activate`)";
+export const PROBE_LABEL = "probing repo-pinned pnpm version via corepack";
 
 export const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -108,6 +109,10 @@ function corepackMissingError(label, detail) {
   return `rust-vectors gate: ${label} failed to start: ${detail} (${COREPACK_PREREQUISITE_HINT})`;
 }
 
+function timeoutDiagnostic(label, timeoutMs) {
+  return `rust-vectors gate: ${label} timed out after ${timeoutMs}ms`;
+}
+
 // Exact production command runner. Logs only binary+argv+label; never env values.
 export function runGateCommandWithDeps(binary, args, label, deps = {}) {
   const {
@@ -130,7 +135,7 @@ export function runGateCommandWithDeps(binary, args, label, deps = {}) {
   });
   if (result.error) {
     if (result.error.code === "ETIMEDOUT") {
-      fail(`rust-vectors gate: ${label} timed out after ${timeoutMs}ms`);
+      fail(timeoutDiagnostic(label, timeoutMs));
     }
     if (binary === "corepack") fail(corepackMissingError(label, result.error.message));
     fail(`rust-vectors gate: ${label} failed to start: ${result.error.message}`);
@@ -147,6 +152,7 @@ export function captureStdoutWithDeps(binary, args, deps = {}) {
     platform = process.platform,
     repoRoot = REPO_ROOT,
     timeoutMs,
+    label = PROBE_LABEL,
   } = deps;
   const result = spawnSyncFn(binary, args, {
     cwd: repoRoot,
@@ -155,7 +161,12 @@ export function captureStdoutWithDeps(binary, args, deps = {}) {
     encoding: "utf8",
     ...(timeoutMs === undefined ? {} : { timeout: timeoutMs }),
   });
-  if (result.error || result.status !== 0) return undefined;
+  if (result.error) {
+    if (result.error.code === "ETIMEDOUT") fail(timeoutDiagnostic(label, timeoutMs));
+    if (binary === "corepack") fail(corepackMissingError(label, result.error.message));
+    fail(`rust-vectors gate: ${label} failed to start: ${result.error.message}`);
+  }
+  if (result.status !== 0) return undefined;
   return typeof result.stdout === "string" ? result.stdout.trim() : undefined;
 }
 
@@ -439,22 +450,55 @@ export function runBootstrapSelfTest() {
     assertEqual(record.length, 0, "reuse path must spawn nothing");
   }
 
-  // Fail-closed: missing corepack exe surfaces the toolchain prerequisite.
-  assertions += 1;
-  assertThrowsWith(
-    "corepack executable is unavailable",
-    () =>
-      ensureWorkspaceWithDeps({
-        spawnSyncFn: () => ({ error: Object.assign(new Error("spawn corepack ENOENT"), { code: "ENOENT" }), status: null }),
-        platform: "linux",
-        env: {},
-        repoRoot: "/repo",
-        workspaceIsInstalledFn: () => false,
-        readPackageJsonFn: () => ({ packageManager: "pnpm@11.23.0" }),
-        logger: silent,
-      }),
-    "missing corepack must fail with prerequisite diagnostic",
-  );
+  // Fail-closed: probe ENOENT surfaces the prerequisite with probe-only call.
+  {
+    const record = [];
+    assertions += 1;
+    assertThrowsWith(
+      "corepack executable is unavailable",
+      () =>
+        ensureWorkspaceWithDeps({
+          spawnSyncFn: (binary, args) => {
+            record.push({ binary, argv: [...args].join(" ") });
+            return { error: Object.assign(new Error("spawn corepack ENOENT"), { code: "ENOENT" }), status: null };
+          },
+          platform: "linux",
+          env: {},
+          repoRoot: "/repo",
+          workspaceIsInstalledFn: () => false,
+          readPackageJsonFn: () => ({ packageManager: "pnpm@11.23.0" }),
+          logger: silent,
+        }),
+      "missing corepack must fail with prerequisite diagnostic",
+    );
+    assertions += 1;
+    assertEqual(record.length, 1, "probe ENOENT must not run prepare/install");
+  }
+
+  // Fail-closed: probe ETIMEDOUT fails immediately with bounded diagnostic.
+  {
+    const record = [];
+    assertions += 1;
+    assertThrowsWith(
+      `timed out after ${PROBE_TIMEOUT_MS}ms`,
+      () =>
+        ensureWorkspaceWithDeps({
+          spawnSyncFn: (binary, args) => {
+            record.push({ binary, argv: [...args].join(" ") });
+            return { error: Object.assign(new Error("spawnSync corepack ETIMEDOUT"), { code: "ETIMEDOUT" }), status: null };
+          },
+          platform: "linux",
+          env: {},
+          repoRoot: "/repo",
+          workspaceIsInstalledFn: () => false,
+          readPackageJsonFn: () => ({ packageManager: "pnpm@11.23.0" }),
+          logger: silent,
+        }),
+      "probe timeout must fail closed with a timeout diagnostic",
+    );
+    assertions += 1;
+    assertEqual(record.length, 1, "probe timeout must not run prepare/install");
+  }
 
   // Fail-closed: spawn timeout surfaces a bounded `timed out` diagnostic.
   assertions += 1;
