@@ -3,12 +3,23 @@
 // so CI ordering (no prior build, no pre-existing dist) cannot fail with
 // ERR_MODULE_NOT_FOUND and stale dist can never mask a divergence. The oracle
 // still exercises the actual production Zod schemas/functions byte-for-byte.
-import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { TextDecoder } from "node:util";
+import {
+  PINNED_VERSION as BOOTSTRAP_PINNED_VERSION,
+  ensureWorkspaceWithDeps,
+  readPackageJsonFile,
+  runBootstrapSelfTest,
+  runGateCommandWithDeps,
+} from "./check-rust-vectors-bootstrap.mjs";
+
+// Executable seam (exactly once): the production bootstrap helper self-checks
+// with injected fakes before any real work, replacing the former grep-only
+// proof. `node scripts/check-rust-vectors.mjs` necessarily runs this.
+runBootstrapSelfTest();
 
 const fixtureUrl = new URL(
   "../crates/eliotr-test-vectors/fixtures/canonical-utf8.v1.txt",
@@ -204,118 +215,38 @@ const REQUIRED_DIST_ENTRIES = Object.freeze([
   join(DOMAIN_DIST, "scope", "snapshot-identity.js"),
 ]);
 const BUILD_PACKAGES = Object.freeze(["packages/contracts", "packages/domain"]);
-const PINNED_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$/u;
 
+// Production bootstrap lives exactly once in
+// scripts/check-rust-vectors-bootstrap.mjs. The wrappers below delegate with
+// the real process behavior; no planning/argv/pin logic is duplicated here.
 function readPackageJson(packagePath) {
-  try {
-    return JSON.parse(readFileSync(packagePath, "utf8"));
-  } catch (error) {
-    fail(`rust-vectors gate: cannot read ${packagePath}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  return readPackageJsonFile(packagePath);
 }
 
 function readPinnedVersion(packagePath, field) {
   const parsed = readPackageJson(packagePath);
   const version = parsed.dependencies?.[field] ?? parsed.devDependencies?.[field];
-  if (typeof version !== "string" || !PINNED_VERSION.test(version)) {
+  if (typeof version !== "string" || !BOOTSTRAP_PINNED_VERSION.test(version)) {
     fail(`rust-vectors gate: pinned ${field} version is missing in ${packagePath}`);
   }
   return version;
 }
 
 function runGateCommand(binary, args, label, extraEnv, useShell = process.platform === "win32") {
-  console.log(`rust-vectors gate: ${label}: ${[binary, ...args].join(" ")}`);
   // Windows resolves `.cmd` shims (pnpm/corepack) only via the shell; Linux
   // keeps exact argv dispatch without a shell. Real binaries (node) never need
   // the shell, which also avoids quoting spaced install paths.
-  const result = spawnSync(binary, args, {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-    shell: useShell,
-    ...(extraEnv === undefined ? {} : { env: { ...process.env, ...extraEnv } }),
-  });
-  if (result.error) {
-    fail(`rust-vectors gate: ${label} failed to start: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    fail(`rust-vectors gate: ${label} exited with code ${result.status}`);
-  }
-}
-
-function captureStdout(binary, args) {
-  const result = spawnSync(binary, args, {
-    cwd: REPO_ROOT,
-    stdio: ["ignore", "pipe", "ignore"],
-    shell: process.platform === "win32",
-    encoding: "utf8",
-  });
-  if (result.error || result.status !== 0) return undefined;
-  return typeof result.stdout === "string" ? result.stdout.trim() : undefined;
+  runGateCommandWithDeps(binary, args, label, { repoRoot: REPO_ROOT, extraEnv, useShell });
 }
 
 // The production build needs the workspace install: the `@eliotr/contracts`
-// symlink for `tsc -b`, plus zod/vitest for compile and runtime. All three
-// probes must hold; anything else fails closed into the bootstrap below.
-function workspaceIsInstalled() {
-  return (
-    existsSync(join(REPO_ROOT, "node_modules", ".modules.yaml")) &&
-    existsSync(join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc")) &&
-    existsSync(
-      join(
-        REPO_ROOT,
-        "packages",
-        "domain",
-        "node_modules",
-        "@eliotr",
-        "contracts",
-        "package.json",
-      ),
-    )
-  );
-}
-
-// Ensures the frozen workspace install exists. A bare `tsc -b` cannot work on a
-// clean checkout (no workspace symlinks, no zod/vitest), so the gate performs
-// the same `pnpm install --frozen-lockfile` the verify job runs — pinned via
-// the root `packageManager` field and activated through corepack when needed.
-// Install output lands in git-ignored node_modules only; no tracked file changes.
-//
-// Cross-platform installer routing: never spawn a bare `pnpm` binary after
-// `corepack prepare --activate`. On a clean Linux runner the current process
-// PATH gains no observable new `pnpm` shim (shell:false), so `spawnSync pnpm`
-// fails with ENOENT even though preparation succeeded. Route every pnpm
-// invocation through the already-resolved `corepack` executable
-// (`corepack pnpm --version`, `corepack pnpm install --frozen-lockfile`);
-// Windows keeps its existing shell shim resolution via runGateCommand.
+// symlink for `tsc -b`, plus zod/vitest for compile and runtime. Delegates to
+// the exact production planner/executor (probe corepack pnpm --version,
+// prepare pnpm@pin --activate on mismatch, then corepack pnpm install
+// --frozen-lockfile; never a bare pnpm; missing corepack fails with the
+// toolchain prerequisite diagnostic).
 function ensureWorkspace() {
-  if (workspaceIsInstalled()) {
-    console.log("rust-vectors gate: frozen workspace dependencies present; reusing the repo toolchain.");
-    return;
-  }
-  const rootPkg = readPackageJson(join(REPO_ROOT, "package.json"));
-  const manager = typeof rootPkg.packageManager === "string" ? rootPkg.packageManager : "";
-  const match = /^pnpm@([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$/u.exec(manager);
-  if (match === null) {
-    fail("rust-vectors gate: root packageManager must pin pnpm (for example pnpm@11.23.0)");
-  }
-  const pinnedPnpm = match[1];
-  if (captureStdout("corepack", ["pnpm", "--version"]) !== pinnedPnpm) {
-    runGateCommand(
-      "corepack",
-      ["prepare", `pnpm@${pinnedPnpm}`, "--activate"],
-      `activating repo-pinned pnpm@${pinnedPnpm} via corepack`,
-      { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
-    );
-  }
-  runGateCommand(
-    "corepack",
-    ["pnpm", "install", "--frozen-lockfile"],
-    "installing frozen workspace dependencies",
-    { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
-  );
-  if (!workspaceIsInstalled()) {
-    fail("rust-vectors gate: workspace install completed but dependencies are still unresolvable");
-  }
+  ensureWorkspaceWithDeps({ repoRoot: REPO_ROOT });
 }
 
 // Rebuilds the exact production dist fresh on every run: stale output is
