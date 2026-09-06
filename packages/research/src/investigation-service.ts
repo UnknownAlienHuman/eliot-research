@@ -1,11 +1,14 @@
-// IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with transaction-time guards, ledger epoch and explicit supersession; Workflow/Session composition and live receipts remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with atomic single-statement commands, D1-time bounds and explicit supersession; Workflow/Session composition and live receipts remain separate.
 import type { Investigation, InquiryProtocolProfile, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { z } from "zod";
 import {
-  GUARD_SQL, LEDGER_SQL, LedgerError, LedgerEventSchema, LedgerHeadSchema, decodeLedgerEvent, decodeLedgerHead, ledgerCasBindings, ledgerEventBindings, ledgerFenceDriftCode, ledgerHeadBindings, parseLedgerTriggerCode, sameLedgerEvent, sameLedgerFence, sameLedgerHead, throwIfCancelled,
+  LEDGER_SQL, LedgerError, LedgerEventSchema, LedgerHeadSchema, decodeLedgerEvent, decodeLedgerHead, ledgerFenceDriftCode, parseLedgerTriggerCode, sameLedgerEvent, sameLedgerFence, sameLedgerHead, throwIfCancelled,
   type InvestigationLedgerStore, type LedgerAuthorityFence, type LedgerEvent, type LedgerEventRow, type LedgerHead, type LedgerHeadRow,
   type LedgerObligation, type LedgerSnapshot,
 } from "./ports.js";
+import {
+  COMMAND_SQL, buildAppendCommand, buildCreateCommand, buildSupersedeCommand, hasCommittedCommand, readCommandFence,
+} from "./ledger-commands.js";
 import type { ResearchRunResult } from "./ports.js";
 export interface LedgerD1Statement {
   first<T>(): Promise<T | null>;
@@ -59,28 +62,14 @@ function parseEvent(value: unknown): LedgerEvent {
 }
 const decodeHead = decodeLedgerHead;
 const decodeEvent = decodeLedgerEvent;
-const headBindings = ledgerHeadBindings;
-const casBindings = ledgerCasBindings;
-const eventBindings = ledgerEventBindings;
 const sameHead = sameLedgerHead;
 const sameEvent = sameLedgerEvent;
 type HeadRow = LedgerHeadRow;
 type EventRow = LedgerEventRow;
-function guardExpiry(observedAt: string): string { return new Date(Date.parse(observedAt) + 5 * 60 * 1000).toISOString(); }
-function guardIdFor(eventId: string): string { return `guard-${eventId}`.slice(0, 256); }
 async function readEpoch(database: LedgerD1Database): Promise<number> {
-  const row = await database.prepare(GUARD_SQL.selectEpoch).bind().first<{ generation: number }>();
+  const row = await database.prepare(COMMAND_SQL.selectEpoch).bind().first<{ generation: number }>();
   if (row === null) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger epoch missing", true);
   return row.generation;
-}
-async function materializeAuthority(database: LedgerD1Database, fence: LedgerAuthorityFence, policyRef: string, now: string): Promise<void> {
-  const expiry = guardExpiry(now);
-  try {
-    await database.batch([database.prepare(GUARD_SQL.upsertAuthority).bind(fence.principal_ref, fence.scope_snapshot_id, fence.scope_snapshot_revision, fence.policy_generation, policyRef, fence.deployment_generation, fence.purge_revision, fence.scope_purge_revision, now, expiry)]);
-  } catch { /* ledger batch revalidates; stale materialization fails there with typed code */ }
-}
-function guardParams(guardId: string, op: "CREATE" | "APPEND" | "SUPERSEDE", oldId: string, newId: string | null, oldRev: number, newRev: number, oldHead: number, newHeadCount: number, eventId: string, newEventId: string | null, fence: LedgerAuthorityFence, policyRef: string, epoch: number, now: string): readonly unknown[] {
-  return [guardId, op, oldId, newId, oldRev, newRev, oldHead, newHeadCount, eventId, newEventId, fence.principal_ref, fence.scope_snapshot_id, fence.scope_snapshot_revision, fence.policy_generation, policyRef, fence.deployment_generation, fence.purge_revision, fence.scope_purge_revision, epoch, now, guardExpiry(now)];
 }
 function mapTriggerError(error: unknown): never {
   if (error instanceof LedgerError) throw error;
@@ -171,33 +160,21 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       if (await database.prepare(LEDGER_SQL.selectByEventId).bind(firstEvent.event_id).first<EventRow>() !== null) {
         ledgerFail("LEDGER_CONFLICT", "event id is already bound");
       }
+      const observedAt = head.updated_at;
+      const fence = await readCommandFence(database, head);
+      const epoch = await readEpoch(database);
+      const command = buildCreateCommand(head, firstEvent, fence, epoch, observedAt);
+      const commandId = command.commandId;
       try {
-        const now = head.updated_at;
-        const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
-        const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
-        const fence: LedgerAuthorityFence = { principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id, scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation, policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
-        await materializeAuthority(database, fence, head.policy_authority_ref, now);
-        const epoch = await readEpoch(database);
-        const gid = guardIdFor(firstEvent.event_id);
-        const batch = await database.batch([
-          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "CREATE", head.investigation_id, null, 0, 1, 0, 1, firstEvent.event_id, null, fence, head.policy_authority_ref, epoch, now)),
-          database.prepare(LEDGER_SQL.insertHead).bind(...headBindings(head)),
-          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(firstEvent)),
-          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
-        ]);
-        if (batch.some((item) => (item.meta?.changes ?? 0) !== 1)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger batch did not settle", true);
+        await database.batch([database.prepare(COMMAND_SQL.insertCommand).bind(...command.params)]);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
-        const raced = await database.prepare(LEDGER_SQL.selectByIdempotency).bind(head.idempotency_key).first<HeadRow>();
-        if (raced !== null) {
-          const existing = await readSnapshot(database, decodeHead(raced).investigation_id);
+        if (await hasCommittedCommand(database, commandId)) {
+          const existing = await readSnapshot(database, head.investigation_id);
           if (existing !== null && sameHead(existing.head, head) && existing.events.length > 0 && sameEvent(existing.events[0] as LedgerEvent, firstEvent)) {
             return { head: existing.head, disposition: "EXISTING" };
           }
           ledgerFail("LEDGER_CONFLICT", "idempotency identity raced with different ledger bytes");
-        }
-        if (await database.prepare(LEDGER_SQL.selectByEventId).bind(firstEvent.event_id).first<EventRow>() !== null) {
-          ledgerFail("LEDGER_CONFLICT", "event id raced with another ledger");
         }
         mapTriggerError(error);
       }
@@ -227,35 +204,26 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       checkAppendShape(head, current, parsedEvent, expectedRevision);
       const racedReplay = await appliedAlready(database, head, parsedEvent);
       if (racedReplay !== null) return racedReplay;
-      const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
-      const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
-      const fence: LedgerAuthorityFence = { principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id, scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation, policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
-      await materializeAuthority(database, fence, head.policy_authority_ref, head.updated_at);
+      const fence = await readCommandFence(database, head);
       const epoch = await readEpoch(database);
-      const gid = guardIdFor(parsedEvent.event_id);
-      let applied: readonly { meta: { changes: number } }[];
+      const command = buildAppendCommand(head, expectedRevision, parsedEvent, fence, epoch, head.updated_at);
+      const commandId = command.commandId;
       try {
-        applied = await database.batch([
-          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "APPEND", head.investigation_id, null, expectedRevision, head.revision, current.event_head, head.event_head, parsedEvent.event_id, null, fence, head.policy_authority_ref, epoch, head.updated_at)),
-          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(parsedEvent)),
-          database.prepare(LEDGER_SQL.casHead).bind(...casBindings(head, expectedRevision)),
-          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
-        ]);
+        await database.batch([database.prepare(COMMAND_SQL.insertCommand).bind(...command.params)]);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
-        const replayed = await appliedAlready(database, head, parsedEvent);
-        if (replayed !== null) return replayed;
         if (error instanceof Error && /protocol\/grade change requires explicit supersession/i.test(error.message)) {
           ledgerFail("LEDGER_SUPERSESSION_REQUIRED", "protocol or grade change requires explicit supersession");
         }
-        mapTriggerError(error);
-      }
-      if ((applied[2]?.meta?.changes ?? 0) !== 1) {
+        if (await hasCommittedCommand(database, commandId)) {
+          const committed = await appliedAlready(database, head, parsedEvent);
+          if (committed !== null) return committed;
+          ledgerFail("LEDGER_CONFLICT", "event id already bound to a committed event");
+        }
         const replayed = await appliedAlready(database, head, parsedEvent);
         if (replayed !== null) return replayed;
-        ledgerFail("LEDGER_STALE_HEAD", "concurrent ledger head update lost the compare-and-swap");
+        mapTriggerError(error);
       }
-      if ((applied[1]?.meta?.changes ?? 0) !== 1) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger event insert is uncertain", true);
       const readback = await readSnapshot(database, head.investigation_id);
       if (readback === null || !sameHead(readback.head, head)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger append readback diverged", true);
       return readback.head;
@@ -296,29 +264,19 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       }
       const racedSupersession = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
       if (racedSupersession !== null) return racedSupersession;
-      const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
-      const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(oldHead.scope_snapshot_id, oldHead.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
-      const fence: LedgerAuthorityFence = { principal_ref: oldHead.principal_ref, scope_snapshot_id: oldHead.scope_snapshot_id, scope_snapshot_revision: oldHead.scope_snapshot_revision, policy_generation: oldHead.policy_generation, policy_authority_ref: oldHead.policy_authority_ref, deployment_generation: oldHead.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
-      await materializeAuthority(database, fence, oldHead.policy_authority_ref, oldEvent.created_at);
+      const fence = await readCommandFence(database, oldHead);
       const epoch = await readEpoch(database);
-      const gid = guardIdFor(oldEvent.event_id);
+      const command = buildSupersedeCommand(oldHead, oldEvent, expectedOldRevision, newHead, newEvent, fence, epoch, oldEvent.created_at);
+      const commandId = command.commandId;
       try {
-        const batch = await database.batch([
-          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "SUPERSEDE", oldHead.investigation_id, newHead.investigation_id, expectedOldRevision, oldHead.revision, current.event_head, oldHead.event_head, oldEvent.event_id, newEvent.event_id, fence, oldHead.policy_authority_ref, epoch, oldEvent.created_at)),
-          database.prepare(LEDGER_SQL.casHead).bind(...casBindings(oldHead, expectedOldRevision)),
-          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(oldEvent)),
-          database.prepare(LEDGER_SQL.insertHead).bind(...headBindings(newHead)),
-          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(newEvent)),
-          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
-        ]);
-        if ((batch[1]?.meta?.changes ?? 0) !== 1) {
-          const lost = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
-          if (lost !== null) return lost;
-          ledgerFail("LEDGER_STALE_HEAD", "concurrent ledger head update lost the supersession compare-and-swap");
-        }
-        if (batch.some((item) => (item.meta?.changes ?? 0) !== 1)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "supersession batch did not settle", true);
+        await database.batch([database.prepare(COMMAND_SQL.insertCommand).bind(...command.params)]);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
+        if (await hasCommittedCommand(database, commandId)) {
+          const committed = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
+          if (committed !== null) return committed;
+          ledgerFail("LEDGER_CONFLICT", "supersession event id already bound with divergent ledger bytes");
+        }
         const replayedSupersession = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
         if (replayedSupersession !== null) return replayedSupersession;
         mapTriggerError(error);

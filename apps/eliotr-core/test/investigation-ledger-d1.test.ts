@@ -36,7 +36,7 @@ function context() {
   };
   const fences = { current: async () => ({ ...fence }) };
   const store = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
-  const service = createInvestigationLedgerService(store, fences, handles, () => "2026-09-05T00:00:00.000Z");
+  const service = createInvestigationLedgerService(store, fences, handles, () => new Date().toISOString());
   return { digests, handles, fence, fences, store, service };
 }
 async function seedAuthority(): Promise<void> {
@@ -65,7 +65,7 @@ function baseInput(tag: string, overrides: Partial<CreateLedgerInput> = {}): Cre
     deployment_generation: "deploy-gen-1", idempotency_key: `idem-d1-${tag}`,
     model_profile_ref: "model-1", event_id: `evt-d1-${tag}`,
     payload_handle_ref: `payload-d1-${tag}`, payload_digest: DIGEST_B,
-    created_at: "2026-09-05T00:00:00.000Z", ...overrides,
+    created_at: new Date().toISOString(), ...overrides,
   };
 }
 
@@ -137,7 +137,7 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     expect(eventRow).toMatchObject({ investigation_id: input.investigation_id, sequence: 1, event_id: input.event_id, kind: "CREATED" });
     ctx.digests.set("payload-d1-t1-2", DIGEST_C);
     await ctx.service.checkpoint(input.investigation_id, 1, 4, "principal-1", "evt-d1-t1-2", "payload-d1-t1-2", DIGEST_C);
-    const restarted = createInvestigationLedgerService(createD1InvestigationLedgerStore(db as unknown as LedgerD1Database), ctx.fences, ctx.handles, () => "2026-09-05T01:00:00.000Z");
+    const restarted = createInvestigationLedgerService(createD1InvestigationLedgerStore(db as unknown as LedgerD1Database), ctx.fences, ctx.handles, () => new Date().toISOString());
     const head = await restarted.read(input.investigation_id);
     expect(head.revision).toBe(2);
     expect(head.checkpoint_head).toBe(4);
@@ -151,7 +151,7 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     ctx.digests.set("payload-d1-t2-2", DIGEST_C);
     ctx.digests.set("payload-d1-t2-stale", DIGEST_D);
     await ctx.service.checkpoint(input.investigation_id, 1, 4, "principal-1", "evt-d1-t2-2", "payload-d1-t2-2", DIGEST_C);
-    const other = createInvestigationLedgerService(createD1InvestigationLedgerStore(db as unknown as LedgerD1Database), ctx.fences, ctx.handles, () => "2026-09-05T02:00:00.000Z");
+    const other = createInvestigationLedgerService(createD1InvestigationLedgerStore(db as unknown as LedgerD1Database), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(other.checkpoint(input.investigation_id, 1, 9, "principal-1", "evt-d1-t2-stale", "payload-d1-t2-stale", DIGEST_D))).toBe("LEDGER_STALE_HEAD");
     expect(await db.prepare("SELECT event_id FROM investigation_ledger_event WHERE event_id=?1").bind("evt-d1-t2-stale").first()).toBeNull();
     expect((await ctx.service.read(input.investigation_id)).revision).toBe(2);
@@ -202,12 +202,12 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     seedAll(ctx, replacement);
     let winnerCommitted = false;
     const loserDb = interceptBatch(db as unknown as LedgerD1Database, async (statements) => {
-      if (statements.length === 6 && !winnerCommitted) {
+      if (statements.length === 1 && !winnerCommitted) {
         winnerCommitted = true;
         await ctx.service.checkpoint(input.investigation_id, 1, 4, "principal-1", "evt-d1-t5-win", "payload-d1-t5-win", DIGEST_C);
       }
     });
-    const loser = createInvestigationLedgerService(createD1InvestigationLedgerStore(loserDb), ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    const loser = createInvestigationLedgerService(createD1InvestigationLedgerStore(loserDb), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(winnerCommitted).toBe(false);
     expect(await codeOf(loser.supersede(input.investigation_id, 1, replacement, "raced supersession", "principal-1"))).toBe("LEDGER_STALE_HEAD");
     expect(winnerCommitted).toBe(true);
@@ -225,9 +225,9 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     const replacement = baseInput("t6r");
     seedAll(ctx, replacement);
     const crashing = interceptBatch(db as unknown as LedgerD1Database, async (statements) => {
-      if (statements.length === 6) throw new Error("crash before supersession batch");
+      if (statements.length === 1) throw new Error("crash before supersession command");
     });
-    const crashingService = createInvestigationLedgerService(createD1InvestigationLedgerStore(crashing), ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    const crashingService = createInvestigationLedgerService(createD1InvestigationLedgerStore(crashing), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(crashingService.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1"))).toBe("LEDGER_SETTLEMENT_UNCERTAIN");
     expect(await rowState(input.investigation_id)).toBe("1/1/OPEN:1");
     expect(await rowState(replacement.investigation_id)).toBe("absent:0");
@@ -240,7 +240,7 @@ describe("investigation ledger over actual Cloudflare D1", () => {
         return out;
       },
     };
-    const ackService = createInvestigationLedgerService(ackStore, ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    const ackService = createInvestigationLedgerService(ackStore, ctx.fences, ctx.handles, () => new Date().toISOString());
     await expect(ackService.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1")).rejects.toThrow("lost acknowledgement");
     const reconciled = await ctx.service.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1");
     expect(reconciled.supersedes_id).toBe(input.investigation_id);
@@ -260,8 +260,9 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     ctx.digests.set("payload-d1-t7-re", DIGEST_C);
     const snap = await ctx.store.read(input.investigation_id);
     if (snap === null) throw new Error("missing ledger");
-    const next: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 4, updated_at: "2026-09-05T01:00:00.000Z" };
-    const exact: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: "evt-d1-t7-re", kind: "CHECKPOINT", payload_handle_ref: "payload-d1-t7-re", payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: "2026-09-05T01:00:00.000Z" };
+    const stamp = new Date().toISOString();
+    const next: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 4, updated_at: stamp };
+    const exact: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: "evt-d1-t7-re", kind: "CHECKPOINT", payload_handle_ref: "payload-d1-t7-re", payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: stamp };
     const first = await ctx.store.append(next, 1, exact);
     expect(first.revision).toBe(2);
     expect(await ctx.store.append(next, 1, exact)).toEqual(first);
@@ -350,9 +351,9 @@ describe("investigation ledger over actual Cloudflare D1", () => {
       await ctx.service.create(input);
       const before = await rowState(input.investigation_id);
       ctx.digests.set(`ph-auth-mut-${n}`, DIGEST_C);
-      const hooked = interceptBatch(d, async (statements) => { if (statements.length === 4) await item.mutate(); });
+      const hooked = interceptBatch(d, async (statements) => { if (statements.length === 1) await item.mutate(); });
       const hookedStore = createD1InvestigationLedgerStore(hooked);
-      const hookedService = createInvestigationLedgerService(hookedStore, ctx.fences, ctx.handles, () => "2026-09-05T01:00:00.000Z");
+      const hookedService = createInvestigationLedgerService(hookedStore, ctx.fences, ctx.handles, () => new Date().toISOString());
       try {
       expect(await codeOf(hookedService.checkpoint(input.investigation_id, 1, 3, "principal-1", `evt-auth-${n}`, `ph-auth-mut-${n}`, DIGEST_C)), item.name).toBe(item.code);
       expect(await rowState(input.investigation_id), `${item.name} rows`).toBe(before);
@@ -386,8 +387,9 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     ctx.digests.set("ph-div-base", DIGEST_C);
     const snap = await ctx.store.read(input.investigation_id);
     if (snap === null) throw new Error("missing ledger");
-    const base: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: "evt-div-all", kind: "CHECKPOINT", payload_handle_ref: "ph-div-base", payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: "2026-09-05T01:00:00.000Z" };
-    const next: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 4, updated_at: "2026-09-05T01:00:00.000Z" };
+    const stamp = new Date().toISOString();
+    const base: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: "evt-div-all", kind: "CHECKPOINT", payload_handle_ref: "ph-div-base", payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: stamp };
+    const next: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 4, updated_at: stamp };
     await ctx.store.append(next, 1, base);
     expect(await rowState(input.investigation_id)).toBe("2/2/OPEN:2");
     const variants: { name: string; event: LedgerEvent }[] = [
@@ -432,7 +434,7 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     seedAll(ctx, replacement);
     let blocked = false;
     const racedDb = interceptBatch(db as unknown as LedgerD1Database, async (statements) => {
-      if (statements.length === 6 && !blocked) {
+      if (statements.length === 1 && !blocked) {
         blocked = true;
         const rival = baseInput("midrbr", { idempotency_key: "idem-midrbr-rival", event_id: "evt-midrbr-rival", payload_handle_ref: "ph-midrbr-rival", portfolio_ref: "pf-midrbr-rival" });
         ctx.digests.set(rival.payload_handle_ref, rival.payload_digest);
@@ -440,7 +442,7 @@ describe("investigation ledger over actual Cloudflare D1", () => {
         await ctx.service.create(rival);
       }
     });
-    const raced = createInvestigationLedgerService(createD1InvestigationLedgerStore(racedDb), ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    const raced = createInvestigationLedgerService(createD1InvestigationLedgerStore(racedDb), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(raced.supersede(input.investigation_id, 1, replacement, "raced replace", "principal-1"))).toMatch(/LEDGER_(CONFLICT|STALE_HEAD)/);
     expect(blocked).toBe(true);
     expect(await rowState(input.investigation_id)).toBe("1/1/OPEN:1");
