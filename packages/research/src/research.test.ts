@@ -2,10 +2,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
-  createD1InvestigationLedgerStore,
-  createInvestigationLedgerService,
-  type CreateLedgerInput,
-  type LedgerD1Database,
+  createD1InvestigationLedgerStore, createInvestigationLedgerService,
+  type CreateLedgerInput, type LedgerD1Database, type LedgerEvent, type LedgerHead,
 } from "./index.js";
 import { LedgerError } from "./index.js";
 import { defaultResearchWorkflowPlan } from "./index.js";
@@ -41,9 +39,7 @@ function toChanges(value: unknown): number {
   if (typeof value === "bigint") return Number(value);
   return 0;
 }
-function spread(params: readonly unknown[]): never[] {
-  return params as never[];
-}
+function spread(params: readonly unknown[]): never[] { return params as never[]; }
 function makeD1(database: RawDatabase): LedgerD1Database & { raw: RawDatabase } {
   const prepare = (sql: string) => ({
     bind(...params: unknown[]): ShimStatement {
@@ -126,19 +122,13 @@ function baseInput(overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInpu
     created_at: "2026-09-05T00:00:00.000Z", ...overrides,
   };
 }
-function nextInput(tag: string, overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInput {
-  return baseInput({ investigation_id: `inv-${tag}`, idempotency_key: `idem-${tag}`, event_id: `evt-${tag}`, ...overrides });
-}
-function seedHandles(ctx: ReturnType<typeof setup>, input: CreateLedgerInput): void {
-  ctx.digests.set(input.payload_handle_ref, input.payload_digest);
-  ctx.digests.set(input.portfolio_ref, input.input_digest);
-}
+function nextInput(tag: string, overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInput { return baseInput({ investigation_id: `inv-${tag}`, idempotency_key: `idem-${tag}`, event_id: `evt-${tag}`, ...overrides }); }
+function seedHandles(ctx: ReturnType<typeof setup>, input: CreateLedgerInput): void { ctx.digests.set(input.payload_handle_ref, input.payload_digest); ctx.digests.set(input.portfolio_ref, input.input_digest); }
 async function invariant(ctx: ReturnType<typeof setup>, id: string): Promise<void> {
   const head = ctx.raw.prepare("SELECT revision, event_head FROM investigation_ledger_head WHERE investigation_id=?").get(id) as unknown as { revision: number; event_head: number } | undefined;
   if (head === undefined) return;
-  const count = ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE investigation_id=?").get(id) as unknown as { n: number };
-  expect(count.n).toBe(head.event_head);
   const rows = ctx.raw.prepare("SELECT sequence FROM investigation_ledger_event WHERE investigation_id=? ORDER BY sequence ASC").all(id) as unknown as { sequence: number }[];
+  expect(rows.length).toBe(head.event_head);
   expect(rows.map((row) => row.sequence)).toEqual(rows.map((_, index) => index + 1));
 }
 async function codeOf(promise: Promise<unknown>): Promise<string> {
@@ -148,9 +138,8 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
   }
   throw new Error("expected LedgerError");
 }
-function eventCount(ctx: ReturnType<typeof setup>, id: string): number {
-  return (ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE investigation_id=?").get(id) as unknown as { n: number }).n;
-}
+function eventCount(ctx: ReturnType<typeof setup>, id: string): number { return (ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE investigation_id=?").get(id) as unknown as { n: number }).n; }
+function headCount(ctx: ReturnType<typeof setup>): number { return (ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_head").get() as unknown as { n: number }).n; }
 
 describe("research workflow", () => {
   it("freezes evidence before synthesis", () => {
@@ -578,5 +567,33 @@ describe("investigation ledger over actual D1 rows", () => {
     expect(await codeOf(ctx.service.create(dupEvent))).toBe("LEDGER_CONFLICT");
     await invariant(ctx, "inv-1");
     await invariant(ctx, "inv-max");
+  });
+  it("11 same event id with any divergent byte conflicts; exact supersession replay settles to one effect", async () => {
+    const ctx = setup();
+    const input = baseInput();
+    seedHandles(ctx, input);
+    await ctx.service.create(input);
+    ctx.digests.set("payload-div", "c".repeat(64));
+    const snap = await ctx.store.read("inv-1");
+    if (snap === null) throw new Error("missing ledger");
+    expect(snap.head.revision).toBe(1);
+    const badHead: LedgerHead = { ...snap.head, revision: 2, event_head: 2, updated_at: "2026-09-05T01:00:00.000Z" };
+    const badEvent: LedgerEvent = { investigation_id: "inv-1", sequence: 2, event_id: "evt-1", kind: "OBSERVED", payload_handle_ref: "payload-div", payload_digest: "c".repeat(64), actor_ref: "principal-1", verifier_ref: null, created_at: "2026-09-05T01:00:00.000Z" };
+    expect(await codeOf(ctx.store.append(badHead, 1, badEvent))).toBe("LEDGER_CONFLICT");
+    expect(eventCount(ctx, "inv-1")).toBe(1);
+    expect((await ctx.service.read("inv-1")).revision).toBe(1);
+    const replacement = nextInput("2");
+    seedHandles(ctx, replacement);
+    const settled = await ctx.service.supersede("inv-1", 1, replacement, "post-exposure metric change", "principal-1");
+    expect(settled.supersedes_id).toBe("inv-1");
+    const replayed = await ctx.service.supersede("inv-1", 1, replacement, "post-exposure metric change", "principal-1");
+    expect(replayed).toEqual(settled);
+    expect(headCount(ctx)).toBe(2);
+    expect(await codeOf(ctx.service.supersede("inv-1", 1, replacement, "a different reason", "principal-1"))).toBe("LEDGER_CONFLICT");
+    expect(headCount(ctx)).toBe(2);
+    expect(eventCount(ctx, "inv-1")).toBe(2);
+    expect(eventCount(ctx, "inv-2")).toBe(1);
+    await invariant(ctx, "inv-1");
+    await invariant(ctx, "inv-2");
   });
 });
