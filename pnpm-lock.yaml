@@ -259,6 +259,9 @@ importers:
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/retrieval:
     dependencies:
