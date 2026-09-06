@@ -1,12 +1,3 @@
 // ER-34 O2 thin facade; substantive implementation lives in @eliotr/backup-o2.
-export {
-  createBackupPort, createPendingRestorePort, claimEpochReceipt, readCommittedEpochReceipt,
-  createBackupEpochPort, copyOffsiteExport, createControlledOffsiteAdapter, expireOffsiteCopy,
-} from "@eliotr/backup-o2";
-export type {
-  BackupEpochDraft, BackupEpochResult, BackupEpochPort, BackupExportContext, BackupSourcePorts,
-  BackupPartRef, AuthorityVector, BackupExportLimits, BackupErrorCode, OffsiteCopyInput,
-  OffsiteCopyResult, OffsiteCopyAdapter, OffsiteStoredPart, BackupDestinationPolicy,
-  OffsiteDestinationDescriptor, ExpiryIntent, ExpiryReceipt, BackupPort, RestorePort,
-} from "@eliotr/backup-o2";
-export { BackupError } from "@eliotr/backup-o2";
+export { createBackupPort, createPendingRestorePort, claimEpochReceipt, peekEpochReplay, parsePersistedEpochReplay, readCommittedEpochReceipt, readEpochDraftById, createBackupEpochPort, reopenPersistedVector, copyOffsiteExport, createControlledOffsiteAdapter, expireOffsiteCopy, authorizeBackupDestination, revokeBackupDestination, requireDestinationAuthority, assertO2MigrationAuthority, createConformantR2Bucket, canonicalEpochIntentDigest, canonicalOffsiteCopyDigest, openExportCut, sealExportCut, BackupError, BACKUP_MANIFEST_PROTOCOL, O2_MIGRATION_FILENAME } from "@eliotr/backup-o2";
+export type { BackupEpochDraft, BackupEpochResult, BackupEpochPort, BackupExportContext, BackupSourcePorts, BackupPartRef, AuthorityVector, BackupExportLimits, BackupErrorCode, OffsiteCopyInput, OffsiteCopyResult, OffsiteCopyAdapter, OffsiteStoredPart, BackupDestinationPolicy, OffsiteDestinationDescriptor, ExpiryIntent, ExpiryReceipt, BackupPort, RestorePort, EpochReplayClaim, PersistedEpochReplay, DestinationAuthorityGrant, StoredDestinationAuthority, StoredCopyReceipt, CopyCheckpoint, CutInputs, OpenCut, TableSpec } from "@eliotr/backup-o2";

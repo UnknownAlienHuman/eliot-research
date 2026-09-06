@@ -20,10 +20,10 @@ import m0010 from "../../../infra/d1/core/migrations/0010_navigation_artifacts.s
 import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
 import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
 import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
-import m0017 from "../../../infra/d1/core/migrations/0017_backup_o2_replay_authority.sql?raw";
+import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
 
 // O2 epoch tests run against real SQLite executing tracked core migrations
-// plus 0017, and byte-exact R2 shims through production readback paths.
+// plus 0018, and byte-exact R2 shims through production readback paths.
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
@@ -120,8 +120,17 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 }
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0017]) db.exec(m);
+  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018]) db.exec(m);
   return db;
+}
+// Simulate the authoritative migration runner (wrangler): every applied file
+// is recorded in d1_migrations. The O2 gate requires the 0018 row; nothing
+// here swallows migration errors.
+const APPLIED_MIGRATIONS = ["0001_initial", "0002_execution_coordination", "0003_delivery_inbox_payload_digest", "0004_outbox_delivery_fence", "0005_ingest_admission", "0006_projection_execution", "0007_evidence_resolution", "0008_erasure_closure", "0009_federation_authority", "0010_navigation_artifacts", "0011_owner_orientation", "0012_google_credentials", "0013_google_oauth_intents", "0018_backup_o2_replay_authority"];
+function recordLedger(db: DatabaseSync): void {
+  for (const [i, n] of APPLIED_MIGRATIONS.entries()) {
+    db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(`${n}.sql`, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+  }
 }
 function seedCore(db: DatabaseSync, withLedger: boolean): void {
   db.exec(`INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES ('ns-1',1,'owner-sys-1','incarnation-1','gen-1',1,'ACTIVE',NULL,'${T}');
@@ -140,9 +149,7 @@ function seedCore(db: DatabaseSync, withLedger: boolean): void {
     INSERT INTO purge_ledger (erasure_id,non_revealing_subject_digest,disposition,receipt_ref,created_at) VALUES ('erasure-1','${HEX("4")}','COMPLETE','receipt-1','${T}');
     INSERT INTO erasure_hold (hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at,state,created_at,released_at) VALUES ('hold-1','source-1',NULL,NULL,'retention-policy-1','2027-01-01T00:00:00.000Z','ACTIVE','${T}',NULL);`);
   if (withLedger) {
-    for (const [i, n] of ["0001_initial", "0002_execution", "0005_ingest"].entries()) {
-      try { db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(`${n}.sql`, `${T.slice(0, 10)}T00:00:0${i}.000Z`); } catch { /* already applied */ }
-    }
+    recordLedger(db);
   }
 }
 async function seedR2(evidence: R2Bucket, work: R2Bucket): Promise<{ total: number }> {
@@ -183,16 +190,25 @@ describe("ER-34 O2 epoch (restart-safe authority)", () => {
     expect(r.draft.manifest_digests["vector"]).toBe(r.draft.vector_manifest_digest);
     expect(r.draft.audit_sample_receipt_ref).toContain(r.draft.vector_digest.slice(0, 16));
     expect(r.receipt.outcome).toBe("SUCCEEDED");
+    expect(r.draft.manifest_protocol).toBe("eliotr.backup-manifest.v1");
+    expect(r.draft.cut_id).toMatch(/^cut-[a-f0-9]{32}$/);
+    expect(r.draft.manifest_digests["schema-inventory"]).toMatch(/^[a-f0-9]{64}$/);
     const reopened = await reopenPersistedVector(h.ports, r.draft);
     expect(reopened.purge_frontier).toBe(1);
   });
-  it("replays exact intent from a new port/process to the same receipt; divergent bytes conflict", async () => {
+  it("replays exact intent from a new port/process to the same persisted bytes; divergent bytes conflict", async () => {
     const h = await setup();
     const first = await h.port.createPortableEpoch(backupIntent("id-replay"), { now_ms: NOW });
     const fresh = createBackupPort(h.ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
-    const second = await fresh.createPortableEpoch(backupIntent("id-replay"), { now_ms: NOW });
+    const second = await fresh.createPortableEpoch(backupIntent("id-replay"), { now_ms: NOW + 60_000 });
     expect(second.draft.epoch_id).toBe(first.draft.epoch_id);
-    expect(second.receipt.outcome).toBe("DUPLICATE");
+    expect(second.receipt).toEqual(first.receipt);
+    expect(second.attempt).toEqual(first.attempt);
+    expect(JSON.stringify(second.draft)).toBe(JSON.stringify(first.draft));
+    await expect(fresh.createPortableEpoch({ ...backupIntent("id-replay"), principal_ref: "attacker" }, { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
+    await expect(fresh.createPortableEpoch({ ...backupIntent("id-replay"), payload_ref: "payload-evil" }, { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
+    await expect(fresh.createPortableEpoch({ ...backupIntent("id-replay"), policy_decision_ref: "policy-evil" }, { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
+    await expect(fresh.createPortableEpoch({ ...backupIntent("id-replay"), created_at: "2027-01-01T00:00:00.000Z" }, { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
     h.db.exec(`INSERT INTO source (source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,kind,origin_uri,title,default_storage_policy,default_residency_profile_id,source_class,license_policy_ref,default_retention_policy_id,head_rev,created_at) VALUES ('source-2','ns-1','owner-sys-1','gen-1','immutable_import','document',NULL,'Other','policy-store-1','profile-1','public','license-1','retention-1',NULL,'${T}')`);
     await expect(fresh.createPortableEpoch(backupIntent("id-replay"), { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
     await expect(h.port.createPortableEpoch(backupIntent("id-replay"), { now_ms: NOW })).rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });

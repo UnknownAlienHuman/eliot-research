@@ -769,6 +769,15 @@
       ],
       "owned_paths": [
         "packages/backup-o2/**",
+        "packages/backup-o2/src/intent-digest.ts",
+        "packages/backup-o2/src/migration-gate.ts",
+        "packages/backup-o2/src/coherent-cut.ts",
+        "packages/backup-o2/src/destination-authority.ts",
+        "packages/backup-o2/src/offsite-durability.ts",
+        "packages/backup-o2/src/r2-conformance.ts",
+        "packages/backup-o2/src/fix2-authority.test.ts",
+        "packages/backup-o2/src/fix2-durability.test.ts",
+        "packages/backup-o2/vitest.config.ts",
         "packages/platform-cloudflare/src/backup.ts",
         "infra/backup/**"
       ],
