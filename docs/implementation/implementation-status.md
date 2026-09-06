@@ -31,6 +31,16 @@ ResearchWorkflow: returns IMPLEMENTATION_PENDING / INCONCLUSIVE; no governed res
 ResearchSession Durable Object: exposes only pending status; no authoritative session state or WebSocket loop
 ```
 
+### `IN_PROGRESS`
+
+Required ChatGPT Drive Exchange: ER-19's interface-only reconciliation is now explicitly registered.
+The cursor/OAuth/result-publication loop must be implemented, not just live-tested. Five bounded
+Sheet/changes REST methods and contribution guards now exist; the D1-bound encrypted-credential refresh/rotation provider now exists for previously admitted
+connections. Internal first-connection OAuth admission now uses real signature verification and durable
+one-use state. Owner HTTP/PWA integration, server configuration admission, provisioning/reconnect and
+full runtime composition remain open. See `drive-rest.md`, `drive-credentials.md` and `drive-oauth-admission.md`. Optional
+Gemini MCP planning and self-reported observation validation cannot satisfy that requirement.
+
 ### `IMPLEMENTED_NOT_LIVE`
 
 ```text
@@ -44,7 +54,9 @@ Queue inbox deduplication, ACK and projection-job acceptance
 deterministic projection execution and managed-generation readiness logic
 exact EvidenceHandle, citation and output gating
 exact erasure closure and non-revealing purge ledger
-Gemini Spark MCP planning/catalog and Google orchestration boundary
+bounded required-Drive Sheet/changes REST subset and strict contribution transport guards (not full OAuth/cursor/publication)
+context-bound AES-GCM refresh-token vault and primary-D1 CAS/refresh leases (not initial OAuth admission)
+optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
 ```
 
 ### Product operations still unavailable at composition time
@@ -102,3 +114,17 @@ local fixture or Wrangler dry-run
 
 Only a retained receipt and exact readback may advance the relevant state. The repository is under active
 implementation and CI is enabled, but no production-ready declaration exists.
+
+## Authorized revision history
+
+The owner Library now reads permitted admitted revision history through the same catalog/source-policy
+checks and a source/session-bound cursor. The panel shows per-channel records from D1 Core, explicitly
+`RECORDED_ONLY`, including absent records and recorded failure/staleness reasons. It never promotes a
+channel, assesses an active index or resolves evidence. #98 still tracks active-readiness assessment,
+project workflows, failure UI and the complete real-storage browser lifecycle; live gates are unchanged.
+
+The launch-code gate also rejects explicitly disabled mandatory slices, independently of unavailable
+method names or registry states. It parses the composition, ignores comment/string examples and fails
+on missing, duplicate or dynamic disabled-slice declarations. This is a negative gate, not a proof that
+all canonical requirements have been implemented. Raw-file conversion and the real-storage browser
+loop remain open in `canonical-alignment.md` and #98.

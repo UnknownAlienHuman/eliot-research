@@ -37,7 +37,8 @@ authority channel and do not let a Google transport result promote itself into E
   signed JWT verification;
 - a human-readable token name cannot substitute for the signed Client ID in `common_name`;
 - MCP 2025-06-18 initialization and protocol-header enforcement work without server session state;
-- tool discovery exposes exactly four product-level tools;
+- tool definitions retain four product-level contracts, but real discovery exposes only authorized implementations;
+- `eliotr_catalog` stays withheld until an explicit service-scope read-policy adapter exists; direct calls fail before D1;
 - ELIOT MCP cannot select providers, models, databases, buckets, indexes, credentials, or arbitrary URLs;
 - no ELIOT tool can directly mutate Google;
 - mutating Google plans require confirmation and exact readback;

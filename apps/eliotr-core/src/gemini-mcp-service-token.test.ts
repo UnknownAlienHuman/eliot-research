@@ -101,3 +101,28 @@ describe("Gemini MCP Access service-token identity", () => {
     });
   });
 });
+
+
+describe("MCP catalog cannot impersonate an owner read policy", () => {
+  async function invoke(method: string, params?: Record<string, unknown>) {
+    const input = new Request("https://mcp.example/mcp", { method: "POST", headers: {
+      "content-type": "application/json", "mcp-protocol-version": "2025-06-18",
+    }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, ...(params ? { params } : {}) }) });
+    // No CORE_DB binding is supplied: neither listing nor an unadvertised catalog call may read it.
+    return handleGeminiMcp(input, environment(), {} as ExecutionContext, { accessVerifier: verifier(CLIENT_ID) });
+  }
+  it("does not advertise a catalog without explicit service-scope authority", async () => {
+    const response = await invoke("tools/list");
+    expect(response.status).toBe(200);
+    const value = await body(response);
+    expect(JSON.stringify(value)).not.toContain('"name":"eliotr_catalog"');
+    expect(JSON.stringify(value)).toContain('"name":"eliotr_system_status"');
+  });
+  it("denies direct calls to the hidden tool before any database operation", async () => {
+    const response = await invoke("tools/call", { name: "eliotr_catalog", arguments: {} });
+    expect(response.status).toBe(200);
+    const value = await body(response);
+    expect(JSON.stringify(value)).toContain("MCP_CATALOG_SCOPE_REQUIRED");
+    expect(JSON.stringify(value)).not.toContain('"projects"');
+  });
+});

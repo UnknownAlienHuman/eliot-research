@@ -94,13 +94,26 @@ export async function uploadStagedPart(
     fail("STAGING_STATE_CONFLICT", `staging file ${input.path} is already completed`);
   }
 
+  // Validation transforms lose the runtime's known-length marker. R2 requires it even
+  // for a bounded input; do not buffer the entire part to work around this boundary.
+  const checked = exactSizeStream(input.body, input.size_bytes);
+  const fixed = typeof FixedLengthStream === "function"
+    ? new FixedLengthStream(input.size_bytes) : undefined;
+  const controller = new AbortController();
   let uploaded: R2UploadedPart;
   try {
-    uploaded = await bucket.resumeMultipartUpload(upload.staging_key, upload.upload_id)
-      .uploadPart(input.part_number, exactSizeStream(input.body, input.size_bytes));
+    const pumping = fixed === undefined ? Promise.resolve()
+      : checked.pipeTo(fixed.writable, { signal: controller.signal });
+    [uploaded] = await Promise.all([
+      Promise.resolve().then(() => bucket.resumeMultipartUpload(upload.staging_key, upload.upload_id)
+        .uploadPart(input.part_number, fixed?.readable ?? checked)),
+      pumping,
+    ]);
   } catch (error) {
     if (error instanceof IngestStorageError) throw error;
     fail("STAGING_STATE_CONFLICT", `multipart upload for ${input.path} failed`, true, error);
+  } finally {
+    controller.abort();
   }
   if (uploaded.partNumber !== input.part_number) {
     fail("STAGING_PART_INVALID", "R2 returned a multipart part-number mismatch");
@@ -136,6 +149,11 @@ export async function completeStagedFile(input: {
 
   if (prior !== null) {
     expectedSize = prior.size_bytes;
+  } else if (input.parts.length === 0) {
+    // Recover a lost completion receipt without invented ETags or another multipart effect.
+    if (object === null) fail("STAGING_FILE_NOT_COMPLETED", "No materialized file to reconcile");
+    assertSafeInteger(object.size, "materialized file size", 1, session.total_bytes);
+    expectedSize = object.size;
   } else {
     const completed = validateCompletedParts(session, input.parts);
     expectedSize = completed.size;
