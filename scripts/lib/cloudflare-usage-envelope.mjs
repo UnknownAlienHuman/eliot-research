@@ -25,6 +25,13 @@
 import { createHash } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import {
+  buildMetricEvidence,
+  computeSnapshotDigest,
+  validateMetricEvidence,
+} from "./cloudflare-usage-receipt-evidence.mjs";
+
+export { computeSnapshotDigest };
 
 export const USAGE_SNAPSHOT_PROTOCOL = "eliotr.cloudflare-usage-snapshot.v1";
 export const USAGE_ADMISSION_PROTOCOL = "eliotr.cloudflare-usage-admission-receipt.v1";
@@ -176,6 +183,21 @@ export const USAGE_METRICS = [
 
 export const REQUIRED_METRIC_KEYS = USAGE_METRICS.map((metric) => metric.key);
 export const METRIC_BY_KEY = new Map(USAGE_METRICS.map((metric) => [metric.key, metric]));
+
+// Evidence taxonomy contract (injected into the receipt-evidence helper so
+// canonical strings live in exactly one place and no import cycle exists).
+const RECEIPT_EVIDENCE_CONTRACT = {
+  requiredKeys: REQUIRED_METRIC_KEYS,
+  windowKindOf: (key) => METRIC_BY_KEY.get(key)?.window ?? "monthly",
+  billingProvenance: METRIC_PROVENANCE.AUTHORITATIVE_BILLING,
+  inventoryProvenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+  billingKindClass: "billing-usage-v2",
+  inventoryKindClasses: ["inventory-ai-search", "inventory-paginated", "inventory-cursor"],
+  snapshotProvenance: "snapshot-asserted",
+  snapshotKindClass: "snapshot-asserted",
+  unavailableProvenance: METRIC_PROVENANCE.UNAVAILABLE,
+  clockSkewMs: CLOCK_SKEW_MS,
+};
 
 // Access contour (one owner-only hostname application, 24h session) is not a
 // usage counter: it is enforced by the Access provisioner plus the core
@@ -363,8 +385,24 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
 
 // Redacted admission receipt: digest plus truncated non-secret ref only.
 // Never carries bearers, tokens, emails, or exact account identifiers.
+// Every receipt binds per-metric evidence (metric, value, provider
+// group+kind brand class, provenance, window, coverage) plus a snapshot
+// digest over canonical account+windows+metrics+evidence, so validation can
+// recompute the binding and refuse forged or tampered shells.
 export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), expectedAccountId }) {
   if (!evaluation || !snapshot) throw new Error("evaluation and snapshot are required");
+  const metrics = { ...(snapshot.metrics ?? {}) };
+  const windows = {
+    monthly: snapshot.window ?? null,
+    daily: snapshot.daily_window ?? null,
+  };
+  const metricEvidence = buildMetricEvidence(snapshot, RECEIPT_EVIDENCE_CONTRACT);
+  const snapshotDigest = computeSnapshotDigest({
+    accountIdDigest: snapshot.account_id_digest ?? "missing",
+    windows,
+    metrics,
+    evidence: metricEvidence,
+  });
   return {
     protocol: USAGE_ADMISSION_PROTOCOL,
     generation: USAGE_ENVELOPE_GENERATION,
@@ -375,11 +413,11 @@ export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), 
       ? accountRef(expectedAccountId)
       : "cloudflare-account:missing",
     collected_at: snapshot.collected_at ?? null,
-    windows: {
-      monthly: snapshot.window ?? null,
-      daily: snapshot.daily_window ?? null,
-    },
+    windows,
     source: snapshot.source ?? "unknown",
+    metrics,
+    metric_evidence: metricEvidence,
+    snapshot_digest: snapshotDigest,
     over_envelope: evaluation.over ?? [],
     unknown_metrics: evaluation.unknown ?? [],
     near_limit: evaluation.near ?? [],
@@ -399,6 +437,14 @@ export async function writeAdmissionReceiptAtomic(receiptPath, receipt) {
 }
 
 export function validateAdmissionReceipt(receipt, options = {}) {
+  // Receipt-guarantee discipline (integrity only, never authenticity): this
+  // validator proves tamper-evidence — the digest binding recomputes over the
+  // carried account/windows/metrics/evidence — not proof-of-live-collection.
+  // Anyone knowing the account ID can mint a self-consistent shell, so a
+  // persisted receipt is a tamper-evident locator, not live evidence. Heavy
+  // paths stay safe because provisioners/deploy/preflight re-collect fresh
+  // in-process; the sole persisted-receipt consumer (admitHeavyOperation)
+  // must source receipts only from the local preflight write path.
   const { expectedAccountDigest, now = Date.now(), maxAgeMs = RECEIPT_MAX_AGE_MS } = options;
   if (typeof expectedAccountDigest !== "string" || expectedAccountDigest === "") {
     throw new Error("expectedAccountDigest is required for receipt binding");
@@ -428,6 +474,16 @@ export function validateAdmissionReceipt(receipt, options = {}) {
   if (receipt.decision === "BLOCKED") reasons.push("admission receipt records BLOCKED");
   if (!Array.isArray(receipt.over_envelope) || !Array.isArray(receipt.unknown_metrics) || !Array.isArray(receipt.reasons)) {
     reasons.push("admission receipt must carry over_envelope, unknown_metrics and reasons arrays");
+  }
+  // Evidence binding: SEALED/BLOCKED receipts stay representable but must
+  // still carry an intact digest; ADMITTED additionally requires complete,
+  // single-family, trusted per-metric evidence (see the helper). Without
+  // this, a hand-forged shell with a valid generation and empty
+  // unknown_metrics would validate as ADMITTED.
+  if (receipt.decision === "ADMITTED") {
+    reasons.push(...validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: true }));
+  } else {
+    reasons.push(...validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: false }));
   }
   // ADMITTED is the only decision that authorizes heavy work, so a forged
   // ADMITTED (for example unknown_metrics non-empty, over-envelope entries,

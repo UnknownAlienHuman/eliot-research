@@ -230,12 +230,104 @@ export function injectOAuthBearer(env, bearer) {
   return { ...env, CLOUDFLARE_API_TOKEN: bearer };
 }
 
+// FIX9WC Layer 2 (defense in depth): ambient module-loader tokens in
+// NODE_OPTIONS must never reach child CLIs. Node auto-loads `--import` (and
+// `--loader` / `--experimental-loader` / `--require`) from NODE_OPTIONS at
+// startup, so a poisoned env would silently register the test-only spawn gate
+// (test-usage-gate-shim.mjs) inside production children. The helpers below
+// detect and strip ONLY those loader flags plus their values; every benign
+// flag (--max-old-space-size, --trace-warnings, ...) passes through intact,
+// and a missing NODE_OPTIONS stays missing. Heads are compared after
+// stripping leading dashes, so `-r`/`--require`, `--import value`, and
+// `--import=value` prefix forms are all covered.
+const NODE_OPTIONS_LOADER_FLAGS = new Set(["import", "loader", "experimental-loader", "require", "r"]);
+
+// Quote-aware NODE_OPTIONS tokenizer (mirrors Node's own splitting closely
+// enough for flag detection: whitespace separates, single/double quotes group,
+// backslash escapes the next character).
+function splitNodeOptionsTokens(text) {
+  const tokens = [];
+  let current = "";
+  let active = false;
+  let quote = null;
+  for (let index = 0; index < text.length; index += 1) {
+    const ch = text[index];
+    if (quote !== null) {
+      if (ch === "\\" && index + 1 < text.length) {
+        current += text[index + 1];
+        index += 1;
+      } else if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      active = true;
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      active = true;
+    } else if (/\s/u.test(ch)) {
+      if (active) {
+        tokens.push(current);
+        current = "";
+        active = false;
+      }
+    } else if (ch === "\\" && index + 1 < text.length) {
+      current += text[index + 1];
+      index += 1;
+      active = true;
+    } else {
+      current += ch;
+      active = true;
+    }
+  }
+  if (active) tokens.push(current);
+  return tokens;
+}
+
+function nodeOptionsFlagHead(token) {
+  return String(token).split("=", 1)[0].replace(/^-+/u, "");
+}
+
+// True when the raw NODE_OPTIONS value carries any module-loader token. Used
+// by the test-only gate hooks (Layer 1 refusal) and by the stripping helper.
+export function nodeOptionsHasLoaderToken(raw) {
+  if (raw === undefined || raw === null) return false;
+  return splitNodeOptionsTokens(String(raw))
+    .some((token) => NODE_OPTIONS_LOADER_FLAGS.has(nodeOptionsFlagHead(token)));
+}
+
+// Remove loader flags plus their values (`--import value` swallows the next
+// token; `--import=value` is a single token). Benign tokens are re-emitted in
+// order, quoted only when they contain whitespace or quotes.
+export function stripNodeOptionsLoaderTokens(raw) {
+  if (raw === undefined || raw === null) return raw;
+  const kept = [];
+  const tokens = splitNodeOptionsTokens(String(raw));
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (NODE_OPTIONS_LOADER_FLAGS.has(nodeOptionsFlagHead(token))) {
+      if (!token.includes("=")) index += 1;
+      continue;
+    }
+    kept.push(/[\s"']/u.test(token) ? `"${token.replace(/"/gu, '\\"')}"` : token);
+  }
+  return kept.join(" ");
+}
+
 // Scrubbed env for official-profile verification: whoami must authenticate
 // via the browser-OAuth profile file, never via an injected token.
+// FIX9WC Layer 2: loader tokens are stripped from NODE_OPTIONS (benign flags
+// intact; loader-only or missing stays missing) so the verification child can
+// never auto-load test hooks from a poisoned ambient env.
 export function scrubTokenEnv(env = {}) {
   const scrubbed = { ...env };
   for (const key of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_EMAIL", "CLOUDFLARE_TOKEN"]) {
     delete scrubbed[key];
+  }
+  if (scrubbed.NODE_OPTIONS !== undefined && scrubbed.NODE_OPTIONS !== null) {
+    const stripped = stripNodeOptionsLoaderTokens(scrubbed.NODE_OPTIONS);
+    if (String(stripped).trim() === "") delete scrubbed.NODE_OPTIONS;
+    else scrubbed.NODE_OPTIONS = stripped;
   }
   return scrubbed;
 }

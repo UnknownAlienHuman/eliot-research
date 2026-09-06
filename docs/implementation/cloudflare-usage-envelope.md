@@ -74,6 +74,30 @@ Vectorize writes/queries stay disabled until a fresh authoritative aggregate
 OR a controller-owned ledger plus inventory proof shows headroom. Sealed
 state is never silently waived.
 
+Every admission receipt binds per-metric evidence (metric, value, provider
+group plus kind brand class, provenance, window, full-coverage flag) and a
+snapshot digest over canonical account+windows+metrics+evidence. Validation
+recomputes the digest and requires complete, single-family, trusted evidence
+for `ADMITTED`; an evidenceless shell or any tampering with the binding fails
+closed and can never authorize heavy work.
+
+### Receipt guarantee: integrity only, never authenticity
+
+The admission receipt scheme proves INTEGRITY / tamper-evidence only — never
+authenticity and never proof-of-live-collection. Anyone knowing the account
+ID can mint a fully self-consistent shell (the digest binds the account
+digest, windows, metrics, and evidence, all of which are computable from
+public shape plus the account ID), so a persisted receipt is a
+tamper-evident locator, not proof that live collection happened. Heavy paths
+stay safe because provisioners, deploy, and the preflight re-collect fresh
+in-process on every run instead of trusting persisted bytes: the sole
+persisted-receipt consumer, `admitHeavyOperation`, must source receipts only
+from the local preflight write path (same-machine, same-run
+`.eliotr-state/cloudflare-usage-admission-receipt.json`), never from
+committed fixtures, transported files, or cross-machine copies. A receipt
+that arrives by any other provenance is untrusted input and must be
+re-collected, not validated-then-trusted.
+
 ## Billing Usage v2 (Alpha, Restricted) source contract
 
 `GET /accounts/{account_id}/billable/usage` returns FinOps FOCUS v1.3 rows
@@ -114,11 +138,16 @@ Fail-closed rules (all typed unknown, never zero):
 ## Provenance enforcement and pagination completeness
 
 A numeric enters a snapshot only through an authorized channel, recorded per
-metric as enforced trust state:
+metric as enforced trust state. Authority derives from module-private brand
+registries populated only inside the approved factory closures — never from
+caller-asserted group/kind/provenance strings. A plain, copied,
+spread-cloned, proxied, or lookalike-group object carries no brand and fails
+closed as unknown/untrusted; factory products are frozen so
+post-construction mutation cannot hijack a branded identity:
 
-- `authoritative_billing` only from the validated Usage v2 provider above;
-- `authoritative_inventory` only for registry-authorized counts (AI Search
-  instance count from `/ai-search/instances`), never billing counters;
+- `authoritative_billing` only from the branded Usage v2 provider above;
+- `authoritative_inventory` only for branded registry-authorized counts (AI
+  Search instance count from `/ai-search/instances`), never billing counters;
 - `analytics_nonbilling` (GraphQL) stays diagnostic metadata, never metrics
   — an injected analytics `workers_requests:42` keeps the aggregate unknown;
 - `ledger_estimate` stays unknown (no complete account-bound ledger contract

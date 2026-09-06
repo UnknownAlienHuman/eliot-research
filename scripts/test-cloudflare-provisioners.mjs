@@ -1,18 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
+import { access, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { digestAccountId, evaluateUsageSnapshot } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
+import {
+  nodeOptionsHasLoaderToken,
+  scrubTokenEnv,
+  stripNodeOptionsLoaderTokens,
+} from "./lib/cloudflare-wrangler-oauth.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = "mock-account";
 const accessHostname = "research.example.test";
 const ownerEmail = "owner@example.test";
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
-const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
+// Scratch isolation: spawned provisioners write receipts under
+// ELIOTR_STATE_DIRECTORY (temp, per-run) instead of the shared gitignored
+// .eliotr-state, so leftover receipts can never divert later children.
+const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "eliotr-provisioner-state-"));
 const canonicalConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc");
 const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");
 const aiSearchDesired = JSON.parse(await readFile(
@@ -21,9 +30,7 @@ const aiSearchDesired = JSON.parse(await readFile(
 ));
 const backupRoot = resolve(repositoryRoot, `.eliotr-provisioner-test-backup-${process.pid}`);
 const backupGeneratedConfigPath = resolve(backupRoot, "wrangler.deploy.jsonc");
-const backupStateDirectory = resolve(backupRoot, "state");
 let generatedConfigBackedUp = false;
-let stateDirectoryBackedUp = false;
 async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
@@ -31,11 +38,6 @@ if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, backupGeneratedConfigPath);
   generatedConfigBackedUp = true;
-}
-if (await exists(stateDirectory)) {
-  await mkdir(backupRoot, { recursive: true });
-  await rename(stateDirectory, backupStateDirectory);
-  stateDirectoryBackedUp = true;
 }
 
 function emptyState() {
@@ -202,6 +204,9 @@ const commonEnv = {
   ELIOTR_ENVIRONMENT: "staging",
   ELIOTR_DEPLOYMENT_GENERATION: "mock-generation",
   ELIOTR_CUSTOM_DOMAIN: "1",
+  // Isolated scratch state: spawned children never touch the shared
+  // gitignored .eliotr-state.
+  ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
   // Mocked Access authority (Access-first order): core apply refuses
   // foundation mutations without a verified AUD/team origin, so the harness
   // establishes the fictional authority the same way
@@ -244,34 +249,108 @@ function expectFail(result, label) {
 function mutationCount() { return state.mutations.length; }
 function reset() { state = emptyState(); }
 
-// Fresh ADMITTED usage fixture so apply paths reach provisioning logic.
-// Without it the api-token runner seals and every direct apply must stop
-// before the first Cloudflare call (see the SEALED block below).
-function admittedFixture() {
-  const now = Date.now();
-  const metrics = {};
-  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
-  metrics.ai_search_instances = 5;
-  metrics.r2_storage_gb_month = 1;
-  return JSON.stringify({
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
-    account_id_digest: digestAccountId(accountId),
-    account_ref: "cloudflare-account:mock-a…ount",
-    collected_at: new Date(now - 60_000).toISOString(),
-    window: monthlyWindowFor(now),
-    daily_window: dailyWindowFor(now),
-    source: "test-fixture",
-    readback: { whoami_verified: true },
-    metrics,
-  });
-}
-function admittedEnv() {
-  return { ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedFixture() };
-}
-
 try {
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
+  await mkdir(isolatedStateDirectory, { recursive: true });
+
+  // Poisoned ambient env alone can never admit: a real-shaped static token
+  // plus every legacy seam name and the shim-only variable (garbage value: if
+  // production read it, it would throw MALFORMED instead of sealing) with no
+  // explicit capability must be denied before the first Cloudflare call.
+  reset();
+  {
+    const poisoned = await run("scripts/provision-cloudflare-core.mjs", [], {
+      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify({ protocol: "eliotr.cloudflare-usage-snapshot.v1" }),
+      ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: `Account ${accountId} via browser OAuth`,
+      ELIOTR_TEST_SPAWN_SNAPSHOT_JSON: "not-json-at-all",
+    });
+    expectFail(poisoned, "poisoned-env core apply");
+    assert.match(poisoned.stderr, /SEALED/u, "poisoned env was not SEALED");
+    assert.equal(mutationCount(), 0, "poisoned env mutated");
+    assert.equal(state.requests.length, 0, "poisoned env contacted Cloudflare");
+  }
+
+  // FIX9WC NODE_OPTIONS-only loader injection denial: spawning the REAL
+  // preflight CLI with NODE_OPTIONS=--import <shim> plus the snapshot variable
+  // and NO --import on argv must stay SEALED with zero mutations. Node
+  // auto-loads NODE_OPTIONS loader tokens at startup, so without the Layer 1
+  // refusal this would admit through the test standin. The fixture below is
+  // genuinely admittable (proven by the control), so SEALED proves refusal.
+  function admittableSpawnSnapshot() {
+    const at = Date.now();
+    return JSON.stringify({
+      protocol: "eliotr.cloudflare-usage-snapshot.v1",
+      account_id_digest: digestAccountId(accountId),
+      account_ref: "cloudflare-account:mock-a…ount",
+      collected_at: new Date(at - 60_000).toISOString(),
+      window: monthlyWindowFor(at),
+      daily_window: dailyWindowFor(at),
+      source: "test-fixture",
+      readback: { whoami_verified: true },
+      metrics: {
+        workers_requests: 100, workers_cpu_ms: 100,
+        d1_storage_bytes: 100, d1_rows_read: 100, d1_rows_written: 100,
+        r2_storage_gb_month: 1, r2_class_a_ops: 100, r2_class_b_ops: 100,
+        queue_ops: 100, do_requests: 100, do_gb_seconds: 100,
+        do_sql_reads: 100, do_sql_writes: 100, do_storage_bytes: 100,
+        workers_ai_neurons_per_day: 100, ai_search_instances: 5,
+        ai_search_queries_month: 100,
+        vectorize_queried_dims_month: 100, vectorize_stored_dims_month: 100,
+      },
+    });
+  }
+  reset();
+  {
+    const fixture = admittableSpawnSnapshot();
+    assert.equal(evaluateUsageSnapshot(JSON.parse(fixture),
+      { expectedAccountDigest: digestAccountId(accountId), now: Date.now() }).decision,
+      "ADMITTED", "denial fixture must be admittable for the control to be load-bearing");
+    const shimHref = pathToFileURL(resolve(repositoryRoot, "scripts/test-usage-gate-shim.mjs")).href;
+    const attacked = await run("scripts/check-cloudflare-usage-preflight.mjs", ["--check-only"], {
+      NODE_OPTIONS: `--import ${shimHref}`,
+      ELIOTR_TEST_SPAWN_SNAPSHOT_JSON: fixture,
+    });
+    assert.equal(attacked.status, 0,
+      `env-only loader injection must stay SEALED (exit 0)\nstdout:\n${attacked.stdout}\nstderr:\n${attacked.stderr}`);
+    assert.equal(JSON.parse(attacked.stdout).decision, "SEALED", "env-only loader injection admitted");
+    assert.match(attacked.stderr, /SEALED/u, "env-only loader injection hid its decision");
+    assert.equal(mutationCount(), 0, "env-only loader injection mutated");
+    assert.equal(state.requests.length, 0, "env-only loader injection contacted Cloudflare");
+  }
+
+  // FIX9WC Layer 2 unit tests (denial of loader injection): only
+  // --import/--loader/--experimental-loader/--require plus their values are
+  // stripped; benign flags pass through intact; missing stays missing.
+  {
+    assert.equal(nodeOptionsHasLoaderToken(undefined), false);
+    assert.equal(nodeOptionsHasLoaderToken(""), false);
+    assert.equal(nodeOptionsHasLoaderToken("--max-old-space-size=4096 --trace-warnings"), false);
+    assert.equal(nodeOptionsHasLoaderToken("--import ./shim.mjs"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--import=./shim.mjs"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--loader ./a.mjs --trace-warnings"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--experimental-loader ./b.mjs"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--require some-module"), true);
+    assert.equal(nodeOptionsHasLoaderToken("-r some-module"), true);
+    assert.equal(stripNodeOptionsLoaderTokens(undefined), undefined);
+    assert.equal(stripNodeOptionsLoaderTokens("--max-old-space-size=4096 --trace-warnings"),
+      "--max-old-space-size=4096 --trace-warnings");
+    assert.equal(stripNodeOptionsLoaderTokens("--import ./shim.mjs --max-old-space-size=4096"),
+      "--max-old-space-size=4096");
+    assert.equal(stripNodeOptionsLoaderTokens("--import=./shim.mjs --max-old-space-size=4096"),
+      "--max-old-space-size=4096");
+    assert.equal(stripNodeOptionsLoaderTokens("--loader ./a.mjs --experimental-loader ./b.mjs --require c --trace-warnings"),
+      "--trace-warnings");
+    assert.equal(stripNodeOptionsLoaderTokens("--import ./shim.mjs"), "");
+    const scrubbed = scrubTokenEnv({ CLOUDFLARE_API_TOKEN: "secret",
+      NODE_OPTIONS: "--import ./shim.mjs --max-old-space-size=4096" });
+    assert.equal(scrubbed.CLOUDFLARE_API_TOKEN, undefined);
+    assert.equal(scrubbed.NODE_OPTIONS, "--max-old-space-size=4096");
+    assert.equal("NODE_OPTIONS" in scrubTokenEnv({ NODE_OPTIONS: "--require some-module" }), false);
+    const untouched = scrubTokenEnv({ A: "1" });
+    assert.equal("NODE_OPTIONS" in untouched, false);
+    assert.equal(untouched.A, "1");
+  }
 
   // Check-only must be globally side-effect free when every resource is missing.
   // (Api-token mode seals here, so this also proves SEALED check-only stays
@@ -312,16 +391,26 @@ try {
   assert.equal(state.requests.length, 0, "invalid public-route mode contacted Cloudflare");
   assert.equal(mutationCount(), 0);
 
-  // Foundation provisioning creates exact resources once and generates only the ignored deploy config.
+  // Foundation plan exposes exact CREATE dispositions with zero mutations.
+  // Apply without usage admission stays SEALED before the first call:
+  // fixture env can no longer admit (see the poisoned block above), and no
+  // explicit provider capability crosses a process boundary.
   reset();
-  expectPass(await run("scripts/provision-cloudflare-core.mjs", [], admittedEnv()), "foundation apply");
-  assert.equal(mutationCount(), 6, "foundation must create exactly two D1, two R2 and two Queues");
-  const generated = JSON.parse(await readFile(generatedConfigPath, "utf8"));
-  assert.deepEqual(generated.d1_databases.map((item) => item.database_id), ["d1-1", "d1-2"]);
-  assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore, "canonical wrangler config was mutated");
-  const afterFirstFoundation = mutationCount();
-  expectPass(await run("scripts/provision-cloudflare-core.mjs", [], admittedEnv()), "foundation idempotent apply");
-  assert.equal(mutationCount(), afterFirstFoundation, "second foundation apply created duplicate resources");
+  {
+    const plan = await run("scripts/provision-cloudflare-core.mjs", ["--check-only"]);
+    expectPass(plan, "foundation check-only plan");
+    const parsed = JSON.parse(plan.stdout);
+    assert.equal(parsed.mode, "CHECK_ONLY_NO_MUTATION");
+    assert.ok(parsed.d1_databases.every((item) => item.disposition === "CREATE"));
+    assert.ok(parsed.r2_buckets.every((item) => item.disposition === "CREATE"));
+    assert.equal(mutationCount(), 0, "foundation plan mutated");
+    const denied = await run("scripts/provision-cloudflare-core.mjs", []);
+    expectFail(denied, "foundation apply without admission");
+    assert.match(denied.stderr, /SEALED/u);
+    assert.equal(mutationCount(), 0, "foundation apply without admission mutated");
+    assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore, "canonical wrangler config was mutated");
+    assert.equal(await exists(generatedConfigPath), false, "apply without admission generated config");
+  }
 
   // Missing stable IDs are unsafe even when names match.
   reset();
@@ -329,7 +418,9 @@ try {
   expectFail(await run("scripts/provision-cloudflare-core.mjs", ["--check-only"]), "D1 missing uuid rejection");
   assert.equal(mutationCount(), 0);
 
-  // Immutable AI Search drift fails in both plan and apply modes before mutation.
+  // Immutable AI Search drift fails the plan before mutation; apply without
+  // admission stops at the usage gate first (SEALED), also with zero
+  // mutations.
   reset();
   state.aiNamespace = { id: "namespace-1", name: aiSearchDesired.namespace };
   const driftSpec = aiSearchDesired.instances[0];
@@ -339,9 +430,9 @@ try {
     embedding_model: "@cf/incompatible/model",
   });
   expectFail(await run("scripts/provision-ai-search.mjs", ["--check-only"]), "AI Search drift check-only");
-  const driftApply = await run("scripts/provision-ai-search.mjs", [], admittedEnv());
+  const driftApply = await run("scripts/provision-ai-search.mjs", []);
   expectFail(driftApply, "AI Search drift apply");
-  assert.match(driftApply.stderr, /differs from generation/u, "AI Search drift apply stopped at the gate instead of the drift");
+  assert.match(driftApply.stderr, /SEALED/u, "AI Search apply without admission hid its decision");
   assert.equal(mutationCount(), 0, "AI Search drift path mutated resources");
 
   // An undeclared Access policy can broaden access and must block both modes before mutation.
@@ -362,42 +453,43 @@ try {
     { id: "unexpected-policy", name: "Everyone", decision: "allow", include: [{ everyone: {} }], exclude: [], require: [] },
   ]);
   expectFail(await run("scripts/provision-cloudflare-access.mjs", ["--check-only"]), "Access extra policy check-only");
-  const extraPolicyApply = await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv());
+  const extraPolicyApply = await run("scripts/provision-cloudflare-access.mjs", []);
   expectFail(extraPolicyApply, "Access extra policy apply");
-  assert.match(extraPolicyApply.stderr, /undeclared additional Access policies/u, "Access apply stopped at the gate instead of the policy check");
+  assert.match(extraPolicyApply.stderr, /SEALED/u, "Access apply without admission hid its decision");
   assert.equal(mutationCount(), 0, "Access drift path mutated resources");
 
-  // A clean hostname-based Access contour creates once and verifies on repeat.
+  // A clean hostname-based Access contour plans one atomic CREATE with zero
+  // mutations; apply without admission stays denied before any mutation.
   reset();
-  expectPass(await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv()), "Access apply");
-  assert.equal(mutationCount(), 1, "Access app and inline owner policy should be one atomic create");
-  const accessApp = [...state.accessApps.values()][0];
-  assert(accessApp);
-  assert.deepEqual(accessApp.destinations, [{ type: "public", uri: accessHostname }]);
-  assert.equal((state.accessPolicies.get(accessApp.id) ?? []).length, 1);
-  const afterFirstAccess = mutationCount();
-  expectPass(await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv()), "Access idempotent apply");
-  assert.equal(mutationCount(), afterFirstAccess, "second Access apply created duplicate state");
+  {
+    const plan = await run("scripts/provision-cloudflare-access.mjs", ["--check-only"]);
+    expectPass(plan, "Access check-only plan");
+    assert.equal(mutationCount(), 0, "Access plan mutated");
+    const denied = await run("scripts/provision-cloudflare-access.mjs", []);
+    expectFail(denied, "Access apply without admission");
+    assert.match(denied.stderr, /SEALED/u);
+    assert.equal(mutationCount(), 0, "Access apply without admission mutated");
+  }
 
   console.log("Cloudflare provisioner mock conformance: PASS");
   console.log("- check-only mutations: 0");
+  console.log("- poisoned ambient env: SEALED BEFORE FIRST CALL, zero mutations");
+  console.log("- NODE_OPTIONS-only loader injection: SEALED BEFORE FIRST CALL, zero mutations");
+  console.log("- NODE_OPTIONS stripping: loader tokens removed, benign flags intact, missing stays missing");
   console.log("- SEALED direct apply: DENIED BEFORE FIRST CALL (core, ai-search, access, gateways)");
   console.log("- public route / Access hostname alignment: PASS");
-  console.log("- foundation create/idempotency: PASS");
+  console.log("- foundation plan/create dispositions: PASS (apply gated by usage admission)");
   console.log("- missing stable resource IDs: REJECTED");
   console.log("- immutable AI Search drift: REJECTED BEFORE MUTATION");
   console.log("- undeclared Access policy: REJECTED BEFORE MUTATION");
-  console.log("- hostname Access create/idempotency: PASS");
+  console.log("- hostname Access plan: PASS (apply gated by usage admission)");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
   if (generatedConfigBackedUp) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });
     await rename(backupGeneratedConfigPath, generatedConfigPath);
-  }
-  if (stateDirectoryBackedUp) {
-    await rename(backupStateDirectory, stateDirectory);
   }
   await rm(backupRoot, { recursive: true, force: true });
 }

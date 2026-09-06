@@ -266,9 +266,11 @@ await check("account verification rejects unrelated-text and ambiguity structura
 await check("env snapshot never precedes identity verification in oauth mode", async () => {
   // Manager repro: the fixture path consumed ELIOTR_TEST_USAGE_SNAPSHOT_JSON
   // before any credential read or whoami. The gate must verify identity
-  // FIRST even when a snapshot is staged: zero reads/verifications is a
-  // bypass. Here a valid staged ADMITTED snapshot is supplied in oauth mode
-  // with failing seams — the run must fail closed on identity, never admit.
+  // FIRST even when a snapshot is staged explicitly: zero reads/verifications
+  // is a bypass. Here a valid staged ADMITTED snapshot is supplied via the
+  // explicit `snapshot` option in oauth mode with failing seams — the run
+  // must fail closed on identity, never admit. Ambient
+  // ELIOTR_TEST_USAGE_SNAPSHOT_JSON is never read (poisoned env alone seals).
   const staged = await admittedSnapshotJson();
   let credReads = 0;
   let whoamiCalls = 0;
@@ -277,12 +279,12 @@ await check("env snapshot never precedes identity verification in oauth mode", a
       ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
       ELIOTR_WRANGLER_CONFIG_FILE: "wrangler-test-default.toml",
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
-      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
     },
     nowMs: NOW,
     readFile: async () => { credReads += 1; throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
     getWhoamiOutput: async () => { whoamiCalls += 1; return `Account ${ACCOUNT} via browser OAuth`; },
     providers: admittedUsageProviders(),
+    snapshot: staged,
   }).then(() => assert.fail("must throw on missing credential"), (error) => error);
   assert.ok(["OAUTH_UNAVAILABLE", "OAUTH_EXPIRED"].includes(result.code), `unexpected code ${result.code}`);
   assert.equal(credReads, 1);
@@ -294,14 +296,33 @@ await check("env snapshot never precedes identity verification in oauth mode", a
       ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
       ELIOTR_WRANGLER_CONFIG_FILE: "wrangler-test-default.toml",
       CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
-      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
     },
     nowMs: NOW,
     readFile: async () => validToml(),
     getWhoamiOutput: async () => "Account other-account via browser OAuth",
     providers: admittedUsageProviders(),
+    snapshot: staged,
   }).then(() => assert.fail("must throw on wrong account"), (error) => error);
   assert.equal(wrong.code, "OAUTH_ACCOUNT_MISMATCH");
+});
+
+await check("poisoned env alone never admits (no explicit snapshot)", async () => {
+  // Static token plus poisoned ELIOTR_TEST_* with throwing seams must seal,
+  // never admit: ambient env cannot select fixture evaluation.
+  const staged = await admittedSnapshotJson();
+  const gate = await runUsagePreflight({
+    env: {
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      CLOUDFLARE_API_TOKEN: "static-token",
+      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
+      ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: `Account ${ACCOUNT} via browser OAuth`,
+    },
+    nowMs: NOW,
+    readFile: async () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
+    getWhoamiOutput: async () => assert.fail("whoami must not run in api-token mode"),
+    providers: [],
+  });
+  assert.equal(gate.decision, "SEALED");
 });
 
 await check("bearer injection stays in child env memory, verification env stays scrubbed", () => {
@@ -387,8 +408,9 @@ await check("wrong profile account fails after gates but before archive and muta
 await check("api-token mode stays compatible for CI without whoami", async () => {
   // Staged admission: the snapshot below was produced by the real collector
   // over the same FOCUS/inventory providers, so the gate evaluates a
-  // genuinely admitted aggregate through the real envelope. usageProviders
-  // are still supplied (forwarded, unused in api-token mode by design).
+  // genuinely admitted aggregate through the real envelope. It travels via
+  // the explicit `snapshot`/`usageSnapshot` options (test-called builder
+  // path), never ambient env: production CLIs never pass the capability.
   const staged = await admittedSnapshotJson();
   noBearer(staged, "staged snapshot");
   const test = deployHarness({
@@ -396,11 +418,11 @@ await check("api-token mode stays compatible for CI without whoami", async () =>
       ...baseEnvironment,
       ELIOTR_CLOUDFLARE_AUTH_MODE: undefined,
       CLOUDFLARE_API_TOKEN: "secret-token",
-      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
     },
+    usageSnapshot: staged,
     runWranglerWhoami: async () => assert.fail("whoami must not run in api-token mode"),
   });
-  const gate = await runUsagePreflight({ env: { ...test.options.environment }, nowMs: NOW, providers: test.options.usageProviders });
+  const gate = await runUsagePreflight({ env: { ...test.options.environment }, nowMs: NOW, providers: test.options.usageProviders, snapshot: staged });
   assert.equal(gate.decision, "ADMITTED");
   assert.deepEqual(gate.evaluation.unknown, []);
   const receipt = await deployCloudflare(test.options);

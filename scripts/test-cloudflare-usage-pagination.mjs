@@ -128,6 +128,107 @@ await check("ai-search short pages without totals never prove full coverage", as
   assert.equal(vanished.metrics.ai_search_instances, "unknown");
 });
 
+await check("ai-search established metadata never disappears (page/per_page/count/totals)", async () => {
+  const aiEndpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`;
+  const fullFirst = { page: 1, per_page: 1, count: 1, total_count: 2, total_pages: 2 };
+  // Manager repro: page 2 retains totals but omits per_page+count. The
+  // cumulative count (2 vs 2) would still pass, so disappearance itself must
+  // reject instead of fullAccount:true.
+  const drops = [
+    ["per_page+count", { page: 2, total_count: 2, total_pages: 2 }],
+    ["count-only", { page: 2, per_page: 1, total_count: 2, total_pages: 2 }],
+    ["per_page-only", { page: 2, count: 1, total_count: 2, total_pages: 2 }],
+    ["totals", { page: 2, per_page: 1, count: 1 }],
+    ["empty-container", {}],
+  ];
+  for (const [label, second] of drops) {
+    const provider = createAiSearchInventoryProvider({
+      endpoint: aiEndpoint,
+      fetchImpl: async (url) => {
+        const page = Number(new URL(url).searchParams.get("page"));
+        if (page <= 1) {
+          return okJson({ success: true, result: [{ id: "one" }], result_info: { ...fullFirst } });
+        }
+        return okJson({ success: true, result: [{ id: "two" }], result_info: { ...second } });
+      },
+    });
+    await assert.rejects(
+      provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+      (error) => error instanceof ProviderFailure && (error.reason === "PARTIAL_PAGINATION" || error.reason === "MALFORMED"),
+      `ai-search page-2 ${label} disappearance must fail closed`,
+    );
+    const snapshot = await collectAccountUsage({
+      bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [provider],
+    });
+    assert.equal(snapshot.metrics.ai_search_instances, "unknown", `ai-search ${label} must stay unknown`);
+  }
+  // Page echo disappearance fails closed as well (totals present require echo).
+  const noEcho = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { ...fullFirst } });
+      }
+      return okJson({ success: true, result: [{ id: "two" }], result_info: { per_page: 1, count: 1, total_count: 2, total_pages: 2 } });
+    },
+  });
+  await assert.rejects(
+    noEcho.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && (error.reason === "PARTIAL_PAGINATION" || error.reason === "MALFORMED"),
+    "ai-search page echo disappearance must fail closed",
+  );
+  // Container switch that drops established fields fails closed; a switch
+  // that preserves every established field stays admissible.
+  const switchDrop = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { ...fullFirst } });
+      }
+      return okJson({ success: true, result: [{ id: "two" }], pagination: { page: 2, total_count: 2, total_pages: 2 } });
+    },
+  });
+  await assert.rejects(
+    switchDrop.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+    "ai-search container switch that drops per_page+count must fail closed",
+  );
+  const switchKeep = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { ...fullFirst } });
+      }
+      return okJson({ success: true, result: [{ id: "two" }], pagination: { page: 2, per_page: 1, count: 1, total_count: 2, total_pages: 2 } });
+    },
+  });
+  const kept = await switchKeep.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(kept.coverage.fullAccount, true);
+  assert.equal(kept.values.ai_search_instances, 2);
+  // Cumulative count mismatch still fails closed even with stable metadata.
+  const shortCount = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { page: 1, per_page: 1, count: 1, total_count: 3, total_pages: 3 } });
+      }
+      if (page === 2) {
+        return okJson({ success: true, result: [{ id: "two" }], result_info: { page: 2, per_page: 1, count: 1, total_count: 3, total_pages: 3 } });
+      }
+      return okJson({ success: true, result: [], result_info: { page: 3, per_page: 1, count: 0, total_count: 3, total_pages: 3 } });
+    },
+  });
+  await assert.rejects(
+    shortCount.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+    "ai-search cumulative mismatch must fail closed",
+  );
+});
+
 await check("R2 cursor that never terminates rejects after the hop cap", async () => {
   const advancing = createR2CursorInventoryProvider({
     endpoint: (id, cursor) => cursor

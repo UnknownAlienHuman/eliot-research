@@ -69,24 +69,20 @@ const address = server.address();
 assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
 
-// Backup live-ignored state so the proof never pollutes the worktree.
+// Backup the generated config so the proof never pollutes the worktree.
+// Receipt state is isolated via ELIOTR_STATE_DIRECTORY (temp, per-run):
+// spawned children never touch the shared gitignored .eliotr-state.
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
-const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
+const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "oauth-preflight-state-"));
 const backupRoot = resolve(repositoryRoot, `.eliotr-oauth-preflight-backup-${process.pid}`);
 async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
 let generatedBackedUp = false;
-let stateBackedUp = false;
 if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, resolve(backupRoot, "wrangler.deploy.jsonc"));
   generatedBackedUp = true;
-}
-if (await exists(stateDirectory)) {
-  await mkdir(backupRoot, { recursive: true });
-  await rename(stateDirectory, resolve(backupRoot, "state"));
-  stateBackedUp = true;
 }
 
 const credentialDir = await mkdtemp(join(tmpdir(), "wrangler-oauth-proof-"));
@@ -94,6 +90,19 @@ const validCredentialPath = join(credentialDir, "default.toml");
 const expiredCredentialPath = join(credentialDir, "expired.toml");
 await writeFile(validCredentialPath, `oauth_token = "${BEARER}"\nrefresh_token = "proof-refresh"\nexpiration_time = "${FUTURE}"\n`);
 await writeFile(expiredCredentialPath, `oauth_token = "${BEARER}"\nexpiration_time = "${PAST}"\n`);
+
+// Fake `pnpm` earlier on PATH so the official `pnpm exec wrangler whoami`
+// verification spawn resolves to this shim (no ambient whoami seam in
+// production code). Only `exec wrangler whoami` is implemented; anything
+// else exits 1. Output is rewritten per case (serial runs only).
+const fakeBinDir = await mkdtemp(join(tmpdir(), "fake-pnpm-"));
+async function setFakeWhoami(output) {
+  const line = String(output).replace(/"/gu, "");
+  await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  echo ${line}\r\n  exit /b 0\r\n)\r\necho unexpected pnpm invocation: %* 1>&2\r\nexit /b 1\r\n`);
+  await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then\n  echo "${line}"\n  exit 0\nfi\necho "unexpected pnpm invocation: $*" >&2\nexit 1\n`);
+}
+await setFakeWhoami(`Account ${ACCOUNT} via browser OAuth`);
+const fakePath = `${fakeBinDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
 function baseEnv(overrides = {}) {
   return {
@@ -103,7 +112,8 @@ function baseEnv(overrides = {}) {
     CLOUDFLARE_API_BASE_URL: apiBase,
     ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
     ELIOTR_WRANGLER_CONFIG_FILE: validCredentialPath,
-    ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: `Account ${ACCOUNT} via browser OAuth`,
+    ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
+    PATH: fakePath,
     ELIOTR_ACCESS_HOSTNAME: HOSTNAME,
     ELIOTR_OWNER_EMAILS: OWNER,
     ELIOTR_ACCESS_TEAM_DOMAIN: "",
@@ -179,7 +189,7 @@ try {
       noBearer(result.stdout, `${script} stdout`);
       noBearer(result.stderr, `${script} stderr`);
       noBearer(result.argv, `${script} argv`);
-      assert.ok(!(await exists(stateDirectory)) || true, "state dir probe");
+      assert.ok(await exists(isolatedStateDirectory), "isolated state dir missing");
     });
   }
 
@@ -209,8 +219,13 @@ try {
 
   await check("wrong-account OAuth profile fails closed with login instruction", async () => {
     const beforeMutations = state.mutations.length;
-    const result = await run("scripts/provision-ai-gateways.mjs", ["--check-only"],
-      { ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: "Account other-account via browser OAuth" });
+    await setFakeWhoami("Account other-account via browser OAuth");
+    let result;
+    try {
+      result = await run("scripts/provision-ai-gateways.mjs", ["--check-only"]);
+    } finally {
+      await setFakeWhoami(`Account ${ACCOUNT} via browser OAuth`);
+    }
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /mismatch|wrangler login/u);
     assert.equal(state.mutations.length, beforeMutations);
@@ -218,20 +233,18 @@ try {
   });
 
   // Check-only purity: no receipt or generated config may appear.
-  assert.ok(!(await exists(resolve(stateDirectory, "cloudflare-access-receipt.json"))), "access receipt written during check-only");
-  assert.ok(!(await exists(resolve(stateDirectory, "cloudflare-foundation-receipt.json"))), "foundation receipt written during check-only");
+  assert.ok(!(await exists(join(isolatedStateDirectory, "cloudflare-access-receipt.json"))), "access receipt written during check-only");
+  assert.ok(!(await exists(join(isolatedStateDirectory, "cloudflare-foundation-receipt.json"))), "foundation receipt written during check-only");
   console.log(`OAuth preflight proof: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
   await rm(credentialDir, { recursive: true, force: true });
+  await rm(fakeBinDir, { recursive: true, force: true });
   if (generatedBackedUp) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });
     await rename(resolve(backupRoot, "wrangler.deploy.jsonc"), generatedConfigPath);
-  }
-  if (stateBackedUp) {
-    await rename(resolve(backupRoot, "state"), stateDirectory);
   }
   await rm(backupRoot, { recursive: true, force: true });
 }

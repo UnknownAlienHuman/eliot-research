@@ -19,9 +19,10 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolveAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { loadWranglerOAuthCredential } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
@@ -37,8 +38,16 @@ const TEAM = "https://int-test-example.cloudflareaccess.com";
 const OTHER_TEAM = "https://other-team-example.cloudflareaccess.com";
 const APP_NAME = `Eliot Research: ${HOSTNAME}`;
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
-const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
-const accessReceiptPath = resolve(stateDirectory, "cloudflare-access-receipt.json");
+// Foundation receipt path is infra-derived (not under ELIOTR_STATE_DIRECTORY),
+// so the suite removes that exact output before/after instead of touching
+// shared state.
+const foundationReceiptPath = resolve(repositoryRoot, JSON.parse(
+  await readFile(resolve(repositoryRoot, "infra/cloudflare/resources.json"), "utf8"),
+).worker.receipt);
+// Isolated scratch state (temp, per-run): spawned children write receipts
+// under ELIOTR_STATE_DIRECTORY, never the shared gitignored .eliotr-state.
+const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "browser-auth-state-"));
+const accessReceiptPath = join(isolatedStateDirectory, "cloudflare-access-receipt.json");
 const backupRoot = resolve(repositoryRoot, `.eliotr-browser-auth-test-backup-${process.pid}`);
 
 function emptyState() {
@@ -162,23 +171,25 @@ async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
 let generatedBackedUp = false;
-let stateBackedUp = false;
 if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, resolve(backupRoot, "wrangler.deploy.jsonc"));
   generatedBackedUp = true;
 }
-if (await exists(stateDirectory)) {
-  await mkdir(backupRoot, { recursive: true });
-  await rename(stateDirectory, resolve(backupRoot, "state"));
-  stateBackedUp = true;
-}
+
+// Explicit spawn gate (see scripts/test-usage-gate-shim.mjs): children that
+// must exercise real apply paths are spawned with `node --import <shim>`,
+// which substitutes the usage-collection module with a test standin honoring
+// ELIOTR_TEST_SPAWN_SNAPSHOT_JSON for that child only. Production never
+// registers the hooks and never reads the variable.
+const GATE_SHIM = pathToFileURL(resolve(repositoryRoot, "scripts/test-usage-gate-shim.mjs")).href;
 
 const baseEnv = {
   ...process.env,
   CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
   CLOUDFLARE_API_TOKEN: BEARER,
   CLOUDFLARE_API_BASE_URL: apiBase,
+  ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
   ELIOTR_ACCESS_HOSTNAME: HOSTNAME,
   ELIOTR_OWNER_EMAILS: OWNER,
   ELIOTR_ENVIRONMENT: "staging",
@@ -186,14 +197,17 @@ const baseEnv = {
   ELIOTR_CUSTOM_DOMAIN: "0",
 };
 
-function run(script, args = [], env = {}) {
-  // Fresh ADMITTED usage fixture by default: direct apply requires ADMITTED
-  // past the usage gate. Cases that need a different decision override
-  // ELIOTR_TEST_USAGE_SNAPSHOT_JSON explicitly.
+function run(script, args = [], env = {}, useGate = true) {
+  // Genuinely admittable usage evidence by default: direct apply requires
+  // ADMITTED past the usage gate. Cases that need a different decision either
+  // override the fixture or spawn without the gate shim (poisoned denial:
+  // the ambient variable alone never admits).
   return new Promise((resolveRun) => {
     const argv = [resolve(repositoryRoot, script), ...args];
-    const child = spawn(process.execPath, argv, {
-      cwd: repositoryRoot, env: { ...baseEnv, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedUsageFixture(), ...env }, stdio: ["ignore", "pipe", "pipe"],
+    const child = spawn(process.execPath, useGate ? ["--import", GATE_SHIM, ...argv] : argv, {
+      cwd: repositoryRoot,
+      env: { ...baseEnv, ELIOTR_TEST_SPAWN_SNAPSHOT_JSON: admittedUsageFixture(), ...env },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -272,7 +286,20 @@ function admittedUsageFixture() {
 
 try {
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
+  await rm(foundationReceiptPath, { force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
+  await mkdir(isolatedStateDirectory, { recursive: true });
+
+  await check("poisoned ambient env without the gate shim is denied before mutation", async () => {
+    reset();
+    const before = requests();
+    const result = await run("scripts/provision-cloudflare-access.mjs", [], {}, false);
+    expectFail(result, "poisoned env");
+    assert.match(result.stderr, /SEALED/u);
+    assert.equal(mutations(), 0);
+    assert.equal(requests(), before, "poisoned env contacted the API");
+    noBearer(result.stderr, "poisoned stderr");
+  });
 
   await check("empty-account access check-only plans CREATE without inventing an AUD", async () => {
     reset();
@@ -483,13 +510,11 @@ try {
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
+  await rm(foundationReceiptPath, { force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
   if (generatedBackedUp) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });
     await rename(resolve(backupRoot, "wrangler.deploy.jsonc"), generatedConfigPath);
-  }
-  if (stateBackedUp) {
-    await rename(resolve(backupRoot, "state"), stateDirectory);
   }
   await rm(backupRoot, { recursive: true, force: true });
 }

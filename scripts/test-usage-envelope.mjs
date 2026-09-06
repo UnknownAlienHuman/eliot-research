@@ -1,10 +1,7 @@
 // Usage-envelope conformance: deterministic, mocked, no live calls.
-// Covers placeholder accept, wrong-account/stale/wrong-window/unknown/
-// over/near-limit handling, unrelated-usage aggregation, OAuth bearer
-// redaction, expired/missing credentials, no API-token fallback, zero
-// mutations on block, Access-first ordering, Gotham allowlist protection,
-// and receipt schema/readback/digest plus atomic write.
-//
+// Fixture admission for spawned children travels ONLY via the explicit gate
+// shim (--import test-usage-gate-shim.mjs + ELIOTR_TEST_SPAWN_SNAPSHOT_JSON,
+// honored solely by the test standin); ambient variables alone never admit.
 // Fictional data only (example.invalid, fake hex identifiers). Run with:
 //   node scripts/test-usage-envelope.mjs
 
@@ -14,7 +11,7 @@ import { createServer } from "node:http";
 import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REQUIRED_METRIC_KEYS,
   USAGE_ADMISSION_PROTOCOL,
@@ -29,6 +26,7 @@ import {
   collectAccountUsage,
   dailyWindowFor,
   monthlyWindowFor,
+  runUsagePreflight,
 } from "./lib/cloudflare-usage-collection.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -175,6 +173,7 @@ await check("ai search instance exactness", async () => {
 });
 
 // Forged-receipt validation moved to test-usage-envelope-receipt.mjs (FIX7W2 split-only).
+// Evidence-binding forged shells live in test-usage-envelope-evidence.mjs (FIX9WA).
 
 await check("digest and window helpers", async () => {
   assert.match(DIGEST, /^[0-9a-f]{64}$/u);
@@ -350,11 +349,17 @@ function childEnv(overrides = {}) {
   return env;
 }
 
-function runScript(script, args = [], env = {}) {
+function runScript(script, args = [], env = {}, gateFixture = null) {
   return new Promise((resolveRun) => {
-    const child = spawn(process.execPath, [resolve(repositoryRoot, script), ...args], {
+    const argv = [resolve(repositoryRoot, script), ...args];
+    const spawnEnv = childEnv(env);
+    // gateFixture reaches the child ONLY via the explicit --import shim flag;
+    // without it the same variable in env is ignored (poisoned case below).
+    const finalArgv = gateFixture === null ? argv : ["--import", GATE_SHIM, ...argv];
+    if (gateFixture !== null) spawnEnv.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON = gateFixture;
+    const child = spawn(process.execPath, finalArgv, {
       cwd: repositoryRoot,
-      env: childEnv(env),
+      env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -379,11 +384,21 @@ const scratch = await mkdtemp(join(tmpdir(), "eliotr-usage-test-"));
 function receiptEnv(extra = {}) {
   return { ELIOTR_USAGE_RECEIPT_PATH: join(scratch, `receipt-${cases}.json`), ...extra };
 }
+// Explicit spawn gate + isolated scratch state for spawned provisioners.
+const GATE_SHIM = pathToFileURL(resolve(repositoryRoot, "scripts/test-usage-gate-shim.mjs")).href;
+const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "eliotr-usage-state-"));
+// Fake `pnpm` on PATH for the `wrangler whoami` spawn in oauth-mode children.
+const fakeBinDir = await mkdtemp(join(tmpdir(), "eliotr-fake-pnpm-"));
+const fakeWhoamiLine = `account ${ACCOUNT} active`.replace(/"/gu, "");
+await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  echo ${fakeWhoamiLine}\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n`);
+await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then echo "${fakeWhoamiLine}"; exit 0; fi\nexit 1\n`);
+const fakePath = `${fakeBinDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
 const provisionEnv = {
   CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
   CLOUDFLARE_API_TOKEN: "fictional-static-token-for-tests",
   CLOUDFLARE_API_BASE_URL: apiBase,
+  ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
   ELIOTR_ACCESS_HOSTNAME: HOSTNAME,
   ELIOTR_OWNER_EMAILS: OWNER_EMAIL,
   ELIOTR_ENVIRONMENT: "staging",
@@ -395,12 +410,23 @@ const provisionEnv = {
 
 // --- preflight CLI ---------------------------------------------------------
 
-await check("preflight admits fixture, writes redacted atomic receipt", async () => {
-  const env = receiptEnv({
-    CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
-    ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify(liveFixtureSnapshot()),
+await check("explicit snapshot admits in-process through the real envelope", async () => {
+  // Positive admission without ambient env: builder-generated fixture via
+  // the explicit `snapshot` option (the shimmed spawn path uses the same
+  // option internally, proven by the fixture tests below).
+  const gate = await runUsagePreflight({
+    env: { CLOUDFLARE_ACCOUNT_ID: ACCOUNT, CLOUDFLARE_API_TOKEN: "fictional-static-token-for-tests" },
+    nowMs: Date.now(),
+    snapshot: JSON.stringify(liveFixtureSnapshot()),
+    providers: [],
   });
-  const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env);
+  assert.equal(gate.decision, "ADMITTED");
+});
+
+await check("preflight admits fixture, writes redacted atomic receipt", async () => {
+  const env = receiptEnv({ CLOUDFLARE_ACCOUNT_ID: ACCOUNT });
+  const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env,
+    JSON.stringify(liveFixtureSnapshot()));
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   const receipt = JSON.parse(await readFile(env.ELIOTR_USAGE_RECEIPT_PATH, "utf8"));
   assert.equal(receipt.protocol, USAGE_ADMISSION_PROTOCOL);
@@ -426,9 +452,9 @@ await check("preflight blocks over-envelope with zero mutations", async () => {
     CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
     CLOUDFLARE_API_TOKEN: "fictional-static-token-for-tests",
     CLOUDFLARE_API_BASE_URL: apiBase,
-    ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify(liveFixtureSnapshot({ queue_ops: 900_000 })),
   });
-  const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env);
+  const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env,
+    JSON.stringify(liveFixtureSnapshot({ queue_ops: 900_000 })));
   assert.notEqual(result.status, 0);
   const receipt = JSON.parse(await readFile(env.ELIOTR_USAGE_RECEIPT_PATH, "utf8"));
   assert.equal(receipt.decision, "BLOCKED");
@@ -448,6 +474,9 @@ await check("no api-token fallback and sealed without network", async () => {
     CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
     CLOUDFLARE_API_TOKEN: "fictional-static-token-for-tests",
     CLOUDFLARE_API_BASE_URL: apiBase,
+    // Poisoned ambient snapshot: production ignores it without the gate shim
+    // and still seals with zero network calls.
+    ELIOTR_TEST_SPAWN_SNAPSHOT_JSON: JSON.stringify(liveFixtureSnapshot()),
   });
   const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env);
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
@@ -465,7 +494,7 @@ await check("oauth bearer memory-only and redacted end to end", async () => {
     CLOUDFLARE_API_BASE_URL: apiBase,
     ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
     ELIOTR_WRANGLER_CONFIG_FILE: profilePath,
-    ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: `account ${ACCOUNT} active`,
+    PATH: fakePath,
     ELIOTR_OWNER_EMAILS: OWNER_EMAIL,
   });
   const result = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [], env);
@@ -483,7 +512,6 @@ await check("expired and missing oauth credentials fail closed", async () => {
   const base = {
     CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
     ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
-    ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT: `account ${ACCOUNT} active`,
   };
   const expired = await runScript("scripts/check-cloudflare-usage-preflight.mjs", [],
     receiptEnv({ ...base, ELIOTR_WRANGLER_CONFIG_FILE: expiredPath }));
@@ -497,33 +525,26 @@ await check("expired and missing oauth credentials fail closed", async () => {
 // --- provisioner gating ----------------------------------------------------
 
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
-const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
 const backupRoot = resolve(repositoryRoot, `.eliotr-usage-test-backup-${process.pid}`);
 async function exists(path) {
   try { await access(path); return true; } catch { return false; }
 }
 let backedGenerated = false;
-let backedState = false;
 if (await exists(generatedConfigPath)) {
   await mkdir(backupRoot, { recursive: true });
   await rename(generatedConfigPath, join(backupRoot, "wrangler.deploy.jsonc"));
   backedGenerated = true;
-}
-if (await exists(stateDirectory)) {
-  await mkdir(backupRoot, { recursive: true });
-  await rename(stateDirectory, join(backupRoot, "state"));
-  backedState = true;
 }
 
 try {
   await check("blocked usage aborts core and access before any mutation", async () => {
     mock = emptyMockState();
     const blocked = JSON.stringify(liveFixtureSnapshot({ r2_class_a_ops: 900_000 }));
-    const coreEnv = { ...provisionEnv, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: blocked, ...receiptEnv() };
-    const core = await runScript("scripts/provision-cloudflare-core.mjs", [], coreEnv);
+    const coreEnv = { ...provisionEnv, ...receiptEnv() };
+    const core = await runScript("scripts/provision-cloudflare-core.mjs", [], coreEnv, blocked);
     assert.notEqual(core.status, 0, `core unexpectedly passed: ${core.stdout}`);
-    const accessEnv = { ...provisionEnv, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: blocked, ...receiptEnv() };
-    const accessScript = await runScript("scripts/provision-cloudflare-access.mjs", [], accessEnv);
+    const accessEnv = { ...provisionEnv, ...receiptEnv() };
+    const accessScript = await runScript("scripts/provision-cloudflare-access.mjs", [], accessEnv, blocked);
     assert.notEqual(accessScript.status, 0, `access unexpectedly passed: ${accessScript.stdout}`);
     assert.equal(mock.requests.length, 0);
     assert.equal(mock.mutations.length, 0);
@@ -549,10 +570,10 @@ try {
     mock.queues.set("gotham-jobs", { queue_id: "queue-gotham", queue_name: "gotham-jobs" });
     const env = {
       ...provisionEnv,
-      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify(liveFixtureSnapshot()),
       ...receiptEnv(),
     };
-    const core = await runScript("scripts/provision-cloudflare-core.mjs", [], env);
+    const core = await runScript("scripts/provision-cloudflare-core.mjs", [], env,
+      JSON.stringify(liveFixtureSnapshot()));
     assert.equal(core.status, 0, `core failed: ${core.stdout}\n${core.stderr}`);
     assert.ok(mock.d1.get("gotham-analytics")?.uuid === "d1-gotham");
     assert.ok(mock.r2.get("gotham-bucket")?.name === "gotham-bucket");
@@ -563,16 +584,14 @@ try {
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });
-  await rm(stateDirectory, { recursive: true, force: true });
   if (backedGenerated) {
     await mkdir(dirname(generatedConfigPath), { recursive: true });
     await rename(join(backupRoot, "wrangler.deploy.jsonc"), generatedConfigPath);
   }
-  if (backedState) {
-    await rename(join(backupRoot, "state"), stateDirectory);
-  }
   await rm(backupRoot, { recursive: true, force: true });
   await rm(scratch, { recursive: true, force: true });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
+  await rm(fakeBinDir, { recursive: true, force: true });
 }
 
 console.log(`Usage envelope conformance: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

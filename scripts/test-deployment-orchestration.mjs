@@ -39,8 +39,10 @@ const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKE
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
-  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie",
-  ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedSnapshotJson() };
+  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie" };
+// Staged snapshots travel via the explicit `usageSnapshot` deploy option
+// (test-called builder path), never ambient env: production never passes it.
+const defaultUsageSnapshot = admittedSnapshotJson();
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "" },
@@ -53,7 +55,7 @@ function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   let reads = 0;
-  const options = { confirmLive: true, verifyCode: async () => {}, environment, now: () => now, log: () => {},
+  const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
@@ -167,7 +169,7 @@ await check("missing cookie retains NOT_EXECUTED", async () => {
 await check("BLOCKED usage denies every remote mutation with zero billable calls", async () => {
   const over = JSON.parse(admittedSnapshotJson());
   over.metrics.queue_ops = 900_000;
-  const test = harness({ options: { environment: { ...environment, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify(over) } } });
+  const test = harness({ options: { usageSnapshot: JSON.stringify(over) } });
   const billable = [];
   test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
   await assert.rejects(deployCloudflare(test.options), /BLOCKED/);
@@ -178,7 +180,7 @@ await check("BLOCKED usage denies every remote mutation with zero billable calls
   assert.equal(test.receipts.length, 0);
 });
 await check("SEALED usage denies Worker upload and D1 migrations (adversarial unknown)", async () => {
-  const test = harness({ options: { environment: { ...environment, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: sealedSnapshotJson() } } });
+  const test = harness({ options: { usageSnapshot: sealedSnapshotJson() } });
   const billable = [];
   test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
   await assert.rejects(deployCloudflare(test.options), /SEALED/);

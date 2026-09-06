@@ -214,8 +214,7 @@ await check("denials carry no secrets", async () => {
   assert.ok(!text.includes(ACCOUNT));
 });
 
-await check("forged admitted receipts never enable heavy work", async () => {
-  const billableCalls = [];
+await check("forged admitted receipts never enable heavy work", async () => {  const billableCalls = [];
   const billable = () => { billableCalls.push("invoked"); };
   const fresh = admittedReceipt(DAY_ONE);
   const forged = { ...fresh, unknown_metrics: ["queue_ops"] };
@@ -241,6 +240,59 @@ await check("forged admitted receipts never enable heavy work", async () => {
   });
   if (admitted.allowed) billable();
   assert.equal(admitted.allowed, true);
+  assert.equal(billableCalls.length, 1);
+});
+
+await check("evidenceless shells and tampered receipts never enable heavy work", async () => {
+  const billableCalls = [];
+  const billable = () => { billableCalls.push("invoked"); };
+  const attempt = (receipt) => admitHeavyOperation(createBudgetLedger(), {
+    operation: "ingestion-commit",
+    metricKey: "d1_rows_written",
+    quantity: 100,
+    now: DAY_ONE,
+    receipt,
+    expectedAccountDigest: DIGEST,
+  });
+  // Hand-forged shell: valid generation, sealed:false, empty unknowns, but
+  // no metric evidence and no snapshot digest.
+  const shell = {
+    protocol: "eliotr.cloudflare-usage-admission-receipt.v1",
+    generation: "usage-envelope-2026-09-06",
+    decision: "ADMITTED",
+    sealed: false,
+    account_id_digest: DIGEST,
+    account_ref: "cloudflare-account:cccccc…cccc",
+    collected_at: new Date(DAY_ONE - 60_000).toISOString(),
+    windows: { monthly: monthlyWindowFor(DAY_ONE), daily: dailyWindowFor(DAY_ONE) },
+    source: "test-fixture",
+    over_envelope: [],
+    unknown_metrics: [],
+    near_limit: [],
+    advisory: [],
+    reasons: [],
+    created_at: new Date(DAY_ONE).toISOString(),
+  };
+  const shelled = attempt(shell);
+  assert.equal(shelled.allowed, false);
+  assert.equal(shelled.reason, "SEALED_NO_HEADROOM_PROOF");
+  // Honest receipt with one metric value tampered (digest now stale).
+  const fresh = admittedReceipt(DAY_ONE);
+  const tampered = structuredClone(fresh);
+  tampered.metrics.queue_ops += 1;
+  const tamperedResult = attempt(tampered);
+  assert.equal(tamperedResult.allowed, false);
+  assert.equal(tamperedResult.reason, "SEALED_NO_HEADROOM_PROOF");
+  // Honest receipt with its evidence stripped.
+  const stripped = structuredClone(fresh);
+  delete stripped.metric_evidence;
+  delete stripped.snapshot_digest;
+  assert.equal(attempt(stripped).allowed, false);
+  // The honest evidence-carrying receipt still admits heavy work.
+  const admitted = attempt(fresh);
+  assert.equal(admitted.allowed, true);
+  assert.equal(admitted.proof, "FRESH_ADMITTED_AGGREGATE");
+  if (admitted.allowed) billable();
   assert.equal(billableCalls.length, 1);
 });
 

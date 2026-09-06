@@ -349,14 +349,29 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
       const pagesCompleted = [];
       let lastHttpStatus = null;
       const stable = {};
-      // Totals seen on page 1 must stay visible: disappearance later fails closed.
-      let sawTotalsOnFirstPage = false;
-      const requireStable = (name, value) => {
-        if (!Number.isInteger(value)) return;
+      // Established-field invariant: once ANY known pagination field is
+      // established on page 1, later pages must retain it with correct
+      // stable/echo/cumulative semantics. Disappearance of page, per_page,
+      // count, total_count, or total_pages fails closed. The container that
+      // established each field (result_info vs pagination) is tracked so a
+      // container switch cannot hide a disappearance.
+      const establishedMeta = new Set();
+      const establishedSource = {};
+      const requireStable = (name, value, source) => {
+        if (!Number.isInteger(value)) {
+          if (establishedMeta.has(name)) {
+            const from = establishedSource[name] ?? "unknown";
+            const hop = from !== source ? ` via container switch ${from}->${source}` : "";
+            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared${hop}`, { httpStatus: lastHttpStatus });
+          }
+          return;
+        }
         if (stable[name] === undefined) stable[name] = value;
         if (stable[name] !== value) {
           throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
         }
+        establishedMeta.add(name);
+        if (establishedSource[name] === undefined) establishedSource[name] = source;
       };
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, page, perPage);
@@ -397,11 +412,16 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
         seen.push(...items);
         assertPlainResultInfo(body?.result_info, group, page, "result_info", lastHttpStatus);
         assertPlainResultInfo(body?.pagination, group, page, "pagination", lastHttpStatus);
-        // Presence before fallback: explicit null result_info is MALFORMED
-        // (already thrown above), never a silent fallthrough to pagination.
-        // Only truly absent (undefined) falls back.
-        const info = body?.result_info !== undefined ? body.result_info
-          : body?.pagination !== undefined ? body.pagination : {};
+        // Presence before merge: explicit null result_info/pagination is
+        // MALFORMED (already thrown above), never a silent fallthrough.
+        // Only truly absent (undefined) containers are skipped. Both present
+        // containers merge (result_info wins) so a container switch that
+        // preserves every established field stays admissible, while a switch
+        // that drops one fails closed via the established checks below.
+        const resultInfo = body?.result_info !== undefined ? body.result_info : {};
+        const pagination = body?.pagination !== undefined ? body.pagination : {};
+        const info = { ...pagination, ...resultInfo };
+        const fieldSource = (name) => (resultInfo[name] !== undefined ? "result_info" : pagination[name] !== undefined ? "pagination" : "none");
         // Same presence-first strict validation as the general provider.
         assertPaginationField(info, "page", 1, group, page, lastHttpStatus);
         assertPaginationField(info, "per_page", 1, group, page, lastHttpStatus);
@@ -421,8 +441,9 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
         // forced): totals require a matching page echo, must not drift, and a
         // supplied total_count must equal the cumulative count. Termination is
         // decisive only: a short page WITHOUT totals (this shape carries no
-        // other terminal signal) never proves full coverage, and totals that
-        // disappear after page 1 fail closed instead of fullAccount:true.
+        // other terminal signal) never proves full coverage, and established
+        // fields that disappear after page 1 fail closed instead of
+        // fullAccount:true.
         if ((info.total_count !== undefined || info.total_pages !== undefined) && info.page !== page) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
         }
@@ -433,15 +454,29 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
           throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
         }
         if (Number.isInteger(info.total_count) && info.total_count < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
-        requireStable("per_page", info.per_page);
-        requireStable("total_count", info.total_count);
-        requireStable("total_pages", info.total_pages);
-        const pageHasTotals = Number.isInteger(info.total_count) || Number.isInteger(info.total_pages);
-        if (page === 1) {
-          sawTotalsOnFirstPage = pageHasTotals;
-        } else if (sawTotalsOnFirstPage && !pageHasTotals) {
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} pagination totals disappeared`, { httpStatus: lastHttpStatus });
+        // Page echo must not disappear mid-walk either (echo varies per page,
+        // so only presence is tracked once established, never stability).
+        if (Number.isInteger(info.page)) {
+          establishedMeta.add("page");
+          if (establishedSource.page === undefined) establishedSource.page = fieldSource("page");
+        } else if (establishedMeta.has("page")) {
+          const from = establishedSource.page ?? "unknown";
+          const hop = from !== fieldSource("page") ? ` via container switch ${from}->${fieldSource("page")}` : "";
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} page echo disappeared${hop}`, { httpStatus: lastHttpStatus });
         }
+        // Count echo semantics must not disappear mid-walk either (count
+        // varies per page, so only presence is tracked, never stability).
+        if (Number.isInteger(info.count)) {
+          establishedMeta.add("count");
+          if (establishedSource.count === undefined) establishedSource.count = fieldSource("count");
+        } else if (establishedMeta.has("count")) {
+          const from = establishedSource.count ?? "unknown";
+          const hop = from !== fieldSource("count") ? ` via container switch ${from}->${fieldSource("count")}` : "";
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared${hop}`, { httpStatus: lastHttpStatus });
+        }
+        requireStable("per_page", info.per_page, fieldSource("per_page"));
+        requireStable("total_count", info.total_count, fieldSource("total_count"));
+        requireStable("total_pages", info.total_pages, fieldSource("total_pages"));
         if (Number.isInteger(info.total_pages)) {
           totalPages = info.total_pages;
         } else if (Number.isInteger(info.total_count) && Number.isInteger(info.per_page)) {

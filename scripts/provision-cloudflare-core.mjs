@@ -9,6 +9,10 @@ import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
 import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
+// gitignored .eliotr-state so parallel/serial runs never communicate through
+// leftover receipts. Production default is unchanged.
+const stateDirectory = process.env.ELIOTR_STATE_DIRECTORY ? resolve(process.env.ELIOTR_STATE_DIRECTORY) : resolve(repositoryRoot, ".eliotr-state");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
@@ -41,27 +45,19 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     process.exit(2);
   }
   try {
-    // Official-profile account pin before the first Cloudflare GET. The
-    // ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT seam is test-only (mocked tests
-    // without a wrangler binary); production always spawns wrangler whoami
-    // with a token-scrubbed env. Either source must still contain the
-    // expected account id, and API calls remain account-scoped, so the seam
-    // cannot grant access by itself.
-    const mockedWhoami = process.env.ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT;
-    let whoamiOutput;
-    if (mockedWhoami !== undefined && mockedWhoami !== "") {
-      whoamiOutput = mockedWhoami;
-    } else {
-      const scrubbed = scrubTokenEnv(process.env);
-      const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
-        { cwd: repositoryRoot, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
-      if (result.error || result.status !== 0) {
-        console.error(`Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
-        process.exit(2);
-      }
-      whoamiOutput = result.stdout ?? "";
+    // Official-profile account pin before the first Cloudflare GET. Always
+    // spawns the official `wrangler whoami` with a token-scrubbed env so the
+    // browser-OAuth profile itself (not an injected bearer) is verified. No
+    // ambient test seam is honored here; tests must fake the binary or call
+    // the library with explicit injection.
+    const scrubbed = scrubTokenEnv(process.env);
+    const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+      { cwd: repositoryRoot, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
+    if (result.error || result.status !== 0) {
+      console.error(`Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+      process.exit(2);
     }
-    await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => whoamiOutput });
+    await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => result.stdout ?? "" });
   } catch (error) {
     console.error(error?.message ?? String(error));
     process.exit(2);
@@ -81,7 +77,7 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   let usageGate;
   try {
     usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
-      receiptPath: resolve(repositoryRoot, ".eliotr-state/cloudflare-usage-admission-receipt.json"), cwd: repositoryRoot });
+      receiptPath: resolve(stateDirectory, "cloudflare-usage-admission-receipt.json"), cwd: repositoryRoot });
   } catch (error) {
     console.error(error?.message ?? String(error));
     process.exit(2);
@@ -315,7 +311,7 @@ const publicRoute = validatePublicRouteConfiguration();
 // authority into generated config before any D1/R2/Queue exposure. A missing
 // receipt with no invented env AUD is a valid CREATE plan, never a demand for
 // an invented AUD. Apply without any authority fails before the first mutation.
-const accessReceiptPath = resolve(repositoryRoot, ".eliotr-state/cloudflare-access-receipt.json");
+const accessReceiptPath = resolve(stateDirectory, "cloudflare-access-receipt.json");
 async function loadAccessReceipt() {
   try {
     const raw = await readFile(accessReceiptPath, "utf8");

@@ -9,10 +9,10 @@
 // so a block performs zero provisioning/deployment/API mutations.
 //
 // Modes:
-//   ELIOTR_TEST_USAGE_SNAPSHOT_JSON - deterministic fixture evaluation, no
-//       network, no bearer use (mocked tests only, fictional data).
-//   non-OAuth auth mode without a fixture - SEALED without any network call
-//       (CI metadata-only path; never falls back to the static API token).
+//   non-OAuth auth mode - SEALED without any network call (CI metadata-only
+//       path; never falls back to the static API token). No environment
+//       variable selects fixture admission: ELIOTR_TEST_USAGE_SNAPSHOT_JSON
+//       and ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT are never read here.
 //   wrangler-oauth mode - live profile verification plus collection; metrics
 //       Cloudflare does not expose stay `unknown` and seal heavy work.
 //   --check-only - evaluate and print without writing any receipt file.

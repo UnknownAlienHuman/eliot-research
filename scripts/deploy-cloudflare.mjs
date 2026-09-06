@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
-  verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
+  stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
 
 import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
@@ -45,8 +45,19 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
-  usageProviders = [] } = {}) {
+  usageProviders = [], usageSnapshot = null } = {}) {
   const env = { ...environment };
+  // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
+  // module-loader tokens (--import/--loader/--experimental-loader/--require
+  // plus values) from NODE_OPTIONS so a poisoned env can never auto-load test
+  // hooks into provisioner/wrangler children. Benign flags pass through
+  // intact; a missing NODE_OPTIONS stays missing. Bearer/token handling above
+  // and below is untouched.
+  if (env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== null) {
+    const stripped = stripNodeOptionsLoaderTokens(env.NODE_OPTIONS);
+    if (String(stripped).trim() === "") delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = stripped;
+  }
   let input;
   let oauth = null;
   if (confirmLive) {
@@ -106,9 +117,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // before any Worker surface exists; any partial failure aborts before the
   // single Worker deploy, leaving no public workers.dev path
   // (preview_urls=false is enforced by validateGeneratedDeployment).
-  // Injected usage evidence only: forwarded verbatim as `providers` to the
-  // preflight. Absent (default []) the gate keeps today's live-registry,
-  // fail-closed behavior byte-identical; no decision logic changes here.
+  // Injected usage evidence only: forwarded verbatim as `providers` (or an
+  // explicit `usageSnapshot` built by test-called builders) to the preflight.
+  // Absent (defaults) the gate keeps today's live-registry, fail-closed
+  // behavior byte-identical; no decision logic changes here. Production CLI
+  // entry below never passes either capability.
   {
     const usageGate = await runUsagePreflight({
       env: { ...process.env, ...env },
@@ -116,6 +129,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       readFile: readWranglerFile ?? read,
       getWhoamiOutput: runWranglerWhoami,
       providers: usageProviders,
+      snapshot: usageSnapshot,
       writeReceipt: false,
       cwd: root,
     });

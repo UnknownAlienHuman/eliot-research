@@ -11,6 +11,7 @@ import { METRIC_PROVENANCE } from "./lib/cloudflare-usage-envelope.mjs";
 import {
   ProviderFailure,
   collectAccountUsage,
+  createAiSearchInventoryProvider,
   createBillableUsageProvider,
 } from "./lib/cloudflare-usage-collection.mjs";
 
@@ -534,21 +535,28 @@ await check("ledger estimates and unauthorized channels stay unknown", async () 
 });
 
 await check("authorized inventory admits only its contracted count", async () => {
-  const inventory = {
+  // Authority now requires a branded registry-built provider: the genuine
+  // AI Search factory product admits its contracted count, while a
+  // lookalike plain object with the same group/kind/provenance strings
+  // stays unknown (see test-usage-aggregation-trust.mjs attacker cases).
+  const inventory = createAiSearchInventoryProvider({
     group: "ai-search-inventory-list",
     covers: ["ai_search_instances"],
-    kind: "inventory-ai-search",
-    collect: async () => ({
-      values: { ai_search_instances: 5 },
-      coverage: { accountId: ACCOUNT, fullAccount: true },
-      provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+    endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
+    fetchImpl: async () => okJson({
+      success: true,
+      result: [1, 2, 3, 4, 5].map((n) => ({ id: `instance-${n}` })),
+      result_info: { page: 1, per_page: 100, count: 5, total_count: 5, total_pages: 1 },
     }),
-  };
+  });
+  assert.equal(inventory.kind, "inventory-ai-search");
+  assert.equal(Object.isFrozen(inventory), true);
   const snapshot = await collectAccountUsage({
     bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [inventory],
   });
   assert.equal(snapshot.metrics.ai_search_instances, 5);
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "trusted-partial");
 });
 
 await check("wrong-path url with expected id in query is never fetched", async () => {

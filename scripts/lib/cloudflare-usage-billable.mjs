@@ -17,11 +17,31 @@ import {
   ProviderFailure,
   UsageCollectionError,
   assertAccountUrl,
+  safeFetchMeta,
+} from "./cloudflare-usage-providers.mjs";
+import {
   createAiSearchInventoryProvider,
   createPaginatedInventoryProvider,
   createR2CursorInventoryProvider,
-  safeFetchMeta,
-} from "./cloudflare-usage-providers.mjs";
+} from "./cloudflare-usage-authority.mjs";
+
+// Module-PRIVATE billing brand registry: the non-caller-assertable
+// construction capability for AUTHORITATIVE_BILLING. Populated ONLY inside
+// createBillableUsageProvider below; no registrar is exported, so a forged
+// plain object with kind "billing-usage" can never carry trust. Products are
+// frozen so post-construction collect-replacement cannot hijack identity.
+const BILLING_BRANDS = new WeakSet();
+
+export const BILLING_BRAND_CLASS = "billing-usage-v2";
+
+// Read-only predicates: the sole trust queries for the billing channel.
+export function isUsageVBillingProvider(provider) {
+  return BILLING_BRANDS.has(provider);
+}
+
+export function billingBrandClass(provider) {
+  return BILLING_BRANDS.has(provider) ? BILLING_BRAND_CLASS : null;
+}
 
 // Reviewed billing triples: `${x_BillableMetricId}:${x_BillableMetricName}:${ConsumedUnit}`
 // mapped to an envelope metric. A triple is added here only after its FinOps
@@ -63,7 +83,7 @@ function billingDayDate(millis) {
 
 export function createBillableUsageProvider({ group = "billable-usage", covers = [], endpoint, fetchImpl = fetch, metricMap = {}, expectedWindow = null } = {}) {
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "billable provider endpoint is required");
-  return {
+  const product = {
     group,
     covers: [...covers],
     kind: "billing-usage",
@@ -258,6 +278,10 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       };
     },
   };
+  // Brand and freeze inside the factory closure: the ONLY place trust attaches.
+  Object.freeze(product.covers);
+  BILLING_BRANDS.add(product);
+  return Object.freeze(product);
 }
 
 // Live registry builder: paginated inventory collectors per service where an
