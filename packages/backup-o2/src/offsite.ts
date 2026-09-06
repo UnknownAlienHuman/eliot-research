@@ -5,13 +5,14 @@ import {
   assertBackupIdentifier, assertBackupIntent, BackupError, type BackupExportLimits,
 } from "./shared.js";
 import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
-import { assertDestinationPolicy, destinationPolicyDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy, type OffsiteDestinationDescriptor } from "./destination-policy.js";
+import { assertDestinationPolicy, destinationDescriptorDigest, destinationPolicyDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy, type OffsiteDestinationDescriptor } from "./destination-policy.js";
 import { requireDestinationAuthority } from "./destination-authority.js";
 import { readEpochDraftById } from "./replay-authority.js";
 import { assertO2MigrationAuthority } from "./migration-gate.js";
+import { allocateOffsiteNonce } from "./nonce-authority.js";
 import { canonicalOffsiteCopyDigest } from "./intent-digest.js";
 import {
-  allocateCopyNonce, backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
+  backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
   deriveBackupNonce, readCopyCheckpoints, readCopyReceipt, recordCopyCheckpoint, resolveControllerClock,
 } from "./offsite-durability.js";
 
@@ -28,8 +29,10 @@ import {
 // Durability: part checkpoints + the success receipt persist in D1, so restart
 // or cancellation resumes from controller-owned state. Nonces derive
 // deterministically from (key generation, copy, part ref, content digest,
-// policy) or from a controller allocator, recorded durably and unique across
-// restarts and key generations. Exact replay of a committed copy returns the
+// policy) or from a controller allocator; every nonce is claimed in the durable
+// per-key nonce authority BEFORE encryption or remote put, so reuse across
+// copies, parts, restarts, concurrent allocators or forged rows collides closed
+// with zero ciphertext produced. Exact replay of a committed copy returns the
 // persisted receipt/epoch bytes verbatim.
 
 export interface OffsiteStoredPart {
@@ -143,6 +146,7 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   const policyDigest = await destinationPolicyDigest(authority.policy);
   const descriptor = await input.adapter.describe();
   reconcileDestinationDescriptor(authority.policy, descriptor, primaryDomain);
+  const descriptorDigest = await destinationDescriptorDigest(descriptor);
   if (descriptor.expires_at !== undefined && Date.parse(descriptor.expires_at) <= clockMs) {
     failBackup("BACKUP_OFFSITE_EXPIRED", "offsite destination admissibility has expired", false, { destination: descriptor.destination_id });
   }
@@ -160,7 +164,7 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   // Exact replay of a committed copy returns persisted bytes verbatim.
   const committed = await readCopyReceipt(ports.core_db, copyId);
   if (committed !== null) {
-    if (committed.epoch_id !== persistedDraft.epoch_id || committed.destination_id !== authority.destination_id || committed.key_generation !== keyGeneration || committed.policy_digest !== policyDigest || committed.intent_digest !== storedIntentDigest) {
+    if (committed.epoch_id !== persistedDraft.epoch_id || committed.destination_id !== authority.destination_id || committed.key_generation !== keyGeneration || committed.policy_digest !== policyDigest || committed.intent_digest !== storedIntentDigest || committed.failure_domain !== descriptor.failure_domain || committed.descriptor_digest !== descriptorDigest || committed.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
     let receipt: OperationReceipt;
@@ -215,7 +219,23 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     const candidate = input.generate_nonce !== undefined
       ? ownedBackupBytes(input.generate_nonce())
       : await deriveBackupNonce({ key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, content_digest: part.sha256, policy_digest: policyDigest });
-    const nonce = await allocateCopyNonce(ports.core_db, copyId, checkpoints, partRef, candidate, now);
+    // Durable pre-encrypt checks: a checkpoint that binds this part to a
+    // different nonce, or this candidate nonce to a different part, collides
+    // here (durable D1 read, not an in-memory set).
+    const candidateHex = backupNonceHex(candidate);
+    const bound = checkpoints.get(partRef);
+    if (bound !== undefined && bound.nonce_hex !== candidateHex) {
+      failBackup("BACKUP_NONCE_COLLISION", "backup copy checkpoint binds this part to a different nonce; refusing reuse across key generations", false, { copy: copyId });
+    }
+    for (const [ref, checkpoint] of checkpoints) {
+      if (ref !== partRef && checkpoint.nonce_hex === candidateHex) {
+        failBackup("BACKUP_NONCE_COLLISION", "backup nonce reuse detected across parts (durable checkpoint record); refusing encryption", false, { copy: copyId });
+      }
+    }
+    // Durable per-key claim BEFORE encryption or remote put: cross-copy,
+    // cross-part, restart, concurrent or forged reuse collides here with zero
+    // ciphertext produced. Exact same (key, copy, part) replay is idempotent.
+    const nonce = await allocateOffsiteNonce(ports.core_db, { key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, nonce: candidate, created_at: now });
     const nonceHex = backupNonceHex(nonce);
     const ciphertext = await encryptBackupPart(input.encryption_key, aad, nonce, plaintext);
     const stored = { content_digest: part.sha256, size_bytes: part.size_bytes, key_generation: keyGeneration, epoch_id: persistedDraft.epoch_id, expires_at: persistedDraft.expires_at };
@@ -277,12 +297,14 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     copy_id: copyId, epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id,
     key_generation: keyGeneration, policy_digest: policyDigest, intent_digest: storedIntentDigest,
     receipt_json: JSON.stringify(receipt), epoch_json: JSON.stringify(epoch), attempt_json: JSON.stringify(attempt),
-    readback_digest: readbackDigest, expires_at: persistedDraft.expires_at, created_at: now,
+    readback_digest: readbackDigest, expires_at: persistedDraft.expires_at,
+    failure_domain: descriptor.failure_domain, descriptor_digest: descriptorDigest,
+    authority_authorized_at: authority.authorized_at, created_at: now,
   });
   if (!outcome.committed) {
     // Concurrent duplicate won: its persisted bytes are authority.
     const winner = outcome.stored;
-    if (winner.epoch_id !== persistedDraft.epoch_id || winner.destination_id !== authority.destination_id || winner.key_generation !== keyGeneration || winner.policy_digest !== policyDigest || winner.intent_digest !== storedIntentDigest) {
+    if (winner.epoch_id !== persistedDraft.epoch_id || winner.destination_id !== authority.destination_id || winner.key_generation !== keyGeneration || winner.policy_digest !== policyDigest || winner.intent_digest !== storedIntentDigest || winner.failure_domain !== descriptor.failure_domain || winner.descriptor_digest !== descriptorDigest || winner.authority_authorized_at !== authority.authorized_at) {
       failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
     }
     try {

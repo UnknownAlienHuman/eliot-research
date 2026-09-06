@@ -1,12 +1,14 @@
-import { backupIsoDateTime, backupSha256Hex, canonicalBackupJson, failBackup, ownedBackupBytes } from "./shared.js";
+import { backupIsoDateTime, backupSha256Hex, canonicalBackupJson, failBackup } from "./shared.js";
 
 // ER-34 O2 FIX2 durable offsite-copy state. Copy-part checkpoints and the
 // success authority live in D1 (controller-owned); restart or cancellation
 // resumes from that state instead of redoing blind writes. Nonces are
 // deterministic per (key generation, copy identity, part ref, content digest,
-// policy digest) by default, or controller-allocated via generate_nonce and
-// then recorded durably; uniqueness is enforced against the checkpoint table
-// across restarts and key generations, never via an in-memory Set.
+// policy digest) by default, or controller-allocated via generate_nonce; per-key
+// uniqueness is enforced by the durable nonce authority BEFORE encryption
+// (see nonce-authority.ts), across restarts, concurrent copies and key
+// generations, never via an in-memory set. The checkpoint UNIQUE on
+// (copy_id, nonce_hex) remains as post-verify defense in depth only.
 //
 // The controller clock disciplines caller timestamps: a caller-supplied now_ms
 // more than CONTROLLER_CLOCK_SKEW_MS from the runtime clock fails closed, so
@@ -82,25 +84,6 @@ export async function readCopyCheckpoints(database: D1Database, copyId: string):
   return map;
 }
 
-// Enforce nonce uniqueness against durable state: the same nonce for a
-// different part ref (or a recorded nonce that disagrees with the derived one
-// for controller-allocated nonces) collides, including across restarts and key
-// generations. Returns the nonce to use for this part.
-export async function allocateCopyNonce(database: D1Database, copyId: string, checkpoints: ReadonlyMap<string, CopyCheckpoint>, partRef: string, nonce: Uint8Array, now: string): Promise<Uint8Array<ArrayBuffer>> {
-  const hex = backupNonceHex(nonce);
-  const existing = checkpoints.get(partRef);
-  if (existing !== undefined && existing.nonce_hex !== hex) {
-    failBackup("BACKUP_NONCE_COLLISION", "backup copy checkpoint binds this part to a different nonce; refusing reuse across key generations", false, { copy: copyId });
-  }
-  for (const [ref, checkpoint] of checkpoints) {
-    if (ref !== partRef && checkpoint.nonce_hex === hex) {
-      failBackup("BACKUP_NONCE_COLLISION", "backup nonce reuse detected across parts (durable record, including restarts)", false, { copy: copyId });
-    }
-  }
-  void now;
-  return ownedBackupBytes(nonce);
-}
-
 export async function recordCopyCheckpoint(database: D1Database, copyId: string, checkpoint: CopyCheckpoint, now: string): Promise<void> {
   try {
     await database.prepare(
@@ -127,6 +110,9 @@ export interface StoredCopyReceipt {
   readonly attempt_json: string;
   readonly readback_digest: string;
   readonly expires_at: string;
+  readonly failure_domain: string;
+  readonly descriptor_digest: string;
+  readonly authority_authorized_at: string;
   readonly created_at: string;
 }
 
@@ -134,7 +120,7 @@ export async function readCopyReceipt(database: D1Database, copyId: string): Pro
   let row: StoredCopyReceipt | null;
   try {
     row = await database.prepare(
-      "SELECT copy_id, epoch_id, destination_id, key_generation, policy_digest, intent_digest, receipt_json, epoch_json, attempt_json, readback_digest, expires_at, created_at FROM backup_offsite_copy_receipt WHERE copy_id = ?1",
+      "SELECT copy_id, epoch_id, destination_id, key_generation, policy_digest, intent_digest, receipt_json, epoch_json, attempt_json, readback_digest, expires_at, failure_domain, descriptor_digest, authority_authorized_at, created_at FROM backup_offsite_copy_receipt WHERE copy_id = ?1",
     ).bind(copyId).first<StoredCopyReceipt>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup copy success authority is unavailable", true, { copy: copyId }, cause);
@@ -145,8 +131,8 @@ export async function readCopyReceipt(database: D1Database, copyId: string): Pro
 export async function commitCopyReceipt(database: D1Database, receipt: StoredCopyReceipt): Promise<{ readonly committed: boolean; readonly stored: StoredCopyReceipt }> {
   try {
     await database.prepare(
-      "INSERT INTO backup_offsite_copy_receipt (copy_id, epoch_id, destination_id, key_generation, policy_digest, intent_digest, receipt_json, epoch_json, attempt_json, readback_digest, expires_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-    ).bind(receipt.copy_id, receipt.epoch_id, receipt.destination_id, receipt.key_generation, receipt.policy_digest, receipt.intent_digest, receipt.receipt_json, receipt.epoch_json, receipt.attempt_json, receipt.readback_digest, receipt.expires_at, receipt.created_at).run();
+      "INSERT INTO backup_offsite_copy_receipt (copy_id, epoch_id, destination_id, key_generation, policy_digest, intent_digest, receipt_json, epoch_json, attempt_json, readback_digest, expires_at, failure_domain, descriptor_digest, authority_authorized_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+    ).bind(receipt.copy_id, receipt.epoch_id, receipt.destination_id, receipt.key_generation, receipt.policy_digest, receipt.intent_digest, receipt.receipt_json, receipt.epoch_json, receipt.attempt_json, receipt.readback_digest, receipt.expires_at, receipt.failure_domain, receipt.descriptor_digest, receipt.authority_authorized_at, receipt.created_at).run();
     return { committed: true, stored: receipt };
   } catch {
     // Concurrent duplicate: the winner's receipt is authority.

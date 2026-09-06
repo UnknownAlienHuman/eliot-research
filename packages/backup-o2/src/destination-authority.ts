@@ -9,7 +9,8 @@ import { assertDestinationPolicy, destinationPolicyDigest, type BackupDestinatio
 // requires the caller-supplied policy to equal the persisted policy exactly,
 // including domain, capabilities, retention/expiry identity, hold state and the
 // authorization receipt. Wrong principal, wrong policy decision, any changed
-// policy field, or a stale/REVOKED authority refuses closed.
+// policy field, or a stale/REVOKED authority refuses closed (FIX3: expiry is
+// same-or-stricter than copy, so revocation blocks deletion too).
 
 export interface DestinationAuthorityGrant {
   readonly destination_id: string;
@@ -27,6 +28,7 @@ export interface StoredDestinationAuthority {
   readonly policy_digest: string;
   readonly authorization_receipt_ref: string;
   readonly state: "AUTHORIZED" | "REVOKED";
+  readonly authorized_at: string;
 }
 
 interface AuthorityRow {
@@ -37,13 +39,14 @@ interface AuthorityRow {
   readonly policy_digest: string;
   readonly authorization_receipt_ref: string;
   readonly state: string;
+  readonly authorized_at: string;
 }
 
 async function readAuthorityRow(database: D1Database, destinationId: string, principalRef: string, policyDecisionRef: string): Promise<AuthorityRow | null> {
   let row: AuthorityRow | null;
   try {
     row = await database.prepare(
-      "SELECT destination_id, principal_ref, policy_decision_ref, policy_json, policy_digest, authorization_receipt_ref, state FROM backup_destination_authority WHERE destination_id = ?1 AND principal_ref = ?2 AND policy_decision_ref = ?3",
+      "SELECT destination_id, principal_ref, policy_decision_ref, policy_json, policy_digest, authorization_receipt_ref, state, authorized_at FROM backup_destination_authority WHERE destination_id = ?1 AND principal_ref = ?2 AND policy_decision_ref = ?3",
     ).bind(destinationId, principalRef, policyDecisionRef).first<AuthorityRow>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup destination authority read is unavailable", true, { destination: destinationId }, cause);
@@ -61,6 +64,9 @@ function parseAuthorityRow(row: AuthorityRow): StoredDestinationAuthority {
   if (row.state !== "AUTHORIZED" && row.state !== "REVOKED") {
     failBackup("BACKUP_VECTOR_UNVERIFIABLE", "controller destination authority carries an unknown state", false, { destination: row.destination_id });
   }
+  if (typeof row.authorized_at !== "string" || row.authorized_at.length === 0) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "controller destination authority carries no generation timestamp", false, { destination: row.destination_id });
+  }
   return {
     destination_id: row.destination_id,
     principal_ref: row.principal_ref,
@@ -69,6 +75,7 @@ function parseAuthorityRow(row: AuthorityRow): StoredDestinationAuthority {
     policy_digest: row.policy_digest,
     authorization_receipt_ref: row.authorization_receipt_ref,
     state: row.state,
+    authorized_at: row.authorized_at,
   };
 }
 
@@ -102,8 +109,8 @@ export async function authorizeBackupDestination(database: D1Database, grant: De
   return parseAuthorityRow(stored);
 }
 
-// Controller plane: revoke authority. Copies refuse; expiry of already-copied
-// parts remains allowed (deletion is safe) but still policy-pinned.
+// Controller plane: revoke authority. Copies and expiries refuse; no deletion
+// proceeds under a revoked or rotated grant.
 export async function revokeBackupDestination(database: D1Database, destinationId: string, principalRef: string, policyDecisionRef: string, nowMs?: number): Promise<void> {
   const now = backupIsoDateTime(nowMs ?? Date.now());
   try {
@@ -119,8 +126,9 @@ export async function revokeBackupDestination(database: D1Database, destinationI
 }
 
 // Caller plane: resolve the controller-owned authority for this intent and
-// require the caller policy to equal it exactly. allowRevokedForExpiry keeps
-// deletion safe after revocation; copies always require AUTHORIZED.
+// require the caller policy to equal it exactly. Copies always require
+// AUTHORIZED; expiry takes the same-or-stricter path (FIX3: revocation or any
+// rotation blocks deletion instead of permitting it).
 export async function requireDestinationAuthority(database: D1Database, intent: OperationIntent, callerPolicy: BackupDestinationPolicy, options?: { readonly allow_revoked?: boolean }): Promise<StoredDestinationAuthority> {
   const policy = assertDestinationPolicy(callerPolicy);
   const stored = await readAuthorityRow(database, policy.destination_id, intent.principal_ref, intent.policy_decision_ref);

@@ -50,6 +50,23 @@ export async function destinationPolicyDigest(policy: BackupDestinationPolicy): 
   return backupSha256Hex(canonicalBackupJson(policy));
 }
 
+// Stable offsite descriptor identity digest (FIX3). Binds destination,
+// failure domain, deletion/expiry capabilities, retention-lock and legal-hold
+// state observed at copy time; the volatile admissibility timestamp
+// (expires_at) is deliberately excluded so destination lifetime extensions do
+// not invalidate copy-time identity. Expiry requires the live descriptor to
+// reproduce this digest before the first deletion.
+export async function destinationDescriptorDigest(descriptor: OffsiteDestinationDescriptor): Promise<string> {
+  return backupSha256Hex(canonicalBackupJson({
+    destination_id: descriptor.destination_id,
+    failure_domain: descriptor.failure_domain,
+    supports_deletion_journal: descriptor.supports_deletion_journal,
+    supports_expiry: descriptor.supports_expiry,
+    retention_locked: descriptor.retention_locked,
+    ...(descriptor.legal_hold_ref === undefined ? {} : { legal_hold_ref: descriptor.legal_hold_ref }),
+  }));
+}
+
 export function reconcileDestinationDescriptor(policy: BackupDestinationPolicy, descriptor: OffsiteDestinationDescriptor, primaryFailureDomain: string): void {
   assertBackupIdentifier(descriptor.destination_id, "offsite destination identity");
   assertBackupIdentifier(descriptor.failure_domain, "offsite failure domain");

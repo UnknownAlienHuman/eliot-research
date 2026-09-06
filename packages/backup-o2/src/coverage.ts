@@ -98,6 +98,7 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "backup_destination_authority",
   "backup_offsite_copy_part",
   "backup_offsite_copy_receipt",
+  "backup_offsite_nonce_authority",
   "backup_export_cut",
 ]);
 

@@ -8,6 +8,16 @@
 -- agent/launch-04-research-20260905). Numeric predecessors 0014-0016 never landed on
 -- this lane, so the gap is intentional and documented here. No placeholder 0017 is
 -- created by ER-34, and no W1 product code is copied: each lane keeps its own file.
+-- FIX3 (ER-34, same 0018 number, strictly additive): persists the copy-time
+-- offsite descriptor identity (failure_domain, descriptor_digest) and the
+-- controller authority generation (authority_authorized_at) on the copy receipt,
+-- mirrors descriptor/failure-domain/policy digests on the expiry receipt, and adds
+-- the per-key durable nonce authority table. Only new columns/tables/indexes are
+-- added below; no column is renamed, dropped, reordered or retightened, earlier
+-- migrations are untouched, and 0018 remains the only O2 migration number (W1 0017
+-- reservation unchanged). O2 is pre-live (IMPLEMENTED_NOT_LIVE, no live receipts),
+-- so fresh application of this file is authoritative; environments holding the
+-- pre-FIX3 0018 shape fail the migration gate until re-applied.
 PRAGMA foreign_keys = ON;
 
 -- Local migration ledger mirror (wrangler D1 convention: name + applied_at).
@@ -44,6 +54,9 @@ CREATE TABLE IF NOT EXISTS backup_offsite_expiry (
   journal_refs_json TEXT NOT NULL CHECK (json_valid(journal_refs_json)),
   state TEXT NOT NULL CHECK (state IN ('DELETED','BLOCKED')),
   absent_parts INTEGER NOT NULL CHECK (absent_parts >= 0),
+  failure_domain TEXT NOT NULL,
+  descriptor_digest TEXT NOT NULL CHECK (length(descriptor_digest) = 64),
+  policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -96,6 +109,9 @@ CREATE TABLE IF NOT EXISTS backup_offsite_copy_receipt (
   attempt_json TEXT NOT NULL CHECK (json_valid(attempt_json)),
   readback_digest TEXT NOT NULL CHECK (length(readback_digest) = 64),
   expires_at TEXT NOT NULL,
+  failure_domain TEXT NOT NULL,
+  descriptor_digest TEXT NOT NULL CHECK (length(descriptor_digest) = 64),
+  authority_authorized_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -107,4 +123,21 @@ CREATE TABLE IF NOT EXISTS backup_export_cut (
   cut_digest TEXT NOT NULL CHECK (length(cut_digest) = 64),
   state TEXT NOT NULL CHECK (state IN ('OPEN','ACCEPTED','REJECTED')),
   created_at TEXT NOT NULL
+) STRICT;
+
+-- Durable per-key nonce allocation authority (FIX3, additive). One row claims a
+-- 96-bit nonce for (key generation, copy, part) and the PRIMARY KEY on
+-- (key_generation, nonce_hex) makes cross-copy / cross-part reuse under one key
+-- an atomic insert conflict BEFORE encryption or remote put, across restarts and
+-- concurrent allocators. Key-generation change is a disjoint scope, so rotation
+-- never collides with retired material. Controller-allocated and derived nonces
+-- share this authority; the copy-part checkpoint UNIQUE on (copy_id, nonce_hex)
+-- remains as post-verify defense in depth only.
+CREATE TABLE IF NOT EXISTS backup_offsite_nonce_authority (
+  key_generation TEXT NOT NULL,
+  nonce_hex TEXT NOT NULL CHECK (length(nonce_hex) = 24),
+  copy_id TEXT NOT NULL,
+  part_ref TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (key_generation, nonce_hex)
 ) STRICT;
