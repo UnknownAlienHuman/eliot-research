@@ -82,3 +82,11 @@ Every reply declares `readiness_basis: RECORDED_ONLY`. Absent rows do not imply 
 ER-24 owns shared catalog authorization, pagination, Worker composition and the real D1 tests. ER-25
 owns strict PWA decoding/rendering and browser fixtures. These shared route/DTO edits are serialized
 with those owners; no migration, grant, index mutation, provider access or semantic API change occurs.
+
+## Launch 07 G1 begin DTO/route (Writer B, PR #95)
+
+G1 reuses this packet's `routes.ts`/`owner-api.ts` for the strict owner-only
+`POST /api/v1/google/oauth/begin` route (`google.oauth.begin`) and its exact
+`BeginGoogleOAuthRequest`/`BeginGoogleOAuthResult` DTO. No new ER-21 files;
+shared edits are integrator-serialized with ER-24. The body carries only
+`operation_ref`; owner/session/config are never accepted from the body.

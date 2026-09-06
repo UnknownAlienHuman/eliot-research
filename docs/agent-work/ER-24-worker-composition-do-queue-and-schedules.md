@@ -46,7 +46,12 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/google-token-store.test.ts`
 - `apps/eliotr-core/src/google-oauth-store.ts`
 - `apps/eliotr-core/src/google-oauth-service.ts`
+- `apps/eliotr-core/src/google-oauth-begin.ts`
 - `apps/eliotr-core/test/google-oauth-admission.test.ts`
+- `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
+- `apps/eliotr-core/test/retrieval-ident-lex.test.ts`
+- `apps/eliotr-core/test/retrieval-q1-fixture.ts`
+- `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -184,6 +189,25 @@ remote history/readiness observations remain NOT_EXECUTED.
 The bounded service, cryptographic verifier and primary-D1 intent/admission store are implemented in
 `drive-oauth-admission.md`. ER-20 owns Google I/O and crypto; ER-24 composes D1, and ER-13 owns migration
 0013. ER-18 retains the package barrel; this integration only adds the reviewed OAuth exports there.
+## Initial Google OAuth integration
+
+The bounded service, cryptographic verifier and primary-D1 intent/admission store are implemented in
+`drive-oauth-admission.md`. ER-20 owns Google I/O and crypto; ER-24 composes D1, and ER-13 owns migration
+0013. ER-18 retains the package barrel; this integration only adds the reviewed OAuth exports there.
 All shared edits are integrator-serialized. The owner HTTP/PWA adapter is still required: trusted owner
 session/currentness and server configuration cannot be replaced by request-body claims. Admission ends
 in AUTHORIZING, not ACTIVE; no exchange asset, cursor, source grant or runtime activation is implied.
+
+## Launch 07 G1 begin integration (Writer B, PR #95)
+
+G1 owns the strict server-admitted owner-only OAuth begin path only: `POST
+/api/v1/google/oauth/begin` wiring in `http.ts`/`env.ts` (this packet),
+route/DTO in ER-21 `routes.ts`/`owner-api.ts`, PWA surface in ER-25, and the
+new Worker HTTP test `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
+(registered in the ER-00 manifest alongside this note). Reuses migrations
+0012/0013 and the existing `google-oauth-service.ts`/`google-oauth-store.ts`
+admission stack; no new migration, no G2 callback/exchange, no RSA/PKCE/state
+primitive rewrite. Owner/session/currentness come only from verified
+Cloudflare Access with same-origin + CSRF enforcement; configuration is
+server-owned. Begin makes no provider/token call and creates no
+credential/exchange/folder/sheet/cursor/grant/source/result.

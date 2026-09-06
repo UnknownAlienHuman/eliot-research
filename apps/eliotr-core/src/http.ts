@@ -39,24 +39,22 @@ import {
   IngestHttpInputError,
 } from "./ingest-http.js";
 import { IngestServiceError } from "./ingest-service.js";
+import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { readReadiness } from "./readiness.js";
 
 export interface HttpDependencies {
   readonly accessVerifier?: AccessVerifier;
   readonly applicationFactory?: (input: CompositionRootInput) => ApplicationLifecycle;
 }
-
 interface RouteMatch {
   readonly route: RouteDefinition;
   readonly params: Readonly<Record<string, string>>;
 }
-
 interface AccessVerifierCache {
   readonly key: string;
   readonly verifier: AccessVerifier;
 }
-
-class HttpRequestError extends Error {
+export class HttpRequestError extends Error {
   public readonly code: string;
   public readonly status: number;
   public readonly retryable: boolean;
@@ -99,7 +97,7 @@ function jsonResponse(body: unknown, status = 200, headers?: HeadersInit): Respo
   return new Response(serialized, { status, headers: responseHeaders });
 }
 
-function problem(
+export function problem(
   request: Request,
   status: number,
   code: string,
@@ -118,12 +116,8 @@ function problem(
   return jsonResponse(body, status, headers);
 }
 
-function apiResult(request: Request, env: Env, data: unknown, status = 200): Response {
-  return jsonResponse({
-    data,
-    trace_id: traceId(request),
-    deployment_generation: env.DEPLOYMENT_GENERATION,
-  }, status);
+export function apiResult(request: Request, env: Env, data: unknown, status = 200): Response {
+  return jsonResponse({ data, trace_id: traceId(request), deployment_generation: env.DEPLOYMENT_GENERATION }, status);
 }
 
 function matchPattern(pattern: string, pathname: string): Readonly<Record<string, string>> | null {
@@ -188,7 +182,7 @@ function parseServicePrincipals(raw: string | undefined): readonly string[] {
   return values;
 }
 
-function configuredAccessVerifier(env: Env): AccessVerifier {
+export function configuredAccessVerifier(env: Env): AccessVerifier {
   if (env.ACCESS_TEAM_DOMAIN === undefined || env.ACCESS_AUDIENCE === undefined) {
     throw new AccessVerificationError(
       "ACCESS_CONFIG_INVALID",
@@ -580,6 +574,10 @@ export async function handleHttp(
     const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
     const identity = await verifier.verify(request);
     const context = authorize(request, resolved.match.route, identity);
+    if (resolved.match.route.operation === "google.oauth.begin") {
+      requireNoQuery(url);
+      return await handleGoogleOAuthBegin(request, env, context, identity, dependencies);
+    }
     if (resolved.match.route.operation === "system.session") {
       requireNoQuery(url);
       return apiResult(request, env, {

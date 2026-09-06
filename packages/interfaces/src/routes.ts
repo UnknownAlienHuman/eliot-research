@@ -27,6 +27,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/research/run", operation: "research.run", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "handle" },
   { method: "GET", path: "/api/v1/research/open/:ref", operation: "research.open", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "POST", path: "/api/v1/research/verify", operation: "research.verify", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
+  { method: "POST", path: "/api/v1/google/oauth/begin", operation: "google.oauth.begin", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "POST", path: "/federation/v1/jobs", operation: "federation.submit", auth: "service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/federation/v1/jobs/:exchange_id", operation: "federation.status", auth: "service", maximum_request_bytes: 0, response_mode: "json" },
 ] as const;

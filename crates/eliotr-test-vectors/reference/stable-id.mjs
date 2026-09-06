@@ -67,6 +67,12 @@ function raise(code) {
   throw new StableIdError(code);
 }
 
+function splitTransportLines(source) {
+  return source
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
 function decodeUtf8(input) {
   try {
     return fatalDecoder.decode(input);
@@ -152,7 +158,7 @@ function decodeHex(value, field, lineNumber) {
 
 function parseFrame(source) {
   if (Buffer.byteLength(source, "utf8") > FRAME_BYTES) fail("stable-ID frame too large");
-  const lines = source.split("\n");
+  const lines = splitTransportLines(source);
   if (lines.at(-1) === "") lines.pop();
 
   [PROTOCOL_HEADER, GENERATION_HEADER, COLUMNS_HEADER].forEach((expected, index) => {
@@ -263,9 +269,16 @@ export async function verifyStableIdReference(
   fixtureUrl,
   label = "Stable ID",
 ) {
-  const source = await readFile(fixtureUrl, "utf8");
+  const raw = await readFile(fixtureUrl, "utf8");
+  const source = splitTransportLines(raw).join("\n");
   const cases = parseFrame(source);
   verifyCases(cases);
+
+  const crlfCases = parseFrame(source.replace(/\n/g, "\r\n"));
+  if (crlfCases.length !== cases.length) {
+    fail(`${label}: CRLF transport changed the case count`);
+  }
+  verifyCases(crlfCases);
 
   const rows = source
     .split("\n")
