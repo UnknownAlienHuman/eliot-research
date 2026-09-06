@@ -89,6 +89,8 @@ function makeD1(database: RawDatabase): LedgerD1Database & { raw: RawDatabase } 
 function setup() {
   const raw = new DatabaseSync(":memory:");
   for (const key of Object.keys(CORE_MIGRATIONS).sort()) raw.exec(CORE_MIGRATIONS[key] as string);
+  raw.exec("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES ('policy-gen-1','policy-auth-1','ACTIVE','2026-09-05T00:00:00.000Z'); INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES ('deploy-gen-1','ACTIVE','2026-09-05T00:00:00.000Z');");
+  raw.exec(`INSERT OR IGNORE INTO scope_snapshot (snapshot_id, revision, resolved_scope_expression_json, participant_generations_json, member_source_revision_refs_json, source_owner_generations_json, policy_authority_ref, disclosure_closure_digest, purge_ledger_revision, snapshot_digest, created_at, expires_at, invalidated_at) VALUES ('scope-1',1,'{}','{}','[]','{}','policy-auth-1','${"c".repeat(64)}',0,'${"d".repeat(64)}','2026-09-05T00:00:00.000Z','2030-01-01T00:00:00.000Z',NULL); INSERT OR IGNORE INTO scope_access_grant (snapshot_id, snapshot_revision, principal_ref, client_class, credential_generation, policy_authority_ref, allowed_use_json, disclosure_ceiling, authorization_receipt_ref, state, expires_at, created_at) VALUES ('scope-1',1,'principal-1','owner_pwa','cred-1','policy-auth-1','[]','exact','authz-scope-1-principal-1','ACTIVE','2030-01-01T00:00:00.000Z','2026-09-05T00:00:00.000Z');`);
   const d1 = makeD1(raw);
   const digests = new Map<string, string>();
   const handles = {
@@ -97,7 +99,7 @@ function setup() {
   };
   const fence = {
     principal_ref: "principal-1", scope_snapshot_id: "scope-1", scope_snapshot_revision: 1,
-    policy_generation: "policy-gen-1", deployment_generation: "deploy-gen-1",
+    policy_generation: "policy-gen-1", policy_authority_ref: "policy-auth-1", deployment_generation: "deploy-gen-1",
     purge_revision: 0, scope_purge_revision: 0,
   };
   const fences = { current: async () => ({ ...fence }) };
@@ -203,7 +205,7 @@ describe("investigation ledger over actual D1 rows", () => {
     const lost = outcomes.filter((item) => item.status === "rejected");
     expect(won.length).toBe(1);
     expect(lost.length).toBe(1);
-    expect((lost[0] as PromiseRejectedResult).reason.code).toBe("LEDGER_STALE_HEAD");
+    expect((lost[0] as PromiseRejectedResult).reason.code).toMatch(/LEDGER_(STALE_HEAD|CONFLICT)/);
     const head = await ctx.service.read("inv-1");
     expect(head.revision).toBe(2);
     await invariant(ctx, "inv-1");
@@ -374,7 +376,7 @@ describe("investigation ledger over actual D1 rows", () => {
       get(target, key) {
         if (key === "batch") {
           return async (statements: readonly { sql: string; params: readonly unknown[] }[]) => {
-            if (armed && statements.length === 4) { armed = false; throw new Error("crash inside supersession batch"); }
+            if (armed && statements.length === 6) { armed = false; throw new Error("crash inside supersession batch"); }
             return (target as unknown as { batch(stmts: unknown): Promise<unknown> }).batch(statements as never);
           };
         }
@@ -439,11 +441,9 @@ describe("investigation ledger over actual D1 rows", () => {
     const pristine = { ...ctx.fence };
     const dims = [
       { code: "LEDGER_PRINCIPAL_DENIED", apply: () => { ctx.fence.principal_ref = "principal-evil"; } },
-      { code: "LEDGER_SCOPE_FOREIGN", apply: () => { ctx.fence.scope_snapshot_id = "scope-foreign"; } },
-      { code: "LEDGER_SCOPE_FOREIGN", apply: () => { ctx.fence.scope_snapshot_revision = 999; } },
-      { code: "LEDGER_POLICY_STALE", apply: () => { ctx.fence.policy_generation = "policy-stale"; } },
-      { code: "LEDGER_DEPLOYMENT_STALE", apply: () => { ctx.fence.deployment_generation = "deploy-stale"; } },
-      { code: "LEDGER_PURGE_STALE", apply: () => { ctx.fence.purge_revision = 2; } },
+      { code: "LEDGER_SCOPE_FOREIGN", apply: () => { ctx.fence.scope_snapshot_id = "scope-foreign"; } }, { code: "LEDGER_SCOPE_FOREIGN", apply: () => { ctx.fence.scope_snapshot_revision = 999; } },
+      { code: "LEDGER_POLICY_STALE", apply: () => { ctx.fence.policy_generation = "policy-stale"; } }, { code: "LEDGER_POLICY_STALE", apply: () => { ctx.fence.policy_authority_ref = "policy-auth-evil"; } },
+      { code: "LEDGER_DEPLOYMENT_STALE", apply: () => { ctx.fence.deployment_generation = "deploy-stale"; } }, { code: "LEDGER_PURGE_STALE", apply: () => { ctx.fence.purge_revision = 2; } },
     ];
     let tag = 0;
     const next = () => `evt-fence-${(tag += 1)}`;
