@@ -2,7 +2,6 @@ import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 import {
   GOOGLE_ACTIONS,
   GOOGLE_PRODUCTS,
-  IDENTIFIER,
   MAX_IDENTIFIER_BYTES,
   MAX_STATUS_BYTES,
   MAX_TARGET_REF_BYTES,
@@ -22,6 +21,32 @@ import {
   type GoogleSyncPlan,
   type GoogleSyncReceiptInput,
 } from "./gemini-mcp-tool-common.js";
+
+const PLAN_TTL_MS = 15 * 60 * 1000;
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
+function observedTime(now: () => number): number {
+  const value = now();
+  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_DATE_MS) {
+    throw new GeminiMcpToolError("CLOCK_INVALID", "clock returned an invalid value", true);
+  }
+  return value;
+}
+
+function planSteps(connector: GoogleSyncPlan["connector"], mutating: boolean): readonly string[] {
+  return [
+    "Review this plan and the exact Google effect.",
+    mutating ? "Obtain explicit user confirmation before invoking the Google tool." : "Invoke only the required read-only Google tool.",
+    `Use the official ${connector} MCP extension for the external action.`,
+    "Read back the exact Google resource after the action.",
+    "Submit the normalized readback receipt to eliotr_validate_google_sync_receipt.",
+    "Treat the validated receipt as a transport observation until an ELIOT authority path admits it.",
+  ];
+}
+
+function exactStrings(raw: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(raw) && raw.length === expected.length && expected.every((value, index) => raw[index] === value);
+}
 
 export async function createPlan(
   input: unknown,
@@ -47,8 +72,8 @@ export async function createPlan(
     ...decoded,
   };
   const planId = `google-sync-${(await sha256(JSON.stringify(stable(identity)))).slice(0, 48)}`;
-  const createdAtMs = dependencies.now();
-  if (!Number.isFinite(createdAtMs) || createdAtMs < 0) {
+  const createdAtMs = observedTime(dependencies.now);
+  if (createdAtMs > MAX_DATE_MS - PLAN_TTL_MS) {
     throw new GeminiMcpToolError("CLOCK_INVALID", "clock returned an invalid value", true);
   }
   const mutating = MUTATING_ACTIONS.has(decoded.action);
@@ -58,21 +83,14 @@ export async function createPlan(
     plan_id: planId,
     connector,
     created_at: new Date(createdAtMs).toISOString(),
-    expires_at: new Date(createdAtMs + 15 * 60 * 1000).toISOString(),
+    expires_at: new Date(createdAtMs + PLAN_TTL_MS).toISOString(),
     candidate_only: true,
     effect_ceiling: "NO_EXTERNAL_EFFECT",
     confirmation_required: mutating,
     exact_readback_required: true,
     eliot_authority_changed: false,
     required_readback_fields: readbackFields(decoded.google_product),
-    steps: [
-      "Review this plan and the exact Google effect.",
-      mutating ? "Obtain explicit user confirmation before invoking the Google tool." : "Invoke only the required read-only Google tool.",
-      `Use the official ${connector} MCP extension for the external action.`,
-      "Read back the exact Google resource after the action.",
-      "Submit the normalized readback receipt to eliotr_validate_google_sync_receipt.",
-      "Treat the validated receipt as a transport observation until an ELIOT authority path admits it.",
-    ],
+    steps: planSteps(connector, mutating),
     ...decoded,
   };
 }
@@ -116,13 +134,14 @@ function decodePlan(value: unknown): GoogleSyncPlan {
   if (
     record.protocol !== "eliotr.google-sync.plan.v1" ||
     typeof record.plan_id !== "string" ||
-    !IDENTIFIER.test(record.plan_id) ||
+    !/^google-sync-[a-f0-9]{48}$/u.test(record.plan_id) ||
     (record.connector !== "google-workspace" && record.connector !== "gcloud") ||
     record.candidate_only !== true ||
     record.effect_ceiling !== "NO_EXTERNAL_EFFECT" ||
     typeof record.confirmation_required !== "boolean" ||
     record.exact_readback_required !== true ||
     record.eliot_authority_changed !== false ||
+    record.dry_run !== true ||
     !Array.isArray(record.required_readback_fields) ||
     !Array.isArray(record.steps)
   ) {
@@ -130,12 +149,15 @@ function decodePlan(value: unknown): GoogleSyncPlan {
   }
   const createdAt = isoDate(record.created_at, "plan.created_at");
   const expiresAt = isoDate(record.expires_at, "plan.expires_at");
-  if (Date.parse(expiresAt) <= Date.parse(createdAt)) {
+  if (Date.parse(expiresAt) - Date.parse(createdAt) !== PLAN_TTL_MS) {
     throw new GeminiMcpToolError("INPUT_INVALID", "sync plan expiry is invalid");
   }
   const expectedConnector = decodedInput.google_product === "cloud" ? "gcloud" : "google-workspace";
-  if (record.connector !== expectedConnector) {
-    throw new GeminiMcpToolError("INPUT_INVALID", "sync plan connector does not match the Google product");
+  const mutating = MUTATING_ACTIONS.has(decodedInput.action);
+  if (record.connector !== expectedConnector || record.confirmation_required !== mutating ||
+      !exactStrings(record.required_readback_fields, readbackFields(decodedInput.google_product)) ||
+      !exactStrings(record.steps, planSteps(expectedConnector, mutating))) {
+    throw new GeminiMcpToolError("INPUT_INVALID", "sync plan descriptors do not match its declared operation");
   }
   return {
     protocol: "eliotr.google-sync.plan.v1",
@@ -178,6 +200,9 @@ function decodeReceiptInput(input: unknown): GoogleSyncReceiptInput {
   const payloadSha = optionalSha256(receipt.readback_payload_sha256, "receipt.readback_payload_sha256");
   const projectId = identifier(receipt.google_project_id, "receipt.google_project_id", false);
   const status = boundedString(receipt.status, "receipt.status", MAX_STATUS_BYTES, false);
+  if (typeof receipt.readback_performed !== "boolean") {
+    throw new GeminiMcpToolError("INPUT_INVALID", "receipt.readback_performed must be boolean");
+  }
   return {
     plan,
     receipt: {
@@ -187,7 +212,7 @@ function decodeReceiptInput(input: unknown): GoogleSyncReceiptInput {
       resource_id: resourceId as string,
       observed_revision: revision as string,
       observed_at: observedAt,
-      readback_performed: receipt.readback_performed === true,
+      readback_performed: receipt.readback_performed,
       ...(payloadSha === undefined ? {} : { readback_payload_sha256: payloadSha }),
       ...(projectId === undefined ? {} : { google_project_id: projectId }),
       ...(status === undefined ? {} : { status }),
@@ -220,8 +245,30 @@ export async function validateReceipt(
   };
   const expectedPlanId = `google-sync-${(await sha256(JSON.stringify(stable(planIdentity)))).slice(0, 48)}`;
   const reasons: string[] = [];
+  // v1 plans and receipts are supplied by the caller, not signed issuance records.
+  // These checks establish internal consistency only, never that a Google effect occurred.
+  const now = observedTime(dependencies.now);
+  const created = Date.parse(decoded.plan.created_at);
+  const expiry = Date.parse(decoded.plan.expires_at);
+  const observed = Date.parse(decoded.receipt.observed_at);
   if (decoded.plan.plan_id !== expectedPlanId) reasons.push("PLAN_ID_MISMATCH");
-  if (Date.parse(decoded.plan.expires_at) < dependencies.now()) reasons.push("PLAN_EXPIRED");
+  if (created > now) reasons.push("PLAN_NOT_YET_VALID");
+  if (expiry <= now) reasons.push("PLAN_EXPIRED");
+  if (observed < created || observed > now || observed >= expiry) reasons.push("OBSERVATION_TIME_INVALID");
+  // target_ref is an exact normalized resource ID/name, not a URL/parent-folder alias.
+  // A create/search plan without that binding needs an adapter's independent readback.
+  if (decoded.plan.target_ref === undefined) reasons.push("RESOURCE_IDENTITY_UNBOUND");
+  else if (decoded.receipt.resource_id !== decoded.plan.target_ref) reasons.push("RESOURCE_ID_MISMATCH");
+  if (decoded.plan.expected_revision !== undefined) {
+    // A write's expected base and its observed result are different version axes. v1 has
+    // no provider precondition receipt, so it cannot certify that CAS was actually honored.
+    if (MUTATING_ACTIONS.has(decoded.plan.action)) reasons.push("REVISION_PRECONDITION_UNVERIFIED");
+    else if (decoded.receipt.observed_revision !== decoded.plan.expected_revision) reasons.push("REVISION_MISMATCH");
+  }
+  // v1 cannot encode a typed expected Cloud/Calendar/Gmail state. A free-form status
+  // cannot fill that gap or certify an action. Keep these observations unverified.
+  if (["cloud", "calendar", "gmail"].includes(decoded.plan.google_product)) reasons.push("PRODUCT_STATE_UNVERIFIED");
+  else if (decoded.plan.payload_sha256 === undefined) reasons.push("PAYLOAD_IDENTITY_UNBOUND");
   if (decoded.receipt.connector !== decoded.plan.connector) reasons.push("CONNECTOR_MISMATCH");
   if (decoded.receipt.google_product !== decoded.plan.google_product) reasons.push("PRODUCT_MISMATCH");
   if (decoded.receipt.action !== decoded.plan.action) reasons.push("ACTION_MISMATCH");

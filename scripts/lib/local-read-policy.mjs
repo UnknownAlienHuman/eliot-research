@@ -1,18 +1,10 @@
 import { createHash } from "node:crypto";
+import { localSqlIdentifier as id, sqlLiteral } from "./local-sql.mjs";
 import { executeLocal, wranglerArgs } from "./local-launch.mjs";
 
 const COLUMNS = ["source_namespace_id", "principal_ref", "client_class", "policy_ref", "generation", "allowed_use_json",
   "disclosure_ceiling", "state", "expires_at", "created_at"];
-const id = (value) => typeof value === "string" && value.length > 0 && value === value.trim() &&
-  Buffer.byteLength(value) <= 512 && !/[\u0000-\u001f\u007f]/u.test(value);
-// Wrangler's CLI has no SQL parameter-binding option. Quote values, never identifiers or arbitrary expressions.
-export const sqlLiteral = (value) => {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
-  if (!id(value) && !(typeof value === "string" && value.startsWith("[") && value.length < 4096 && !value.includes("\0"))) {
-    throw new Error("Invalid local policy SQL value");
-  }
-  return `'${value.replaceAll("'", "''")}'`;
-};
+export { sqlLiteral } from "./local-sql.mjs";
 export function localPolicyQuery(paths) {
   return async (sql) => {
     const text = executeLocal(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]), { capture: true });
