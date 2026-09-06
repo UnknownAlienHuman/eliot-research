@@ -56,11 +56,12 @@
         "ER-24"
       ],
       "state": "IN_PROGRESS",
-      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner HTTP/PWA connect/callback, configuration/production evidence admission, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
+      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
         "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
         "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
+        "G1 owner begin: apps/eliotr-core/test/google-oauth-begin-http.test.ts (12 actual local HTTP/D1/crypto cases: forged owner/session/config, service principal, Origin/CSRF, unknown/max+1 fields, invalid Production attestation, replay/concurrency/lost response/currentness revocation, D1 cap/expiry, secret leakage; invalid requests cause zero token/provider calls or credential writes; valid retry returns the same pending intent) and apps/eliotr-pwa strict begin decoder/transport/panel with no private token in URL, log, or browser storage.",
         "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
       ]
     },

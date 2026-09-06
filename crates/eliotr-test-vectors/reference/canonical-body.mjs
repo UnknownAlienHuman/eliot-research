@@ -77,6 +77,12 @@ function fail(message) {
   throw new Error(message);
 }
 
+function splitTransportLines(source) {
+  return source
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
 function byteLength(value) {
   return encoder.encode(value).byteLength;
 }
@@ -406,7 +412,7 @@ function decodeHex(value, field, lineNumber) {
 
 function parseFrame(source) {
   if (Buffer.byteLength(source, "utf8") > FRAME_BYTES) fail("canonical-body frame too large");
-  const lines = source.split("\n");
+  const lines = splitTransportLines(source);
   if (lines.at(-1) === "") lines.pop();
   const expectedHeaders = [PROTOCOL_HEADER, GENERATION_HEADER, COLUMNS_HEADER];
   expectedHeaders.forEach((expected, index) => {
@@ -509,9 +515,16 @@ export async function verifyCanonicalBodyReference(
   fixtureUrl,
   label = "Canonical body",
 ) {
-  const source = await readFile(fixtureUrl, "utf8");
+  const raw = await readFile(fixtureUrl, "utf8");
+  const source = splitTransportLines(raw).join("\n");
   const cases = parseFrame(source);
   verifyCases(cases);
+
+  const crlfCases = parseFrame(source.replace(/\n/g, "\r\n"));
+  if (crlfCases.length !== cases.length) {
+    fail(`${label}: CRLF transport changed the case count`);
+  }
+  verifyCases(crlfCases);
 
   const firstRow = source
     .split("\n")

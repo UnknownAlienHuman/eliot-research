@@ -13,7 +13,9 @@ pub fn embedded_vectors_pass() -> bool {
         && eliotr_test_vectors::verify_embedded_ingest_identity_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_projection_identity_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_owner_cutover_canonical_vectors().is_ok()
+        && eliotr_test_vectors::verify_embedded_owner_token_vectors().is_ok()
         && eliotr_test_vectors::verify_embedded_residency_key_vectors().is_ok()
+        && eliotr_test_vectors::verify_embedded_scope_snapshot_identity_vectors().is_ok()
 }
 
 /// CI-only scalar M1 UTF-8 vector export.
@@ -58,11 +60,25 @@ pub extern "C" fn eliotr_m2_verify_embedded_owner_cutover_canonical_vectors_v1()
     u32::from(eliotr_test_vectors::verify_embedded_owner_cutover_canonical_vectors().is_ok())
 }
 
+/// CI-only scalar M2 owner-token vector export.
+#[cfg(feature = "m1-self-test-export")]
+#[unsafe(no_mangle)]
+pub extern "C" fn eliotr_m2_verify_embedded_owner_token_vectors_v1() -> u32 {
+    u32::from(eliotr_test_vectors::verify_embedded_owner_token_vectors().is_ok())
+}
+
 /// CI-only scalar M2 object-residency-key vector export.
 #[cfg(feature = "m1-self-test-export")]
 #[unsafe(no_mangle)]
 pub extern "C" fn eliotr_m2_verify_embedded_residency_key_vectors_v1() -> u32 {
     u32::from(eliotr_test_vectors::verify_embedded_residency_key_vectors().is_ok())
+}
+
+/// CI-only scalar M2 scope-snapshot-identity vector export.
+#[cfg(feature = "m1-self-test-export")]
+#[unsafe(no_mangle)]
+pub extern "C" fn eliotr_m2_verify_embedded_scope_snapshot_identity_vectors_v1() -> u32 {
+    u32::from(eliotr_test_vectors::verify_embedded_scope_snapshot_identity_vectors().is_ok())
 }
 
 #[cfg(test)]
