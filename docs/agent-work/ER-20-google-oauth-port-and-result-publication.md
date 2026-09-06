@@ -25,6 +25,13 @@ outside the paths below.
 - `packages/google-drive-exchange/src/token-vault.test.ts`
 - `packages/google-drive-exchange/src/token-lease.test.ts`
 - `docs/implementation/drive-credentials.md`
+- `packages/google-drive-exchange/src/oauth-types.ts`
+- `packages/google-drive-exchange/src/oauth-transport.ts`
+- `packages/google-drive-exchange/src/oauth-identity.ts`
+- `packages/google-drive-exchange/src/oauth-admission.ts`
+- `packages/google-drive-exchange/src/oauth-test-fixture.ts`
+- `packages/google-drive-exchange/src/oauth-identity.test.ts`
+- `docs/implementation/drive-oauth-admission.md`
 
 ## Read only
 
@@ -62,3 +69,12 @@ Produce:
 The PR must state contract/generation impact, migration/backfill impact, exact commands, negative-case
 result, live receipts (or `NOT EXECUTED`), and any follow-up packet. Do not mark this packet complete
 with placeholders, TODO authority paths, mocked live gates, or a stronger disposition than observed.
+
+## Initial Google OAuth integration
+
+The bounded service, cryptographic verifier and primary-D1 intent/admission store are implemented in
+`drive-oauth-admission.md`. ER-20 owns Google I/O and crypto; ER-24 composes D1, and ER-13 owns migration
+0013. ER-18 retains the package barrel; this integration only adds the reviewed OAuth exports there.
+All shared edits are integrator-serialized. The owner HTTP/PWA adapter is still required: trusted owner
+session/currentness and server configuration cannot be replaced by request-body claims. Admission ends
+in AUTHORIZING, not ACTIVE; no exchange asset, cursor, source grant or runtime activation is implied.

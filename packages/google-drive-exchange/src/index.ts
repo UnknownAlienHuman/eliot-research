@@ -12,3 +12,6 @@ export { GoogleRestError, type GoogleRestOptions, type GoogleAccessLease } from 
 
 export * from "./token-credentials.js";
 export * from "./token-lease.js";
+
+export * from "./oauth-types.js";
+export * from "./oauth-admission.js";

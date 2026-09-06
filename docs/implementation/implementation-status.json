@@ -56,7 +56,7 @@
         "ER-24"
       ],
       "state": "IN_PROGRESS",
-      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Bounded Sheet/changes REST, contribution guards and encrypted D1 credential rotation/refresh leases for previously admitted connections exist. Initial browser OAuth/verified identity admission, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and runtime composition remain missing. Optional Gemini MCP does not replace this path.",
+      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner HTTP/PWA connect/callback, configuration/production evidence admission, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
         "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
@@ -336,7 +336,7 @@
         "contribution-boundary.test.ts: seven baseline failure groups reproduced and rejected; existing v1 sixteen/five-column serialization round-trips.",
         "sheet-port.test.ts: fixed resource/lease/range bindings, valid and malformed provider JSON, deadline/body/request budgets, cancellation, revocation, no secret reflection and uncertain append outcomes.",
         "Actual serializer -> bounded numeric range readback -> strict contribution assembly uses controlled Google HTTP fixtures; not a real account or canonical admission receipt.",
-        "OAuth/vault/generation/cursor/freeze/publication/composition and complete local-storage/browser acceptance remain required; live Google/Cloudflare NOT_EXECUTED."
+        "Owner OAuth transport/UI, generation/cursor/freeze/publication/composition and complete local-storage/browser acceptance remain required; live Google/Cloudflare NOT_EXECUTED."
       ]
     },
     {
@@ -350,7 +350,7 @@
       "behavior": "Context-bound AES-256-GCM refresh-token vault with versioned nonextractable keys, cryptographic random nonces, forward key rotation and exact narrow-scope validation. No initial Google identity admission.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "Initial authorization-code callback/state/PKCE/nonce, verified dedicated Google subject/email and Production project evidence still require implementation and integration; never bootstrap by hand-setting a trusted record.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
       ]
     },
@@ -365,7 +365,7 @@
       "behavior": "One-attempt, request-scoped OAuth refresh lease from previously admitted encrypted records; deadlines, sticky cancellation, expiry, CAS token rotation and durable REAUTH_REQUIRED. It is not a browser OAuth callback or public connect route.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "Initial authorization-code callback/state/PKCE/nonce, verified dedicated Google subject/email and Production project evidence still require implementation and integration; never bootstrap by hand-setting a trusted record.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
       ]
     },
@@ -382,8 +382,26 @@
       "behavior": "Actual primary D1 encrypted-credential load/CAS/readback and pinned exchange descriptor checks compose the existing REST lease. Legacy/Testing records fail closed; lost ACKs reconcile exactly and late invalid_grant cannot revoke a replaced grant.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "Initial authorization-code callback/state/PKCE/nonce, verified dedicated Google subject/email and Production project evidence still require implementation and integration; never bootstrap by hand-setting a trusted record.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-initial-oauth",
+      "path": "packages/google-drive-exchange/src/oauth-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 initial OAuth admission service; owner HTTP/PWA and provisioned exchange qualification remain separate.",
+      "owner_packets": [
+        "ER-20",
+        "ER-13",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Internal initial OAuth service and real primary-D1 store: encrypted owner/session/client/redirect-bound one-use intent, PKCE/state/nonce, fixed code/JWKS endpoints, actual RS256/dedicated identity/narrow scope/hash/time verification, atomic encrypted credential insertion and exact readback. Only AUTHORIZING admission; no public connect/callback route, UI, provisioning, new source grant or completed Drive Exchange. Trusted operator configuration/production evidence and authenticated owner currentness remain caller dependencies.",
+      "completion_evidence": [
+        "oauth-identity.test.ts: 29 real-RSA/transport/configuration regressions, mandatory access hash, optional code hash, issuer/audience/nonce/subject/email, strict scopes and body/deadline/cancellation failures.",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts: 23 actual local D1/crypto cases including restart, one-use replay, concurrent claim, lost initial/claim/admission ACKs, rollback, owner revocation and preservation of existing artifacts.",
+        "Owner HTTP/PWA integration and complete browser/storage OAuth lifecycle still required; fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
+        "No real Google code exchange, key retrieval, account change or Cloudflare deployment; live qualification NOT_EXECUTED."
       ]
     }
   ]

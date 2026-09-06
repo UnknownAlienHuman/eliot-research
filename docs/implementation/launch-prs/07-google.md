@@ -1,96 +1,104 @@
 # Launch 07 — Required ChatGPT Drive Exchange; optional Gemini service
 
-Status: unfinished draft. Incorporate current main and read canonical-alignment.md, agent-start.md,
-drive-rest.md, drive-credentials.md and the exact ER-18/19/20 packet before claiming one bounded task.
-#89's merged ingest checkpoint is available; #98 retains Library acceptance. ER-17/24/26 own
-sign-in/composition/setup; ER-25 UI; ER-13 owns migrations. No agent is started by this task plan.
+Status: unfinished draft. Incorporate current main; read AGENTS.md, canonical-alignment.md,
+agent-start.md, drive-rest.md, drive-credentials.md, drive-oauth-admission.md and the exact owning
+ER-18/19/20 packet. ER-17/24/26 own authenticated routing/composition/setup, ER-25 UI and ER-13 SQL.
+One bounded exact-path task at a time. This plan does not launch an agent.
 
 ## Canonical decision
 
-ELIOT_RESEARCH v29.1 (2026-08-28) §§12.3–12.12, §13.4, §15.1 and accepted ADR-0003 require
-Google Drive Exchange for Day-0 and first production ChatGPT use. A future qualified native app may
-REPLACE it; two simultaneous ChatGPT write transports are forbidden. Optional ER-36 Gemini planning
-is not an accepted substitute. Keep the mutual-exclusion and complete-application launch hold.
+ELIOT_RESEARCH v29.1 §§12.3–12.12, §13.4, §15.1 and accepted ADR-0003 require Google Drive Exchange
+for Day-0 and first production ChatGPT use. Optional Gemini MCP is not its replacement. A future
+qualified native app may replace Drive; two simultaneous ChatGPT writers are prohibited. Keep the
+existing mutual-exclusion and complete-application deployment hold. OAuth is governed by §12.9 and
+security §§13.5–13.6; TypeScript owns platform I/O/cryptography, SQL transactions and Rust pure authority.
 
 ## Implemented on main — reuse, do not rewrite
 
-G1a (c0729c2): existing GoogleDrivePort Sheet/changes methods, fixed endpoints, numeric-grid reads,
-exact metadata, ERC-only append, bounded requests and strict original contribution/serializer guards.
-No fake Doc/export methods. ERC cannot write REQUESTS/PAYLOAD_PARTS, edit/sort/delete or submit formulas.
-Uncertain append outcomes remain UNKNOWN without retry. HTTP acknowledgement is not canonical admission.
+G1a (c0729c2): five existing GoogleDrivePort Sheet/changes methods, fixed endpoints, numeric-grid reads,
+exact metadata, ERC-owned append, bounded requests and strict contribution/serializer guards. ERC
+cannot write REQUESTS/PAYLOAD_PARTS or arbitrarily edit/sort/delete/submit formulas. An uncertain
+append stays UNKNOWN with no automatic retry; HTTP acknowledgement is not canonical admission.
 
 G2a (502e2c6): context-bound AES-GCM TokenVault, primary-D1 encrypted credential CAS/readback,
-request-scoped one-attempt refresh and current GoogleAccessLease for the existing REST adapter.
-Read token-vault.ts, token-credentials.ts, token-refresh.ts, token-lease.ts and the Worker
-createD1GoogleAccessLeaseProvider. Migration 0012 extends the existing connection table; no competing
-store. Key/context swaps, stale credentials, concurrent rotation and late invalid_grant fail closed.
-REAUTH_REQUIRED affects only the current grant, not canonical artifacts. Scope validation admits only
-openid/email/drive.file, including the documented equivalent email URI spelling.
+request-scoped one-attempt refresh and current GoogleAccessLease for that REST adapter. Migration 0012
+extends the existing connection store. Key/context substitution, stale credentials, rotation races and
+late invalid_grant fail closed. REAUTH_REQUIRED never deletes canonical artifacts. Only the narrow
+openid/email/drive.file scope profile is allowed; documented equivalent email spelling is accepted.
 
-G2a starts with a PREVIOUSLY VERIFIED connection. Initial browser authorization, signature/identity
-verification, first encrypted admission and explicit reconnect/disconnect remain missing. Tests seed
-controlled metadata and use real WebCrypto/D1/R2 with controlled provider replies; this is not genuine
-Google admission or a completed connector. Legacy rows stay UNVERIFIED and cannot be activated by
-hand-setting database fields. Access tokens are not persisted; KEKs remain separate Worker secrets.
+G2b-core (f94bd7a): createD1GoogleOAuthAdmission composes a durable one-use intent, encrypted
+state/PKCE/nonce, a claimed single code exchange, actual Google RS256 verification and first encrypted
+connection insertion. Identity is pinned to the configured dedicated subject/email/client; signature,
+issuer/audience/nonce/expiry and access-token hash are checked. Callback issuer is mandatory. Intent
+and credentials use separate authenticated vault purposes. Migration 0013 atomically links initial
+credentials with an admission receipt and prohibits context/transition substitution. Lost claim or
+admission ACKs require exact readback; a spent/uncertain token exchange never silently retries.
 
-## Sequential checkpoints
+**G2b-core is an internal service, not a finished browser login.** Its authenticated owner/currentness
+and operator production-client configuration are trusted inputs that HTTP/PWA integration must supply.
+No route, owner session bypass, pasted-token path or environment activation is added. A new connection
+remains AUTHORIZING until exchange assets/cursor/schema are qualified, not ACTIVE merely after OAuth.
+Legacy connections stay unverified. Reuse oauth-{admission,identity,transport,types}, google-oauth-
+{store,service}, the existing vault/store/refresh and their real-crypto/local-D1 tests.
 
-- [x] G1a / ER-20. Bounded fixed-resource Sheet/changes REST subset and ER-18 serializer guards.
-- [ ] G1b / ER-20. Remaining operation-specific methods: native Doc delivery/export and provisioning
-  readback with exact resource/identity/budget/failure handling. No fake port completion.
-- [x] G2a / ER-20/13/24. Encrypted credential storage, rotation, CAS/reconciliation, finite consent
-  expiry, one-attempt refresh and request-scoped lease. This does not complete initial OAuth admission.
-- [ ] G2b NEXT / ER-20. Implement one initial OAuth checkpoint at a time against canonical §12.9,
-  §§13.5–13.6 and current official authorization-code/OIDC behavior. First durable, one-use authorization
-  intent bound to the authenticated local owner, exact OAuth client and allowlisted redirect; state,
-  PKCE and nonce. Then bounded code exchange, verified Google signature/issuer/audience/nonce/expiry,
-  configured dedicated subject/email, narrow scopes and production-client evidence before encrypted
-  admission. Return only typed status, never token-bearing browser URLs or logs. Do not treat pasted
-  refresh tokens, unsigned claims or test fixtures as verification. Reuse the completed vault/store/
-  refresh provider; source grants remain separate. Add replay, CSRF/session swap, expired intent,
-  foreign issuer/client/account, lost response and concurrent callback tests with actual local storage.
-- [ ] G2c / ER-20/24/25. Explicit reconnect/disconnect/reauth UI and credential-generation lifecycle.
-  Reconnect cannot revive an old grant; revoke stops Google work without deleting canonical artifacts.
-  Validate old KEK removal only after ciphertext rotation/readback. No browser or durable access-token cache.
-- [ ] G3 / ER-18. Fixed exchange folder/native Sheet/numeric-tab schema and immutable generation
-  provisioning. One independent atomic ChatGPT REQUESTS/PAYLOAD_PARTS append, exact readback/idempotency.
-  Complete draining-generation delivery under explicit ownership; no silent destination switch.
-  Existing identities/limits are preserved; schema changes create reviewed shadow generations.
-- [ ] G4 / ER-19. Leased changes cursor, bounded ID/range scans, R2 freeze and D1 ContributionIntent.
-  Advance cursor only after successful reconciliation. Missing parts never start jobs; lost ACK or
-  notification cannot lose work or duplicate admission. Row positions are navigation, not identity.
-- [ ] G5 / ER-19. Historical ID/hash audit detects edit/reorder/missing/deleted/duplicate rows;
-  preserve frozen canonical bytes. Test lease expiry, concurrency and restart on real local storage.
-- [ ] G6 / ER-20. Canonical-artifact/terminal-receipt-first delivery Doc/RESULTS publication and exact
-  readback. invalid_grant or UNKNOWN append outcome preserves the artifact and same delivery intent.
-  The G2a artifact-preservation test alone does not qualify this still-missing publisher.
-- [ ] G7 / ER-24/25. Required connector runtime/status UI; reuse source admission and typed
-  contribution reconciliation, not automatic bundle casts or Google-derived source grants.
-- [ ] G8 / ER-27. Complete recorded-provider + actual D1/R2/browser lifecycle and bounded failure probes.
-  Implement missing probe runners locally with cleanup and redacted result verification.
+## Remaining checkpoints
 
-Split these lists into one port/state family per claim. Shared migrations, exports, lockfiles, CI and
-composition are integrator-serialized with #90/#98. TypeScript owns I/O and platform cryptography;
-SQL owns transactions; deterministic domain decisions follow the language migration. No large SDK,
-new daemon, permanent duplicate authority or silent removal of canonical requirements.
+- [x] G1a: bounded Sheet/changes transport and contribution input guards.
+- [ ] G1b: native Doc delivery/export and provisioning methods, each with resource/identity/budget/
+  uncertainty checks; no fake completion of unimplemented GoogleDrivePort methods.
+- [x] G2a: encrypted credential storage, rotation, CAS/readback, finite expiry and bounded refresh lease.
+- [x] G2b-core: durable one-use initial authorization, real signed identity verification and atomic
+  first encrypted admission. This does not complete public OAuth transport or connector readiness.
+- [ ] **G2b-transport NEXT:** connect the internal service to existing authenticated owner HTTP/PWA
+  and admitted server configuration. Derive principal/session from verified Access, not request JSON;
+  enforce currentness before and after effects. Begin is an explicit same-origin owner action with a
+  stable operation identity. Strictly decode callback query once: reject duplicate/unknown fields,
+  validate state/iss and the allowlisted redirect; never reflect code/token/nonce in UI, logs or errors.
+  Use a fixed clean return route and no-store/no-referrer responses. Handle cancellation, same-callback
+  replay, uncertain exchange and reauthentication as typed states without a second token POST. Require
+  actual browser + Worker/D1 tests with controlled Google endpoints/real signatures, not mocked identity.
+  Preserve the production-auth boundary; no local auth bypass or hand-seeded verified credential rows.
+- [ ] G2c: explicit disconnect/reconnect and reauth UI/credential-generation lifecycle. Existing first-
+  insert logic intentionally refuses overwrites; add reviewed CAS transitions rather than relaxing it.
+  Revocation stops Google work but preserves artifacts. Old KEKs may be removed only after rotation/
+  readback. Access tokens must not be persisted in browser storage, D1 or a global cache.
+- [ ] G3: fixed folder/native Sheet/numeric-tab schema, immutable shadow/draining generations and
+  qualified activation. Obtain/retain the initial changes cursor before exposure. Independent ChatGPT
+  REQUESTS/PAYLOAD_PARTS append is atomic; exact readback/idempotency and explicit draining delivery
+  are required. Never silently switch destinations or promote AUTHORIZING without these checks.
+- [ ] G4: leased changes cursor, bounded ID/range scans, immutable R2 freeze and D1 ContributionIntent.
+  Cursor advances only after successful reconciliation. Missing parts cannot start jobs; lost ACKs or
+  notifications cannot duplicate admission or lose work. Row positions are navigation, never identity.
+- [ ] G5: historical ID/hash audit for edits/reorder/missing/deleted/duplicate rows, lease expiry,
+  concurrency and restart on actual local storage. Preserve previously frozen canonical bytes.
+- [ ] G6: canonical-artifact/terminal-receipt-first Doc/RESULTS publication and exact readback.
+  invalid_grant/UNKNOWN preserves the artifact and original delivery intent; credential tests alone
+  do not qualify this still-missing publisher. Do not substitute HTTP success for result readback.
+- [ ] G7/G8: full required connector/status UI and recorded-provider + actual D1/R2/browser lifecycle,
+  with bounded redacted real-account probe runners prepared locally. Reuse source admission and typed
+  contributions; no Google-derived source grants or service-to-owner impersonation.
+
+Split umbrella checkpoints into one port/state family per claim. Shared exports/migrations/lockfiles/
+composition/CI are integrator-serialized with #90/#98. No large SDK, new daemon, duplicated authority or
+silent removal of canonical requirements. Read current code before assigning a supposedly missing port.
 
 ## Optional Gemini service
 
-Its v1 observer checks declared consistency of unsigned plans/self-reports, not issuance, consent,
-actual Google I/O or write preconditions. Operation-specific missing proof stays unverified. Service
-catalog remains withheld until explicit service-scope grants and revocation tests exist; never
-relabel a service principal owner_pwa. This optional helper cannot satisfy required Drive completion.
+Its observer validates consistency of unsigned plans/self-reports, not issuance, consent, real Google
+I/O or mutation preconditions. Missing operation-specific proof remains unverified. Service catalog
+stays withheld until explicit scope grants/currentness tests; never relabel a service owner_pwa.
 
-## Acceptance and Cloudflare
+## Acceptance and Cloudflare handoff
 
-Require exact-head full repository/Rust CI, strict Worker fixtures, Linux/Windows local boot, actual
-storage replay/tamper and the prescribed complete browser loop. Drive remains IN_PROGRESS while initial
-OAuth and remaining required paths do not execute. Keep this PR draft and all unchecked items visible.
+Require exact-head full repository/Rust CI, strict Worker fixtures, Linux/Windows local boot and the
+prescribed full browser/storage lifecycle. The new checkpoint has real RSA/AES and D1 transaction
+coverage with controlled Google replies, not a genuine IdP login or deployed connector. Drive remains
+IN_PROGRESS; keep this PR draft until every mandatory implementation item is complete.
 
-Follow cloudflare-handoff.md plus drive-credentials.md. At the first COMPLETE approved staging trial,
-retain genuine dedicated identity/scopes, production-client evidence, KEK rotation, invalid_grant,
-fixed numeric-tab/default-field observations, independent ChatGPT atomic append, exact row readback,
-cursor/tamper/reconnect and canonical outcomes. Do not seed admission by raw SQL. Missing code remains
-off-account development; actual Google/Access/Cloudflare qualification stays NOT_EXECUTED until the
-mandatory application/Rust work and approved isolation exist. No partial deploy, launch-hold bypass,
-secret logging or transport-success authority.
+Follow cloudflare-handoff.md and drive-oauth-admission.md. At the first COMPLETE approved staging trial,
+retain genuine account/client/scopes/production-status evidence, callback/PKCE/nonce/signature failures,
+key rotation/reauth, fixed numeric-tab/schema observations, independent ChatGPT append, exact readback,
+cursor/tamper/reconnect and canonical outcomes. Production-client status is operator-attested, not an
+ID-token claim. Missing code is off-account work; live Google/Access/Cloudflare remains NOT_EXECUTED
+until complete mandatory application/Rust code and approved isolation. No partial deployment,
+launch-hold bypass, secret logging or transport-success authority.

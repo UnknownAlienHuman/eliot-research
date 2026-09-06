@@ -19,8 +19,9 @@ The canonical documents have not been changed to accommodate incomplete code.
 
 - **#95 / ER-18/19/20:** continue Drive OAuth/durable-cursor/Doc-publication adapters, one state family at a time. Five
   bounded Sheet/changes REST methods and strict contribution guards now exist (`drive-rest.md`), but
-  The encrypted D1 credential/refresh boundary also exists (`drive-credentials.md`); initial browser
-  OAuth and verified connection admission are still missing. These components neither complete the required exchange nor replace its missing canonical admission loop. The optional
+  The encrypted D1 credential/refresh boundary and internal initial OAuth admission now exist
+  (`drive-credentials.md`, `drive-oauth-admission.md`); owner HTTP/PWA integration, operator configuration
+  admission and exchange provisioning remain missing. These components neither complete the required exchange nor replace its missing canonical admission loop. The optional
   ER-36 observation validator cannot become their source, identity or cursor authority.
 - **#98 / ER-05/14/29/24/25:** raw-file managed conversion plus active readiness, projects, failure UI
   and the complete authenticated browser + local D1/R2 lifecycle. The current normalized importer,
