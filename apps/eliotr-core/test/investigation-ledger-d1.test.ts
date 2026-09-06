@@ -6,6 +6,9 @@ import {
   createInvestigationLedgerService,
   type CreateLedgerInput,
   type LedgerD1Database,
+  type LedgerD1Statement,
+  type LedgerEvent,
+  type LedgerHead,
 } from "@eliotr/research";
 
 interface Migration {
@@ -79,6 +82,32 @@ async function codeOf(promise: Promise<unknown>): Promise<string> {
   throw new Error("expected ledger failure");
 }
 
+async function rowState(investigationId: string): Promise<string> {
+  const head = await db.prepare("SELECT revision, event_head, status FROM investigation_ledger_head WHERE investigation_id=?1").bind(investigationId).first<{ revision: number; event_head: number; status: string }>();
+  const events = await db.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE investigation_id=?1").bind(investigationId).first<{ n: number }>();
+  return `${head === null ? "absent" : `${head.revision}/${head.event_head}/${head.status}`}:${events?.n ?? 0}`;
+}
+
+async function eventKinds(investigationId: string): Promise<string[]> {
+  const rows = await db.prepare("SELECT kind FROM investigation_ledger_event WHERE investigation_id=?1 ORDER BY sequence ASC").bind(investigationId).all<{ kind: string }>();
+  return rows.results.map((row) => row.kind);
+}
+
+function interceptBatch(database: LedgerD1Database, onBatch: (statements: readonly LedgerD1Statement[]) => Promise<void>): LedgerD1Database {
+  return new Proxy(database, {
+    get(target, key) {
+      if (key === "batch") {
+        return async (statements: readonly LedgerD1Statement[]) => {
+          await onBatch(statements);
+          return (target as LedgerD1Database).batch(statements);
+        };
+      }
+      const value = Reflect.get(target, key);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as LedgerD1Database;
+}
+
 beforeEach(async () => {
   await applyD1Migrations(db as never, runtime.CORE_MIGRATIONS);
 });
@@ -150,5 +179,141 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     expect(heads?.n).toBe(1);
     expect(events?.n).toBe(1);
     await invariant(input.investigation_id);
+  });
+  it("supersession CAS loss at the in-batch boundary leaves the complete old winner with no orphan replacement", async () => {
+    const ctx = context();
+    const input = baseInput("t5");
+    seedAll(ctx, input);
+    await ctx.service.create(input);
+    ctx.digests.set("payload-d1-t5-win", DIGEST_C);
+    const replacement = baseInput("t5r");
+    seedAll(ctx, replacement);
+    let winnerCommitted = false;
+    const loserDb = interceptBatch(db as unknown as LedgerD1Database, async (statements) => {
+      if (statements.length === 4 && !winnerCommitted) {
+        winnerCommitted = true;
+        await ctx.service.checkpoint(input.investigation_id, 1, 4, "principal-1", "evt-d1-t5-win", "payload-d1-t5-win", DIGEST_C);
+      }
+    });
+    const loser = createInvestigationLedgerService(createD1InvestigationLedgerStore(loserDb), ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    expect(winnerCommitted).toBe(false);
+    expect(await codeOf(loser.supersede(input.investigation_id, 1, replacement, "raced supersession", "principal-1"))).toBe("LEDGER_STALE_HEAD");
+    expect(winnerCommitted).toBe(true);
+    expect(await rowState(input.investigation_id)).toBe("2/2/OPEN:2");
+    expect(await eventKinds(input.investigation_id)).toEqual(["CREATED", "CHECKPOINT"]);
+    expect(await rowState(replacement.investigation_id)).toBe("absent:0");
+    expect(await db.prepare("SELECT investigation_id FROM investigation_ledger_head WHERE supersedes_id=?1").bind(input.investigation_id).first()).toBeNull();
+    await invariant(input.investigation_id);
+  });
+  it("supersession fault injection before the batch and lost ACK after it never duplicate the effect", async () => {
+    const ctx = context();
+    const input = baseInput("t6");
+    seedAll(ctx, input);
+    await ctx.service.create(input);
+    const replacement = baseInput("t6r");
+    seedAll(ctx, replacement);
+    const crashing = interceptBatch(db as unknown as LedgerD1Database, async (statements) => {
+      if (statements.length === 4) throw new Error("crash before supersession batch");
+    });
+    const crashingService = createInvestigationLedgerService(createD1InvestigationLedgerStore(crashing), ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    expect(await codeOf(crashingService.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1"))).toBe("LEDGER_SETTLEMENT_UNCERTAIN");
+    expect(await rowState(input.investigation_id)).toBe("1/1/OPEN:1");
+    expect(await rowState(replacement.investigation_id)).toBe("absent:0");
+    let ackLost = true;
+    const ackStore = {
+      ...ctx.store,
+      supersede: async (oldHead: LedgerHead, oldEvent: LedgerEvent, expectedOldRevision: number, newHead: LedgerHead, newEvent: LedgerEvent) => {
+        const out = await ctx.store.supersede(oldHead, oldEvent, expectedOldRevision, newHead, newEvent);
+        if (ackLost) { ackLost = false; throw new Error("lost acknowledgement"); }
+        return out;
+      },
+    };
+    const ackService = createInvestigationLedgerService(ackStore, ctx.fences, ctx.handles, () => "2026-09-05T03:00:00.000Z");
+    await expect(ackService.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1")).rejects.toThrow("lost acknowledgement");
+    const reconciled = await ctx.service.supersede(input.investigation_id, 1, replacement, "fault injection", "principal-1");
+    expect(reconciled.supersedes_id).toBe(input.investigation_id);
+    expect(await rowState(input.investigation_id)).toBe("2/2/SUPERSEDED:2");
+    expect(await eventKinds(input.investigation_id)).toEqual(["CREATED", "SUPERSEDED"]);
+    expect(await rowState(replacement.investigation_id)).toBe("1/1/OPEN:1");
+    const link = await db.prepare("SELECT supersedes_id FROM investigation_ledger_head WHERE investigation_id=?1").bind(replacement.investigation_id).first<{ supersedes_id: string }>();
+    expect(link?.supersedes_id).toBe(input.investigation_id);
+    await invariant(input.investigation_id);
+    await invariant(replacement.investigation_id);
+  });
+  it("divergent event-id reuse over D1 conflicts on append and supersede; exact store replay settles once", async () => {
+    const ctx = context();
+    const input = baseInput("t7");
+    seedAll(ctx, input);
+    await ctx.service.create(input);
+    ctx.digests.set("payload-d1-t7-re", DIGEST_C);
+    const snap = await ctx.store.read(input.investigation_id);
+    if (snap === null) throw new Error("missing ledger");
+    const next: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 4, updated_at: "2026-09-05T01:00:00.000Z" };
+    const exact: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: "evt-d1-t7-re", kind: "CHECKPOINT", payload_handle_ref: "payload-d1-t7-re", payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: "2026-09-05T01:00:00.000Z" };
+    const first = await ctx.store.append(next, 1, exact);
+    expect(first.revision).toBe(2);
+    expect(await ctx.store.append(next, 1, exact)).toEqual(first);
+    expect(await rowState(input.investigation_id)).toBe("2/2/OPEN:2");
+    const divergent: LedgerEvent = { ...exact, kind: "OBSERVED", payload_digest: DIGEST_D };
+    ctx.digests.set("payload-d1-t7-div", DIGEST_D);
+    expect(await codeOf(ctx.store.append(next, 1, divergent))).toBe("LEDGER_CONFLICT");
+    expect(await rowState(input.investigation_id)).toBe("2/2/OPEN:2");
+    const replacement = baseInput("t7r");
+    seedAll(ctx, replacement);
+    const settled = await ctx.service.supersede(input.investigation_id, 2, replacement, "post-exposure metric change", "principal-1");
+    expect(settled.supersedes_id).toBe(input.investigation_id);
+    expect(await ctx.service.supersede(input.investigation_id, 2, replacement, "post-exposure metric change", "principal-1")).toEqual(settled);
+    expect(await codeOf(ctx.service.supersede(input.investigation_id, 2, replacement, "a different reason", "principal-1"))).toBe("LEDGER_CONFLICT");
+    expect(await rowState(input.investigation_id)).toBe("3/3/SUPERSEDED:3");
+    expect(await rowState(replacement.investigation_id)).toBe("1/1/OPEN:1");
+    await invariant(input.investigation_id);
+    await invariant(replacement.investigation_id);
+  });
+  it("fence changes after preflight but before the D1 write deny every mutation with zero committed effect", async () => {
+    const good = { principal_ref: "principal-1", scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, policy_generation: "policy-gen-1", deployment_generation: "deploy-gen-1", purge_revision: 0, scope_purge_revision: 0 };
+    const dims: { code: string; apply: (fence: Record<string, unknown>) => void }[] = [
+      { code: "LEDGER_PRINCIPAL_DENIED", apply: (fence) => { fence.principal_ref = "principal-evil"; } },
+      { code: "LEDGER_SCOPE_FOREIGN", apply: (fence) => { fence.scope_snapshot_id = "scope-foreign"; } },
+      { code: "LEDGER_SCOPE_FOREIGN", apply: (fence) => { fence.scope_snapshot_revision = 999; } },
+      { code: "LEDGER_POLICY_STALE", apply: (fence) => { fence.policy_generation = "policy-stale"; } },
+      { code: "LEDGER_DEPLOYMENT_STALE", apply: (fence) => { fence.deployment_generation = "deploy-stale"; } },
+      { code: "LEDGER_PURGE_STALE", apply: (fence) => { fence.purge_revision = 2; } },
+    ];
+    type Ctx = ReturnType<typeof context>;
+    const mutations: { name: string; needs: "open" | "closed" | "create"; run: (c: Ctx, id: string, rev: number, n: number) => Promise<unknown> }[] = [
+      { name: "checkpoint", needs: "open", run: (c, id, rev, n) => c.service.checkpoint(id, rev, 3, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
+      { name: "accept", needs: "open", run: (c, id, rev, n) => c.service.acceptObligation(id, rev, "obl-1", "verifier-a", "metric-1", "verifier-a", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
+      { name: "deviation", needs: "open", run: (c, id, rev, n) => c.service.recordDeviation(id, rev, "obl-1", "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C, "note") },
+      { name: "observed", needs: "open", run: (c, id, rev, n) => c.service.recordObserved(id, rev, "x", "y", "z", "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
+      { name: "close", needs: "open", run: (c, id, rev, n) => c.service.close(id, rev, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
+      { name: "reopen", needs: "closed", run: (c, id, rev, n) => c.service.reopen(id, rev, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
+      { name: "supersede", needs: "open", run: (c, id, rev, n) => { const r = baseInput(`fr-${n}`, { payload_handle_ref: `ph-fr-${n}`, portfolio_ref: `pf-fr-${n}` }); c.digests.set(r.payload_handle_ref, r.payload_digest); c.digests.set(r.portfolio_ref, r.input_digest); return c.service.supersede(id, rev, r, "fenced", "principal-1"); } },
+      { name: "create", needs: "create", run: (c, id, _rev, n) => { const r = baseInput(`fc-${n}`, { investigation_id: id, idempotency_key: `idem-fc-${n}`, event_id: `evt-fc-${n}`, payload_handle_ref: `ph-f-${n}`, portfolio_ref: `pf-f-${n}` }); c.digests.set(r.payload_handle_ref, r.payload_digest); c.digests.set(r.portfolio_ref, r.input_digest); return c.service.create(r); } },
+    ];
+    let tag = 0;
+    for (const dim of dims) {
+      for (const mutation of mutations) {
+        const c = context();
+        const id = `inv-d1-flip-${tag}`;
+        tag += 1;
+        c.digests.set(`ph-f-${tag}`, DIGEST_C);
+        if (mutation.needs !== "create") {
+          const input = baseInput(`flip-${tag}`, { investigation_id: id, idempotency_key: `idem-d1-flip-${tag}`, event_id: `evt-d1-flip-${tag}`, payload_handle_ref: `ph-seed-${tag}`, portfolio_ref: `pf-seed-${tag}` });
+          c.digests.set(input.payload_handle_ref, input.payload_digest);
+          c.digests.set(input.portfolio_ref, input.input_digest);
+          await c.service.create(input);
+          if (mutation.needs === "closed") await c.service.close(id, 1, "principal-1", `evt-fc-${tag}`, `ph-f-${tag}`, DIGEST_C);
+        }
+        const before = await rowState(id);
+        const evil = { ...good };
+        dim.apply(evil as unknown as Record<string, unknown>);
+        let calls = 0;
+        c.fences.current = async () => ({ ...(calls++ === 0 ? good : evil) });
+        const rev = mutation.needs === "closed" ? 2 : 1;
+        expect(await codeOf(mutation.run(c, id, rev, tag)), `${mutation.name}/${dim.code}`).toBe(dim.code);
+        expect(await rowState(id), `${mutation.name}/${dim.code} rows`).toBe(before);
+        await invariant(id);
+      }
+    }
   });
 });

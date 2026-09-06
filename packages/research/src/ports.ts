@@ -241,7 +241,22 @@ export const LEDGER_SQL = {
   selectByEventId: "SELECT * FROM investigation_ledger_event WHERE event_id = ?1 LIMIT 1",
   selectEvents: "SELECT * FROM investigation_ledger_event WHERE investigation_id = ?1 ORDER BY sequence ASC",
   insertHead: "INSERT INTO investigation_ledger_head (investigation_id, revision, protocol_version, goal,scope_snapshot_id, scope_snapshot_revision, evidence_grade, lane, lane_registrations_json,obligations_json, hypotheses_json, portfolio_ref, debt_refs_json, checkpoint_head, principal_ref,input_digest, policy_generation, policy_authority_ref, deployment_generation, idempotency_key,model_profile_ref, observed_execution, observed_fidelity, observed_assurance, status,supersedes_id, supersession_reason, event_head, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30)",
+  insertHeadIfEvent: "INSERT INTO investigation_ledger_head (investigation_id, revision, protocol_version, goal,scope_snapshot_id, scope_snapshot_revision, evidence_grade, lane, lane_registrations_json,obligations_json, hypotheses_json, portfolio_ref, debt_refs_json, checkpoint_head, principal_ref,input_digest, policy_generation, policy_authority_ref, deployment_generation, idempotency_key,model_profile_ref, observed_execution, observed_fidelity, observed_assurance, status,supersedes_id, supersession_reason, event_head, created_at, updated_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30 WHERE EXISTS (SELECT 1 FROM investigation_ledger_event WHERE event_id = ?31)",
+  insertSupersedeMarkEvent: "INSERT INTO investigation_ledger_event (investigation_id, sequence, event_id, kind,payload_handle_ref, payload_digest, actor_ref, verifier_ref, created_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE EXISTS (SELECT 1 FROM investigation_ledger_head WHERE investigation_id = ?1 AND revision = ?10 AND status = 'SUPERSEDED' AND supersession_reason = ?11)",
   insertEvent: "INSERT INTO investigation_ledger_event (investigation_id, sequence, event_id, kind,payload_handle_ref, payload_digest, actor_ref, verifier_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
   insertEventIfRevision: "INSERT INTO investigation_ledger_event (investigation_id, sequence, event_id, kind,payload_handle_ref, payload_digest, actor_ref, verifier_ref, created_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9 WHERE EXISTS (SELECT 1 FROM investigation_ledger_head WHERE investigation_id = ?1 AND revision = ?10)",
-  casHead: "UPDATE investigation_ledger_head SET revision = ?3, lane_registrations_json = ?4,obligations_json = ?5, hypotheses_json = ?6, portfolio_ref = ?7, debt_refs_json = ?8,checkpoint_head = ?9, observed_execution = ?10, observed_fidelity = ?11, observed_assurance = ?12,status = ?13, supersedes_id = ?14, supersession_reason = ?15, event_head = ?16, updated_at = ?17 WHERE investigation_id = ?1 AND revision = ?2",
+  casHead: "UPDATE investigation_ledger_head SET revision = ?3, lane_registrations_json = ?4,obligations_json = ?5, hypotheses_json = ?6, portfolio_ref = ?7, debt_refs_json = ?8,checkpoint_head = ?9, observed_execution = ?10, observed_fidelity = ?11, observed_assurance = ?12,status = ?13, supersedes_id = ?14, supersession_reason = ?15, event_head = ?16, updated_at = ?17 WHERE investigation_id = ?1 AND revision = ?2 AND principal_ref = ?18 AND scope_snapshot_id = ?19 AND scope_snapshot_revision = ?20 AND policy_generation = ?21 AND deployment_generation = ?22",
 } as const;
+export function sameLedgerFence(left: LedgerAuthorityFence, right: LedgerAuthorityFence): boolean {
+  return left.principal_ref === right.principal_ref && left.scope_snapshot_id === right.scope_snapshot_id &&
+    left.scope_snapshot_revision === right.scope_snapshot_revision && left.policy_generation === right.policy_generation &&
+    left.deployment_generation === right.deployment_generation && left.purge_revision === right.purge_revision &&
+    left.scope_purge_revision === right.scope_purge_revision;
+}
+export function ledgerFenceDriftCode(pre: LedgerAuthorityFence, post: LedgerAuthorityFence): LedgerErrorCode {
+  if (post.principal_ref !== pre.principal_ref) return "LEDGER_PRINCIPAL_DENIED";
+  if (post.scope_snapshot_id !== pre.scope_snapshot_id || post.scope_snapshot_revision !== pre.scope_snapshot_revision) return "LEDGER_SCOPE_FOREIGN";
+  if (post.policy_generation !== pre.policy_generation) return "LEDGER_POLICY_STALE";
+  if (post.deployment_generation !== pre.deployment_generation) return "LEDGER_DEPLOYMENT_STALE";
+  return "LEDGER_PURGE_STALE";
+}
