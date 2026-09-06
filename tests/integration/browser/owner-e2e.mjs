@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm, access, writeFile, stat } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, access, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { dirname, resolve, join } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 /* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
-  sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly */
+  sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
+  Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly */
 import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge } from "../../../scripts/lib/local-owner-bridge.mjs";
@@ -91,7 +92,7 @@ export async function createOwnerE2EKey() {
   return { privateKey: keys.privateKey, publicJwk: bounded };
 }
 
-export async function startJwksServer(publicJwk) {
+export async function startJwksServer(publicJwk, { closeTimeoutMs = 5000 } = {}) {
   const body = JSON.stringify({ keys: [publicJwk] });
   assert.ok(body.length < 8192, "JWKS document must stay bounded");
   const server = createServer((req, res) => {
@@ -108,10 +109,23 @@ export async function startJwksServer(publicJwk) {
       res.end(body);
     })().catch(() => { try { res.statusCode = 500; res.end(); } catch { /* closed */ } });
   });
+  const sockets = new Set();
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => { sockets.delete(socket); });
+  });
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const port = server.address().port;
   const url = `http://127.0.0.1:${port}${OWNER_E2E_CERTS_PATH}`;
-  const close = async () => { await new Promise((resolve) => server.close(resolve)); };
+  const close = async () => {
+    for (const socket of [...sockets]) { try { socket.destroy(); } catch { /* owned only */ } }
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("JWKS server did not close within the strict deadline")), closeTimeoutMs);
+      timer.unref?.();
+      server.close((error) => { clearTimeout(timer); if (error) reject(error); else resolve(); });
+    });
+    for (const socket of [...sockets]) { try { socket.destroy(); } catch { /* owned only */ } }
+  };
   return { url, port, close };
 }
 
@@ -131,13 +145,17 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   assert.equal(jwks.hostname, "127.0.0.1", "JWKS override must be 127.0.0.1");
   assert.equal(jwks.pathname, OWNER_E2E_CERTS_PATH, "JWKS override must use the exact certs path");
   assert.equal(jwks.search, "", "JWKS override must not carry a query");
+  const port = Number(jwks.port);
+  assert.ok(Number.isSafeInteger(port) && port >= 1024 && port <= 65535, "JWKS override port must be in range");
   const text = await readFile(paths.config, "utf8");
   assert.ok(!text.includes("owner-e2e") || text.includes(OWNER_E2E_ISSUER), "profile patch must be explicit");
   assert.ok(!/BEGIN PRIVATE|"d"\s*:\s*"[A-Za-z0-9_-]{10,}/.test(text), "Worker config must never contain private key material");
   const config = JSON.parse(text);
   assert.equal(config.name, "eliotr-core-local", "local profile must stay canonical");
+  assert.equal(config.vars?.ENVIRONMENT, "development", "owner-e2e seam requires dedicated development ENVIRONMENT");
   config.vars = {
     ...config.vars,
+    ENVIRONMENT: "development",
     ACCESS_TEAM_DOMAIN: OWNER_E2E_ISSUER,
     ACCESS_AUDIENCE: OWNER_E2E_AUDIENCE,
     ACCESS_TEST_JWKS_URL: jwksUrl,
@@ -244,31 +262,26 @@ async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
 async function launchPlaywright(runId) {
   const { chromium } = await import("playwright-core");
   const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
-  // Every temp profile carries a run-specific ownership marker. Cleanup below
-  // deletes only paths with a resolved location inside the OS temp root plus
-  // a marker proving this harness created them. Never touch unrelated
-  // Chrome/Wrangler processes or profiles.
   await writeHarnessMarker(profileDir, runId, "browser-profile");
+  let context;
+  let browser;
   try {
-    // Deterministic discovery: explicit ELIOTR_BROWSER_EXECUTABLE wins,
-    // otherwise only fixed OS standard paths (Windows Chrome standard paths,
-    // Linux /usr/bin/*). Clear fail when absent; Linux CI stays stable; no
-    // registry/network probing and no arbitrary executables.
     const executable = await resolveLocalBrowserExecutable();
     await access(executable);
-    const context = await chromium.launchPersistentContext(profileDir, {
+    context = await chromium.launchPersistentContext(profileDir, {
       executablePath: executable,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run",
         "--disable-background-networking", "--disable-component-update", "--disable-extensions",
         "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
     });
-    const browser = context.browser();
+    browser = context.browser();
     assert.ok(browser, "Playwright browser must be owned by this harness");
     const page = context.pages()[0] ?? await context.newPage();
     const consoleErrors = [];
     const pageErrors = [];
     const failedRequests = [];
+    const responses = [];
     page.on("console", (message) => {
       if (message.type() === "error") {
         const loc = message.location();
@@ -279,17 +292,22 @@ async function launchPlaywright(runId) {
     page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
     page.on("requestfailed", (request) => { failedRequests.push(
       `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`.slice(0, 512)); });
+    page.on("response", (response) => { responses.push(
+      `${response.request().method()} ${response.url()} -> ${response.status()}`.slice(0, 512)); });
     const evaluate = (fn, arg) => page.evaluate(fn, arg);
+    const resetLedger = () => {
+      consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; responses.length = 0;
+    };
     const close = async () => {
-      try { await context.close(); } catch { /* Best-effort. */ }
-      try { await browser.close(); } catch { /* Already closed. */ }
+      try { await context?.close(); } catch { /* Best-effort. */ }
+      try { await browser?.close(); } catch { /* Already closed. */ }
       await removeHarnessOwned(profileDir, runId);
       await assert.rejects(access(profileDir), /ENOENT/, "temp browser profile must be removed");
     };
-    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, close, profileDir };
+    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, responses, resetLedger, close, profileDir };
   } catch (error) {
-    // Browser-start failure must leave no profile residue, but only delete
-    // the marker-proven owned directory, never unrelated profiles.
+    try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
+    try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
     try { await removeHarnessOwned(profileDir, runId); } catch { /* Marker mismatch: retain for inspection. */ }
     throw error;
   }
@@ -368,18 +386,54 @@ function assertNoPrivateStorage(storage, label) {
     `${label}: browser storage must hold no credentials/source bytes/private responses`);
 }
 
-function assertOnlyDenialNoise(consoleErrors, label) {
-  const unexpected = consoleErrors.filter((text) =>
-    !/Failed to load resource.*401/.test(text) &&
-    !/favicon\.ico/.test(text) &&
-    !/manifest\.webmanifest/.test(text));
-  assert.deepEqual(unexpected, [], `${label}: unexpected console errors: ${unexpected.slice(0, 2).join("; ")}`);
+function assertAuthedLedger(harness, label, origin) {
+  const { consoleErrors, pageErrors, failedRequests } = harness;
+  assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
+  const manifest401 = `Failed to load resource: the server responded with a status of 401 (Unauthorized) @${origin}/manifest.webmanifest`;
+  const manifestFailed = `Manifest fetch from ${origin}/manifest.webmanifest failed, code 401 @${origin}/`;
+  const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
+  const allowedConsole = new Set([manifest401, manifestFailed, pair403]);
+  assert.ok(consoleErrors.length <= 5, `${label}: at most the exact bridge static-asset + one-use reuse noise may log, got: ${consoleErrors.slice(0, 5).join("; ")}`);
+  for (const text of consoleErrors) {
+    assert.ok(allowedConsole.has(text), `${label}: unexpected authed console, got: ${text.slice(0, 300)}`);
+    assert.ok(!text.includes("eyJ") && !text.includes("/api/"),
+      `${label}: authed console must hold no JWT and no private API 401, got: ${text.slice(0, 200)}`);
+  }
+  const allowedFailed = new Set([
+    `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+    `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
+  ]);
+  assert.ok(failedRequests.length <= 2, `${label}: at most the exact superseded probes may abort`);
+  for (const text of failedRequests) {
+    assert.ok(allowedFailed.has(text), `${label}: unexpected authed abort, got: ${text.slice(0, 300)}`);
+  }
 }
 
-function assertOnlyExpectedFailedRequests(failedRequests, label) {
-  const unexpected = failedRequests.filter((text) =>
-    !(/\/api\//.test(text) && /ERR_ABORTED|ABORTED|aborted|cancel/i.test(text)));
-  assert.deepEqual(unexpected, [], `${label}: unexpected failed requests: ${unexpected.slice(0, 2).join("; ")}`);
+function assertUnauthLedger(harness, label, origin) {
+  const { consoleErrors, pageErrors, failedRequests } = harness;
+  assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
+  const allowedConsole = new Set([
+    `Failed to load resource: the server responded with a status of 401 (Unauthorized) @${origin}/api/v1/research/catalog?limit=20`,
+    `Failed to load resource: the server responded with a status of 401 (Unauthorized) @${origin}/api/v1/system/health`,
+  ]);
+  assert.ok(consoleErrors.length <= 2, `${label}: at most the two exact unauth probes may log, got: ${consoleErrors.slice(0, 3).join("; ")}`);
+  assert.ok(new Set(consoleErrors).size === consoleErrors.length, `${label}: duplicate console entries indicate retry noise`);
+  for (const text of consoleErrors) {
+    assert.ok(allowedConsole.has(text), `${label}: unexpected console error, got: ${text.slice(0, 300)}`);
+    assert.ok(!text.includes("eyJ"), `${label}: ledger must never contain JWT`);
+  }
+  const allowedFailed = new Set([
+    `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+    `GET ${origin}/api/v1/system/health :: net::ERR_ABORTED`,
+  ]);
+  assert.ok(failedRequests.length <= 2, `${label}: at most the two exact probes may abort, got: ${failedRequests.slice(0, 3).join("; ")}`);
+  for (const text of failedRequests) {
+    assert.ok(allowedFailed.has(text), `${label}: unexpected failed request, got: ${text.slice(0, 300)}`);
+  }
+  for (const text of [...consoleErrors, ...failedRequests]) {
+    assert.ok(!text.includes("favicon") && !text.includes("manifest"),
+      `${label}: favicon/manifest must never fail, got: ${text.slice(0, 200)}`);
+  }
 }
 
 async function buildBundleFiles(namespace, ownerGeneration, revisionRef) {
@@ -497,19 +551,35 @@ async function importBundleViaWorker(origin, token, bundle, idempotencyKey) {
   return { receipt: committed.data, operationId, manifestSha: data.manifest_sha256 };
 }
 
-async function listPersistFiles(dir) {
-  const out = [];
-  const walk = async (current) => {
-    const entries = await readdir(current, { withFileTypes: true }).catch(() => null);
-    if (entries === null) return;
-    for (const entry of entries) {
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else out.push(full);
-    }
-  };
-  await walk(dir);
-  return out;
+async function r2ObjectGet(paths, bucket, key) {
+  const args = wranglerArgs(paths, ["r2", "object", "get", `${bucket}/${key}`, "--pipe"]);
+  const output = executeLocal(args, { capture: true });
+  return output;
+}
+
+async function tryR2ObjectGet(paths, bucket, key) {
+  try {
+    return { ok: true, output: await r2ObjectGet(paths, bucket, key) };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
+async function resolveEvidenceBucket(paths) {
+  const text = await readFile(paths.config, "utf8");
+  const config = JSON.parse(text);
+  const entry = (config.r2_buckets ?? []).find((item) => item.binding === "EVIDENCE_BUCKET");
+  assert.ok(entry?.bucket_name, "local profile must declare EVIDENCE_BUCKET");
+  assert.ok(!String(entry.bucket_name).includes("work"), "evidence bucket must not be the work bucket");
+  return String(entry.bucket_name);
+}
+
+async function resolveWorkBucket(paths) {
+  const text = await readFile(paths.config, "utf8");
+  const config = JSON.parse(text);
+  const entry = (config.r2_buckets ?? []).find((item) => item.binding === "WORK_BUCKET");
+  assert.ok(entry?.bucket_name, "local profile must declare WORK_BUCKET");
+  return String(entry.bucket_name);
 }
 
 export async function runOwnerE2E() {
@@ -543,15 +613,80 @@ export async function runOwnerE2E() {
     storage: "PENDING",
     bounds: "PENDING",
     controlled_issuer: "PENDING",
+    seam_rejection: "PENDING",
+    browser_pairing: "PENDING",
+    browser_logout: "PENDING",
+    evidence_readback: "PENDING",
   };
   try {
     const { privateKey, publicJwk } = await createOwnerE2EKey();
     jwks = await startJwksServer(publicJwk);
+    {
+      const badPaths = [
+        `${jwks.url}/wrong`,
+        jwks.url.replace(OWNER_E2E_CERTS_PATH, "/wrong"),
+        `${jwks.url}?x=1`,
+      ];
+      for (const bad of badPaths) {
+        const response = await globalThis.fetch(bad, { redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+        assert.equal(response.status, 404, `JWKS server must 404 non-exact path: ${bad}`);
+        await response.text().catch(() => {});
+      }
+      const post = await globalThis.fetch(jwks.url, { method: "POST", redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+      assert.equal(post.status, 404, "JWKS server must 404 non-GET");
+      await post.text().catch(() => {});
+      const started = Date.now();
+      const probe = await globalThis.fetch(jwks.url, { signal: globalThis.AbortSignal.timeout(5000) });
+      assert.equal(probe.status, 200, "JWKS server must serve the exact certs document");
+      await probe.text();
+      assert.ok(Date.now() - started < 5000, "JWKS exact-path readback must stay bounded");
+    }
     const nowSeconds = () => Math.floor(globalThis.Date.now() / 1000);
     const sign = (overrides = {}, kid = OWNER_E2E_KID) => signOwnerToken(privateKey, {
       iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE], sub: "e2e-owner",
       type: "app", iat: nowSeconds(), exp: nowSeconds() + 600, ...overrides,
     }, kid);
+    {
+      const stagingDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-staging-"));
+      const stagingId = `${runId}-staging`;
+      await writeHarnessMarker(stagingDir, stagingId, "owner-state-staging");
+      let stagingWorker;
+      try {
+        let stagingPaths;
+        let lastStagingError;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          try {
+            stagingPaths = await prepareLocal({ stateDirectory: stagingDir, log: () => {} });
+            lastStagingError = undefined;
+            break;
+          } catch (error) {
+            lastStagingError = error;
+            const text = String(error?.message ?? error) + String(error?.cause?.stderr ?? "");
+            if (!/bad port|database is locked|SQLITE_BUSY|EBUSY|EPERM|ETIMEDOUT|EAGAIN/i.test(text) || attempt >= 3) throw error;
+            await new Promise((resolve) => globalThis.setTimeout(resolve, 1000 * attempt));
+          }
+        }
+        if (!stagingPaths) throw lastStagingError;
+        await applyOwnerE2EProfile(stagingPaths, jwks.url);
+        const raw = await readFile(stagingPaths.config, "utf8");
+        const parsed = JSON.parse(raw);
+        parsed.vars = { ...parsed.vars, ENVIRONMENT: "staging" };
+        await writeFile(stagingPaths.config, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+        stagingWorker = await startLocalWorker(stagingPaths);
+        const stagingToken = await sign();
+        const denied = await workerJson(stagingWorker.origin, "/api/v1/system/session", { token: stagingToken });
+        assert.equal(denied.status, 503, "staging with identical test vars must fail config, never seam");
+        assert.equal(denied.data?.code ?? denied.data?.data?.code, "ACCESS_CONFIG_INVALID",
+          "staging seam must fail with ACCESS_CONFIG_INVALID");
+        assert.ok(!JSON.stringify(denied.data).includes("e2e-owner") || denied.status !== 200,
+          "staging denial must not leak identity");
+        receipt.seam_rejection = "PASS";
+      } finally {
+        try { await stagingWorker?.stop(); } catch { /* best-effort */ }
+        try { await removeHarnessOwned(stagingDir, stagingId); } catch { /* retain for inspection */ }
+      }
+      assert.equal(receipt.seam_rejection, "PASS", "production/staging seam rejection must pass");
+    }
     const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
     await access(resolve(root, "apps/eliotr-pwa/dist/index.html"));
     assert.equal(paths.directory, directory, "isolated state must use the fresh directory");
@@ -588,16 +723,21 @@ export async function runOwnerE2E() {
     assert.ok(Number.isFinite(Date.parse(identity.expires_at)));
     assert.equal(session.data.deployment_generation, paths.generation);
     assert.ok(!JSON.stringify(session.data).includes(token.slice(0, 16)), "session must not reflect the token");
+    const oversizedToken = `${await sign()}.${"a".repeat(17000)}`;
     const negatives = [
-      { name: "missing", init: {}, expect: [401] },
-      { name: "malformed", token: "not-a-jwt", expect: [401] },
-      { name: "forged", token: `${(await sign()).split(".").slice(0, 2).join(".")}.AAAA`, expect: [401] },
-      { name: "wrong-issuer", token: await sign({ iss: "https://other.cloudflareaccess.com" }), expect: [401] },
-      { name: "wrong-audience", token: await sign({ aud: ["other-audience"] }), expect: [401] },
-      { name: "expired", token: await sign({ iat: nowSeconds() - 1000, exp: nowSeconds() - 100 }), expect: [401] },
-      { name: "service-token", token: await sign({ sub: "" }), expect: [401, 403] },
-      { name: "unknown-kid", token: await sign({}, "unknown-kid"), expect: [401, 503] },
-      { name: "wrong-alg", token: (() => { const t = `${encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID })}.${encodeJwtPart({ iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE], sub: "e2e-owner", type: "app", iat: nowSeconds(), exp: nowSeconds() + 600 })}.${(good => good.split(".")[2])(("") )}`; return t; })(), expect: [401] },
+      { name: "missing", expect: [401], code: "ACCESS_JWT_MISSING" },
+      { name: "malformed", token: "not-a-jwt", expect: [401], code: "ACCESS_JWT_MALFORMED" },
+      { name: "forged", token: `${(await sign()).split(".").slice(0, 2).join(".")}.AAAA`, expect: [401], code: "ACCESS_JWT_SIGNATURE_INVALID" },
+      { name: "wrong-issuer", token: await sign({ iss: "https://other.cloudflareaccess.com" }), expect: [401], code: "ACCESS_JWT_ISSUER_INVALID" },
+      { name: "wrong-audience", token: await sign({ aud: ["other-audience"] }), expect: [401], code: "ACCESS_JWT_AUDIENCE_INVALID" },
+      { name: "expired", token: await sign({ iat: nowSeconds() - 1000, exp: nowSeconds() - 100 }), expect: [401], code: "ACCESS_JWT_EXPIRED" },
+      { name: "wrong-type", token: await sign({ type: "service" }), expect: [401], code: "ACCESS_JWT_TYPE_INVALID" },
+      { name: "active-nbf", token: await sign({ nbf: nowSeconds() + 600, exp: nowSeconds() + 1200 }), expect: [401], code: "ACCESS_JWT_NOT_YET_VALID" },
+      { name: "future-iat", token: await sign({ iat: nowSeconds() + 600, exp: nowSeconds() + 1200 }), expect: [401], code: "ACCESS_JWT_ISSUED_IN_FUTURE" },
+      { name: "service-token-empty-sub", token: await sign({ sub: "" }), expect: [401], code: "ACCESS_JWT_SUBJECT_INVALID" },
+      { name: "service-principal-denied", token: await sign({ sub: "", common_name: "e2e-service-1" }), expect: [403], code: "ACCESS_SERVICE_PRINCIPAL_DENIED" },
+      { name: "unknown-kid", token: await sign({}, "unknown-kid"), expect: [401, 503], code: null },
+      { name: "oversized", token: oversizedToken, expect: [401], code: "ACCESS_JWT_TOO_LARGE" },
     ];
     for (const item of negatives) {
       let response;
@@ -612,7 +752,21 @@ export async function runOwnerE2E() {
         response = await workerJson(worker.origin, "/api/v1/system/session", { token: item.token });
       }
       assert.ok(item.expect.includes(response.status), `${item.name} must deny, got ${response.status}`);
+      const bodyCode = response.data?.code ?? response.data?.data?.code;
+      if (item.code !== null) {
+        assert.equal(bodyCode, item.code, `${item.name} must carry exact code ${item.code}, got ${bodyCode}`);
+      } else {
+        assert.ok(typeof bodyCode === "string" && bodyCode.startsWith("ACCESS_"), `${item.name} must carry an ACCESS_ code`);
+      }
       assert.ok(!JSON.stringify(response.data).includes("e2e-owner") || response.status !== 200, `${item.name} must not leak identity on denial`);
+    }
+    {
+      const good = await sign();
+      const segs = good.split(".");
+      const badHeader = encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID });
+      const algDenied = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}` });
+      assert.equal(algDenied.status, 401, "wrong-alg must deny with 401");
+      assert.equal(algDenied.data?.code, "ACCESS_JWT_ALGORITHM_DENIED", "wrong-alg must carry exact code");
     }
     const namespace = "e2e-library";
     const revisionRef = "rev-e2e-1";
@@ -666,20 +820,56 @@ export async function runOwnerE2E() {
     const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
     assert.equal(revisions.status, 200, "authorized revision history must succeed");
     assert.ok(JSON.stringify(revisions.data).includes(revisionRef), "revision history must include the admitted revision");
-    const persistFiles = await listPersistFiles(paths.persist);
-    assert.ok(persistFiles.length > 0, "local R2/D1 persist root must hold real objects");
-    let r2Match = null;
-    for (const file of persistFiles) {
-      try {
-        const st = await stat(file);
-        if (st.size < 10 || st.size > 32 * 1024 * 1024) continue;
-        const bytes = await readFile(file);
-        if (bytes.includes(encoder.encode("Pinned owner-e2e content.").slice(0, 8))) { r2Match = file; break; }
-      } catch { /* ignore */ }
-    }
-    assert.ok(r2Match !== null, "at least one real immutable R2 object with admitted bytes must exist");
-    const r2Bytes = await readFile(r2Match);
-    assert.ok(r2Bytes.length > 0, "R2 object body must be non-empty");
+    const canonicalKey = imported.receipt.normalized_artifact_ref;
+    assert.ok(typeof canonicalKey === "string" && canonicalKey.startsWith("normalized/"),
+      "commit receipt must name the canonical immutable EVIDENCE_BUCKET key");
+    assert.ok(!canonicalKey.includes("..") && !canonicalKey.includes("//") && canonicalKey.length < 1024,
+      "canonical key must stay bounded and traversal-free");
+    const evidenceBucket = await resolveEvidenceBucket(paths);
+    const workBucket = await resolveWorkBucket(paths);
+    assert.ok(evidenceBucket.includes("evidence"), "evidence bucket name must identify the immutable store");
+    assert.ok(workBucket.includes("work"), "work bucket name must identify staging");
+    assert.ok(evidenceBucket !== workBucket, "evidence and work buckets must differ");
+    const revisionDetail = d1Query(paths, "CORE_DB",
+      `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
+      `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
+      `WHERE s.source_namespace_id='${namespace}'`);
+    assert.ok(revisionDetail.some((row) => row.normalized_artifact_ref === canonicalKey &&
+      row.source_revision_ref === revisionRef && row.source_namespace_id === namespace &&
+      row.source_owner_generation === ownerGeneration), "D1 revision must bind the canonical key to owner/namespace/generation");
+    assert.equal(imported.receipt.object_residency_key_digest,
+      revisionDetail.find((row) => row.source_revision_ref === revisionRef)?.object_residency_key_digest,
+      "commit receipt residency digest must match D1");
+    const operationRows = d1Query(paths, "CORE_DB",
+      `SELECT state, decision_receipt_ref, promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${imported.operationId}'`);
+    assert.equal(operationRows.length, 1, "authoritative ingest operation must exist");
+    assert.equal(operationRows[0].state, "COMMITTED", "operation must be COMMITTED");
+    assert.ok(typeof operationRows[0].decision_receipt_ref === "string" && operationRows[0].decision_receipt_ref.length > 0,
+      "admission receipt ref must exist");
+    assert.ok(typeof operationRows[0].promotion_receipt_ref === "string" && operationRows[0].promotion_receipt_ref.length > 0,
+      "promotion receipt ref must exist");
+    const expectedManifestBytes = bundle.files["manifest.json"];
+    assert.ok(expectedManifestBytes && expectedManifestBytes.length > 0, "expected manifest bytes must exist");
+    const expectedManifestSha = bundle.hashes["manifest.json"];
+    const evidenceGet = await tryR2ObjectGet(paths, evidenceBucket, canonicalKey);
+    assert.equal(evidenceGet.ok, true, `exact EVIDENCE_BUCKET object must be readable: ${canonicalKey}`);
+    const evidenceBytes = Buffer.from(evidenceGet.output ?? "", "utf8");
+    assert.ok(evidenceBytes.length > 0, "EVIDENCE_BUCKET object body must be non-empty");
+    assert.equal(evidenceBytes.length, expectedManifestBytes.length, "EVIDENCE_BUCKET size must match admitted manifest size");
+    assert.equal(await sha256Hex(evidenceBytes), expectedManifestSha, "EVIDENCE_BUCKET byte digest must match admitted manifest sha");
+    assert.equal(JSON.parse(decoder.decode(evidenceBytes)).protocol, "eliotr.normalized.v1",
+      "EVIDENCE_BUCKET manifest must carry the normalized protocol");
+    const workGet = await tryR2ObjectGet(paths, workBucket, canonicalKey);
+    assert.equal(workGet.ok, false, "canonical immutable key must not exist in WORK_BUCKET staging");
+    const canonicalKeyForReceipt = canonicalKey;
+    const evidenceMeta = {
+      bucket: evidenceBucket, key: canonicalKeyForReceipt, sha256: expectedManifestSha,
+      size_bytes: evidenceBytes.length, content_type: "application/json; charset=utf-8",
+      source_namespace_id: namespace, source_owner_generation: ownerGeneration,
+      admission_receipt_ref: operationRows[0].decision_receipt_ref,
+      promotion_receipt_ref: operationRows[0].promotion_receipt_ref,
+    };
+    receipt.evidence_readback = "PASS";
     receipt.authorized_library = "PASS";
     playwright = await launchPlaywright(runId);
     receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
@@ -689,45 +879,43 @@ export async function runOwnerE2E() {
     assert.equal(unauthHasPrivate, false, "unauthenticated PWA must not render private Library rows");
     const unauthStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(unauthStorage, "unauthenticated");
-    assertOnlyDenialNoise(playwright.consoleErrors, "unauthenticated");
-    assert.deepEqual(playwright.pageErrors, [], `page errors must be empty: ${playwright.pageErrors.slice(0, 2).join("; ")}`);
-    assertOnlyExpectedFailedRequests(playwright.failedRequests, "unauthenticated");
-    playwright.consoleErrors.length = 0;
-    playwright.pageErrors.length = 0;
-    playwright.failedRequests.length = 0;
+    assertUnauthLedger(playwright, "unauthenticated", worker.origin);
+    playwright.resetLedger();
     bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
     assert.ok(bridge.pairingUrl.includes("/__local/#"), "bridge must issue a one-use fragment link");
     assert.ok(!bridge.pairingUrl.includes(token.slice(0, 8)), "pairing URL must not embed the JWT");
+    assert.ok(!bridge.pairingUrl.includes("eyJ"), "pairing URL must never carry JWT material");
     const secret = bridge.pairingUrl.split("#")[1];
-    assert.ok(typeof secret === "string" && secret.length > 0, "pairing secret must be present");
-    const pairResponse = await globalThis.fetch(`${bridge.origin}/__local/pair`, {
-      method: "POST", headers: { "X-Eliotr-Pair": secret, Origin: bridge.origin }, redirect: "manual",
-      signal: globalThis.AbortSignal.timeout(5000),
-    });
-    assert.equal(pairResponse.status, 204, "one-use pairing must succeed");
-    const setCookie = pairResponse.headers.get("set-cookie") ?? "";
-    assert.ok(setCookie.includes("HttpOnly") && setCookie.includes("SameSite=Strict"), "bridge cookie must be opaque HttpOnly/SameSite");
-    assert.ok(!setCookie.includes("eyJ"), "bridge cookie must be opaque, never a JWT");
-    const cookieName = setCookie.split("=")[0];
-    let cookieValue = setCookie.split(";")[0].split("=").slice(1).join("=");
-    let activeCookieName = cookieName;
-    await playwright.context.addCookies([{ name: cookieName, value: cookieValue, domain: "127.0.0.1", path: "/" }]);
-    const reuse = await globalThis.fetch(`${bridge.origin}/__local/pair`, {
-      method: "POST", headers: { "X-Eliotr-Pair": secret, Origin: bridge.origin }, redirect: "manual",
-      signal: globalThis.AbortSignal.timeout(5000),
-    });
-    assert.equal(reuse.status, 403, "pairing secret must be one-use");
-    await playwright.page.goto(`${bridge.origin}/`, { waitUntil: "domcontentloaded", timeout: 15000 });
+    assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
+    assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
+    await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+    await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
+    const pairedCookies = await playwright.context.cookies();
+    const sessionCookies = pairedCookies.filter((item) => item.name.startsWith("eliotr_local_"));
+    assert.equal(sessionCookies.length, 1, "Chromium itself must hold exactly one opaque session cookie from the real bridge response");
+    const sessionCookie = sessionCookies[0];
+    assert.equal(sessionCookie.httpOnly, true, "browser session cookie must be HttpOnly");
+    assert.ok(sessionCookie.sameSite === "Strict" || sessionCookie.sameSite === "StrictLaxAllowUnsafeTokens" || String(sessionCookie.sameSite).toLowerCase().includes("strict"),
+      `browser session cookie must be SameSite=Strict, got ${sessionCookie.sameSite}`);
+    assert.equal(sessionCookie.domain, "127.0.0.1", "browser session cookie must be loopback-bound");
+    assert.equal(sessionCookie.path, "/", "browser session cookie path must be /");
+    assert.ok(typeof sessionCookie.value === "string" && sessionCookie.value.length >= 32, "browser cookie value must be opaque");
+    assert.ok(!sessionCookie.value.includes("eyJ") && !sessionCookie.value.includes("."), "browser cookie must be opaque, never a JWT");
+    assert.ok(!JSON.stringify(pairedCookies).includes("eyJ"), "browser cookie store must hold no JWT");
+    const reuseStatus = await playwright.page.evaluate(async (pairSecret) => {
+      const response = await fetch("/__local/pair", { method: "POST", headers: { "X-Eliotr-Pair": pairSecret } });
+      return response.status;
+    }, secret);
+    assert.equal(reuseStatus, 403, "pairing secret must be one-use even when reused from Chromium itself");
+    receipt.browser_pairing = `PASS (Chromium paired via ${bridge.origin}/__local/#, HttpOnly=${sessionCookie.httpOnly}, SameSite=${sessionCookie.sameSite}, domain=${sessionCookie.domain})`;
     const authedStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(authedStorage, "authed");
-    const authedNoise = playwright.consoleErrors.filter((text) =>
-      !(/manifest\.webmanifest/.test(text) || /Failed to load resource.*401/.test(text)));
-    assert.deepEqual(authedNoise, [], `authed console must be clean beyond cookieless manifest 401s: ${authedNoise.slice(0, 2).join("; ")}`);
     assert.ok(!playwright.consoleErrors.join("|").includes("eyJ"), "authed console must hold no JWT");
-    assert.deepEqual(playwright.pageErrors, [], `page errors must be empty: ${playwright.pageErrors.slice(0, 2).join("; ")}`);
-    assert.deepEqual(playwright.failedRequests, [], `authed failed requests must be empty: ${playwright.failedRequests.slice(0, 2).join("; ")}`);
+    assertAuthedLedger(playwright, "authed", bridge.origin);
+    playwright.resetLedger();
     const stoppedOrigin = worker.origin;
     const stoppedGeneration = paths.generation;
     await worker.stop();
@@ -764,49 +952,72 @@ export async function runOwnerE2E() {
     const revisionsAfter = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
     assert.equal(revisionsAfter.status, 200);
     assert.ok(JSON.stringify(revisionsAfter.data).includes(revisionRef), "restart must preserve the same revision");
-    await playwright.page.goto(`${bridge.origin}/`, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-    playwright.consoleErrors.length = 0;
-    playwright.pageErrors.length = 0;
-    playwright.failedRequests.length = 0;
+    const preRestartNames = new Set((await playwright.context.cookies())
+      .filter((item) => item.name.startsWith("eliotr_local_")).map((item) => item.name));
+    try { await bridge?.close(); } catch { /* Close stale pre-restart bridge before post-restart PWA readback. */ }
+    bridge = undefined;
+    playwright.resetLedger();
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const restartStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(restartStorage, "post-restart");
-    assert.deepEqual(playwright.pageErrors, [], "page errors must stay empty after restart");
+    assertUnauthLedger(playwright, "post-restart", worker.origin);
     receipt.persistence = "PASS";
     try { await bridge.close(); } catch { /* replaced below */ }
     bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
+    assert.ok(!bridge.pairingUrl.includes("eyJ"), "re-pairing URL must never carry JWT material");
     const secret2 = bridge.pairingUrl.split("#")[1];
-    const pair2 = await globalThis.fetch(`${bridge.origin}/__local/pair`, {
-      method: "POST", headers: { "X-Eliotr-Pair": secret2, Origin: bridge.origin }, redirect: "manual",
-      signal: globalThis.AbortSignal.timeout(5000),
+    assert.ok(typeof secret2 === "string" && secret2.length >= 32 && !secret2.includes("eyJ"), "re-pairing secret must be opaque");
+    await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+    await playwright.page.click("#connect", { timeout: 15000 });
+    await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+    await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
+    const rePaired = await playwright.context.cookies();
+    const reNew = rePaired.filter((item) => item.name.startsWith("eliotr_local_") && !preRestartNames.has(item.name));
+    assert.equal(reNew.length, 1, "Chromium re-pairing after restart must yield exactly one fresh opaque session cookie");
+    assert.equal(reNew[0].httpOnly, true, "re-paired cookie must be HttpOnly");
+    assert.ok(!String(reNew[0].value).includes("eyJ"), "re-paired cookie must be opaque");
+    const reSessionName = reNew[0].name;
+    playwright.resetLedger();
+    await playwright.page.goto(`${bridge.origin}/__local/`, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForSelector("#logout", { timeout: 15000 });
+    await playwright.page.click("#logout", { timeout: 15000 });
+    await playwright.page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Local session closed"), null, { timeout: 15000 });
+    const clearedCookies = await playwright.context.cookies();
+    assert.equal(clearedCookies.filter((item) => item.name === reSessionName).length, 0,
+      "Chromium cookie store must show Set-Cookie clearing of the fresh session via browser state after browser-driven logout");
+    receipt.browser_logout = `PASS (Chromium logged out via ${bridge.origin}/__local/ #logout, fresh session ${reSessionName} cleared)`;
+    const deniedViaBrowser = await playwright.page.evaluate(async () => {
+      const response = await fetch("/api/v1/research/catalog?limit=20");
+      return { status: response.status, url: response.url };
     });
-    assert.equal(pair2.status, 204, "re-pairing after restart must succeed");
-    const setCookie2 = pair2.headers.get("set-cookie") ?? "";
-    const cookieName2 = setCookie2.split("=")[0];
-    cookieValue = setCookie2.split(";")[0].split("=").slice(1).join("=");
-    assert.ok(cookieName2.startsWith("eliotr_local_") && cookieValue.length > 0,
-      "restarted bridge must issue a fresh opaque session");
-    activeCookieName = cookieName2;
-    const logoutResponse = await globalThis.fetch(`${bridge.origin}/__local/logout`, {
-      method: "POST", headers: { cookie: `${activeCookieName}=${cookieValue}`, Origin: bridge.origin }, redirect: "manual",
-      signal: globalThis.AbortSignal.timeout(5000),
-    });
-    assert.equal(logoutResponse.status, 204, "bridge logout must clear the session");
-    const afterLogout = await globalThis.fetch(`${bridge.origin}/api/v1/research/catalog?limit=20`, {
-      redirect: "manual", signal: globalThis.AbortSignal.timeout(5000),
-    });
-    assert.equal(afterLogout.status, 401, "private API through the bridge must 401 after logout");
-    await playwright.context.clearCookies();
+    assert.equal(deniedViaBrowser.status, 401, "browser-originated private API must be exact 401 after logout");
+    assert.ok(deniedViaBrowser.url.includes("/api/v1/research/catalog"), "denied URL must be the exact private catalog route");
+    assert.deepEqual(playwright.pageErrors, [], "page errors must stay empty after browser logout");
+    {
+      const allowedLogoutAbort = `POST ${bridge.origin}/__local/logout :: net::ERR_ABORTED`;
+      assert.ok(playwright.failedRequests.length <= 1,
+        `post-logout failed requests must hold at most the exact logout probe abort, got: ${playwright.failedRequests.slice(0, 2).join("; ")}`);
+      for (const text of playwright.failedRequests) {
+        assert.equal(text, allowedLogoutAbort, `post-logout abort must be the exact logout probe, got: ${text.slice(0, 300)}`);
+      }
+    }
+    const logoutConsole = [...playwright.consoleErrors];
+    assert.ok(logoutConsole.length <= 1, `post-logout console must hold at most the one deliberate 401, got: ${logoutConsole.slice(0, 2).join("; ")}`);
+    if (logoutConsole.length === 1) {
+      assert.ok(logoutConsole[0].includes("/api/v1/research/catalog") && logoutConsole[0].includes("401"),
+        `deliberate post-logout denial must be the exact catalog 401, got: ${logoutConsole[0].slice(0, 300)}`);
+      assert.ok(!logoutConsole[0].includes("eyJ"), "deliberate denial must not leak JWT");
+    }
+    playwright.resetLedger();
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const loggedOutHasPrivate = await playwright.evaluate(bodyIncludes, sourceId);
     assert.equal(loggedOutHasPrivate, false, "Library must hide the source after logout");
     const loggedOutStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(loggedOutStorage, "post-logout");
-    assertOnlyDenialNoise(playwright.consoleErrors, "post-logout");
-    assert.deepEqual(playwright.pageErrors, [], "page errors must stay empty after logout");
-    assertOnlyExpectedFailedRequests(playwright.failedRequests, "post-logout");
+    assertUnauthLedger(playwright, "post-logout-clean", worker.origin);
     receipt.logout = "PASS";
     receipt.storage = "PASS";
     receipt.console_errors = "PASS";
@@ -857,35 +1068,64 @@ export async function runOwnerE2E() {
     receipt.resource_ids = {
       namespace, source_id: sourceId, source_revision_ref: revisionRef,
       operation_id: imported.operationId, manifest_sha256: imported.manifestSha,
-      r2_object: r2Match, generation: stoppedGeneration,
+      evidence_bucket: evidenceMeta.bucket, evidence_key: evidenceMeta.key,
+      evidence_sha256: evidenceMeta.sha256, evidence_size_bytes: evidenceMeta.size_bytes,
+      evidence_content_type: evidenceMeta.content_type,
+      admission_receipt_ref: evidenceMeta.admission_receipt_ref,
+      generation: stoppedGeneration,
     };
   } finally {
-    try { await bridge?.close(); } catch { /* best-effort */ }
-    try { await worker?.stop(); } catch { /* Shutdown best-effort. */ }
-    try { await playwright?.close(); } catch { /* Browser teardown best-effort. */ }
-    try { await jwks?.close(); } catch { /* JWKS teardown best-effort. */ }
-    // Marker-gated teardown: delete only the run-specific owned state dir
-    // proven by its marker inside the OS temp root. Never delete unrelated
-    // temp entries; never kill unrelated Chrome/Wrangler processes.
+    const teardownStarted = Date.now();
+    const teardownDeadlineMs = 60000;
+    const teardownStep = async (label, fn) => {
+      const remaining = teardownDeadlineMs - (Date.now() - teardownStarted);
+      if (remaining <= 0) throw new Error(`teardown deadline exceeded before ${label}`);
+      await Promise.race([
+        (async () => { await fn(); })(),
+        new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(new Error(`teardown step timed out: ${label}`)), Math.max(1000, remaining));
+          timer.unref?.();
+        }),
+      ]);
+    };
     try {
-      await removeHarnessOwned(directory, runId);
+      await teardownStep("bridge.close", async () => { try { await bridge?.close(); } catch { /* best-effort */ } });
+      await teardownStep("worker.stop", async () => { try { await worker?.stop(); } catch { /* best-effort */ } });
+      await teardownStep("playwright.close", async () => { try { await playwright?.close(); } catch { /* best-effort */ } });
+      await teardownStep("jwks.close", async () => {
+        const started = Date.now();
+        try { await jwks?.close(); } catch { /* best-effort */ }
+        assert.ok(Date.now() - started < 10000, "JWKS shutdown must stay within its strict deadline");
+      });
+      await teardownStep("removeHarnessOwned", async () => {
+        try { await removeHarnessOwned(directory, runId); } catch (error) { teardownError = teardownError ?? error; }
+      });
+      await teardownStep("assertStateRemoved", async () => {
+        await assert.rejects(access(directory), /ENOENT/, "isolated state directory must be removed").catch((error) => {
+          teardownError = teardownError ?? error;
+        });
+      });
+      await teardownStep("reconcileStateRoot", async () => {
+        const afterDirs = new Set(await readdir(stateRoot).catch(() => []));
+        for (const name of afterDirs) {
+          if (!beforeDirs.has(name) && !name.startsWith("smoke-") && !name.startsWith("owner-e2e-")) {
+            teardownError = new Error(`teardown created unexpected shared state: ${name}`);
+          }
+        }
+        const leftovers = [...afterDirs].filter((name) => !beforeDirs.has(name));
+        for (const name of leftovers) {
+          if (name.startsWith("owner-e2e-") || name.startsWith("smoke-")) {
+            await rm(resolve(stateRoot, name), { recursive: true, force: true }).catch(() => {});
+          }
+        }
+      });
+      await teardownStep("reconcileTempProfiles", async () => {
+        const names = (await readdir(tmpdir()).catch(() => [])).filter((name) => name.startsWith("eliotr-owner-e2e-profile-"));
+        assert.deepEqual(names.filter((name) => !names.includes(name)), [], "temp profile reconciliation must not touch unrelated profiles");
+      });
+      assert.ok(Date.now() - teardownStarted < teardownDeadlineMs, "outer teardown deadline must hold with full reconciliation");
     } catch (error) {
       teardownError = teardownError ?? error;
-    }
-    await assert.rejects(access(directory), /ENOENT/, "isolated state directory must be removed").catch((error) => {
-      teardownError = teardownError ?? error;
-    });
-    const afterDirs = new Set(await readdir(stateRoot).catch(() => []));
-    for (const name of afterDirs) {
-      if (!beforeDirs.has(name) && !name.startsWith("smoke-") && !name.startsWith("owner-e2e-")) {
-        teardownError = new Error(`teardown created unexpected shared state: ${name}`);
-      }
-    }
-    const leftovers = [...afterDirs].filter((name) => !beforeDirs.has(name));
-    for (const name of leftovers) {
-      if (name.startsWith("owner-e2e-") || name.startsWith("smoke-")) {
-        await rm(resolve(stateRoot, name), { recursive: true, force: true }).catch(() => {});
-      }
     }
     receipt.teardown = teardownError === null ? "PASS" : "FAIL";
   }

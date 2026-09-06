@@ -183,7 +183,11 @@ function configuredAccessVerifier(env: Env): AccessVerifier {
   }
   const servicePrincipals = parseServicePrincipals(env.ACCESS_SERVICE_PRINCIPALS);
   const testJwks = env.ACCESS_TEST_JWKS_URL;
-  const key = JSON.stringify([env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUDIENCE, servicePrincipals, testJwks ?? ""]);
+  if (testJwks !== undefined && testJwks !== "" && env.ENVIRONMENT !== "development") {
+    throw new AccessVerificationError("ACCESS_CONFIG_INVALID",
+      "Access test JWKS override is development-only; staging/production must use the real network verifier", true);
+  }
+  const key = JSON.stringify([env.ENVIRONMENT, env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUDIENCE, servicePrincipals, testJwks ?? ""]);
   if (accessVerifierCache?.key === key) return accessVerifierCache.verifier;
   const teamDomain = env.ACCESS_TEAM_DOMAIN;
   const audience = env.ACCESS_AUDIENCE;

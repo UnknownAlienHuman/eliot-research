@@ -68,6 +68,9 @@ function validatedLoopbackJwksUrl(raw: string): URL {
 export function resolveOwnerE2ETestFetch(env: Env, certsUrl: string): typeof fetch | undefined {
   const override = env.ACCESS_TEST_JWKS_URL;
   if (override === undefined || override === "") return undefined;
+  if (env.ENVIRONMENT !== "development") {
+    failConfig("Access test JWKS override is development-only; staging/production must use the real network verifier");
+  }
   if (env.ACCESS_TEAM_DOMAIN !== OWNER_E2E_ISSUER || env.ACCESS_AUDIENCE !== OWNER_E2E_AUDIENCE) {
     failConfig("Access test JWKS override outside the exact owner-e2e profile is denied");
   }
