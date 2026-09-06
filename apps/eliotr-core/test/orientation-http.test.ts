@@ -11,7 +11,10 @@ describe("launch path: real HTTP -> read policy -> scope -> persisted navigation
     expect(response.status).toBe(200);
     expect(result.data.navigation?.navigation_authority).toBe("NAVIGATION_ONLY");
     expect(result.data.navigation?.source_cards[0]?.title).toBe("Source happy");
-    expect(result.data.navigation?.document_maps[0]?.unresolved_structure).toContain("STRUCTURE_NOT_MATERIALIZED");
+    expect(result.data.navigation?.document_maps[0]?.unresolved_structure)
+      .toContain("COORDINATE_MAP_ABSENT_NATIVE_ANCHORS_UNAVAILABLE");
+    expect(result.data.navigation?.document_maps[0]?.unresolved_structure)
+      .not.toContain("STRUCTURE_NOT_MATERIALIZED");
     expect(result.data.evidence_pack.resolved_evidence).toEqual([]);
     expect(result.data.evidence_pack.total_utf8_bytes).toBe(0);
     const traceResponse = await run(new Request(`https://research.example/api/v1/research/trace/${result.data.trace_ref.id}`));
@@ -19,7 +22,8 @@ describe("launch path: real HTTP -> read policy -> scope -> persisted navigation
     const trace = await body(traceResponse);
     expect(trace.data.scope_snapshot.snapshot_id).toBe(result.data.evidence_pack.scope_snapshot_ref.id);
     expect(trace.data.query_product).toBe("ORIENT");
-    expect(trace.data.stale_or_degraded_channels).toContain("METADATA_ONLY");
+    expect(trace.data.stale_or_degraded_channels).toContain("STRUCTURAL_NAVIGATION");
+    expect(trace.data.stale_or_degraded_channels).not.toContain("METADATA_ONLY");
   });
   it("replays exactly without duplicating scope or navigation artifacts", async () => {
     await seedSource("replay");

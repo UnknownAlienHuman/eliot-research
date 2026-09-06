@@ -80,8 +80,34 @@ function headingOf(line: string): { level: number; title: string } | null {
   return { level: marker.length, title };
 }
 
-function isFence(line: string): boolean {
-  return /^ {0,3}(```+|~~~+)/u.test(line);
+interface FenceOpener {
+  readonly char: "`" | "~";
+  readonly length: number;
+}
+
+function parseFenceOpener(line: string): FenceOpener | null {
+  const match = /^ {0,3}(`+|~+)/u.exec(line);
+  if (match === null) return null;
+  const run = match[1] ?? "";
+  if (run.length < 3) return null;
+  const char = (run[0] === "~" ? "~" : "`") as "`" | "~";
+  // CommonMark: a backtick opener whose info string contains a backtick is not a fence.
+  if (char === "`" && line.slice(match[0].length).includes("`")) return null;
+  return { char, length: run.length };
+}
+
+function isFenceCloser(line: string, opener: FenceOpener): boolean {
+  const match = /^ {0,3}(`+|~+)[ \t]*(?:\r?\n)?$/u.exec(line);
+  if (match === null) return false;
+  const run = match[1] ?? "";
+  // CommonMark: closer matches the opener char, runs at least as long, carries no info string.
+  return run[0] === opener.char && run.length >= opener.length;
+}
+
+/** Truncate on Unicode code-point boundaries; never splits a surrogate pair. Byte ranges are untouched. */
+function truncateCodePoints(value: string, maxCodePoints: number): string {
+  const points = Array.from(value);
+  return points.length > maxCodePoints ? points.slice(0, maxCodePoints).join("") : value;
 }
 
 interface LineSpan {
@@ -196,17 +222,19 @@ export async function materializeStructuralNavigation(
     start: number;
   }
   const marks: HeadingMark[] = [];
-  let inFence: string | null = null;
+  let inFence: FenceOpener | null = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line === undefined) continue;
-    if (isFence(line.text)) {
-      const fence = /^ {0,3}(```+|~~~+)/u.exec(line.text)?.[1];
-      if (inFence === null) inFence = fence ?? "fence";
-      else inFence = null;
+    if (inFence !== null) {
+      if (isFenceCloser(line.text, inFence)) inFence = null;
       continue;
     }
-    if (inFence !== null) continue;
+    const opener = parseFenceOpener(line.text);
+    if (opener !== null) {
+      inFence = opener;
+      continue;
+    }
     const found = headingOf(line.text);
     if (found !== null) {
       if (utf8Length(found.title) > MAX_SHORT_TEXT_BYTES) {
@@ -233,7 +261,7 @@ export async function materializeStructuralNavigation(
     if (end <= 0) navigationFail("NAVIGATION_INPUT_INVALID", "normalized Markdown has no projectable bytes");
     sections.push({
       section_ref: await sectionRef(0, end, []),
-      label: `Source ${source.source_revision_ref}`.slice(0, 256),
+      label: truncateCodePoints(`Source ${source.source_revision_ref}`, 256),
       heading_path: [],
       level: 1,
       start: 0,
@@ -401,7 +429,7 @@ export async function materializeStructuralNavigation(
     generator_generation: input.generator_generation,
     created_at: input.created_at,
     draft: {
-      title: title.slice(0, 256),
+      title: truncateCodePoints(title, 256),
       authors: [],
       language: "und",
       source_kind: sourceKind,

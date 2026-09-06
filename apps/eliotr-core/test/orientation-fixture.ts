@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 import { expect } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import type { SourceAdmissionDecision } from "@eliotr/contracts";
 import type { QueryResult } from "@eliotr/interfaces";
 import type { RetrievalTrace } from "@eliotr/contracts";
@@ -13,6 +14,7 @@ import type { Env } from "../src/env.js";
 interface Migration { name: string; queries: string[]; }
 export const runtime = env as unknown as Env & { CORE_MIGRATIONS: Migration[]; SEARCH_MIGRATIONS: Migration[] };
 export const db = runtime.CORE_DB;
+export const evidenceBucket = (runtime as unknown as { EVIDENCE_BUCKET: R2Bucket }).EVIDENCE_BUCKET;
 export const principal = "orientation-owner";
 export const credential = "credential-v1";
 const A = "a".repeat(64); const B = "b".repeat(64);
@@ -28,6 +30,11 @@ export const count = (table: string) => db.prepare(`SELECT COUNT(*) AS n FROM ${
 
 export async function seedSource(id: string, withPolicy = true) {
   const namespace = `ns-${id}`; const ref = `rev-${id}`;
+  // N1 admitted normalized bundle: exact staged bytes whose digest is the admitted content identity.
+  const markdown = `# Source ${id}\n\nAdmitted body for ${id}.\n`;
+  const markdownBytes = new TextEncoder().encode(markdown);
+  const contentSha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", markdownBytes as BufferSource))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
   await insert("source_namespace_ownership", { source_namespace_id: namespace, ownership_record_revision: 1,
     owner_system_id: "eliotr", owner_incarnation_ref: "incarnation-1", source_owner_generation: "owner-gen-1",
     source_admission_policy_revision: 1, status: "ACTIVE", created_at: now });
@@ -36,7 +43,7 @@ export async function seedSource(id: string, withPolicy = true) {
     default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "residency-1", source_class: "document",
     license_policy_ref: "license-1", default_retention_policy_id: "retention-1", head_rev: null, created_at: now });
   await insert("source_revision", { source_revision_ref: ref, source_id: id, source_owner_generation: "owner-gen-1",
-    content_sha256: A, object_residency_key_digest: B, normalized_artifact_ref: `normalized/${id}`, captured_at: now,
+    content_sha256: contentSha, object_residency_key_digest: B, normalized_artifact_ref: `normalized/${id}`, captured_at: now,
     quality_state: "standard", purge_state: "LIVE", source_view_ref: `view-${id}`, admitted_at: now });
   await db.prepare("UPDATE source SET head_rev=?2 WHERE source_id=?1").bind(id, ref).run();
   await insert("bundle_ingest_operation", { operation_id: `op-${id}`, principal_ref: principal, origin_authentication_receipt_ref: "auth-1",
@@ -54,6 +61,12 @@ export async function seedSource(id: string, withPolicy = true) {
   if (withPolicy) await insert("scope_read_policy", { source_namespace_id: namespace, principal_ref: principal, client_class: "owner_pwa",
     policy_ref: `read-${id}`, generation: 1, allowed_use_json: '["research"]', disclosure_ceiling: "private", state: "ACTIVE",
     expires_at: expiry, created_at: now });
+  const bundleKey = await canonicalNormalizedBundleKey(B, { owner_system_id: "eliotr", source_namespace_id: namespace,
+    source_owner_generation: "owner-gen-1", source_logical_id: id, source_revision_ref: ref }, "content.md");
+  await evidenceBucket.put(bundleKey, markdownBytes, { httpMetadata: { contentType: "text/markdown" },
+    customMetadata: { eliotr_sha256: contentSha, eliotr_size_bytes: String(markdownBytes.byteLength),
+      eliotr_immutable: "true", source_namespace_id: namespace, source_owner_generation: "owner-gen-1",
+      admission_receipt_ref: `decision-${id}` } });
 }
 export function request(id: string, fields: Record<string, unknown> = {}, key = `request-${id}`) {
   return new Request("https://research.example/api/v1/research/orient", { method: "POST", headers: {

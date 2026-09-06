@@ -6,12 +6,16 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@el
 import { nextOrientationBoundary, orientationCurrentness } from "./orientation-currentness.js";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import { ORIENTATION_MAX_SOURCES, ORIENTATION_PROFILE, orientationFail, parseOrientationRequest } from "./orientation-input.js";
-import { materializeMetadataNavigation } from "./orientation-materialization.js";
+import { materializeMetadataNavigation, materializeStructuralNavigationBatch } from "./orientation-materialization.js";
 import { createNavigationService } from "./navigation-service.js";
 import { orientationStorage } from "./orientation-storage.js";
 import { createD1ScopeService } from "./scope-service.js";
 
-interface OrientationEnvironment { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database; }
+interface OrientationEnvironment {
+  readonly CORE_DB: D1Database;
+  readonly SEARCH_DB: D1Database;
+  readonly EVIDENCE_BUCKET?: R2Bucket | undefined;
+}
 // IMPLEMENTED_NOT_LIVE: ER-24 owner metadata orientation requires retained deployed D1/Access receipts.
 export function createOrientationApi(env: OrientationEnvironment, now: () => number = Date.now) {
   function services(context: AuthenticatedRequestContext) {
@@ -63,10 +67,16 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     await requireCurrent(snapshot);
     const store = createD1NavigationStore({ database: env.CORE_DB, scope_snapshot: snapshot, access: context,
       require_current: requireCurrent, now });
-    if (operation.state !== "COMPLETE") {
-      const sources = await authority.sources(snapshot.member_source_revision_refs);
-      checkpoint();
-      await materializeMetadataNavigation(store, snapshot, sources);
+    // N1 structural contour runs on every call, including idempotent replay: D1 puts are exact-readback
+    // idempotent and R2 reads are digest-verified, so replay converges to the same stored payload instead of
+    // rebuilding a metadata-only trace that would conflict with the retained structural result.
+    const sources = await authority.sources(snapshot.member_source_revision_refs);
+    checkpoint();
+    const structural = await materializeStructuralNavigationBatch({ store, snapshot, sources,
+      evidence_bucket: env.EVIDENCE_BUCKET, created_at: snapshot.created_at });
+    checkpoint();
+    if (structural.metadata_only.length > 0) {
+      await materializeMetadataNavigation(store, snapshot, structural.metadata_only);
     }
     checkpoint();
     const navigation = await createNavigationService(store).orient({ scope_snapshot: snapshot,
@@ -75,16 +85,22 @@ export function createOrientationApi(env: OrientationEnvironment, now: () => num
     const packRef = { id: `${operation.operation_id}:pack`, revision: 1 };
     const scopeRef = { id: snapshot.snapshot_id, revision: snapshot.revision };
     const budgetRef = `${operation.operation_id}:budget`;
+    const structuralCount = structural.structural.length;
+    const metadataOnlyCount = structural.metadata_only.length;
     const trace = RetrievalTraceSchema.parse({ trace_ref: traceRef, raw_query: request.query,
-      scope_snapshot: snapshot, query_product: "ORIENT", lanes_used: ["SOURCECARD"],
-      lanes_skipped: [{ lane: "STRUCTURE", reason: "STRUCTURE_NOT_MATERIALIZED" }, { lane: "ATLAS", reason: "PROJECT_ATLAS_NOT_MATERIALIZED" },
+      scope_snapshot: snapshot, query_product: "ORIENT",
+      lanes_used: structuralCount > 0 ? ["SOURCECARD", "STRUCTURE"] : ["SOURCECARD"],
+      lanes_skipped: [...(structuralCount > 0 ? [] : [{ lane: "STRUCTURE", reason: "STRUCTURE_NOT_MATERIALIZED" }]),
+        { lane: "ATLAS", reason: "PROJECT_ATLAS_NOT_MATERIALIZED" },
         { lane: "SEM", reason: "METADATA_PROFILE_NO_PROVIDER_CALLS" }, { lane: "VERIFY", reason: "NAVIGATION_ONLY" }],
       exact_probes: [], index_generations: [ORIENTATION_PROFILE], context_expansion: 0,
       candidates_by_lane: Object.fromEntries(RetrievalLaneSchema.options.map((lane) => [lane,
         lane === "SOURCECARD" ? snapshot.member_source_revision_refs.length : 0])),
       expansion_refs: [], represented_source_refs: navigation.represented_source_revision_refs,
       omitted_sources: navigation.omissions.map((item) => ({ source_ref: item.source_revision_ref, reason: item.reason })),
-      stale_or_degraded_channels: ["METADATA_ONLY", "STRUCTURE_NOT_MATERIALIZED"],
+      stale_or_degraded_channels: structuralCount > 0 && metadataOnlyCount === 0 ? ["STRUCTURAL_NAVIGATION"]
+        : structuralCount > 0 ? ["STRUCTURAL_NAVIGATION", "METADATA_ONLY", "STRUCTURE_NOT_MATERIALIZED"]
+        : ["METADATA_ONLY", "STRUCTURE_NOT_MATERIALIZED"],
       budget_receipt_ref: budgetRef, evidence_pack_ref: packRef.id });
     const result: QueryResult = { evidence_pack: { pack_ref: packRef, scope_snapshot_ref: scopeRef,
       resolved_evidence: [], omitted_candidates: [], trace_ref: traceRef, total_utf8_bytes: 0 }, trace_ref: traceRef, navigation };

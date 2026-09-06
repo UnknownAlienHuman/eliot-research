@@ -1,13 +1,96 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { env } from "cloudflare:workers";
 import { createD1NavigationStore, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
+import { materializeStructuralNavigationBatch, type OrientationSource } from "@eliotr/cloudflare-navigation";
+import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import { canonicalNavigationJson, materializeStructuralNavigation, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
 import { createD1NavigationService } from "../src/navigation-persistence.js";
 import { createNavigationService } from "../src/navigation-service.js";
-import { access, artifacts, clearDatabase, countArtifacts, db, fixture, grant, project,
+import { access, artifacts, B, clearDatabase, countArtifacts, db, fixture, grant, project,
   seedHandle, setupDatabase, source, TIME, wrappedDatabase } from "./navigation-fixture.js";
 
 beforeAll(setupDatabase);
 beforeEach(clearDatabase);
+
+const bucket = (env as unknown as { EVIDENCE_BUCKET: R2Bucket }).EVIDENCE_BUCKET;
+
+interface StagedBundle {
+  readonly revision: ReturnType<typeof source>;
+  readonly authority: Record<string, unknown>;
+  readonly key: string;
+  readonly bytes: Uint8Array;
+  readonly digest: string;
+}
+
+async function shaHex(value: string | Uint8Array): Promise<string> {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function stageBundle(ref: string, markdown: string, metadata: Record<string, string> = {}): Promise<StagedBundle> {
+  const bytes = new TextEncoder().encode(markdown);
+  const digest = await shaHex(bytes);
+  await db.prepare("UPDATE source_revision SET content_sha256=?1 WHERE source_revision_ref=?2").bind(digest, ref).run();
+  const revision = { ...source(ref), content_sha256: digest };
+  const key = await canonicalNormalizedBundleKey(B, { owner_system_id: "owner-system-1",
+    source_namespace_id: revision.source_namespace_id, source_owner_generation: revision.source_owner_generation,
+    source_logical_id: revision.source_id, source_revision_ref: ref }, "content.md");
+  await bucket.put(key, bytes, { httpMetadata: { contentType: "text/markdown" },
+    customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(bytes.byteLength),
+      eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
+      source_owner_generation: revision.source_owner_generation,
+      admission_receipt_ref: `decision-${ref}`, ...metadata } });
+  const authority = { source_id: revision.source_id, owner_system_id: "owner-system-1",
+    source_namespace_id: revision.source_namespace_id, source_owner_generation: revision.source_owner_generation,
+    source_revision_ref: ref, source_title: "Rust memory", source_class: "document", content_sha256: digest,
+    object_residency_key_digest: B, normalized_artifact_ref: revision.normalized_artifact_ref,
+    purge_state: "LIVE", admission_receipt_ref: `decision-${ref}` };
+  return { revision, authority, key, bytes, digest };
+}
+
+function contourSource(staged: StagedBundle): OrientationSource {
+  return { revision: staged.revision, authority: staged.authority, policy: {}, policy_uses: ["research"],
+    policy_closure_ref: "policy-closure-1", title: "Rust memory", kind: "document" } as unknown as OrientationSource;
+}
+
+async function stageManifest(ref: string, markdownDigest: string, mappings: string | undefined,
+  mapDigest: string | undefined, stageMap: boolean, originRef = ref, mapJson = "{}"): Promise<void> {
+  const manifest = {
+    protocol: "eliotr.normalized.v1",
+    origin: { owner_system_id: "owner-system-1", source_namespace_id: `namespace-${ref}`,
+      source_owner_generation: "owner-generation-1", source_revision_ref: originRef,
+      source_view_ref: `view-${ref}`, ownership_mode: "immutable_import" },
+    source: { logical_id: `source-${ref}`, original_name: "doc.md", original_sha256: markdownDigest,
+      origin_location_class: "cloud", mime_type: "text/markdown" },
+    residency_and_disclosure: { scope_domain_id: "scope-1", access_domain_id: "access-1",
+      confidentiality_domain_id: "conf-1", encryption_key_domain_id: "enc-1", retention_domain_id: "ret-1",
+      erasure_domain_id: "era-1", disclosure_ceiling: "private", allowed_use: ["research"] },
+    normalization: { analyzer: "test", analyzer_version: "1", profile: "p",
+      config_hash: markdownDigest, created_at: TIME },
+    content: { markdown: "content.md", markdown_sha256: markdownDigest,
+      ...(mappings === undefined ? {} : { mappings }),
+      ...(mapDigest === undefined ? {} : { coordinate_map_digest: mapDigest }) },
+    capabilities: { text_ranges: true, pages: false, bounding_boxes: false, tables: false, figures: false },
+    quality: { state: "standard", assurance_ceiling: "ceiling-1", warnings: [] as string[] },
+    export: { purpose: "test", receipt_ref: "receipt-1" },
+  };
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const manifestDigest = await shaHex(manifestBytes);
+  const keyFor = async (logicalPath: string) => canonicalNormalizedBundleKey(B,
+    { owner_system_id: "owner-system-1", source_namespace_id: `namespace-${ref}`,
+      source_owner_generation: "owner-generation-1", source_logical_id: `source-${ref}`,
+      source_revision_ref: ref }, logicalPath);
+  const metadataFor = (digest: string, size: number) => ({ httpMetadata: { contentType: "text/markdown" },
+    customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(size), eliotr_immutable: "true",
+      source_namespace_id: `namespace-${ref}`, source_owner_generation: "owner-generation-1",
+      admission_receipt_ref: `decision-${ref}` } });
+  await bucket.put(await keyFor("manifest.json"), manifestBytes, metadataFor(manifestDigest, manifestBytes.byteLength));
+  if (stageMap && mappings !== undefined) {
+    const mapBytes = new TextEncoder().encode(mapJson);
+    await bucket.put(await keyFor(mappings), mapBytes, metadataFor(await shaHex(mapBytes), mapBytes.byteLength));
+  }
+}
 describe("persisted Corpus Lens in local Workers/D1", () => {
   it("persists and reopens card, map and atlas across store instances", async () => {
     const f = await fixture(); await grant(f.snapshot);
@@ -264,5 +347,137 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     await expect(f.store.putArtifact("SOURCE_CARD", derived.sourceCard)).rejects.toBeInstanceOf(Error);
     await expect(f.store.getSourceCards(["revision-1"])).rejects.toBeInstanceOf(Error);
   });
-
+  it("reads the admitted R2 bundle through the supported contour into real D1 artifacts", async () => {
+    const f = await fixture(["revision-r2a"]); await grant(f.snapshot);
+    const markdown = ["# Введение", "", "Привет мир.", "", "## Details", "", "English body with `code`:",
+      "", "| a | b |", "|---|---|", "| 1 | 2 |", "", "```ts", "const x = 1;", "# not a heading", "```", "",
+      "## Заключение", "", "Финальный текст.", ""].join("\n");
+    const staged = await stageBundle("revision-r2a", markdown);
+    const outcome = await materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+      sources: [contourSource(staged)], evidence_bucket: bucket });
+    expect(outcome.structural).toHaveLength(1);
+    expect(outcome.metadata_only).toHaveLength(0);
+    expect(await countArtifacts()).toBe(2);
+    // Deterministic replay through the same contour reuses the persisted identities.
+    const replay = await materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+      sources: [contourSource(staged)], evidence_bucket: bucket });
+    expect(replay.structural).toHaveLength(1);
+    expect(await countArtifacts()).toBe(2);
+    // Restart readback across store instances reopens the same bytes; fence text never became a section.
+    const reader = createD1NavigationStore(f.input);
+    const cards = await reader.getSourceCards(["revision-r2a"]);
+    const maps = await reader.getDocumentMaps(["revision-r2a"]);
+    expect(cards).toHaveLength(1);
+    expect(maps).toHaveLength(1);
+    expect(JSON.stringify(maps[0])).not.toMatch(/not a heading/u);
+    const original = await bucket.get(staged.key);
+    if (!original) throw new Error("staged bundle vanished");
+    const originalBytes = new Uint8Array(await original.arrayBuffer());
+    expect(await evidenceSha256Bytes(originalBytes)).toBe(staged.digest);
+    for (const section of (maps[0] as unknown as { section_hierarchy: Record<string, unknown>[] }).section_hierarchy) {
+      const start = section.normalized_start_byte as number;
+      const end = section.normalized_end_byte as number;
+      const reopened = await bucket.get(staged.key, { range: { offset: start, length: end - start } });
+      if (!reopened) throw new Error("range reopen vanished");
+      expect(new Uint8Array(await reopened.arrayBuffer())).toEqual(originalBytes.slice(start, end));
+      expect(end).toBeGreaterThan(start);
+    }
+    expect((maps[0] as unknown as { page_ranges: unknown[] }).page_ranges).toEqual([]);
+    expect((maps[0] as unknown as { tables: unknown[] }).tables).toEqual([]);
+    // The orientation read path reopens structural artifacts, never metadata-only placeholders.
+    const service = createD1NavigationService({ ...f.input, scopes: f.scopes });
+    const expanded = await service.expand({ kind: "DOCUMENT_MAP", scope_snapshot: f.snapshot, source_revision_ref: "revision-r2a" });
+    expect(expanded.support).toMatchObject({ kind: "NAVIGATION_ONLY", publication_eligible: false });
+    if (expanded.kind !== "DOCUMENT_MAP") throw new Error("wrong expansion kind");
+    expect(expanded.sections.length).toBeGreaterThanOrEqual(3);
+    // Overwriting the immutable key with divergent bytes fails closed; the admitted artifacts survive.
+    await bucket.put(staged.key, new TextEncoder().encode("# Введение\n\nTampered.\n"));
+    await expect(materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+      sources: [contourSource(staged)], evidence_bucket: bucket }))
+      .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(2);
+    expect(await reader.getDocumentMaps(["revision-r2a"])).toEqual(maps);
+  });
+  it("fails closed on altered, foreign and missing R2 and manifest bindings", async () => {
+    const f = await fixture(["revision-r2b", "revision-r2c", "revision-r2d", "revision-r2e"]); await grant(f.snapshot);
+    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store,
+      snapshot: f.snapshot, sources: [contourSource(staged)], evidence_bucket: bucket });
+    // Altered body under the admitted key: stale digest metadata, correct size envelope.
+    const altered = await stageBundle("revision-r2b", "# Title B\n\nBody B.\n");
+    const tamperedBytes = new TextEncoder().encode("# Title B\n\nBody B altered.\n");
+    await bucket.put(altered.key, tamperedBytes, {
+      httpMetadata: { contentType: "text/markdown" },
+      customMetadata: { eliotr_sha256: altered.digest, eliotr_size_bytes: String(tamperedBytes.byteLength),
+        eliotr_immutable: "true", source_namespace_id: "namespace-revision-r2b",
+        source_owner_generation: "owner-generation-1", admission_receipt_ref: "decision-revision-r2b" },
+    });
+    await expect(run(altered)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    // Foreign owner generation in the immutable metadata.
+    const foreign = await stageBundle("revision-r2c", "# Title C\n\nBody C.\n",
+      { source_owner_generation: "owner-generation-foreign" });
+    await expect(run(foreign)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    // Manifest-referenced coordinate map that was never staged.
+    const missingMap = await stageBundle("revision-r2d", "# Title D\n\nBody D.\n");
+    await stageManifest("revision-r2d", missingMap.digest, "coordinate-map.json", await shaHex("map"), false);
+    await expect(run(missingMap)).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_NOT_FOUND" });
+    // Foreign manifest origin plus altered coordinate digest.
+    const foreignManifest = await stageBundle("revision-r2e", "# T\n\nBody.\n");
+    await stageManifest("revision-r2e", foreignManifest.digest, undefined, undefined, false, "foreign-revision");
+    await expect(run(foreignManifest)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(0);
+    // An honestly staged manifest with an exact coordinate map persists native anchors and nothing inferred.
+    const exact = await stageBundle("revision-r2b", "# Title B\n\nBody B.\n");
+    const exactBytes = new TextEncoder().encode("# Title B\n\nBody B.\n");
+    const mapJson = JSON.stringify([{ normalized_start_byte: 0, normalized_end_byte: exactBytes.byteLength,
+      precision: "EXACT", native_anchor: { page: 1 } }]);
+    await stageManifest("revision-r2b", exact.digest, "coordinate-map.json", await shaHex(mapJson), true,
+      "revision-r2b", mapJson);
+    const ok = await run(exact);
+    expect(ok.structural).toHaveLength(1);
+    const maps = await f.store.getDocumentMaps(["revision-r2b"]);
+    expect(JSON.stringify(maps[0])).toMatch(/"page":1/u);
+    expect(JSON.stringify(maps[0])).not.toMatch(/bbox|table_cell/u);
+  });
+  it("denies barrier changes with zero usable artifacts and parses fences honestly", async () => {
+    const f = await fixture(["revision-r2f"]); await grant(f.snapshot);
+    const staged = await stageBundle("revision-r2f", "# Fences\n\nBody.\n");
+    const run = () => materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+      sources: [contourSource(staged)], evidence_bucket: bucket });
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED'").run();
+    await expect(run()).rejects.toBeInstanceOf(Error);
+    await db.prepare("UPDATE scope_access_grant SET state='ACTIVE'").run();
+    await db.prepare("UPDATE scope_snapshot SET invalidated_at=?1, invalidation_reason='PURGED'").bind(TIME).run();
+    await expect(run()).rejects.toBeInstanceOf(Error);
+    expect(await countArtifacts()).toBe(0);
+    // Pure CommonMark fence matrix plus code-point-safe truncation.
+    const fenceCases: { readonly markdown: string; readonly labels: readonly string[] }[] = [
+      { markdown: "```\n# hidden\n~~~\n# still hidden\n```\n\n# Shown\n", labels: ["Shown"] },
+      { markdown: "````\n# hidden\n```\n# still hidden\n````\n", labels: ["Source revision-r2f"] },
+      { markdown: "```\n# hidden\n`````\n\n# Shown\n", labels: ["Shown"] },
+      { markdown: "```\n# hidden\n   ```\n\n# Shown\n", labels: ["Shown"] },
+      { markdown: "```ts\nconst x = 1;\n```js\n# hidden\n```\n\n# Shown\n", labels: ["Shown"] },
+      { markdown: "```a`b\n# Shown\n", labels: ["Shown"] },
+      { markdown: "```\n# hidden to EOF\n", labels: ["Source revision-r2f"] },
+    ];
+    for (const fenceCase of fenceCases) {
+      const digest = await shaHex(fenceCase.markdown);
+      const revision = { ...source("revision-r2f"), content_sha256: digest };
+      const derived = await materializeStructuralNavigation({ source_revision: revision,
+        scope_snapshot: f.snapshot, normalized_markdown: fenceCase.markdown,
+        generator_generation: "navigation-1", created_at: TIME });
+      const labels = derived.documentMap.section_hierarchy.map((section) =>
+        (section as Record<string, unknown>).label as string).filter((label) => label !== "Preamble");
+      expect(labels).toEqual(fenceCase.labels);
+    }
+    const emojiTitle = `# ${"A".repeat(250)}${"😀".repeat(10)}\n\nBody.\n`;
+    const emojiDigest = await shaHex(emojiTitle);
+    const emojiDerived = await materializeStructuralNavigation({
+      source_revision: { ...source("revision-r2f"), content_sha256: emojiDigest },
+      scope_snapshot: f.snapshot, normalized_markdown: emojiTitle,
+      generator_generation: "navigation-1", created_at: TIME });
+    const cardTitle = emojiDerived.sourceCard.title;
+    expect(Array.from(cardTitle).length).toBeLessThanOrEqual(256);
+    expect(cardTitle).toBe(Array.from(`# ${"A".repeat(250)}${"😀".repeat(10)}`.slice(2)).slice(0, 256).join(""));
+    expect(cardTitle).not.toMatch(/�/u);
+  });
 });
