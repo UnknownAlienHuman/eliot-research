@@ -1,36 +1,14 @@
 import { BackupEpochSchema, type BackupEpoch, type OperationAttempt, type OperationIntent, type OperationReceipt } from "@eliotr/contracts";
-import { bufferBounded } from "./r2.js";
 import {
-  assertBackupIdentifier,
-  assertBackupIntent,
-  backupAborted,
-  backupAttempt,
-  backupIsoDateTime,
-  backupReceipt,
-  backupSha256Hex,
-  backupUtf8Bytes,
-  failBackup,
-  ownedBackupBytes,
-  BackupError,
-  type BackupExportLimits,
-} from "./backup-shared.js";
-import type { BackupEpochDraft, BackupSourcePorts } from "./backup-epoch.js";
+  backupAborted, backupAttempt, backupIsoDateTime, backupReceipt, backupSha256Hex,
+  backupUtf8Bytes, bufferBackupStream, canonicalBackupJson, failBackup, ownedBackupBytes,
+  assertBackupIdentifier, assertBackupIntent, BackupError, type BackupExportLimits,
+} from "./shared.js";
+import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
+import { assertDestinationPolicy, destinationPolicyDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy, type OffsiteDestinationDescriptor } from "./destination-policy.js";
 
-// ER-34 O2 encrypted independent offsite copy. Encryption happens before the
-// destination boundary; KEK/key bytes and credentials are injected and never
-// enter the epoch, logs, receipts or fixtures. Expiry and deletion-journal
-// semantics also serve future erasure; a retained/locked destination yields
-// a typed PURGE_BLOCKED-class receipt with review metadata, never "deleted".
-
-export interface OffsiteDestinationDescriptor {
-  readonly destination_id: string;
-  readonly failure_domain: string;
-  readonly supports_deletion_journal: boolean;
-  readonly supports_expiry: boolean;
-  readonly retention_locked: boolean;
-  readonly legal_hold_ref?: string;
-  readonly expires_at?: string;
-}
+// ER-34 O2 encrypted offsite copy. Encryption happens before the destination
+// boundary; KEK/key bytes never enter the epoch, logs, receipts or fixtures.
 
 export interface OffsiteStoredPart {
   readonly ciphertext: Uint8Array;
@@ -55,9 +33,11 @@ export interface OffsiteCopyInput {
   readonly encryption_key: CryptoKey;
   readonly key_generation: string;
   readonly primary_failure_domain: string;
+  readonly destination_policy: BackupDestinationPolicy;
   readonly adapter: OffsiteCopyAdapter;
   readonly signal?: AbortSignal;
   readonly now_ms?: number;
+  readonly generate_nonce?: () => Uint8Array;
 }
 
 export interface OffsiteCopyResult {
@@ -68,21 +48,38 @@ export interface OffsiteCopyResult {
   readonly receipt: OperationReceipt;
 }
 
-async function encryptBackupPart(key: CryptoKey, partRef: string, plaintext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: backupUtf8Bytes(partRef) }, key, ownedBackupBytes(plaintext));
+function assertAes256GcmKey(key: CryptoKey): void {
+  const algo = (key as unknown as { readonly algorithm?: unknown }).algorithm as { readonly name?: unknown; readonly length?: unknown } | undefined;
+  if (algo?.name !== "AES-GCM" || algo?.length !== 256) failBackup("BACKUP_KEY_INVALID", "offsite encryption key must be AES-256-GCM with 256-bit strength");
+  if (key.type !== "secret") failBackup("BACKUP_KEY_INVALID", "offsite encryption key must be a secret key");
+  const usages = key.usages as readonly string[];
+  if (!usages.includes("encrypt") || !usages.includes("decrypt")) failBackup("BACKUP_KEY_INVALID", "offsite encryption key must allow encrypt and decrypt");
+}
+
+async function canonicalAad(input: { epoch_id: string; manifest: string; index: number; part_ref: string; part_sha256: string; destination_policy_digest: string; key_generation: string; expires_at: string; retention_policy_ref: string; expiry_identity: string }): Promise<Uint8Array<ArrayBuffer>> {
+  return backupUtf8Bytes(canonicalBackupJson(input));
+}
+
+async function encryptBackupPart(key: CryptoKey, aad: Uint8Array, nonce: Uint8Array, plaintext: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  if (nonce.byteLength !== 12) failBackup("BACKUP_KEY_INVALID", "offsite nonce must be 96 bits");
+  let sealed: ArrayBuffer;
+  try {
+    sealed = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce as unknown as BufferSource, additionalData: aad as unknown as BufferSource }, key, ownedBackupBytes(plaintext));
+  } catch (cause) {
+    failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite encryption failed", false, {}, cause);
+  }
   const out = new Uint8Array(12 + sealed.byteLength);
-  out.set(iv, 0);
+  out.set(nonce, 0);
   out.set(new Uint8Array(sealed), 12);
   return out;
 }
 
-async function decryptBackupPart(key: CryptoKey, partRef: string, sealed: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
-  if (sealed.byteLength < 13) failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite ciphertext is truncated", false, {});
+async function decryptBackupPart(key: CryptoKey, aad: Uint8Array, sealed: Uint8Array): Promise<Uint8Array<ArrayBuffer>> {
+  if (sealed.byteLength < 28) failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite ciphertext is truncated", false, {});
   const iv = sealed.slice(0, 12);
   const body = sealed.slice(12);
   try {
-    const open = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: backupUtf8Bytes(partRef) }, key, body);
+    const open = await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as unknown as BufferSource, additionalData: aad as unknown as BufferSource }, key, body as unknown as BufferSource);
     return ownedBackupBytes(new Uint8Array(open));
   } catch (cause) {
     failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite ciphertext fails authenticated decryption", false, {}, cause);
@@ -95,24 +92,18 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) failBackup("BACKUP_INPUT_INVALID", "backup attempt number is invalid");
   const keyGeneration = assertBackupIdentifier(input.key_generation, "encryption key generation");
   const primaryDomain = assertBackupIdentifier(input.primary_failure_domain, "primary failure domain");
+  assertAes256GcmKey(input.encryption_key);
+  const policy = assertDestinationPolicy(input.destination_policy);
+  if (policy.destination_id.length === 0) failBackup("BACKUP_INPUT_INVALID", "destination policy is empty");
   const nowMs = input.now_ms ?? Date.now();
   const now = backupIsoDateTime(nowMs);
   const signal = input.signal;
   const draft = input.draft;
   if (draft.part_index.length === 0) failBackup("BACKUP_INPUT_INVALID", "backup draft carries no audited parts");
-
+  if (draft.vector_digest.length !== 64) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup draft carries no complete authority vector binding");
+  const policyDigest = await destinationPolicyDigest(policy);
   const descriptor = await input.adapter.describe();
-  assertBackupIdentifier(descriptor.destination_id, "offsite destination identity");
-  assertBackupIdentifier(descriptor.failure_domain, "offsite failure domain");
-  if (descriptor.failure_domain === primaryDomain) {
-    failBackup("BACKUP_OFFSITE_INADMISSIBLE", "offsite destination shares the primary failure domain", false, { destination: descriptor.destination_id });
-  }
-  if (!descriptor.supports_deletion_journal || !descriptor.supports_expiry) {
-    failBackup("BACKUP_OFFSITE_INADMISSIBLE", "offsite destination cannot honor purge/expiry", false, { destination: descriptor.destination_id });
-  }
-  if (descriptor.legal_hold_ref !== undefined) {
-    failBackup("BACKUP_OFFSITE_INADMISSIBLE", "offsite destination reports a legal retention conflict", false, { destination: descriptor.destination_id });
-  }
+  reconcileDestinationDescriptor(policy, descriptor, primaryDomain);
   if (descriptor.expires_at !== undefined && Date.parse(descriptor.expires_at) <= nowMs) {
     failBackup("BACKUP_OFFSITE_EXPIRED", "offsite destination admissibility has expired", false, { destination: descriptor.destination_id });
   }
@@ -120,7 +111,15 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     throw new BackupError("BACKUP_PURGE_BLOCKED", "offsite destination is retention-locked; copy withheld for review, nothing deleted", false,
       { destination: descriptor.destination_id, next_review_at: descriptor.expires_at ?? draft.expires_at });
   }
-
+  const usedNonces = new Set<string>();
+  const freshNonce = (): Uint8Array<ArrayBuffer> => {
+    const nonce = input.generate_nonce !== undefined ? ownedBackupBytes(input.generate_nonce()) : ownedBackupBytes(crypto.getRandomValues(new Uint8Array(12)));
+    if (nonce.byteLength !== 12) failBackup("BACKUP_KEY_INVALID", "offsite nonce must be 96 bits");
+    const hex = [...nonce].map((b) => b.toString(16).padStart(2, "0")).join("");
+    if (usedNonces.has(hex)) failBackup("BACKUP_NONCE_COLLISION", "offsite nonce reuse detected within the copy operation", false, {});
+    usedNonces.add(hex);
+    return nonce;
+  };
   let reconciled = false;
   const remoteRefs: string[] = [];
   for (const part of draft.part_index) {
@@ -128,9 +127,15 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     const partRef = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
     const reopened = await ports.part_sink.open(part.part_key);
     if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent before offsite copy", false, { manifest: part.manifest });
-    const plaintext = await bufferBounded(reopened.body, limits.max_object_bytes);
+    const plaintext = await bufferBackupStream(reopened.body, limits.max_object_bytes);
     if (plaintext.byteLength !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part size disagrees before offsite copy", false, { manifest: part.manifest });
-    const ciphertext = await encryptBackupPart(input.encryption_key, partRef, plaintext);
+    const aad = await canonicalAad({
+      epoch_id: draft.epoch_id, manifest: part.manifest, index: part.index, part_ref: partRef,
+      part_sha256: part.sha256, destination_policy_digest: policyDigest,
+      key_generation: keyGeneration, expires_at: draft.expires_at,
+      retention_policy_ref: policy.retention_policy_ref, expiry_identity: policy.expiry_identity,
+    });
+    const ciphertext = await encryptBackupPart(input.encryption_key, aad, freshNonce(), plaintext);
     const stored = { content_digest: part.sha256, size_bytes: part.size_bytes, key_generation: keyGeneration, epoch_id: draft.epoch_id, expires_at: draft.expires_at };
     let acknowledged = false;
     try {
@@ -140,8 +145,6 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
       if (!(cause instanceof BackupError) || cause.code !== "BACKUP_OFFSITE_UNCERTAIN") throw cause;
     }
     if (!acknowledged) {
-      // Lost/unknown ACK reconciles via the stable intent+content digest:
-      // read back the same identity instead of writing a blind second copy.
       const existing = await input.adapter.get(partRef);
       if (existing === null) {
         await input.adapter.put(partRef, ciphertext, stored);
@@ -154,17 +157,16 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     }
     const remote = await input.adapter.get(partRef);
     if (remote === null) failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part is absent on readback", true, {});
-    if (remote.stored.content_digest !== part.sha256 || remote.stored.size_bytes !== part.size_bytes || remote.stored.key_generation !== keyGeneration || remote.stored.epoch_id !== draft.epoch_id) {
+    if (remote.stored.content_digest !== part.sha256 || remote.stored.size_bytes !== part.size_bytes || remote.stored.key_generation !== keyGeneration || remote.stored.epoch_id !== draft.epoch_id || remote.stored.expires_at !== draft.expires_at) {
       failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part metadata was altered", false, {});
     }
-    const decrypted = await decryptBackupPart(input.encryption_key, partRef, remote.ciphertext);
+    const decrypted = await decryptBackupPart(input.encryption_key, aad, remote.ciphertext);
     if (decrypted.byteLength !== part.size_bytes || await backupSha256Hex(decrypted) !== part.sha256) {
       failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part plaintext digest disagrees on readback", false, {});
     }
     remoteRefs.push(partRef);
   }
-
-  const offsiteCopyRef = `offsite-${(await backupSha256Hex(`offsite-copy\u0000${draft.epoch_id}\u0000${descriptor.destination_id}\u0000${keyGeneration}\u0000${remoteRefs.join(",")}`)).slice(0, 48)}`;
+  const offsiteCopyRef = `offsite-${(await backupSha256Hex(`offsite-copy\u0000${draft.epoch_id}\u0000${draft.vector_digest}\u0000${policyDigest}\u0000${policy.authorization_receipt_ref}\u0000${keyGeneration}\u0000${remoteRefs.join(",")}`)).slice(0, 48)}`;
   const readbackDigest = await backupSha256Hex(remoteRefs.join("\n"));
   const epoch: BackupEpoch = BackupEpochSchema.parse({
     epoch_ref: { id: draft.epoch_id, revision: 1 },
@@ -185,14 +187,11 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   });
   const attempt = backupAttempt(intent, attemptNumber, "SUCCEEDED", now);
   const receipt = backupReceipt(intent, attempt.attempt_id, "SUCCEEDED",
-    [draft.epoch_id, offsiteCopyRef], [draft.audit_sample_receipt_ref, readbackDigest], reconciled,
-    reconciled ? ["OFFSITE_ACK_RECONCILED"] : [], now);
+    [draft.epoch_id, offsiteCopyRef], [draft.audit_sample_receipt_ref, readbackDigest, policyDigest, policy.authorization_receipt_ref], reconciled,
+    reconciled ? ["OFFSITE_ACK_RECONCILED", `POLICY:${policy.policy_version}`] : [`POLICY:${policy.policy_version}`], now);
   return { epoch, offsite_copy_ref: offsiteCopyRef, readback_digest: readbackDigest, attempt, receipt };
 }
 
-// Controlled encrypted destination adapter for tests: real AES-GCM bytes,
-// real readback and a real deletion journal, with no external credentials
-// and no live-provider receipt claim.
 export interface ControlledOffsiteFaults {
   readonly lose_ack_after_puts?: number;
   readonly corrupt_readback?: "none" | "bytes" | "truncate" | "metadata";
@@ -216,6 +215,7 @@ export function createControlledOffsiteAdapter(options: {
 }): ControlledOffsiteAdapter {
   const objects = new Map<string, { readonly ciphertext: Uint8Array<ArrayBuffer>; readonly stored: Omit<OffsiteStoredPart, "ciphertext"> }>();
   const journal: { readonly journal_ref: string; readonly part_ref: string; readonly reason: string }[] = [];
+  const tombstones = new Set<string>();
   let puts = 0;
   let lostAcks = 0;
   const loseAfter = options.faults?.lose_ack_after_puts ?? 0;
@@ -240,6 +240,20 @@ export function createControlledOffsiteAdapter(options: {
     },
     async put(part_ref, ciphertext, stored): Promise<{ readonly ack_ref: string }> {
       puts += 1;
+      if (tombstones.has(part_ref)) {
+        throw new BackupError("BACKUP_RESURRECTION_REFUSED", "offsite immutable ref was terminally expired; resurrection refused", false, {});
+      }
+      if (objects.has(part_ref)) {
+        const prior = objects.get(part_ref) as { readonly ciphertext: Uint8Array<ArrayBuffer>; readonly stored: Omit<OffsiteStoredPart, "ciphertext"> };
+        if (prior.stored.content_digest !== stored.content_digest || prior.stored.size_bytes !== stored.size_bytes || prior.stored.epoch_id !== stored.epoch_id) {
+          throw new BackupError("BACKUP_RESURRECTION_REFUSED", "offsite immutable ref already holds divergent bytes; resurrection refused", false, {});
+        }
+        if (lostAcks < loseAfter) {
+          lostAcks += 1;
+          throw new BackupError("BACKUP_OFFSITE_UNCERTAIN", "controlled offsite acknowledgement was lost after a durable write", true, {});
+        }
+        return { ack_ref: `ack-${part_ref.length}-${puts}` };
+      }
       objects.set(part_ref, { ciphertext: ownedBackupBytes(ciphertext), stored });
       if (lostAcks < loseAfter) {
         lostAcks += 1;
@@ -266,6 +280,7 @@ export function createControlledOffsiteAdapter(options: {
     async delete(part_ref, reason) {
       const journalRef = `journal-${journal.length + 1}-${part_ref.length}`;
       objects.delete(part_ref);
+      tombstones.add(part_ref);
       journal.push({ journal_ref: journalRef, part_ref, reason });
       return { journal_ref: journalRef };
     },

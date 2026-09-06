@@ -5,28 +5,16 @@
     "outDir": "dist",
     "tsBuildInfoFile": "dist/.tsbuildinfo",
     "types": [
-      "@cloudflare/workers-types"
+      "@cloudflare/workers-types",
+      "node"
     ]
   },
   "include": [
-    "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.ts"
   ],
   "references": [
     {
       "path": "../contracts"
-    },
-    {
-      "path": "../domain"
-    },
-    {
-      "path": "../retrieval"
-    },
-    {
-      "path": "../research"
-    },
-    {
-      "path": "../backup-o2"
     }
   ]
 }

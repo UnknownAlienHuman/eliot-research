@@ -13,9 +13,11 @@
     "algorithm": "AES-256-GCM",
     "key_generation_ref": "test-key-generation-1",
     "key_handling": "injected CryptoKey only; never persisted, logged, or embedded in epochs/receipts/fixtures",
+    "key_validation": "AES-GCM secret key, 256-bit strength, encrypt+decrypt usages",
     "iv_bytes": 12,
     "tag_bytes": 16,
-    "aad": "offsite part reference"
+    "aad": "canonical epoch, part ordinal/ref/digest, destination policy digest, key generation, expiry/retention identity",
+    "nonce_uniqueness": "fresh 96-bit nonce per part within the operation; reuse fails with BACKUP_NONCE_COLLISION"
   },
   "semantics": {
     "lost_ack": "reconcile via stable part reference plus content digest; never write a blind second identity",

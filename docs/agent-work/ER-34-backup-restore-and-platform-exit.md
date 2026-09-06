@@ -11,12 +11,15 @@ outside the paths below.
 
 ## Owned paths
 
+- `packages/backup-o2/**`
 - `packages/platform-cloudflare/src/backup.ts`
-- `packages/platform-cloudflare/src/backup-shared.ts`
-- `packages/platform-cloudflare/src/backup-epoch.ts`
-- `packages/platform-cloudflare/src/backup-offsite.ts`
-- `packages/platform-cloudflare/src/backup.test.ts`
 - `infra/backup/**`
+
+Integration dependencies (not owned): `infra/d1/core/migrations/0017_backup_o2_replay_authority.sql`
+is ER-13-owned additive state required for D1 restart-safe replay authority; `scripts/check-boundaries.mjs`,
+`tsconfig.json`, `packages/platform-cloudflare/package.json` and `packages/platform-cloudflare/tsconfig.json`
+are workspace/barrel adjustments only. O2 is IMPLEMENTED_NOT_LIVE; O3 restore/isolation and O4
+source-erasure/purge replay remain explicit fail-closed NOT_IMPLEMENTED with no live receipts.
 
 ## Read only
 
