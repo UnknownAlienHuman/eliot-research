@@ -44,7 +44,8 @@ async function saveReceipt(receipt) {
 export async function deployCloudflare({ confirmLive = false, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
-  verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami } = {}) {
+  verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
+  usageProviders = [] } = {}) {
   const env = { ...environment };
   let input;
   let oauth = null;
@@ -105,12 +106,16 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // before any Worker surface exists; any partial failure aborts before the
   // single Worker deploy, leaving no public workers.dev path
   // (preview_urls=false is enforced by validateGeneratedDeployment).
+  // Injected usage evidence only: forwarded verbatim as `providers` to the
+  // preflight. Absent (default []) the gate keeps today's live-registry,
+  // fail-closed behavior byte-identical; no decision logic changes here.
   {
     const usageGate = await runUsagePreflight({
       env: { ...process.env, ...env },
       nowMs: now(),
       readFile: readWranglerFile ?? read,
       getWhoamiOutput: runWranglerWhoami,
+      providers: usageProviders,
       writeReceipt: false,
       cwd: root,
     });

@@ -15,6 +15,13 @@ import {
   verifyWranglerOAuthAccount,
   WRANGLER_OAUTH_MODE,
 } from "./lib/cloudflare-wrangler-oauth.mjs";
+import {
+  BILLABLE_LIVE_COVERS,
+  collectAccountUsage,
+  createAiSearchInventoryProvider,
+  createBillableUsageProvider,
+  runUsagePreflight,
+} from "./lib/cloudflare-usage-collection.mjs";
 
 const BEARER = "oauth-test-bearer-VALID-0042";
 const ACCOUNT = "test-account";
@@ -54,6 +61,85 @@ const config = {
 };
 const configBytes = Buffer.from(JSON.stringify(config));
 
+// Genuinely admitted usage evidence through the real collector/envelope: the
+// real billing provider over fictional FOCUS v1.3 rows (complete
+// month-start→today cover for every billing metric, triple-mapped, mirroring
+// test-cloudflare-usage-billing.mjs) plus the real AI Search inventory
+// provider for the exact instance count. Fictional account/bearer only; the
+// bearer crosses provider calls in memory and is never persisted.
+function admittedMetricMap() {
+  const map = {};
+  for (const key of BILLABLE_LIVE_COVERS) {
+    map[`fictional_${key}:Fictional ${key}:FictionalUnits`] = key;
+  }
+  return map;
+}
+
+function admittedBillingRows() {
+  const rows = [];
+  for (const key of BILLABLE_LIVE_COVERS) {
+    for (let day = 1; day <= 5; day += 1) {
+      const pad = String(day).padStart(2, "0");
+      const next = String(day + 1).padStart(2, "0");
+      rows.push({
+        BillingAccountId: ACCOUNT,
+        BillingAccountName: "Fictional Account",
+        ChargeCategory: "Usage",
+        ChargeDescription: `Fictional ${key} daily usage`,
+        ChargeFrequency: "Usage-Based",
+        ChargePeriodStart: `2026-09-${pad}T00:00:00.000Z`,
+        ChargePeriodEnd: `2026-09-${next}T00:00:00.000Z`,
+        ConsumedQuantity: 1,
+        ConsumedUnit: "FictionalUnits",
+        x_BillableMetricId: `fictional_${key}`,
+        x_BillableMetricName: `Fictional ${key}`,
+      });
+    }
+  }
+  return rows;
+}
+
+function admittedUsageProviders() {
+  const billing = createBillableUsageProvider({
+    group: "billable-usage",
+    covers: [...BILLABLE_LIVE_COVERS],
+    endpoint: (id, from, to) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=${from}&to=${to}`,
+    fetchImpl: async () => ({ status: 200, json: async () => ({ success: true, result: admittedBillingRows() }) }),
+    metricMap: admittedMetricMap(),
+  });
+  const inventory = createAiSearchInventoryProvider({
+    group: "ai-search-inventory-list",
+    covers: ["ai_search_instances"],
+    endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
+    fetchImpl: async () => ({
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [1, 2, 3, 4, 5].map((n) => ({ id: `fictional-instance-${n}`, name: `fictional-${n}` })),
+        result_info: { page: 1, per_page: 100, count: 5, total_count: 5, total_pages: 1 },
+      }),
+    }),
+  });
+  return [billing, inventory];
+}
+
+// API-token mode exposes no live aggregate by design, so its harness stages a
+// snapshot produced by the real collector over the same providers above and
+// evaluated by the real envelope at the gate (the established provisioner
+// pattern, but collector-generated instead of hand-written).
+async function admittedSnapshotJson() {
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER,
+    expectedAccountId: ACCOUNT,
+    now: NOW,
+    whoamiOutput: `Account ${ACCOUNT} via browser OAuth`,
+    providers: admittedUsageProviders(),
+    source: "test-fixture",
+  });
+  assert.ok(!JSON.stringify(snapshot).includes(BEARER), "staged snapshot leaks the bearer");
+  return JSON.stringify(snapshot);
+}
+
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Wrangler OAuth: ${name}: PASS`); };
 const noBearer = (value, label) => assert.ok(
@@ -88,6 +174,9 @@ function deployHarness(overrides = {}) {
       }
       return globalThis.Response.json({ trace_id: "trace-test", deployment_generation: "git-test", data: { protocol: "eliotr.capabilities.v1", deployment_generation: "git-test", enabled_slices: ["HEALTH", "ACCESS"], disabled_slices: ["RESEARCH"], exact_evidence_resolution_required: true, transport_completion_is_research_completion: false, ingest_live_qualified: false } });
     },
+    // Injected usage evidence for the preflight seam; SEALED-negative tests
+    // override with [] to prove the fail-closed default is intact.
+    usageProviders: admittedUsageProviders(),
     ...overrides,
   };
   return { calls, childTokens, logs, receipts, options };
@@ -161,16 +250,43 @@ await check("bearer injection stays in child env memory, verification env stays 
 
 await check("oauth happy path keeps gate order and bearer out of argv/logs/receipts", async () => {
   const test = deployHarness();
+  // Explicit decision proof through the real gate, not merely non-throw.
+  // Fresh lambdas mirror the harness seams without recording calls, so the
+  // gate-order assertions below observe only the deploy path.
+  const gate = await runUsagePreflight({
+    env: { ...test.options.environment },
+    nowMs: NOW,
+    readFile: async () => validToml(),
+    getWhoamiOutput: async () => `Account ${ACCOUNT} via browser OAuth`,
+    providers: admittedUsageProviders(),
+  });
+  assert.equal(gate.decision, "ADMITTED");
+  assert.deepEqual(gate.evaluation.unknown, []);
   const receipt = await deployCloudflare(test.options);
   assert.ok(receipt.deployment_generation === "git-test");
   assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === BEARER));
   assert.ok(test.calls.indexOf("pnpm check") < test.calls.indexOf("whoami"));
   assert.ok(test.calls.indexOf("whoami") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs --check-only"));
   assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
+  assert.ok(test.calls.includes("save"));
   noBearer(test.calls, "argv");
   noBearer(test.logs, "logs");
   noBearer(test.receipts, "receipts");
   noBearer(process.argv, "process argv");
+});
+
+await check("sealed zero-provider preflight denies before archive and mutation", async () => {
+  const test = deployHarness({ usageProviders: [] });
+  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
+  assert.match(error.message, /SEALED/);
+  assert.match(error.message, /Zero billable bindings/);
+  assert.ok(test.calls.includes("pnpm check") && test.calls.includes("whoami"));
+  assert.ok(!test.calls.includes("archive"), "sealed path archived a receipt");
+  assert.ok(!test.calls.includes("save"), "sealed path saved a receipt");
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")), "sealed path ran a provisioner");
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "sealed path made a remote call");
+  assert.equal(test.receipts.length, 0);
+  noBearer(error.message, "error");
 });
 
 await check("expired oauth blocks before any local gate or mutation", async () => {
@@ -205,14 +321,30 @@ await check("wrong profile account fails after gates but before archive and muta
 });
 
 await check("api-token mode stays compatible for CI without whoami", async () => {
+  // Staged admission: the snapshot below was produced by the real collector
+  // over the same FOCUS/inventory providers, so the gate evaluates a
+  // genuinely admitted aggregate through the real envelope. usageProviders
+  // are still supplied (forwarded, unused in api-token mode by design).
+  const staged = await admittedSnapshotJson();
+  noBearer(staged, "staged snapshot");
   const test = deployHarness({
-    environment: { ...baseEnvironment, ELIOTR_CLOUDFLARE_AUTH_MODE: undefined, CLOUDFLARE_API_TOKEN: "secret-token" },
+    environment: {
+      ...baseEnvironment,
+      ELIOTR_CLOUDFLARE_AUTH_MODE: undefined,
+      CLOUDFLARE_API_TOKEN: "secret-token",
+      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
+    },
     runWranglerWhoami: async () => assert.fail("whoami must not run in api-token mode"),
   });
+  const gate = await runUsagePreflight({ env: { ...test.options.environment }, nowMs: NOW, providers: test.options.usageProviders });
+  assert.equal(gate.decision, "ADMITTED");
+  assert.deepEqual(gate.evaluation.unknown, []);
   const receipt = await deployCloudflare(test.options);
   assert.ok(receipt.deployment_generation === "git-test");
   assert.ok(test.childTokens.every((token) => token === "secret-token"));
   assert.ok(!test.calls.includes("whoami"));
+  assert.ok(test.calls.includes("save"));
+  noBearer(test.receipts, "receipts");
 });
 
 await check("dry run never touches credentials or the network", async () => {
