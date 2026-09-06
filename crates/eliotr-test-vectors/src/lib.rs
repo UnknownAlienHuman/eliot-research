@@ -11,6 +11,7 @@ mod model;
 mod owner_token;
 mod parser;
 mod residency_key;
+mod scope_snapshot_identity;
 mod stable_id;
 
 pub use canonical_body::*;
@@ -23,6 +24,7 @@ pub use model::{
 pub use owner_token::*;
 pub use parser::{VectorParseError, VectorParseErrorKind, parse_vector_set};
 pub use residency_key::*;
+pub use scope_snapshot_identity::*;
 pub use stable_id::*;
 
 /// Exact committed M1 fixture bytes embedded into native Rust and Rust/Wasm builds.
