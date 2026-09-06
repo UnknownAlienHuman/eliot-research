@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CHROMIUM_UNSAFE_PORTS } from "./local-owner-bridge.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const CORE = resolve(ROOT, "apps/eliotr-core");
@@ -295,6 +296,7 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
 
 export function devArguments(paths, port = 8787) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error("Local port must be an integer in [1024, 65535]");
+  if (CHROMIUM_UNSAFE_PORTS.has(port)) throw new Error(`Local port ${port} is Chromium-unsafe (ERR_UNSAFE_PORT); refusing to bind`);
   return wranglerArgs(paths, ["dev", "--ip", "127.0.0.1", "--port", String(port),
     "--inspector-port", "0", "--show-interactive-dev-session", "false"]);
 }

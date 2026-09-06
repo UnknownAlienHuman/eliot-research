@@ -3,9 +3,10 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { devArguments, localEnvironment, ROOT, signalLocalProcess } from "./local-launch.mjs";
+import { CHROMIUM_SAFE_PORT_RETRIES, isChromiumSafePort } from "./local-owner-bridge.mjs";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 
-async function vacantPort() {
+async function probeEphemeralPort() {
   const server = createServer();
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const port = server.address().port;
@@ -13,8 +14,22 @@ async function vacantPort() {
   return port;
 }
 
+// A port-0 probe may return a Chromium-blocked ephemeral port (observed: 6000 on
+// Windows) or race a concurrent bind. Retry with a fresh probe; every probe is
+// closed before return, so no listener leaks. Bounded: fail-closed, never sleep-loop.
+async function vacantChromiumSafePort({ attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+  let lastError = new Error("No Chromium-safe port probe attempted");
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const port = await probeEphemeralPort();
+    if (isChromiumSafePort(port)) return { port, attempts: attempt };
+    lastError = new Error(`OS assigned Chromium-unsafe ephemeral port ${port}; retrying with a fresh probe`);
+  }
+  throw lastError;
+}
+
 export async function startLocalWorker(paths) {
-  const port = await vacantPort();
+  const probed = await vacantChromiumSafePort();
+  const port = probed.port;
   const child = spawn(process.execPath, devArguments(paths, port), {
     cwd: ROOT, env: localEnvironment(), stdio: ["ignore", "pipe", "pipe"], shell: false,
   });

@@ -19,6 +19,71 @@ const CSP = `default-src 'none'; script-src 'sha256-${createHash("sha256").updat
 const equal = (a, b) => typeof a === "string" && typeof b === "string" &&
   Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 
+/**
+ * Chromium-restricted ports (Chromium src/net/base/port_util.cc: ERR_UNSAFE_PORT).
+ * A loopback listener bound to one of these ports is unreachable from Chromium:
+ * navigation fails with net::ERR_UNSAFE_PORT even though node/fetch connects.
+ * The set errs toward deny across Chromium revisions; all entries are well-known
+ * service ports, never ports this harness assigns deliberately.
+ */
+export const CHROMIUM_UNSAFE_PORTS = new Set([
+  1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79,
+  87, 95, 101, 102, 103, 104, 109, 110, 111, 113, 115, 117, 119, 123, 135, 137,
+  139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532,
+  540, 548, 554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723,
+  2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566, 6665, 6666, 6667, 6668, 6669,
+  6697, 10080,
+]);
+
+export const CHROMIUM_SAFE_PORT_RETRIES = 25;
+
+export function isChromiumSafePort(port) {
+  return Number.isSafeInteger(port) && port >= 1024 && port <= 65535 && !CHROMIUM_UNSAFE_PORTS.has(port);
+}
+
+export function assertChromiumSafePort(port, label = "local port") {
+  if (!isChromiumSafePort(port)) {
+    throw new Error(`${label} ${Number.isSafeInteger(port) ? port : String(port)} is Chromium-unsafe or out of range; refusing to bind`);
+  }
+  return port;
+}
+
+async function closeServerQuiet(server) {
+  try { await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
+  catch { /* Retry loop owns the error; a per-attempt close failure is best-effort. */ }
+  try { server.closeAllConnections?.(); } catch { /* Best-effort. */ }
+}
+
+/**
+ * Bind a loopback HTTP listener with Chromium-safety validation and bounded retry.
+ * `listen(candidate)` must bind exactly that port (0 = OS ephemeral) and resolve
+ * `{ server, port }`; it rejects on collision/denial. An explicitly requested port
+ * is fail-closed when Chromium-unsafe (no retry, no fallback). Port 0 retries when
+ * the OS assigns a Chromium-unsafe ephemeral port or a collision/race intervenes.
+ * Every rejected attempt closes its listener before the next attempt, so no
+ * listener or process leaks across retries or failures. Returns `{ server, port,
+ * attempts }` where attempts counts binds including the successful one.
+ */
+export async function bindChromiumSafeListener(listen, { port = 0, attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("Invalid local bridge port");
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100) throw new Error("Invalid Chromium-safe retry bound");
+  if (port !== 0) assertChromiumSafePort(port, "requested local port");
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    let bound;
+    try {
+      bound = await listen(port);
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    if (isChromiumSafePort(bound.port)) return { server: bound.server, port: bound.port, attempts: attempt };
+    lastError = new Error(`OS assigned Chromium-unsafe ephemeral port ${bound.port}; retrying with a fresh bind`);
+    await closeServerQuiet(bound.server);
+  }
+  throw lastError ?? new Error("Chromium-safe bind failed without an attempt error");
+}
+
 function headers(response, type = "application/json; charset=utf-8") {
   response.setHeader("content-type", type);
   response.setHeader("cache-control", "no-store");
@@ -68,6 +133,9 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535 ||
       !Number.isSafeInteger(lifetimeMs) || lifetimeMs < 1 || lifetimeMs > 900000 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 15000) throw new Error("Invalid local bridge limits");
+  // Fail closed before any identity/network work: Chromium cannot reach an
+  // explicitly unsafe port (ERR_UNSAFE_PORT), so never bind or advertise one.
+  if (port !== 0) assertChromiumSafePort(port, "requested owner bridge port");
   // The running Worker verifies signature, issuer, audience, owner class and time. No token claims are trusted here.
   const identity = await readOwnerIdentity(workerOrigin, token, generation, { fetchImpl, now });
   const expiresAt = Math.min(Date.parse(identity.expires_at), now() + lifetimeMs);
@@ -167,17 +235,34 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
     } catch { problem(response, 502, "LOCAL_REQUEST_FAILED"); }
     finally { clearTimeout(timer); response.removeListener("close", disconnected); active -= 1; }
   };
-  const server = createServer({ maxHeaderSize: 32768, requestTimeout: 20000, headersTimeout: 10000 },
-    (request, response) => { void handler(request, response); });
-  server.on("upgrade", (_request, socket) => socket.destroy());
-  server.on("clientError", (_error, socket) => socket.destroy());
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(port, "127.0.0.1", resolve); });
-  origin = `http://127.0.0.1:${server.address().port}`;
+  const createBridgeServer = () => {
+    const candidate = createServer({ maxHeaderSize: 32768, requestTimeout: 20000, headersTimeout: 10000 },
+      (request, response) => { void handler(request, response); });
+    candidate.on("upgrade", (_request, socket) => socket.destroy());
+    candidate.on("clientError", (_error, socket) => socket.destroy());
+    return candidate;
+  };
+  // Chromium-safe bind: an explicit port fails closed when unsafe; port 0 retries
+  // a Chromium-blocked ephemeral assignment or a collision/race with a fresh bind.
+  // No listener leaks across attempts: bindChromiumSafeListener closes rejects.
+  const listenAttempt = (candidate) => new Promise((resolve, reject) => {
+    const candidateServer = createBridgeServer();
+    candidateServer.once("error", (error) => {
+      candidateServer.close(() => reject(error));
+    });
+    candidateServer.listen(candidate, "127.0.0.1", () => {
+      resolve({ server: candidateServer, port: candidateServer.address().port });
+    });
+  });
+  const bound = await bindChromiumSafeListener(listenAttempt, { port });
+  const server = bound.server;
+  origin = `http://127.0.0.1:${bound.port}`;
+  const bindAttempts = bound.attempts;
   const expiryTimer = setTimeout(invalidate, Math.max(1, expiresAt - now())); expiryTimer.unref();
   const close = async () => {
     closing = true; invalidate(); clearTimeout(expiryTimer);
     const done = new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     server.closeAllConnections(); await done;
   };
-  return { origin, pairingUrl: `${origin}/__local/#${pairing}`, identity, expiresAt, close };
+  return { origin, pairingUrl: `${origin}/__local/#${pairing}`, identity, expiresAt, bindAttempts, close };
 }

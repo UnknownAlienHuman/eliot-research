@@ -17,6 +17,11 @@ type E2EReceipt = {
   readonly browser_pairing: string;
   readonly browser_logout: string;
   readonly evidence_readback: string;
+  readonly chromium_safe_ports: string;
+  readonly network_ledger: string;
+  readonly ledger_negative: string;
+  readonly jwt_negatives: string;
+  readonly teardown_inventory: unknown;
   readonly live: string;
   readonly browser: unknown;
 };
@@ -48,6 +53,15 @@ test("L1 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "Chromium itself must pair via the one-time bridge flow with HttpOnly/SameSite cookie");
   assert.ok(typeof receipt.browser_logout === "string" && receipt.browser_logout.startsWith("PASS"),
     "Chromium itself must log out via browser-originated request with Set-Cookie clearing and exact 401");
+  assert.equal(receipt.chromium_safe_ports, "PASS", "deterministic Chromium-safe port protocol (unsafe+collision retry, no leak) must pass");
+  assert.ok(typeof receipt.network_ledger === "string" && receipt.network_ledger.startsWith("PASS"),
+    "phase-aware full request/response ledger over all browser traffic must pass");
+  assert.ok(typeof receipt.ledger_negative === "string" && receipt.ledger_negative.startsWith("PASS"),
+    "injected unexpected browser response must trip the ledger closure");
+  assert.ok(typeof receipt.jwt_negatives === "string" && receipt.jwt_negatives.startsWith("PASS"),
+    "real-browser JWT/JWKS negatives with zero D1 mutation must pass");
+  assert.ok(receipt.teardown_inventory !== null && typeof receipt.teardown_inventory === "object",
+    "immutable before/after teardown inventories must be recorded");
   assert.equal(receipt.live, "NOT_EXECUTED", "remote/live remains NOT_EXECUTED");
   assert.ok(typeof receipt.browser === "string" && receipt.browser.length > 0, "real Chromium executable must be recorded");
   console.warn(`owner-e2e: ${receipt.isolated_setup}/${receipt.unauth_denied}/${receipt.authorized_library}/${receipt.logout} live=${receipt.live}`);
