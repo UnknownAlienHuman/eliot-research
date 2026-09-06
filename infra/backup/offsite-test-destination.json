@@ -17,7 +17,9 @@
     "iv_bytes": 12,
     "tag_bytes": 16,
     "aad": "canonical epoch, part ordinal/ref/digest, destination policy digest, key generation, expiry/retention identity",
-    "nonce_uniqueness": "fresh 96-bit nonce per part within the operation; reuse fails with BACKUP_NONCE_COLLISION"
+    "nonce_uniqueness": "deterministic 96-bit nonce per (key generation, copy, part ref, content digest, policy) or controller-allocated, checkpointed in D1 with resume; reuse across parts/restarts fails with BACKUP_NONCE_COLLISION (no in-memory Set)",
+    "authority": "controller-owned D1 destination authority bound to initiating principal plus approved policy decision and authorization receipt; caller refs never self-authorize; controller-disciplined clock (caller skew fails closed)",
+    "replay": "committed copies replay persisted receipt/epoch bytes verbatim; terminal expiry re-proves absence of every remote part"
   },
   "semantics": {
     "lost_ack": "reconcile via stable part reference plus content digest; never write a blind second identity",
