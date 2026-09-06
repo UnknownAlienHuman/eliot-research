@@ -103,10 +103,10 @@
     {
       "export_name": "BundleAdmissionReceiptSchema",
       "family": "normalized-bundle",
-      "json_schema_sha256": "4d3985fcb9140a9ffb1798a4b24b9a0397eb265e46853a0cd25e9974bec370b7",
+      "json_schema_sha256": "63cb0a089617be58f382e79840042f1740a97d15b86eb3c40d68bb316999b3a3",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -763,10 +763,10 @@
     {
       "export_name": "NormalizedBundleManifestSchema",
       "family": "normalized-bundle",
-      "json_schema_sha256": "a0881148d5dd862769a3609d82553d340fc1e437d6d9de3b8b45da0a7f20ee68",
+      "json_schema_sha256": "38a2531ad24911d2b9b78a03138faff15fedf760f6d98cb8ae68d0384d180806",
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -907,6 +907,16 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "PromotedObjectReadbackSchema",
+      "family": "normalized-bundle",
+      "json_schema_sha256": "333446038f8751d4d607bb8cdc78074dea4da1c7684607ba9f0c170663721411",
+      "kind": "OBJECT",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:promoted-object-readback:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1294,5 +1304,5 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
   "registry_generation": 2,
-  "schema_count": 129
+  "schema_count": 130
 }

@@ -7,6 +7,7 @@ import initial from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
 import admission from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
 import evidence from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
 import navigation from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
+import orientation from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?raw";
 
 export const db = (env as unknown as { CORE_DB: D1Database }).CORE_DB;
 export const NOW = Date.parse("2026-09-05T00:00:00.000Z");
@@ -29,6 +30,30 @@ export async function setupDatabase(): Promise<void> {
   await db.prepare(ddl(admission, "bundle_ingest_operation")).run();
   await db.prepare(ddl(admission, "source_admission_decision")).run();
   await db.prepare(ddl(evidence, "scope_access_grant")).run();
+  // N1 FIX3 E2E tables, byte-identical DDL extracted from the current
+  // migrations: the real ingest commit guard path and the real Worker
+  // orientation route both execute against these rows. No migration change.
+  for (const table of ["purge_ledger", "source_readiness", "operation_intent", "operation_attempt",
+    "operation_receipt", "outbox", "project", "project_source_membership", "source_tag"]) {
+    await db.prepare(ddl(initial, table)).run();
+  }
+  for (const table of ["source_admission_policy", "source_acquisition_candidate", "qualification_report",
+    "bundle_ingest_commit_guard"]) {
+    await db.prepare(ddl(admission, table)).run();
+  }
+  // 0011 owner orientation wholesale (tables, indexes, guard/epoch triggers and
+  // the epoch singleton seed). The trailing schema_state marker is skipped: the
+  // subset harness has no schema_state table and the E2E asserts behavior, not
+  // the version marker. Trigger bodies execute against actual Miniflare D1.
+  const cleanedOrientation = orientation.replace(/^--.*$/gmu, "");
+  const orientationPattern = /CREATE TABLE[\s\S]*?\) STRICT;|CREATE TRIGGER[\s\S]*?END;|CREATE INDEX[\s\S]*?;|INSERT INTO orientation_authority_epoch[\s\S]*?;/gu;
+  const orientationStatements = cleanedOrientation.match(orientationPattern) ?? [];
+  for (const statement of orientationStatements) {
+    await db.prepare(statement).run();
+  }
+  if (cleanedOrientation.replace(orientationPattern, "").replace(/UPDATE schema_state[\s\S]*?;/u, "").trim()) {
+    throw new Error("unexecuted owner orientation migration statement");
+  }
   // The migration's entire statements (including trigger bodies) execute against actual Miniflare D1.
   const cleaned = navigation.replace(/^--.*$/gmu, "");
   const pattern = /CREATE TABLE[\s\S]*?\) STRICT;|CREATE TRIGGER[\s\S]*?\nEND;/gu;
@@ -38,8 +63,12 @@ export async function setupDatabase(): Promise<void> {
   }
 }
 export async function clearDatabase(): Promise<void> {
-  for (const table of ["navigation_artifact", "evidence_handle", "scope_access_grant", "scope_snapshot", "source_admission_decision",
-    "bundle_ingest_operation", "source_revision", "source", "source_namespace_ownership"]) await db.prepare(`DELETE FROM ${table}`).run();
+  for (const table of ["navigation_artifact", "evidence_handle", "scope_access_grant", "orientation_request",
+    "scope_snapshot", "scope_read_policy", "source_admission_decision", "qualification_report",
+    "bundle_ingest_operation", "bundle_ingest_commit_guard", "source_acquisition_candidate",
+    "source_readiness", "operation_receipt", "operation_attempt", "operation_intent", "outbox",
+    "project_source_membership", "source_tag", "project", "purge_ledger",
+    "source_revision", "source", "source_namespace_ownership", "source_admission_policy"]) await db.prepare(`DELETE FROM ${table}`).run();
 }
 async function insert(table: string, fields: Record<string, string | number | null>): Promise<void> {
   await db.prepare(`INSERT INTO ${table} (${Object.keys(fields).join(",")}) VALUES (${Object.keys(fields).map((_, i) => `?${i + 1}`).join(",")})`)

@@ -19,10 +19,18 @@ interface StagedBundle {
   readonly authority: Record<string, unknown>;
   readonly key: string;
   readonly manifestKey: string;
+  readonly hashesKey: string;
   readonly bytes: Uint8Array;
   readonly digest: string;
   readonly contentResidencyDigest: string;
   readonly manifestDigest: string;
+  readonly receiptJson: string;
+  readonly receiptSha256: string;
+}
+
+function versionOf(object: R2Object | null): Record<string, string> {
+  const version = (object as unknown as { version?: unknown } | null)?.version;
+  return typeof version === "string" && version.length > 0 ? { version } : {};
 }
 
 async function shaHex(value: string | Uint8Array): Promise<string> {
@@ -82,30 +90,78 @@ async function stageBundle(ref: string, markdown: string, metadata: Record<strin
       .bind(contentResidencyDigest, newJson, newSha, ref).run();
   }
   const updatedRevision = { ...revision, object_residency_key_digest: contentResidencyDigest, normalized_artifact_ref: manifestKey };
-  await bucket.put(key, bytes, { httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+  const contentPut = await bucket.put(key, bytes, { httpMetadata: { contentType: "text/markdown; charset=utf-8" },
     customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(bytes.byteLength),
       eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
       source_owner_generation: revision.source_owner_generation,
       admission_receipt_ref: `decision-${ref}`, ...metadata } });
-  await bucket.put(manifestKey, manifestBytes, { httpMetadata: { contentType: "application/json; charset=utf-8" },
+  const manifestPut = await bucket.put(manifestKey, manifestBytes, { httpMetadata: { contentType: "application/json; charset=utf-8" },
     customMetadata: { eliotr_sha256: manifestDigest, eliotr_size_bytes: String(manifestBytes.byteLength),
       eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
       source_owner_generation: revision.source_owner_generation,
       admission_receipt_ref: `decision-${ref}` } });
+  // Subsidiary staging keeps the production three-file bundle shape and the
+  // durable per-file promotion readbacks (key, residency digest, digest, size,
+  // media type, ETag + version) inside the canonical admission receipt JSON.
+  // The FIX3 acceptance E2E below produces these rows through the real ingest
+  // validation, promotion and guarded commit path instead of this helper.
+  const hashesText = `${digest}  content.md\n${manifestDigest}  manifest.json\n`;
+  const hashesBytes = new TextEncoder().encode(hashesText);
+  const hashesSha = await shaHex(hashesBytes);
+  const hashesResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
+    content_digest: { algorithm: "sha256", digest: hashesSha } });
+  const hashesKey = await canonicalNormalizedBundleKey(hashesResidencyDigest, identity, "hashes.sha256");
+  const hashesPut = await bucket.put(hashesKey, hashesBytes, { httpMetadata: { contentType: "text/plain; charset=utf-8" },
+    customMetadata: { eliotr_sha256: hashesSha, eliotr_size_bytes: String(hashesBytes.byteLength),
+      eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
+      source_owner_generation: revision.source_owner_generation,
+      admission_receipt_ref: `decision-${ref}` } });
+  if (!contentPut?.etag || !manifestPut?.etag || !hashesPut?.etag) throw new Error("staged R2 readback lost its ETag");
+  const receipt = {
+    operation_id: `op-${ref}`, manifest_sha256: manifestDigest, source_revision_ref: ref,
+    normalized_artifact_ref: manifestKey, object_residency_key_digest: contentResidencyDigest,
+    decision: "ADMITTED", reason_codes: [] as string[], readback_sha256: await shaHex(`readback-${ref}`),
+    promoted_objects: [
+      { logical_path: "content.md", canonical_key: key, residency_key_digest: contentResidencyDigest,
+        sha256: digest, size_bytes: bytes.byteLength, etag: contentPut.etag,
+        ...versionOf(contentPut), content_type: "text/markdown; charset=utf-8" },
+      { logical_path: "hashes.sha256", canonical_key: hashesKey, residency_key_digest: hashesResidencyDigest,
+        sha256: hashesSha, size_bytes: hashesBytes.byteLength, etag: hashesPut.etag,
+        ...versionOf(hashesPut), content_type: "text/plain; charset=utf-8" },
+      { logical_path: "manifest.json", canonical_key: manifestKey, residency_key_digest: manifestResidencyDigest,
+        sha256: manifestDigest, size_bytes: manifestBytes.byteLength, etag: manifestPut.etag,
+        ...versionOf(manifestPut), content_type: "application/json; charset=utf-8" },
+    ],
+    committed_at: TIME,
+  };
+  const receiptJson = canonicalEvidenceJson(receipt);
+  const receiptSha256 = await shaHex(receiptJson);
+  await db.prepare("UPDATE bundle_ingest_operation SET bundle_receipt_json=?1, bundle_receipt_sha256=?2, " +
+    "promotion_receipt_ref=?3 WHERE operation_id=?4")
+    .bind(receiptJson, receiptSha256, `promotion:fixture-${ref}`, `op-${ref}`).run();
+  await db.prepare("INSERT INTO scope_read_policy (source_namespace_id, principal_ref, client_class, policy_ref, " +
+    "generation, allowed_use_json, disclosure_ceiling, state, expires_at, created_at) VALUES " +
+    "(?1,'owner-1','owner_pwa',?2,1,'[\"research\"]','private','ACTIVE','2027-09-05T00:00:00.000Z',?3) " +
+    "ON CONFLICT(source_namespace_id,principal_ref,client_class) DO NOTHING")
+    .bind(revision.source_namespace_id, `read-${ref}`, TIME).run();
   const authority = { source_id: revision.source_id, owner_system_id: "owner-system-1",
     source_namespace_id: revision.source_namespace_id, source_owner_generation: revision.source_owner_generation,
     source_revision_ref: ref, source_title: "Rust memory", source_class: "document", content_sha256: digest,
     object_residency_key_digest: contentResidencyDigest, normalized_artifact_ref: manifestKey,
     purge_state: "LIVE", admission_receipt_ref: `decision-${ref}`,
     disclosure_ceiling: "private", allowed_use: ["research"] };
-  return { revision: updatedRevision, authority, key, manifestKey, bytes, digest,
-    contentResidencyDigest, manifestDigest };
+  return { revision: updatedRevision, authority, key, manifestKey, hashesKey, bytes, digest,
+    contentResidencyDigest, manifestDigest, receiptJson, receiptSha256 };
 }
 
 function contourSource(staged: StagedBundle): OrientationSource {
   return { revision: staged.revision, authority: staged.authority,
-    policy: { disclosure_ceiling: "private" }, policy_uses: ["research"],
-    policy_closure_ref: "policy-closure-1", title: "Rust memory", kind: "document" } as unknown as OrientationSource;
+    policy: { source_namespace_id: (staged.revision as { source_namespace_id: string }).source_namespace_id,
+      policy_ref: "read-1", generation: 1, allowed_use_json: '["research"]',
+      disclosure_ceiling: "private", expires_at: "2027-09-05T00:00:00.000Z" },
+    policy_uses: ["research"],
+    policy_closure_ref: "policy-closure-1", title: "Rust memory", kind: "document",
+    bundle_admission: null } as unknown as OrientationSource;
 }
 
 async function stageManifest(ref: string, markdownDigest: string, mappings: string | undefined,
@@ -139,7 +195,7 @@ async function stageManifest(ref: string, markdownDigest: string, mappings: stri
     customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(size), eliotr_immutable: "true",
       source_namespace_id: `namespace-${ref}`, source_owner_generation: "owner-generation-1",
       admission_receipt_ref: `decision-${ref}` } });
-  await bucket.put(manifestKey, manifestBytes, jsonMetadataFor(manifestDigest, manifestBytes.byteLength));
+  const manifestPut = await bucket.put(manifestKey, manifestBytes, jsonMetadataFor(manifestDigest, manifestBytes.byteLength));
   await db.prepare("UPDATE source_revision SET normalized_artifact_ref=?1 WHERE source_revision_ref=?2")
     .bind(manifestKey, ref).run();
   if (stageMap && mappings !== undefined) {
@@ -148,7 +204,30 @@ async function stageManifest(ref: string, markdownDigest: string, mappings: stri
     const mapResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
       content_digest: { algorithm: "sha256", digest: mapSha } });
     const mapKey = await canonicalNormalizedBundleKey(mapResidencyDigest, identity, mappings);
-    await bucket.put(mapKey, mapBytes, jsonMetadataFor(mapSha, mapBytes.byteLength));
+    const mapPut = await bucket.put(mapKey, mapBytes, jsonMetadataFor(mapSha, mapBytes.byteLength));
+    if (!manifestPut?.etag || !mapPut?.etag) throw new Error("staged manifest/map readback lost its ETag");
+    // An honestly re-staged manifest extends the durable receipt (replaced
+    // manifest entry plus the new map entry); a forged manifest that skips
+    // this step keeps a stale receipt and fails the ref/receipt reconciliation.
+    const receiptRow = await db.prepare("SELECT bundle_receipt_json FROM bundle_ingest_operation WHERE operation_id=?1")
+      .bind(`op-${ref}`).first<{ bundle_receipt_json: string }>();
+    if (!receiptRow) throw new Error("staged bundle has no durable receipt");
+    const receipt = JSON.parse(receiptRow.bundle_receipt_json) as {
+      promoted_objects: Record<string, unknown>[]; normalized_artifact_ref: string; manifest_sha256: string };
+    receipt.normalized_artifact_ref = manifestKey;
+    receipt.manifest_sha256 = manifestDigest;
+    receipt.promoted_objects = [
+      ...receipt.promoted_objects.filter((entry) => entry.logical_path !== "manifest.json" && entry.logical_path !== mappings),
+      { logical_path: "manifest.json", canonical_key: manifestKey, residency_key_digest: manifestResidencyDigest,
+        sha256: manifestDigest, size_bytes: manifestBytes.byteLength, etag: manifestPut.etag,
+        ...versionOf(manifestPut), content_type: "application/json; charset=utf-8" },
+      { logical_path: mappings, canonical_key: mapKey, residency_key_digest: mapResidencyDigest,
+        sha256: mapSha, size_bytes: mapBytes.byteLength, etag: mapPut.etag,
+        ...versionOf(mapPut), content_type: "application/json; charset=utf-8" },
+    ].sort((left, right) => String(left.logical_path).localeCompare(String(right.logical_path)));
+    const receiptJson = canonicalEvidenceJson(receipt);
+    await db.prepare("UPDATE bundle_ingest_operation SET bundle_receipt_json=?1, bundle_receipt_sha256=?2 WHERE operation_id=?3")
+      .bind(receiptJson, await shaHex(receiptJson), `op-${ref}`).run();
   }
   return manifestKey;
 }
@@ -414,13 +493,13 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
       "", "| a | b |", "|---|---|", "| 1 | 2 |", "", "```ts", "const x = 1;", "# not a heading", "```", "",
       "## Заключение", "", "Финальный текст.", ""].join("\n");
     const staged = await stageBundle("revision-r2a", markdown);
-    const outcome = await materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+    const outcome = await materializeStructuralNavigationBatch({ store: f.store, database: db, snapshot: f.snapshot,
       sources: [contourSource(staged)], evidence_bucket: bucket });
     expect(outcome.structural).toHaveLength(1);
     expect(outcome.metadata_only).toHaveLength(0);
     expect(await countArtifacts()).toBe(2);
     // Deterministic replay through the same contour reuses the persisted identities.
-    const replay = await materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+    const replay = await materializeStructuralNavigationBatch({ store: f.store, database: db, snapshot: f.snapshot,
       sources: [contourSource(staged)], evidence_bucket: bucket });
     expect(replay.structural).toHaveLength(1);
     expect(await countArtifacts()).toBe(2);
@@ -453,7 +532,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     expect(expanded.sections.length).toBeGreaterThanOrEqual(3);
     // Overwriting the immutable key with divergent bytes fails closed; the admitted artifacts survive.
     await bucket.put(staged.key, new TextEncoder().encode("# Введение\n\nTampered.\n"));
-    await expect(materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+    await expect(materializeStructuralNavigationBatch({ store: f.store, database: db, snapshot: f.snapshot,
       sources: [contourSource(staged)], evidence_bucket: bucket }))
       .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
     expect(await countArtifacts()).toBe(2);
@@ -461,7 +540,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
   });
   it("fails closed on altered, foreign and missing R2 and manifest bindings", async () => {
     const f = await fixture(["revision-r2b", "revision-r2c", "revision-r2d", "revision-r2e"]); await grant(f.snapshot);
-    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store,
+    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store, database: db,
       snapshot: f.snapshot, sources: [contourSource(staged)], evidence_bucket: bucket });
     // Altered body under the admitted key: stale digest metadata, correct size envelope.
     const altered = await stageBundle("revision-r2b", "# Title B\n\nBody B.\n");
@@ -482,15 +561,15 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     const missingMapKey = await stageManifest("revision-r2d", missingMap.digest, "coordinate-map.json", await shaHex("map"), false);
     const missingMapUpdated: StagedBundle = { ...missingMap,
       authority: { ...missingMap.authority, normalized_artifact_ref: missingMapKey } };
-    await expect(materializeStructuralNavigationBatch({ store: f.store,
+    await expect(materializeStructuralNavigationBatch({ store: f.store, database: db,
       snapshot: f.snapshot, sources: [contourSource(missingMapUpdated)], evidence_bucket: bucket }))
-      .rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_NOT_FOUND" });
+      .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
     // Foreign manifest origin plus altered coordinate digest.
     const foreignManifest = await stageBundle("revision-r2e", "# T\n\nBody.\n");
     const foreignKey = await stageManifest("revision-r2e", foreignManifest.digest, undefined, undefined, false, "foreign-revision");
     const foreignManifestUpdated: StagedBundle = { ...foreignManifest,
       authority: { ...foreignManifest.authority, normalized_artifact_ref: foreignKey } };
-    await expect(materializeStructuralNavigationBatch({ store: f.store,
+    await expect(materializeStructuralNavigationBatch({ store: f.store, database: db,
       snapshot: f.snapshot, sources: [contourSource(foreignManifestUpdated)], evidence_bucket: bucket }))
       .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
     expect(await countArtifacts()).toBe(0);
@@ -502,8 +581,9 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     const exactKey = await stageManifest("revision-r2b", exact.digest, "coordinate-map.json", await shaHex(mapJson), true,
       "revision-r2b", mapJson);
     const exactUpdated: StagedBundle = { ...exact,
+      revision: { ...exact.revision, normalized_artifact_ref: exactKey },
       authority: { ...exact.authority, normalized_artifact_ref: exactKey } };
-    const ok = await materializeStructuralNavigationBatch({ store: f.store,
+    const ok = await materializeStructuralNavigationBatch({ store: f.store, database: db,
       snapshot: f.snapshot, sources: [contourSource(exactUpdated)], evidence_bucket: bucket });
     expect(ok.structural).toHaveLength(1);
     const maps = await f.store.getDocumentMaps(["revision-r2b"]);
@@ -512,7 +592,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
   });
   it("fails closed on LUNA per-file key, MIME, metadata, residency and missing-manifest bindings", async () => {
     const f = await fixture(["revision-luna"]); await grant(f.snapshot);
-    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store,
+    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store, database: db,
       snapshot: f.snapshot, sources: [contourSource(staged)], evidence_bucket: bucket });
     const base = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
     // Distinct per-file promoted keys/digests: manifest key must differ from content key.
@@ -532,19 +612,42 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
         source_revision_ref: "revision-luna" }, "manifest.json");
     expect(wrongKey).not.toBe(restored.manifestKey);
     expect(await bucket.get(wrongKey)).toBeNull();
-    // Wrong MIME on the admitted manifest fails closed.
+    // Wrong MIME on the admitted manifest fails closed: first the rewrite is
+    // rejected as a substituted object at the readback identity, then — after
+    // rebinding the durable receipt to the rewritten bytes — the media-type
+    // gate itself rejects the wrong type. Neither downgrades to metadata.
     const manifestObject = await bucket.get(restored.manifestKey);
     if (!manifestObject) throw new Error("manifest vanished");
     const manifestBytes = new Uint8Array(await manifestObject.arrayBuffer());
-    await bucket.put(restored.manifestKey, manifestBytes, {
+    const wrongMimePut = await bucket.put(restored.manifestKey, manifestBytes, {
       httpMetadata: { contentType: "text/markdown; charset=utf-8" },
       customMetadata: { eliotr_sha256: restored.manifestDigest,
         eliotr_size_bytes: String(manifestBytes.byteLength), eliotr_immutable: "true",
         source_namespace_id: "namespace-revision-luna", source_owner_generation: "owner-generation-1",
         admission_receipt_ref: "decision-revision-luna" } });
+    if (!wrongMimePut?.etag) throw new Error("wrong-MIME readback lost its ETag");
+    await expect(run(restored)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(0);
+    const rebindRow = await db.prepare("SELECT bundle_receipt_json FROM bundle_ingest_operation WHERE operation_id='op-revision-luna'")
+      .first<{ bundle_receipt_json: string }>();
+    if (!rebindRow) throw new Error("durable receipt vanished");
+    const rebindReceipt = JSON.parse(rebindRow.bundle_receipt_json) as { promoted_objects: Record<string, unknown>[] };
+    for (const entry of rebindReceipt.promoted_objects) {
+      if (entry.logical_path === "manifest.json") {
+        entry.etag = wrongMimePut.etag;
+        const rewritten = versionOf(wrongMimePut);
+        if (rewritten.version === undefined) delete entry.version;
+        else entry.version = rewritten.version;
+      }
+    }
+    const rebindJson = canonicalEvidenceJson(rebindReceipt);
+    await db.prepare("UPDATE bundle_ingest_operation SET bundle_receipt_json=?1, bundle_receipt_sha256=?2 WHERE operation_id='op-revision-luna'")
+      .bind(rebindJson, await shaHex(rebindJson)).run();
     await expect(run(restored)).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
     expect(await countArtifacts()).toBe(0);
-    // Missing mandatory namespace metadata fails closed.
+    // Missing mandatory namespace metadata fails closed. The rewrite mints a
+    // fresh R2 version, so the durable readback-identity reconciliation rejects
+    // the substituted object before metadata inspection is even reached.
     const clean = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
     const cleanManifest = await bucket.get(clean.manifestKey);
     if (!cleanManifest) throw new Error("clean manifest vanished");
@@ -569,7 +672,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
   it("denies barrier changes with zero usable artifacts and parses fences honestly", async () => {
     const f = await fixture(["revision-r2f"]); await grant(f.snapshot);
     const staged = await stageBundle("revision-r2f", "# Fences\n\nBody.\n");
-    const run = () => materializeStructuralNavigationBatch({ store: f.store, snapshot: f.snapshot,
+    const run = () => materializeStructuralNavigationBatch({ store: f.store, database: db, snapshot: f.snapshot,
       sources: [contourSource(staged)], evidence_bucket: bucket });
     await db.prepare("UPDATE scope_access_grant SET state='REVOKED'").run();
     await expect(run()).rejects.toBeInstanceOf(Error);

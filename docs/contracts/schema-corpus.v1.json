@@ -2,7 +2,7 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
   "registry_generation": 2,
-  "schema_count": 129,
+  "schema_count": 130,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -1062,17 +1062,78 @@
             "type": "array"
           },
           "__schema5": {
+            "items": {
+              "$ref": "#/$defs/__schema6"
+            },
+            "maxItems": 1024,
+            "minItems": 3,
+            "type": "array"
+          },
+          "__schema6": {
+            "additionalProperties": false,
+            "properties": {
+              "canonical_key": {
+                "maxLength": 1024,
+                "minLength": 1,
+                "type": "string"
+              },
+              "content_type": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "etag": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "logical_path": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "residency_key_digest": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "size_bytes": {
+                "maximum": 9007199254740991,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "version": {
+                "$ref": "#/$defs/__schema7"
+              }
+            },
+            "required": [
+              "logical_path",
+              "canonical_key",
+              "residency_key_digest",
+              "sha256",
+              "size_bytes",
+              "etag",
+              "content_type"
+            ],
+            "type": "object"
+          },
+          "__schema7": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          },
+          "__schema8": {
             "format": "date-time",
             "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g1",
+        "$id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
           "committed_at": {
-            "$ref": "#/$defs/__schema5"
+            "$ref": "#/$defs/__schema8"
           },
           "decision": {
             "$ref": "#/$defs/__schema3"
@@ -1088,6 +1149,9 @@
           },
           "operation_id": {
             "$ref": "#/$defs/__schema0"
+          },
+          "promoted_objects": {
+            "$ref": "#/$defs/__schema5"
           },
           "readback_sha256": {
             "$ref": "#/$defs/__schema1"
@@ -1112,13 +1176,13 @@
         "title": "BundleAdmissionReceipt",
         "type": "object",
         "x-eliotr-family": "normalized-bundle",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -8069,7 +8133,7 @@
             "type": "object"
           }
         },
-        "$id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g1",
+        "$id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g2",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -8115,13 +8179,13 @@
         "title": "NormalizedBundleManifest",
         "type": "object",
         "x-eliotr-family": "normalized-bundle",
-        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-generation": 2,
         "x-eliotr-schema-version": 1,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
-      "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g1",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -9185,6 +9249,81 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:retrieval:projection-item:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "PromotedObjectReadbackSchema",
+      "family": "normalized-bundle",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 512,
+            "minLength": 1,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:normalized-bundle:promoted-object-readback:v1:g2",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "canonical_key": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "content_type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "etag": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "logical_path": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "residency_key_digest": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "sha256": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "size_bytes": {
+            "maximum": 9007199254740991,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "version": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "logical_path",
+          "canonical_key",
+          "residency_key_digest",
+          "sha256",
+          "size_bytes",
+          "etag",
+          "content_type"
+        ],
+        "title": "PromotedObjectReadback",
+        "type": "object",
+        "x-eliotr-family": "normalized-bundle",
+        "x-eliotr-schema-generation": 2,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:promoted-object-readback:v1:g2",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },

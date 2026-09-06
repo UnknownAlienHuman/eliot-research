@@ -78,6 +78,28 @@ export const NormalizedBundleManifestSchema = z.object({
 });
 export type NormalizedBundleManifest = z.infer<typeof NormalizedBundleManifestSchema>;
 
+// Durable per-file promotion readbacks persisted inside the canonical bundle
+// admission receipt JSON (same D1 bundle_receipt_json column: no migration).
+// Each entry mirrors one R2 immutable write observed at promotion: exact logical
+// path, canonical key, per-file residency digest, content digest/size, media type
+// and the R2 readback identity (ETag plus the versioned object identity when the
+// bucket issues one). The field is optional so pre-FIX3 receipts still parse,
+// but new ADMITTED commits and orientation both require it (fail closed).
+const printableToken = z.string().min(1).max(512)
+  .regex(/^[^\u0000-\u001f\u007f]+$/u);
+
+export const PromotedObjectReadbackSchema = z.object({
+  logical_path: z.string().min(1).max(512),
+  canonical_key: z.string().min(1).max(1024),
+  residency_key_digest: Sha256Schema,
+  sha256: Sha256Schema,
+  size_bytes: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  etag: printableToken,
+  version: printableToken.optional(),
+  content_type: z.string().min(1).max(256),
+}).strict();
+export type PromotedObjectReadback = z.infer<typeof PromotedObjectReadbackSchema>;
+
 export const BundleAdmissionReceiptSchema = z.object({
   operation_id: IdentifierSchema,
   manifest_sha256: Sha256Schema,
@@ -87,6 +109,7 @@ export const BundleAdmissionReceiptSchema = z.object({
   decision: z.enum(["ADMITTED", "DUPLICATE", "QUARANTINED", "REJECTED"]),
   reason_codes: z.array(IdentifierSchema),
   readback_sha256: Sha256Schema,
+  promoted_objects: z.array(PromotedObjectReadbackSchema).min(3).max(1024).optional(),
   committed_at: IsoDateTimeSchema,
 }).strict().superRefine((value, context) => {
   const requiresArtifact = value.decision === "ADMITTED" || value.decision === "DUPLICATE";
@@ -103,6 +126,20 @@ export const BundleAdmissionReceiptSchema = z.object({
       path: ["normalized_artifact_ref"],
       message: "must be absent when no canonical artifact was admitted",
     });
+  }
+  if (value.promoted_objects !== undefined) {
+    const paths = value.promoted_objects.map((entry) => entry.logical_path);
+    const keys = value.promoted_objects.map((entry) => entry.canonical_key);
+    const ordered = [...paths].sort();
+    if (paths.some((path, index) => path !== ordered[index])
+      || new Set(paths).size !== paths.length
+      || new Set(keys).size !== keys.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["promoted_objects"],
+        message: "promoted objects must be canonically ordered with unique paths and keys",
+      });
+    }
   }
 });
 export type BundleAdmissionReceipt = z.infer<typeof BundleAdmissionReceiptSchema>;

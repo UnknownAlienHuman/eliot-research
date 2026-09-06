@@ -1586,6 +1586,44 @@
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT",
       "supersedes_schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "BundleAdmissionReceiptSchema",
+      "family": "normalized-bundle",
+      "json_schema_sha256": "63cb0a089617be58f382e79840042f1740a97d15b86eb3c40d68bb316999b3a3",
+      "kind": "OBJECT",
+      "note": "N1 FIX3: optional durable per-file promotion readbacks (logical path, canonical key, residency digest, digest, size, media type, ETag, version) inside the admitted bundle receipt. Pre-FIX3 receipts without the set still parse; new ADMITTED commits and orientation require it.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:normalized-bundle:bundle-admission-receipt:v1:g1"
+    },
+    {
+      "compatibility": "BACKWARD_COMPATIBLE",
+      "export_name": "NormalizedBundleManifestSchema",
+      "family": "normalized-bundle",
+      "json_schema_sha256": "38a2531ad24911d2b9b78a03138faff15fedf760f6d98cb8ae68d0384d180806",
+      "kind": "OBJECT",
+      "note": "N1 FIX3 generation rollover: manifest bytes unchanged; new generation identifier only.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:normalized-bundle:normalized-bundle-manifest:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "PromotedObjectReadbackSchema",
+      "family": "normalized-bundle",
+      "json_schema_sha256": "333446038f8751d4d607bb8cdc78074dea4da1c7684607ba9f0c170663721411",
+      "kind": "OBJECT",
+      "note": "N1 FIX3: first publication of the durable per-file promotion readback bound into admitted bundle receipts.",
+      "schema_generation": 2,
+      "schema_id": "urn:eliotr:contracts:normalized-bundle:promoted-object-readback:v1:g2",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
