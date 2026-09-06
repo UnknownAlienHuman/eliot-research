@@ -30,6 +30,7 @@ production definition and final exit evidence are specified in
 | P2 | PWA has authorized Library-to-Lens, same-tab/reload recovery and read-only exact-folder discovery of lost operation IDs; authorized revision history and explicitly recorded-only channel states are connected; active-index readiness assessment, project editing, remaining failure UI and the full setup-to-import browser/storage loop remain incomplete (#98) | ER-25 | browser session/reconnect and full owner-loop tests with degraded dependencies |
 | P2 | T2/T3 corpus is too small for generation promotion | ER-31, ER-32 | real RU/EN/code cases and adjudicated regression thresholds |
 | P2 | T6 workload profile has not been measured | ER-35 | 5/20/50 readers, D1 contention, index throughput, cost and p95 receipts |
+| P2 | Launch-03 N1 FIX3 leaves packages/platform-cloudflare at 10127/10000 source lines (FIX3 net +129; every changed file below 600 lines), so pnpm budgets:check is red while the FIX3 receipt-to-readback integrity chain is accepted | ER-14, ER-00 (N1 FIX3 follow-up records only, no product-code move) | ER-14/ER-00 capability split of the d1-ingest-commit readback-validation block out of packages/platform-cloudflare (same-package file does not count) or normative cap relief; green pnpm budgets:check with FIX3 behavior unchanged; N2-N4/live stay open |
 
 Rules:
 

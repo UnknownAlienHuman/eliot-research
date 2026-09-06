@@ -4,6 +4,18 @@
   "baseline_commit": "ec21df807a6ee10e4b2b35283224ff172a077cf8",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
   "generated_at": "2026-09-05T05:30:00Z",
+  "launch_budget_exceptions": [
+    {
+      "id": "launch-03-n1-fix3-budget",
+      "package": "packages/platform-cloudflare",
+      "observed_source_lines": 10127,
+      "max_package_source_lines": 10000,
+      "cause": "N1 FIX3 commit 78ed3bad678acebaed245fa18a62c5dcf95bcb5f nets +129 source lines in packages/platform-cloudflare (base 9998 passing); every changed file stays below the 600-line file budget",
+      "gate_effect": "none: scripts/check-budgets.mjs sums whole-package src with no exception hook, so pnpm budgets:check stays red until an ER-14/ER-00 integrator lands the capability split or ER-00 records cap relief",
+      "handoff": "ER-14/ER-00 integrator: extract the readback-validation capability (asPromotionField, assertReadbackToken, validatePromotion, validateBundleReceipt in packages/platform-cloudflare/src/d1-ingest-commit.ts) out of packages/platform-cloudflare in a dependency-direction-compliant split, or record normative cap relief; a same-package new file does not reduce the package total",
+      "scope_guard": "N1 FIX3 integrity logic untouched; N2-N4 and live qualification remain open (IMPLEMENTED_NOT_LIVE)"
+    }
+  ],
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
