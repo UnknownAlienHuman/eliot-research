@@ -719,14 +719,19 @@ function assertNoPrivateStorage(storage, label) {
     `${label}: browser storage must hold no credentials/source bytes/private responses`);
 }
 
-function assertAuthedLedger(harness, label, origin) {
+export function assertAuthedLedger(harness, label, origin) {
   const { consoleErrors, pageErrors, failedRequests } = harness;
   assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
-  const manifest401 = `Failed to load resource: the server responded with a status of 401 (Unauthorized) @${origin}/manifest.webmanifest`;
-  const manifestFailed = `Manifest fetch from ${origin}/manifest.webmanifest failed, code 401 @${origin}/`;
+  // Contract: /manifest.webmanifest is an exact public shell asset proxied
+  // without a session and served exact 200 (see authedNetworkSpec). A manifest
+  // 401 here is drift and must fail, never be allowlisted as noise.
+  for (const text of consoleErrors) {
+    assert.ok(!text.includes("/manifest.webmanifest"),
+      `${label}: manifest must serve exact 200, got authed console: ${text.slice(0, 300)}`);
+  }
   const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
-  const allowedConsole = new Set([manifest401, manifestFailed, pair403]);
-  assert.ok(consoleErrors.length <= 5, `${label}: at most the exact bridge static-asset + one-use reuse noise may log, got: ${consoleErrors.slice(0, 5).join("; ")}`);
+  const allowedConsole = new Set([pair403]);
+  assert.ok(consoleErrors.length <= 1, `${label}: at most the exact one-use reuse noise may log, got: ${consoleErrors.slice(0, 5).join("; ")}`);
   for (const text of consoleErrors) {
     assert.ok(allowedConsole.has(text), `${label}: unexpected authed console, got: ${text.slice(0, 300)}`);
     assert.ok(!text.includes("eyJ") && !text.includes("/api/"),
@@ -740,6 +745,26 @@ function assertAuthedLedger(harness, label, origin) {
   for (const text of failedRequests) {
     assert.ok(allowedFailed.has(text), `${label}: unexpected authed abort, got: ${text.slice(0, 300)}`);
   }
+}
+
+// Regression: a manifest 401 in the authed window must fail closed because the
+// contract requires exact 200 for the public shell asset. Passes only when a
+// synthetic manifest-401 harness is rejected and the clean + one-use-reuse
+// harnesses are accepted.
+export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
+  const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
+  const manifest401 = `Failed to load resource: the server responded with a status of 401 (Unauthorized) @${origin}/manifest.webmanifest`;
+  assert.throws(() => assertAuthedLedger({ consoleErrors: [manifest401], pageErrors: [], failedRequests: [] },
+    "manifest-regression", origin), /manifest must serve exact 200/,
+    "authed ledger must reject a manifest 401");
+  assert.throws(() => assertAuthedLedger({ consoleErrors: [`Manifest fetch from ${origin}/manifest.webmanifest failed, code 401 @${origin}/`], pageErrors: [], failedRequests: [] },
+    "manifest-regression", origin), /manifest must serve exact 200/,
+    "authed ledger must reject a manifest fetch 401");
+  assert.doesNotThrow(() => assertAuthedLedger({ consoleErrors: [], pageErrors: [], failedRequests: [] },
+    "manifest-regression", origin), "clean authed ledger must pass");
+  assert.doesNotThrow(() => assertAuthedLedger({ consoleErrors: [pair403], pageErrors: [], failedRequests: [] },
+    "manifest-regression", origin), "one-use pair 403 reuse noise must pass");
+  return { protocol: "eliotr.owner-e2e.authed-manifest-regression.v1", state: "PASS" };
 }
 
 function assertUnauthLedger(harness, label, origin) {

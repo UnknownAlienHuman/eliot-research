@@ -38,14 +38,33 @@ export const CHROMIUM_UNSAFE_PORTS = new Set([
 export const CHROMIUM_SAFE_PORT_RETRIES = 25;
 
 /**
- * Fail-closed classifier for loopback port-collision / bad-port failures.
- * Retried: EADDRINUSE/address-in-use, EACCES/denied bind, ERR_UNSAFE_PORT and
- * the Chromium-unsafe refusal text. Everything else (schema, authority, data,
+ * Fail-closed classifier for loopback port-collision / Chromium-unsafe-port
+ * failures. Retried (typed, narrowly scoped): error code EADDRINUSE,
+ * "address already in use" tied to listen/bind/EADDRINUSE evidence, error
+ * code ERR_UNSAFE_PORT, ERR_UNSAFE_PORT text tied to port/bind/Chromium
+ * refusal evidence, and Chromium-unsafe refusal text tied to ERR_UNSAFE_PORT
+ * / refusing-to-bind / local-port evidence. Everything else (EACCES alone,
+ * blanket "bad port", "port is already allocated", schema, authority, data,
  * config, syntax) is fail-closed and must never retry with a new port.
  */
-export function isPortCollisionMessage(text) {
-  return /EADDRINUSE|address already in use|\bEACCES\b|ERR_UNSAFE_PORT|Chromium-unsafe|bad port|port is already allocated/i
-    .test(String(text ?? ""));
+export function isPortCollisionMessage(input) {
+  const code = typeof input?.code === "string" ? input.code.trim() : "";
+  if (/^EADDRINUSE$/i.test(code)) return true;
+  if (/^ERR_UNSAFE_PORT$/i.test(code)) return true;
+  const text = String(input?.message ?? input ?? "");
+  if (/EADDRINUSE/.test(text)) {
+    return /listen|bind|address already in use/i.test(text);
+  }
+  if (/address already in use/i.test(text)) {
+    return /listen|bind|EADDRINUSE/i.test(text);
+  }
+  if (/ERR_UNSAFE_PORT/.test(text)) {
+    return /chromium-unsafe|unsafe.*port|port.*unsafe|refusing to bind|net::ERR_UNSAFE_PORT|local port/i.test(text);
+  }
+  if (/Chromium-unsafe/i.test(text)) {
+    return /ERR_UNSAFE_PORT|refusing to bind|local port|unsafe.*port|port.*unsafe/i.test(text);
+  }
+  return false;
 }
 
 export function isChromiumSafePort(port) {
@@ -70,10 +89,14 @@ async function closeServerQuiet(server) {
  * `listen(candidate)` must bind exactly that port (0 = OS ephemeral) and resolve
  * `{ server, port }`; it rejects on collision/denial. An explicitly requested port
  * is fail-closed when Chromium-unsafe (no retry, no fallback). Port 0 retries when
- * the OS assigns a Chromium-unsafe ephemeral port or a collision/race intervenes.
- * Every rejected attempt closes its listener before the next attempt, so no
- * listener or process leaks across retries or failures. Returns `{ server, port,
- * attempts }` where attempts counts binds including the successful one.
+ * the OS assigns a Chromium-unsafe ephemeral port or a classified collision/race
+ * intervenes. A rejected listen() attempt retries ONLY when the collision
+ * classifier positively identifies a genuine port-bind/Chromium-unsafe-port
+ * refusal; every other rejection (schema, authority, data, config, syntax)
+ * fails closed on the first attempt with no new bind. Every rejected attempt
+ * closes its listener before the next attempt, so no listener or process leaks
+ * across retries or failures. Returns `{ server, port, attempts }` where
+ * attempts counts binds including the successful one.
  */
 export async function bindChromiumSafeListener(listen, { port = 0, attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error("Invalid local bridge port");
@@ -86,6 +109,8 @@ export async function bindChromiumSafeListener(listen, { port = 0, attempts = CH
       bound = await listen(port);
     } catch (error) {
       lastError = error;
+      if (!isPortCollisionMessage(error)) throw error;
+      if (attempt >= attempts) throw error;
       continue;
     }
     if (isChromiumSafePort(bound.port)) return { server: bound.server, port: bound.port, attempts: attempt };
