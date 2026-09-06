@@ -1,4 +1,5 @@
 import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
+import { verifyOwnerTokenReference } from "../crates/eliotr-test-vectors/reference/owner-token.mjs";
 import { verifyResidencyKeyReference } from "../crates/eliotr-test-vectors/reference/residency-key.mjs";
 import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
 import { TextDecoder } from "node:util";
@@ -193,6 +194,15 @@ const source = await readFile(fixtureUrl, "utf8");
 const cases = parseFrame(source);
 verifyCases(cases);
 
+const crlfTransport = splitStrictLines(source)
+  .join("\n")
+  .replace(/\n/g, "\r\n");
+const crlfCases = parseFrame(crlfTransport);
+if (crlfCases.length !== cases.length) {
+  fail("CRLF transport changed the M1 case count");
+}
+verifyCases(crlfCases);
+
 assertRejected(
   "unknown protocol",
   source.replace("eliotr.test-vectors.canonical-utf8.v1", "eliotr.test-vectors.unknown.v1"),
@@ -285,4 +295,10 @@ await verifyStableIdReference(
     import.meta.url,
   ),
   "Projection identity",
+);
+await verifyOwnerTokenReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/owner-token.v1.txt",
+    import.meta.url,
+  ),
 );

@@ -1,6 +1,7 @@
 import "./styles.css";
 import { getSystemHealth, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
+import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { escapeHtml } from "./html.js";
@@ -36,6 +37,8 @@ function render(health: SystemHealth | null): void {
       <section class="panel panel--investigation">
         <div id="bundle-import"></div>
         <hr>
+        <div id="google-oauth"></div>
+        <hr>
         <div id="corpus-lens"></div>
       </section>
       <aside class="panel panel--evidence">
@@ -51,9 +54,11 @@ function render(health: SystemHealth | null): void {
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
+  const googleOAuth = app.querySelector<HTMLElement>("#google-oauth");
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
   const cleanups = [orientation, importer ? mountBundleImportPanel(importer) : undefined,
+    googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
     library ? mountLibraryPanel(library, (id) => orientation?.selectSource(id)) : undefined];
   window.addEventListener("pagehide", () => cleanups.forEach((cleanup) => cleanup?.()), { once: true });
 }
