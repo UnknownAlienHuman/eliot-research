@@ -28,6 +28,20 @@ import { resolveControllerClock, backupIsoNow } from "./offsite-durability.js";
 // Terminal replay re-proves absence of EVERY remote part via adapter get; any
 // reappeared part is BACKUP_RESURRECTION_REFUSED, never DELETED while a part
 // is present. Replays return persisted bytes verbatim (including created_at).
+// FIX4 terminal authority: a terminal receipt is NEVER returned before the
+// full first-expiry reconciliation is re-proven against live state — current
+// destination authority + policy/epoch/digests, live adapter descriptor,
+// primary failure domain, deletion/expiry capabilities, retention lock, legal
+// hold, the fail-closed hold read, and the persisted
+// failure_domain/descriptor_digest/policy_digest/authority_authorized_at
+// binding. Any missing/ambiguous/read error or drift fails closed with zero
+// deletes and no hidden mutation before any success receipt. Terminal BLOCKED
+// replay re-evaluates current hold state: a persisting block returns the
+// current evaluation; a cleared hold/policy refuses stale BLOCKED success
+// (BACKUP_INTENT_CONFLICT — deletion requires a fresh expiry intent under
+// current authority). A blocking hold gates deletion, never history: a
+// terminal DELETED replay whose absence re-proof and binding verify still
+// returns the historical receipt.
 
 export interface ExpiryIntent {
   readonly expiry_intent_key: string;
@@ -51,6 +65,10 @@ interface ExpiryRow {
   readonly absent_parts: number;
   readonly epoch_id: string;
   readonly destination_id: string;
+  readonly failure_domain: string;
+  readonly descriptor_digest: string;
+  readonly policy_digest: string;
+  readonly authority_authorized_at: string;
   readonly created_at: string;
 }
 
@@ -58,7 +76,7 @@ async function readExpiryRow(database: D1Database, expiryKey: string): Promise<E
   let row: ExpiryRow | null;
   try {
     row = await database.prepare(
-      "SELECT journal_refs_json, state, absent_parts, epoch_id, destination_id, created_at FROM backup_offsite_expiry WHERE expiry_intent_key = ?1",
+      "SELECT journal_refs_json, state, absent_parts, epoch_id, destination_id, failure_domain, descriptor_digest, policy_digest, authority_authorized_at, created_at FROM backup_offsite_expiry WHERE expiry_intent_key = ?1",
     ).bind(expiryKey).first<ExpiryRow>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup expiry read is unavailable", true, {}, cause);
@@ -157,10 +175,47 @@ export async function expireOffsiteCopy(input: {
     if (existing.epoch_id !== epochId || existing.destination_id !== authority.destination_id) {
       failBackup("BACKUP_INTENT_CONFLICT", "expiry intent reuses an identity with divergent content", false, { intent_id: expiryKey });
     }
+    // FIX4 terminal authority: re-prove the full first-expiry reconciliation
+    // against LIVE state before returning any success receipt. No terminal
+    // replay skips describe(), authority/generation/digest reconciliation, or
+    // the fail-closed hold read; any drift fails closed with zero deletes and
+    // no hidden mutation.
+    let descriptor: Awaited<ReturnType<OffsiteCopyAdapter["describe"]>>;
+    try {
+      descriptor = await input.adapter.describe();
+    } catch (cause) {
+      failBackup("BACKUP_OBJECT_UNREADABLE", "offsite descriptor is unavailable on terminal replay; refusing stale success", true, {}, cause);
+    }
+    const liveDescriptorDigest = await destinationDescriptorDigest(descriptor);
+    const replayAuthoritative = candidates.find((row) =>
+      row.policy_digest === authority.policy_digest
+      && row.authority_authorized_at === authority.authorized_at
+      && row.descriptor_digest === liveDescriptorDigest
+      && row.failure_domain === authority.policy.failure_domain
+      && row.failure_domain === descriptor.failure_domain,
+    );
+    if (replayAuthoritative === undefined) {
+      failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "terminal replay observes no D1 copy authority matching the live controller policy generation and descriptor identity; refusing stale success across policy, generation or descriptor drift", false, {});
+    }
+    if (replayAuthoritative.expires_at !== persistedDraft.expires_at) {
+      failBackup("BACKUP_VECTOR_UNVERIFIABLE", "D1 copy authority expires_at disagrees with the persisted epoch draft", false, {});
+    }
+    reconcileDestinationDescriptor(authority.policy, descriptor, primaryDomain);
+    // Fail-closed hold read BEFORE any success return: missing, unreadable or
+    // ambiguous hold state refuses even when the terminal state is history.
+    const replayHoldRef = await readBlockingHoldAuthority(input.core_db, epochId);
+    if (existing.failure_domain !== descriptor.failure_domain
+      || existing.descriptor_digest !== liveDescriptorDigest
+      || existing.policy_digest !== authority.policy_digest
+      || existing.authority_authorized_at !== authority.authorized_at) {
+      failBackup("BACKUP_DESTINATION_POLICY_MISMATCH", "terminal expiry binding diverges from the live descriptor, policy or authority generation; refusing stale success", false, {});
+    }
     const persisted = parseExpiryRow(existing, expiryKey);
     if (persisted.state === "DELETED") {
       // Terminal replay re-proves absence of EVERY remote part. A reappeared
-      // part is resurrection, never DELETED while present.
+      // part is resurrection, never DELETED while present. A blocking hold
+      // gates deletion, never history: once absence and binding verify, the
+      // historical receipt stands.
       for (const part of persistedDraft.part_index) {
         const ref = partRefFor(epochId, part.manifest, part.index, part.sha256);
         let remote: { readonly ciphertext: Uint8Array } | null;
@@ -173,8 +228,17 @@ export async function expireOffsiteCopy(input: {
           failBackup("BACKUP_RESURRECTION_REFUSED", "offsite part reappeared after terminal expiry; resurrection refused", false, {});
         }
       }
+      return persisted;
     }
-    return persisted;
+    // Terminal BLOCKED replay re-evaluates current hold state instead of
+    // returning stale success. Descriptor/policy locks and holds are already
+    // enforced by reconcileDestinationDescriptor above; only the controller
+    // hold table can still legitimately block. A persisting block returns the
+    // current evaluation with no new write (the key already carries it); a
+    // cleared hold refuses stale BLOCKED success so deletion requires a fresh
+    // expiry intent under current authority.
+    if (replayHoldRef !== null) return persisted;
+    failBackup("BACKUP_INTENT_CONFLICT", "stale BLOCKED expiry predates cleared controller hold; deletion requires a fresh expiry intent under current authority", false, { intent_id: expiryKey });
   }
   // Full destination-policy reconciliation BEFORE the first deletion,
   // same-or-stricter than offsite creation: live descriptor identity must equal
@@ -205,8 +269,8 @@ export async function expireOffsiteCopy(input: {
     };
     try {
       await input.core_db.prepare(
-        "INSERT INTO backup_offsite_expiry (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-      ).bind(expiryKey, epochId, authority.destination_id, JSON.stringify(blocked.journal_refs), blocked.state, blocked.absent_parts, descriptor.failure_domain, liveDescriptorDigest, authority.policy_digest, now).run();
+        "INSERT INTO backup_offsite_expiry (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, authority_authorized_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+      ).bind(expiryKey, epochId, authority.destination_id, JSON.stringify(blocked.journal_refs), blocked.state, blocked.absent_parts, descriptor.failure_domain, liveDescriptorDigest, authority.policy_digest, authority.authorized_at, now).run();
     } catch (cause) {
       failBackup("BACKUP_TABLE_MISSING", "backup expiry commit is unavailable", true, {}, cause);
     }
@@ -232,8 +296,8 @@ export async function expireOffsiteCopy(input: {
   };
   try {
     await input.core_db.prepare(
-      "INSERT INTO backup_offsite_expiry (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-    ).bind(expiryKey, epochId, authority.destination_id, JSON.stringify(journalRefs), receipt.state, receipt.absent_parts, descriptor.failure_domain, liveDescriptorDigest, authority.policy_digest, now).run();
+      "INSERT INTO backup_offsite_expiry (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, authority_authorized_at, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    ).bind(expiryKey, epochId, authority.destination_id, JSON.stringify(journalRefs), receipt.state, receipt.absent_parts, descriptor.failure_domain, liveDescriptorDigest, authority.policy_digest, authority.authorized_at, now).run();
   } catch {
     const raced = await readExpiryRow(input.core_db, expiryKey);
     if (raced === null) failBackup("BACKUP_TABLE_MISSING", "backup expiry commit lost", true, {});

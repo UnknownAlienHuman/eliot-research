@@ -1,9 +1,15 @@
 import { backupSha256Hex, failBackup } from "./shared.js";
 
-// ER-34 O2 FIX3 complete canonical migration authority. Runtime CREATE TABLE is
+// ER-34 O2 FIX4 complete canonical migration authority. Runtime CREATE TABLE is
 // not a migration substitute: every O2 entry point asserts that migration 0018 is
 // present in the authoritative D1 migration ledger AND that every O2 table and
-// index matches its expected canonical shape exactly.
+// index matches its expected canonical shape exactly. FIX4 tightens the FIX3
+// shape: nonce_hex alone is the nonce-authority PRIMARY KEY (globally unique
+// across copies and key generations) with a UNIQUE owner tuple
+// (key_generation, copy_id, part_ref), and the expiry receipt mirrors the
+// controller authority generation (authority_authorized_at); the previous
+// weaker (key_generation, nonce_hex) key and shapes without the owner
+// uniqueness are rejected here.
 //
 // Compared depth (FIX2 checked only column order/name/affinity/not-null):
 // column order, name, affinity, not-null, DEFAULT (0018 defines none), PRIMARY
@@ -26,13 +32,13 @@ export const O2_MIGRATION_FILENAME = "0018_backup_o2_replay_authority.sql";
 // sha256 (hex) of the tracked migration file above with CRLF normalized to LF.
 // Bound to the ledger check by fix3 tests: any file edit without a matching
 // gate update fails the suite.
-export const O2_EXPECTED_MIGRATION_DIGEST = "dd6b24611a6f9d7d1ad8b80b2443263bcf1de4e324bb33479f13bc2e2980fa4a";
+export const O2_EXPECTED_MIGRATION_DIGEST = "af311a7297c291f76db50394e85aae5ce433472ff79e342d2f98fd1847055dee";
 
 // sha256 (hex) of the canonical schema text (sorted table/index entries, see
 // canonicalO2SchemaFingerprint) read back from a database with 0018 applied.
 // Any dropped/altered constraint, index, default, key or STRICT option changes
 // the live fingerprint and fails closed here.
-export const O2_EXPECTED_SCHEMA_DIGEST = "2a44abeeb07dafb928b4fe0ba825b102132c74698793522b90532ebd0be1d8d7";
+export const O2_EXPECTED_SCHEMA_DIGEST = "63aeb24c0fa6d18e4f0fd3c521a8122f5a75954bf63e56b4e267ba0c1dbbeb75";
 
 type Affinity = "TEXT" | "INTEGER";
 
@@ -86,7 +92,7 @@ export const O2_EXPECTED_TABLES: Readonly<Record<string, ExpectedTable>> = {
       col("expiry_intent_key", T, NN, 1), col("epoch_id", T, NN, 0), col("destination_id", T, NN, 0),
       col("journal_refs_json", T, NN, 0), col("state", T, NN, 0), col("absent_parts", I, NN, 0),
       col("failure_domain", T, NN, 0), col("descriptor_digest", T, NN, 0), col("policy_digest", T, NN, 0),
-      col("created_at", T, NN, 0),
+      col("authority_authorized_at", T, NN, 0), col("created_at", T, NN, 0),
     ],
     checks: ["json_valid(journal_refs_json)", "state IN ('DELETED','BLOCKED')", "absent_parts >= 0", "length(descriptor_digest) = 64", "length(policy_digest) = 64"],
     indexes: [{ name: "sqlite_autoindex_backup_offsite_expiry_1", unique: true, origin: "pk", columns: ["expiry_intent_key"] }],
@@ -130,11 +136,14 @@ export const O2_EXPECTED_TABLES: Readonly<Record<string, ExpectedTable>> = {
   },
   backup_offsite_nonce_authority: {
     columns: [
-      col("key_generation", T, NN, 1), col("nonce_hex", T, NN, 2), col("copy_id", T, NN, 0),
+      col("key_generation", T, NN, 0), col("nonce_hex", T, NN, 1), col("copy_id", T, NN, 0),
       col("part_ref", T, NN, 0), col("created_at", T, NN, 0),
     ],
     checks: ["length(nonce_hex) = 24"],
-    indexes: [{ name: "sqlite_autoindex_backup_offsite_nonce_authority_1", unique: true, origin: "pk", columns: ["key_generation", "nonce_hex"] }],
+    indexes: [
+      { name: "sqlite_autoindex_backup_offsite_nonce_authority_1", unique: true, origin: "pk", columns: ["nonce_hex"] },
+      { name: "backup_offsite_nonce_owner_unique", unique: true, origin: "c", columns: ["key_generation", "copy_id", "part_ref"] },
+    ],
   },
 };
 

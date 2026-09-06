@@ -4,9 +4,9 @@ import { backupIsoDateTime, backupSha256Hex, canonicalBackupJson, failBackup } f
 // success authority live in D1 (controller-owned); restart or cancellation
 // resumes from that state instead of redoing blind writes. Nonces are
 // deterministic per (key generation, copy identity, part ref, content digest,
-// policy digest) by default, or controller-allocated via generate_nonce; per-key
+// policy digest) by default, or controller-allocated via generate_nonce; global
 // uniqueness is enforced by the durable nonce authority BEFORE encryption
-// (see nonce-authority.ts), across restarts, concurrent copies and key
+// (see nonce-authority.ts), across restarts, concurrent copies, parts and key
 // generations, never via an in-memory set. The checkpoint UNIQUE on
 // (copy_id, nonce_hex) remains as post-verify defense in depth only.
 //

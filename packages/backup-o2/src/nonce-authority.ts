@@ -1,16 +1,18 @@
 import { failBackup, ownedBackupBytes } from "./shared.js";
 import { backupNonceHex } from "./offsite-durability.js";
 
-// ER-34 O2 FIX3 durable per-key nonce allocation authority.
+// ER-34 O2 FIX4 durable globally-unique nonce allocation authority.
 //
-// AES-GCM nonces must be unique per encryption key. The key scope is the key
-// generation: allocation claims (key_generation, nonce_hex) in D1 with an
-// atomic PRIMARY KEY insert BEFORE encryption or remote put, so reuse across
-// copies, parts, restarts, concurrent allocators, or forged pre-existing rows
-// fails closed as BACKUP_NONCE_COLLISION with zero ciphertext produced.
-// A key-generation change is a disjoint scope and never collides with retired
-// material. Exact replay of the same (key, copy, part) allocation is
-// idempotent and returns the same nonce bytes.
+// AES-GCM nonces must be unique per encryption key, and key rotation must
+// never resurrect retired nonce bytes: allocation claims nonce_hex alone in
+// D1 with an atomic PRIMARY KEY insert BEFORE encryption or remote put, so
+// ANY reuse of identical nonce bytes — across copies, parts, restarts,
+// concurrent allocators, forged pre-existing rows, or key generations — fails
+// closed as BACKUP_NONCE_COLLISION with zero ciphertext produced. A separate
+// UNIQUE owner tuple (key_generation, copy_id, part_ref) guarantees one
+// durable owner mapping per allocation scope: restart/replay cannot silently
+// allocate a different nonce to the same owner tuple, and exact replay of the
+// same owner with the same nonce is idempotent and returns the same bytes.
 //
 // This replaces copy_id-scoped map checks: the durable row is the authority,
 // never an in-memory set. No nonce or key bytes enter messages or details.
@@ -24,14 +26,23 @@ export interface NonceAllocationClaim {
 }
 
 interface NonceOwnerRow {
+  readonly key_generation: unknown;
   readonly copy_id: unknown;
   readonly part_ref: unknown;
+}
+
+interface NonceBindingRow {
+  readonly nonce_hex: unknown;
 }
 
 function assertAllocationLabel(value: string, label: string): void {
   if (typeof value !== "string" || value.length === 0 || value.length > 512) {
     failBackup("BACKUP_INPUT_INVALID", `backup nonce allocation carries an invalid ${label}`);
   }
+}
+
+function sameOwner(row: NonceOwnerRow, claim: NonceAllocationClaim): boolean {
+  return row.key_generation === claim.key_generation && row.copy_id === claim.copy_id && row.part_ref === claim.part_ref;
 }
 
 export async function allocateOffsiteNonce(database: D1Database, claim: NonceAllocationClaim): Promise<Uint8Array<ArrayBuffer>> {
@@ -47,21 +58,41 @@ export async function allocateOffsiteNonce(database: D1Database, claim: NonceAll
     return ownedBackupBytes(claim.nonce);
   } catch {
     // Possible duplicate: resolve the durable owner below instead of sniffing
-    // driver error text.
+    // driver error text. Either the global nonce or the owner tuple (or the
+    // table itself) explains the conflict.
   }
-  let owner: NonceOwnerRow | null;
+  // Global nonce lookup: identical bytes anywhere — any generation, copy or
+  // part — belong to exactly one durable owner.
+  let byNonce: NonceOwnerRow | null;
   try {
-    owner = await database.prepare(
-      "SELECT copy_id, part_ref FROM backup_offsite_nonce_authority WHERE key_generation = ?1 AND nonce_hex = ?2",
-    ).bind(claim.key_generation, hex).first<NonceOwnerRow>();
+    byNonce = await database.prepare(
+      "SELECT key_generation, copy_id, part_ref FROM backup_offsite_nonce_authority WHERE nonce_hex = ?1",
+    ).bind(hex).first<NonceOwnerRow>();
   } catch (cause) {
     failBackup("BACKUP_TABLE_MISSING", "backup nonce authority is unavailable", true, { copy: claim.copy_id }, cause);
   }
-  if (owner === null) {
-    failBackup("BACKUP_TABLE_MISSING", "backup nonce authority lost an allocation", true, { copy: claim.copy_id });
+  if (byNonce !== null) {
+    if (!sameOwner(byNonce, claim)) {
+      failBackup("BACKUP_NONCE_COLLISION", "backup nonce reuse detected across copies, parts, restarts or key generations (durable global record); refusing encryption", false, { copy: claim.copy_id });
+    }
+    return ownedBackupBytes(claim.nonce);
   }
-  if (owner.copy_id !== claim.copy_id || owner.part_ref !== claim.part_ref) {
-    failBackup("BACKUP_NONCE_COLLISION", "backup nonce reuse detected under one key generation (durable record, across copies, parts and restarts); refusing encryption", false, { copy: claim.copy_id });
+  // The nonce is unclaimed, so the failed insert hit the owner-tuple
+  // uniqueness: this owner is already bound to a different nonce. Silent
+  // re-allocation is refused; exact replay must present the bound bytes.
+  let byOwner: NonceBindingRow | null;
+  try {
+    byOwner = await database.prepare(
+      "SELECT nonce_hex FROM backup_offsite_nonce_authority WHERE key_generation = ?1 AND copy_id = ?2 AND part_ref = ?3",
+    ).bind(claim.key_generation, claim.copy_id, claim.part_ref).first<NonceBindingRow>();
+  } catch (cause) {
+    failBackup("BACKUP_TABLE_MISSING", "backup nonce authority is unavailable", true, { copy: claim.copy_id }, cause);
   }
-  return ownedBackupBytes(claim.nonce);
+  if (byOwner !== null) {
+    if (byOwner.nonce_hex !== hex) {
+      failBackup("BACKUP_NONCE_COLLISION", "backup nonce owner is already bound to a different nonce; refusing silent re-allocation across restart or replay", false, { copy: claim.copy_id });
+    }
+    return ownedBackupBytes(claim.nonce);
+  }
+  failBackup("BACKUP_TABLE_MISSING", "backup nonce authority lost an allocation", true, { copy: claim.copy_id });
 }

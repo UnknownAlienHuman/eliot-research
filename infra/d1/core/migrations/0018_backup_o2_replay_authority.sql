@@ -18,6 +18,16 @@
 -- reservation unchanged). O2 is pre-live (IMPLEMENTED_NOT_LIVE, no live receipts),
 -- so fresh application of this file is authoritative; environments holding the
 -- pre-FIX3 0018 shape fail the migration gate until re-applied.
+-- FIX4 (ER-34, same 0018 number, strictly additive, controller-serialized for
+-- OC-O2-FIX4 only; ER-13 integration dependency unchanged, ER-34 owns no
+-- migration): terminal expiry replay authority binds the controller generation
+-- directly (authority_authorized_at mirrored on the expiry receipt), and the
+-- nonce authority is globally unique (PRIMARY KEY on nonce_hex across all
+-- copies and key generations) with one durable owner mapping per
+-- (key_generation, copy_id, part_ref) UNIQUE tuple. Only the expiry column
+-- addition, the nonce key tightening and the owner index are added below;
+-- earlier migrations are untouched, and pre-FIX4 0018 shapes fail the gate
+-- until re-applied (O2 pre-live, no live receipts).
 PRAGMA foreign_keys = ON;
 
 -- Local migration ledger mirror (wrangler D1 convention: name + applied_at).
@@ -57,6 +67,7 @@ CREATE TABLE IF NOT EXISTS backup_offsite_expiry (
   failure_domain TEXT NOT NULL,
   descriptor_digest TEXT NOT NULL CHECK (length(descriptor_digest) = 64),
   policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),
+  authority_authorized_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 ) STRICT;
 
@@ -125,19 +136,24 @@ CREATE TABLE IF NOT EXISTS backup_export_cut (
   created_at TEXT NOT NULL
 ) STRICT;
 
--- Durable per-key nonce allocation authority (FIX3, additive). One row claims a
--- 96-bit nonce for (key generation, copy, part) and the PRIMARY KEY on
--- (key_generation, nonce_hex) makes cross-copy / cross-part reuse under one key
--- an atomic insert conflict BEFORE encryption or remote put, across restarts and
--- concurrent allocators. Key-generation change is a disjoint scope, so rotation
--- never collides with retired material. Controller-allocated and derived nonces
--- share this authority; the copy-part checkpoint UNIQUE on (copy_id, nonce_hex)
--- remains as post-verify defense in depth only.
+-- Durable globally-unique nonce allocation authority (FIX4, additive tightening
+-- of the FIX3 table). One row claims a 96-bit nonce for (key generation, copy,
+-- part) and the PRIMARY KEY on nonce_hex alone makes ANY reuse of identical
+-- nonce bytes an atomic insert conflict BEFORE encryption or remote put, across
+-- copies, parts, restarts, concurrent allocators and key generations: rotation
+-- never reuses retired material. The UNIQUE owner tuple
+-- (key_generation, copy_id, part_ref) separately guarantees one durable owner
+-- mapping per allocation scope, so restart/replay cannot silently allocate a
+-- different nonce to the same owner tuple. Controller-allocated and derived
+-- nonces share this authority; the copy-part checkpoint UNIQUE on
+-- (copy_id, nonce_hex) remains as post-verify defense in depth only.
 CREATE TABLE IF NOT EXISTS backup_offsite_nonce_authority (
   key_generation TEXT NOT NULL,
   nonce_hex TEXT NOT NULL CHECK (length(nonce_hex) = 24),
   copy_id TEXT NOT NULL,
   part_ref TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  PRIMARY KEY (key_generation, nonce_hex)
+  PRIMARY KEY (nonce_hex)
 ) STRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_nonce_owner_unique
+  ON backup_offsite_nonce_authority(key_generation, copy_id, part_ref);
