@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -82,14 +83,178 @@ export function wranglerArgs(paths, command) {
   return [WRANGLER, ...command, "--config", paths.config, "--persist-to", paths.persist, "--local"];
 }
 
+function redactLocalDiagnostic(text) {
+  return text
+    .replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
+    .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]")
+    .replaceAll(/"d"\s*:\s*"[A-Za-z0-9_-]{10,}"/gu, '"d":"[REDACTED]"')
+    .slice(0, 1000);
+}
+
 export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), capture = false } = {}) {
   const result = spawnSync(process.execPath, args, { cwd, env, shell: false, timeout: 180_000,
     encoding: "utf8", maxBuffer: 8 * 1024 * 1024, stdio: capture ? "pipe" : "inherit" });
   if (result.error || result.status !== 0) {
-    // Do not reflect subprocess output: a user-supplied .dev.vars may contain credentials.
-    throw new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested`);
+    // Bounded redacted snippet only: never reflect full output because a
+    // user-supplied .dev.vars may contain credentials. JWT/key material is
+    // redacted above; the snippet exists so transient SQLite locks can be
+    // classified instead of hidden behind a bare status code.
+    const raw = capture ? `${result.stdout ?? ""}\n${result.stderr ?? ""}` : "";
+    const diagnostic = capture ? classifyLocalFailure(result.stdout ?? "", result.stderr ?? "") : "";
+    const snippet = capture && raw.trim() ? ` :: ${redactLocalDiagnostic(raw.trim())}` : "";
+    const suffix = diagnostic ? ` [${diagnostic}]` : "";
+    const error = new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested${suffix}${snippet}`);
+    error.cause = { code: result.error?.code ?? result.status ?? "unknown", diagnostic,
+      stdout: redactLocalDiagnostic(result.stdout ?? ""), stderr: redactLocalDiagnostic(result.stderr ?? "") };
+    throw error;
   }
   return result.stdout ?? "";
+}
+
+// Documented transient SQLite/process locks only. Schema, authority, data and
+// config errors are fail-closed and must never retry with a new generation.
+// D1 CLI shares SQLite files with a running `wrangler dev` Worker (Miniflare)
+// on the same persist dir; on Windows an overlapping CLI can also surface as
+// EBUSY/EPERM on the SQLite/WAL files. Bare EBUSY/EPERM is retryable here
+// because this classifier is only consulted for D1 CLI failures.
+const TRANSIENT_D1_PATTERNS = [
+  /SQLITE_BUSY/i,
+  /SQLITE_LOCKED/i,
+  /database is locked/i,
+  /database is busy/i,
+  /database table is locked/i,
+  /database schema is locked/i,
+  /resource busy or locked/i,
+  /miniflare.*lock/i,
+  /lock.*miniflare/i,
+  /cannot start a transaction within a transaction/i,
+  /\bEBUSY\b/,
+  /\bEPERM\b/,
+  /\bETIMEDOUT\b/,
+  /\bEAGAIN\b/,
+];
+
+const FAIL_CLOSED_D1_PATTERNS = [
+  /LOCAL_NAMESPACE_CONFLICT/,
+  /LOCAL_NAMESPACE_SETTLEMENT_UNCERTAIN/,
+  /LOCAL_NAMESPACE_INPUT_INVALID/,
+  /LOCAL_NAMESPACE_PROFILE_UNSUPPORTED/,
+  /LOCAL_NAMESPACE_EXISTING_LINEAGE/,
+  /LOCAL_NAMESPACE_OWNER_REQUIRED/,
+  /LOCAL_NAMESPACE_READBACK_INVALID/,
+  /LOCAL_POLICY_CONFLICT/,
+  /LOCAL_POLICY_SETTLEMENT_UNCERTAIN/,
+  /no such table/i,
+  /no such column/i,
+  /syntax error/i,
+];
+
+function classifyLocalFailure(stdout, stderr) {
+  const text = `${stdout}\n${stderr}`.slice(0, 4096);
+  if (FAIL_CLOSED_D1_PATTERNS.some((pattern) => pattern.test(text))) return "FAIL_CLOSED";
+  if (TRANSIENT_D1_PATTERNS.some((pattern) => pattern.test(text))) return "TRANSIENT_D1_LOCK";
+  return "";
+}
+
+export function isTransientLocalD1Error(error) {
+  if (!error) return false;
+  const diagnostic = error?.cause?.diagnostic;
+  if (diagnostic === "TRANSIENT_D1_LOCK") return true;
+  if (diagnostic === "FAIL_CLOSED") return false;
+  const text = `${error?.message ?? error}\n${error?.cause?.code ?? ""}\n${error?.cause?.stdout ?? ""}\n${error?.cause?.stderr ?? ""}\n${error?.stderr ?? ""}\n${error?.stdout ?? ""}`;
+  if (FAIL_CLOSED_D1_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  return TRANSIENT_D1_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function sleepSync(milliseconds) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+  } catch { /* Bounded backoff only; ignore timer failure. */ }
+}
+
+// Bounded retry for documented transient D1 locks only. Strict deadline,
+// fixed backoff, no new generation, fail-closed for schema/authority/data errors.
+export function executeLocalD1WithRetry(args, { execute = executeLocal, attempts = 6, deadlineMs = 15000, delayMs = 250 } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return execute(args, { capture: true });
+    } catch (error) {
+      lastError = error;
+      if (!isTransientLocalD1Error(error)) throw error;
+      if (attempt >= attempts || Date.now() + delayMs > deadline) throw error;
+      sleepSync(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+// Deterministic Chromium/Chrome discovery. Explicit ELIOTR_BROWSER_EXECUTABLE
+// wins; otherwise only fixed OS standard paths are probed (no registry,
+// network or PATH probing, no arbitrary executables). Throws clearly when absent.
+export async function resolveLocalBrowserExecutable({ environment = process.env } = {}) {
+  const override = environment.ELIOTR_BROWSER_EXECUTABLE;
+  if (typeof override === "string" && override.length > 0) {
+    await access(override);
+    return override;
+  }
+  const candidates = [];
+  if (process.platform === "win32") {
+    const localAppData = environment.LOCALAPPDATA ?? "";
+    const programFiles = environment.PROGRAMFILES ?? "C:\\Program Files";
+    const programFilesX86 = environment["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)";
+    candidates.push(
+      resolve(programFiles, "Google/Chrome/Application/chrome.exe"),
+      resolve(programFilesX86, "Google/Chrome/Application/chrome.exe"),
+      ...(localAppData ? [resolve(localAppData, "Google/Chrome/Application/chrome.exe")] : []),
+      resolve(programFiles, "Chromium/Application/chrome.exe"),
+    );
+  } else {
+    candidates.push(
+      "/usr/bin/google-chrome",
+      "/usr/bin/chromium",
+      "/usr/bin/chromium-browser",
+      "/snap/bin/chromium",
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    );
+  }
+  for (const candidate of candidates) {
+    try { await access(candidate); return candidate; } catch { /* Try the next fixed path. */ }
+  }
+  throw new Error("Chromium/Chrome executable not found at OS standard paths; set ELIOTR_BROWSER_EXECUTABLE to the installed executable");
+}
+
+const HARNESS_MARKER = ".eliotr-owner-e2e.json";
+
+export async function writeHarnessMarker(directory, runId, kind) {
+  const payload = JSON.stringify({ protocol: "eliotr.owner-e2e.marker.v1", runId, pid: process.pid, kind,
+    createdAt: new Date().toISOString() });
+  await writeFile(resolve(directory, HARNESS_MARKER), `${payload}\n`, { mode: 0o600 });
+  return payload;
+}
+
+function resolvedTempRoot() {
+  return resolve(tmpdir());
+}
+
+export async function assertHarnessOwned(directory, runId) {
+  const resolved = resolve(directory);
+  const root = resolvedTempRoot();
+  if (resolved !== root && !resolved.startsWith(`${root}${sep}`)) {
+    throw new Error("Harness-owned path escapes the OS temp root");
+  }
+  const raw = await readFile(resolve(resolved, HARNESS_MARKER), "utf8");
+  const marker = JSON.parse(raw);
+  if (marker?.protocol !== "eliotr.owner-e2e.marker.v1" || marker?.runId !== runId) {
+    throw new Error("Harness-owned path marker mismatch; refusing to delete");
+  }
+  return resolved;
+}
+
+export async function removeHarnessOwned(directory, runId) {
+  const resolved = await assertHarnessOwned(directory, runId);
+  await rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }
 
 /** Stop only this launcher-owned process tree, never all Node/Workerd processes. */
