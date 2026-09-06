@@ -34,7 +34,7 @@ const baseEnvironment = {
   ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com",
   ELIOTR_OWNER_EMAILS: "owner@example.com",
-  ELIOTR_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+  ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
   ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "",
   ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie",
@@ -44,7 +44,7 @@ const config = {
   name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: {
     DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging",
-    ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud",
+    ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud",
     ACCESS_SERVICE_PRINCIPALS: "",
   },
   d1_databases: [

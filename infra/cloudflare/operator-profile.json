@@ -1,21 +1,21 @@
 {
   "protocol": "eliotr.cloudflare-operator-profile.v1",
-  "description": "Tracked non-secret operator identity for local preflight/deploy. Never add secrets, tokens, or generated receipt IDs to this file.",
+  "description": "Tracked TEMPLATE (non-secret, account-neutral). Do not commit real account IDs, emails, subdomains, hostnames, or team origins here. Copy to .eliotr-state/cloudflare/operator-profile.json (ignored) and fill real values locally, or supply explicit env vars. See docs/implementation/cloudflare-runbook.md.",
   "account": {
-    "name": "Kleymor.metal@gmail.com's Account",
-    "id": "bc10e9f02aa57f4adc5a7a48ad1bacff"
+    "name": "Example Account (template only)",
+    "id": "00000000000000000000000000000000"
   },
   "operator": {
-    "email": "kleymor.metal@gmail.com",
+    "email": "operator@example.com",
     "wrangler_profile": "default",
     "auth_method": "browser-oauth",
     "allowed_auth_methods": ["browser-oauth"],
-    "auth_note": "Browser OAuth via Wrangler profile 'default' is the ONLY permitted auth method. API tokens, service tokens, and key files are not used by this profile."
+    "auth_note": "Browser OAuth via the local Wrangler profile is the ONLY permitted auth method. API tokens, service tokens, and key files are not used by this profile."
   },
   "workers_dev": {
-    "subdomain": "kleymor-metal",
+    "subdomain": "example-subdomain",
     "worker_name": "eliotr-core",
-    "hostname": "eliotr-core.kleymor-metal.workers.dev"
+    "hostname": "eliotr-core.example-subdomain.workers.dev"
   },
   "routing": {
     "mode": "workers-dev-only",
@@ -24,8 +24,8 @@
     "route_note": "workers.dev only. ELIOTR_CUSTOM_DOMAIN must be 0. Custom domains are out of scope for this profile."
   },
   "zero_trust": {
-    "team_origin": "https://iuriilisenkov.cloudflareaccess.com",
-    "owner_emails": ["kleymor.metal@gmail.com"]
+    "team_origin": "https://example.cloudflareaccess.com",
+    "owner_emails": ["operator@example.com"]
   },
   "operational_policy": {
     "plan": "free-tier",

@@ -2,48 +2,101 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
-  OPERATOR_PROFILE_EXPECTED,
+  assertOperatorProfileMatchesReadback,
+  expectedFromEnv,
   loadOperatorProfile,
   validateOperatorProfile,
 } from "./lib/cloudflare-operator-profile.mjs";
 
-const profilePath = resolve(process.cwd(), "infra/cloudflare/operator-profile.json");
-const raw = await readFile(profilePath, "utf8");
+// Fictional RFC-reserved identities only. No real account IDs, emails,
+// subdomains, hostnames, or team origins may appear in this file.
+const FICTIONAL_EXPECTED = Object.freeze({
+  accountName: "Example Account (template only)",
+  accountId: "00000000000000000000000000000000",
+  operatorEmail: "operator@example.com",
+  wranglerProfile: "default",
+  authMethod: "browser-oauth",
+  workersDevSubdomain: "example-subdomain",
+  workerName: "eliotr-core",
+  hostname: "eliotr-core.example-subdomain.workers.dev",
+  routeMode: "workers-dev-only",
+  customDomainFlag: "0",
+  teamOrigin: "https://example.cloudflareaccess.com",
+  ownerEmails: Object.freeze(["operator@example.com"]),
+});
+
+const OTHER_FICTIONAL_ACCOUNT_ID = "11111111111111111111111111111111";
+
+const templatePath = resolve(process.cwd(), "infra/cloudflare/operator-profile.json");
+const raw = await readFile(templatePath, "utf8");
 const tracked = JSON.parse(raw);
 
 function clone() {
   return JSON.parse(JSON.stringify(tracked));
 }
 
-// Happy path: the tracked file validates and exposes the exact operator identity.
-const summary = validateOperatorProfile(tracked);
-assert.equal(summary.accountId, "bc10e9f02aa57f4adc5a7a48ad1bacff");
-assert.equal(summary.accountName, "Kleymor.metal@gmail.com's Account");
-assert.equal(summary.operatorEmail, "kleymor.metal@gmail.com");
-assert.equal(summary.wranglerProfile, "default");
+// Happy path: the tracked template validates structurally and matches the
+// fictional supplied expectations.
+const summary = validateOperatorProfile(tracked, FICTIONAL_EXPECTED);
+assert.equal(summary.accountId, FICTIONAL_EXPECTED.accountId);
+assert.equal(summary.accountName, FICTIONAL_EXPECTED.accountName);
+assert.equal(summary.operatorEmail, FICTIONAL_EXPECTED.operatorEmail);
+assert.equal(summary.wranglerProfile, FICTIONAL_EXPECTED.wranglerProfile);
 assert.equal(summary.authMethod, "browser-oauth");
-assert.equal(summary.workersDevSubdomain, "kleymor-metal");
-assert.equal(summary.hostname, "eliotr-core.kleymor-metal.workers.dev");
+assert.equal(summary.workersDevSubdomain, FICTIONAL_EXPECTED.workersDevSubdomain);
+assert.equal(summary.hostname, FICTIONAL_EXPECTED.hostname);
 assert.equal(summary.routeMode, "workers-dev-only");
-assert.equal(summary.teamOrigin, "https://iuriilisenkov.cloudflareaccess.com");
-assert.deepEqual(summary.ownerEmails, ["kleymor.metal@gmail.com"]);
-assert.equal(OPERATOR_PROFILE_EXPECTED.customDomainFlag, "0");
+assert.equal(summary.teamOrigin, FICTIONAL_EXPECTED.teamOrigin);
+assert.deepEqual([...summary.ownerEmails], [...FICTIONAL_EXPECTED.ownerEmails]);
+
+// Structural validation also passes without supplied expectations.
+const structuralOnly = validateOperatorProfile(clone());
+assert.equal(structuralOnly.hostname, FICTIONAL_EXPECTED.hostname);
 
 const loaded = await loadOperatorProfile("infra/cloudflare/operator-profile.json");
 assert.equal(loaded.hostname, summary.hostname);
 
-// Negative: wrong account id.
+// Supplied-expectation drift fails closed.
 {
-  const mutated = clone();
-  mutated.account.id = "00000000000000000000000000000000";
-  assert.throws(() => validateOperatorProfile(mutated), /account\.id/u);
+  const mutatedExpectations = { ...FICTIONAL_EXPECTED, accountId: OTHER_FICTIONAL_ACCOUNT_ID };
+  assert.throws(() => validateOperatorProfile(clone(), mutatedExpectations), /account\.id/u);
 }
 
-// Negative: wrong hostname.
+// Live readback comparison: matching readback passes, drift fails.
+{
+  assertOperatorProfileMatchesReadback(summary, {
+    accountId: FICTIONAL_EXPECTED.accountId,
+    hostname: FICTIONAL_EXPECTED.hostname,
+    teamOrigin: FICTIONAL_EXPECTED.teamOrigin,
+    ownerEmails: [...FICTIONAL_EXPECTED.ownerEmails],
+  });
+  assert.throws(
+    () =>
+      assertOperatorProfileMatchesReadback(summary, {
+        accountId: OTHER_FICTIONAL_ACCOUNT_ID,
+      }),
+    /readback/u,
+  );
+}
+
+// expectedFromEnv builds expectations from explicit env vars (no constants).
+{
+  const fromEnv = expectedFromEnv({
+    CLOUDFLARE_ACCOUNT_ID: FICTIONAL_EXPECTED.accountId,
+    ELIOTR_OWNER_EMAILS: "operator@example.com",
+    ELIOTR_ACCESS_HOSTNAME: FICTIONAL_EXPECTED.hostname,
+    ELIOTR_ACCESS_TEAM_DOMAIN: FICTIONAL_EXPECTED.teamOrigin,
+  });
+  assert.equal(fromEnv.accountId, FICTIONAL_EXPECTED.accountId);
+  assert.deepEqual(fromEnv.ownerEmails, ["operator@example.com"]);
+  validateOperatorProfile(clone(), fromEnv);
+}
+
+// Negative: wrong hostname against supplied expectations.
 {
   const mutated = clone();
-  mutated.workers_dev.hostname = "eliotr-core.wrong-subdomain.workers.dev";
-  assert.throws(() => validateOperatorProfile(mutated), /workers_dev\.hostname/u);
+  mutated.workers_dev.hostname = "eliotr-core.other-example.workers.dev";
+  assert.throws(() => validateOperatorProfile(mutated, FICTIONAL_EXPECTED), /workers_dev\.hostname/u);
 }
 
 // Negative: custom-domain mode.
@@ -66,7 +119,7 @@ assert.equal(loaded.hostname, summary.hostname);
 {
   const mutated = clone();
   mutated.operational_policy.overage_note =
-    "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"; // privacy-allowlist: synthetic token fixture
   assert.throws(() => validateOperatorProfile(mutated), /token material/u);
 }
 

@@ -3,7 +3,7 @@ import { createCloudflareAccessVerifier } from "@eliotr/platform-cloudflare";
 import type { Env } from "../src/env.js";
 import { handleHttp } from "../src/http.js";
 
-const issuer = "https://owner-test.cloudflareaccess.com";
+const issuer = "https://owner-test-example.cloudflareaccess.com";
 const audience = "owner-test-audience";
 const now = Math.floor(Date.now() / 1000);
 const keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
@@ -49,7 +49,7 @@ describe("owner identity introspection using real signature verification", () =>
     const token = await signed(); const pieces = token.split(".");
     pieces[2] = `${pieces[2]?.startsWith("A") ? "B" : "A"}${pieces[2]?.slice(1)}`;
     for (const candidate of [undefined, "forged.token.signature", pieces.join("."), await signed({ exp: now - 1, iat: now - 100 }),
-      await signed({ iss: "https://another.cloudflareaccess.com" }), await signed({ aud: ["other"] })]) {
+      await signed({ iss: "https://another-example.cloudflareaccess.com" }), await signed({ aud: ["other"] })]) {
       const response = await call(candidate); expect(response.status).toBe(401);
       expect(await response.json()).not.toHaveProperty("data");
     }

@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BEARER = "oauth-preflight-proof-bearer-9d4e2a1f";
 const ACCOUNT = "oauth-preflight-account";
-const HOSTNAME = "eliotr-core.oauth-preflight.workers.dev";
+const HOSTNAME = "eliotr-core.oauth-preflight-example.workers.dev";
 const OWNER = "owner@oauth-preflight.example";
 const TEAM_HOST = "oauth-preflight.cloudflareaccess.com";
 const TEAM = `https://${TEAM_HOST}`;

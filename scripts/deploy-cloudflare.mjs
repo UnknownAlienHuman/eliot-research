@@ -7,6 +7,7 @@ import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeploym
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
   verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
 
 import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
 
@@ -88,6 +89,25 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       return result.stdout ?? "";
     });
     await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
+  }
+
+  // FIX1-B usage-envelope gate (narrow): usage preflight before the first
+  // remote mutation. In-process shared runner honors the same injected
+  // credential/whoami seams as the OAuth path above and performs no file
+  // writes here; BLOCKED throws ahead of every provisioner check and
+  // mutation. Api-token/CI runs resolve SEALED (metadata-only).
+  {
+    const usageGate = await runUsagePreflight({
+      env: { ...process.env, ...env },
+      nowMs: now(),
+      readFile: readWranglerFile ?? read,
+      getWhoamiOutput: runWranglerWhoami,
+      writeReceipt: false,
+      cwd: root,
+    });
+    if (usageGate.decision === "BLOCKED") {
+      throw new Error(`Cloudflare usage preflight blocked deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+    }
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.

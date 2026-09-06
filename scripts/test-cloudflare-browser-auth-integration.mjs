@@ -29,10 +29,10 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BEARER = "browser-oauth-int-bearer-7f3a9c2e";
 const ACCOUNT = "browser-int-account";
 const OTHER_ACCOUNT = "browser-int-other-account";
-const HOSTNAME = "eliotr-core.int-test.workers.dev";
+const HOSTNAME = "eliotr-core.int-test-example.workers.dev";
 const OWNER = "owner@int-test.example";
-const TEAM = "https://int-test.cloudflareaccess.com";
-const OTHER_TEAM = "https://other-team.cloudflareaccess.com";
+const TEAM = "https://int-test-example.cloudflareaccess.com";
+const OTHER_TEAM = "https://other-team-example.cloudflareaccess.com";
 const APP_NAME = `Eliot Research: ${HOSTNAME}`;
 const POLICY_NAME = "Eliot Research owners";
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
@@ -44,7 +44,7 @@ function emptyState() {
   return {
     d1: new Map(), r2: new Map(), queues: new Map(),
     apps: new Map(), policies: new Map(),
-    org: { auth_domain: "int-test.cloudflareaccess.com" },
+    org: { auth_domain: "int-test-example.cloudflareaccess.com" },
     requests: [], mutations: [], authSeen: [],
     dropFirstAppId: false, appPosts: 0,
   };

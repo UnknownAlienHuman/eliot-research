@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -63,6 +64,26 @@ if (authMode === WRANGLER_OAUTH_MODE) {
 } else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
+}
+
+// FIX1-B usage-envelope gate (narrow): usage preflight before the first
+// remote mutation. In-process shared runner writes the redacted admission
+// receipt; BLOCKED exits here with zero Cloudflare mutations. Api-token/CI
+// runs without a usage seam resolve SEALED inside the runner (metadata-only
+// provisioning may continue, heavy operations stay disabled).
+{
+  let usageGate;
+  try {
+    usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
+      receiptPath: resolve(repositoryRoot, ".eliotr-state/cloudflare-usage-admission-receipt.json"), cwd: repositoryRoot });
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+  if (usageGate.decision === "BLOCKED") {
+    console.error(`Cloudflare usage preflight blocked Access provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+    process.exit(2);
+  }
 }
 if (!hostname) {
   console.error("ELIOTR_ACCESS_HOSTNAME is required for a live deployment");

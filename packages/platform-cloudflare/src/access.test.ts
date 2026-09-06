@@ -4,7 +4,7 @@ import {
   createCloudflareAccessVerifier,
 } from "./access.js";
 
-const TEAM_DOMAIN = "https://eliotr.cloudflareaccess.com";
+const TEAM_DOMAIN = "https://eliotr-example.cloudflareaccess.com";
 const AUDIENCE = "eliotr-app-aud";
 const NOW_MS = Date.UTC(2026, 7, 29, 12, 0, 0);
 const NOW_SECONDS = Math.floor(NOW_MS / 1000);

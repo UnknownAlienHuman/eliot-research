@@ -16,7 +16,7 @@ import { type Env } from "../src/env.js";
 interface Migration { name: string; queries: string[]; }
 const runtime = env as unknown as Env & { CORE_MIGRATIONS: Migration[]; SEARCH_MIGRATIONS: Migration[] };
 const db = runtime.CORE_DB, owner = "bootstrap-owner";
-const issuer = "https://bootstrap-test.cloudflareaccess.com", audience = "bootstrap-audience";
+const issuer = "https://bootstrap-test-example.cloudflareaccess.com", audience = "bootstrap-audience";
 const keys = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048,
   publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
 const jwk = { ...await crypto.subtle.exportKey("jwk", keys.publicKey), kid: "bootstrap-key", alg: "RS256", use: "sig" };
