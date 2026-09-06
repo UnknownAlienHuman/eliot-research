@@ -44,6 +44,12 @@ function raise(code) {
   throw new ResidencyKeyError(code);
 }
 
+function splitTransportLines(source) {
+  return source
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
 function decodeUtf8(input) {
   try {
     return fatalDecoder.decode(input);
@@ -159,7 +165,7 @@ function isCanonicalOutput(output) {
 
 function parseFrame(source) {
   if (Buffer.byteLength(source, "utf8") > FRAME_BYTES) fail("residency-key frame too large");
-  const lines = source.split("\n");
+  const lines = splitTransportLines(source);
   if (lines.at(-1) === "") lines.pop();
 
   [PROTOCOL_HEADER, GENERATION_HEADER, COLUMNS_HEADER].forEach((expected, index) => {
@@ -277,9 +283,16 @@ function assertRejected(name, source, expectedMessage) {
 }
 
 export async function verifyResidencyKeyReference(fixtureUrl) {
-  const source = await readFile(fixtureUrl, "utf8");
+  const raw = await readFile(fixtureUrl, "utf8");
+  const source = splitTransportLines(raw).join("\n");
   const cases = parseFrame(source);
   verifyCases(cases);
+
+  const crlfCases = parseFrame(source.replace(/\n/g, "\r\n"));
+  if (crlfCases.length !== cases.length) {
+    fail("residency-key: CRLF transport changed the case count");
+  }
+  verifyCases(crlfCases);
 
   const firstRow = source
     .split("\n")
