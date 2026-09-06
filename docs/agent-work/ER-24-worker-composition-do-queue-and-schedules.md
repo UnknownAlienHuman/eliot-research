@@ -43,6 +43,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
+- `apps/eliotr-core/src/google-token-store.ts`
+- `apps/eliotr-core/test/google-token-store.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.

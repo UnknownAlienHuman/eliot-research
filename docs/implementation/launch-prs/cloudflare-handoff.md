@@ -225,3 +225,15 @@ only the disposable resources owned by this trial; never delete by broad prefix/
 Update the relevant PR checklist with observed evidence and remaining failures. Do not mark a topic
 complete merely because this handoff exists. #96 consolidates the release evidence only after all
 required topic code and real gates are independently satisfied.
+
+### #95 credential checkpoint — initial admission still pending
+
+Use `../drive-credentials.md` with canonical §§12.9/13.5–13.6. Migration 0012 adds credential identity,
+revision and consent-expiry fencing; it never admits legacy rows. Implement the missing authenticated
+browser callback/one-use state/PKCE/nonce/verified identity path locally before provisioning real secrets.
+Do not set `In production` or a principal/generation manually to turn fixtures into trusted credentials.
+After complete-code/target approval, retain real narrow scopes and dedicated identity evidence, encrypted
+D1 restart/key-rotation, expired/revoked-grant and late-response probes. `invalid_grant` must preserve
+existing canonical D1/R2 artifacts. No automatic refresh retry in an uncertain operation; reconnect is
+explicit. Keep the old KEK until affected ciphertext has been rotated and read back; never log keys/tokens.
+This checkpoint neither implements result publication nor supplies its missing full failure receipt.

@@ -35,8 +35,9 @@ ResearchSession Durable Object: exposes only pending status; no authoritative se
 
 Required ChatGPT Drive Exchange: ER-19's interface-only reconciliation is now explicitly registered.
 The cursor/OAuth/result-publication loop must be implemented, not just live-tested. Five bounded
-Sheet/changes REST methods and contribution guards now exist; their request-scoped trusted credential
-provider and durable/runtime composition remain open. See `drive-rest.md`. Optional
+Sheet/changes REST methods and contribution guards now exist; the D1-bound encrypted-credential refresh/rotation provider now exists for previously admitted
+connections. Initial browser OAuth/verified identity admission and full runtime composition remain open.
+See `drive-rest.md` and `drive-credentials.md`. Optional
 Gemini MCP planning and self-reported observation validation cannot satisfy that requirement.
 
 ### `IMPLEMENTED_NOT_LIVE`
@@ -53,6 +54,7 @@ deterministic projection execution and managed-generation readiness logic
 exact EvidenceHandle, citation and output gating
 exact erasure closure and non-revealing purge ledger
 bounded required-Drive Sheet/changes REST subset and strict contribution transport guards (not full OAuth/cursor/publication)
+context-bound AES-GCM refresh-token vault and primary-D1 CAS/refresh leases (not initial OAuth admission)
 optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
 ```
 
