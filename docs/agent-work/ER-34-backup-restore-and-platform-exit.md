@@ -12,6 +12,10 @@ outside the paths below.
 ## Owned paths
 
 - `packages/platform-cloudflare/src/backup.ts`
+- `packages/platform-cloudflare/src/backup-shared.ts`
+- `packages/platform-cloudflare/src/backup-epoch.ts`
+- `packages/platform-cloudflare/src/backup-offsite.ts`
+- `packages/platform-cloudflare/src/backup.test.ts`
 - `infra/backup/**`
 
 ## Read only
