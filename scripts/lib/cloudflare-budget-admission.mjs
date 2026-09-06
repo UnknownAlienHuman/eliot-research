@@ -229,6 +229,11 @@ export function releaseLease(ledger, { operation } = {}) {
 // writes/queries stay disabled until EITHER a fresh ADMITTED aggregate
 // receipt OR a fresh controller-owned ledger+inventory proof shows headroom.
 // Denials carry no secrets and must precede any billable call.
+// Provenance discipline (receipts are integrity-only locators, never proof of
+// live collection): this function is the sole persisted-receipt consumer, and
+// its `receipt` must come only from the local preflight write path
+// (same-machine, same-run receipt file). Never pass committed fixtures,
+// transported files, or cross-machine copies — re-collect instead.
 export function admitHeavyOperation(ledger, options = {}) {
   const {
     operation,
