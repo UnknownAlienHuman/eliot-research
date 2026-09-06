@@ -1,12 +1,12 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
-import { createD1NavigationStore, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
+import { createD1NavigationStore, canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
 import { materializeStructuralNavigationBatch, type OrientationSource } from "@eliotr/cloudflare-navigation";
-import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
+import { canonicalNormalizedBundleKey, objectResidencyKeyDigest } from "@eliotr/platform-cloudflare";
 import { canonicalNavigationJson, materializeStructuralNavigation, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
 import { createD1NavigationService } from "../src/navigation-persistence.js";
 import { createNavigationService } from "../src/navigation-service.js";
-import { access, artifacts, B, clearDatabase, countArtifacts, db, fixture, grant, project,
+import { access, artifacts, clearDatabase, countArtifacts, db, fixture, grant, project,
   seedHandle, setupDatabase, source, TIME, wrappedDatabase } from "./navigation-fixture.js";
 
 beforeAll(setupDatabase);
@@ -18,8 +18,11 @@ interface StagedBundle {
   readonly revision: ReturnType<typeof source>;
   readonly authority: Record<string, unknown>;
   readonly key: string;
+  readonly manifestKey: string;
   readonly bytes: Uint8Array;
   readonly digest: string;
+  readonly contentResidencyDigest: string;
+  readonly manifestDigest: string;
 }
 
 async function shaHex(value: string | Uint8Array): Promise<string> {
@@ -28,34 +31,85 @@ async function shaHex(value: string | Uint8Array): Promise<string> {
     .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+const RESIDENCY_BASE = { scope_domain_id: "scope-1", access_domain_id: "access-1",
+  confidentiality_domain_id: "conf-1", encryption_key_domain_id: "enc-1",
+  retention_domain_id: "ret-1", erasure_domain_id: "era-1" };
+
 async function stageBundle(ref: string, markdown: string, metadata: Record<string, string> = {}): Promise<StagedBundle> {
   const bytes = new TextEncoder().encode(markdown);
   const digest = await shaHex(bytes);
-  await db.prepare("UPDATE source_revision SET content_sha256=?1 WHERE source_revision_ref=?2").bind(digest, ref).run();
-  const revision = { ...source(ref), content_sha256: digest };
-  const key = await canonicalNormalizedBundleKey(B, { owner_system_id: "owner-system-1",
+  const contentResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
+    content_digest: { algorithm: "sha256", digest } });
+  const revisionBase = source(ref);
+  const revision = { ...revisionBase, content_sha256: digest };
+  const identity = { owner_system_id: "owner-system-1",
     source_namespace_id: revision.source_namespace_id, source_owner_generation: revision.source_owner_generation,
-    source_logical_id: revision.source_id, source_revision_ref: ref }, "content.md");
-  await bucket.put(key, bytes, { httpMetadata: { contentType: "text/markdown" },
+    source_logical_id: revision.source_id, source_revision_ref: ref };
+  const key = await canonicalNormalizedBundleKey(contentResidencyDigest, identity, "content.md");
+  // Stage the admitted manifest first so the D1 normalized_artifact_ref is the canonical
+  // promotion receipt binding (per-file residency digests, three distinct keys).
+  const manifest = {
+    protocol: "eliotr.normalized.v1",
+    origin: { owner_system_id: "owner-system-1", source_namespace_id: revision.source_namespace_id,
+      source_owner_generation: revision.source_owner_generation, source_revision_ref: ref,
+      source_view_ref: `view-${ref}`, ownership_mode: "immutable_import" },
+    source: { logical_id: revision.source_id, original_name: "doc.md", original_sha256: digest,
+      origin_location_class: "cloud", mime_type: "text/markdown" },
+    residency_and_disclosure: { ...RESIDENCY_BASE, disclosure_ceiling: "private", allowed_use: ["research"] },
+    normalization: { analyzer: "test", analyzer_version: "1", profile: "p",
+      config_hash: digest, created_at: TIME },
+    content: { markdown: "content.md", markdown_sha256: digest },
+    capabilities: { text_ranges: true, pages: false, bounding_boxes: false, tables: false, figures: false },
+    quality: { state: "standard", assurance_ceiling: "ceiling-1", warnings: [] as string[] },
+    export: { purpose: "test", receipt_ref: "receipt-1" },
+  };
+  const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const manifestDigest = await shaHex(manifestBytes);
+  const manifestResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
+    content_digest: { algorithm: "sha256", digest: manifestDigest } });
+  if (manifestResidencyDigest === contentResidencyDigest) throw new Error("per-file digests must differ");
+  const manifestKey = await canonicalNormalizedBundleKey(manifestResidencyDigest, identity, "manifest.json");
+  await db.prepare("UPDATE source_revision SET content_sha256=?1, object_residency_key_digest=?2, normalized_artifact_ref=?3 WHERE source_revision_ref=?4")
+    .bind(digest, contentResidencyDigest, manifestKey, ref).run();
+  const decisionRow = await db.prepare("SELECT decision_json FROM source_admission_decision WHERE source_revision_ref=?1")
+    .bind(ref).first<{ decision_json: string }>();
+  if (decisionRow) {
+    const decision = JSON.parse(decisionRow.decision_json) as Record<string, unknown>;
+    decision.object_residency_key_digest = contentResidencyDigest;
+    const newJson = canonicalEvidenceJson(decision);
+    const newSha = await evidenceSha256(decision);
+    await db.prepare("UPDATE source_admission_decision SET object_residency_key_digest=?1, decision_json=?2, decision_sha256=?3 WHERE source_revision_ref=?4")
+      .bind(contentResidencyDigest, newJson, newSha, ref).run();
+  }
+  const updatedRevision = { ...revision, object_residency_key_digest: contentResidencyDigest, normalized_artifact_ref: manifestKey };
+  await bucket.put(key, bytes, { httpMetadata: { contentType: "text/markdown; charset=utf-8" },
     customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(bytes.byteLength),
       eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
       source_owner_generation: revision.source_owner_generation,
       admission_receipt_ref: `decision-${ref}`, ...metadata } });
+  await bucket.put(manifestKey, manifestBytes, { httpMetadata: { contentType: "application/json; charset=utf-8" },
+    customMetadata: { eliotr_sha256: manifestDigest, eliotr_size_bytes: String(manifestBytes.byteLength),
+      eliotr_immutable: "true", source_namespace_id: revision.source_namespace_id,
+      source_owner_generation: revision.source_owner_generation,
+      admission_receipt_ref: `decision-${ref}` } });
   const authority = { source_id: revision.source_id, owner_system_id: "owner-system-1",
     source_namespace_id: revision.source_namespace_id, source_owner_generation: revision.source_owner_generation,
     source_revision_ref: ref, source_title: "Rust memory", source_class: "document", content_sha256: digest,
-    object_residency_key_digest: B, normalized_artifact_ref: revision.normalized_artifact_ref,
-    purge_state: "LIVE", admission_receipt_ref: `decision-${ref}` };
-  return { revision, authority, key, bytes, digest };
+    object_residency_key_digest: contentResidencyDigest, normalized_artifact_ref: manifestKey,
+    purge_state: "LIVE", admission_receipt_ref: `decision-${ref}`,
+    disclosure_ceiling: "private", allowed_use: ["research"] };
+  return { revision: updatedRevision, authority, key, manifestKey, bytes, digest,
+    contentResidencyDigest, manifestDigest };
 }
 
 function contourSource(staged: StagedBundle): OrientationSource {
-  return { revision: staged.revision, authority: staged.authority, policy: {}, policy_uses: ["research"],
+  return { revision: staged.revision, authority: staged.authority,
+    policy: { disclosure_ceiling: "private" }, policy_uses: ["research"],
     policy_closure_ref: "policy-closure-1", title: "Rust memory", kind: "document" } as unknown as OrientationSource;
 }
 
 async function stageManifest(ref: string, markdownDigest: string, mappings: string | undefined,
-  mapDigest: string | undefined, stageMap: boolean, originRef = ref, mapJson = "{}"): Promise<void> {
+  mapDigest: string | undefined, stageMap: boolean, originRef = ref, mapJson = "{}"): Promise<string> {
   const manifest = {
     protocol: "eliotr.normalized.v1",
     origin: { owner_system_id: "owner-system-1", source_namespace_id: `namespace-${ref}`,
@@ -63,9 +117,7 @@ async function stageManifest(ref: string, markdownDigest: string, mappings: stri
       source_view_ref: `view-${ref}`, ownership_mode: "immutable_import" },
     source: { logical_id: `source-${ref}`, original_name: "doc.md", original_sha256: markdownDigest,
       origin_location_class: "cloud", mime_type: "text/markdown" },
-    residency_and_disclosure: { scope_domain_id: "scope-1", access_domain_id: "access-1",
-      confidentiality_domain_id: "conf-1", encryption_key_domain_id: "enc-1", retention_domain_id: "ret-1",
-      erasure_domain_id: "era-1", disclosure_ceiling: "private", allowed_use: ["research"] },
+    residency_and_disclosure: { ...RESIDENCY_BASE, disclosure_ceiling: "private", allowed_use: ["research"] },
     normalization: { analyzer: "test", analyzer_version: "1", profile: "p",
       config_hash: markdownDigest, created_at: TIME },
     content: { markdown: "content.md", markdown_sha256: markdownDigest,
@@ -77,19 +129,28 @@ async function stageManifest(ref: string, markdownDigest: string, mappings: stri
   };
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   const manifestDigest = await shaHex(manifestBytes);
-  const keyFor = async (logicalPath: string) => canonicalNormalizedBundleKey(B,
-    { owner_system_id: "owner-system-1", source_namespace_id: `namespace-${ref}`,
-      source_owner_generation: "owner-generation-1", source_logical_id: `source-${ref}`,
-      source_revision_ref: ref }, logicalPath);
-  const metadataFor = (digest: string, size: number) => ({ httpMetadata: { contentType: "text/markdown" },
+  const identity = { owner_system_id: "owner-system-1", source_namespace_id: `namespace-${ref}`,
+    source_owner_generation: "owner-generation-1", source_logical_id: `source-${ref}`,
+    source_revision_ref: ref };
+  const manifestResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
+    content_digest: { algorithm: "sha256", digest: manifestDigest } });
+  const manifestKey = await canonicalNormalizedBundleKey(manifestResidencyDigest, identity, "manifest.json");
+  const jsonMetadataFor = (digest: string, size: number) => ({ httpMetadata: { contentType: "application/json; charset=utf-8" },
     customMetadata: { eliotr_sha256: digest, eliotr_size_bytes: String(size), eliotr_immutable: "true",
       source_namespace_id: `namespace-${ref}`, source_owner_generation: "owner-generation-1",
       admission_receipt_ref: `decision-${ref}` } });
-  await bucket.put(await keyFor("manifest.json"), manifestBytes, metadataFor(manifestDigest, manifestBytes.byteLength));
+  await bucket.put(manifestKey, manifestBytes, jsonMetadataFor(manifestDigest, manifestBytes.byteLength));
+  await db.prepare("UPDATE source_revision SET normalized_artifact_ref=?1 WHERE source_revision_ref=?2")
+    .bind(manifestKey, ref).run();
   if (stageMap && mappings !== undefined) {
     const mapBytes = new TextEncoder().encode(mapJson);
-    await bucket.put(await keyFor(mappings), mapBytes, metadataFor(await shaHex(mapBytes), mapBytes.byteLength));
+    const mapSha = await shaHex(mapBytes);
+    const mapResidencyDigest = await objectResidencyKeyDigest({ ...RESIDENCY_BASE,
+      content_digest: { algorithm: "sha256", digest: mapSha } });
+    const mapKey = await canonicalNormalizedBundleKey(mapResidencyDigest, identity, mappings);
+    await bucket.put(mapKey, mapBytes, jsonMetadataFor(mapSha, mapBytes.byteLength));
   }
+  return manifestKey;
 }
 describe("persisted Corpus Lens in local Workers/D1", () => {
   it("persists and reopens card, map and atlas across store instances", async () => {
@@ -406,7 +467,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     const altered = await stageBundle("revision-r2b", "# Title B\n\nBody B.\n");
     const tamperedBytes = new TextEncoder().encode("# Title B\n\nBody B altered.\n");
     await bucket.put(altered.key, tamperedBytes, {
-      httpMetadata: { contentType: "text/markdown" },
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
       customMetadata: { eliotr_sha256: altered.digest, eliotr_size_bytes: String(tamperedBytes.byteLength),
         eliotr_immutable: "true", source_namespace_id: "namespace-revision-r2b",
         source_owner_generation: "owner-generation-1", admission_receipt_ref: "decision-revision-r2b" },
@@ -418,25 +479,92 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     await expect(run(foreign)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
     // Manifest-referenced coordinate map that was never staged.
     const missingMap = await stageBundle("revision-r2d", "# Title D\n\nBody D.\n");
-    await stageManifest("revision-r2d", missingMap.digest, "coordinate-map.json", await shaHex("map"), false);
-    await expect(run(missingMap)).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_NOT_FOUND" });
+    const missingMapKey = await stageManifest("revision-r2d", missingMap.digest, "coordinate-map.json", await shaHex("map"), false);
+    const missingMapUpdated: StagedBundle = { ...missingMap,
+      authority: { ...missingMap.authority, normalized_artifact_ref: missingMapKey } };
+    await expect(materializeStructuralNavigationBatch({ store: f.store,
+      snapshot: f.snapshot, sources: [contourSource(missingMapUpdated)], evidence_bucket: bucket }))
+      .rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_NOT_FOUND" });
     // Foreign manifest origin plus altered coordinate digest.
     const foreignManifest = await stageBundle("revision-r2e", "# T\n\nBody.\n");
-    await stageManifest("revision-r2e", foreignManifest.digest, undefined, undefined, false, "foreign-revision");
-    await expect(run(foreignManifest)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    const foreignKey = await stageManifest("revision-r2e", foreignManifest.digest, undefined, undefined, false, "foreign-revision");
+    const foreignManifestUpdated: StagedBundle = { ...foreignManifest,
+      authority: { ...foreignManifest.authority, normalized_artifact_ref: foreignKey } };
+    await expect(materializeStructuralNavigationBatch({ store: f.store,
+      snapshot: f.snapshot, sources: [contourSource(foreignManifestUpdated)], evidence_bucket: bucket }))
+      .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
     expect(await countArtifacts()).toBe(0);
     // An honestly staged manifest with an exact coordinate map persists native anchors and nothing inferred.
     const exact = await stageBundle("revision-r2b", "# Title B\n\nBody B.\n");
     const exactBytes = new TextEncoder().encode("# Title B\n\nBody B.\n");
     const mapJson = JSON.stringify([{ normalized_start_byte: 0, normalized_end_byte: exactBytes.byteLength,
       precision: "EXACT", native_anchor: { page: 1 } }]);
-    await stageManifest("revision-r2b", exact.digest, "coordinate-map.json", await shaHex(mapJson), true,
+    const exactKey = await stageManifest("revision-r2b", exact.digest, "coordinate-map.json", await shaHex(mapJson), true,
       "revision-r2b", mapJson);
-    const ok = await run(exact);
+    const exactUpdated: StagedBundle = { ...exact,
+      authority: { ...exact.authority, normalized_artifact_ref: exactKey } };
+    const ok = await materializeStructuralNavigationBatch({ store: f.store,
+      snapshot: f.snapshot, sources: [contourSource(exactUpdated)], evidence_bucket: bucket });
     expect(ok.structural).toHaveLength(1);
     const maps = await f.store.getDocumentMaps(["revision-r2b"]);
     expect(JSON.stringify(maps[0])).toMatch(/"page":1/u);
     expect(JSON.stringify(maps[0])).not.toMatch(/bbox|table_cell/u);
+  });
+  it("fails closed on LUNA per-file key, MIME, metadata, residency and missing-manifest bindings", async () => {
+    const f = await fixture(["revision-luna"]); await grant(f.snapshot);
+    const run = (staged: StagedBundle) => materializeStructuralNavigationBatch({ store: f.store,
+      snapshot: f.snapshot, sources: [contourSource(staged)], evidence_bucket: bucket });
+    const base = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
+    // Distinct per-file promoted keys/digests: manifest key must differ from content key.
+    expect(base.manifestKey).not.toBe(base.key);
+    expect(base.manifestDigest).not.toBe(base.digest);
+    expect(base.contentResidencyDigest).toBe(base.authority.object_residency_key_digest);
+    // Missing manifest for an admitted bundle fails closed (no content-only structural success).
+    await bucket.delete(base.manifestKey);
+    await expect(run(base)).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_NOT_FOUND" });
+    expect(await countArtifacts()).toBe(0);
+    // Restore the admitted manifest for the remaining negatives.
+    const restored = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
+    // Wrong per-file key: manifest bytes under the content residency digest are unfindable.
+    const wrongKey = await canonicalNormalizedBundleKey(restored.contentResidencyDigest,
+      { owner_system_id: "owner-system-1", source_namespace_id: "namespace-revision-luna",
+        source_owner_generation: "owner-generation-1", source_logical_id: "source-revision-luna",
+        source_revision_ref: "revision-luna" }, "manifest.json");
+    expect(wrongKey).not.toBe(restored.manifestKey);
+    expect(await bucket.get(wrongKey)).toBeNull();
+    // Wrong MIME on the admitted manifest fails closed.
+    const manifestObject = await bucket.get(restored.manifestKey);
+    if (!manifestObject) throw new Error("manifest vanished");
+    const manifestBytes = new Uint8Array(await manifestObject.arrayBuffer());
+    await bucket.put(restored.manifestKey, manifestBytes, {
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: { eliotr_sha256: restored.manifestDigest,
+        eliotr_size_bytes: String(manifestBytes.byteLength), eliotr_immutable: "true",
+        source_namespace_id: "namespace-revision-luna", source_owner_generation: "owner-generation-1",
+        admission_receipt_ref: "decision-revision-luna" } });
+    await expect(run(restored)).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
+    expect(await countArtifacts()).toBe(0);
+    // Missing mandatory namespace metadata fails closed.
+    const clean = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
+    const cleanManifest = await bucket.get(clean.manifestKey);
+    if (!cleanManifest) throw new Error("clean manifest vanished");
+    const cleanBytes = new Uint8Array(await cleanManifest.arrayBuffer());
+    await bucket.put(clean.manifestKey, cleanBytes, {
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+      customMetadata: { eliotr_sha256: clean.manifestDigest,
+        eliotr_size_bytes: String(cleanBytes.byteLength), eliotr_immutable: "true",
+        source_owner_generation: "owner-generation-1",
+        admission_receipt_ref: "decision-revision-luna" } });
+    await expect(run(clean)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(0);
+    // Residency/disclosure mismatch fails closed.
+    const resident = await stageBundle("revision-luna", "# Luna\n\nBody.\n");
+    await db.prepare("UPDATE source_revision SET object_residency_key_digest=?1 WHERE source_revision_ref='revision-luna'")
+      .bind("c".repeat(64)).run();
+    const residentTampered: StagedBundle = { ...resident,
+      authority: { ...resident.authority, object_residency_key_digest: "c".repeat(64) } };
+    await expect(run(residentTampered)).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(0);
   });
   it("denies barrier changes with zero usable artifacts and parses fences honestly", async () => {
     const f = await fixture(["revision-r2f"]); await grant(f.snapshot);

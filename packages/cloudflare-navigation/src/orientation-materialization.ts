@@ -3,7 +3,7 @@ import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { buildDocumentMap, buildSourceCard, materializeStructuralNavigation, MAX_CANONICAL_BYTES, NavigationError } from "@eliotr/retrieval";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import { NormalizedBundleManifestSchema, type NormalizedBundleManifest } from "@eliotr/contracts";
-import { bufferBounded, canonicalNormalizedBundleKey, createR2EvidenceObjectStore, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import { bufferBounded, canonicalNormalizedBundleKey, createR2EvidenceObjectStore, objectResidencyKeyDigest, residencyKeyForManifest, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import type { OrientationSource } from "./orientation-authority.js";
 import { ORIENTATION_PROFILE } from "./orientation-input.js";
 
@@ -65,10 +65,15 @@ interface VerifiedBundle {
  * 1. `store.requireCurrentScopeSnapshot` binds principal/owner generation, residency, ScopeSnapshot
  *    identity/revision/currentness, grant, read policy, policy generation/authority ref, deployment
  *    generation and global/scope purge fences BEFORE any R2 read.
- * 2. Every R2 object is resolved through `canonicalNormalizedBundleKey` (residency digest, owner system,
- *    namespace, owner generation, logical id, revision ref all embedded in the key), then verified for
- *    key/ref binding, immutable metadata triple, byte length, SHA-256 digest, media type, ETag presence,
- *    manifest/source-revision agreement and residency+scope identity BEFORE parsing.
+ * 2. The manifest key is the D1 admission receipt
+ *    (`source_revision.normalized_artifact_ref === promotion.canonical_manifest_ref`).
+ *    Content/map keys are re-derived per file with their own complete residency digests
+ *    (three distinct digests, never one content digest for all files). Every R2 object is
+ *    then verified for key/ref binding, mandatory immutable metadata (namespace, owner
+ *    generation, admission receipt, digest, size, object identity), byte length, SHA-256
+ *    digest, path-specific media type (Markdown content, JSON manifest/map with charset
+ *    normalization), ETag/readback identity, manifest/source-revision agreement and
+ *    residency_and_disclosure binding to current D1 authority (recomputed digests) BEFORE parsing.
  * 3. Authority is re-checked AFTER all R2 reads plus pure derivation and BEFORE any D1 persistence.
  * 4. `D1NavigationStore.putArtifacts` independently re-verifies grant/sources/identity with exact readback
  *    (lost-ACK safe, same-ID divergent bytes rejected). A source mutated between the R2 read and the D1
@@ -76,9 +81,11 @@ interface VerifiedBundle {
  *    are not one atomic transaction; staleness surfacing between them fails closed instead of persisting.
  *
  * Missing, truncated, altered, foreign or mismatched bindings throw typed fail-closed errors and persist
- * nothing. A source with neither a staged manifest nor staged content (bundle never staged) returns as
- * `metadata_only` so the caller keeps the explicit honest narrower profile; integrity failures of staged
- * bytes never silently downgrade.
+ * nothing. For an admitted bundle the manifest is mandatory: expected-but-missing/corrupt
+ * manifest/content/map fails closed with zero new usable artifacts and never becomes a
+ * content-only structural success. `metadata_only` is returned only when authoritative D1
+ * proves no normalized-bundle admission exists at all (empty manifest reference) or when no
+ * evidence bucket is configured; integrity failures never silently downgrade.
  */
 export async function materializeStructuralNavigationBatch(
   input: StructuralOrientationInput,
@@ -151,13 +158,34 @@ async function bundleIdentity(source: OrientationSource): Promise<{
   };
 }
 
+function expectedMediaBase(logicalPath: string): string {
+  if (logicalPath.endsWith(".md")) return "text/markdown";
+  if (logicalPath.endsWith(".json")) return "application/json";
+  if (logicalPath.endsWith(".sha256")) return "text/plain";
+  return "application/octet-stream";
+}
+
+function mediaTypeAccepted(actual: string | undefined, logicalPath: string): boolean {
+  if (actual === undefined) return false;
+  const segments = actual.split(";");
+  const base = segments[0]?.trim().toLowerCase();
+  if (base !== expectedMediaBase(logicalPath)) return false;
+  if (segments.length === 1) return true;
+  if (segments.length === 2) {
+    const param = segments[1]?.trim().toLowerCase();
+    return param === "charset=utf-8" || param === "charset=utf8" || param === "charset=\"utf-8\"";
+  }
+  return false;
+}
+
 async function readImmutableTextObject(
   objects: EvidenceObjectStore,
   key: string,
   label: string,
   expectedSha256: string | undefined,
   source: OrientationSource,
-): Promise<{ readonly bytes: Uint8Array; readonly text: string } | null> {
+  logicalPath: string,
+): Promise<{ readonly bytes: Uint8Array; readonly text: string; readonly sha256: string } | null> {
   let opened;
   try {
     opened = await objects.open(key);
@@ -192,17 +220,24 @@ async function readImmutableTextObject(
     || metadata.eliotr_size_bytes !== String(opened.size)) {
     structuralFail("NAVIGATION_ARTIFACT_INVALID", `${label} R2 immutable authority metadata mismatch`);
   }
-  if (metadata.source_namespace_id !== undefined && metadata.source_namespace_id !== source.authority.source_namespace_id) {
+  if (metadata.source_namespace_id !== source.authority.source_namespace_id) {
     structuralFail("NAVIGATION_SOURCE_MISMATCH", `${label} R2 object belongs to another source namespace`);
   }
-  if (metadata.source_owner_generation !== undefined && metadata.source_owner_generation !== source.authority.source_owner_generation) {
+  if (metadata.source_owner_generation !== source.authority.source_owner_generation) {
     structuralFail("NAVIGATION_SOURCE_MISMATCH", `${label} R2 object belongs to another owner generation`);
   }
-  if (metadata.admission_receipt_ref !== undefined && metadata.admission_receipt_ref !== source.authority.admission_receipt_ref) {
+  if (metadata.admission_receipt_ref !== source.authority.admission_receipt_ref) {
     structuralFail("NAVIGATION_SOURCE_MISMATCH", `${label} R2 object carries another admission receipt`);
   }
+  // Production R2 cannot precompute an ETag before the immutable write. The promotion
+  // receipt persists the actual readback ETag; here we validate the actual readback
+  // identity (non-empty ETag, exact size/digest/metadata binding) rather than non-empty alone.
+  const version = (opened as unknown as { readonly version?: unknown }).version;
+  if (typeof version === "string" && version.length > 0 && /[\u0000-\u001f\u007f]/u.test(version)) {
+    structuralFail("NAVIGATION_ARTIFACT_INVALID", `${label} R2 version binding is malformed`);
+  }
   const contentType = opened.httpMetadata?.contentType;
-  if (contentType === undefined || !contentType.toLowerCase().startsWith("text/markdown")) {
+  if (!mediaTypeAccepted(contentType, logicalPath)) {
     structuralFail("NAVIGATION_ARTIFACT_INVALID", `${label} normalized object has an invalid media type`);
   }
   let text: string;
@@ -211,7 +246,7 @@ async function readImmutableTextObject(
   } catch {
     structuralFail("NAVIGATION_ARTIFACT_INVALID", `${label} R2 bytes are not valid UTF-8`);
   }
-  return { bytes, text };
+  return { bytes, text, sha256: observedSha };
 }
 
 async function readVerifiedNormalizedBundle(
@@ -219,13 +254,20 @@ async function readVerifiedNormalizedBundle(
   source: OrientationSource,
 ): Promise<VerifiedBundle | null> {
   const binding = await bundleIdentity(source);
-  const manifestKey = await canonicalNormalizedBundleKey(binding.residencyKeyDigest, binding.identity, "manifest.json");
-  const manifestObject = await readImmutableTextObject(objects, manifestKey, "normalized manifest", undefined, source);
+  // Canonical promotion stores per-file residency digests, so manifest/content/map live
+  // under three distinct keys. The exact manifest key is the D1 admission receipt
+  // (source_revision.normalized_artifact_ref === promotion.canonical_manifest_ref).
+  // Never re-derive it from the content digest, never scan/list R2, never choose newest.
+  const manifestKey = source.authority.normalized_artifact_ref;
+  if (typeof manifestKey !== "string" || manifestKey.length === 0) {
+    return null;
+  }
+  if (!manifestKey.endsWith("/manifest.json")) {
+    structuralFail("NAVIGATION_ARTIFACT_INVALID", "admitted manifest reference is not a canonical bundle key");
+  }
+  const manifestObject = await readImmutableTextObject(objects, manifestKey, "normalized manifest", undefined, source, "manifest.json");
   if (manifestObject === null) {
-    const contentKey = await canonicalNormalizedBundleKey(binding.residencyKeyDigest, binding.identity, "content.md");
-    const direct = await readImmutableTextObject(objects, contentKey, "normalized content", source.authority.content_sha256, source);
-    if (direct === null) return null;
-    return { markdown: direct.text };
+    structuralFail("NAVIGATION_ARTIFACT_NOT_FOUND", "admitted normalized manifest is not staged");
   }
   let manifest: NormalizedBundleManifest;
   try {
@@ -248,20 +290,51 @@ async function readVerifiedNormalizedBundle(
   if (manifest.content.markdown_sha256 !== source.authority.content_sha256) {
     structuralFail("NAVIGATION_SOURCE_MISMATCH", "normalized manifest disagrees with the admitted content digest");
   }
+  if (manifest.residency_and_disclosure.disclosure_ceiling !== source.authority.disclosure_ceiling) {
+    structuralFail("NAVIGATION_SOURCE_MISMATCH", "normalized manifest disclosure disagrees with current D1 authority");
+  }
+  const manifestUses = [...manifest.residency_and_disclosure.allowed_use].sort();
+  const authorityUses = [...source.authority.allowed_use].sort();
+  if (JSON.stringify(manifestUses) !== JSON.stringify(authorityUses)) {
+    structuralFail("NAVIGATION_SOURCE_MISMATCH", "normalized manifest allowed use disagrees with current D1 authority");
+  }
+  if (manifest.residency_and_disclosure.disclosure_ceiling !== source.policy.disclosure_ceiling) {
+    structuralFail("NAVIGATION_SOURCE_MISMATCH", "normalized manifest disclosure disagrees with the current read policy");
+  }
+  const baseResidency = residencyKeyForManifest(manifest);
+  const contentResidencyDigest = await objectResidencyKeyDigest(baseResidency);
+  if (contentResidencyDigest !== source.authority.object_residency_key_digest) {
+    structuralFail("NAVIGATION_SOURCE_MISMATCH", "manifest residency does not recompute to the admitted residency digest");
+  }
+  const manifestResidencyDigest = await objectResidencyKeyDigest({
+    ...baseResidency,
+    content_digest: { algorithm: "sha256", digest: manifestObject.sha256 },
+  });
+  const expectedManifestKey = await canonicalNormalizedBundleKey(manifestResidencyDigest, binding.identity, "manifest.json");
+  if (expectedManifestKey !== manifestKey) {
+    structuralFail("NAVIGATION_SOURCE_MISMATCH", "admitted manifest key does not match its recomputed residency digest");
+  }
   let coordinateMapJson: string | undefined;
   if (manifest.content.mappings !== undefined) {
     if (manifest.content.mappings === manifest.content.markdown) {
       structuralFail("NAVIGATION_ARTIFACT_INVALID", "normalized manifest aliases its coordinate map to content");
     }
-    const mappingsKey = await canonicalNormalizedBundleKey(binding.residencyKeyDigest, binding.identity, manifest.content.mappings);
-    const mappings = await readImmutableTextObject(objects, mappingsKey, "coordinate map", manifest.content.coordinate_map_digest, source);
+    if (manifest.content.coordinate_map_digest === undefined) {
+      structuralFail("NAVIGATION_ARTIFACT_INVALID", "manifest-referenced coordinate map has no digest binding");
+    }
+    const mapResidencyDigest = await objectResidencyKeyDigest({
+      ...baseResidency,
+      content_digest: { algorithm: "sha256", digest: manifest.content.coordinate_map_digest },
+    });
+    const mappingsKey = await canonicalNormalizedBundleKey(mapResidencyDigest, binding.identity, manifest.content.mappings);
+    const mappings = await readImmutableTextObject(objects, mappingsKey, "coordinate map", manifest.content.coordinate_map_digest, source, manifest.content.mappings);
     if (mappings === null) {
       structuralFail("NAVIGATION_ARTIFACT_NOT_FOUND", "manifest-referenced coordinate map is not staged");
     }
     coordinateMapJson = mappings.text;
   }
-  const contentKey = await canonicalNormalizedBundleKey(binding.residencyKeyDigest, binding.identity, manifest.content.markdown);
-  const content = await readImmutableTextObject(objects, contentKey, "normalized content", manifest.content.markdown_sha256, source);
+  const contentKey = await canonicalNormalizedBundleKey(contentResidencyDigest, binding.identity, manifest.content.markdown);
+  const content = await readImmutableTextObject(objects, contentKey, "normalized content", manifest.content.markdown_sha256, source, manifest.content.markdown);
   if (content === null) {
     structuralFail("NAVIGATION_ARTIFACT_NOT_FOUND", "manifest-referenced normalized content is not staged");
   }
