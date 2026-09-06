@@ -114,6 +114,28 @@ all typed negative paths through JavaScript, native Rust and Rust/Wasm.
 This slice does not move `residencyDomainsEqual`, `validateDeduplication`, storage placement, encryption,
 retention, erasure or transition authority. Those remain TypeScript/M3+ responsibilities.
 
+## M2 `scope-snapshot-identity.v1` identity shadow slice
+
+The first scope-identity corpus binds the generic shadow kernel to the exact
+`scopeSnapshotIdentityPayload`, `scopeSnapshotDigestPayload` and `expectedSnapshotIdentity`
+formulas: the canonical identity payload (protocol, revision, resolved expression, participant
+and owner generations, member revisions, policy authority, disclosure digest, purge revision,
+optional client fence, creation/expiry timestamps), the `scope-` plus 48-hex stable ID, and the
+snapshot digest over the digest payload. Object keys follow the TypeScript UTF-16 code-unit
+order; duplicate, missing, extra and unknown keys fail closed with typed content-free errors.
+
+Forty-eight committed cases cover valid derivation/verification, key-ordering and
+escaped-equivalent metamorphism, replay versus conflicting replay, digest/ID mismatch on
+valid-hex tamper, foreign owner/scope/generation/policy inputs, zero/max/max+1 identifier and
+resource boundaries, malformed UTF-8, escapes, non-canonical numbers, surrogates, and every
+bounded depth/member/payload ceiling. The same fixture bytes run through the independent
+JavaScript reference, native Rust and compiled Rust/Wasm.
+
+Scope normalization, algebra, resolution, authority closure, persistence, expiry/currentness
+and all D1/R2 effects remain TypeScript/Cloudflare authority. No production call site
+consumes Rust output, no live receipt is claimed, and promotion still requires a separately
+reviewed rollback-bound packet. This family is `IMPLEMENTED_NOT_LIVE`.
+
 The default Wasm build exposes no product ABI and is inspected before the feature build can replace its
 artifact. CI-only scalar verifiers exist under `m1-self-test-export`; they are not M5 product exports.
 
