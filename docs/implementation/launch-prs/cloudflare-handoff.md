@@ -152,6 +152,13 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
 
 ### #95 — Required ChatGPT Drive Exchange and optional Gemini MCP (ER-18/19/20/36; ER-17/26/27)
 
+The Sheet/changes REST subset and v1 contribution guards are implemented in `../drive-rest.md`.
+They do not complete OAuth, durable reconciliation, result publication or runtime activation. At the
+real-account gate verify numeric filters/default/omitted fields, exact parent ownership, 401 handling,
+unknown append outcomes and that ERC cannot write ChatGPT REQUESTS/PAYLOAD_PARTS. An HTTP 200
+requires subsequent exact-row readback; `writtenAt` is only a local observation.
+
+
 - [ ] Implement and locally test the mandatory Drive adapters BEFORE accessing an account. Canonical
       §§12.3–12.12 and ADR-0003 still select Drive for Day-0 ChatGPT. The Gemini MCP flag/helper is not
       a qualified replacement; one active ChatGPT write transport only. Do not equate an interface,
@@ -218,3 +225,26 @@ only the disposable resources owned by this trial; never delete by broad prefix/
 Update the relevant PR checklist with observed evidence and remaining failures. Do not mark a topic
 complete merely because this handoff exists. #96 consolidates the release evidence only after all
 required topic code and real gates are independently satisfied.
+
+### #95 credential checkpoint — owner integration and exchange qualification still pending
+
+Use `../drive-credentials.md` with canonical §§12.9/13.5–13.6. Migration 0012 adds credential identity,
+revision and consent-expiry fencing; it never admits legacy rows. Connect the implemented one-use state/PKCE/nonce/verified identity service to authenticated
+owner HTTP/PWA locally before provisioning real secrets.
+Do not set `In production` or a principal/generation manually to turn fixtures into trusted credentials.
+After complete-code/target approval, retain real narrow scopes and dedicated identity evidence, encrypted
+D1 restart/key-rotation, expired/revoked-grant and late-response probes. `invalid_grant` must preserve
+existing canonical D1/R2 artifacts. No automatic refresh retry in an uncertain operation; reconnect is
+explicit. Keep the old KEK until affected ciphertext has been rotated and read back; never log keys/tokens.
+This checkpoint neither implements result publication nor supplies its missing full failure receipt.
+
+### #95 internal initial OAuth admission
+
+`drive-oauth-admission.md` now defines the implemented one-use intent, fixed-endpoint code exchange,
+real RS256 verifier and atomic encrypted first insert. The owner HTTP/PWA routes/configuration admission
+and full connect/provision/reconnect loop remain off-account development. Tests must not substitute
+unsigned identity claims or hand-made ACTIVE rows for that integration. At the later complete approved
+trial, retain genuine dedicated subject/email, exact callback issuer/client/redirect/state/nonce, narrow
+scopes, configured production-client attestation and the AUTHORIZING-to-qualified-exchange transition.
+Also verify fresh login after an uncertain/spent attempt, replay/races, rotated Google keys and no secret
+logging/referrer leakage. JWT claims do not establish OAuth publishing status. No new live gate is passed.

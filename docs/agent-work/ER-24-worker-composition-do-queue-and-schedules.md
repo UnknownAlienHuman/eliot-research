@@ -36,13 +36,17 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-http.test.ts`
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
-
 - `apps/eliotr-core/src/catalog-service.ts`
 - `apps/eliotr-core/src/catalog-service.test.ts`
 - `apps/eliotr-core/src/catalog-queries.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
+- `apps/eliotr-core/src/google-token-store.ts`
+- `apps/eliotr-core/test/google-token-store.test.ts`
+- `apps/eliotr-core/src/google-oauth-store.ts`
+- `apps/eliotr-core/src/google-oauth-service.ts`
+- `apps/eliotr-core/test/google-oauth-admission.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -174,3 +178,12 @@ Recorded channel observations carry their existing generation/receipt references
 reader does not attest the current D1 Search or managed index. The UI labels that limitation explicitly.
 Actual D1/HTTP tests cover pagination, corruption, hidden histories and read races. Live Access and
 remote history/readiness observations remain NOT_EXECUTED.
+
+## Initial Google OAuth integration
+
+The bounded service, cryptographic verifier and primary-D1 intent/admission store are implemented in
+`drive-oauth-admission.md`. ER-20 owns Google I/O and crypto; ER-24 composes D1, and ER-13 owns migration
+0013. ER-18 retains the package barrel; this integration only adds the reviewed OAuth exports there.
+All shared edits are integrator-serialized. The owner HTTP/PWA adapter is still required: trusted owner
+session/currentness and server configuration cannot be replaced by request-body claims. Admission ends
+in AUTHORIZING, not ACTIVE; no exchange asset, cursor, source grant or runtime activation is implied.
