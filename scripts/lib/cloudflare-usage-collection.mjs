@@ -18,6 +18,7 @@ import { spawnSync } from "node:child_process";
 import {
   LOGIN_INSTRUCTION,
   WRANGLER_OAUTH_MODE,
+  extractActiveAccountId,
   loadWranglerOAuthCredential,
   resolveAuthMode,
   scrubTokenEnv,
@@ -171,7 +172,7 @@ export async function collectAccountUsage(options = {}) {
   if (typeof expectedAccountId !== "string" || expectedAccountId.trim() === "") {
     collectionFail("COLLECTION_INVALID", "expectedAccountId is required for account binding");
   }
-  if (typeof whoamiOutput !== "string" || !whoamiOutput.includes(expectedAccountId)) {
+  if (extractActiveAccountId(whoamiOutput) !== expectedAccountId) {
     collectionFail("WRONG_ACCOUNT", "active browser profile does not match the expected account; refusing collection");
   }
 
@@ -324,6 +325,12 @@ export async function collectAccountUsage(options = {}) {
         continue;
       } else if (provider?.kind === "billing-usage" || provider?.kind === "inventory-ai-search") {
         refuseChannel("authority kind without provenance", METRIC_PROVENANCE.UNAVAILABLE);
+        continue;
+      } else {
+        // No numeric is trusted without an allowed provenance plus coverage
+        // proof: unprovenanced reporters are refused to a typed gap
+        // (unknown), never admitted as trusted-partial/unavailable.
+        refuseChannel("unprovenanced reporter declares no verified aggregate", METRIC_PROVENANCE.UNAVAILABLE);
         continue;
       }
       for (const [key, value] of Object.entries(values)) {
@@ -490,6 +497,53 @@ export async function runUsagePreflight(options = {}) {
     return { decision: evaluation.decision, evaluation, snapshot, receipt };
   };
 
+  let authMode = "api-token";
+  try {
+    authMode = resolveAuthMode(env);
+  } catch (error) {
+    collectionFail("AUTH_MODE_INVALID", error?.message ?? "unknown auth mode");
+  }
+
+  // Identity verification FIRST: in wrangler-oauth mode the credential load
+  // plus the exact whoami account binding precede any env-snapshot
+  // evaluation, so no env-controlled production path manufactures ADMITTED
+  // or bypasses OAuth/account binding. The snapshot below is still evaluated
+  // through the real envelope; tests inject via the readFile/getWhoamiOutput
+  // seams and never precede verification.
+  let oauthBearer = null;
+  let oauthWhoamiOutput = null;
+  if (authMode === WRANGLER_OAUTH_MODE) {
+    const readFileImpl = readFile ?? (await import("node:fs/promises")).readFile;
+    try {
+      const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
+      oauthBearer = credential.bearer;
+    } catch (error) {
+      if (error instanceof UsageCollectionError) throw error;
+      throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
+    }
+    const mockedWhoami = env?.ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT;
+    if (mockedWhoami !== undefined && mockedWhoami !== "") {
+      oauthWhoamiOutput = mockedWhoami;
+    } else if (typeof getWhoamiOutput === "function") {
+      oauthWhoamiOutput = await getWhoamiOutput();
+    } else {
+      const scrubbed = scrubTokenEnv({ ...env });
+      const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+        { cwd, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
+      if (result.error || result.status !== 0) {
+        collectionFail("OAUTH_UNAVAILABLE",
+          `Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+      }
+      oauthWhoamiOutput = result.stdout ?? "";
+    }
+    try {
+      await verifyWranglerOAuthAccount({ expectedAccountId, getWhoamiOutput: async () => oauthWhoamiOutput });
+    } catch (error) {
+      if (error instanceof UsageCollectionError) throw error;
+      throw new UsageCollectionError(error?.code ?? "OAUTH_ACCOUNT_MISMATCH", error?.message ?? "account verification failed");
+    }
+  }
+
   const fixtureRaw = env?.ELIOTR_TEST_USAGE_SNAPSHOT_JSON;
   if (fixtureRaw !== undefined && fixtureRaw !== "") {
     let snapshot;
@@ -500,13 +554,6 @@ export async function runUsagePreflight(options = {}) {
     }
     const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });
     return finish(evaluation, snapshot);
-  }
-
-  let authMode = "api-token";
-  try {
-    authMode = resolveAuthMode(env);
-  } catch (error) {
-    collectionFail("AUTH_MODE_INVALID", error?.message ?? "unknown auth mode");
   }
 
   if (authMode !== WRANGLER_OAUTH_MODE) {
@@ -523,53 +570,21 @@ export async function runUsagePreflight(options = {}) {
     return finish(evaluation, snapshot);
   }
 
-  const readFileImpl = readFile ?? (await import("node:fs/promises")).readFile;
-  let bearer;
-  try {
-    const credential = await loadWranglerOAuthCredential({ env, readFile: readFileImpl, now: nowMs });
-    bearer = credential.bearer;
-  } catch (error) {
-    if (error instanceof UsageCollectionError) throw error;
-    throw new UsageCollectionError(error?.code ?? "OAUTH_UNAVAILABLE", error?.message ?? "OAuth credential unavailable");
-  }
-
-  let whoamiOutput;
-  const mockedWhoami = env?.ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT;
-  if (mockedWhoami !== undefined && mockedWhoami !== "") {
-    whoamiOutput = mockedWhoami;
-  } else if (typeof getWhoamiOutput === "function") {
-    whoamiOutput = await getWhoamiOutput();
-  } else {
-    const scrubbed = scrubTokenEnv({ ...env });
-    const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
-      { cwd, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
-    if (result.error || result.status !== 0) {
-      collectionFail("OAUTH_UNAVAILABLE",
-        `Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
-    }
-    whoamiOutput = result.stdout ?? "";
-  }
-
-  try {
-    await verifyWranglerOAuthAccount({ expectedAccountId, getWhoamiOutput: async () => whoamiOutput });
-  } catch (error) {
-    if (error instanceof UsageCollectionError) throw error;
-    throw new UsageCollectionError(error?.code ?? "OAUTH_ACCOUNT_MISMATCH", error?.message ?? "account verification failed");
-  }
-
-  // Live OAuth collection: the registry must cover every required metric
-  // (explicit source set or explicit limitation). An empty provider list seals
-  // with unknown counters — it never admits and never fabricates zero. Where
-  // no authoritative aggregate exists the limitation above plus a
+  // Live OAuth collection: identity was verified above before any snapshot
+  // evaluation, so the bearer and whoami output below are the verified
+  // values. The registry must cover every required metric (explicit source
+  // set or explicit limitation). An empty provider list seals with unknown
+  // counters — it never admits and never fabricates zero. Where no
+  // authoritative aggregate exists the limitation above plus a
   // controller-owned ledger and fresh full inventory are required before any
   // runtime lease opens. Bearer stays memory-only; snapshot carries digests.
   assertLiveRegistryCoversAll();
   const snapshot = await collectAccountUsage({
-    bearer,
+    bearer: oauthBearer,
     expectedAccountId,
     now: nowMs,
     providers,
-    whoamiOutput,
+    whoamiOutput: oauthWhoamiOutput,
     source: USAGE_SOURCE_LIVE,
   });
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });

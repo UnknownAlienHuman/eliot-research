@@ -174,6 +174,8 @@ await check("ai search instance exactness", async () => {
   assert.ok(under.advisory.length > 0);
 });
 
+// Forged-receipt validation moved to test-usage-envelope-receipt.mjs (FIX7W2 split-only).
+
 await check("digest and window helpers", async () => {
   assert.match(DIGEST, /^[0-9a-f]{64}$/u);
   assert.equal(digestAccountId(ACCOUNT), DIGEST);
@@ -205,24 +207,33 @@ await check("collection needs bearer, redacts it, binds account", async () => {
     }],
   });
   assert.ok(!JSON.stringify(snapshot).includes(BEARER), "bearer leaked into snapshot");
-  assert.equal(snapshot.metrics.queue_ops, 10);
+  // Corrected to the mandated invariant: the unprovenanced mock reporter
+  // carries no allowed provenance plus coverage proof, so its numeric is
+  // refused to a typed gap (unknown) instead of trusted-partial.
+  assert.equal(snapshot.metrics.queue_ops, "unknown");
+  assert.equal(snapshot.readback.metric_trust.queue_ops.state, "unknown-untrusted");
   assert.equal(snapshot.metrics.workers_requests, "unknown");
 });
 
 await check("aggregate includes unrelated mocked usage", async () => {
+  // Corrected to the mandated invariant: unprovenanced reporters never
+  // admit, so the legacy summation below stays unknown fail-closed. Proven
+  // cross-account summation through authorized billing channels is covered
+  // by test-cloudflare-usage-billing.mjs (dimensional rows aggregate).
   const snapshot = await collectAccountUsage({
     bearer: BEARER,
     expectedAccountId: ACCOUNT,
     now: NOW,
-    whoamiOutput: ACCOUNT,
+    whoamiOutput: `account ${ACCOUNT} active`,
     providers: [
       { group: "eliotr-counters", collect: async () => ({ values: { workers_requests: 200_000 } }) },
       { group: "gotham-counters", collect: async () => ({ values: { workers_requests: 7_900_000 } }) },
     ],
   });
-  assert.equal(snapshot.metrics.workers_requests, 8_100_000);
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "unknown-untrusted");
   const result = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: DIGEST, now: NOW });
-  assert.equal(result.decision, "BLOCKED");
+  assert.equal(result.decision, "SEALED");
 });
 
 // --- mock Cloudflare API ---------------------------------------------------

@@ -38,3 +38,5 @@ await import("./test-usage-aggregation-trust.mjs");
 await import("./test-privacy-large-line-regression.mjs");
 await import("./test-queues-chunk-accounting.mjs");
 await import("./test-cloudflare-usage-billing.mjs");
+await import("./test-cloudflare-usage-pagination.mjs");
+await import("./test-usage-envelope-receipt.mjs");

@@ -99,6 +99,11 @@ await check("conflicting full-account sources keep unknown", async () => {
 });
 
 await check("unrelated provider failure does not poison other counters", async () => {
+  // Corrected to the mandated invariant: no numeric is trusted without an
+  // allowed provenance plus coverage proof. The unprovenanced "good"
+  // reporter below is refused to a typed gap (unknown), exactly like the
+  // failed provider's declared cover — the failure still poisons only its
+  // own declared metric, and no unprovenanced numeric is admitted.
   const snapshot = await collectAccountUsage({
     bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: whoami,
     providers: [
@@ -106,8 +111,21 @@ await check("unrelated provider failure does not poison other counters", async (
       { group: "good", collect: async () => ({ values: { queue_ops: 7 }, coverage: { accountId: ACCOUNT } }) },
     ],
   });
-  assert.equal(snapshot.metrics.queue_ops, 7);
+  assert.equal(snapshot.metrics.queue_ops, "unknown");
+  assert.equal(snapshot.readback.metric_trust.queue_ops.state, "unknown-untrusted");
   assert.equal(snapshot.metrics.d1_rows_read, "unknown");
+});
+
+await check("unprovenanced numeric reporters never admit (workers_requests=42 regression)", async () => {
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: whoami,
+    providers: [
+      { group: "legacy-fallthrough", collect: async () => ({ values: { workers_requests: 42 }, coverage: { accountId: ACCOUNT, fullAccount: false } }) },
+    ],
+  });
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "unknown-untrusted");
+  assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("legacy-fallthrough") && line.includes("unprovenanced")));
 });
 
 await check("paginated inventory proves pages without fabricating counters", async () => {

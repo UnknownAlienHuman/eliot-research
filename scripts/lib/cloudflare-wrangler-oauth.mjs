@@ -171,6 +171,38 @@ export async function loadWranglerOAuthCredential(options = {}) {
 // Verify the active official profile matches the deployment account.
 // getWhoamiOutput must return stdout of `wrangler whoami` run WITHOUT any
 // injected API token so the profile itself (not the bearer) is verified.
+//
+// Structural identity: the ACTIVE account identifier is extracted with strict
+// patterns matching Wrangler's documented `whoami` shape
+// (`Account <id> via browser OAuth`, the `account <id> active` seam shape,
+// `id <id> ok`, or a single unambiguous 32-hex account token under an
+// `Account ID` table header). Exact equality with the expected account is
+// required. Substring presence is never sufficient: an expected ID mentioned
+// in unrelated text, a query/fragment-style token, multiple distinct IDs, or
+// unparseable output all fail closed with OAUTH_ACCOUNT_MISMATCH.
+const WHOAMI_ACTIVE_PATTERNS = [
+  /Account\s+([A-Za-z0-9_-]+)\s+via\s+browser\s+OAuth/u,
+  /account\s+([A-Za-z0-9_-]+)\s+active/u,
+  /\bid\s+([A-Za-z0-9_-]+)\s+ok\b/u,
+];
+
+export function extractActiveAccountId(output) {
+  if (typeof output !== "string" || output === "") return null;
+  const candidates = [];
+  for (const pattern of WHOAMI_ACTIVE_PATTERNS) {
+    const global = new RegExp(pattern.source, `${pattern.flags.includes("g") ? "" : "g"}${pattern.flags}`);
+    for (const match of output.matchAll(global)) {
+      if (typeof match[1] === "string" && match[1] !== "") candidates.push(match[1]);
+    }
+  }
+  if (/Account ID/u.test(output)) {
+    const tokens = output.match(/\b[0-9a-fA-F]{32}\b/gu) ?? [];
+    for (const token of tokens) candidates.push(token);
+  }
+  if (candidates.length === 0) return null;
+  if (new Set(candidates).size !== 1) return null;
+  return candidates[0];
+}
 export async function verifyWranglerOAuthAccount(options = {}) {
   const expectedAccountId = options.expectedAccountId;
   if (typeof expectedAccountId !== "string" || expectedAccountId.trim() === "") {
@@ -183,7 +215,7 @@ export async function verifyWranglerOAuthAccount(options = {}) {
     if (error instanceof WranglerOAuthError) throw error;
     fail("OAUTH_UNAVAILABLE", `Wrangler verification (wrangler whoami) failed. ${LOGIN_INSTRUCTION}`);
   }
-  if (typeof output !== "string" || !output.includes(expectedAccountId)) {
+  if (typeof output !== "string" || extractActiveAccountId(output) !== expectedAccountId) {
     fail("OAUTH_ACCOUNT_MISMATCH", `Wrangler OAuth account mismatch: the active browser profile does not match account ${JSON.stringify(expectedAccountId)}. Run \`wrangler login\` with the correct account, then retry.`);
   }
   return { accountId: expectedAccountId };

@@ -551,4 +551,36 @@ await check("authorized inventory admits only its contracted count", async () =>
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
 });
 
+await check("wrong-path url with expected id in query is never fetched", async () => {
+  let fetched = 0;
+  const laundered = createBillableUsageProvider({
+    group: "billable-usage",
+    covers: ["workers_requests"],
+    endpoint: () => `https://api.cloudflare.com/client/v4/accounts/${OTHER}/billable/usage?from=${FROM}&to=${TO}&echo=${ACCOUNT}`,
+    fetchImpl: async () => { fetched += 1; return okJson({ success: true, result: [] }); },
+    metricMap: MAP,
+  });
+  await assert.rejects(
+    laundered.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "ACCOUNT_MISMATCH",
+  );
+  assert.equal(fetched, 0);
+});
+
+await check("zero-row declared metric never admits its sibling", async () => {
+  // covers [workers_requests, queue_ops] with rows only for workers_requests:
+  // the complete sibling must not be admitted under fullAccount:true.
+  const rows = fullSeptemberRows();
+  const gapped = twoMetricProvider(rows);
+  await assert.rejects(
+    gapped.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH" && String(error.message).includes("queue_ops"),
+  );
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [gapped],
+  });
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+  assert.equal(snapshot.metrics.queue_ops, "unknown");
+});
+
 console.log(`Billing usage v2: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

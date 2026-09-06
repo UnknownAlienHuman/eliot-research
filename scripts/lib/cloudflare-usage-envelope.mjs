@@ -429,5 +429,53 @@ export function validateAdmissionReceipt(receipt, options = {}) {
   if (!Array.isArray(receipt.over_envelope) || !Array.isArray(receipt.unknown_metrics) || !Array.isArray(receipt.reasons)) {
     reasons.push("admission receipt must carry over_envelope, unknown_metrics and reasons arrays");
   }
+  // ADMITTED is the only decision that authorizes heavy work, so a forged
+  // ADMITTED (for example unknown_metrics non-empty, over-envelope entries,
+  // incoherent sealed flag, wrong generation, unbound account ref, stale
+  // snapshot, or malformed windows) must fail closed. SEALED/BLOCKED keep
+  // their current semantics.
+  if (receipt.decision === "ADMITTED") {
+    if (!Array.isArray(receipt.unknown_metrics) || receipt.unknown_metrics.length !== 0) {
+      reasons.push("admission receipt claims ADMITTED with unknown metrics; refusing forged receipt");
+    }
+    if (!Array.isArray(receipt.over_envelope) || receipt.over_envelope.length !== 0) {
+      reasons.push("admission receipt claims ADMITTED over the envelope; refusing forged receipt");
+    }
+    if (receipt.sealed !== false) {
+      reasons.push("admission receipt claims ADMITTED with an incoherent sealed flag; refusing forged receipt");
+    }
+    if (receipt.generation !== USAGE_ENVELOPE_GENERATION) {
+      reasons.push("admission receipt generation binding is missing or stale; refusing forged receipt");
+    }
+    if (typeof receipt.account_ref !== "string" || receipt.account_ref === "" || receipt.account_ref === "cloudflare-account:missing") {
+      reasons.push("admission receipt account ref binding is missing; refusing forged receipt");
+    }
+    try {
+      const collectedAt = parseTime(receipt.collected_at, "collected_at");
+      if (collectedAt > now + CLOCK_SKEW_MS || now - collectedAt > maxAgeMs) {
+        reasons.push("admission receipt snapshot is stale; re-run the usage preflight before mutating");
+      }
+    } catch (error) {
+      reasons.push(error.message);
+    }
+    const monthly = receipt.windows?.monthly;
+    const monthlyFailures = validateWindow(monthly, "windows.monthly");
+    if (monthlyFailures.length > 0) {
+      reasons.push(...monthlyFailures);
+    } else if (monthly.kind !== "monthly") {
+      reasons.push("windows.monthly.kind must be monthly");
+    }
+    const daily = receipt.windows?.daily;
+    if (daily !== null && daily !== undefined) {
+      const dailyFailures = validateWindow(daily, "windows.daily");
+      if (dailyFailures.length > 0) {
+        reasons.push(...dailyFailures);
+      } else if (daily.kind !== "daily") {
+        reasons.push("windows.daily.kind must be daily");
+      }
+    } else {
+      reasons.push("admission receipt windows.daily binding is missing; refusing forged receipt");
+    }
+  }
   return { ok: reasons.length === 0, decision: receipt.decision ?? "BLOCKED", reasons };
 }

@@ -16,6 +16,7 @@ import {
 import {
   ProviderFailure,
   UsageCollectionError,
+  assertAccountUrl,
   createAiSearchInventoryProvider,
   createPaginatedInventoryProvider,
   createR2CursorInventoryProvider,
@@ -94,8 +95,19 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       const fromDate = billingDayDate(queryFromMs);
       const toDate = billingDayDate(queryToMs);
       let url = endpoint(accountId, fromDate, toDate);
-      if (typeof url !== "string" || !url.includes(accountId) || !url.includes("/billable/usage")) {
-        throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} left the bound billing endpoint`);
+      // Structural endpoint binding: the exact `/accounts/{accountId}/`
+      // path segment must match and the pathname must carry
+      // `/billable/usage`. An expected ID in the query/fragment while the
+      // path binds another account is ACCOUNT_MISMATCH, never fetched.
+      assertAccountUrl(url, accountId, group, "billing endpoint");
+      try {
+        const parsed = new URL(url);
+        if (!parsed.pathname.includes("/billable/usage")) {
+          throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} left the bound billing endpoint`);
+        }
+      } catch (error) {
+        if (error instanceof ProviderFailure) throw error;
+        throw new ProviderFailure("MALFORMED", `${group} billing endpoint unparseable`);
       }
       const sentFrom = url.match(/[?&]from=([^&]*)/)?.[1];
       const sentTo = url.match(/[?&]to=([^&]*)/)?.[1];
@@ -221,6 +233,20 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
           if (interval.end > cursor) cursor = interval.end;
         }
         if (cursor < queryToMs - CLOCK_SKEW_MS) throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} partial usage interval`, { httpStatus });
+      }
+      // Zero-row declared metric: every declared covers metric mapped by
+      // metricMap must independently prove full exact-window coverage. A
+      // mapped covers metric with no usable rows is WINDOW_MISMATCH for the
+      // whole provider — the complete metrics are never admitted alongside
+      // the gapped one under a single fullAccount:true receipt. Metrics NOT
+      // in covers stay absent (unknown downstream, never zero).
+      if (scoped !== null) {
+        const mappedValues = new Set(Object.values(metricMap));
+        for (const metric of scoped) {
+          if (mappedValues.has(metric) && !intervalsByMetric.has(metric)) {
+            throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} declared cover has no usage rows`, { httpStatus });
+          }
+        }
       }
       const windowStart = new Date(queryFromMs).toISOString();
       const windowEnd = new Date(queryToMs).toISOString();

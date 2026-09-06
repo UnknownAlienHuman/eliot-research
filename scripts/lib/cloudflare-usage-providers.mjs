@@ -42,6 +42,30 @@ export function safeFetchMeta({ httpStatus = null, kind = "inventory", pages = n
   return { httpStatus, kind, pages, cursors, full, authoritative, reason };
 }
 
+// Structural account binding for provider URLs: the expected account must be
+// the exact `/accounts/{accountId}/` path segment. Query/fragment laundering
+// (expected ID in `?...=` while the path binds another account),
+// ambiguity, and unparseable URLs all fail closed.
+export function assertAccountUrl(url, accountId, group, context) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new ProviderFailure("MALFORMED", `${group} ${context} unparseable URL`);
+  }
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  const index = segments.indexOf("accounts");
+  if (index < 0 || segments[index + 1] !== accountId) {
+    throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} ${context} left the bound account`);
+  }
+}
+
+function assertPlainResultInfo(raw, group, page, context) {
+  if (raw !== undefined && raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
+    throw new ProviderFailure("MALFORMED", `${group} page ${page} ${context} malformed`);
+  }
+}
+
 // Paginated account-wide inventory provider over the browser-OAuth bearer.
 // Every page must be success:true with an array result. D1-style pagination
 // uses total_count/page/per_page safely: total_pages must match
@@ -87,9 +111,7 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
       };
       do {
         const url = endpoint(accountId, page, perPage);
-        if (typeof url !== "string" || !url.includes(accountId)) {
-          throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} page ${page} left the bound account`);
-        }
+        assertAccountUrl(url, accountId, group, `page ${page}`);
         let response;
         try {
           response = await fetchImpl(url, { headers: { authorization: `Bearer ${bearer}` } });
@@ -113,7 +135,21 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus });
         }
         seen.push(...body.result);
+        assertPlainResultInfo(body?.result_info, group, page, "result_info");
         const info = body?.result_info ?? {};
+        // Pagination integers are fail-closed: total_pages >= 1,
+        // per_page >= 1, count >= 0 (total_count >= 0 is checked below).
+        // Non-integer wire values stay ignored-as-absent per contract; an
+        // integer that is out of range is MALFORMED, never fullAccount:true.
+        if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.per_page) && info.per_page < 1) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.count) && info.count < 0) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus });
+        }
         // Page echo: with pagination metadata, a missing/mismatched echo is wrong slice.
         // Once a multi-page walk is established, later pages must echo too:
         // metadata that disappears mid-walk fails closed (Luna case).
@@ -203,9 +239,7 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
       let terminated = false;
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, cursor);
-        if (typeof url !== "string" || !url.includes(accountId)) {
-          throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} cursor hop ${hop} left the bound account`);
-        }
+        assertAccountUrl(url, accountId, group, `cursor hop ${hop}`);
         if (url.includes("per_page=") || url.includes("page=")) {
           throw new ProviderFailure("MALFORMED", `${group} R2 inventory must use cursor pagination, not page/per_page`);
         }
@@ -298,9 +332,7 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
       };
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, page, perPage);
-        if (typeof url !== "string" || !url.includes(accountId)) {
-          throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} page ${page} left the bound account`);
-        }
+        assertAccountUrl(url, accountId, group, `page ${page}`);
         if (url.includes("ai-search/indexes")) {
           throw new ProviderFailure("MALFORMED", `${group} must use /ai-search/instances, never ai-search/indexes`);
         }
@@ -335,7 +367,18 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
           throw new ProviderFailure("MALFORMED", `${group} page ${page} missing instances array`, { httpStatus: lastHttpStatus });
         }
         seen.push(...items);
+        assertPlainResultInfo(body?.result_info, group, page, "result_info");
+        assertPlainResultInfo(body?.pagination, group, page, "pagination");
         const info = body?.result_info ?? body?.pagination ?? {};
+        if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.per_page) && info.per_page < 1) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.count) && info.count < 0) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus });
+        }
         // This API's own shape (result_info or pagination; D1 semantics not
         // forced): totals require a matching page echo, must not drift, and a
         // supplied total_count must equal the cumulative count. Termination is

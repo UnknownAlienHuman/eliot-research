@@ -240,6 +240,70 @@ await check("account verification pins the official profile to the deployment ac
   assert.equal(failed.code, "OAUTH_UNAVAILABLE");
 });
 
+await check("account verification rejects unrelated-text and ambiguity structurally", async () => {
+  // Wrong-account output that mentions the expected ID in unrelated text is
+  // not THE active account: exact active-identifier equality is required.
+  for (const output of [
+    `Account other-account via browser OAuth (note ${ACCOUNT} seen elsewhere)`,
+    `account other-account active; ${ACCOUNT} in unrelated text`,
+    `Account ${ACCOUNT}-suffix via browser OAuth`,
+    `Account prefix-${ACCOUNT} via browser OAuth`,
+    `Account ${ACCOUNT} via browser OAuth\nAccount other-account via browser OAuth`,
+  ]) {
+    const error = await verifyWranglerOAuthAccount({ expectedAccountId: ACCOUNT, getWhoamiOutput: async () => output }).then(() => assert.fail("must throw"), (error) => error);
+    assert.equal(error.code, "OAUTH_ACCOUNT_MISMATCH");
+  }
+  // The strict contract still accepts every documented active shape.
+  for (const output of [
+    `Account ${ACCOUNT} via browser OAuth`,
+    `account ${ACCOUNT} active`,
+    `id ${ACCOUNT} ok`,
+  ]) {
+    assert.deepEqual(await verifyWranglerOAuthAccount({ expectedAccountId: ACCOUNT, getWhoamiOutput: async () => output }), { accountId: ACCOUNT });
+  }
+});
+
+await check("env snapshot never precedes identity verification in oauth mode", async () => {
+  // Manager repro: the fixture path consumed ELIOTR_TEST_USAGE_SNAPSHOT_JSON
+  // before any credential read or whoami. The gate must verify identity
+  // FIRST even when a snapshot is staged: zero reads/verifications is a
+  // bypass. Here a valid staged ADMITTED snapshot is supplied in oauth mode
+  // with failing seams — the run must fail closed on identity, never admit.
+  const staged = await admittedSnapshotJson();
+  let credReads = 0;
+  let whoamiCalls = 0;
+  const result = await runUsagePreflight({
+    env: {
+      ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
+      ELIOTR_WRANGLER_CONFIG_FILE: "wrangler-test-default.toml",
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
+    },
+    nowMs: NOW,
+    readFile: async () => { credReads += 1; throw Object.assign(new Error("missing"), { code: "ENOENT" }); },
+    getWhoamiOutput: async () => { whoamiCalls += 1; return `Account ${ACCOUNT} via browser OAuth`; },
+    providers: admittedUsageProviders(),
+  }).then(() => assert.fail("must throw on missing credential"), (error) => error);
+  assert.ok(["OAUTH_UNAVAILABLE", "OAUTH_EXPIRED"].includes(result.code), `unexpected code ${result.code}`);
+  assert.equal(credReads, 1);
+  assert.equal(whoamiCalls, 0);
+  // And with a readable credential but a wrong-account whoami, the staged
+  // snapshot must still not admit: verification precedes evaluation.
+  const wrong = await runUsagePreflight({
+    env: {
+      ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
+      ELIOTR_WRANGLER_CONFIG_FILE: "wrangler-test-default.toml",
+      CLOUDFLARE_ACCOUNT_ID: ACCOUNT,
+      ELIOTR_TEST_USAGE_SNAPSHOT_JSON: staged,
+    },
+    nowMs: NOW,
+    readFile: async () => validToml(),
+    getWhoamiOutput: async () => "Account other-account via browser OAuth",
+    providers: admittedUsageProviders(),
+  }).then(() => assert.fail("must throw on wrong account"), (error) => error);
+  assert.equal(wrong.code, "OAUTH_ACCOUNT_MISMATCH");
+});
+
 await check("bearer injection stays in child env memory, verification env stays scrubbed", () => {
   const injected = injectOAuthBearer({ A: "1" }, BEARER);
   assert.equal(injected.CLOUDFLARE_API_TOKEN, BEARER);

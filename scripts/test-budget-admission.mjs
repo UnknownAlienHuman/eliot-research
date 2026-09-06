@@ -214,4 +214,34 @@ await check("denials carry no secrets", async () => {
   assert.ok(!text.includes(ACCOUNT));
 });
 
+await check("forged admitted receipts never enable heavy work", async () => {
+  const billableCalls = [];
+  const billable = () => { billableCalls.push("invoked"); };
+  const fresh = admittedReceipt(DAY_ONE);
+  const forged = { ...fresh, unknown_metrics: ["queue_ops"] };
+  const denied = admitHeavyOperation(createBudgetLedger(), {
+    operation: "ingestion-commit",
+    metricKey: "d1_rows_written",
+    quantity: 100,
+    now: DAY_ONE,
+    receipt: forged,
+    expectedAccountDigest: DIGEST,
+  });
+  assert.equal(denied.allowed, false);
+  assert.equal(denied.reason, "SEALED_NO_HEADROOM_PROOF");
+  assert.equal(billableCalls.length, 0);
+  // The honest receipt from the same helper still admits.
+  const admitted = admitHeavyOperation(createBudgetLedger(), {
+    operation: "ingestion-commit",
+    metricKey: "d1_rows_written",
+    quantity: 100,
+    now: DAY_ONE,
+    receipt: fresh,
+    expectedAccountDigest: DIGEST,
+  });
+  if (admitted.allowed) billable();
+  assert.equal(admitted.allowed, true);
+  assert.equal(billableCalls.length, 1);
+});
+
 console.log(`Budget admission conformance: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
