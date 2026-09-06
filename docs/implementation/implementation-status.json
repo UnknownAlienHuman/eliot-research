@@ -260,12 +260,15 @@
         "ER-31"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; full structural/Atlas materialization and live conformance remain open",
+      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; N1 honest structural SourceCard/DocumentMap materialization from exact admitted bytes is implemented with bounded derivation and immutable persistence; N2/N3/N4 Atlas and source-span expansion plus live conformance remain open",
       "completion_evidence": [
         "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
         "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
         "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
-        "Full structural/Atlas navigation, R2 source-span expansion and remote live receipts NOT_EXECUTED"
+        "packages/retrieval/src/projection.ts materializeStructuralNavigation bounded exact-byte derivation through existing ER-31 builders/codec/identity; no inferred page/table/code/native coords",
+        "packages/retrieval/src/navigation.test.ts N1 controlled-parser cases: nested RU+EN+code+table, non-ASCII offsets, reordered headings, missing/partial/duplicate/invalid/cross-source/scope/revision, divergent bytes, max/max+1 bounds, explicit gaps, publication-ineligible",
+        "apps/eliotr-core/test/navigation-persistence.test.ts structural persistence in real local D1/Miniflare: exact replay, divergent-byte conflict, purge race with zero new artifact",
+        "N2/N3/N4 full Atlas/source-span expansion, R2 range readback and remote live receipts NOT_EXECUTED"
       ]
     },
     {

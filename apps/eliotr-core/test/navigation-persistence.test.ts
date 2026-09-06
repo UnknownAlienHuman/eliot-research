@@ -1,10 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createD1NavigationStore, evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
-import { canonicalNavigationJson, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
+import { canonicalNavigationJson, materializeStructuralNavigation, projectAtlasIdentity, requireResolvedEvidenceForPublication } from "@eliotr/retrieval";
 import { createD1NavigationService } from "../src/navigation-persistence.js";
 import { createNavigationService } from "../src/navigation-service.js";
 import { access, artifacts, clearDatabase, countArtifacts, db, fixture, grant, project,
-  seedHandle, setupDatabase, TIME, wrappedDatabase } from "./navigation-fixture.js";
+  seedHandle, setupDatabase, source, TIME, wrappedDatabase } from "./navigation-fixture.js";
 
 beforeAll(setupDatabase);
 beforeEach(clearDatabase);
@@ -216,6 +216,53 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
       Array.from({ length: 5 }, (_, i) => ({ ...card.card_ref, id: `card-${i}` }))))
       .rejects.toMatchObject({ code: "NAVIGATION_LIMIT_EXCEEDED" });
     expect(payloadFetched).toBe(false);
+  });
+  it("materializes honest structural navigation from admitted bytes with replay, conflict and race fences", async () => {
+    const f = await fixture(); await grant(f.snapshot);
+    const markdown = "# Введение\n\nПривет мир.\n\n## Details\n\nBody with `code` and table:\n\n| a | b |\n";
+    const markdownSha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(markdown)))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    await db.prepare("UPDATE source_revision SET content_sha256=?1 WHERE source_revision_ref='revision-1'").bind(markdownSha).run();
+    const revision = { ...source("revision-1"), content_sha256: markdownSha };
+    const derived = await materializeStructuralNavigation({
+      source_revision: revision,
+      scope_snapshot: f.snapshot,
+      normalized_markdown: markdown,
+      generator_generation: "navigation-1",
+      created_at: TIME,
+    });
+    // Every claimed coordinate reopens the exact admitted bytes.
+    const bytes = new TextEncoder().encode(markdown);
+    for (const section of derived.documentMap.section_hierarchy) {
+      const record = section as Record<string, unknown>;
+      const start = record.normalized_start_byte as number;
+      const end = record.normalized_end_byte as number;
+      expect(end).toBeGreaterThan(start);
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(start, end)).length).toBeGreaterThan(0);
+    }
+    expect(derived.documentMap.page_ranges).toEqual([]);
+    expect(derived.documentMap.tables).toEqual([]);
+    expect(derived.documentMap.unresolved_structure.length).toBeGreaterThan(0);
+    expect(await f.store.putArtifact("SOURCE_CARD", derived.sourceCard)).toBe("CREATED");
+    expect(await f.store.putArtifact("DOCUMENT_MAP", derived.documentMap)).toBe("CREATED");
+    expect(await f.store.putArtifact("SOURCE_CARD", derived.sourceCard)).toBe("REPLAY");
+    expect(await countArtifacts()).toBe(2);
+    const readBack = await f.store.getDocumentMaps(["revision-1"]);
+    expect(readBack).toEqual([derived.documentMap]);
+    // Same identity with different canonical bytes fails closed without a second artifact.
+    const otherMarkdown = "# Введение\n\nOther bytes.\n";
+    await expect(materializeStructuralNavigation({
+      source_revision: revision,
+      scope_snapshot: f.snapshot,
+      normalized_markdown: otherMarkdown,
+      generator_generation: "navigation-1",
+      created_at: TIME,
+    })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    expect(await countArtifacts()).toBe(2);
+    // Purge change between load and save yields zero new usable artifact.
+    await db.prepare("UPDATE source_revision SET purge_state='PURGE_REQUESTED' WHERE source_revision_ref='revision-1'").run();
+    await expect(f.store.putArtifact("SOURCE_CARD", derived.sourceCard)).rejects.toBeInstanceOf(Error);
+    await expect(f.store.getSourceCards(["revision-1"])).rejects.toBeInstanceOf(Error);
   });
 
 });
