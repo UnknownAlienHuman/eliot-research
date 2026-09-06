@@ -1,5 +1,5 @@
 {
-  "name": "@eliotr/platform-cloudflare",
+  "name": "@eliotr/backup-o2",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,10 +14,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@eliotr/backup-o2": "workspace:*",
-    "@eliotr/contracts": "workspace:*",
-    "@eliotr/domain": "workspace:*",
-    "@eliotr/retrieval": "workspace:*",
-    "@eliotr/research": "workspace:*"
+    "@eliotr/contracts": "workspace:*"
   }
 }

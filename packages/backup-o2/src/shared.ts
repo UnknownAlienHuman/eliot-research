@@ -7,9 +7,7 @@ import {
   type OperationReceipt,
 } from "@eliotr/contracts";
 
-// ER-34 O2 shared backup primitives: typed fail-closed errors, canonical
-// JSON/digest helpers, export limits, and the Intent/Attempt/Receipt builders
-// reused from the versioned operation contracts (no second authority).
+// ER-34 O2 shared primitives. IMPLEMENTED_NOT_LIVE; O3/O4 stay NOT_IMPLEMENTED.
 
 export type BackupErrorCode =
   | "BACKUP_INPUT_INVALID"
@@ -21,13 +19,21 @@ export type BackupErrorCode =
   | "BACKUP_PART_WRITE_FAILED"
   | "BACKUP_PART_READBACK_MISMATCH"
   | "BACKUP_VECTOR_DRIFT"
+  | "BACKUP_VECTOR_UNVERIFIABLE"
   | "BACKUP_INTENT_CONFLICT"
   | "BACKUP_CANCELLED"
+  | "BACKUP_COVERAGE_GAP"
   | "BACKUP_OFFSITE_INADMISSIBLE"
   | "BACKUP_OFFSITE_UNCERTAIN"
   | "BACKUP_OFFSITE_READBACK_MISMATCH"
   | "BACKUP_OFFSITE_EXPIRED"
+  | "BACKUP_DESTINATION_POLICY_MISMATCH"
+  | "BACKUP_KEY_INVALID"
+  | "BACKUP_NONCE_COLLISION"
   | "BACKUP_PURGE_BLOCKED"
+  | "BACKUP_EXPIRY_BLOCKED"
+  | "BACKUP_EXPIRY_ABSENCE_UNPROVEN"
+  | "BACKUP_RESURRECTION_REFUSED"
   | "BACKUP_RESTORE_NOT_IMPLEMENTED"
   | "BACKUP_PURGE_REPLAY_NOT_IMPLEMENTED";
 
@@ -158,4 +164,109 @@ export function resolveBackupExportLimits(input?: Partial<BackupExportLimits>): 
   }
   if (limits.r2_list_page_size < 1 || limits.part_bytes < 1) failBackup("BACKUP_INPUT_INVALID", "backup paging and part sizes must be positive");
   return limits;
+}
+
+export interface ImmutableObjectWrite {
+  readonly key: string;
+  readonly body: ReadableStream<Uint8Array>;
+  readonly expected_sha256: string;
+  readonly expected_size_bytes: number;
+  readonly content_type: string;
+  readonly custom_metadata: Readonly<Record<string, string>>;
+}
+
+export interface ImmutableObjectReceipt {
+  readonly key: string;
+  readonly expected_sha256: string;
+  readonly readback_sha256: string;
+  readonly size_bytes: number;
+  readonly etag: string;
+  readonly existed_identically: boolean;
+}
+
+export interface EvidenceObjectStore {
+  putImmutable(write: ImmutableObjectWrite): Promise<ImmutableObjectReceipt>;
+  open(key: string): Promise<R2ObjectBody | null>;
+}
+
+export interface StreamHashReceipt {
+  readonly sha256: string;
+  readonly size_bytes: number;
+  readonly chunks: number;
+}
+
+export interface Sha256DigestSink {
+  readonly writable: WritableStream<Uint8Array>;
+  readonly digest: Promise<ArrayBuffer>;
+}
+
+export type Sha256DigestSinkFactory = () => Sha256DigestSink;
+
+export async function hashBackupStream(body: ReadableStream<Uint8Array>, maximumBytes: number, createSink?: Sha256DigestSinkFactory): Promise<StreamHashReceipt> {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) failBackup("BACKUP_INPUT_INVALID", "backup stream bound is invalid");
+  if (createSink === undefined) {
+    const bytes = await new Response(body as ReadableStream<Uint8Array>).arrayBuffer();
+    if (bytes.byteLength > maximumBytes) failBackup("BACKUP_BOUND_EXCEEDED", "backup stream exceeds its byte bound");
+    return { sha256: await backupSha256Hex(new Uint8Array(bytes)), size_bytes: bytes.byteLength, chunks: 1 };
+  }
+  const sink = createSink();
+  const reader = body.getReader();
+  const writer = sink.writable.getWriter();
+  let size = 0;
+  let chunks = 0;
+  let closed = false;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      if (!(next.value instanceof Uint8Array)) failBackup("BACKUP_OBJECT_UNREADABLE", "backup body yielded a non-byte chunk", true);
+      chunks += 1;
+      size += next.value.byteLength;
+      if (!Number.isSafeInteger(size) || size > maximumBytes) failBackup("BACKUP_BOUND_EXCEEDED", "backup body exceeds its byte bound");
+      await writer.write(next.value);
+    }
+    await writer.close();
+    closed = true;
+    const digest = await sink.digest;
+    return { sha256: [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join(""), size_bytes: size, chunks };
+  } finally {
+    if (!closed) {
+      try { await reader.cancel(); } catch { /* preserve */ }
+      try { await writer.abort(); } catch { /* preserve */ }
+    }
+    reader.releaseLock();
+    writer.releaseLock();
+  }
+}
+
+export async function bufferBackupStream(body: ReadableStream<Uint8Array>, limit: number): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = body.getReader();
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  let completed = false;
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) {
+        completed = true;
+        break;
+      }
+      if (!(next.value instanceof Uint8Array)) failBackup("BACKUP_OBJECT_UNREADABLE", "backup body yielded a non-byte chunk", true);
+      total += next.value.byteLength;
+      if (total > limit) failBackup("BACKUP_BOUND_EXCEEDED", "backup buffered object exceeds its byte bound");
+      parts.push(next.value.slice());
+    }
+  } finally {
+    if (!completed) {
+      try { await reader.cancel(); } catch { /* preserve */ }
+    }
+    reader.releaseLock();
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out;
 }

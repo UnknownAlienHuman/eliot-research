@@ -17,6 +17,9 @@
       "path": "packages/research"
     },
     {
+      "path": "packages/backup-o2"
+    },
+    {
       "path": "packages/platform-cloudflare"
     },
     {

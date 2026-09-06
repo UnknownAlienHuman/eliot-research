@@ -1,24 +1,17 @@
-import type { OperationAttempt, OperationIntent, OperationReceipt } from "@eliotr/contracts";
-import { hashReadableStream } from "./r2.js";
-import type { EvidenceObjectStore, Sha256DigestSinkFactory } from "./r2.js";
+import type { OperationIntent, OperationReceipt, OperationAttempt } from "@eliotr/contracts";
 import {
-  backupAborted,
-  backupAttempt,
-  backupIsoDateTime,
-  backupReceipt,
-  backupSha256Hex,
-  canonicalBackupJson,
-  failBackup,
-  resolveBackupExportLimits,
-  assertBackupIntent,
-  type BackupExportLimits,
-} from "./backup-shared.js";
+  backupAborted, backupAttempt, backupIsoDateTime, backupReceipt, backupSha256Hex,
+  canonicalBackupJson, failBackup, resolveBackupExportLimits, assertBackupIntent,
+  hashBackupStream, type BackupExportLimits, type EvidenceObjectStore, type Sha256DigestSinkFactory,
+} from "./shared.js";
+import { assertExhaustiveTableCoverage, listDurableTables, rebuildManifestLines } from "./coverage.js";
+import { freshBackupR2Tally, snapshotBackupR2Bucket } from "./r2-inventory.js";
+import { claimEpochReceipt } from "./replay-authority.js";
 
-// ER-34 O2 epoch export: portable coherent BackupEpoch drafts over injected
-// real D1+R2 ports. O2 is IMPLEMENTED_NOT_LIVE; O3 restore and O4 purge
-// replay stay NOT_IMPLEMENTED. D1 Search, AI Search, Queue, Workflow and
-// Durable Object state are recorded only as rebuild refs; D1 Time Travel
-// alone is never treated as a backup. All SQL here is read-only snapshots.
+// ER-34 O2 portable epoch. IMPLEMENTED_NOT_LIVE. Coherent-cut: pre-freeze,
+// bounded export, post-freeze/readback reconciliation proving byte-identical
+// watermarks or failing closed. The complete authority vector is persisted as
+// a content-addressed `vector` manifest; its digest is bound into the epoch.
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 
@@ -30,7 +23,6 @@ export interface BackupExportContext {
 }
 
 type ColumnKind = "text" | "int" | "text-or-null" | "int-or-null";
-
 interface TableSpec {
   readonly manifest: string;
   readonly table: string;
@@ -61,17 +53,51 @@ const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "retention", table: "erasure_hold", order_by: "hold_ref", columns: { hold_ref: "text", policy_or_hold_ref: "text", next_review_at: "text", state: "text" }, required: false },
 ];
 
-export interface SnapshotRow {
-  readonly table: string;
-  readonly row: Readonly<Record<string, unknown>>;
+export interface SnapshotRow { readonly table: string; readonly row: Readonly<Record<string, unknown>>; }
+export interface AuthorityVector {
+  readonly schema_generation: string;
+  readonly migration_names: readonly string[];
+  readonly migration_ledger_digest: string;
+  readonly tables: Readonly<Record<string, { readonly count: number; readonly digest: string }>>;
+  readonly purge_frontier: number;
+  readonly purge_digest: string;
+  readonly r2_keys: number;
+  readonly r2_bytes: number;
+  readonly r2_digest: string;
+}
+export interface BackupSourcePorts {
+  readonly core_db: D1Database;
+  readonly evidence_bucket: R2Bucket;
+  readonly work_bucket: R2Bucket;
+  readonly part_sink: EvidenceObjectStore;
+  readonly create_sha256_sink?: Sha256DigestSinkFactory;
+}
+export interface BackupPartRef {
+  readonly manifest: string; readonly index: number; readonly part_key: string;
+  readonly sha256: string; readonly size_bytes: number; readonly etag: string;
+  readonly existed_identically: boolean;
+}
+export interface BackupEpochDraft {
+  readonly epoch_id: string; readonly schema_generation: string;
+  readonly migration_ledger_digest: string;
+  readonly manifest_digests: Readonly<Record<string, string>>;
+  readonly group_digests: Readonly<Record<string, string>>;
+  readonly part_index: readonly BackupPartRef[];
+  readonly purge_ledger_revision: number; readonly purge_ledger_digest: string;
+  readonly r2_object_count: number; readonly r2_total_bytes: number;
+  readonly audit_sample_receipt_ref: string;
+  readonly vector_digest: string; readonly vector_manifest_digest: string;
+  readonly created_at: string; readonly expires_at: string;
+}
+export interface BackupEpochResult {
+  readonly draft: BackupEpochDraft; readonly attempt: OperationAttempt;
+  readonly receipt: OperationReceipt; readonly vector_digest: string;
+}
+export interface BackupEpochPort {
+  createPortableEpoch(intent: OperationIntent, context?: BackupExportContext): Promise<BackupEpochResult>;
 }
 
-interface ManifestBundle {
-  readonly name: string;
-  readonly jsonl: string;
-  readonly bytes: Uint8Array<ArrayBuffer>;
-  readonly digest: string;
-}
+const MANIFEST_NAMES = ["schema", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild", "vector"];
 
 async function backupTableExists(database: D1Database, table: string): Promise<boolean> {
   try {
@@ -120,42 +146,20 @@ async function readBackupTable(database: D1Database, spec: TableSpec, maxRows: n
     }
     return { table: spec.table, row };
   });
-  const ordered = [...rows].sort((left, right) => {
-    const leftKey = canonicalBackupJson(left.row);
-    const rightKey = canonicalBackupJson(right.row);
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  const ordered = [...rows].sort((l, r) => {
+    const a = canonicalBackupJson(l.row); const b = canonicalBackupJson(r.row);
+    return a < b ? -1 : a > b ? 1 : 0;
   });
-  for (let index = 1; index < ordered.length; index += 1) {
-    const previous = ordered[index - 1];
-    const current = ordered[index];
-    if (previous !== undefined && current !== undefined && canonicalBackupJson(previous.row) === canonicalBackupJson(current.row)) {
-      failBackup("BACKUP_ROW_INVALID", `backup table ${spec.table} contains a duplicate row`, false, { table: spec.table });
-    }
+  for (let i = 1; i < ordered.length; i += 1) {
+    const p = ordered[i - 1]; const c = ordered[i];
+    if (p !== undefined && c !== undefined && canonicalBackupJson(p.row) === canonicalBackupJson(c.row)) failBackup("BACKUP_ROW_INVALID", `backup table ${spec.table} contains a duplicate row`, false, { table: spec.table });
   }
-  for (const row of ordered) {
-    for (const [column, value] of Object.entries(row.row)) {
-      if (typeof value === "string" && column.endsWith("_json")) {
-        try {
-          JSON.parse(value);
-        } catch {
-          failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}.${column} is not valid JSON`, false, { table: spec.table, column });
-        }
-      }
+  for (const row of ordered) for (const [col, v] of Object.entries(row.row)) {
+    if (typeof v === "string" && col.endsWith("_json")) {
+      try { JSON.parse(v); } catch { failBackup("BACKUP_ROW_INVALID", `backup row ${spec.table}.${col} is not valid JSON`, false, { table: spec.table, column: col }); }
     }
   }
   return ordered;
-}
-
-export interface AuthorityVector {
-  readonly schema_generation: string;
-  readonly migration_names: readonly string[];
-  readonly migration_ledger_digest: string;
-  readonly tables: Readonly<Record<string, { readonly count: number; readonly digest: string }>>;
-  readonly purge_frontier: number;
-  readonly purge_digest: string;
-  readonly r2_keys: number;
-  readonly r2_bytes: number;
-  readonly r2_digest: string;
 }
 
 async function readSchemaGeneration(database: D1Database): Promise<string> {
@@ -179,11 +183,13 @@ async function readMigrationNames(database: D1Database, maxRows: number): Promis
   }
   const rows = result.results ?? [];
   if (rows.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup migration ledger exceeds its row bound", false, { limit: String(maxRows) });
-  const names = rows.map((row, index) => {
-    if (typeof row?.name !== "string" || row.name.length === 0) failBackup("BACKUP_ROW_INVALID", `backup migration ledger row ${index} is malformed`, false, {});
-    return row.name;
-  }).sort();
-  return { names, explicit_absent: false };
+  return {
+    names: rows.map((row, i) => {
+      if (typeof row?.name !== "string" || row.name.length === 0) failBackup("BACKUP_ROW_INVALID", `backup migration ledger row ${i} is malformed`, false, {});
+      return row.name;
+    }).sort(),
+    explicit_absent: false,
+  };
 }
 
 async function readPurgeLedger(database: D1Database, maxRows: number, signal?: AbortSignal): Promise<{ readonly rows: readonly SnapshotRow[]; readonly frontier: number; readonly digest: string }> {
@@ -197,159 +203,33 @@ async function readPurgeLedger(database: D1Database, maxRows: number, signal?: A
   }
   const raw = result.results ?? [];
   if (raw.length > maxRows) failBackup("BACKUP_BOUND_EXCEEDED", "backup purge ledger exceeds its row bound", false, { limit: String(maxRows) });
-  const rows: SnapshotRow[] = raw.map((input, index) => {
-    const record = input as Record<string, unknown>;
-    if (typeof record["ledger_revision"] !== "number" || !Number.isSafeInteger(record["ledger_revision"]) || (record["ledger_revision"] as number) < 1) {
-      failBackup("BACKUP_ROW_INVALID", `backup purge ledger row ${index} has an invalid revision`, false, {});
-    }
-    if (typeof record["non_revealing_subject_digest"] !== "string" || !SHA256.test(record["non_revealing_subject_digest"] as string)) {
-      failBackup("BACKUP_ROW_INVALID", `backup purge ledger row ${index} has an invalid subject digest`, false, {});
-    }
-    if (record["disposition"] !== "COMPLETE" && record["disposition"] !== "BLOCKED") {
-      failBackup("BACKUP_ROW_INVALID", `backup purge ledger row ${index} has an unknown disposition`, false, {});
-    }
+  const rows: SnapshotRow[] = raw.map((input) => {
+    const r = input as Record<string, unknown>;
+    if (typeof r["ledger_revision"] !== "number" || !Number.isSafeInteger(r["ledger_revision"])) failBackup("BACKUP_ROW_INVALID", "backup purge ledger has an invalid revision", false, {});
+    if (typeof r["non_revealing_subject_digest"] !== "string" || !SHA256.test(r["non_revealing_subject_digest"] as string)) failBackup("BACKUP_ROW_INVALID", "backup purge ledger has an invalid subject digest", false, {});
+    if (r["disposition"] !== "COMPLETE" && r["disposition"] !== "BLOCKED") failBackup("BACKUP_ROW_INVALID", "backup purge ledger has an unknown disposition", false, {});
     return { table: "purge_ledger", row: input as Readonly<Record<string, unknown>> };
   });
   let frontier = 0;
   for (const row of rows) {
-    const revision = row.row["ledger_revision"];
-    if (typeof revision === "number" && revision > frontier) frontier = revision;
+    const rev = row.row["ledger_revision"];
+    if (typeof rev === "number" && rev > frontier) frontier = rev;
   }
   return { rows, frontier, digest: await backupSha256Hex(rows.map((row) => canonicalBackupJson(row.row)).join("\n")) };
 }
 
-export interface R2ObjectEntry {
-  readonly bucket: "evidence" | "work";
-  readonly key: string;
-  readonly size_bytes: number;
-  readonly etag: string;
-  readonly version: string;
-  readonly sha256: string;
-  readonly admitted_sha256: string | null;
-  readonly metadata_digest: string;
-}
-
-export interface BackupR2Tally {
-  keys: number;
-  bytes: number;
-}
-
-export function freshBackupR2Tally(): BackupR2Tally {
-  return { keys: 0, bytes: 0 };
-}
-
-export async function snapshotBackupR2Bucket(bucket: R2Bucket, label: "evidence" | "work", limits: BackupExportLimits, createSink: Sha256DigestSinkFactory | undefined, tally: BackupR2Tally, signal?: AbortSignal): Promise<{ readonly entries: readonly R2ObjectEntry[]; readonly fingerprint: string }> {
-  const entries: R2ObjectEntry[] = [];
-  let pages = 0;
-  let cursor: string | undefined;
-  for (;;) {
-    if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
-    pages += 1;
-    if (pages > limits.max_r2_pages) failBackup("BACKUP_BOUND_EXCEEDED", `backup R2 ${label} listing exceeds its page bound`, false, { bucket: label, limit: String(limits.max_r2_pages) });
-    let page: R2Objects;
-    try {
-      page = await bucket.list({ limit: limits.r2_list_page_size, include: ["customMetadata", "httpMetadata"], ...(cursor === undefined ? {} : { cursor }) });
-    } catch (cause) {
-      failBackup("BACKUP_OBJECT_UNREADABLE", `backup R2 ${label} listing is unavailable`, true, { bucket: label }, cause);
-    }
-    for (const object of page.objects) {
-      if (tally.keys >= limits.max_r2_keys) failBackup("BACKUP_BOUND_EXCEEDED", `backup R2 ${label} objects exceed the key bound`, false, { bucket: label, limit: String(limits.max_r2_keys) });
-      if (object.size > limits.max_object_bytes) failBackup("BACKUP_BOUND_EXCEEDED", "backup R2 object exceeds the per-object byte bound", false, { bucket: label, limit: String(limits.max_object_bytes) });
-      tally.bytes += object.size;
-      if (tally.bytes > limits.max_total_object_bytes) failBackup("BACKUP_BOUND_EXCEEDED", `backup R2 ${label} objects exceed the total byte bound`, false, { bucket: label, limit: String(limits.max_total_object_bytes) });
-      let body: R2ObjectBody | null;
-      try {
-        body = await bucket.get(object.key);
-      } catch (cause) {
-        failBackup("BACKUP_OBJECT_UNREADABLE", "backup R2 object read is unavailable", true, { bucket: label }, cause);
-      }
-      if (body === null) failBackup("BACKUP_OBJECT_UNREADABLE", "backup R2 object vanished during export", true, { bucket: label });
-      const hash = await hashReadableStream(body.body, object.size, createSink);
-      if (hash.size_bytes !== object.size) failBackup("BACKUP_OBJECT_UNREADABLE", "backup R2 object truncated during readback", false, { bucket: label });
-      const metadata = body.customMetadata ?? {};
-      const admitted = metadata["eliotr_sha256"];
-      if (admitted !== undefined && admitted !== hash.sha256) failBackup("BACKUP_OBJECT_DIGEST_MISMATCH", "backup R2 object digest disagrees with its admitted digest", false, { bucket: label });
-      if (typeof admitted === "string" && !SHA256.test(admitted)) failBackup("BACKUP_OBJECT_DIGEST_MISMATCH", "backup R2 object carries a malformed admitted digest", false, { bucket: label });
-      entries.push({ bucket: label, key: object.key, size_bytes: object.size, etag: object.etag, version: object.version, sha256: hash.sha256, admitted_sha256: typeof admitted === "string" ? admitted : null, metadata_digest: await backupSha256Hex(canonicalBackupJson(metadata)) });
-      tally.keys += 1;
-    }
-    if (!page.truncated) break;
-    cursor = page.cursor;
-  }
-  const ordered = [...entries].sort((left, right) => {
-    const leftKey = `${left.bucket}\u0000${left.key}`;
-    const rightKey = `${right.bucket}\u0000${right.key}`;
-    return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
-  });
-  return { entries: ordered, fingerprint: await backupSha256Hex(ordered.map((entry) => canonicalBackupJson(entry)).join("\n")) };
-}
-
-async function buildManifest(name: string, lines: readonly string[], maxBytes: number): Promise<ManifestBundle> {
+async function buildManifest(name: string, lines: readonly string[], maxBytes: number): Promise<{ name: string; jsonl: string; bytes: Uint8Array<ArrayBuffer>; digest: string }> {
   const jsonl = lines.join("\n");
   const bytes = new TextEncoder().encode(jsonl);
   if (bytes.byteLength > maxBytes) failBackup("BACKUP_BOUND_EXCEEDED", `backup manifest ${name} exceeds its byte bound`, false, { manifest: name, limit: String(maxBytes) });
   return { name, jsonl, bytes, digest: await backupSha256Hex(bytes) };
 }
 
-export interface BackupSourcePorts {
-  readonly core_db: D1Database;
-  readonly evidence_bucket: R2Bucket;
-  readonly work_bucket: R2Bucket;
-  readonly part_sink: EvidenceObjectStore;
-  readonly create_sha256_sink?: Sha256DigestSinkFactory;
-}
-
-export interface BackupPartRef {
-  readonly manifest: string;
-  readonly index: number;
-  readonly part_key: string;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly etag: string;
-  readonly existed_identically: boolean;
-}
-
-export interface BackupEpochDraft {
-  readonly epoch_id: string;
-  readonly schema_generation: string;
-  readonly migration_ledger_digest: string;
-  readonly manifest_digests: Readonly<Record<string, string>>;
-  readonly group_digests: Readonly<Record<string, string>>;
-  readonly part_index: readonly BackupPartRef[];
-  readonly purge_ledger_revision: number;
-  readonly purge_ledger_digest: string;
-  readonly r2_object_count: number;
-  readonly r2_total_bytes: number;
-  readonly audit_sample_receipt_ref: string;
-  readonly created_at: string;
-  readonly expires_at: string;
-}
-
-export interface BackupEpochResult {
-  readonly draft: BackupEpochDraft;
-  readonly attempt: OperationAttempt;
-  readonly receipt: OperationReceipt;
-  readonly vector_digest: string;
-}
-
-interface IntentRecord {
-  readonly intent_id: string;
-  readonly vector_digest: string;
-  readonly manifest_digest: string;
-  readonly epoch_id: string;
-}
-
-const MANIFEST_NAMES = ["schema", "ownership", "sources", "revisions", "projects", "scopes", "handles", "heads", "generations", "retention", "purge", "r2-objects", "rebuild"];
-
-export interface BackupEpochPort {
-  createPortableEpoch(intent: OperationIntent, context?: BackupExportContext): Promise<BackupEpochResult>;
-}
-
 export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { readonly limits?: Partial<BackupExportLimits> }): BackupEpochPort {
   const limits = resolveBackupExportLimits(overrides?.limits);
-  const registry = new Map<string, IntentRecord>();
 
   async function freezeVector(signal?: AbortSignal): Promise<{ readonly vector: AuthorityVector; readonly rows: readonly SnapshotRow[]; readonly purge_rows: readonly SnapshotRow[] }> {
+    assertExhaustiveTableCoverage(await listDurableTables(ports.core_db));
     const schemaGeneration = await readSchemaGeneration(ports.core_db);
     const ledger = await readMigrationNames(ports.core_db, limits.max_table_rows);
     const migrationLedgerDigest = await backupSha256Hex(ledger.explicit_absent ? "migration-ledger:ABSENT" : `migration-ledger\n${ledger.names.join("\n")}`);
@@ -371,8 +251,7 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     const purge = await readPurgeLedger(ports.core_db, limits.max_table_rows, signal);
     return {
       vector: { schema_generation: schemaGeneration, migration_names: ledger.names, migration_ledger_digest: migrationLedgerDigest, tables, purge_frontier: purge.frontier, purge_digest: purge.digest, r2_keys: 0, r2_bytes: 0, r2_digest: await backupSha256Hex("r2:pending") },
-      rows,
-      purge_rows: purge.rows,
+      rows, purge_rows: purge.rows,
     };
   }
 
@@ -386,21 +265,19 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) failBackup("BACKUP_INPUT_INVALID", "backup retention window is out of range");
     const signal = context.signal;
     if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
-
     const frozen = await freezeVector(signal);
     const tally = freshBackupR2Tally();
     const evidence = await snapshotBackupR2Bucket(ports.evidence_bucket, "evidence", limits, ports.create_sha256_sink, tally, signal);
     const work = await snapshotBackupR2Bucket(ports.work_bucket, "work", limits, ports.create_sha256_sink, tally, signal);
-    const r2Entries = [...evidence.entries, ...work.entries].sort((left, right) => {
-      const leftKey = `${left.bucket}\u0000${left.key}`;
-      const rightKey = `${right.bucket}\u0000${right.key}`;
-      return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+    const r2Entries = [...evidence.entries, ...work.entries].sort((l, r) => {
+      const a = `${l.bucket}\u0000${l.key}`; const b = `${r.bucket}\u0000${r.key}`;
+      return a < b ? -1 : a > b ? 1 : 0;
     });
-    const r2TotalBytes = r2Entries.reduce((sum, entry) => sum + entry.size_bytes, 0);
-    const r2Digest = await backupSha256Hex(r2Entries.map((entry) => canonicalBackupJson(entry)).join("\n"));
+    const r2TotalBytes = r2Entries.reduce((s, e) => s + e.size_bytes, 0);
+    const r2Digest = await backupSha256Hex(r2Entries.map((e) => canonicalBackupJson(e)).join("\n"));
     const vector: AuthorityVector = { ...frozen.vector, r2_keys: r2Entries.length, r2_bytes: r2TotalBytes, r2_digest: r2Digest };
     const vectorDigest = await backupSha256Hex(canonicalBackupJson(vector));
-
+    const vectorManifestLine = canonicalBackupJson({ vector, vector_digest: vectorDigest });
     const byManifest = new Map<string, string[]>();
     const record = (manifest: string, line: string): void => {
       const lines = byManifest.get(manifest);
@@ -414,114 +291,129 @@ export function createBackupEpochPort(ports: BackupSourcePorts, overrides?: { re
     for (const table of ["publication", "federation_reference_manifest", "navigation_artifact"] as const) {
       if (!await backupTableExists(ports.core_db, table)) record("heads", canonicalBackupJson({ table, status: "TABLE_ABSENT" }));
     }
-    const investigationHeads = new Map<string, number>();
+    const heads = new Map<string, number>();
     for (const row of frozen.rows) {
       if (row.table !== "investigation") continue;
-      const id = row.row["investigation_id"];
-      const revision = row.row["revision"];
-      if (typeof id !== "string" || typeof revision !== "number") continue;
-      if (revision > (investigationHeads.get(id) ?? 0)) investigationHeads.set(id, revision);
+      const id = row.row["investigation_id"]; const rev = row.row["revision"];
+      if (typeof id !== "string" || typeof rev !== "number") continue;
+      if (rev > (heads.get(id) ?? 0)) heads.set(id, rev);
     }
-    for (const [id, head] of [...investigationHeads.entries()].sort()) record("heads", canonicalBackupJson({ kind: "investigation", id, head_revision: head }));
-    record("rebuild", canonicalBackupJson({ kind: "d1-search", source: "search-db", status: "REBUILD_REQUIRED" }));
-    record("rebuild", canonicalBackupJson({ kind: "ai-search", source: "managed-index", status: "REBUILD_REQUIRED" }));
-    record("rebuild", canonicalBackupJson({ kind: "queue", source: "queue-transient", status: "REBUILD_REQUIRED" }));
-    record("rebuild", canonicalBackupJson({ kind: "workflow", source: "workflow-transient", status: "REBUILD_REQUIRED" }));
-    record("rebuild", canonicalBackupJson({ kind: "durable-object", source: "do-transient", status: "TRANSIENT_EXCLUDED" }));
-    record("rebuild", canonicalBackupJson({ kind: "d1-time-travel", status: "NOT_A_BACKUP" }));
+    for (const [id, head] of [...heads.entries()].sort()) record("heads", canonicalBackupJson({ kind: "investigation", id, head_revision: head }));
+    for (const line of rebuildManifestLines()) record("rebuild", line);
     record("schema", canonicalBackupJson({ schema_generation: vector.schema_generation, migration_ledger_digest: vector.migration_ledger_digest, migration_ledger: vector.migration_names.length === 0 ? "ABSENT" : "PRESENT", migration_count: vector.migration_names.length }));
     record("purge", canonicalBackupJson({ purge_frontier: vector.purge_frontier, purge_digest: vector.purge_digest }));
     record("r2-objects", canonicalBackupJson({ object_count: r2Entries.length, total_bytes: r2TotalBytes, fingerprint: r2Digest }));
     for (const entry of r2Entries) record("r2-objects", canonicalBackupJson(entry));
-
+    record("vector", vectorManifestLine);
     const bundles: { name: string; jsonl: string; bytes: Uint8Array<ArrayBuffer>; digest: string }[] = [];
     for (const name of MANIFEST_NAMES) bundles.push(await buildManifest(name, (byManifest.get(name) ?? []).sort(), limits.max_manifest_bytes));
     const manifestDigests: Record<string, string> = {};
     for (const bundle of bundles) manifestDigests[bundle.name] = bundle.digest;
-    const group = async (members: readonly string[]): Promise<string> => backupSha256Hex(members.map((member) => `${member}:${manifestDigests[member] ?? "ABSENT"}`).sort().join("\n"));
-    const groupDigests: Record<string, string> = { core: await group(["schema", "ownership", "sources", "revisions", "projects", "scopes", "handles", "retention", "purge"]), heads: await group(["heads"]), generations: await group(["generations"]), r2: await group(["r2-objects"]) };
-    const manifestDigest = await backupSha256Hex(Object.entries(manifestDigests).sort().map(([name, digest]) => `${name}:${digest}`).join("\n"));
+    const vectorManifestDigest = manifestDigests["vector"] ?? "";
+    const group = async (members: readonly string[]): Promise<string> => backupSha256Hex(members.map((m) => `${m}:${manifestDigests[m] ?? "ABSENT"}`).sort().join("\n"));
+    const groupDigests: Record<string, string> = { core: await group(["schema", "ownership", "sources", "revisions", "projects", "scopes", "handles", "retention", "purge", "vector"]), heads: await group(["heads"]), generations: await group(["generations"]), r2: await group(["r2-objects"]) };
+    const manifestDigest = await backupSha256Hex(Object.entries(manifestDigests).sort().map(([n, d]) => `${n}:${d}`).join("\n"));
     const epochId = `epoch-${(await backupSha256Hex(`backup-epoch\u0000${intent.intent_ref.id}\u0000${vectorDigest}\u0000${manifestDigest}`)).slice(0, 48)}`;
-
-    const prior = registry.get(intent.idempotency_key);
-    if (prior !== undefined && (prior.intent_id !== intent.intent_ref.id || prior.vector_digest !== vectorDigest || prior.manifest_digest !== manifestDigest)) {
-      failBackup("BACKUP_INTENT_CONFLICT", "backup intent reuses an identity with divergent content", false, { intent_id: intent.intent_ref.id });
-    }
-
     const partIndex: BackupPartRef[] = [];
     let reconciled = false;
     for (const bundle of bundles) {
       const chunks: Uint8Array<ArrayBuffer>[] = [];
-      for (let offset = 0; offset < bundle.bytes.byteLength; offset += limits.part_bytes) chunks.push(bundle.bytes.slice(offset, offset + limits.part_bytes));
+      for (let off = 0; off < bundle.bytes.byteLength; off += limits.part_bytes) chunks.push(bundle.bytes.slice(off, off + limits.part_bytes));
       if (chunks.length === 0) chunks.push(new Uint8Array());
-      let chunkNumber = 0;
+      let n = 0;
       for (const chunk of chunks) {
-        chunkNumber += 1;
+        n += 1;
         if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup export was cancelled", true);
         const chunkDigest = await backupSha256Hex(chunk);
-        const partKey = `backup-parts/${epochId}/${bundle.name}/${String(chunkNumber).padStart(6, "0")}-${chunkDigest}`;
-        const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(chunk.slice()); controller.close(); } });
+        const partKey = `backup-parts/${epochId}/${bundle.name}/${String(n).padStart(6, "0")}-${chunkDigest}`;
+        const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(chunk.slice()); c.close(); } });
         let receipt;
         try {
-          receipt = await ports.part_sink.putImmutable({ key: partKey, body: stream, expected_sha256: chunkDigest, expected_size_bytes: chunk.byteLength, content_type: "application/jsonl", custom_metadata: { backup_epoch: epochId, backup_manifest: bundle.name, backup_part_index: String(chunkNumber), backup_part_sha256: chunkDigest } });
+          receipt = await ports.part_sink.putImmutable({ key: partKey, body: stream, expected_sha256: chunkDigest, expected_size_bytes: chunk.byteLength, content_type: "application/jsonl", custom_metadata: { backup_epoch: epochId, backup_manifest: bundle.name, backup_part_index: String(n), backup_part_sha256: chunkDigest, backup_vector_digest: vectorDigest } });
         } catch (cause) {
           failBackup("BACKUP_PART_WRITE_FAILED", "backup part write failed", true, { manifest: bundle.name }, cause);
         }
         if (receipt.existed_identically) reconciled = true;
-        partIndex.push({ manifest: bundle.name, index: chunkNumber, part_key: partKey, sha256: chunkDigest, size_bytes: chunk.byteLength, etag: receipt.etag, existed_identically: receipt.existed_identically });
+        partIndex.push({ manifest: bundle.name, index: n, part_key: partKey, sha256: chunkDigest, size_bytes: chunk.byteLength, etag: receipt.etag, existed_identically: receipt.existed_identically });
       }
     }
-
     for (const part of partIndex) {
       const reopened = await ports.part_sink.open(part.part_key);
       if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent on audit readback", false, { manifest: part.manifest });
-      const hash = await hashReadableStream(reopened.body, part.size_bytes, ports.create_sha256_sink);
+      const hash = await hashBackupStream(reopened.body, part.size_bytes, ports.create_sha256_sink);
       if (hash.sha256 !== part.sha256 || hash.size_bytes !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part digest disagrees on audit readback", false, { manifest: part.manifest });
     }
-
-    // Re-read the authority vector after all external R2/part work. Any
-    // concurrent drift invalidates the export: explicit stale, never mixed.
     const reread = await freezeVector(signal);
     const rereadTally = freshBackupR2Tally();
     const rereadEvidence = await snapshotBackupR2Bucket(ports.evidence_bucket, "evidence", limits, ports.create_sha256_sink, rereadTally, signal);
     const rereadWork = await snapshotBackupR2Bucket(ports.work_bucket, "work", limits, ports.create_sha256_sink, rereadTally, signal);
     const rereadR2Digest = await backupSha256Hex([...rereadEvidence.entries, ...rereadWork.entries]
-      .sort((left, right) => (`${left.bucket}\u0000${left.key}` < `${right.bucket}\u0000${right.key}` ? -1 : 1))
-      .map((entry) => canonicalBackupJson(entry)).join("\n"));
+      .sort((l, r) => (`${l.bucket}\u0000${l.key}` < `${r.bucket}\u0000${r.key}` ? -1 : 1))
+      .map((e) => canonicalBackupJson(e)).join("\n"));
     const drifted: string[] = [];
     for (const name of Object.keys(vector.tables).sort()) {
-      const left = vector.tables[name];
-      const right = reread.vector.tables[name];
-      if (left?.digest !== right?.digest || left?.count !== right?.count) drifted.push(name);
+      const l = vector.tables[name]; const r = reread.vector.tables[name];
+      if (l?.digest !== r?.digest || l?.count !== r?.count) drifted.push(name);
     }
     if (reread.vector.schema_generation !== vector.schema_generation) drifted.push("schema_state");
     if (reread.vector.migration_ledger_digest !== vector.migration_ledger_digest) drifted.push("d1_migrations");
     if (reread.vector.purge_frontier !== vector.purge_frontier || reread.vector.purge_digest !== vector.purge_digest) drifted.push("purge_ledger");
     if (rereadR2Digest !== r2Digest) drifted.push("r2-objects");
     if (drifted.length > 0) failBackup("BACKUP_VECTOR_DRIFT", "backup authority vector drifted during export; epoch withheld as stale", true, { drifted: drifted.sort().join(",") });
-
     const draft: BackupEpochDraft = {
-      epoch_id: epochId,
-      schema_generation: vector.schema_generation,
+      epoch_id: epochId, schema_generation: vector.schema_generation,
       migration_ledger_digest: vector.migration_ledger_digest,
-      manifest_digests: manifestDigests,
-      group_digests: groupDigests,
-      part_index: partIndex,
-      purge_ledger_revision: vector.purge_frontier,
-      purge_ledger_digest: vector.purge_digest,
-      r2_object_count: r2Entries.length,
-      r2_total_bytes: r2TotalBytes,
-      audit_sample_receipt_ref: `audit-${epochId}-p${partIndex.length}`,
-      created_at: now,
-      expires_at: backupIsoDateTime(nowMs + retentionDays * 86_400_000),
+      manifest_digests: manifestDigests, group_digests: groupDigests, part_index: partIndex,
+      purge_ledger_revision: vector.purge_frontier, purge_ledger_digest: vector.purge_digest,
+      r2_object_count: r2Entries.length, r2_total_bytes: r2TotalBytes,
+      audit_sample_receipt_ref: `audit-${epochId}-v${vectorDigest.slice(0, 16)}-p${partIndex.length}`,
+      vector_digest: vectorDigest, vector_manifest_digest: vectorManifestDigest,
+      created_at: now, expires_at: backupIsoDateTime(nowMs + retentionDays * 86_400_000),
     };
-    registry.set(intent.idempotency_key, { intent_id: intent.intent_ref.id, vector_digest: vectorDigest, manifest_digest: manifestDigest, epoch_id: epochId });
     const attempt = backupAttempt(intent, attemptNumber, "SUCCEEDED", now);
-    const receipt = backupReceipt(intent, attempt.attempt_id, prior === undefined ? "SUCCEEDED" : "DUPLICATE",
-      [epochId], [draft.audit_sample_receipt_ref, ...partIndex.map((part) => part.etag)], reconciled,
-      prior === undefined ? (reconciled ? ["RESUMED_PARTS"] : []) : ["REPLAY"], now);
-    return { draft, attempt, receipt, vector_digest: vectorDigest };
+    const provisional = backupReceipt(intent, attempt.attempt_id, "SUCCEEDED",
+      [epochId], [draft.audit_sample_receipt_ref, ...partIndex.map((p) => p.etag)], reconciled,
+      reconciled ? ["RESUMED_PARTS"] : [], now);
+    const claimed = await claimEpochReceipt(ports.core_db,
+      { idempotency_key: intent.idempotency_key, intent_id: intent.intent_ref.id, vector_digest: vectorDigest, manifest_digest: manifestDigest, epoch_id: epochId },
+      provisional, now);
+    const finalReceipt = claimed.replayed
+      ? backupReceipt(intent, attempt.attempt_id, "DUPLICATE", [epochId], [draft.audit_sample_receipt_ref, ...partIndex.map((p) => p.etag)], true, ["REPLAY"], now)
+      : provisional;
+    if (claimed.replayed) {
+      if (claimed.receipt.output_refs[0] !== epochId) failBackup("BACKUP_INTENT_CONFLICT", "backup replay resolves to a divergent epoch", false, { intent_id: intent.intent_ref.id });
+    }
+    return { draft, attempt, receipt: finalReceipt, vector_digest: vectorDigest };
   }
 
   return { createPortableEpoch };
+}
+
+export async function reopenPersistedVector(ports: BackupSourcePorts, draft: BackupEpochDraft): Promise<AuthorityVector> {
+  const parts = draft.part_index.filter((p) => p.manifest === "vector").sort((a, b) => a.index - b.index);
+  if (parts.length === 0) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup epoch carries no persisted vector part");
+  const chunks: Uint8Array[] = [];
+  for (const part of parts) {
+    const reopened = await ports.part_sink.open(part.part_key);
+    if (reopened === null) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted vector part is absent");
+    chunks.push(new Uint8Array(await new Response(reopened.body as ReadableStream<Uint8Array>).arrayBuffer()));
+  }
+  const total = chunks.reduce((s, c) => s + c.byteLength, 0);
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    joined.set(c, offset);
+    offset += c.byteLength;
+  }
+  const text = new TextDecoder().decode(joined);
+  const line = text.split("\n").filter((l) => l.length > 0)[0] ?? "";
+  let parsed: { readonly vector?: unknown; readonly vector_digest?: unknown };
+  try {
+    parsed = JSON.parse(line) as { readonly vector?: unknown; readonly vector_digest?: unknown };
+  } catch (cause) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted vector is not valid JSON", false, {}, cause);
+  }
+  const digest = await backupSha256Hex(canonicalBackupJson(parsed.vector));
+  if (digest !== draft.vector_digest || digest !== parsed.vector_digest) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted vector digest disagrees with the epoch binding");
+  return parsed.vector as AuthorityVector;
 }
