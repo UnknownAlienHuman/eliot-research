@@ -1,7 +1,9 @@
 // Cloudflare usage preflight: Layer-1 admission gate before any remote
 // mutation (FIX1 section B). Thin CLI over runUsagePreflight() in
-// lib/cloudflare-usage-collection.mjs (shared with the in-process
-// provisioner/deploy gates).
+// lib/cloudflare-usage-admission.mjs (shared with the in-process
+// provisioner/deploy gates). The printed receipt is informational readback:
+// remote/billable mutations additionally require the same-process admission
+// capability, which never serializes into the receipt.
 //
 // Exit 0: ADMITTED or SEALED (sealed still allows zero/metadata-only
 // provisioning; heavy operations stay disabled).
@@ -21,7 +23,7 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
+import { runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const checkOnly = process.argv.includes("--check-only");

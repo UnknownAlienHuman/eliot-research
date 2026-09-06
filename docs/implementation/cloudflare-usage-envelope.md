@@ -66,7 +66,10 @@ committed fixtures are fictional (`example.invalid`, fake hex IDs).
 Decisions: `ADMITTED` (fresh, known, inside), `SEALED` (stale, wrong window,
 or unknown metrics: zero/metadata-only provisioning may proceed, everything
 below stays disabled), `BLOCKED` (malformed, wrong account, missing binding,
-or over envelope: exit nonzero before the first mutation).
+or over envelope: exit nonzero before the first mutation). `ADMITTED` is
+necessary but never sufficient for a remote/billable mutation: every deploy,
+each provisioner apply path, and the heavy gate additionally requires the
+same-process admission capability described below.
 
 Unknown or unexposed metrics seal: ingestion, queue produce/consume,
 Workflow/DO execution, Workers AI calls, AI Search index/query, and
@@ -102,6 +105,31 @@ same-run `.eliotr-state/cloudflare-usage-admission-receipt.json`), never from
 committed fixtures, transported files, or cross-machine copies. A receipt
 that arrives by any other provenance is untrusted input and must be
 re-collected, not validated-then-trusted.
+
+### Admission capability: object identity, not strings
+
+Even a validator-clean live-family receipt is not enough: remote/billable
+mutations additionally require the same-process admission capability — an
+object-identity proof minted ONLY by the successful fresh default-live
+collection lifecycle in the current process (verified browser-OAuth identity,
+live collection over default transports, `ADMITTED` evaluation, complete
+live provider trust). The mint is a non-exported function in
+`scripts/lib/cloudflare-usage-admission.mjs`, the same closure/authority root
+as issuance; only read-only predicates are exposed
+(`isUsageAdmissionCapability`, plus the read-only issuer predicate
+`isLiveAdmissibleForCapability` for deterministic tests). Copies, spreads,
+`structuredClone` output, Proxies, hand-built objects, and
+persisted-bytes-deserialized objects are new identities and deny. No
+structural object, recomputable digest, caller-supplied string, source, or
+test seam mints or presents production authority.
+
+What the capability does and does not prove: it proves THIS process ran the
+verified live lifecycle to success — not that any counter is correct (row and
+page validation still applies), and not anything about persisted bytes (which
+stay informational). Test apply paths run under the test-only `--import`
+gate, where the standin mints TEST capabilities from its own unreachable
+registry; production predicates never consult it, and production entry paths
+never load the standin.
 
 ## Billing Usage v2 (Alpha, Restricted) source contract
 
@@ -204,8 +232,11 @@ unknown rather than dropping the provider silently; billing never covers
 additionally stops every direct apply path (core, AI Search, Access, AI
 Gateways):
 while sealed, no `POST`/`PUT`/`PATCH`/`DELETE`, Worker upload, or migration
-may occur. Check-only inspection stays read-only metadata. The deploy
-orchestrator requires `ADMITTED` before any remote mutation.
+may occur. An `ADMITTED` evaluation without the same-process admission
+capability denies exactly the same way (missing-capability message, zero
+mutations). Check-only inspection stays read-only metadata. The deploy
+orchestrator requires `ADMITTED` plus the capability before any remote
+mutation.
 
 ## Layer 2: runtime budget admission
 
@@ -213,10 +244,11 @@ orchestrator requires `ADMITTED` before any remote mutation.
 atomic check-and-reserve against the envelope share minus a 5% safety
 margin, daily fencing at UTC midnight, monthly fencing at the UTC month
 boundary, retry/DLQ delivery accounting against Queue operations,
-concurrency leases (default cap 4), and heavy-operation admission only on a
-fresh `ADMITTED` receipt carrying a live provider evidence family (test-only
-and snapshot-asserted families never authorize, no matter how
-self-consistent) or a fresh ledger-plus-inventory proof. Denials are
+concurrency leases (default cap 4), and heavy-operation admission only on the
+same-process admission capability plus a fresh `ADMITTED` receipt carrying a
+live provider evidence family (test-only and snapshot-asserted families never
+authorize, no matter how self-consistent) or a fresh ledger-plus-inventory
+proof plus the capability. Denials are
 non-secret; the caller must never invoke the billable binding when blocked.
 
 ## Exact deployment order
@@ -260,6 +292,8 @@ mutated or included in generated config.
 
 ```text
 node scripts/test-usage-envelope.mjs
+node scripts/test-usage-preflight-children.mjs
+node scripts/test-usage-admission-capability.mjs
 node scripts/test-budget-admission.mjs
 ```
 

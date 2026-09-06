@@ -24,6 +24,9 @@ import {
   isLiveEvidenceFamily,
   validateAdmissionReceipt,
 } from "./cloudflare-usage-envelope.mjs";
+import {
+  isUsageAdmissionCapability,
+} from "./cloudflare-usage-admission.mjs";
 
 export const DEFAULT_CONCURRENCY_CAP = 4;
 export const QUEUE_BILLABLE_CHUNK_BYTES = QUEUE_CHUNK_BYTES;
@@ -227,20 +230,24 @@ export function releaseLease(ledger, { operation } = {}) {
 
 // Heavy-operation gate: ingestion, queue produce/consume, Workflow/DO
 // execution, Workers AI calls, AI Search index/query and Vectorize
-// writes/queries stay disabled until EITHER a fresh ADMITTED aggregate
-// receipt with a LIVE provider evidence family OR a fresh controller-owned
-// ledger+inventory proof shows headroom. Denials carry no secrets and must
-// precede any billable call.
+// writes/queries stay disabled until the caller presents the same-process
+// admission capability minted by the fresh live collection lifecycle, AND
+// EITHER a fresh ADMITTED aggregate receipt with a LIVE provider evidence
+// family OR a fresh controller-owned ledger+inventory proof shows headroom.
+// ADMITTED (even validator-clean with a live family) is necessary but never
+// sufficient: without the capability the gate denies. Denials carry no
+// secrets and must precede any billable call.
 // Provenance discipline (receipts are integrity-only locators, never proof of
 // live collection): a self-consistent receipt minted without fresh live
-// collection NEVER authorizes heavy work here. Test-only and
-// snapshot-asserted evidence families are refused even when structurally
-// intact and validator-clean — the family is re-checked explicitly below, so
-// no validator drift can launder a fixture into authorization. This function
-// is the sole persisted-receipt consumer, and its `receipt` must come only
-// from the local preflight write path (same-machine, same-run receipt file).
-// Never pass committed fixtures, transported files, or cross-machine
-// copies — re-collect instead.
+// collection NEVER authorizes heavy work here, and neither does any
+// structural copy of a genuine capability — only the exact minted object
+// identity passes. Test-only and snapshot-asserted evidence families are
+// refused even when structurally intact and validator-clean — the family is
+// re-checked explicitly below, so no validator drift can launder a fixture
+// into authorization. This function is the sole persisted-receipt consumer,
+// and its `receipt` must come only from the local preflight write path
+// (same-machine, same-run receipt file). Never pass committed fixtures,
+// transported files, or cross-machine copies — re-collect instead.
 export function admitHeavyOperation(ledger, options = {}) {
   const {
     operation,
@@ -251,6 +258,10 @@ export function admitHeavyOperation(ledger, options = {}) {
     expectedAccountDigest = null,
     inventoryProof = null,
     receiptMaxAgeMs = RECEIPT_MAX_AGE_MS,
+    // Same-process admission capability from runUsagePreflight. New objects
+    // with identical shape (copies, clones, deserialized bytes) fail the
+    // identity predicate and deny.
+    capability = null,
   } = options;
   if (typeof operation !== "string" || operation.trim() === "") {
     throw new BudgetAdmissionError("INVALID_OPERATION", "operation name is required");
@@ -260,6 +271,12 @@ export function admitHeavyOperation(ledger, options = {}) {
     if (check.ok && check.decision === "ADMITTED") {
       if (!isLiveEvidenceFamily(receipt)) {
         return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "SEALED_NO_HEADROOM_PROOF" };
+      }
+      // Capability is the additional necessary condition: a validator-clean
+      // live-family receipt without the same-process mint still denies, so a
+      // recomputed digest or hand-built live evidence can never authorize.
+      if (!isUsageAdmissionCapability(capability)) {
+        return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "MISSING_ADMISSION_CAPABILITY" };
       }
       const admission = admitOperation(ledger, { metricKey, quantity, now });
       return { ...admission, operation, proof: "FRESH_ADMITTED_AGGREGATE" };
@@ -281,6 +298,11 @@ export function admitHeavyOperation(ledger, options = {}) {
     const cap = Math.floor(metric.envelope * (1 - SAFETY_MARGIN_RATIO));
     if (known + quantity > cap) {
       return { allowed: false, operation, metric: metricKey, proof: "LEDGER_INVENTORY", reason: "OVER_ENVELOPE_SHARE" };
+    }
+    // Ledger proofs prove headroom, not liveness: the capability is still
+    // required before any reservation.
+    if (!isUsageAdmissionCapability(capability)) {
+      return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "MISSING_ADMISSION_CAPABILITY" };
     }
     const admission = admitOperation(ledger, { metricKey, quantity, now });
     return { ...admission, operation, proof: "LEDGER_INVENTORY" };

@@ -7,7 +7,7 @@ import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeploym
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
   stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
-import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
+import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
 
@@ -112,7 +112,11 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // D1 migrations/queries, R2 writes, Queue create/config/produce/consume,
   // Workflow/DO exec, Workers AI, AI Search index/query and Vectorize
   // writes/queries must not occur while any required metric is
-  // unknown/stale/untrusted — so only ADMITTED proceeds past this point.
+  // unknown/stale/untrusted — so ADMITTED alone never suffices: the gate
+  // additionally requires the same-process admission capability minted by the
+  // fresh live collection lifecycle above. Injected providers, staged
+  // snapshots, and persisted receipts can yield the ADMITTED label but never
+  // the capability, so they deny here before the first remote mutation.
   // Access runs first in both check-only and apply loops and is read back
   // before any Worker surface exists; any partial failure aborts before the
   // single Worker deploy, leaving no public workers.dev path
@@ -136,8 +140,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     if (usageGate.decision === "BLOCKED") {
       throw new Error(`Cloudflare usage preflight BLOCKED deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
     }
-    if (usageGate.decision !== "ADMITTED") {
-      throw new Error(`Cloudflare usage preflight ${usageGate.decision} denies remote deployment: only ADMITTED authorizes Worker upload, D1 migrations, and provisioner apply. ${usageGate.evaluation.reasons.join("; ")} Zero billable bindings were invoked.`);
+    if (usageGate.decision !== "ADMITTED" || !isUsageAdmissionCapability(usageGate.capability)) {
+      throw new Error(`Cloudflare usage preflight ${usageGate.decision} denies remote deployment: only a fresh ADMITTED aggregate with a same-process admission capability authorizes Worker upload, D1 migrations, and provisioner apply. ${usageGate.evaluation.reasons.join("; ")} Zero billable bindings were invoked.`);
     }
   }
 

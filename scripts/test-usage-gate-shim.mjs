@@ -4,9 +4,10 @@
 // production no longer reads ambient fixture vars. Tests that must exercise
 // real apply paths (lost-ACK, fail-before-write, mutation counts, drift)
 // spawn the child with `node --import <this file> <script>`, which registers
-// test-usage-gate-hooks.mjs. That hook substitutes ONLY
-// lib/cloudflare-usage-collection.mjs with test-usage-gate-standin.mjs,
-// which honors ELIOTR_TEST_SPAWN_SNAPSHOT_JSON for that child only.
+// test-usage-gate-hooks.mjs. That hook substitutes
+// lib/cloudflare-usage-collection.mjs and lib/cloudflare-usage-admission.mjs
+// with test-usage-gate-standin.mjs, which honors
+// ELIOTR_TEST_SPAWN_SNAPSHOT_JSON for that child only.
 //
 // Production modules never read ELIOTR_TEST_SPAWN_SNAPSHOT_JSON and never
 // register this loader, so the variable alone (poisoned env without the

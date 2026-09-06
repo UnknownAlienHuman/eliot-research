@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { applyAccessRuntimeVars, resolveAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
-import { runUsagePreflight } from "./lib/cloudflare-usage-collection.mjs";
+import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -71,8 +71,11 @@ if (authMode === WRANGLER_OAUTH_MODE) {
 // remote mutation. In-process shared runner writes the redacted admission
 // receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
 // (SEALED) exits in apply mode — SEALED never POSTs/PUTs/PATCHes/DELETEs,
-// uploads a Worker, or applies a migration. Check-only inspection stays
-// read-only metadata (GET inventory lists, local config generation).
+// uploads a Worker, or applies a migration. ADMITTED alone never suffices:
+// apply additionally requires the same-process admission capability minted by
+// the fresh live collection lifecycle (staged snapshots and persisted
+// receipts carry none). Check-only inspection stays read-only metadata
+// (GET inventory lists, local config generation).
 {
   let usageGate;
   try {
@@ -82,8 +85,9 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(error?.message ?? String(error));
     process.exit(2);
   }
-  if (usageGate.decision === "BLOCKED" || (!checkOnly && usageGate.decision !== "ADMITTED")) {
-    console.error(`Cloudflare usage preflight ${usageGate.decision} denies foundation provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+  const admittedWithCapability = usageGate.decision === "ADMITTED" && isUsageAdmissionCapability(usageGate.capability);
+  if (usageGate.decision === "BLOCKED" || (!checkOnly && !admittedWithCapability)) {
+    console.error(`Cloudflare usage preflight ${usageGate.decision} denies foundation provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
     process.exit(2);
   }
 }

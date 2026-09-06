@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
@@ -126,45 +125,34 @@ await check("config drift blocks the next release effect", async () => {
     assert.equal(test.receipts.length, 0);
   }
 });
-await check("migration or deployment failure cannot publish PASS", async () => {
-  for (const command of [coreMigration, searchMigration, deployCommand]) {
-    const test = harness({ failCommand: command });
-    await assert.rejects(deployCloudflare(test.options));
-    assert.equal(test.receipts.length, 0);
-    assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  }
-});
-await check("readback failure after upload is not successful deployment", async () => {
-  const test = harness({ failReadback: true });
-  await assert.rejects(deployCloudflare(test.options));
-  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.ok(test.calls.includes("archive"));
+// FIX11: moved to test-deployment-apply-ordering.mjs (see above).
+// FIX11: post-gate failure ordering (migration/deploy failure, readback
+// failure after upload) moved to test-deployment-apply-ordering.mjs —
+// reaching the upload requires passing the usage gate, which in-process
+// test-only inputs can never do without a capability (see the
+// admitted-without-capability check below). The redirected ordering suite
+// covers those failures with the capability mechanics engaged.
+await check("admitted snapshot without capability denies before archive and mutation", async () => {
+  // FIX11: the staged ADMITTED snapshot below proves the evaluation premise,
+  // but deploy apply additionally requires the same-process admission
+  // capability (minted only by fresh live collection), so apply denies with
+  // zero remote effects. Positive apply ordering moved to
+  // test-deployment-apply-ordering.mjs, which runs under the test-only
+  // --import gate where TEST capabilities authorize the fake-observed apply.
+  const test = harness();
+  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
+  assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+    "pnpm --filter @eliotr/core deploy:dry-run"]);
+  assert.ok(!test.calls.includes("archive"));
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
   assert.equal(test.receipts.length, 0);
 });
-await check("successful ordering and no implicit live qualification", async () => {
-  const test = harness();
-  const receipt = await deployCloudflare(test.options);
-  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.ok(test.calls.indexOf(generatedDryRun) < test.calls.indexOf(coreMigration));
-  assert.ok(test.calls.indexOf(coreMigration) < test.calls.indexOf(searchMigration));
-  assert.ok(test.calls.indexOf(searchMigration) < test.calls.indexOf(deployCommand));
-  assert.equal(test.calls.filter((call) => call.endsWith("--check-only")).length, 4);
-  assert.ok(!test.calls.some((call) => call.includes("--keep-vars")));
-  assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
-  assert.equal(receipt.remote_http_smoke.state, "PASS");
-  assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
-  assert.equal(test.receipts.length, 1);
-  assert.ok(!JSON.stringify(receipt).includes("secret-"));
-  const schema = JSON.parse(await readFile(new URL("../infra/cloudflare/deployment-receipt.schema.json", import.meta.url), "utf8"));
-  assert.deepEqual(Object.keys(receipt).sort(), schema.required.slice().sort());
-  const itemSchema = schema.properties.remote_http_smoke.oneOf.find((branch) => branch.properties.state.const === "PASS").properties.results.items;
-  assert.deepEqual(Object.keys(receipt.remote_http_smoke.results[0]).sort(), itemSchema.required.slice().sort());
-});
-await check("missing cookie retains NOT_EXECUTED", async () => {
+await check("missing cookie still denies on capability before smoke", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
-  const receipt = await deployCloudflare(test.options);
-  assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
-  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 1);
+  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
+  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 0);
+  assert.equal(test.receipts.length, 0);
 });
 await check("BLOCKED usage denies every remote mutation with zero billable calls", async () => {
   const over = JSON.parse(admittedSnapshotJson());

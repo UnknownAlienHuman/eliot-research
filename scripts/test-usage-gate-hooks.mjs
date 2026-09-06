@@ -1,8 +1,9 @@
 // Test-only module hooks for the spawn gate (see test-usage-gate-shim.mjs).
-// Redirects lib/cloudflare-usage-collection.mjs to the test standin, but
-// ONLY when imported by a production CLI entry point (the provisioners, the
-// preflight CLI, the deployer). Every other importer — including the standin
-// itself importing the real module — resolves normally, so no cycle occurs.
+// Redirects lib/cloudflare-usage-collection.mjs AND
+// lib/cloudflare-usage-admission.mjs to the test standin, but ONLY when
+// imported by a production CLI entry point (the provisioners, the preflight
+// CLI, the deployer). Every other importer — including the standin itself
+// importing the real modules — resolves normally, so no cycle occurs.
 //
 // FIX9WC Layer 1 (primary, test-only): this hook REFUSES to redirect when it
 // was itself loaded via ambient loader configuration — i.e. when
@@ -33,7 +34,7 @@ export async function resolve(specifier, context, nextResolve) {
   // Layer 1 refusal: ambient loader configuration means this hook was not
   // requested by explicit spawn argv — resolve everything normally.
   if (AMBIENT_LOADER_REFUSED) return nextResolve(specifier, context);
-  if (/(^|\/)cloudflare-usage-collection\.mjs$/.test(specifier)) {
+  if (/(^|\/)cloudflare-usage-(collection|admission)\.mjs$/.test(specifier)) {
     const parent = String(context?.parentURL ?? "");
     const parentFile = parent.split("/").pop().split("?")[0];
     if (GATED_PARENTS.has(parentFile)) {

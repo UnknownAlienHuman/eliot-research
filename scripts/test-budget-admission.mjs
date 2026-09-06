@@ -179,6 +179,9 @@ await check("ledger plus inventory proves headroom without aggregate", async () 
     collected_at: new Date(DAY_ONE - 60_000).toISOString(),
     perMetric: { d1_rows_written: 1_000 },
   };
+  // FIX11: ledger proofs prove headroom, not liveness — the same-process
+  // admission capability is still required before any reservation, so the
+  // valid proof below denies without one (and never reserves).
   const admitted = admitHeavyOperation(ledger, {
     operation: "ingestion-commit",
     metricKey: "d1_rows_written",
@@ -188,8 +191,9 @@ await check("ledger plus inventory proves headroom without aggregate", async () 
     expectedAccountDigest: DIGEST,
     inventoryProof: proof,
   });
-  assert.equal(admitted.allowed, true);
-  assert.equal(admitted.proof, "LEDGER_INVENTORY");
+  assert.equal(admitted.allowed, false);
+  assert.equal(admitted.reason, "MISSING_ADMISSION_CAPABILITY");
+  assert.equal(ledgerSnapshot(ledger).monthly["queue_ops"], undefined);
   const wrongAccount = admitHeavyOperation(createBudgetLedger(), {
     operation: "ingestion-commit",
     metricKey: "d1_rows_written",

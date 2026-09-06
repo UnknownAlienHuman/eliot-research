@@ -20,8 +20,10 @@ import {
   collectAccountUsage,
   createAiSearchInventoryProvider,
   createBillableUsageProvider,
-  runUsagePreflight,
 } from "./lib/cloudflare-usage-collection.mjs";
+import {
+  runUsagePreflight,
+} from "./lib/cloudflare-usage-admission.mjs";
 
 const BEARER = "oauth-test-bearer-VALID-0042";
 const ACCOUNT = "test-account";
@@ -333,11 +335,15 @@ await check("bearer injection stays in child env memory, verification env stays 
   assert.equal(scrubbed.CLOUDFLARE_ACCOUNT_ID, ACCOUNT);
 });
 
-await check("oauth happy path keeps gate order and bearer out of argv/logs/receipts", async () => {
+await check("test-only providers admit evaluation but never authorize deploy apply", async () => {
   const test = deployHarness();
-  // Explicit decision proof through the real gate, not merely non-throw.
-  // Fresh lambdas mirror the harness seams without recording calls, so the
-  // gate-order assertions below observe only the deploy path.
+  // FIX11 negative (Luna bypass 2): the mocked providers below flow through
+  // the real collector and the real envelope to a fully-known ADMITTED
+  // evaluation — and the exported deploy apply still denies with zero
+  // mutations, because ADMITTED alone never suffices without the
+  // same-process admission capability (which only fresh live collection
+  // mints). Fresh lambdas mirror the harness seams without recording calls,
+  // so the gate-order assertions below observe only the deploy path.
   const gate = await runUsagePreflight({
     env: { ...test.options.environment },
     nowMs: NOW,
@@ -347,17 +353,22 @@ await check("oauth happy path keeps gate order and bearer out of argv/logs/recei
   });
   assert.equal(gate.decision, "ADMITTED");
   assert.deepEqual(gate.evaluation.unknown, []);
-  const receipt = await deployCloudflare(test.options);
-  assert.ok(receipt.deployment_generation === "git-test");
+  assert.equal(gate.capability, null);
+  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
+  assert.match(error.message, /admission capability/u);
   assert.ok(test.childTokens.length > 0 && test.childTokens.every((token) => token === BEARER));
   assert.ok(test.calls.indexOf("pnpm check") < test.calls.indexOf("whoami"));
-  assert.ok(test.calls.indexOf("whoami") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs --check-only"));
-  assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
-  assert.ok(test.calls.includes("save"));
+  assert.ok(!test.calls.includes("archive"), "capability denial archived a receipt");
+  assert.ok(!test.calls.some((call) => call.startsWith("node scripts/provision")), "capability denial ran a provisioner");
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")), "capability denial applied a migration");
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "capability denial made a remote call");
+  assert.ok(!test.calls.includes("save"), "capability denial saved a receipt");
+  assert.equal(test.receipts.length, 0);
   noBearer(test.calls, "argv");
   noBearer(test.logs, "logs");
   noBearer(test.receipts, "receipts");
   noBearer(process.argv, "process argv");
+  noBearer(error.message, "error");
 });
 
 await check("sealed zero-provider preflight denies before archive and mutation", async () => {
@@ -405,12 +416,13 @@ await check("wrong profile account fails after gates but before archive and muta
   noBearer(error.message, "error");
 });
 
-await check("api-token mode stays compatible for CI without whoami", async () => {
+await check("staged snapshot admits evaluation but never authorizes deploy apply", async () => {
   // Staged admission: the snapshot below was produced by the real collector
   // over the same FOCUS/inventory providers, so the gate evaluates a
   // genuinely admitted aggregate through the real envelope. It travels via
   // the explicit `snapshot`/`usageSnapshot` options (test-called builder
   // path), never ambient env: production CLIs never pass the capability.
+  // FIX11: the ADMITTED label still denies apply without the capability.
   const staged = await admittedSnapshotJson();
   noBearer(staged, "staged snapshot");
   const test = deployHarness({
@@ -425,12 +437,18 @@ await check("api-token mode stays compatible for CI without whoami", async () =>
   const gate = await runUsagePreflight({ env: { ...test.options.environment }, nowMs: NOW, providers: test.options.usageProviders, snapshot: staged });
   assert.equal(gate.decision, "ADMITTED");
   assert.deepEqual(gate.evaluation.unknown, []);
-  const receipt = await deployCloudflare(test.options);
-  assert.ok(receipt.deployment_generation === "git-test");
+  assert.equal(gate.capability, null);
+  const error = await deployCloudflare(test.options).then(() => assert.fail("must throw"), (error) => error);
+  assert.match(error.message, /admission capability/u);
   assert.ok(test.childTokens.every((token) => token === "secret-token"));
   assert.ok(!test.calls.includes("whoami"));
-  assert.ok(test.calls.includes("save"));
+  assert.ok(!test.calls.includes("archive"), "capability denial archived a receipt");
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")), "capability denial applied a migration");
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")), "capability denial made a remote call");
+  assert.ok(!test.calls.includes("save"), "capability denial saved a receipt");
+  assert.equal(test.receipts.length, 0);
   noBearer(test.receipts, "receipts");
+  noBearer(error.message, "error");
 });
 
 await check("dry run never touches credentials or the network", async () => {

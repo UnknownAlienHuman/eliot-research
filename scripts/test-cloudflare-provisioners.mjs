@@ -402,6 +402,58 @@ try {
   assert.equal(mutationCount(), 0, "SEALED apply sent a mutating request");
   assert.equal(state.requests.length, 0, "SEALED apply contacted Cloudflare");
 
+  // FIX11: ADMITTED without a capability denies every direct apply path too.
+  // The child runs under the test-only --import gate with a genuinely
+  // admittable fixture, so evaluation is ADMITTED — but with capability
+  // minting suppressed (standin-only seam, unreachable from production) no
+  // capability exists, and apply must deny before the first Cloudflare call
+  // with an explicit capability message and zero mutations.
+  reset();
+  {
+    const fixture = admittableSpawnSnapshot();
+    assert.equal(evaluateUsageSnapshot(JSON.parse(fixture),
+      { expectedAccountDigest: digestAccountId(accountId), now: Date.now() }).decision,
+      "ADMITTED", "capability-denial fixture must be admittable for the control to be load-bearing");
+    const shimHref = pathToFileURL(resolve(repositoryRoot, "scripts/test-usage-gate-shim.mjs")).href;
+    const runGated = (script, extraEnv = {}) => new Promise((resolveRun) => {
+      const child = spawn(process.execPath,
+        ["--import", shimHref, resolve(repositoryRoot, script)],
+        {
+          cwd: repositoryRoot,
+          env: {
+            ...commonEnv,
+            ...extraEnv,
+            ELIOTR_TEST_SPAWN_SNAPSHOT_JSON: fixture,
+            ELIOTR_TEST_SPAWN_SUPPRESS_CAPABILITY: "1",
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      const timeout = setTimeout(() => child.kill("SIGKILL"), 15_000);
+      child.on("close", (status, signal) => {
+        clearTimeout(timeout);
+        resolveRun({ status, signal, stdout, stderr });
+      });
+    });
+    for (const script of [
+      "scripts/provision-cloudflare-core.mjs",
+      "scripts/provision-ai-search.mjs",
+      "scripts/provision-cloudflare-access.mjs",
+      "scripts/provision-ai-gateways.mjs",
+    ]) {
+      const denied = await runGated(script);
+      expectFail(denied, `capability-less ADMITTED ${script} apply`);
+      assert.match(denied.stderr, /admission capability/u, `${script} capability denial hid its reason`);
+      assert.equal(mutationCount(), 0, `capability-less ADMITTED ${script} apply mutated`);
+      assert.equal(state.requests.length, 0, `capability-less ADMITTED ${script} apply contacted Cloudflare`);
+    }
+  }
+
   // Route/Access mismatch is rejected before the first Cloudflare read or mutation.
   reset();
   expectFail(
