@@ -9,6 +9,7 @@
 mod canonical_json;
 mod canonical_json_error;
 mod generation;
+mod owner_token;
 mod residency_key;
 mod sha256;
 mod stable_id;
@@ -16,6 +17,7 @@ mod stable_id;
 pub use canonical_json::*;
 pub use canonical_json_error::*;
 pub use generation::*;
+pub use owner_token::*;
 pub use residency_key::*;
 pub use sha256::sha256;
 pub use stable_id::*;
