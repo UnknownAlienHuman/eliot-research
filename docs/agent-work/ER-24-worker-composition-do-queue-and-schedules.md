@@ -49,6 +49,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/google-oauth-begin.ts`
 - `apps/eliotr-core/test/google-oauth-admission.test.ts`
 - `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
+- `apps/eliotr-core/test/retrieval-ident-lex.test.ts`
+- `apps/eliotr-core/test/retrieval-q1-fixture.ts`
+- `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.

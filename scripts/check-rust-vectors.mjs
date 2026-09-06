@@ -1,8 +1,25 @@
-import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
-import { verifyResidencyKeyReference } from "../crates/eliotr-test-vectors/reference/residency-key.mjs";
-import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
-import { TextDecoder } from "node:util";
+// Self-contained clean-checkout gate: this script rebuilds the exact production
+// contracts+domain `dist` from source BEFORE importing the differential oracle,
+// so CI ordering (no prior build, no pre-existing dist) cannot fail with
+// ERR_MODULE_NOT_FOUND and stale dist can never mask a divergence. The oracle
+// still exercises the actual production Zod schemas/functions byte-for-byte.
+import { existsSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { TextDecoder } from "node:util";
+import {
+  PINNED_VERSION as BOOTSTRAP_PINNED_VERSION,
+  ensureWorkspaceWithDeps,
+  readPackageJsonFile,
+  runBootstrapSelfTest,
+  runGateCommandWithDeps,
+} from "./check-rust-vectors-bootstrap.mjs";
+
+// Executable seam (exactly once): the production bootstrap helper self-checks
+// with injected fakes before any real work, replacing the former grep-only
+// proof. `node scripts/check-rust-vectors.mjs` necessarily runs this.
+runBootstrapSelfTest();
 
 const fixtureUrl = new URL(
   "../crates/eliotr-test-vectors/fixtures/canonical-utf8.v1.txt",
@@ -189,9 +206,153 @@ function assertRejected(name, source, expectedMessage) {
   fail(`${name}: malformed fixture was accepted`);
 }
 
+const REPO_ROOT = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const CONTRACTS_DIST = join(REPO_ROOT, "packages", "contracts", "dist");
+const DOMAIN_DIST = join(REPO_ROOT, "packages", "domain", "dist");
+const REQUIRED_DIST_ENTRIES = Object.freeze([
+  join(CONTRACTS_DIST, "common.js"),
+  join(CONTRACTS_DIST, "scope.js"),
+  join(DOMAIN_DIST, "scope", "snapshot-identity.js"),
+]);
+const BUILD_PACKAGES = Object.freeze(["packages/contracts", "packages/domain"]);
+
+// Production bootstrap lives exactly once in
+// scripts/check-rust-vectors-bootstrap.mjs. The wrappers below delegate with
+// the real process behavior; no planning/argv/pin logic is duplicated here.
+function readPackageJson(packagePath) {
+  return readPackageJsonFile(packagePath);
+}
+
+function readPinnedVersion(packagePath, field) {
+  const parsed = readPackageJson(packagePath);
+  const version = parsed.dependencies?.[field] ?? parsed.devDependencies?.[field];
+  if (typeof version !== "string" || !BOOTSTRAP_PINNED_VERSION.test(version)) {
+    fail(`rust-vectors gate: pinned ${field} version is missing in ${packagePath}`);
+  }
+  return version;
+}
+
+function runGateCommand(binary, args, label, extraEnv, useShell = process.platform === "win32") {
+  // Windows resolves `.cmd` shims (pnpm/corepack) only via the shell; Linux
+  // keeps exact argv dispatch without a shell. Real binaries (node) never need
+  // the shell, which also avoids quoting spaced install paths.
+  runGateCommandWithDeps(binary, args, label, { repoRoot: REPO_ROOT, extraEnv, useShell });
+}
+
+// The production build needs the workspace install: the `@eliotr/contracts`
+// symlink for `tsc -b`, plus zod/vitest for compile and runtime. Delegates to
+// the exact production planner/executor (probe corepack pnpm --version,
+// prepare pnpm@pin --activate on mismatch, then corepack pnpm install
+// --frozen-lockfile; never a bare pnpm; missing corepack fails with the
+// toolchain prerequisite diagnostic).
+function ensureWorkspace() {
+  ensureWorkspaceWithDeps({ repoRoot: REPO_ROOT });
+}
+
+// Rebuilds the exact production dist fresh on every run: stale output is
+// removed first so it can never mask a divergence, and the build fails closed.
+function ensureFreshProductionDist() {
+  ensureWorkspace();
+  const typescriptPinned = readPinnedVersion(join(REPO_ROOT, "package.json"), "typescript");
+  for (const distDir of [CONTRACTS_DIST, DOMAIN_DIST]) {
+    rmSync(distDir, { recursive: true, force: true });
+  }
+  console.log("rust-vectors gate: removed stale contracts+domain dist; rebuilding fresh from source.");
+  const localTsc = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
+  if (!existsSync(localTsc)) {
+    fail("rust-vectors gate: workspace install did not provide the repo TypeScript compiler");
+  }
+  runGateCommand(
+    process.execPath,
+    [localTsc, "-b", ...BUILD_PACKAGES],
+    `rebuilding exact production dist with repo typescript@${typescriptPinned}`,
+    undefined,
+    false,
+  );
+  for (const entry of REQUIRED_DIST_ENTRIES) {
+    if (!existsSync(entry)) {
+      fail(`rust-vectors gate: fresh build did not emit ${entry}`);
+    }
+  }
+}
+
+function assertProductionZodPath(modules) {
+  const { IsoDateTimeSchema } = modules[0];
+  const { ScopeSnapshotSchema } = modules[1];
+  const { scopeSnapshotDigestPayload, scopeSnapshotIdentityPayload } = modules[2];
+  if (typeof IsoDateTimeSchema?.safeParse !== "function") {
+    fail("rust-vectors gate: fresh contracts dist does not export IsoDateTimeSchema");
+  }
+  if (typeof ScopeSnapshotSchema?.safeParse !== "function") {
+    fail("rust-vectors gate: fresh contracts dist does not export ScopeSnapshotSchema");
+  }
+  if (
+    typeof scopeSnapshotIdentityPayload !== "function" ||
+    typeof scopeSnapshotDigestPayload !== "function"
+  ) {
+    fail("rust-vectors gate: fresh domain dist does not export the snapshot payload builders");
+  }
+  console.log(
+    "rust-vectors gate: fresh dist built; exercising IsoDateTimeSchema/ScopeSnapshotSchema + scopeSnapshotIdentityPayload/scopeSnapshotDigestPayload from the exact production build.",
+  );
+}
+
+ensureFreshProductionDist();
+const productionModules = [];
+for (const entry of REQUIRED_DIST_ENTRIES) {
+  productionModules.push(await import(pathToFileURL(entry).href));
+}
+assertProductionZodPath(productionModules);
+
+const { verifyCanonicalBodyReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "canonical-body.mjs"),
+  ).href
+);
+const { verifyOwnerTokenReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "owner-token.mjs"),
+  ).href
+);
+const { verifyScopeSnapshotIdentityReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "scope-snapshot-identity.mjs"),
+  ).href
+);
+const { verifyScopeSnapshotIdentityDifferential } = await import(
+  pathToFileURL(
+    join(
+      REPO_ROOT,
+      "crates",
+      "eliotr-test-vectors",
+      "reference",
+      "scope-snapshot-identity-differential.mjs",
+    ),
+  ).href
+);
+const { verifyResidencyKeyReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "residency-key.mjs"),
+  ).href
+);
+const { verifyStableIdReference } = await import(
+  pathToFileURL(
+    join(REPO_ROOT, "crates", "eliotr-test-vectors", "reference", "stable-id.mjs"),
+  ).href
+);
+
 const source = await readFile(fixtureUrl, "utf8");
 const cases = parseFrame(source);
 verifyCases(cases);
+
+const crlfTransport = splitStrictLines(source)
+  .join("\n")
+  .replace(/\n/g, "\r\n");
+const crlfCases = parseFrame(crlfTransport);
+if (crlfCases.length !== cases.length) {
+  fail("CRLF transport changed the M1 case count");
+}
+verifyCases(crlfCases);
 
 assertRejected(
   "unknown protocol",
@@ -285,4 +446,22 @@ await verifyStableIdReference(
     import.meta.url,
   ),
   "Projection identity",
+);
+await verifyOwnerTokenReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/owner-token.v1.txt",
+    import.meta.url,
+  ),
+);
+await verifyScopeSnapshotIdentityReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt",
+    import.meta.url,
+  ),
+);
+await verifyScopeSnapshotIdentityDifferential(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt",
+    import.meta.url,
+  ),
 );
