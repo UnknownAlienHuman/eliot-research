@@ -137,8 +137,22 @@ export interface SourceRevisionsResult {
   readonly next_cursor?: string;
 }
 
-export interface OwnerApi {
-  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
+/** G1 owner-only Google OAuth begin. The body carries only the stable
+ * operation reference; owner/session/config are server-derived, never parsed
+ * from the request. The result is a locator for the Google consent page, not
+ * a credential, token, or exchange grant. */
+export interface BeginGoogleOAuthRequest {
+  readonly operation_ref: string;
+}
+
+export interface BeginGoogleOAuthResult {
+  readonly protocol: "eliotr.google-oauth-start.v1";
+  readonly authorization_url: string;
+  readonly expires_at: string;
+  readonly intent_id: string;
+}
+
+export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
   prepareBundle(

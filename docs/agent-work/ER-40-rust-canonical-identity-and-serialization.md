@@ -19,7 +19,10 @@ family, its observation window, mismatch policy, rollback switch, and superseded
 - `crates/eliotr-test-vectors/**`
 - `crates/eliotr-kernel-wasm/**`
 - `fuzz/**`
+- `scripts/check-er40-line-budget.mjs`
 - `scripts/check-rust-vectors.mjs`
+- `scripts/check-rust-vectors-bootstrap.mjs`
+- `scripts/test-rust-vectors-install.mjs`
 - `scripts/check-rust-wasm.mjs`
 - `docs/agent-work/ER-40-rust-canonical-identity-and-serialization.md`
 
@@ -142,6 +145,51 @@ pinned Rust 1.98.0 formatter is enforced before lint, native tests, Wasm executi
 This is a generic shadow primitive, not a stable-ID cutover for ingest, projection, evidence,
 erasure, owner-cutover, receipt or handle families. Those families require their own named vectors,
 observation evidence, rollback and promotion review. Live receipts remain `NOT EXECUTED`.
+
+## Active implementation slice — scope-snapshot-identity.v1
+
+This slice ports the exact `scopeSnapshotIdentityPayload`, `scopeSnapshotDigestPayload` and
+`expectedSnapshotIdentity` formulas while leaving TypeScript authority intact:
+
+- the canonical identity payload binds protocol, revision, resolved expression, participant
+  generations, member source revisions, owner generations, policy authority, disclosure
+  digest, purge revision, the optional client fence, and creation/expiry timestamps;
+- the snapshot ID is `scope-` plus the first 48 lowercase hex characters of SHA-256 over the
+  canonical identity bytes; the snapshot digest is SHA-256 over the canonical digest payload
+  (`snapshot_id` plus the identity payload), per the accepted TypeScript behavior;
+- key order is ECMAScript UTF-16 code-unit order, matching the current TypeScript
+  `canonicalJson` authority; duplicate, missing, extra and unknown keys fail closed;
+- 67 committed vectors cover derivation and verification, ordering and escaped-equivalent
+  metamorphism, replay versus conflicting replay, digest/ID mismatch on valid-hex tamper,
+  foreign owner/scope/generation/policy inputs, zero/max/max+1 boundaries, malformed UTF-8,
+  escapes, non-canonical numbers, surrogates, bounded depth/member/payload ceilings,
+  valid timestamps with 10 and 20 fractional-second digits, optional-seconds positives
+  (`00:00Z`, `00:00±HH:MM`), leap/non-leap February (`2024`/`2000` admit, `2026`/`1900`
+  reject), 30/31-day boundaries (April 30 admits, April/September 31 reject), offsets,
+  and fail-closed derive rejection of caller-supplied `snapshot_id`/`digest` members;
+- the same corpus executes through the independent JavaScript reference, native Rust and
+  compiled Rust/Wasm, with fuzz and branch-coverage reach, plus a direct differential
+  oracle replaying the accepted TypeScript schema/functions
+  (`scopeSnapshotIdentityPayload`, `scopeSnapshotDigestPayload`, the
+  `expectedSnapshotIdentity` service path) against every committed derive output;
+
+This is identity parity for already-admitted material only. Scope normalization/algebra,
+resolution, authority closure, persistence, expiry/currentness, D1/R2 effects, K1
+cutover/residency/admission/receipt/owner-token semantics and publication identity remain
+TypeScript/Cloudflare authority. No production call site consumes Rust output, no live
+observation receipt is claimed, and promotion still requires a separate rollback-bound
+review packet. This family is `IMPLEMENTED_NOT_LIVE`.
+
+Corpus evidence (`crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt`):
+67 cases, 88,473 bytes, SHA-256
+`f520fffa55db154efaa966e3a666845fd1e653dceab054c48dad76c417fe4862`.
+Timestamps track the admitted `IsoDateTimeSchema` (`datetime({ offset: true })`,
+`zod@4.4.3`) exactly: seconds are optional, Gregorian month/day/leap validity
+holds (century rule included), offsets stay bounded, fractional-second runs have
+no nine-digit ceiling and are preserved verbatim.
+Derive inputs carrying `snapshot_id` or `digest` are fail-closed
+(`ELIOTR_SNAPSHOT_UNKNOWN_FIELD`, no output); the TypeScript authority strips extra
+keys instead, which the differential oracle pins as an explicit divergence.
 
 ## Active implementation slice — source.owner-cutover.v1 canonical vectors
 
