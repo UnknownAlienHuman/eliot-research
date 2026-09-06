@@ -117,11 +117,7 @@ export function problem(
 }
 
 export function apiResult(request: Request, env: Env, data: unknown, status = 200): Response {
-  return jsonResponse({
-    data,
-    trace_id: traceId(request),
-    deployment_generation: env.DEPLOYMENT_GENERATION,
-  }, status);
+  return jsonResponse({ data, trace_id: traceId(request), deployment_generation: env.DEPLOYMENT_GENERATION }, status);
 }
 
 function matchPattern(pattern: string, pathname: string): Readonly<Record<string, string>> | null {
@@ -578,8 +574,10 @@ export async function handleHttp(
     const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
     const identity = await verifier.verify(request);
     const context = authorize(request, resolved.match.route, identity);
-    if (resolved.match.route.operation === "google.oauth.begin")
+    if (resolved.match.route.operation === "google.oauth.begin") {
+      requireNoQuery(url);
       return await handleGoogleOAuthBegin(request, env, context, identity, dependencies);
+    }
     if (resolved.match.route.operation === "system.session") {
       requireNoQuery(url);
       return apiResult(request, env, {

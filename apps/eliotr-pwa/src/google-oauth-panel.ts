@@ -1,5 +1,5 @@
 import { ApiRequestError } from "./api.js";
-import { beginGoogleOAuth } from "./google-oauth-api.js";
+import { beginGoogleOAuth, newGoogleOAuthOperationRef } from "./google-oauth-api.js";
 import { escapeHtml } from "./html.js";
 
 /**
@@ -35,7 +35,11 @@ export function mountGoogleOAuthPanel(root: HTMLElement): () => void {
     if (busy || controller.signal.aborted) return;
     busy = true;
     try {
-      const outcome = await beginGoogleOAuth(operationRef ?? undefined, controller.signal);
+      // Mint before the first network attempt and retain across every failure,
+      // so timeout/lost/invalid responses retry with the same ref (no new
+      // intent). Cleared only by the explicit lifecycle reset below.
+      if (operationRef === null) operationRef = newGoogleOAuthOperationRef();
+      const outcome = await beginGoogleOAuth(operationRef, controller.signal);
       operationRef = outcome.operationRef;
       const result = root.querySelector("[data-oauth-result]");
       if (result) {

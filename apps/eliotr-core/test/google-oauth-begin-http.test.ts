@@ -209,6 +209,52 @@ describe("G1 owner-only Google OAuth begin over real HTTP/D1/crypto", () => {
     expect(await intentCount("g1-shape-owner")).toBe(0);
   });
 
+  it("rejects unknown query parameters before intent creation with zero rows", async () => {
+    const owner = "g1-query-unknown-owner";
+    const auth = verifier(owner);
+    for (const query of ["?unknown=1", "?operation_ref=g1-query-unknown&extra=1", "?%00=1"]) {
+      const response = await handleHttp(
+        new Request(`${ORIGIN}${BEGIN_PATH}${query}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: ORIGIN, "x-eliotr-csrf": "1" },
+          body: JSON.stringify({ operation_ref: "g1-query-unknown" }),
+        }),
+        googleEnv() as never,
+        {} as ExecutionContext,
+        { accessVerifier: auth as never },
+      );
+      const document = (await response.json()) as Record<string, unknown>;
+      expect(response.status, `${query}: ${JSON.stringify(document)}`).toBe(400);
+      expect(document.code).toBe("UNKNOWN_QUERY_PARAMETER");
+    }
+    expect(await intentCount(owner)).toBe(0);
+    expect(await intentCount(owner, "g1-query-unknown")).toBe(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("rejects duplicate query parameters before intent creation with zero rows", async () => {
+    const owner = "g1-query-duplicate-owner";
+    const auth = verifier(owner);
+    for (const query of ["?a=1&a=2", "?operation_ref=x&operation_ref=y", "?x=1&x=1"]) {
+      const response = await handleHttp(
+        new Request(`${ORIGIN}${BEGIN_PATH}${query}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: ORIGIN, "x-eliotr-csrf": "1" },
+          body: JSON.stringify({ operation_ref: "g1-query-duplicate" }),
+        }),
+        googleEnv() as never,
+        {} as ExecutionContext,
+        { accessVerifier: auth as never },
+      );
+      const document = (await response.json()) as Record<string, unknown>;
+      expect(response.status, `${query}: ${JSON.stringify(document)}`).toBe(400);
+      expect(document.code).toBe("UNKNOWN_QUERY_PARAMETER");
+    }
+    expect(await intentCount(owner)).toBe(0);
+    expect(await intentCount(owner, "g1-query-duplicate")).toBe(0);
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
   it("fails closed without durable effects when server config or Production attestation is invalid", async () => {
     const cases: Record<string, string | undefined>[] = [
       { GOOGLE_CLIENT_ID: undefined },
@@ -241,7 +287,7 @@ describe("G1 owner-only Google OAuth begin over real HTTP/D1/crypto", () => {
         calls += 1;
         if (calls > 1) {
           const { AccessVerificationError } = await import("@eliotr/platform-cloudflare");
-          throw new AccessVerificationError("ACCESS_TOKEN_EXPIRED", "owner session revoked", false);
+          throw new AccessVerificationError("ACCESS_JWT_EXPIRED", "owner session revoked", false);
         }
         return {
           principal_ref: "g1-revoked-owner",

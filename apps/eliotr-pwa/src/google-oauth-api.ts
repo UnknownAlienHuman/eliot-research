@@ -10,6 +10,10 @@ export interface GoogleOAuthBegin {
 type JsonRecord = Record<string, unknown>;
 
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const GOOGLE_AUTHORIZATION_ORIGIN = "https://accounts.google.com";
+const GOOGLE_AUTHORIZATION_PATH = "/o/oauth2/v2/auth";
+const SECRET_QUERY_PATTERN = /secret|token|credential/iu;
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -28,8 +32,8 @@ function exactKeys(record: JsonRecord, allowed: readonly string[], label: string
 }
 
 function requiredString(value: unknown, label: string, maximumLength: number): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > maximumLength ||
-      /[\u0000-\u001f\u007f]/u.test(value)) {
+  if (typeof value !== "string" || value.length === 0 || value !== value.trim() ||
+      value.length > maximumLength || /[\u0000-\u001f\u007f]/u.test(value)) {
     throw new ApiRequestError({
       status: 502,
       code: "API_RESPONSE_SCHEMA_MISMATCH",
@@ -37,6 +41,30 @@ function requiredString(value: unknown, label: string, maximumLength: number): s
     });
   }
   return value;
+}
+
+function deploymentGeneration(value: unknown, label: string): string {
+  const generation = requiredString(value, label, 256);
+  if (!SAFE_IDENTIFIER.test(generation)) {
+    throw new ApiRequestError({
+      status: 502,
+      code: "API_RESPONSE_SCHEMA_MISMATCH",
+      message: `${label} is not a valid generation identifier`,
+    });
+  }
+  return generation;
+}
+
+function envelopeTraceId(value: unknown, label: string): string {
+  const trace = requiredString(value, label, 128);
+  if (!SAFE_TRACE_ID.test(trace)) {
+    throw new ApiRequestError({
+      status: 502,
+      code: "API_RESPONSE_SCHEMA_MISMATCH",
+      message: `${label} is invalid`,
+    });
+  }
+  return trace;
 }
 
 /** Strict decoder for the G1 begin envelope. Unknown load-bearing fields fail closed. */
@@ -49,6 +77,8 @@ export function decodeGoogleOAuthBeginEnvelope(value: unknown): GoogleOAuthBegin
     });
   }
   exactKeys(value, ["data", "trace_id", "deployment_generation"], "OAuth begin envelope");
+  deploymentGeneration(value.deployment_generation, "envelope.deployment_generation");
+  envelopeTraceId(value.trace_id, "envelope.trace_id");
   const data = value.data;
   if (!isRecord(data)) {
     throw new ApiRequestError({
@@ -76,10 +106,13 @@ export function decodeGoogleOAuthBeginEnvelope(value: unknown): GoogleOAuthBegin
       message: "OAuth authorization URL is malformed",
     });
   }
-  if (url.protocol !== "https:" || url.host !== "accounts.google.com" || url.hash !== "" ||
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" ||
+      url.origin !== GOOGLE_AUTHORIZATION_ORIGIN || url.host !== "accounts.google.com" ||
+      url.pathname !== GOOGLE_AUTHORIZATION_PATH || url.hash !== "" ||
       url.searchParams.has("client_secret") || url.searchParams.has("refresh_token") ||
       url.searchParams.has("access_token") || url.searchParams.has("id_token") ||
-      url.searchParams.has("code")) {
+      url.searchParams.has("code") ||
+      [...url.searchParams.keys()].some((key) => SECRET_QUERY_PATTERN.test(key))) {
     throw new ApiRequestError({
       status: 502,
       code: "API_RESPONSE_SCHEMA_MISMATCH",
@@ -94,7 +127,7 @@ export function decodeGoogleOAuthBeginEnvelope(value: unknown): GoogleOAuthBegin
       message: "OAuth begin expiry must be a canonical ISO timestamp",
     });
   }
-  const intentId = requiredString(data.intent_id, "intent_id", 256);
+  const intentId = requiredString(data.intent_id, "intent_id", 64);
   if (!SAFE_IDENTIFIER.test(intentId)) {
     throw new ApiRequestError({
       status: 502,
@@ -111,6 +144,16 @@ function newOperationRef(): string {
     throw new ApiRequestError({ status: 503, code: "API_REQUEST_ABORTED", message: "Could not mint an operation reference" });
   }
   return ref;
+}
+
+/**
+ * Mint an OAuth begin operation reference before the first network attempt.
+ * Callers keep the returned value in memory and reuse it for every retry, so a
+ * timeout, lost response, or invalid envelope never mints a replacement
+ * intent. Clear it only on explicit lifecycle reset (logout/unmount/pagehide).
+ */
+export function newGoogleOAuthOperationRef(): string {
+  return newOperationRef();
 }
 
 /**
