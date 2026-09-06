@@ -1,5 +1,6 @@
 import { verifyCanonicalBodyReference } from "../crates/eliotr-test-vectors/reference/canonical-body.mjs";
 import { verifyOwnerTokenReference } from "../crates/eliotr-test-vectors/reference/owner-token.mjs";
+import { verifyScopeSnapshotIdentityReference } from "../crates/eliotr-test-vectors/reference/scope-snapshot-identity.mjs";
 import { verifyResidencyKeyReference } from "../crates/eliotr-test-vectors/reference/residency-key.mjs";
 import { verifyStableIdReference } from "../crates/eliotr-test-vectors/reference/stable-id.mjs";
 import { TextDecoder } from "node:util";
@@ -299,6 +300,12 @@ await verifyStableIdReference(
 await verifyOwnerTokenReference(
   new URL(
     "../crates/eliotr-test-vectors/fixtures/owner-token.v1.txt",
+    import.meta.url,
+  ),
+);
+await verifyScopeSnapshotIdentityReference(
+  new URL(
+    "../crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt",
     import.meta.url,
   ),
 );
