@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { createBackupPort } from "./index.js";
 import { reopenPersistedVector, type BackupSourcePorts } from "./epoch.js";
-import { assertO2MigrationAuthority, O2_MIGRATION_FILENAME } from "./migration-gate.js";
+import { assertO2MigrationAuthority, O2_MIGRATION_FILENAME, O2_EXPECTED_MIGRATION_DIGEST, O2_EXPECTED_SCHEMA_DIGEST, canonicalO2SchemaFingerprint, canonicalizeSchemaSql } from "./migration-gate.js";
 import { BACKUP_MANIFEST_PROTOCOL } from "./coherent-cut.js";
 import { authorizeBackupDestination, requireDestinationAuthority, revokeBackupDestination } from "./destination-authority.js";
 import type { BackupDestinationPolicy } from "./destination-policy.js";
@@ -234,8 +234,7 @@ describe("ER-34 O2 FIX2 authority (migration gate, intent digest, cut, destinati
     const r = await h2.port.createPortableEpoch(backupIntent("fix2-proto"), { now_ms: NOW });
     await expect(reopenPersistedVector(h2.ports, { ...r.draft, manifest_protocol: "eliotr.backup-manifest.v9" })).rejects.toMatchObject({ code: "BACKUP_VECTOR_UNVERIFIABLE" });
   });
-  it("requires exact controller authority: negatives for principal, decision, domain, capability, retention, hold, lock, auth receipt, revocation", async () => {
-    const h = await setup();
+  it("requires exact controller authority: negatives for principal, decision, domain, capability, retention, hold, lock, auth receipt, revocation", async () => {    const h = await setup();
     await authorizeBackupDestination(h.coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: policy(), authorization_receipt_ref: "auth-1" });
     const good = await requireDestinationAuthority(h.coreDb, backupIntent("x"), policy());
     expect(good.state).toBe("AUTHORIZED");
@@ -251,5 +250,62 @@ describe("ER-34 O2 FIX2 authority (migration gate, intent digest, cut, destinati
     await expect(requireDestinationAuthority(h.coreDb, backupIntent("x"), policy())).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     await authorizeBackupDestination(h.coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: policy(), authorization_receipt_ref: "auth-1" });
     await expect(requireDestinationAuthority(h.coreDb, backupIntent("x"), policy())).resolves.toMatchObject({ state: "AUTHORIZED" });
+  });
+});
+
+describe("ER-34 O2 FIX3 canonical migration authority", () => {
+  const LF0018 = m0018.replace(/\r\n/g, "\n");
+  async function shaHex(text: string): Promise<string> {
+    const bytes = new TextEncoder().encode(text);
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    return [...new Uint8Array(await crypto.subtle.digest("SHA-256", copy.buffer))].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+  function mutatedDb(variant0018: string): D1Database {
+    const db = new DatabaseSync(":memory:");
+    for (const m of MIGRATIONS.slice(0, 13)) db.exec(m);
+    db.exec(variant0018);
+    for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
+    return d1Database(db);
+  }
+  it("binds the expected migration content digest to the tracked 0018 file", async () => {
+    expect(await shaHex(m0018.replace(/\r\n/g, "\n"))).toBe(O2_EXPECTED_MIGRATION_DIGEST);
+  });
+  it("reads back the canonical schema fingerprint from the actual applied 0018", async () => {
+    const db = openCore(); recordLedger(db);
+    const coreDb = d1Database(db);
+    await expect(assertO2MigrationAuthority(coreDb)).resolves.toBeUndefined();
+    const tableRows = (db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('d1_migrations','backup_epoch_receipt','backup_offsite_expiry','backup_destination_authority','backup_offsite_copy_part','backup_offsite_copy_receipt','backup_export_cut','backup_offsite_nonce_authority')").all() as { name: string; sql: string }[]);
+    expect(tableRows.length).toBe(8);
+    const entries: { kind: "table" | "index"; name: string; sql: string }[] = tableRows.map((row) => ({ kind: "table" as const, name: row.name, sql: row.sql }));
+    const indexes = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN ('d1_migrations','backup_epoch_receipt','backup_offsite_expiry','backup_destination_authority','backup_offsite_copy_part','backup_offsite_copy_receipt','backup_export_cut','backup_offsite_nonce_authority')").all() as { name: string; sql: string }[];
+    expect(indexes.map((r) => r.name)).toEqual(["backup_offsite_copy_part_nonce_unique"]);
+    for (const row of indexes) entries.push({ kind: "index" as const, name: row.name, sql: row.sql });
+    expect(await canonicalO2SchemaFingerprint(entries)).toBe(O2_EXPECTED_SCHEMA_DIGEST);
+    expect(canonicalizeSchemaSql("  CREATE   TABLE x (\n a TEXT )  ")).toBe("CREATE TABLE x ( a TEXT )");
+  });
+  it("rejects the forged weak schema (same columns, no constraints) with a fake ledger row", async () => {
+    const db = new DatabaseSync(":memory:");
+    for (const m of MIGRATIONS.slice(0, 13)) db.exec(m);
+    db.exec("CREATE TABLE d1_migrations (name TEXT NOT NULL, applied_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_epoch_receipt (idempotency_key TEXT NOT NULL, intent_id TEXT NOT NULL, intent_digest TEXT NOT NULL, vector_digest TEXT NOT NULL, manifest_digest TEXT NOT NULL, epoch_id TEXT NOT NULL, receipt_json TEXT NOT NULL, draft_json TEXT NOT NULL, attempt_json TEXT NOT NULL, created_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_offsite_expiry (expiry_intent_key TEXT NOT NULL, epoch_id TEXT NOT NULL, destination_id TEXT NOT NULL, journal_refs_json TEXT NOT NULL, state TEXT NOT NULL, absent_parts INTEGER NOT NULL, created_at TEXT NOT NULL, failure_domain TEXT NOT NULL, descriptor_digest TEXT NOT NULL, policy_digest TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_destination_authority (destination_id TEXT NOT NULL, principal_ref TEXT NOT NULL, policy_decision_ref TEXT NOT NULL, policy_json TEXT NOT NULL, policy_digest TEXT NOT NULL, authorization_receipt_ref TEXT NOT NULL, state TEXT NOT NULL, authorized_at TEXT NOT NULL, revoked_at TEXT)");
+    db.exec("CREATE TABLE backup_offsite_copy_part (copy_id TEXT NOT NULL, part_ref TEXT NOT NULL, content_digest TEXT NOT NULL, size_bytes INTEGER NOT NULL, nonce_hex TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_offsite_copy_receipt (copy_id TEXT NOT NULL, epoch_id TEXT NOT NULL, destination_id TEXT NOT NULL, key_generation TEXT NOT NULL, policy_digest TEXT NOT NULL, intent_digest TEXT NOT NULL, receipt_json TEXT NOT NULL, epoch_json TEXT NOT NULL, attempt_json TEXT NOT NULL, readback_digest TEXT NOT NULL, expires_at TEXT NOT NULL, failure_domain TEXT NOT NULL, descriptor_digest TEXT NOT NULL, authority_authorized_at TEXT NOT NULL, created_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_export_cut (cut_id TEXT NOT NULL, cut_digest TEXT NOT NULL, state TEXT NOT NULL, created_at TEXT NOT NULL)");
+    db.exec("CREATE TABLE backup_offsite_nonce_authority (key_generation TEXT NOT NULL, nonce_hex TEXT NOT NULL, copy_id TEXT NOT NULL, part_ref TEXT NOT NULL, created_at TEXT NOT NULL)");
+    db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run("0018_backup_o2_replay_authority.sql", T);
+    await expect(assertO2MigrationAuthority(d1Database(db))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+  });
+  it.each([
+    ["dropped CHECK", LF0018.replace("cut_digest TEXT NOT NULL CHECK (length(cut_digest) = 64)", "cut_digest TEXT NOT NULL")],
+    ["dropped UNIQUE index", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_copy_part_nonce_unique\n  ON backup_offsite_copy_part(copy_id, nonce_hex);", "")],
+    ["added DEFAULT", LF0018.replace("updated_at TEXT NOT NULL,\n  PRIMARY KEY (copy_id, part_ref)", "updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',\n  PRIMARY KEY (copy_id, part_ref)")],
+    ["altered PRIMARY KEY", LF0018.replace("PRIMARY KEY (copy_id, part_ref)", "PRIMARY KEY (copy_id)")],
+    ["dropped STRICT", LF0018.replace("PRIMARY KEY (key_generation, nonce_hex)\n) STRICT;", "PRIMARY KEY (key_generation, nonce_hex)\n);")],
+    ["reordered column", LF0018.replace("authorized_at TEXT NOT NULL,\n  revoked_at TEXT,", "revoked_at TEXT,\n  authorized_at TEXT NOT NULL,")],
+  ])("rejects edited migration variant: %s", async (_label, variant) => {
+    await expect(assertO2MigrationAuthority(mutatedDb(variant))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
   });
 });

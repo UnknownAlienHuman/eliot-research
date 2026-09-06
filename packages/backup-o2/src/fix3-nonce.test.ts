@@ -4,9 +4,10 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { createBackupPort } from "./index.js";
-import { createControlledOffsiteAdapter, type OffsiteCopyAdapter, type OffsiteStoredPart } from "./offsite.js";
-import { expireOffsiteCopy } from "./expiry.js";
+import { createControlledOffsiteAdapter, type OffsiteCopyAdapter } from "./offsite.js";
 import { authorizeBackupDestination } from "./destination-authority.js";
+import { allocateOffsiteNonce } from "./nonce-authority.js";
+import { backupNonceHex } from "./offsite-durability.js";
 import type { BackupDestinationPolicy } from "./destination-policy.js";
 import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
@@ -24,6 +25,10 @@ import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?
 import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
 import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
+
+// ER-34 O2 FIX3 durable nonce authority proof (IMPLEMENTED_NOT_LIVE).
+// Uniqueness is enforced per key generation by an atomic D1 insert BEFORE
+// encryption or remote put, across restart, concurrent copies and key changes.
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
@@ -49,7 +54,7 @@ function d1Database(db: DatabaseSync): D1Database {
 function shimBucket(): { bucket: R2Bucket } {
   const objects = new Map<string, { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string> }>(); let seq = 0;
   const streamOf = (b: Uint8Array): ReadableStream<Uint8Array> => new ReadableStream({ start(c) { c.enqueue(b.slice()); c.close(); } });
-  const metaOf = (k: string, o: { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string> }): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { contentType: "application/jsonl" } });
+  const metaOf = (k: string, o: { bytes: Uint8Array; etag: string; version: string; customMetadata: Record<string, string> }): Record<string, unknown> => ({ key: k, size: o.bytes.byteLength, etag: o.etag, version: o.version, customMetadata: { ...o.customMetadata }, httpMetadata: { contentType: "application/octet-stream" } });
   const api = {
     async head(k: string) { const o = objects.get(k); return o === undefined ? null : metaOf(k, o); },
     async get(k: string) { const o = objects.get(k); if (o === undefined) return null; const f = o.bytes.slice(); return { ...metaOf(k, o), size: o.bytes.byteLength, body: streamOf(o.bytes), bytes: async () => f.slice() }; },
@@ -87,7 +92,7 @@ function intent(k: string): OperationIntent {
 function policy(over: Partial<BackupDestinationPolicy> = {}): BackupDestinationPolicy {
   return { destination_id: "offsite-1", failure_domain: "domain-remote", endpoint_identity: "endpoint-1", supports_deletion_journal: true, supports_expiry: true, retention_locked: false, retention_policy_ref: "retention-1", expiry_identity: "expiry-1", policy_version: "v1", owner_ref: "owner-1", authorization_receipt_ref: "auth-1", ...over };
 }
-function seedRows(db: DatabaseSync): void {
+function seedCore(db: DatabaseSync): void {
   db.exec(`INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES ('ns-1',1,'owner-sys-1','incarnation-1','gen-1',1,'ACTIVE',NULL,'${T}');
     INSERT INTO source (source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,kind,origin_uri,title,default_storage_policy,default_residency_profile_id,source_class,license_policy_ref,default_retention_policy_id,head_rev,created_at) VALUES ('source-1','ns-1','owner-sys-1','gen-1','immutable_import','document',NULL,'T','policy-store-1','profile-1','public','license-1','retention-1',NULL,'${T}');
     INSERT INTO source_revision (source_revision_ref,source_id,source_owner_generation,content_sha256,object_residency_key_digest,original_r2_key,normalized_artifact_ref,captured_at,parser_profile_generation,quality_state,purge_state,currentness_state,source_view_ref,workspace_view_revision_ref,admitted_at) VALUES ('rev-1','source-1','gen-1','${HEX("a")}','${HEX("b")}',NULL,NULL,'${T}',NULL,'standard','LIVE','unknown','view-1',NULL,'${T}');
@@ -98,78 +103,125 @@ async function setup() {
   const db = new DatabaseSync(":memory:");
   for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018]) db.exec(m);
   for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
-  seedRows(db);
+  seedCore(db);
   const evidence = shimBucket(); const work = shimBucket(); const parts = shimBucket();
   const coreDb = d1Database(db);
   const ports: BackupSourcePorts = { core_db: coreDb, evidence_bucket: evidence.bucket, work_bucket: work.bucket, part_sink: testPartSink(parts.bucket), create_sha256_sink: sink };
   const port = createBackupPort(ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
   await authorizeBackupDestination(coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: policy(), authorization_receipt_ref: "auth-1" });
-  return { db, coreDb, ports, port };
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  return { db, coreDb, ports, port, key };
 }
-function plainAdapter(): OffsiteCopyAdapter & { store: Map<string, { ciphertext: Uint8Array; stored: Omit<OffsiteStoredPart, "ciphertext"> }> } {
-  const store = new Map<string, { ciphertext: Uint8Array; stored: Omit<OffsiteStoredPart, "ciphertext"> }>();
-  return {
-    store,
-    describe: () => ({ destination_id: "offsite-1", failure_domain: "domain-remote", supports_deletion_journal: true, supports_expiry: true, retention_locked: false }),
-    put: async (ref, ciphertext, stored) => { store.set(ref, { ciphertext: ciphertext.slice(), stored }); return { ack_ref: "ack" }; },
-    get: async (ref) => { const f = store.get(ref); return f === undefined ? null : { ciphertext: f.ciphertext.slice(), stored: f.stored }; },
-    delete: async (ref, _reason) => { store.delete(ref); return { journal_ref: `journal-${ref.length}` }; },
-  };
+async function draftFor(h: Awaited<ReturnType<typeof setup>>, k: string): Promise<BackupEpochDraft> {
+  return (await h.port.createPortableEpoch(intent(k), { now_ms: NOW })).draft;
 }
-async function copyFixture(h: Awaited<ReturnType<typeof setup>>, key: string, adapter: OffsiteCopyAdapter): Promise<BackupEpochDraft> {
-  const draft = (await h.port.createPortableEpoch(intent(key), { now_ms: NOW })).draft;
-  const enc = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-  await h.port.copyOffsite({ draft, intent: intent(key), encryption_key: enc, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
-  return draft;
+function nonceRows(db: DatabaseSync, keyGen: string): { nonce_hex: string; copy_id: string; part_ref: string }[] {
+  return db.prepare("SELECT nonce_hex, copy_id, part_ref FROM backup_offsite_nonce_authority WHERE key_generation = ? ORDER BY part_ref").all(keyGen) as { nonce_hex: string; copy_id: string; part_ref: string }[];
 }
 
-describe("ER-34 O2 expiry lifecycle (not O4)", () => {
-  it("deletes with journal, proves absence, replays persisted bytes and refuses resurrection", async () => {
+describe("ER-34 O2 FIX3 durable nonce authority", () => {
+  it("same part/copy replay is exactly idempotent with no new puts or ciphertext", async () => {
     const h = await setup();
+    const draft = await draftFor(h, "fix3-nonce-replay");
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
-    const draft = await copyFixture(h, "id-exp", adapter);
-    const receipt = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp"), expiry: { expiry_intent_key: "expiry-1", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
-    expect(receipt.state).toBe("DELETED");
-    expect(receipt.journal_refs.length).toBe(draft.part_index.length);
-    for (const part of draft.part_index) {
-      const ref = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
-      expect(await adapter.get(ref)).toBeNull();
-    }
-    const replayed = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp"), expiry: { expiry_intent_key: "expiry-1", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
-    expect(replayed).toEqual(receipt);
-    const firstRef = `offsite/${draft.epoch_id}/${draft.part_index[0]?.manifest}/${String(draft.part_index[0]?.index).padStart(6, "0")}-${draft.part_index[0]?.sha256}`;
-    await expect(adapter.put(firstRef, new Uint8Array([9, 9, 9]), { content_digest: HEX("9"), size_bytes: 3, key_generation: "key-gen-1", epoch_id: draft.epoch_id, expires_at: draft.expires_at })).rejects.toMatchObject({ code: "BACKUP_RESURRECTION_REFUSED" });
+    const first = await h.port.copyOffsite({ draft, intent: intent("fix3-nonce-replay"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    const putsAfterFirst = adapter.puts;
+    const rowsAfterFirst = nonceRows(h.db, "key-gen-1").length;
+    expect(rowsAfterFirst).toBe(draft.part_index.length);
+    const replayed = await h.port.copyOffsite({ draft, intent: intent("fix3-nonce-replay"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    expect(replayed.receipt).toEqual(first.receipt);
+    expect(replayed.epoch).toEqual(first.epoch);
+    expect(adapter.puts).toBe(putsAfterFirst);
+    expect(nonceRows(h.db, "key-gen-1").length).toBe(rowsAfterFirst);
   });
-  it("re-proves absence on terminal replay: a re-put part refuses resurrection instead of staying DELETED", async () => {
+  it("different copy under one key with copy-blind nonces collides BEFORE encryption/put", async () => {
     const h = await setup();
-    const adapter = plainAdapter();
-    const draft = await copyFixture(h, "id-exp-reput", adapter);
-    const receipt = await expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp-reput"), expiry: { expiry_intent_key: "expiry-reput", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() });
-    expect(receipt.state).toBe("DELETED");
-    const ref = `offsite/${draft.epoch_id}/${draft.part_index[0]?.manifest}/${String(draft.part_index[0]?.index).padStart(6, "0")}-${draft.part_index[0]?.sha256}`;
-    await adapter.put(ref, new Uint8Array([1, 2, 3]), { content_digest: HEX("9"), size_bytes: 3, key_generation: "key-gen-1", epoch_id: draft.epoch_id, expires_at: draft.expires_at });
-    await expect(expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-exp-reput"), expiry: { expiry_intent_key: "expiry-reput", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_RESURRECTION_REFUSED" });
+    const draft = await draftFor(h, "fix3-nonce-xcopy");
+    // Controller allocator emitting a fixed per-part sequence. The second copy
+    // replays the same sequence under a different copy identity.
+    const sequence = (): (() => Uint8Array) => {
+      let n = 0;
+      return () => {
+        n += 1;
+        const out = new Uint8Array(12).fill(0x40);
+        out[11] = n % 256;
+        out[10] = Math.floor(n / 256) % 256;
+        return out;
+      };
+    };
+    const a1 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const c1 = await h.port.copyOffsite({ draft, intent: intent("fix3-nonce-xcopy"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a1, now_ms: Date.now(), generate_nonce: sequence() });
+    expect(c1.receipt.outcome).toBe("SUCCEEDED");
+    const a2 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const putsBefore = a2.puts;
+    // Same nonce sequence, different copy identity: the first part's nonce is
+    // already claimed under this key generation, so allocation collides first.
+    await expect(h.port.copyOffsite({ draft, intent: intent("fix3-nonce-xcopy-2"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a2, now_ms: Date.now(), generate_nonce: sequence() })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(a2.puts).toBe(putsBefore);
   });
-  it("blocks expiry under legal hold, retention lock, or a controller backup-path hold, and stays auditable", async () => {
+  it("different key generation succeeds with disjoint nonce scope", async () => {
     const h = await setup();
-    const draft = (await h.port.createPortableEpoch(intent("id-hold"), { now_ms: NOW })).draft;
-    const enc = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const draft = await draftFor(h, "fix3-nonce-keygen");
+    const a1 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({ draft, intent: intent("fix3-nonce-keygen"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a1, now_ms: Date.now() });
+    const a2 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const rotated = await h.port.copyOffsite({ draft, intent: intent("fix3-nonce-keygen-rot"), encryption_key: h.key, key_generation: "key-gen-2", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a2, now_ms: Date.now() });
+    expect(rotated.receipt.outcome).toBe("SUCCEEDED");
+    const gen1 = nonceRows(h.db, "key-gen-1");
+    const gen2 = nonceRows(h.db, "key-gen-2");
+    expect(gen1.length).toBe(draft.part_index.length);
+    expect(gen2.length).toBe(draft.part_index.length);
+    const hex1 = new Set(gen1.map((r) => r.nonce_hex));
+    const hex2 = new Set(gen2.map((r) => r.nonce_hex));
+    for (const n of hex2) expect(hex1.has(n)).toBe(false);
+  });
+  it("concurrent allocation is atomic: same owner idempotent, divergent owner collides", async () => {
+    const h = await setup();
+    const same = new Uint8Array(12).fill(0x11);
+    const [r1, r2] = await Promise.all([
+      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-conc", part_ref: "part-1", nonce: same, created_at: T }),
+      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-conc", part_ref: "part-1", nonce: same, created_at: T }),
+    ]);
+    expect(backupNonceHex(r1)).toBe(backupNonceHex(r2));
+    const clash = new Uint8Array(12).fill(0x22);
+    const settled = await Promise.allSettled([
+      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-conc", part_ref: "part-2", nonce: clash, created_at: T }),
+      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-conc", part_ref: "part-3", nonce: clash, created_at: T }),
+    ]);
+    const fulfilled = settled.filter((s) => s.status === "fulfilled").length;
+    const collisions = settled.filter((s) => s.status === "rejected" && (s.reason as { code?: string }).code === "BACKUP_NONCE_COLLISION").length;
+    expect(fulfilled).toBe(1);
+    expect(collisions).toBe(1);
+  });
+  it("forged pre-existing nonce fails closed with zero puts", async () => {
+    const h = await setup();
+    const forged = new Uint8Array(12).fill(0x5a);
+    const forgedHex = backupNonceHex(forged);
+    h.db.prepare("INSERT INTO backup_offsite_nonce_authority (key_generation, nonce_hex, copy_id, part_ref, created_at) VALUES (?1,?2,?3,?4,?5)")
+      .run("key-gen-1", forgedHex, "copy-attacker", "part-evil", T);
+    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-victim", part_ref: "part-victim-1", nonce: forged, created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    // End to end: the forged bytes cannot encrypt or put under this key.
+    const draft = await draftFor(h, "fix3-nonce-forge");
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
-    await h.port.copyOffsite({ draft, intent: intent("id-hold"), encryption_key: enc, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
-    // FIX3: a retention-locked adapter that disagrees with the approved policy
-    // fails closed on descriptor reconciliation with zero deletes.
-    const locked = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote", retention_locked: true });
-    let lockedDeletes = 0;
-    const countingLocked = { ...locked, delete: async (ref: string, why: string) => { lockedDeletes += 1; return locked.delete(ref, why); } };
-    await expect(expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-hold"), expiry: { expiry_intent_key: "expiry-hold", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter: countingLocked, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
-    expect(lockedDeletes).toBe(0);
-    h.db.exec(`INSERT INTO erasure_hold (hold_ref,exact_subject_ref,location,canonical_ref,policy_or_hold_ref,next_review_at,state,created_at,released_at) VALUES ('hold-path',NULL,'BackupRestorePath',NULL,'retention-policy-1','2027-01-01T00:00:00.000Z','ACTIVE','${T}',NULL)`);
-    const plain = plainAdapter();
-    await expect(expireOffsiteCopy({ core_db: h.ports.core_db, draft, intent: intent("id-hold"), expiry: { expiry_intent_key: "expiry-hold-2", epoch_id: draft.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter: plain, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_EXPIRY_BLOCKED" });
-    const blocked = h.db.prepare("SELECT state, failure_domain, descriptor_digest, policy_digest FROM backup_offsite_expiry WHERE expiry_intent_key = 'expiry-hold-2'").get() as { state: string; failure_domain: string; descriptor_digest: string; policy_digest: string };
-    expect(blocked.state).toBe("BLOCKED");
-    expect(blocked.failure_domain).toBe("domain-remote");
-    expect(blocked.descriptor_digest).toMatch(/^[a-f0-9]{64}$/);
-    expect(blocked.policy_digest).toMatch(/^[a-f0-9]{64}$/);
+    const putsBefore = adapter.puts;
+    await expect(h.port.copyOffsite({ draft, intent: intent("fix3-nonce-forge-2"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now(), generate_nonce: () => forged.slice() })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(adapter.puts).toBe(putsBefore);
+  });
+  it("restart through a fresh port resumes from durable state and replays exactly", async () => {
+    const h = await setup();
+    const draft = await draftFor(h, "fix3-nonce-restart");
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    const controller = new AbortController();
+    let puts = 0;
+    const crashing: OffsiteCopyAdapter = { ...adapter, put: async (r, b, s) => { const out = await adapter.put(r, b, s); puts += 1; if (puts >= 2) controller.abort(); return out; } };
+    await expect(h.port.copyOffsite({ draft, intent: intent("fix3-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: crashing, signal: controller.signal, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_CANCELLED" });
+    // Restart: a brand-new port over the same D1 resumes and commits.
+    const fresh = createBackupPort(h.ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
+    const resumed = await fresh.copyOffsite({ draft, intent: intent("fix3-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    expect(resumed.receipt.outcome).toBe("SUCCEEDED");
+    const putsAfterCommit = adapter.puts;
+    const again = await fresh.copyOffsite({ draft, intent: intent("fix3-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    expect(again.receipt).toEqual(resumed.receipt);
+    expect(adapter.puts).toBe(putsAfterCommit);
   });
 });

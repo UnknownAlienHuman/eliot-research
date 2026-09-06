@@ -11,6 +11,8 @@ export * from "./r2-inventory.js";
 export * from "./r2-conformance.js";
 export * from "./epoch.js";
 export * from "./destination-policy.js";
+export * from "./hold-authority.js";
+export * from "./nonce-authority.js";
 export * from "./offsite.js";
 export * from "./expiry.js";
 
