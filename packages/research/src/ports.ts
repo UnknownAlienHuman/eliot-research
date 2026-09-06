@@ -181,17 +181,18 @@ export interface LedgerAuthorityFence {
   readonly scope_snapshot_id: string;
   readonly scope_snapshot_revision: number;
   readonly policy_generation: string;
+  readonly policy_authority_ref: string;
   readonly deployment_generation: string;
   readonly purge_revision: number;
   readonly scope_purge_revision: number;
 }
 
 export interface InvestigationLedgerStore {
-  create(head: LedgerHead, firstEvent: LedgerEvent): Promise<{ head: LedgerHead; disposition: "CREATED" | "EXISTING" }>;
+  create(head: LedgerHead, firstEvent: LedgerEvent, context?: LedgerOperationContext): Promise<{ head: LedgerHead; disposition: "CREATED" | "EXISTING" }>;
   read(investigationId: string): Promise<LedgerSnapshot | null>;
   readByIdempotency(idempotencyKey: string): Promise<LedgerSnapshot | null>;
-  append(head: LedgerHead, expectedRevision: number, event: LedgerEvent): Promise<LedgerHead>;
-  supersede(oldHead: LedgerHead, oldEvent: LedgerEvent, expectedOldRevision: number, newHead: LedgerHead, newEvent: LedgerEvent): Promise<{ oldHead: LedgerHead; newHead: LedgerHead }>;
+  append(head: LedgerHead, expectedRevision: number, event: LedgerEvent, context?: LedgerOperationContext): Promise<LedgerHead>;
+  supersede(oldHead: LedgerHead, oldEvent: LedgerEvent, expectedOldRevision: number, newHead: LedgerHead, newEvent: LedgerEvent, context?: LedgerOperationContext): Promise<{ oldHead: LedgerHead; newHead: LedgerHead }>;
 }
 
 export const LedgerIdSchema = z.string().min(1).max(128);
@@ -250,13 +251,103 @@ export const LEDGER_SQL = {
 export function sameLedgerFence(left: LedgerAuthorityFence, right: LedgerAuthorityFence): boolean {
   return left.principal_ref === right.principal_ref && left.scope_snapshot_id === right.scope_snapshot_id &&
     left.scope_snapshot_revision === right.scope_snapshot_revision && left.policy_generation === right.policy_generation &&
+    left.policy_authority_ref === right.policy_authority_ref &&
     left.deployment_generation === right.deployment_generation && left.purge_revision === right.purge_revision &&
     left.scope_purge_revision === right.scope_purge_revision;
 }
 export function ledgerFenceDriftCode(pre: LedgerAuthorityFence, post: LedgerAuthorityFence): LedgerErrorCode {
   if (post.principal_ref !== pre.principal_ref) return "LEDGER_PRINCIPAL_DENIED";
   if (post.scope_snapshot_id !== pre.scope_snapshot_id || post.scope_snapshot_revision !== pre.scope_snapshot_revision) return "LEDGER_SCOPE_FOREIGN";
-  if (post.policy_generation !== pre.policy_generation) return "LEDGER_POLICY_STALE";
+  if (post.policy_generation !== pre.policy_generation || post.policy_authority_ref !== pre.policy_authority_ref) return "LEDGER_POLICY_STALE";
   if (post.deployment_generation !== pre.deployment_generation) return "LEDGER_DEPLOYMENT_STALE";
   return "LEDGER_PURGE_STALE";
 }
+export interface LedgerOperationContext {
+  readonly idempotencyKey?: string;
+  readonly signal?: AbortSignal;
+  readonly budgetMs?: number;
+}
+export function throwIfCancelled(context: LedgerOperationContext | undefined): void {
+  if (context?.signal?.aborted) throw new LedgerError("LEDGER_SETTLEMENT_UNCERTAIN", "ledger operation cancelled", true);
+}
+export const GUARD_SQL = {
+  selectEpoch: "SELECT generation FROM investigation_ledger_epoch WHERE singleton = 1 LIMIT 1",
+  upsertAuthority: "INSERT INTO investigation_ledger_authority (principal_ref, scope_snapshot_id, scope_snapshot_revision, policy_generation, policy_authority_ref, deployment_generation, global_purge_revision, scope_purge_revision, observed_at, expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(principal_ref, scope_snapshot_id, scope_snapshot_revision) DO UPDATE SET policy_generation = excluded.policy_generation, policy_authority_ref = excluded.policy_authority_ref, deployment_generation = excluded.deployment_generation, global_purge_revision = excluded.global_purge_revision, scope_purge_revision = excluded.scope_purge_revision, observed_at = excluded.observed_at, expires_at = excluded.expires_at",
+  insertGuard: "INSERT INTO investigation_ledger_guard (guard_id, op_kind, investigation_id, new_investigation_id, expected_old_revision, expected_new_revision, expected_old_event_head, expected_new_event_head, expected_event_id, expected_new_event_id, principal_ref, scope_snapshot_id, scope_snapshot_revision, policy_generation, policy_authority_ref, deployment_generation, global_purge_revision, scope_purge_revision, expected_epoch, observed_at, expires_at, state) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,'PENDING')",
+  consumeGuard: "UPDATE investigation_ledger_guard SET state = 'CONSUMED' WHERE guard_id = ?1 AND state = 'PENDING'",
+  ensurePolicy: "INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)",
+  ensureDeployment: "INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)",
+} as const;
+const TRIGGER_CODES: readonly LedgerErrorCode[] = ["LEDGER_INPUT_INVALID","LEDGER_CONFLICT","LEDGER_STALE_HEAD","LEDGER_PRINCIPAL_DENIED","LEDGER_SCOPE_FOREIGN","LEDGER_POLICY_STALE","LEDGER_DEPLOYMENT_STALE","LEDGER_PURGE_STALE","LEDGER_VERIFIER_DENIED","LEDGER_SUPERSESSION_REQUIRED","LEDGER_HANDLE_MISSING","LEDGER_SETTLEMENT_UNCERTAIN"];
+export function parseLedgerTriggerCode(message: string): LedgerErrorCode | null {
+  for (const code of TRIGGER_CODES) if (message.includes(code)) return code;
+  if (/ABORT|UNIQUE|CHECK|constraint|append-only|guard/i.test(message)) return "LEDGER_CONFLICT";
+  return null;
+}
+export function ledgerFailure(code: LedgerErrorCode, message: string, retryable = false, cause?: unknown): never {
+  throw new LedgerError(code, message, retryable, cause);
+}
+export interface LedgerHeadRow {
+  readonly investigation_id: unknown; readonly revision: unknown; readonly protocol_version: unknown; readonly goal: unknown; readonly scope_snapshot_id: unknown;
+  readonly scope_snapshot_revision: unknown; readonly evidence_grade: unknown; readonly lane: unknown; readonly lane_registrations_json: unknown; readonly obligations_json: unknown;
+  readonly hypotheses_json: unknown; readonly portfolio_ref: unknown; readonly debt_refs_json: unknown; readonly checkpoint_head: unknown; readonly principal_ref: unknown;
+  readonly input_digest: unknown; readonly policy_generation: unknown; readonly policy_authority_ref: unknown; readonly deployment_generation: unknown; readonly idempotency_key: unknown;
+  readonly model_profile_ref: unknown; readonly observed_execution: unknown; readonly observed_fidelity: unknown; readonly observed_assurance: unknown; readonly status: unknown;
+  readonly supersedes_id: unknown; readonly supersession_reason: unknown; readonly event_head: unknown; readonly created_at: unknown; readonly updated_at: unknown;
+}
+export interface LedgerEventRow {
+  readonly investigation_id: unknown; readonly sequence: unknown; readonly event_id: unknown; readonly kind: unknown; readonly payload_handle_ref: unknown;
+  readonly payload_digest: unknown; readonly actor_ref: unknown; readonly verifier_ref: unknown; readonly created_at: unknown;
+}
+export function decodeLedgerHead(row: LedgerHeadRow): LedgerHead {
+  try {
+    const parsed = LedgerHeadSchema.parse({
+      investigation_id: row.investigation_id, revision: row.revision, protocol_version: row.protocol_version,
+      goal: row.goal, scope_snapshot_id: row.scope_snapshot_id, scope_snapshot_revision: row.scope_snapshot_revision,
+      evidence_grade: row.evidence_grade, lane: row.lane, lane_registrations: JSON.parse(String(row.lane_registrations_json)),
+      obligations: JSON.parse(String(row.obligations_json)), hypotheses: JSON.parse(String(row.hypotheses_json)),
+      portfolio_ref: row.portfolio_ref, debt_refs: JSON.parse(String(row.debt_refs_json)), checkpoint_head: row.checkpoint_head,
+      principal_ref: row.principal_ref, input_digest: row.input_digest, policy_generation: row.policy_generation,
+      policy_authority_ref: row.policy_authority_ref, deployment_generation: row.deployment_generation, idempotency_key: row.idempotency_key,
+      model_profile_ref: row.model_profile_ref, observed_execution: row.observed_execution, observed_fidelity: row.observed_fidelity,
+      observed_assurance: row.observed_assurance, status: row.status, supersedes_id: row.supersedes_id,
+      supersession_reason: row.supersession_reason, event_head: row.event_head, created_at: row.created_at, updated_at: row.updated_at,
+    });
+    return { ...parsed, lane_registrations: [...parsed.lane_registrations], obligations: [...parsed.obligations], hypotheses: [...parsed.hypotheses], debt_refs: [...parsed.debt_refs] };
+  } catch (cause) {
+    throw new LedgerError("LEDGER_INPUT_INVALID", "stored ledger head is malformed", false, cause);
+  }
+}
+export function decodeLedgerEvent(row: LedgerEventRow): LedgerEvent {
+  try {
+    return LedgerEventSchema.parse({
+      investigation_id: row.investigation_id, sequence: row.sequence, event_id: row.event_id, kind: row.kind,
+      payload_handle_ref: row.payload_handle_ref, payload_digest: row.payload_digest, actor_ref: row.actor_ref,
+      verifier_ref: row.verifier_ref, created_at: row.created_at,
+    });
+  } catch (cause) {
+    throw new LedgerError("LEDGER_INPUT_INVALID", "stored ledger event is malformed", false, cause);
+  }
+}
+export function ledgerHeadBindings(head: LedgerHead): readonly unknown[] {
+  return [head.investigation_id, head.revision, head.protocol_version, head.goal, head.scope_snapshot_id,
+    head.scope_snapshot_revision, head.evidence_grade, head.lane, JSON.stringify([...head.lane_registrations]),
+    JSON.stringify([...head.obligations]), JSON.stringify([...head.hypotheses]), head.portfolio_ref,
+    JSON.stringify([...head.debt_refs]), head.checkpoint_head, head.principal_ref, head.input_digest,
+    head.policy_generation, head.policy_authority_ref, head.deployment_generation, head.idempotency_key,
+    head.model_profile_ref, head.observed_execution, head.observed_fidelity, head.observed_assurance,
+    head.status, head.supersedes_id, head.supersession_reason, head.event_head, head.created_at, head.updated_at];
+}
+export function ledgerCasBindings(head: LedgerHead, expectedRevision: number): readonly unknown[] {
+  return [head.investigation_id, expectedRevision, head.revision, JSON.stringify([...head.lane_registrations]),
+    JSON.stringify([...head.obligations]), JSON.stringify([...head.hypotheses]), head.portfolio_ref,
+    JSON.stringify([...head.debt_refs]), head.checkpoint_head, head.observed_execution, head.observed_fidelity,
+    head.observed_assurance, head.status, head.supersedes_id, head.supersession_reason, head.event_head, head.updated_at,
+    head.principal_ref, head.scope_snapshot_id, head.scope_snapshot_revision, head.policy_generation, head.deployment_generation];
+}
+export function ledgerEventBindings(event: LedgerEvent): readonly unknown[] {
+  return [event.investigation_id, event.sequence, event.event_id, event.kind, event.payload_handle_ref,
+    event.payload_digest, event.actor_ref, event.verifier_ref, event.created_at];
+}
+export function sameLedgerHead(left: LedgerHead, right: LedgerHead): boolean { return JSON.stringify(left) === JSON.stringify(right); }
+export function sameLedgerEvent(left: LedgerEvent, right: LedgerEvent): boolean { return JSON.stringify(left) === JSON.stringify(right); }
