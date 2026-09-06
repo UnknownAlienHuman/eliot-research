@@ -202,6 +202,93 @@ await check("charge-period evidence is required inside the interval", async () =
   );
 });
 
+function twoMetricProvider(rows) {
+  return createBillableUsageProvider({
+    group: "billable-usage",
+    covers: ["workers_requests", "queue_ops"],
+    endpoint: (id, from, to) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=${from}&to=${to}`,
+    fetchImpl: async () => okJson({ success: true, result: rows }),
+    metricMap: MAP,
+  });
+}
+
+function metricDay(id, unit, quantity, day) {
+  return focusRow({ id, unit, quantity, ...septemberDay(day) });
+}
+
+function fullTwoMetricRows() {
+  const rows = [];
+  for (let day = 1; day <= 5; day += 1) {
+    rows.push(metricDay("workers_standard_requests", "Requests", 10, day));
+    rows.push(metricDay("queue_affinity_operations", "Operations", 7, day));
+  }
+  return rows;
+}
+
+await check("two complete metrics admit together with exact sums", async () => {
+  const provider = twoMetricProvider(fullTwoMetricRows());
+  const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.values.workers_requests, 50);
+  assert.equal(reported.values.queue_ops, 35);
+  assert.equal(reported.coverage.fullAccount, true);
+  assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+});
+
+await check("a missing day in one metric rejects naming that metric", async () => {
+  // Metric A covers the full window; metric B skips 9/3. Under shared-union
+  // coverage B's gap hid behind A's rows (queue_ops:28 admitted); per-metric
+  // coverage fails the whole provider closed instead.
+  const rows = fullTwoMetricRows().filter(
+    (row) => row.x_BillableMetricId !== "queue_affinity_operations" || row.ChargePeriodStart !== "2026-09-03T00:00:00.000Z",
+  );
+  const gapped = twoMetricProvider(rows);
+  await assert.rejects(
+    gapped.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH" && String(error.message).includes("queue_ops"),
+  );
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [gapped],
+  });
+  assert.equal(snapshot.metrics.queue_ops, "unknown");
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+});
+
+await check("overlapping periods within one metric of a two-metric payload reject", async () => {
+  const rows = fullTwoMetricRows();
+  rows.push(focusRow({ id: "queue_affinity_operations", unit: "Operations", quantity: 7, start: "2026-09-02T12:00:00.000Z", end: "2026-09-03T12:00:00.000Z" }));
+  const overlapped = twoMetricProvider(rows);
+  await assert.rejects(
+    overlapped.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+});
+
+await check("cross-metric intervals never launder a gapped metric", async () => {
+  // A's complete rows exactly bridge B's missing 9/3 in union terms; B must
+  // never be admitted (no partial receipt, no silent complete-metric subset).
+  const rows = [];
+  for (let day = 1; day <= 5; day += 1) {
+    rows.push(metricDay("workers_standard_requests", "Requests", 10, day));
+  }
+  for (const day of [1, 2, 4, 5]) {
+    rows.push(metricDay("queue_affinity_operations", "Operations", 7, day));
+  }
+  const laundered = twoMetricProvider(rows);
+  const failure = await laundered.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }).then(
+    () => assert.fail("bridged gap must throw"),
+    (error) => error,
+  );
+  assert.ok(failure instanceof ProviderFailure);
+  assert.equal(failure.reason, "WINDOW_MISMATCH");
+  assert.ok(String(failure.message).includes("queue_ops"));
+  assert.ok(!String(failure.message).includes(BEARER));
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [laundered],
+  });
+  assert.equal(snapshot.metrics.queue_ops, "unknown");
+  assert.ok(!snapshot.readback.provider_errors.some((line) => line.includes(BEARER)));
+});
+
 await check("synthetic rows are rejected, never mapped", async () => {
   for (const synthetic of [
     [{ metric: "workers_requests", unit: "Requests", value: 42 }],

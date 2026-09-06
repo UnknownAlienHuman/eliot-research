@@ -137,7 +137,6 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       const scoped = Array.isArray(covers) && covers.length > 0 ? new Set(covers) : null;
       const sums = new Map();
       const intervalsByMetric = new Map();
-      const allIntervals = [];
       const seenRows = new Set();
       for (const row of body.result) {
         if (!row || typeof row !== "object" || Array.isArray(row)) {
@@ -202,21 +201,27 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
         }
         known.push({ start: rowStartMs, end: rowEndMs });
         intervalsByMetric.set(mapped, known);
-        allIntervals.push({ start: rowStartMs, end: rowEndMs });
         sums.set(mapped, (sums.get(mapped) ?? 0) + quantity);
       }
-      if (allIntervals.length === 0) {
+      if (intervalsByMetric.size === 0) {
         throw new ProviderFailure("WINDOW_MISMATCH", `${group} empty usage result proves no complete window`, { httpStatus });
       }
-      // Completeness: row evidence must continuously cover the queried
-      // interval. Gaps are days without evidence, never zeros.
-      allIntervals.sort((left, right) => left.start - right.start || left.end - right.end);
-      let cursor = queryFromMs;
-      for (const interval of allIntervals) {
-        if (interval.start > cursor + CLOCK_SKEW_MS) throw new ProviderFailure("WINDOW_MISMATCH", `${group} partial usage interval`, { httpStatus });
-        if (interval.end > cursor) cursor = interval.end;
+      // Completeness per mapped metric: every admitted metric must
+      // continuously cover the exact full queried window on its OWN
+      // intervals. Intervals from another metric never bridge a gap
+      // (cross-metric laundering fails closed); metrics with zero rows stay
+      // absent (unknown downstream, never zero). A per-metric gap fails the
+      // whole provider closed rather than admitting the complete metrics
+      // alongside the gapped one under a single fullAccount:true receipt.
+      for (const [metric, intervals] of intervalsByMetric) {
+        const sorted = [...intervals].sort((left, right) => left.start - right.start || left.end - right.end);
+        let cursor = queryFromMs;
+        for (const interval of sorted) {
+          if (interval.start > cursor + CLOCK_SKEW_MS) throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} partial usage interval`, { httpStatus });
+          if (interval.end > cursor) cursor = interval.end;
+        }
+        if (cursor < queryToMs - CLOCK_SKEW_MS) throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} partial usage interval`, { httpStatus });
       }
-      if (cursor < queryToMs - CLOCK_SKEW_MS) throw new ProviderFailure("WINDOW_MISMATCH", `${group} partial usage interval`, { httpStatus });
       const windowStart = new Date(queryFromMs).toISOString();
       const windowEnd = new Date(queryToMs).toISOString();
       return {

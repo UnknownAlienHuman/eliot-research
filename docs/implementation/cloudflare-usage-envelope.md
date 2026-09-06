@@ -96,8 +96,11 @@ Fail-closed rules (all typed unknown, never zero):
   inherited from the request or a top-level echo.
 - Every accepted row must carry real `ChargePeriodStart`/`End` evidence
   inside the queried interval; missing, invalid, outside, future,
-  overlapping-ambiguous, or incomplete (gapped union) evidence is typed
-  unknown. The retired synthetic `{metric,unit,value}` + `window_start` /
+  overlapping-ambiguous, or incomplete (per-metric gapped) evidence is typed
+  unknown. Window coverage is validated separately for every mapped metric:
+  each metric admitted as authoritative must continuously cover the exact
+  full queried window on its own intervals; intervals from another metric
+  never bridge a gap. The retired synthetic `{metric,unit,value}` + `window_start` /
   `window_end` schema is rejected as `MALFORMED`.
 - Mapping binds a reviewed `x_BillableMetricId` + `x_BillableMetricName` +
   `ConsumedUnit` triple to an envelope metric: the name is identity, never
@@ -125,7 +128,10 @@ metric as enforced trust state:
 
 `fullAccount:true` requires proven completeness: cumulative counts must equal
 a supplied stable `total_count` (drift rejects), coherent page echoes are
-required where the API accounts totals, and R2 cursor walks prove completion
+required where the API accounts totals, and D1-style pagination that
+establishes a multi-page walk must keep echoing its stable metadata — a
+missing page echo, `per_page`, count, `total_count`, or `total_pages` on a
+later page fails closed instead of `fullAccount:true`. R2 cursor walks prove completion
 only with an explicit empty terminal cursor (`PARTIAL_PAGINATION` when the
 hop cap hits with a next cursor pending). AI Search termination is decisive
 on its own shape (`result_info` or `pagination`, never forced D1 semantics):

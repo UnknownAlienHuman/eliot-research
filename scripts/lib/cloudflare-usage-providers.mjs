@@ -66,14 +66,24 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
       const seen = [];
       const pagesCompleted = [];
       let lastHttpStatus;
-      // Stable pagination metadata: drift or short cumulative counts fail closed.
+      // Stable pagination metadata: drift, disappearance, or short cumulative
+      // counts fail closed. Once an earlier page establishes a multi-page
+      // walk, later pages must keep echoing the established metadata.
       const stable = {};
+      const establishedMeta = new Set();
+      let multiPageWalk = false;
       const requireStable = (name, value) => {
-        if (!Number.isInteger(value)) return;
+        if (!Number.isInteger(value)) {
+          if (multiPageWalk && establishedMeta.has(name)) {
+            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared`, { httpStatus: lastHttpStatus });
+          }
+          return;
+        }
         if (stable[name] === undefined) stable[name] = value;
         if (stable[name] !== value) {
           throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
         }
+        establishedMeta.add(name);
       };
       do {
         const url = endpoint(accountId, page, perPage);
@@ -105,13 +115,22 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         seen.push(...body.result);
         const info = body?.result_info ?? {};
         // Page echo: with pagination metadata, a missing/mismatched echo is wrong slice.
+        // Once a multi-page walk is established, later pages must echo too:
+        // metadata that disappears mid-walk fails closed (Luna case).
         const hasPaginationMeta = info.page !== undefined || info.per_page !== undefined ||
           info.count !== undefined || info.total_count !== undefined || info.total_pages !== undefined;
-        if (hasPaginationMeta && info.page !== page) {
+        if ((hasPaginationMeta || (page > 1 && multiPageWalk)) && info.page !== page) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
         }
         if (info.count !== undefined && info.count !== body.result.length) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
+        }
+        // Count echo semantics must not disappear mid-walk either (count
+        // varies per page, so only presence is tracked, never stability).
+        if (info.count !== undefined) {
+          establishedMeta.add("count");
+        } else if (page > 1 && multiPageWalk && establishedMeta.has("count")) {
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared`, { httpStatus: lastHttpStatus });
         }
         const effectivePerPage = Number.isInteger(info.per_page) ? info.per_page : perPage;
         requireStable("per_page", info.per_page);
@@ -141,6 +160,9 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         if (!Number.isInteger(totalPages) || totalPages < page) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} bad pagination`, { httpStatus: lastHttpStatus });
         }
+        // An implied totalPages>1 establishes a multi-page walk: every later
+        // page must keep echoing the metadata above instead of going quiet.
+        if (totalPages > 1) multiPageWalk = true;
         pagesCompleted.push(page);
         page += 1;
         if (page > 50) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} pagination runaway`, { httpStatus: lastHttpStatus });
