@@ -1,9 +1,9 @@
-// IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with CAS-coupled batches, authority-conditioned writes and explicit supersession; Workflow/Session composition and live receipts remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with transaction-time guards, ledger epoch and explicit supersession; Workflow/Session composition and live receipts remain separate.
 import type { Investigation, InquiryProtocolProfile, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { z } from "zod";
 import {
-  LEDGER_SQL, LedgerError, LedgerEventSchema, LedgerHeadSchema, ledgerFenceDriftCode, sameLedgerFence,
-  type InvestigationLedgerStore, type LedgerAuthorityFence, type LedgerEvent, type LedgerHead,
+  GUARD_SQL, LEDGER_SQL, LedgerError, LedgerEventSchema, LedgerHeadSchema, decodeLedgerEvent, decodeLedgerHead, ledgerCasBindings, ledgerEventBindings, ledgerFenceDriftCode, ledgerHeadBindings, parseLedgerTriggerCode, sameLedgerEvent, sameLedgerFence, sameLedgerHead, throwIfCancelled,
+  type InvestigationLedgerStore, type LedgerAuthorityFence, type LedgerEvent, type LedgerEventRow, type LedgerHead, type LedgerHeadRow,
   type LedgerObligation, type LedgerSnapshot,
 } from "./ports.js";
 import type { ResearchRunResult } from "./ports.js";
@@ -51,76 +51,44 @@ const CreateInputSchema = z.object({
 function ledgerFail(code: "LEDGER_INPUT_INVALID" | "LEDGER_CONFLICT" | "LEDGER_STALE_HEAD" | "LEDGER_PRINCIPAL_DENIED" | "LEDGER_SCOPE_FOREIGN" | "LEDGER_POLICY_STALE" | "LEDGER_DEPLOYMENT_STALE" | "LEDGER_PURGE_STALE" | "LEDGER_VERIFIER_DENIED" | "LEDGER_SUPERSESSION_REQUIRED" | "LEDGER_HANDLE_MISSING" | "LEDGER_SETTLEMENT_UNCERTAIN", message: string, retryable = false, cause?: unknown): never {
   throw new LedgerError(code, message, retryable, cause);
 }
-interface HeadRow {
-  readonly investigation_id: unknown; readonly revision: unknown; readonly protocol_version: unknown; readonly goal: unknown; readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown; readonly evidence_grade: unknown; readonly lane: unknown; readonly lane_registrations_json: unknown; readonly obligations_json: unknown;
-  readonly hypotheses_json: unknown; readonly portfolio_ref: unknown; readonly debt_refs_json: unknown; readonly checkpoint_head: unknown; readonly principal_ref: unknown;
-  readonly input_digest: unknown; readonly policy_generation: unknown; readonly policy_authority_ref: unknown; readonly deployment_generation: unknown; readonly idempotency_key: unknown;
-  readonly model_profile_ref: unknown; readonly observed_execution: unknown; readonly observed_fidelity: unknown; readonly observed_assurance: unknown; readonly status: unknown;
-  readonly supersedes_id: unknown; readonly supersession_reason: unknown; readonly event_head: unknown; readonly created_at: unknown; readonly updated_at: unknown;
-}
-interface EventRow {
-  readonly investigation_id: unknown; readonly sequence: unknown; readonly event_id: unknown; readonly kind: unknown; readonly payload_handle_ref: unknown;
-  readonly payload_digest: unknown; readonly actor_ref: unknown; readonly verifier_ref: unknown; readonly created_at: unknown;
-}
 function parseHead(value: unknown): LedgerHead {
   try { return LedgerHeadSchema.parse(value); } catch (cause) { ledgerFail("LEDGER_INPUT_INVALID", "ledger head failed strict validation", false, cause); }
 }
 function parseEvent(value: unknown): LedgerEvent {
   try { return LedgerEventSchema.parse(value); } catch (cause) { ledgerFail("LEDGER_INPUT_INVALID", "ledger event failed strict validation", false, cause); }
 }
-function decodeHead(row: HeadRow): LedgerHead {
+const decodeHead = decodeLedgerHead;
+const decodeEvent = decodeLedgerEvent;
+const headBindings = ledgerHeadBindings;
+const casBindings = ledgerCasBindings;
+const eventBindings = ledgerEventBindings;
+const sameHead = sameLedgerHead;
+const sameEvent = sameLedgerEvent;
+type HeadRow = LedgerHeadRow;
+type EventRow = LedgerEventRow;
+function guardExpiry(observedAt: string): string { return new Date(Date.parse(observedAt) + 5 * 60 * 1000).toISOString(); }
+function guardIdFor(eventId: string): string { return `guard-${eventId}`.slice(0, 256); }
+async function readEpoch(database: LedgerD1Database): Promise<number> {
+  const row = await database.prepare(GUARD_SQL.selectEpoch).bind().first<{ generation: number }>();
+  if (row === null) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger epoch missing", true);
+  return row.generation;
+}
+async function materializeAuthority(database: LedgerD1Database, fence: LedgerAuthorityFence, policyRef: string, now: string): Promise<void> {
+  const expiry = guardExpiry(now);
   try {
-    const parsed = LedgerHeadSchema.parse({
-      investigation_id: row.investigation_id, revision: row.revision, protocol_version: row.protocol_version,
-      goal: row.goal, scope_snapshot_id: row.scope_snapshot_id, scope_snapshot_revision: row.scope_snapshot_revision,
-      evidence_grade: row.evidence_grade, lane: row.lane, lane_registrations: JSON.parse(String(row.lane_registrations_json)),
-      obligations: JSON.parse(String(row.obligations_json)), hypotheses: JSON.parse(String(row.hypotheses_json)),
-      portfolio_ref: row.portfolio_ref, debt_refs: JSON.parse(String(row.debt_refs_json)), checkpoint_head: row.checkpoint_head,
-      principal_ref: row.principal_ref, input_digest: row.input_digest, policy_generation: row.policy_generation,
-      policy_authority_ref: row.policy_authority_ref, deployment_generation: row.deployment_generation, idempotency_key: row.idempotency_key,
-      model_profile_ref: row.model_profile_ref, observed_execution: row.observed_execution, observed_fidelity: row.observed_fidelity,
-      observed_assurance: row.observed_assurance, status: row.status, supersedes_id: row.supersedes_id,
-      supersession_reason: row.supersession_reason, event_head: row.event_head, created_at: row.created_at, updated_at: row.updated_at,
-    });
-    return { ...parsed, lane_registrations: [...parsed.lane_registrations], obligations: [...parsed.obligations], hypotheses: [...parsed.hypotheses], debt_refs: [...parsed.debt_refs] };
-  } catch (cause) {
-    ledgerFail("LEDGER_INPUT_INVALID", "stored ledger head is malformed", false, cause);
-  }
+    await database.batch([database.prepare(GUARD_SQL.upsertAuthority).bind(fence.principal_ref, fence.scope_snapshot_id, fence.scope_snapshot_revision, fence.policy_generation, policyRef, fence.deployment_generation, fence.purge_revision, fence.scope_purge_revision, now, expiry)]);
+  } catch { /* ledger batch revalidates; stale materialization fails there with typed code */ }
 }
-function decodeEvent(row: EventRow): LedgerEvent {
-  try {
-    return LedgerEventSchema.parse({
-      investigation_id: row.investigation_id, sequence: row.sequence, event_id: row.event_id, kind: row.kind,
-      payload_handle_ref: row.payload_handle_ref, payload_digest: row.payload_digest, actor_ref: row.actor_ref,
-      verifier_ref: row.verifier_ref, created_at: row.created_at,
-    });
-  } catch (cause) {
-    ledgerFail("LEDGER_INPUT_INVALID", "stored ledger event is malformed", false, cause);
-  }
+function guardParams(guardId: string, op: "CREATE" | "APPEND" | "SUPERSEDE", oldId: string, newId: string | null, oldRev: number, newRev: number, oldHead: number, newHeadCount: number, eventId: string, newEventId: string | null, fence: LedgerAuthorityFence, policyRef: string, epoch: number, now: string): readonly unknown[] {
+  return [guardId, op, oldId, newId, oldRev, newRev, oldHead, newHeadCount, eventId, newEventId, fence.principal_ref, fence.scope_snapshot_id, fence.scope_snapshot_revision, fence.policy_generation, policyRef, fence.deployment_generation, fence.purge_revision, fence.scope_purge_revision, epoch, now, guardExpiry(now)];
 }
-function headBindings(head: LedgerHead): readonly unknown[] {
-  return [head.investigation_id, head.revision, head.protocol_version, head.goal, head.scope_snapshot_id,
-    head.scope_snapshot_revision, head.evidence_grade, head.lane, JSON.stringify([...head.lane_registrations]),
-    JSON.stringify([...head.obligations]), JSON.stringify([...head.hypotheses]), head.portfolio_ref,
-    JSON.stringify([...head.debt_refs]), head.checkpoint_head, head.principal_ref, head.input_digest,
-    head.policy_generation, head.policy_authority_ref, head.deployment_generation, head.idempotency_key,
-    head.model_profile_ref, head.observed_execution, head.observed_fidelity, head.observed_assurance,
-    head.status, head.supersedes_id, head.supersession_reason, head.event_head, head.created_at, head.updated_at];
+function mapTriggerError(error: unknown): never {
+  if (error instanceof LedgerError) throw error;
+  const code = error instanceof Error ? parseLedgerTriggerCode(error.message) : null;
+  if (code !== null && code !== "LEDGER_SETTLEMENT_UNCERTAIN") ledgerFail(code, error instanceof Error ? error.message : "ledger guard rejected");
+  if (error instanceof Error && /ABORT|UNIQUE|CHECK|constraint|append-only|guard/i.test(error.message)) ledgerFail("LEDGER_CONFLICT", "ledger conflicted");
+  ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger outcome is unknown", true, error);
 }
-function casBindings(head: LedgerHead, expectedRevision: number): readonly unknown[] {
-  return [head.investigation_id, expectedRevision, head.revision, JSON.stringify([...head.lane_registrations]),
-    JSON.stringify([...head.obligations]), JSON.stringify([...head.hypotheses]), head.portfolio_ref,
-    JSON.stringify([...head.debt_refs]), head.checkpoint_head, head.observed_execution, head.observed_fidelity,
-    head.observed_assurance, head.status, head.supersedes_id, head.supersession_reason, head.event_head, head.updated_at,
-    head.principal_ref, head.scope_snapshot_id, head.scope_snapshot_revision, head.policy_generation, head.deployment_generation];
-}
-function eventBindings(event: LedgerEvent): readonly unknown[] {
-  return [event.investigation_id, event.sequence, event.event_id, event.kind, event.payload_handle_ref,
-    event.payload_digest, event.actor_ref, event.verifier_ref, event.created_at];
-}
-function sameHead(left: LedgerHead, right: LedgerHead): boolean { return JSON.stringify(left) === JSON.stringify(right); }
-function sameEvent(left: LedgerEvent, right: LedgerEvent): boolean { return JSON.stringify(left) === JSON.stringify(right); }
 async function readSnapshot(database: LedgerD1Database, investigationId: string) {
   const headRow = await database.prepare(LEDGER_SQL.selectHead).bind(investigationId).first<HeadRow>();
   if (headRow === null) return null;
@@ -156,7 +124,6 @@ function checkAppendShape(head: LedgerHead, current: LedgerHead, parsedEvent: Le
     ledgerFail("LEDGER_INPUT_INVALID", "ledger authority identity is immutable");
   }
 }
-// Committed event authority: exact replay needs sameEvent over all event fields plus sameHead; reused event_id with any divergent byte is LEDGER_CONFLICT.
 async function storedEvent(database: LedgerD1Database, eventId: string): Promise<LedgerEvent | null> {
   const row = await database.prepare(LEDGER_SQL.selectByEventId).bind(eventId).first<EventRow>();
   return row === null ? null : decodeEvent(row);
@@ -181,7 +148,8 @@ async function supersessionAlready(database: LedgerD1Database, oldHead: LedgerHe
 }
 export function createD1InvestigationLedgerStore(database: LedgerD1Database): InvestigationLedgerStore {
   return {
-    async create(rawHead, rawEvent) {
+    async create(rawHead, rawEvent, context?) {
+      throwIfCancelled(context);
       const head = parseHead(rawHead);
       const firstEvent = parseEvent(rawEvent);
       if (firstEvent.sequence !== 1 || firstEvent.kind !== "CREATED" || firstEvent.investigation_id !== head.investigation_id) {
@@ -204,13 +172,20 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
         ledgerFail("LEDGER_CONFLICT", "event id is already bound");
       }
       try {
+        const now = head.updated_at;
+        const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
+        const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
+        const fence: LedgerAuthorityFence = { principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id, scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation, policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
+        await materializeAuthority(database, fence, head.policy_authority_ref, now);
+        const epoch = await readEpoch(database);
+        const gid = guardIdFor(firstEvent.event_id);
         const batch = await database.batch([
+          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "CREATE", head.investigation_id, null, 0, 1, 0, 1, firstEvent.event_id, null, fence, head.policy_authority_ref, epoch, now)),
           database.prepare(LEDGER_SQL.insertHead).bind(...headBindings(head)),
-          database.prepare(LEDGER_SQL.insertEventIfRevision).bind(...eventBindings(firstEvent), head.revision),
+          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(firstEvent)),
+          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
         ]);
-        if ((batch[0]?.meta?.changes ?? 0) !== 1 || (batch[1]?.meta?.changes ?? 0) !== 1) {
-          ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger batch did not mutate exactly two rows", true);
-        }
+        if (batch.some((item) => (item.meta?.changes ?? 0) !== 1)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger batch did not settle", true);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
         const raced = await database.prepare(LEDGER_SQL.selectByIdempotency).bind(head.idempotency_key).first<HeadRow>();
@@ -224,10 +199,7 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
         if (await database.prepare(LEDGER_SQL.selectByEventId).bind(firstEvent.event_id).first<EventRow>() !== null) {
           ledgerFail("LEDGER_CONFLICT", "event id raced with another ledger");
         }
-        if (error instanceof Error && /ABORT|UNIQUE|CHECK|constraint|append-only/i.test(error.message)) {
-          ledgerFail("LEDGER_CONFLICT", "ledger create conflicted with existing rows");
-        }
-        ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger create outcome is unknown", true, error);
+        mapTriggerError(error);
       }
       const readback = await readSnapshot(database, head.investigation_id);
       if (readback === null) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger create readback missing", true);
@@ -243,7 +215,8 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       if (row === null) return null;
       return readSnapshot(database, decodeHead(row).investigation_id);
     },
-    async append(nextHead, expectedRevision, event) {
+    async append(nextHead, expectedRevision, event, context?) {
+      throwIfCancelled(context);
       const head = parseHead(nextHead);
       const parsedEvent = parseEvent(event);
       const fastReplay = await appliedAlready(database, head, parsedEvent);
@@ -254,11 +227,19 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       checkAppendShape(head, current, parsedEvent, expectedRevision);
       const racedReplay = await appliedAlready(database, head, parsedEvent);
       if (racedReplay !== null) return racedReplay;
+      const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
+      const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
+      const fence: LedgerAuthorityFence = { principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id, scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation, policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
+      await materializeAuthority(database, fence, head.policy_authority_ref, head.updated_at);
+      const epoch = await readEpoch(database);
+      const gid = guardIdFor(parsedEvent.event_id);
       let applied: readonly { meta: { changes: number } }[];
       try {
         applied = await database.batch([
-          database.prepare(LEDGER_SQL.insertEventIfRevision).bind(...eventBindings(parsedEvent), expectedRevision),
+          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "APPEND", head.investigation_id, null, expectedRevision, head.revision, current.event_head, head.event_head, parsedEvent.event_id, null, fence, head.policy_authority_ref, epoch, head.updated_at)),
+          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(parsedEvent)),
           database.prepare(LEDGER_SQL.casHead).bind(...casBindings(head, expectedRevision)),
+          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
         ]);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
@@ -267,20 +248,20 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
         if (error instanceof Error && /protocol\/grade change requires explicit supersession/i.test(error.message)) {
           ledgerFail("LEDGER_SUPERSESSION_REQUIRED", "protocol or grade change requires explicit supersession");
         }
-        if (error instanceof Error && /ABORT|UNIQUE|CHECK|constraint|append-only/i.test(error.message)) ledgerFail("LEDGER_CONFLICT", "ledger append conflicted");
-        ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger append outcome is unknown", true, error);
+        mapTriggerError(error);
       }
-      if ((applied[1]?.meta?.changes ?? 0) !== 1) {
+      if ((applied[2]?.meta?.changes ?? 0) !== 1) {
         const replayed = await appliedAlready(database, head, parsedEvent);
         if (replayed !== null) return replayed;
         ledgerFail("LEDGER_STALE_HEAD", "concurrent ledger head update lost the compare-and-swap");
       }
-      if ((applied[0]?.meta?.changes ?? 0) !== 1) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger event insert is uncertain", true);
+      if ((applied[1]?.meta?.changes ?? 0) !== 1) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger event insert is uncertain", true);
       const readback = await readSnapshot(database, head.investigation_id);
       if (readback === null || !sameHead(readback.head, head)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "ledger append readback diverged", true);
       return readback.head;
     },
-    async supersede(rawOldHead, rawOldEvent, expectedOldRevision, rawNewHead, rawNewEvent) {
+    async supersede(rawOldHead, rawOldEvent, expectedOldRevision, rawNewHead, rawNewEvent, context?) {
+      throwIfCancelled(context);
       const oldHead = parseHead(rawOldHead);
       const oldEvent = parseEvent(rawOldEvent);
       const newHead = parseHead(rawNewHead);
@@ -315,28 +296,32 @@ export function createD1InvestigationLedgerStore(database: LedgerD1Database): In
       }
       const racedSupersession = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
       if (racedSupersession !== null) return racedSupersession;
+      const globalRow = await database.prepare("SELECT COALESCE(MAX(ledger_revision), 0) AS n FROM purge_ledger").bind().first<{ n: number }>().catch(() => ({ n: 0 }));
+      const scopeRow = await database.prepare("SELECT purge_ledger_revision AS p FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2").bind(oldHead.scope_snapshot_id, oldHead.scope_snapshot_revision).first<{ p: number }>().catch(() => null);
+      const fence: LedgerAuthorityFence = { principal_ref: oldHead.principal_ref, scope_snapshot_id: oldHead.scope_snapshot_id, scope_snapshot_revision: oldHead.scope_snapshot_revision, policy_generation: oldHead.policy_generation, policy_authority_ref: oldHead.policy_authority_ref, deployment_generation: oldHead.deployment_generation, purge_revision: globalRow?.n ?? 0, scope_purge_revision: scopeRow?.p ?? 0 };
+      await materializeAuthority(database, fence, oldHead.policy_authority_ref, oldEvent.created_at);
+      const epoch = await readEpoch(database);
+      const gid = guardIdFor(oldEvent.event_id);
       try {
-        // CAS first, then each effect chained to this batch's own CAS output: the mark requires our SUPERSEDED status+reason, the new head requires our mark event id, the new event requires our new head. A stale/foreign old head yields zero effects and never an orphan replacement.
         const batch = await database.batch([
+          database.prepare(GUARD_SQL.insertGuard).bind(...guardParams(gid, "SUPERSEDE", oldHead.investigation_id, newHead.investigation_id, expectedOldRevision, oldHead.revision, current.event_head, oldHead.event_head, oldEvent.event_id, newEvent.event_id, fence, oldHead.policy_authority_ref, epoch, oldEvent.created_at)),
           database.prepare(LEDGER_SQL.casHead).bind(...casBindings(oldHead, expectedOldRevision)),
-          database.prepare(LEDGER_SQL.insertSupersedeMarkEvent).bind(...eventBindings(oldEvent), oldHead.revision, oldHead.supersession_reason),
-          database.prepare(LEDGER_SQL.insertHeadIfEvent).bind(...headBindings(newHead), oldEvent.event_id),
-          database.prepare(LEDGER_SQL.insertEventIfRevision).bind(...eventBindings(newEvent), newHead.revision),
+          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(oldEvent)),
+          database.prepare(LEDGER_SQL.insertHead).bind(...headBindings(newHead)),
+          database.prepare(LEDGER_SQL.insertEvent).bind(...eventBindings(newEvent)),
+          database.prepare(GUARD_SQL.consumeGuard).bind(gid),
         ]);
-        if ((batch[0]?.meta?.changes ?? 0) !== 1) {
+        if ((batch[1]?.meta?.changes ?? 0) !== 1) {
           const lost = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
           if (lost !== null) return lost;
           ledgerFail("LEDGER_STALE_HEAD", "concurrent ledger head update lost the supersession compare-and-swap");
         }
-        if (batch.some((item) => (item.meta?.changes ?? 0) !== 1)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "supersession batch did not settle all four rows", true);
+        if (batch.some((item) => (item.meta?.changes ?? 0) !== 1)) ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "supersession batch did not settle", true);
       } catch (error) {
         if (error instanceof LedgerError) throw error;
         const replayedSupersession = await supersessionAlready(database, oldHead, oldEvent, newHead, newEvent);
         if (replayedSupersession !== null) return replayedSupersession;
-        if (error instanceof Error && /ABORT|UNIQUE|CHECK|constraint|append-only/i.test(error.message)) {
-          ledgerFail("LEDGER_CONFLICT", "supersession conflicted with existing rows");
-        }
-        ledgerFail("LEDGER_SETTLEMENT_UNCERTAIN", "supersession outcome is unknown", true, error);
+        mapTriggerError(error);
       }
       const oldReadback = await readSnapshot(database, oldHead.investigation_id);
       const newReadback = await readSnapshot(database, newHead.investigation_id);
@@ -415,7 +400,7 @@ export function createInvestigationLedgerService(
   function checkFence(head: LedgerHead, fence: LedgerAuthorityFence): void {
     if (head.principal_ref !== fence.principal_ref) ledgerFail("LEDGER_PRINCIPAL_DENIED", "wrong principal for ledger");
     if (head.scope_snapshot_id !== fence.scope_snapshot_id || head.scope_snapshot_revision !== fence.scope_snapshot_revision) ledgerFail("LEDGER_SCOPE_FOREIGN", "foreign scope for ledger");
-    if (head.policy_generation !== fence.policy_generation) ledgerFail("LEDGER_POLICY_STALE", "stale policy generation");
+    if (head.policy_generation !== fence.policy_generation || head.policy_authority_ref !== fence.policy_authority_ref) ledgerFail("LEDGER_POLICY_STALE", "stale policy generation");
     if (head.deployment_generation !== fence.deployment_generation) ledgerFail("LEDGER_DEPLOYMENT_STALE", "stale deployment generation");
     if (fence.scope_purge_revision < fence.purge_revision) ledgerFail("LEDGER_PURGE_STALE", "scope is purged");
   }
@@ -427,9 +412,6 @@ export function createInvestigationLedgerService(
     if (snapshot === null) ledgerFail("LEDGER_CONFLICT", "unknown investigation ledger");
     return snapshot;
   }
-  // Write-boundary fence coupling: the preflight snapshot is re-fetched just before the D1 write
-  // and any provider drift denies with zero D1 effect. CAS effects are further conditioned on the D1
-  // head still carrying the fence-checked authority refs. Purge has no ledger column (blocker below).
   function requireStableFence(pre: LedgerAuthorityFence, post: LedgerAuthorityFence): void {
     if (!sameLedgerFence(pre, post)) throw new LedgerError(ledgerFenceDriftCode(pre, post), "authority fence changed between preflight and write; no effect was committed");
   }
@@ -570,14 +552,21 @@ export function createInvestigationLedgerService(
       if (parsed.principal_ref !== pre.principal_ref || actor !== parsed.principal_ref) {
         ledgerFail("LEDGER_PRINCIPAL_DENIED", "superseding principal must match the fenced actor");
       }
-      checkFence({ ...snapshot.head, principal_ref: parsed.principal_ref, scope_snapshot_id: parsed.scope_snapshot_id, scope_snapshot_revision: parsed.scope_snapshot_revision, policy_generation: parsed.policy_generation, deployment_generation: parsed.deployment_generation }, pre);
+      checkFence({ ...snapshot.head, principal_ref: parsed.principal_ref, scope_snapshot_id: parsed.scope_snapshot_id, scope_snapshot_revision: parsed.scope_snapshot_revision, policy_generation: parsed.policy_generation, policy_authority_ref: parsed.policy_authority_ref, deployment_generation: parsed.deployment_generation }, pre);
       await requireHandle(parsed.payload_handle_ref, parsed.payload_digest);
       await requireHandle(parsed.portfolio_ref, parsed.input_digest);
       if (snapshot.head.status === "SUPERSEDED") {
         const prior = await store.read(parsed.investigation_id);
         if (prior === null) ledgerFail("LEDGER_INPUT_INVALID", "only an open ledger can be superseded");
         const want = headFor(parsed, 1, 1, prior.head.created_at, prior.head.updated_at, { supersedes_id: oldId, supersession_reason: reason });
-        if (!sameHead(prior.head, want) || !snapshot.events.some((item) => item.event_id === `supersede-${parsed.event_id}`)) ledgerFail("LEDGER_CONFLICT", "supersession identity already bound to different ledger bytes");
+        if (!sameHead(prior.head, want)) ledgerFail("LEDGER_CONFLICT", "supersession identity already bound to different ledger bytes");
+        const markId = `supersede-${parsed.event_id}`;
+        const storedMark = snapshot.events.find((item) => item.event_id === markId);
+        const storedNew = prior.events.find((item) => item.event_id === parsed.event_id);
+        if (storedMark === undefined || storedNew === undefined) ledgerFail("LEDGER_CONFLICT", "supersession identity already bound to different ledger bytes");
+        const wantMark: LedgerEvent = { investigation_id: oldId, sequence: snapshot.head.event_head, event_id: markId, kind: "SUPERSEDED", payload_handle_ref: parsed.payload_handle_ref, payload_digest: parsed.payload_digest, actor_ref: actor, verifier_ref: null, created_at: prior.head.created_at };
+        const wantNew: LedgerEvent = { investigation_id: parsed.investigation_id, sequence: 1, event_id: parsed.event_id, kind: "CREATED", payload_handle_ref: parsed.payload_handle_ref, payload_digest: parsed.payload_digest, actor_ref: actor, verifier_ref: null, created_at: prior.head.created_at };
+        if (!sameEvent(storedMark, wantMark) || !sameEvent(storedNew, wantNew)) ledgerFail("LEDGER_CONFLICT", "supersession identity already bound to different ledger bytes");
         return prior.head;
       }
       const now = clock();
