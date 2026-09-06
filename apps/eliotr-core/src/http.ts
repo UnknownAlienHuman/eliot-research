@@ -28,6 +28,7 @@ import {
   type CompositionRootInput,
 } from "./composition-root.js";
 import type { Env } from "./env.js";
+import { OWNER_E2E_AUDIENCE, OWNER_E2E_ISSUER, parseServicePrincipals, resolveOwnerE2ETestFetch } from "./env.js";
 import {
   EvidenceHttpInputError,
   parseEvidenceHandleRef,
@@ -175,35 +176,27 @@ function isApiPath(pathname: string): boolean {
     pathname.startsWith("/oauth/");
 }
 
-function parseServicePrincipals(raw: string | undefined): readonly string[] {
-  if (raw === undefined || raw.trim() === "") return [];
-  const values = raw.split(",").map((value) => value.trim()).filter(Boolean);
-  if (values.length > 64 || new Set(values).size !== values.length) {
-    throw new AccessVerificationError(
-      "ACCESS_CONFIG_INVALID",
-      "ACCESS_SERVICE_PRINCIPALS must contain at most 64 unique values",
-      true,
-    );
-  }
-  return values;
-}
-
 function configuredAccessVerifier(env: Env): AccessVerifier {
   if (env.ACCESS_TEAM_DOMAIN === undefined || env.ACCESS_AUDIENCE === undefined) {
-    throw new AccessVerificationError(
-      "ACCESS_CONFIG_INVALID",
-      "Cloudflare Access runtime configuration is missing",
-      true,
-    );
+    throw new AccessVerificationError("ACCESS_CONFIG_INVALID",
+      "Cloudflare Access runtime configuration is missing", true);
   }
   const servicePrincipals = parseServicePrincipals(env.ACCESS_SERVICE_PRINCIPALS);
-  const key = JSON.stringify([env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUDIENCE, servicePrincipals]);
+  const testJwks = env.ACCESS_TEST_JWKS_URL;
+  const key = JSON.stringify([env.ACCESS_TEAM_DOMAIN, env.ACCESS_AUDIENCE, servicePrincipals, testJwks ?? ""]);
   if (accessVerifierCache?.key === key) return accessVerifierCache.verifier;
+  const teamDomain = env.ACCESS_TEAM_DOMAIN;
+  const audience = env.ACCESS_AUDIENCE;
+  const expectedCerts = `${teamDomain.endsWith("/") ? teamDomain.slice(0, -1) : teamDomain}/cdn-cgi/access/certs`;
+  const testFetch = teamDomain === OWNER_E2E_ISSUER && audience === OWNER_E2E_AUDIENCE
+    ? resolveOwnerE2ETestFetch(env, expectedCerts)
+    : (testJwks !== undefined && testJwks !== "" ? (() => {
+      throw new AccessVerificationError("ACCESS_CONFIG_INVALID",
+        "Access test JWKS override outside the exact owner-e2e profile is denied", true);
+    })() as never : undefined);
   const verifier = createCloudflareAccessVerifier({
-    team_domain: env.ACCESS_TEAM_DOMAIN,
-    audience: env.ACCESS_AUDIENCE,
-    allowed_service_principal_common_names: servicePrincipals,
-  });
+    team_domain: teamDomain, audience, allowed_service_principal_common_names: servicePrincipals,
+  }, testFetch === undefined ? {} : { fetch: testFetch });
   accessVerifierCache = { key, verifier };
   return verifier;
 }
