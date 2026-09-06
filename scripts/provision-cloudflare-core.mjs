@@ -65,6 +65,22 @@ if (authMode === WRANGLER_OAUTH_MODE) {
   process.exit(2);
 }
 
+// FIX1-B usage-envelope gate (narrow): usage preflight before the first
+// remote mutation. The preflight writes a redacted admission receipt and
+// exits nonzero when BLOCKED; api-token/CI runs without a usage seam resolve
+// SEALED inside the preflight (metadata-only provisioning may continue,
+// heavy operations stay disabled). No other logic changes.
+{
+  const usageGate = spawnSync(process.execPath,
+    [resolve(repositoryRoot, "scripts/check-cloudflare-usage-preflight.mjs")],
+    { env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (usageGate.error || usageGate.status !== 0) {
+    const detail = ((usageGate.stderr ?? "").trim() || (usageGate.stdout ?? "").trim()).split("\n").pop() ?? "";
+    console.error(`Cloudflare usage preflight blocked foundation provisioning before any mutation.${detail ? ` ${detail}` : ""}`);
+    process.exit(2);
+  }
+}
+
 const desiredPath = resolve(repositoryRoot, "infra/cloudflare/resources.json");
 const desired = JSON.parse(await readFile(desiredPath, "utf8"));
 const canonicalPath = resolve(repositoryRoot, desired.worker.canonical_config);

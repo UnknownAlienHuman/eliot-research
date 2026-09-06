@@ -90,6 +90,19 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
   }
 
+  // FIX1-B usage-envelope gate (narrow): usage preflight before the first
+  // remote mutation. --check-only performs no file writes; BLOCKED throws
+  // here, ahead of every provisioner check and mutation.
+  {
+    const usageGate = spawnSync(process.execPath,
+      [resolve(root, "scripts/check-cloudflare-usage-preflight.mjs"), "--check-only"],
+      { env: { ...process.env, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    if (usageGate.error || usageGate.status !== 0) {
+      const detail = ((usageGate.stderr ?? "").trim() || (usageGate.stdout ?? "").trim()).split("\n").pop() ?? "";
+      throw new Error(`Cloudflare usage preflight blocked deployment before any mutation.${detail ? ` ${detail}` : ""}`);
+    }
+  }
+
   // All predictable cross-product drift must fail before the first remote mutation.
   for (const name of provisioners) exec("node", [`scripts/${name}.mjs`, "--check-only"]);
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
