@@ -1,10 +1,58 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
+  scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-const token = process.env.CLOUDFLARE_API_TOKEN;
+let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
-if (!accountId || !token) {
+let authMode = "api-token";
+try {
+  authMode = resolveAuthMode(process.env);
+} catch (error) {
+  console.error(error?.message ?? String(error));
+  process.exit(2);
+}
+if (authMode === WRANGLER_OAUTH_MODE) {
+  // Direct-invocation OAuth path: bearer stays in process memory only.
+  if (!accountId) {
+    console.error(`CLOUDFLARE_ACCOUNT_ID is required. ${LOGIN_INSTRUCTION}`);
+    process.exit(2);
+  }
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+  try {
+    // Test-only seam ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT bypasses the wrangler
+    // binary in mocked tests; production always spawns wrangler whoami.
+    const mockedWhoami = process.env.ELIOTR_TEST_WRANGLER_WHOAMI_OUTPUT;
+    let whoamiOutput;
+    if (mockedWhoami !== undefined && mockedWhoami !== "") {
+      whoamiOutput = mockedWhoami;
+    } else {
+      const scrubbed = scrubTokenEnv(process.env);
+      const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+        { cwd: repositoryRoot, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
+      if (result.error || result.status !== 0) {
+        console.error(`Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+        process.exit(2);
+      }
+      whoamiOutput = result.stdout ?? "";
+    }
+    await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => whoamiOutput });
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+} else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
 }
