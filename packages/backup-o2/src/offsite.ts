@@ -30,9 +30,10 @@ import {
 // or cancellation resumes from controller-owned state. Nonces derive
 // deterministically from (key generation, copy, part ref, content digest,
 // policy) or from a controller allocator; every nonce is claimed in the durable
-// per-key nonce authority BEFORE encryption or remote put, so reuse across
-// copies, parts, restarts, concurrent allocators or forged rows collides closed
-// with zero ciphertext produced. Exact replay of a committed copy returns the
+// globally-unique nonce authority BEFORE encryption or remote put, so reuse
+// across copies, parts, restarts, concurrent allocators, forged rows or key
+// generations collides closed with zero ciphertext produced. Exact replay of a
+// committed copy returns the
 // persisted receipt/epoch bytes verbatim.
 
 export interface OffsiteStoredPart {
@@ -225,16 +226,17 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     const candidateHex = backupNonceHex(candidate);
     const bound = checkpoints.get(partRef);
     if (bound !== undefined && bound.nonce_hex !== candidateHex) {
-      failBackup("BACKUP_NONCE_COLLISION", "backup copy checkpoint binds this part to a different nonce; refusing reuse across key generations", false, { copy: copyId });
+      failBackup("BACKUP_NONCE_COLLISION", "backup copy checkpoint binds this owner to a different nonce; refusing silent re-allocation", false, { copy: copyId });
     }
     for (const [ref, checkpoint] of checkpoints) {
       if (ref !== partRef && checkpoint.nonce_hex === candidateHex) {
         failBackup("BACKUP_NONCE_COLLISION", "backup nonce reuse detected across parts (durable checkpoint record); refusing encryption", false, { copy: copyId });
       }
     }
-    // Durable per-key claim BEFORE encryption or remote put: cross-copy,
-    // cross-part, restart, concurrent or forged reuse collides here with zero
-    // ciphertext produced. Exact same (key, copy, part) replay is idempotent.
+    // Durable global claim BEFORE encryption or remote put: cross-copy,
+    // cross-part, cross-generation, restart, concurrent or forged reuse
+    // collides here with zero ciphertext produced. Exact same owner with the
+    // same nonce replays idempotently.
     const nonce = await allocateOffsiteNonce(ports.core_db, { key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, nonce: candidate, created_at: now });
     const nonceHex = backupNonceHex(nonce);
     const ciphertext = await encryptBackupPart(input.encryption_key, aad, nonce, plaintext);

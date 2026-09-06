@@ -279,7 +279,7 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     expect(tableRows.length).toBe(8);
     const entries: { kind: "table" | "index"; name: string; sql: string }[] = tableRows.map((row) => ({ kind: "table" as const, name: row.name, sql: row.sql }));
     const indexes = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND tbl_name IN ('d1_migrations','backup_epoch_receipt','backup_offsite_expiry','backup_destination_authority','backup_offsite_copy_part','backup_offsite_copy_receipt','backup_export_cut','backup_offsite_nonce_authority')").all() as { name: string; sql: string }[];
-    expect(indexes.map((r) => r.name)).toEqual(["backup_offsite_copy_part_nonce_unique"]);
+    expect(indexes.map((r) => r.name)).toEqual(["backup_offsite_copy_part_nonce_unique", "backup_offsite_nonce_owner_unique"]);
     for (const row of indexes) entries.push({ kind: "index" as const, name: row.name, sql: row.sql });
     expect(await canonicalO2SchemaFingerprint(entries)).toBe(O2_EXPECTED_SCHEMA_DIGEST);
     expect(canonicalizeSchemaSql("  CREATE   TABLE x (\n a TEXT )  ")).toBe("CREATE TABLE x ( a TEXT )");
@@ -303,8 +303,11 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     ["dropped UNIQUE index", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_copy_part_nonce_unique\n  ON backup_offsite_copy_part(copy_id, nonce_hex);", "")],
     ["added DEFAULT", LF0018.replace("updated_at TEXT NOT NULL,\n  PRIMARY KEY (copy_id, part_ref)", "updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',\n  PRIMARY KEY (copy_id, part_ref)")],
     ["altered PRIMARY KEY", LF0018.replace("PRIMARY KEY (copy_id, part_ref)", "PRIMARY KEY (copy_id)")],
-    ["dropped STRICT", LF0018.replace("PRIMARY KEY (key_generation, nonce_hex)\n) STRICT;", "PRIMARY KEY (key_generation, nonce_hex)\n);")],
+    ["dropped STRICT", LF0018.replace("PRIMARY KEY (nonce_hex)\n) STRICT;", "PRIMARY KEY (nonce_hex)\n);")],
     ["reordered column", LF0018.replace("authorized_at TEXT NOT NULL,\n  revoked_at TEXT,", "revoked_at TEXT,\n  authorized_at TEXT NOT NULL,")],
+    ["weaker per-generation nonce PK", LF0018.replace("PRIMARY KEY (nonce_hex)", "PRIMARY KEY (key_generation, nonce_hex)")],
+    ["missing nonce owner uniqueness", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_nonce_owner_unique\n  ON backup_offsite_nonce_authority(key_generation, copy_id, part_ref);", "")],
+    ["missing expiry generation binding", LF0018.replace("policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),\n  authority_authorized_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n) STRICT;\n\n-- Controller-owned destination authority", "policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),\n  created_at TEXT NOT NULL\n) STRICT;\n\n-- Controller-owned destination authority")],
   ])("rejects edited migration variant: %s", async (_label, variant) => {
     await expect(assertO2MigrationAuthority(mutatedDb(variant))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
   });
