@@ -59,16 +59,20 @@ function isFictionalHexId(value) {
 }
 
 // Patterns built via concatenation so this file holds no scannable literal.
+// Precompiled once at module load (never per-line) to keep the tracked-tree
+// scan linear. Quantifiers are bounded so long fixture lines cannot trigger
+// quadratic backtracking; literal/prefix prefilters in scanLine() skip the
+// regex entirely unless a necessary substring is present.
 const AT = "@";
 const GMAIL_DOMAIN = ["gmail", ".", "com"].join("");
-const gmailPattern = () => new RegExp(`[A-Za-z0-9._%+-]+${AT}gmail\\.${"com"}`, "i");
-const hexIdPattern = () => /\b[0-9a-f]{32}\b/i;
-const workersDevPattern = () => new RegExp(`[A-Za-z0-9-]+\\.[A-Za-z0-9-]+\\.${"workers"}\\.${"dev"}`, "i");
-const accessOriginPattern = () =>
-  new RegExp(`https:\\/\\/[A-Za-z0-9-]+\\.${"cloudflareaccess"}\\.${"com"}`, "i");
-const jwtPattern = () => new RegExp(`${"eyJ"}[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}`);
-const privateKeyPattern = () => new RegExp(`-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`);
-const bearerPattern = () => new RegExp(`\\bBearer\\s+[A-Za-z0-9._~+/-]{20,}={0,2}\\b`, "i");
+const GMAIL_RE = new RegExp(`[A-Za-z0-9._%+-]{1,256}${AT}gmail\\.${"com"}`, "i");
+const HEX_RE = /\b[0-9a-f]{32}\b/i;
+const WORKERS_DEV_RE = new RegExp(`[A-Za-z0-9-]{1,128}\\.[A-Za-z0-9-]{1,128}\\.${"workers"}\\.${"dev"}`, "i");
+const ACCESS_ORIGIN_RE =
+  new RegExp(`https:\\/\\/[A-Za-z0-9-]{1,128}\\.${"cloudflareaccess"}\\.${"com"}`, "i");
+const JWT_RE = new RegExp(`${"eyJ"}[A-Za-z0-9_-]{10,512}\\.[A-Za-z0-9_-]{10,512}`);
+const PRIVATE_KEY_RE = new RegExp(`-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----`);
+const BEARER_RE = new RegExp(`\\bBearer\\s+[A-Za-z0-9._~+/-]{20,512}={0,2}\\b`, "i");
 
 async function listTrackedFiles() {
   try {
@@ -150,20 +154,39 @@ function scanLine(line, forbidden, rel = "") {
   for (const [value, label] of forbidden) {
     if (value && line.includes(value)) hits.push(label);
   }
-  if (gmailPattern().test(line)) hits.push("generic-pattern:personal-email-provider");
-  const hexMatch = line.match(new RegExp(`\\b[0-9a-f]{32}\\b`, "i"));
-  void hexIdPattern;
-  if (hexMatch && !isFictionalHexId(hexMatch[0]) && !isAllowlistedHexVector(rel, line)) hits.push("generic-pattern:account-id-hex");
-  if (workersDevPattern().test(line) && !isNeutralHostLine(line)) {
+  // Safe literal/prefix prefilters: each regex runs only when a necessary
+  // substring is present, so long fixture lines without triggers skip every
+  // regex in linear native includes() time. Never echo the matched secret:
+  // only redacted labels are reported.
+  if (line.includes(AT) && GMAIL_RE.test(line)) hits.push("generic-pattern:personal-email-provider");
+  if (line.length >= 32 && HEX_RE.test(line)) {
+    const hexMatch = line.match(HEX_RE);
+    if (hexMatch && !isFictionalHexId(hexMatch[0]) && !isAllowlistedHexVector(rel, line)) {
+      hits.push("generic-pattern:account-id-hex");
+    }
+  }
+  // Fixture marker skips credential-material patterns only (identity
+  // patterns above and below still apply).
+  const isFixtureLine = line.includes(FIXTURE_MARKER);
+  if (!isFixtureLine) {
+    if (line.includes("eyJ") && JWT_RE.test(line)) hits.push("generic-pattern:token-material-jwt");
+    if (line.includes("PRIVATE KEY") && PRIVATE_KEY_RE.test(line)) {
+      hits.push("generic-pattern:token-material-private-key");
+    }
+  }
+  // Host/credential prefilters use a single lazy lowercase to avoid repeat
+  // case-insensitive scans over very long lines.
+  let lower = null;
+  const lowered = () => (lower ??= line.toLowerCase());
+  if (!isFixtureLine && lowered().includes("bearer") && BEARER_RE.test(line)) {
+    hits.push("generic-pattern:token-material-bearer");
+  }
+  const low = lowered();
+  if (low.includes("workers") && WORKERS_DEV_RE.test(line) && !isNeutralHostLine(line)) {
     hits.push("generic-pattern:workers-dev-hostname");
   }
-  if (accessOriginPattern().test(line) && !isNeutralHostLine(line)) {
+  if (low.includes("cloudflareaccess") && ACCESS_ORIGIN_RE.test(line) && !isNeutralHostLine(line)) {
     hits.push("generic-pattern:access-team-origin");
-  }
-  if (!line.includes(FIXTURE_MARKER)) {
-    if (jwtPattern().test(line)) hits.push("generic-pattern:token-material-jwt");
-    if (privateKeyPattern().test(line)) hits.push("generic-pattern:token-material-private-key");
-    if (bearerPattern().test(line)) hits.push("generic-pattern:token-material-bearer");
   }
   return hits;
 }

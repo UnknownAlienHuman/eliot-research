@@ -3,13 +3,44 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
+function admittedSnapshotJson(accountId = "test-account", at = now) {
+  const metrics = {
+    workers_requests: 100, workers_cpu_ms: 100,
+    d1_storage_bytes: 100, d1_rows_read: 100, d1_rows_written: 100,
+    r2_storage_gb_month: 1, r2_class_a_ops: 100, r2_class_b_ops: 100,
+    queue_ops: 100, do_requests: 100, do_gb_seconds: 100,
+    do_sql_reads: 100, do_sql_writes: 100, do_storage_bytes: 100,
+    workers_ai_neurons_per_day: 100, ai_search_instances: 5,
+    ai_search_queries_month: 100,
+    vectorize_queried_dims_month: 100, vectorize_stored_dims_month: 100,
+  };
+  return JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(accountId),
+    account_ref: "cloudflare-account:test-a…ount",
+    collected_at: new Date(at - 60_000).toISOString(),
+    window: monthlyWindowFor(at),
+    daily_window: dailyWindowFor(at),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
+}
+function sealedSnapshotJson(accountId = "test-account", at = now) {
+  const parsed = JSON.parse(admittedSnapshotJson(accountId, at));
+  parsed.metrics.queue_ops = "unknown";
+  return JSON.stringify(parsed);
+}
 const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
-  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie" };
+  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie",
+  ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedSnapshotJson() };
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "" },
@@ -132,5 +163,36 @@ await check("missing cookie retains NOT_EXECUTED", async () => {
   const receipt = await deployCloudflare(test.options);
   assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
   assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 1);
+});
+await check("BLOCKED usage denies every remote mutation with zero billable calls", async () => {
+  const over = JSON.parse(admittedSnapshotJson());
+  over.metrics.queue_ops = 900_000;
+  const test = harness({ options: { environment: { ...environment, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: JSON.stringify(over) } } });
+  const billable = [];
+  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
+  await assert.rejects(deployCloudflare(test.options), /BLOCKED/);
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.equal(billable.length, 0);
+  assert.equal(test.receipts.length, 0);
+});
+await check("SEALED usage denies Worker upload and D1 migrations (adversarial unknown)", async () => {
+  const test = harness({ options: { environment: { ...environment, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: sealedSnapshotJson() } } });
+  const billable = [];
+  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
+  await assert.rejects(deployCloudflare(test.options), /SEALED/);
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.equal(billable.length, 0);
+  assert.equal(test.receipts.length, 0);
+});
+await check("access-first: access check precedes core apply and partial failure exposes no workers.dev", async () => {
+  const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs" });
+  await assert.rejects(deployCloudflare(test.options));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.equal(test.receipts.length, 0);
 });
 console.log(`Deployment orchestration: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

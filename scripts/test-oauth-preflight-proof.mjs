@@ -21,7 +21,6 @@ const ACCOUNT = "oauth-preflight-account";
 const HOSTNAME = "eliotr-core.oauth-preflight-example.workers.dev";
 const OWNER = "owner@oauth-preflight.example";
 const TEAM_HOST = "oauth-preflight.cloudflareaccess.com";
-const TEAM = `https://${TEAM_HOST}`;
 const FUTURE = "2030-01-01T00:00:00.000Z";
 const PAST = "2000-01-01T00:00:00.000Z";
 
@@ -149,7 +148,7 @@ const noBearer = (value, label) => assert.ok(
 const WIN_STATUS = 3221226505;
 const WIN_STDERR = /Assertion failed: !\(handle->flags & UV_HANDLE_CLOSING\)/u;
 const expectPlanPass = (result, label) => {
-  let plan = null;
+  let plan;
   try { plan = JSON.parse(result.stdout); } catch { plan = null; }
   assert.ok(plan, `${label} printed no parseable plan\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
   assert.equal(plan.mode, "CHECK_ONLY_NO_MUTATION", `${label} is not check-only`);

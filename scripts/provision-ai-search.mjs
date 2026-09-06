@@ -12,6 +12,12 @@ let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ??
   "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
+if (showHelp) {
+  console.log("Usage: scripts/provision-ai-search.mjs [--check-only] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations.");
+  process.exitCode = 0;
+}
+if (!showHelp) {
 const namespaceDescription =
   "Eliot Research private managed retrieval namespace";
 let authMode = "api-token";
@@ -377,8 +383,9 @@ if (namespace === null && checkOnly) {
       2,
     ),
   );
-  process.exit(0);
+  process.exitCode = 0;
 }
+if (namespace !== null || !checkOnly) {
 if (namespace === null) {
   let createError;
   try {
@@ -470,3 +477,5 @@ console.log(
     2,
   ),
 );
+}
+}

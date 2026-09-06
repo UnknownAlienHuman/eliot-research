@@ -15,8 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
 const deployConfig = "wrangler.deploy.jsonc";
 const receiptPath = resolve(root, ".eliotr-state/cloudflare-deployment-receipt.json");
-const provisioners = ["provision-cloudflare-core", "provision-ai-search",
-  "provision-ai-gateways", "provision-cloudflare-access"];
+const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core", "provision-ai-search",
+  "provision-ai-gateways"];
 
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
@@ -91,11 +91,20 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
   }
 
-  // FIX1-B usage-envelope gate (narrow): usage preflight before the first
-  // remote mutation. In-process shared runner honors the same injected
-  // credential/whoami seams as the OAuth path above and performs no file
-  // writes here; BLOCKED throws ahead of every provisioner check and
-  // mutation. Api-token/CI runs resolve SEALED (metadata-only).
+  // FIX1-B usage-envelope gate (strict deny-by-default): usage preflight
+  // before the first remote mutation. Local gates above (pnpm check, PWA
+  // build, cf:types, deploy:dry-run, provisioner --check-only) are the
+  // enumerated proven metadata-only/zero-billable SEALED allowlist. BLOCKED
+  // denies everything; SEALED authorizes only that allowlist after fresh
+  // account binding/inventory receipt. Worker upload/exposure, route/domain,
+  // D1 migrations/queries, R2 writes, Queue create/config/produce/consume,
+  // Workflow/DO exec, Workers AI, AI Search index/query and Vectorize
+  // writes/queries must not occur while any required metric is
+  // unknown/stale/untrusted — so only ADMITTED proceeds past this point.
+  // Access runs first in both check-only and apply loops and is read back
+  // before any Worker surface exists; any partial failure aborts before the
+  // single Worker deploy, leaving no public workers.dev path
+  // (preview_urls=false is enforced by validateGeneratedDeployment).
   {
     const usageGate = await runUsagePreflight({
       env: { ...process.env, ...env },
@@ -106,7 +115,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       cwd: root,
     });
     if (usageGate.decision === "BLOCKED") {
-      throw new Error(`Cloudflare usage preflight blocked deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+      throw new Error(`Cloudflare usage preflight BLOCKED deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+    }
+    if (usageGate.decision !== "ADMITTED") {
+      throw new Error(`Cloudflare usage preflight ${usageGate.decision} denies remote deployment: only ADMITTED authorizes Worker upload, D1 migrations, and provisioner apply. ${usageGate.evaluation.reasons.join("; ")} Zero billable bindings were invoked.`);
     }
   }
 

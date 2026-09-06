@@ -12,6 +12,12 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
+if (showHelp) {
+  console.log("Usage: scripts/provision-cloudflare-access.mjs [--check-only] [--help]\nProvisions the hostname-based Cloudflare Access application and owner policy. --check-only prints the plan with zero mutations.");
+  process.exitCode = 0;
+}
+if (!showHelp) {
 const hostname = process.env.ELIOTR_ACCESS_HOSTNAME?.trim().toLowerCase();
 const ownerEmails = parseOwnerEmails(process.env.ELIOTR_OWNER_EMAILS);
 const allowedAdditionalPolicyIds = new Set((process.env.ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
@@ -312,9 +318,10 @@ if (!application && checkOnly) {
     aud_disposition: "GENERATED_ON_CREATE",
     team_disposition: teamPreflight.teamDomain ? "VERIFY" : "READBACK_ON_APPLY",
   }), null, 2));
-  process.exit(0);
+  process.exitCode = 0;
 }
 
+if (application || !checkOnly) {
 if (!application && !checkOnly) {
   applicationDisposition = "CREATED";
   policyDisposition = "CREATED_INLINE";
@@ -364,8 +371,9 @@ if (!classified.owner && checkOnly) {
     aud_disposition: liveAud.aud ? "VERIFY" : "GENERATED_ON_CREATE",
     approved_additional_policy_count: classified.additional.length,
   }), null, 2));
-  process.exit(0);
+  process.exitCode = 0;
 }
+if (classified.owner || !checkOnly) {
 if (!classified.owner) {
   await request("POST", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies`, expectedPolicy);
   policyDisposition = policyDisposition === "CREATED_INLINE" ? "CREATED_INLINE" : "CREATED";
@@ -391,9 +399,10 @@ if (checkOnly) {
     aud_disposition: "VERIFY",
     approved_additional_policy_count: classified.additional.length,
   }), null, 2));
-  process.exit(0);
+  process.exitCode = 0;
 }
 
+if (!checkOnly) {
 // Apply readback: AUD plus exact team origin are Cloudflare authority and are
 // persisted only in the ignored non-secret receipt for core config generation.
 let liveAud = resolveLiveAud(application);
@@ -461,3 +470,7 @@ const receiptTemporary = `${receiptPath}.${process.pid}.tmp`;
 await writeFile(receiptTemporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
 await rename(receiptTemporary, receiptPath);
 console.log(JSON.stringify(receipt, null, 2));
+}
+}
+}
+}

@@ -17,12 +17,16 @@
 
 import {
   METRIC_BY_KEY,
+  QUEUE_CHUNK_BYTES,
+  QUEUE_MESSAGE_OVERHEAD_BYTES,
   RECEIPT_MAX_AGE_MS,
   SAFETY_MARGIN_RATIO,
   validateAdmissionReceipt,
 } from "./cloudflare-usage-envelope.mjs";
 
 export const DEFAULT_CONCURRENCY_CAP = 4;
+export const QUEUE_BILLABLE_CHUNK_BYTES = QUEUE_CHUNK_BYTES;
+export const QUEUE_BILLABLE_OVERHEAD_BYTES = QUEUE_MESSAGE_OVERHEAD_BYTES;
 
 export class BudgetAdmissionError extends Error {
   constructor(code, message) {
@@ -115,24 +119,83 @@ export function admitOperation(ledger, { metricKey, quantity, now = Date.now() }
   return { allowed: true, metric: metricKey, reason: "WITHIN_ENVELOPE_SHARE", used: slot.used, remaining: cap - slot.used, projected };
 }
 
-// Retry accounting: every delivery attempt (including DLQ redrives) consumes
-// queue operations, so retries cannot silently exceed the Queue envelope.
-export function recordRetryDelivery(ledger, { attempts, now = Date.now() } = {}) {
-  if (!Number.isInteger(attempts) || attempts < 1) {
-    throw new BudgetAdmissionError("INVALID_QUANTITY", "attempts must be a positive integer");
+// Queues billable ops (per https://developers.cloudflare.com/queues/pricing/,
+// retrieved 2026-09-06): 1 op per 64,000-byte chunk written, read, or deleted,
+// including a ~100-byte per-message overhead. Retries add reads, DLQ writes
+// add chunked writes, deletions/expiry add deletes. All rounding is
+// conservative ceil — never undercount.
+//
+// Examples: 1 byte -> 1 op; 64,000 bytes payload + 100 overhead = 64,100 ->
+// 2 ops; 65,000 bytes -> ceil(65,100/64,000) = 2 ops; 127,000 bytes ->
+// ceil(127,100/64,000) = 2 ops; 128,000 bytes -> ceil(128,100/64,000) = 3 ops.
+export function queueOpsForBytes(byteLength) {
+  if (typeof byteLength !== "number" || !Number.isFinite(byteLength) || byteLength < 0) {
+    throw new BudgetAdmissionError("INVALID_QUANTITY", "byteLength must be a non-negative finite number");
   }
-  const admission = admitOperation(ledger, { metricKey: "queue_ops", quantity: attempts, now });
-  if (admission.allowed) ledger.retries += attempts;
-  return { ...admission, retries: ledger.retries };
+  return Math.max(1, Math.ceil((Math.ceil(byteLength) + QUEUE_BILLABLE_OVERHEAD_BYTES) / QUEUE_BILLABLE_CHUNK_BYTES));
 }
 
-export function recordDlqRedrive(ledger, { messages, now = Date.now() } = {}) {
+export function queueOpsForMessage(byteLength = 0) {
+  return queueOpsForBytes(byteLength);
+}
+
+export function queueOpsForBatch(byteLengths) {
+  if (!Array.isArray(byteLengths)) {
+    throw new BudgetAdmissionError("INVALID_QUANTITY", "byteLengths must be an array");
+  }
+  let total = 0;
+  for (const length of byteLengths) total += queueOpsForBytes(length);
+  return total;
+}
+
+export function recordQueueWrite(ledger, { bytes, messages = 1, now = Date.now() } = {}) {
   if (!Number.isInteger(messages) || messages < 1) {
     throw new BudgetAdmissionError("INVALID_QUANTITY", "messages must be a positive integer");
   }
-  const admission = admitOperation(ledger, { metricKey: "queue_ops", quantity: messages, now });
-  if (admission.allowed) ledger.dlqRedrives += messages;
-  return { ...admission, dlqRedrives: ledger.dlqRedrives };
+  const actual = Array.isArray(bytes) ? queueOpsForBatch(bytes) : queueOpsForBytes(bytes ?? 0) * messages;
+  const admission = admitOperation(ledger, { metricKey: "queue_ops", quantity: actual, now });
+  return { ...admission, ops: actual };
+}
+
+export function recordQueueRead(ledger, { bytes, messages = 1, now = Date.now() } = {}) {
+  return recordQueueWrite(ledger, { bytes, messages, now });
+}
+
+export function recordQueueDelete(ledger, { bytes, messages = 1, now = Date.now() } = {}) {
+  return recordQueueWrite(ledger, { bytes, messages, now });
+}
+
+// Retry accounting: every delivery attempt (including DLQ redrives) consumes
+// queue operations, so retries cannot silently exceed the Queue envelope.
+// Chunk-aware: callers SHOULD pass bytesPerAttempt / bytesEach so large
+// payloads are not undercounted; omitted sizes conservatively count 1 op per
+// message (the minimum for any non-empty delivery).
+export function recordRetryDelivery(ledger, { attempts, bytesPerAttempt, now = Date.now() } = {}) {
+  if (!Number.isInteger(attempts) || attempts < 1) {
+    throw new BudgetAdmissionError("INVALID_QUANTITY", "attempts must be a positive integer");
+  }
+  // Each retry is a re-read: chunked when the payload size is known, else the
+  // conservative 1-op minimum per attempt (caller must supply sizes for large
+  // payloads to avoid undercount).
+  const ops = Array.isArray(bytesPerAttempt)
+    ? queueOpsForBatch(bytesPerAttempt)
+    : queueOpsForBytes(bytesPerAttempt ?? 0) * attempts;
+  const admission = admitOperation(ledger, { metricKey: "queue_ops", quantity: ops, now });
+  if (admission.allowed) ledger.retries += ops;
+  return { ...admission, ops, retries: ledger.retries };
+}
+
+export function recordDlqRedrive(ledger, { messages, bytesEach, now = Date.now() } = {}) {
+  if (!Number.isInteger(messages) || messages < 1) {
+    throw new BudgetAdmissionError("INVALID_QUANTITY", "messages must be a positive integer");
+  }
+  // DLQ redrive writes each message again: chunked writes, same minimum rule.
+  const ops = Array.isArray(bytesEach)
+    ? queueOpsForBatch(bytesEach)
+    : queueOpsForBytes(bytesEach ?? 0) * messages;
+  const admission = admitOperation(ledger, { metricKey: "queue_ops", quantity: ops, now });
+  if (admission.allowed) ledger.dlqRedrives += ops;
+  return { ...admission, ops, dlqRedrives: ledger.dlqRedrives };
 }
 
 // Concurrency protection: at most `cap` concurrent heavy leases per

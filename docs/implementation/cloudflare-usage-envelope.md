@@ -12,16 +12,38 @@ the smaller local admission boundary first and fails closed.
 
 | Product | Included quota (100%) | Envelope (80%) |
 |---|---|---|
-| Workers requests | 10,000,000 / mo | 8,000,000 / mo |
-| Workers CPU time | 30,000,000 ms / mo | 24,000,000 ms / mo |
-| D1 storage / rows read / rows written | 5 GiB / 25B / 50M | 4 GiB / 20B / 40M |
-| R2 storage / Class A / Class B | 10 GB-mo / 1M / 10M | 8 GB-mo / 800K / 8M |
-| Queues operations (retries + DLQ included) | 1,000,000 / mo | 800,000 / mo |
-| Durable Objects req / GB-s / SQL reads / SQL writes / storage | 1M / 400K / 25B / 50M / 5 GiB | 800K / 320K / 20B / 40M / 4 GiB |
-| Workers AI neurons | 10,000 / day | 8,000 / day |
+| Workers requests (Workers Paid, monthly renewal) | 10,000,000 / mo | 8,000,000 / mo |
+| Workers CPU time (Workers Paid, monthly renewal) | 30,000,000 ms / mo | 24,000,000 ms / mo |
+| D1 storage / rows read / rows written (decimal GB) | 5 GB (5,000,000,000 B) / 25B / 50M | 4 GB (4,000,000,000 B) / 20B / 40M |
+| R2 storage / Class A / Class B (R2 paid inclusions, decimal GB-mo) | 10 GB-mo / 1M / 10M | 8 GB-mo / 800K / 8M |
+| Queues operations, 64,000-byte chunks + ~100 B overhead (retries + DLQ included) | 1,000,000 / mo | 800,000 / mo |
+| Durable Objects req / GB-s / SQL reads / SQL writes / storage (decimal GB) | 1M / 400K / 25B / 50M / 5 GB | 800K / 320K / 20B / 40M / 4 GB |
+| Workers AI neurons (daily UTC midnight reset) | 10,000 / day | 8,000 / day |
 | AI Search instances / queries | exactly 5 / 25,000 / mo | exactly 5 / 20,000 / mo |
 | Vectorize queried dims / stored dims | 50M / 10M per mo | 40M / 8M per mo |
 | Access | one owner-only hostname app, 24 h session | contour (see below) |
+
+Plan scope: this deployment budgets Workers Paid monthly inclusions + R2
+paid inclusions. Free-tier daily limits are a separate optional profile and
+must never be mislabeled as this envelope. Pricing GB/KB are decimal
+(1 GB = 1,000,000,000 bytes; 1 KB = 1,000 bytes) unless a source below states
+otherwise; byte conversions use `bytesFromDecimalGb` / `decimalGbFromBytes`.
+Monthly windows approximate subscription-renewal months as UTC calendar
+months; daily windows reset at UTC midnight. Wrong-window or reset-crossing
+snapshots fail closed (SEALED/BLOCKED, never admitted).
+
+Official sources (retrieved 2026-09-06; validated against Wrangler 4.127.1;
+tests mock only observed response/pagination fields):
+
+- https://developers.cloudflare.com/workers/pricing/ (workers req/CPU)
+- https://developers.cloudflare.com/workers/platform/limits/ (workers limits)
+- https://developers.cloudflare.com/d1/pricing/ (D1 storage/rows)
+- https://developers.cloudflare.com/r2/pricing/ (R2 storage/ops)
+- https://developers.cloudflare.com/queues/pricing/ (Queues 64 KB chunks)
+- https://developers.cloudflare.com/durable-objects/pricing/ (DO/SQLite)
+- https://developers.cloudflare.com/workers-ai/pricing/ (AI neurons/day)
+- https://developers.cloudflare.com/ai-search/limits-pricing/ (AI Search 5/queries)
+- https://developers.cloudflare.com/vectorize/pricing/ (Vectorize dims)
 
 A value at or above 90% of its envelope is a near-limit advisory; anything
 above the envelope blocks. `unknown` is never coerced to zero.

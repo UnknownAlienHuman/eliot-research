@@ -13,7 +13,12 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ?? "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
-
+const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
+if (showHelp) {
+  console.log("Usage: scripts/provision-cloudflare-core.mjs [--check-only] [--help]\nProvisions the Cloudflare foundation (D1/R2/Queues) from infra/cloudflare/resources.json. --check-only prints the plan with zero mutations.");
+  process.exitCode = 0;
+}
+if (!showHelp) {
 let authMode = "api-token";
 try {
   authMode = resolveAuthMode(process.env);
@@ -393,9 +398,10 @@ if (checkOnly) {
     r2_buckets: r2Plans.map((item) => ({ binding: item.spec.binding, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
     queues: queuePlans.map((item) => ({ binding: item.spec.binding ?? null, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
   }, null, 2));
-  process.exit(0);
+  process.exitCode = 0;
 }
 
+if (!checkOnly) {
 if (!accessRuntime) {
   throw new Error("missing Access authority: run scripts/provision-cloudflare-access.mjs first so the verified AUD and team origin feed core config generation; refusing foundation mutations");
 }
@@ -444,3 +450,5 @@ const receiptTemporary = `${receiptPath}.${process.pid}.tmp`;
 await writeFile(receiptTemporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
 await rename(receiptTemporary, receiptPath);
 console.log(JSON.stringify(receipt, null, 2));
+}
+}

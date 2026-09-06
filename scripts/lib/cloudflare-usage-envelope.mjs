@@ -37,32 +37,141 @@ export const RECEIPT_MAX_AGE_MS = 60 * 60 * 1000;
 export const CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const UNKNOWN = "unknown";
 
-const GIB = 1024 * 1024 * 1024;
+// Metric provenance taxonomy (Luna FIX3G): every reported counter carries one
+// provenance. `unknown` metrics carry a typed reason below, never a zero.
+//   authoritative_billing   - Restricted Alpha GET /accounts/{id}/billable/usage
+//                             with account/date/metric/unit/full-window validation.
+//   authoritative_inventory - Complete account-bound inventory proving a
+//                             point-in-time count (for example AI Search
+//                             instance count from /ai-search/instances).
+//   analytics_nonbilling    - Cloudflare GraphQL analytics: operational evidence
+//                             only, never billing authority.
+//   ledger_estimate         - Controller-owned ledger + fresh full inventory
+//                             proof (budget admission Layer 2).
+//   unavailable             - No verified aggregate; metric stays unknown.
+export const METRIC_PROVENANCE = Object.freeze({
+  AUTHORITATIVE_BILLING: "authoritative_billing",
+  AUTHORITATIVE_INVENTORY: "authoritative_inventory",
+  ANALYTICS_NONBILLING: "analytics_nonbilling",
+  LEDGER_ESTIMATE: "ledger_estimate",
+  UNAVAILABLE: "unavailable",
+});
+
+// Typed unknown reasons (Luna FIX3G): every unknown metric names one.
+export const UNKNOWN_REASONS = Object.freeze([
+  "NO_AUTH_ENDPOINT",
+  "AUTH_SCOPE_DENIED",
+  "HTTP_ERROR",
+  "MALFORMED",
+  "PARTIAL_PAGINATION",
+  "WINDOW_MISMATCH",
+  "STALE",
+  "ACCOUNT_MISMATCH",
+  "DEGRADED",
+]);
+
+export function isProvenance(value) {
+  return Object.values(METRIC_PROVENANCE).includes(value);
+}
+
+export function isUnknownReason(value) {
+  return UNKNOWN_REASONS.includes(value);
+}
+
+export const DECIMAL_BYTES_PER_GB = 1_000_000_000;
+export const DECIMAL_BYTES_PER_KB = 1_000;
+export const QUEUE_CHUNK_BYTES = 64_000;
+export const QUEUE_MESSAGE_OVERHEAD_BYTES = 100;
+
+// Plan scope (explicit, no mislabeling): this deployment budgets Workers Paid
+// monthly inclusions and R2 paid inclusions. Free-tier daily limits are a
+// separate optional profile and must never be presented as this envelope.
+// Pricing GB/KB are decimal unless a doc below states otherwise. Monthly
+// windows are UTC calendar-month approximations of subscription-renewal
+// months; daily windows reset at UTC midnight. A snapshot whose window does
+// not cover `now` (wrong window or reset crossing) seals/blocks fail-closed.
+export const PLAN_SCOPE = {
+  deployment: "Workers Paid monthly inclusions + R2 paid inclusions",
+  workersPlan: "Workers Paid",
+  r2Plan: "R2 paid inclusions",
+  freeTier: "separate optional profile; never this envelope",
+  monthlySemantics: "subscription-renewal month approximated as UTC calendar month",
+  dailySemantics: "UTC midnight to UTC midnight",
+  unitBasis: "decimal GB/KB (1 GB = 1,000,000,000 bytes) unless docs state otherwise",
+};
+
+// Official Cloudflare pricing/limits sources (truth for quotas/units).
+// Retrieved 2026-09-06. Validated against installed Wrangler 4.127.1 schemas;
+// response/pagination shapes in tests mock only fields observed in that
+// toolchain. No undocumented counter fields are guessed.
+export const DOC_SOURCES = [
+  { url: "https://developers.cloudflare.com/workers/pricing/", covers: "workers_requests, workers_cpu_ms", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/workers/platform/limits/", covers: "workers limits", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/d1/pricing/", covers: "d1_storage, d1_rows_read, d1_rows_written", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/r2/pricing/", covers: "r2_storage, r2_class_a_ops, r2_class_b_ops", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/queues/pricing/", covers: "queue_ops 64KB chunk", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/durable-objects/pricing/", covers: "do_requests, do_gb_seconds, do_sql, do_storage", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/workers-ai/pricing/", covers: "workers_ai_neurons_per_day", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/ai-search/limits-pricing/", covers: "ai_search_instances, ai_search_queries_month", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/vectorize/pricing/", covers: "vectorize_queried_dims, vectorize_stored_dims", retrieved: "2026-09-06" },
+];
+
+export function bytesFromDecimalGb(gb) {
+  if (typeof gb !== "number" || !Number.isFinite(gb) || gb < 0) throw new Error("gb must be a non-negative finite number");
+  return Math.round(gb * DECIMAL_BYTES_PER_GB);
+}
+
+export function decimalGbFromBytes(bytes) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) throw new Error("bytes must be a non-negative finite number");
+  return bytes / DECIMAL_BYTES_PER_GB;
+}
+
+// SEALED allowlist: the ONLY remote effects authorized while sealed (stale /
+// wrong-window / unknown-untrusted), and only after fresh account binding
+// (verified whoami digest) plus a fresh inventory receipt. Everything else —
+// Worker upload/exposure, route/domain, D1 migrations/queries, R2 writes,
+// Queue create/config/produce/consume, Workflow/DO exec, Workers AI, AI
+// Search index/query, Vectorize writes/queries — stays denied until ADMITTED
+// or a controller-owned ledger + full inventory proof shows headroom.
+export const SEALED_ALLOWLIST = Object.freeze([
+  "wrangler-whoami-verify",
+  "access-app-readback",
+  "d1-inventory-list",
+  "r2-inventory-list",
+  "queue-inventory-list",
+  "ai-search-inventory-list",
+  "local-config-generate",
+  "preflight-receipt-write",
+]);
+
+export function isSealedAllowlistedOperation(operation) {
+  return typeof operation === "string" && SEALED_ALLOWLIST.includes(operation);
+}
 
 // quota is the included Cloudflare plan quota (100%); envelope is the local
 // 80% admission boundary. window selects the fencing discipline; `exact`
 // marks point-in-time counts (AI Search instance inventory) rather than
-// cumulative counters.
+// cumulative counters. Storage bytes are decimal-GB derived (see above).
 export const USAGE_METRICS = [
-  { key: "workers_requests", quota: 10_000_000, envelope: 8_000_000, window: "monthly" },
-  { key: "workers_cpu_ms", quota: 30_000_000, envelope: 24_000_000, window: "monthly" },
-  { key: "d1_storage_bytes", quota: 5 * GIB, envelope: 4 * GIB, window: "monthly" },
-  { key: "d1_rows_read", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly" },
-  { key: "d1_rows_written", quota: 50_000_000, envelope: 40_000_000, window: "monthly" },
-  { key: "r2_storage_gb_month", quota: 10, envelope: 8, window: "monthly" },
-  { key: "r2_class_a_ops", quota: 1_000_000, envelope: 800_000, window: "monthly" },
-  { key: "r2_class_b_ops", quota: 10_000_000, envelope: 8_000_000, window: "monthly" },
-  { key: "queue_ops", quota: 1_000_000, envelope: 800_000, window: "monthly" },
-  { key: "do_requests", quota: 1_000_000, envelope: 800_000, window: "monthly" },
-  { key: "do_gb_seconds", quota: 400_000, envelope: 320_000, window: "monthly" },
-  { key: "do_sql_reads", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly" },
-  { key: "do_sql_writes", quota: 50_000_000, envelope: 40_000_000, window: "monthly" },
-  { key: "do_storage_bytes", quota: 5 * GIB, envelope: 4 * GIB, window: "monthly" },
-  { key: "workers_ai_neurons_per_day", quota: 10_000, envelope: 8_000, window: "daily" },
-  { key: "ai_search_instances", quota: 5, envelope: 5, window: "point", exact: true },
-  { key: "ai_search_queries_month", quota: 25_000, envelope: 20_000, window: "monthly" },
-  { key: "vectorize_queried_dims_month", quota: 50_000_000, envelope: 40_000_000, window: "monthly" },
-  { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly" },
+  { key: "workers_requests", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Workers Paid" },
+  { key: "workers_cpu_ms", quota: 30_000_000, envelope: 24_000_000, window: "monthly", plan: "Workers Paid" },
+  { key: "d1_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "D1 paid inclusion (decimal GB)" },
+  { key: "d1_rows_read", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly", plan: "D1 paid inclusion" },
+  { key: "d1_rows_written", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "D1 paid inclusion" },
+  { key: "r2_storage_gb_month", quota: 10, envelope: 8, window: "monthly", plan: "R2 paid inclusion (decimal GB-mo)", unit: "decimal-GB-mo" },
+  { key: "r2_class_a_ops", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "R2 paid inclusion" },
+  { key: "r2_class_b_ops", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "R2 paid inclusion" },
+  { key: "queue_ops", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "Queues paid inclusion (64,000-byte chunks)" },
+  { key: "do_requests", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "Durable Objects paid inclusion" },
+  { key: "do_gb_seconds", quota: 400_000, envelope: 320_000, window: "monthly", plan: "Durable Objects paid inclusion" },
+  { key: "do_sql_reads", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
+  { key: "do_sql_writes", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
+  { key: "do_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "Durable Objects paid inclusion (decimal GB)" },
+  { key: "workers_ai_neurons_per_day", quota: 10_000, envelope: 8_000, window: "daily", plan: "Workers AI paid inclusion" },
+  { key: "ai_search_instances", quota: 5, envelope: 5, window: "point", exact: true, plan: "AI Search (exactly 5)" },
+  { key: "ai_search_queries_month", quota: 25_000, envelope: 20_000, window: "monthly", plan: "AI Search" },
+  { key: "vectorize_queried_dims_month", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Vectorize" },
+  { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Vectorize" },
 ];
 
 export const REQUIRED_METRIC_KEYS = USAGE_METRICS.map((metric) => metric.key);

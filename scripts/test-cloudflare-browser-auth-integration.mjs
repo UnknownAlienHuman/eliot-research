@@ -34,7 +34,6 @@ const OWNER = "owner@int-test.example";
 const TEAM = "https://int-test-example.cloudflareaccess.com";
 const OTHER_TEAM = "https://other-team-example.cloudflareaccess.com";
 const APP_NAME = `Eliot Research: ${HOSTNAME}`;
-const POLICY_NAME = "Eliot Research owners";
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
 const stateDirectory = resolve(repositoryRoot, ".eliotr-state");
 const accessReceiptPath = resolve(stateDirectory, "cloudflare-access-receipt.json");
@@ -99,7 +98,8 @@ const server = createServer(async (req, res) => {
         // Lost-ACK simulation: persist server-side but answer without an id once.
         if (state.dropFirstAppId) {
           state.dropFirstAppId = false;
-          const { id: _dropped, ...withoutId } = app;
+          const { id: droppedAppId, ...withoutId } = app;
+          assert.ok(typeof droppedAppId === "string" && droppedAppId.length > 0);
           return json(res, success(withoutId));
         }
         return json(res, success(app));

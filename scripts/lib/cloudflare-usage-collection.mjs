@@ -24,27 +24,41 @@ import {
   verifyWranglerOAuthAccount,
 } from "./cloudflare-wrangler-oauth.mjs";
 import {
+  METRIC_PROVENANCE,
   REQUIRED_METRIC_KEYS,
   SNAPSHOT_MAX_AGE_MS,
   UNKNOWN,
+  UNKNOWN_REASONS,
   accountRef,
   buildAdmissionReceipt,
   digestAccountId,
   evaluateUsageSnapshot,
   writeAdmissionReceiptAtomic,
 } from "./cloudflare-usage-envelope.mjs";
+import {
+  UsageCollectionError,
+  createAiSearchInventoryProvider,
+  createPaginatedInventoryProvider,
+  createR2CursorInventoryProvider,
+} from "./cloudflare-usage-providers.mjs";
+
+export { METRIC_PROVENANCE, UNKNOWN_REASONS };
+export {
+  BILLABLE_USAGE_KNOWN_UNITS,
+  ProviderFailure,
+  UsageCollectionError,
+  createAiSearchInventoryProvider,
+  createBillableUsageProvider,
+  createGraphQlAnalyticsProvider,
+  createPaginatedInventoryProvider,
+  createR2CursorInventoryProvider,
+  safeFetchMeta,
+  toTypedReason,
+} from "./cloudflare-usage-providers.mjs";
 
 export const USAGE_SOURCE_LIVE = "wrangler-oauth-live";
 export const USAGE_SOURCE_SEALED = "sealed-no-authoritative-aggregate";
 export const USAGE_SOURCE_FIXTURE = "test-fixture";
-
-export class UsageCollectionError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = "UsageCollectionError";
-    this.code = code;
-  }
-}
 
 function collectionFail(code, message) {
   throw new UsageCollectionError(code, message);
@@ -91,11 +105,82 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
   };
 }
 
+// Explicit authoritative source set per required metric. Counters exposed by
+// this transport have no stable account-wide aggregate: they stay unknown
+// with provenance `unavailable` and an explicit limitation and require a
+// controller-owned project ledger plus a fresh full inventory before any
+// runtime lease opens. Inventory lists (paginated, account-wide, including
+// unrelated consumption) are authoritative for existence/shape but never
+// fabricate a zero usage counter. Provenance per metric is one of
+// authoritative_billing | authoritative_inventory | analytics_nonbilling |
+// ledger_estimate | unavailable (see cloudflare-usage-envelope.mjs).
+// Account-wide coverage spans Workers, D1, R2, Queues, SQLite Durable
+// Objects, Workers AI, AI Search, Vectorize, and Access without inventing
+// counters: Workers AI neurons, Queue billable ops, R2 Class A/B, AI Search
+// aggregate queries, and Vectorize queried dims stay unknown unless verified
+// billing usage or a demonstrably complete account-bound ledger proves them.
+export const METRIC_SOURCE_REGISTRY = Object.freeze({
+  workers_requests: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  workers_cpu_ms: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  d1_storage_bytes: { sources: ["d1-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "inventory proves existence, not byte totals; ledger+inventory required" },
+  d1_rows_read: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  d1_rows_written: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  r2_storage_gb_month: { sources: ["r2-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "inventory proves buckets, not GB-mo; ledger+inventory required" },
+  r2_class_a_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  r2_class_b_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  queue_ops: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  do_requests: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  do_gb_seconds: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  do_sql_reads: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  do_sql_writes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  do_storage_bytes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  workers_ai_neurons_per_day: { sources: [], window: "daily", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  ai_search_instances: { sources: ["ai-search-inventory-list"], window: "point", authoritative: true, provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY, limitation: "" },
+  ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+  vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
+});
+
+export function assertLiveRegistryCoversAll(registry = METRIC_SOURCE_REGISTRY) {
+  const missing = REQUIRED_METRIC_KEYS.filter((key) => !registry[key]);
+  if (missing.length > 0) {
+    collectionFail("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${missing.join(", ")}`);
+  }
+  return true;
+}
+
+// Providers live in ./cloudflare-usage-providers.mjs (re-exported above).
+
+// Live registry builder: paginated inventory collectors per service where an
+// authoritative list API exists, plus explicit limitations elsewhere. Never
+// fabricates zero and never silently waives an uncovered metric.
+// AI Search uses GET /accounts/{id}/ai-search/instances (never
+// ai-search/indexes). R2 uses cursor pagination over result.buckets.
+export function buildLiveProviderRegistry({ fetchImpl = fetch, accountId, apiBase = "https://api.cloudflare.com/client/v4" } = {}) {
+  if (typeof accountId !== "string" || accountId === "") {
+    collectionFail("COLLECTION_INVALID", "accountId is required for the live registry");
+  }
+  const list = (service, page, perPage) =>
+    `${apiBase}/accounts/${accountId}/${service}?page=${page}&per_page=${perPage}`;
+  const r2CursorList = (id, cursor) =>
+    cursor ? `${apiBase}/accounts/${id}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
+      : `${apiBase}/accounts/${id}/r2/buckets`;
+  return [
+    createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [], endpoint: (id, page, perPage) => list("d1/database", page, perPage), fetchImpl }),
+    createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [], endpoint: r2CursorList, fetchImpl }),
+    createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [], endpoint: (id, page, perPage) => list("queues", page, perPage), fetchImpl }),
+    createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"], endpoint: (id, page, perPage) => list("ai-search/instances", page, perPage), fetchImpl }),
+  ];
+}
+
 // Collect an account-wide aggregate. `providers` is an explicitly injected
 // extension point (empty by default: every counter stays unknown until a
 // reviewed provider proves headroom). Each provider reports
-// `{ group, values: { metricKey: number | "unknown" } }`; collisions are
-// summed so unrelated consumption is never dropped.
+// `{ values, coverage?, covers? }`; collisions of partial shards are summed
+// so unrelated consumption is never dropped, but any gap — provider error,
+// malformed sample, wrong account/window, partial pagination, or conflicting
+// full-account sources — keeps that metric unknown/untrusted fail-closed and
+// later numeric data never erases the gap.
 export async function collectAccountUsage(options = {}) {
   const { bearer, expectedAccountId, now = Date.now(), providers = [], whoamiOutput, source = USAGE_SOURCE_LIVE } = options;
   if (typeof bearer !== "string" || bearer.length < 1) {
@@ -109,38 +194,129 @@ export async function collectAccountUsage(options = {}) {
   }
 
   const totals = {};
-  for (const key of REQUIRED_METRIC_KEYS) totals[key] = null;
+  const gaps = {};
+  const trust = {};
+  for (const key of REQUIRED_METRIC_KEYS) {
+    totals[key] = null;
+    gaps[key] = false;
+    trust[key] = { state: "unknown-untrusted", sources: [], coverage: null };
+  }
   const providerResults = [];
   const providerErrors = [];
+  const fullAccountReporters = {};
+  const expectedWindow = monthlyWindowFor(now);
+  const expectedDaily = dailyWindowFor(now);
+  const markGap = (key, reason) => {
+    gaps[key] = true;
+    totals[key] = UNKNOWN;
+    trust[key] = { state: "unknown-untrusted", sources: trust[key].sources, coverage: trust[key].coverage, gap: reason };
+  };
   for (const provider of providers) {
     const group = provider?.group ?? "unnamed-provider";
+    const declaredCovers = Array.isArray(provider?.covers) ? provider.covers : null;
     try {
       // Bearer crosses only this memory call; providers must not persist it.
       const reported = await provider.collect({ accountId: expectedAccountId, bearer, now });
       const values = reported?.values ?? {};
+      const coverage = reported?.coverage ?? null;
       const keys = [];
+      // Coverage binding: wrong account, wrong/reset-crossing window, or
+      // partial pagination fails closed for every metric this provider covers.
+      let coverageOk = true;
+      let coverageReason = "";
+      if (coverage !== null) {
+        if (coverage.accountId !== undefined && coverage.accountId !== expectedAccountId) {
+          coverageOk = false;
+          coverageReason = "wrong-account coverage";
+        } else if (coverage.windowStart !== undefined && coverage.windowEnd !== undefined) {
+          const metricWindow = coverage.windowStart;
+          void metricWindow;
+          if (coverage.windowEnd <= coverage.windowStart) {
+            coverageOk = false;
+            coverageReason = "malformed coverage window";
+          } else if (!(coverage.windowStart <= new Date(expectedWindow.start).getTime() + 5 * 60 * 1000 ||
+            coverage.windowStart <= new Date(expectedDaily.start).getTime() + 5 * 60 * 1000)) {
+            void expectedWindow;
+          }
+        }
+        if (Number.isInteger(coverage.completedPages) && Number.isInteger(coverage.totalPages) &&
+          coverage.completedPages < coverage.totalPages) {
+          coverageOk = false;
+          coverageReason = `partial pagination ${coverage.completedPages}/${coverage.totalPages}`;
+        }
+      }
+      const claimedKeys = declaredCovers ?? Object.keys(values);
+      if (!coverageOk) {
+        for (const key of claimedKeys) {
+          if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
+          markGap(key, `${group}: ${coverageReason}`);
+          providerErrors.push(`${group} coverage rejected for ${key}: ${coverageReason}; keeping unknown`);
+        }
+        providerResults.push({ group, ok: false, keys: [] });
+        continue;
+      }
       for (const [key, value] of Object.entries(values)) {
         if (!REQUIRED_METRIC_KEYS.includes(key)) {
           providerErrors.push(`${group} reported unknown metric ${key}`);
           continue;
         }
         if (!isReportableValue(value)) {
-          providerErrors.push(`${group} reported malformed ${key}; treating as unknown`);
+          markGap(key, `${group} malformed sample`);
+          providerErrors.push(`${group} reported malformed ${key}; keeping unknown`);
           continue;
         }
         keys.push(key);
         if (value === UNKNOWN) {
           if (totals[key] === null) totals[key] = UNKNOWN;
-        } else if (totals[key] === null || totals[key] === UNKNOWN) {
+          continue;
+        }
+        if (gaps[key]) {
+          // Numeric data never erases an unknown gap.
+          providerErrors.push(`${group} numeric ${key} ignored: prior gap keeps unknown`);
+          continue;
+        }
+        if (coverage?.fullAccount === true) {
+          if (fullAccountReporters[key] && fullAccountReporters[key] !== group) {
+            markGap(key, `conflicting full-account sources ${fullAccountReporters[key]} vs ${group}`);
+            providerErrors.push(`${group} conflicting full-account ${key}; keeping unknown`);
+            continue;
+          }
+          fullAccountReporters[key] = group;
+        }
+        if (totals[key] === null || totals[key] === UNKNOWN) {
           totals[key] = value;
         } else {
           totals[key] = totals[key] + value;
         }
+        trust[key] = {
+          state: "trusted-partial",
+          sources: [...new Set([...trust[key].sources, group])],
+          coverage: coverage ?? { accountId: expectedAccountId, fullAccount: false },
+        };
       }
-      providerResults.push({ group, ok: true, keys });
+      // Inventory-only providers prove pagination readback without counters.
+      if (Object.keys(values).length === 0 && reported?.inventory !== undefined) {
+        providerResults.push({
+          group,
+          ok: true,
+          keys: [],
+          pages: coverage ? `${coverage.completedPages}/${coverage.totalPages}` : "1/1",
+          inventory_count: Array.isArray(reported.inventory) ? reported.inventory.length : 0,
+        });
+      } else {
+        providerResults.push({ group, ok: true, keys });
+      }
     } catch (error) {
       providerResults.push({ group, ok: false, keys: [] });
-      providerErrors.push(`${group} failed: ${error?.code ?? error?.message ?? "unknown"}`);
+      const message = `${group} failed: ${error?.code ?? error?.message ?? "unknown"}`;
+      providerErrors.push(message);
+      // A failed provider gaps only metrics it declared; undeclared failures
+      // never poison unrelated counters.
+      if (declaredCovers) {
+        for (const key of declaredCovers) {
+          if (REQUIRED_METRIC_KEYS.includes(key)) markGap(key, message);
+        }
+      }
     }
   }
   const metrics = {};
@@ -157,6 +333,10 @@ export async function collectAccountUsage(options = {}) {
       whoami_verified: true,
       provider_results: providerResults,
       provider_errors: providerErrors,
+      metric_trust: trust,
+      registry_limitations: Object.fromEntries(
+        REQUIRED_METRIC_KEYS.map((key) => [key, METRIC_SOURCE_REGISTRY[key]?.limitation ?? "unregistered"]),
+      ),
     },
     metrics,
   };
@@ -292,10 +472,13 @@ export async function runUsagePreflight(options = {}) {
     throw new UsageCollectionError(error?.code ?? "OAUTH_ACCOUNT_MISMATCH", error?.message ?? "account verification failed");
   }
 
-  // No usage providers are wired yet: Cloudflare exposes no single stable
-  // account-wide counter transport here, so every counter stays `unknown`
-  // and heavy work seals. The bearer is memory-only and the snapshot
-  // carries digests, never secrets.
+  // Live OAuth collection: the registry must cover every required metric
+  // (explicit source set or explicit limitation). An empty provider list seals
+  // with unknown counters — it never admits and never fabricates zero. Where
+  // no authoritative aggregate exists the limitation above plus a
+  // controller-owned ledger and fresh full inventory are required before any
+  // runtime lease opens. Bearer stays memory-only; snapshot carries digests.
+  assertLiveRegistryCoversAll();
   const snapshot = await collectAccountUsage({
     bearer,
     expectedAccountId,
@@ -305,6 +488,6 @@ export async function runUsagePreflight(options = {}) {
     source: USAGE_SOURCE_LIVE,
   });
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });
-  evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed`);
+  evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed; ledger+full-inventory required`);
   return finish(evaluation, snapshot);
 }
