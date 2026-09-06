@@ -20,16 +20,18 @@ The obsolete draft `09-rust.md` on `agent/launch-09-rust-20260905` (98 lines, ti
 superseded planning draft. It must be **closed, not merged**. Its old two-tree diff
 touches 47 files and must NOT be applied to current main.
 
-Patch-id verification (`git patch-id --stable`) confirms all five old #97
-implementation commits are already present in current main through #99 / #100:
+Patch-id verification (`git -c core.autocrlf=input diff-tree -p <commit> | git -c core.autocrlf=input patch-id --stable`, run via byte-preserving external shell `cmd.exe /d /s /c`) confirms all five old #97
+implementation commits are already present in current main through #99 / #100.
+Pair equality is the content-equivalence invariant; absolute values can vary if a
+pipeline rewrites diff bytes:
 
 | Old #97 commit | Current main commit | Stable patch-id |
 |---|---|---|
 | K1 `6ac2287` | `57ae0ec` "Launch 09 K1: ER-44 initial owner-token parity" | `a905b151553d51af009d61c8af1150ee3ddbde48` |
-| K2a `ffa1799` | `7ead68a` "Launch 09 K2a: ER-40 scope-snapshot-identity.v1 parity" | `a252945ee0b9acc54526a6ed100f90399e328471` |
-| FIX1 `56089de` | `e78cecb` | `4cc5d5f9cecb7c1c0cca141be9fdce7d9d1e5f06` |
-| FIX2 `662271c` | `ac1ebfc` | `4e316147f23bc68178a5c02e7000f449edd5d8bd` |
-| FIX3 `2041363` | `41338ad` | `f2320fbab10e57d711f3a89e387a0c8ffbe92458` |
+| K2a `ffa1799` | `7ead68a` "Launch 09 K2a: ER-40 scope-snapshot-identity.v1 parity" | `d4f1e4cf35e517afd274b090cfb67ebca1a9c286` |
+| FIX1 `56089de` | `e78cecb` | `14911b67d5432783b86d2a715c3d023639cc6f62` |
+| FIX2 `662271c` | `ac1ebfc` | `1cea3c38df91185f2f0551be781d9a5ace6fa424` |
+| FIX3 `2041363` | `41338ad` | `b6a86093623184e3c68bb28c10e62b4645a6bfa2` |
 
 Integration path: Wave 1 integration `ea9b88e` (PR #99) carried the K1 content into
 main; PR #100 merge `7174f47` carried K2a plus FIX1–FIX3, the line-budget ownership
