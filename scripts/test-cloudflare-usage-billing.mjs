@@ -438,8 +438,11 @@ await check("collector admits validated billing with enforced provenance", async
   const snapshot = await collectAccountUsage({
     bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [provider],
   });
+  // Mocked transports flow test-only only: marked, never authoritative.
   assert.equal(snapshot.metrics.workers_requests, 150);
-  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "trusted-partial");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "test-only");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.testOnly, true);
+  assert.equal(snapshot.readback.metric_trust.workers_requests.brand, null);
   assert.equal(snapshot.readback.metric_trust.workers_requests.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
 });
 
@@ -535,10 +538,10 @@ await check("ledger estimates and unauthorized channels stay unknown", async () 
 });
 
 await check("authorized inventory admits only its contracted count", async () => {
-  // Authority now requires a branded registry-built provider: the genuine
-  // AI Search factory product admits its contracted count, while a
-  // lookalike plain object with the same group/kind/provenance strings
-  // stays unknown (see test-usage-aggregation-trust.mjs attacker cases).
+  // Authority now requires the default live transport: genuine factory
+  // products with mocked transports flow test-only (never authoritative),
+  // while lookalike plain objects stay unknown (see attacker cases in
+  // test-usage-aggregation-trust.mjs).
   const inventory = createAiSearchInventoryProvider({
     group: "ai-search-inventory-list",
     covers: ["ai_search_instances"],
@@ -556,7 +559,9 @@ await check("authorized inventory admits only its contracted count", async () =>
   });
   assert.equal(snapshot.metrics.ai_search_instances, 5);
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
-  assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "trusted-partial");
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "test-only");
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.testOnly, true);
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.brand, null);
 });
 
 await check("wrong-path url with expected id in query is never fetched", async () => {

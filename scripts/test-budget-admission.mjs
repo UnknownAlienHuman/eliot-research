@@ -1,7 +1,8 @@
 // Runtime budget admission conformance: deterministic, no live calls.
 // Covers atomic concurrent admission, retry/DLQ accounting, daily/monthly
-// fencing, concurrency leases, safety margin, sealed-vs-activated heavy
-// work, denial redaction, and zero billable calls on block.
+// fencing, concurrency leases, safety margin, sealed-vs-fixture heavy work
+// (only live-family evidence authorizes; fixtures never do), full-cloth
+// forgery denial, denial redaction, and zero billable calls on block.
 //
 // Fictional data only. Run with:
 //   node scripts/test-budget-admission.mjs
@@ -19,9 +20,11 @@ import {
   releaseLease,
 } from "./lib/cloudflare-budget-admission.mjs";
 import {
+  REQUIRED_METRIC_KEYS,
   buildAdmissionReceipt,
   digestAccountId,
   evaluateUsageSnapshot,
+  validateAdmissionReceipt,
 } from "./lib/cloudflare-usage-envelope.mjs";
 import { monthlyWindowFor, dailyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
@@ -127,9 +130,8 @@ await check("safety margin fences the last five percent", async () => {
   assert.equal(last.remaining, 0);
 });
 
-await check("sealed receipt disables heavy work, admitted enables it", async () => {
+await check("sealed and fixture-admitted receipts both disable heavy work", async () => {
   const billableCalls = [];
-  const billable = () => { billableCalls.push("invoked"); };
   const ledger = createBudgetLedger();
   const sealed = { ...admittedReceipt(DAY_ONE), decision: "SEALED", sealed: true };
   const denied = admitHeavyOperation(ledger, {
@@ -142,8 +144,11 @@ await check("sealed receipt disables heavy work, admitted enables it", async () 
   });
   assert.equal(denied.allowed, false);
   assert.equal(denied.reason, "SEALED_NO_HEADROOM_PROOF");
+  // BLOCKER B: a self-consistent fixture ADMITTED receipt (no live
+  // collection) carries snapshot-asserted evidence, so it never authorizes
+  // heavy work either — no billable binding may run.
   const fresh = admittedReceipt(DAY_ONE);
-  const admitted = admitHeavyOperation(ledger, {
+  const fixtureAdmitted = admitHeavyOperation(ledger, {
     operation: "ingestion-commit",
     metricKey: "d1_rows_written",
     quantity: 100,
@@ -151,9 +156,9 @@ await check("sealed receipt disables heavy work, admitted enables it", async () 
     receipt: fresh,
     expectedAccountDigest: DIGEST,
   });
-  if (admitted.allowed) billable();
-  assert.equal(admitted.allowed, true);
-  assert.equal(billableCalls.length, 1);
+  assert.equal(fixtureAdmitted.allowed, false);
+  assert.equal(fixtureAdmitted.reason, "SEALED_NO_HEADROOM_PROOF");
+  assert.equal(billableCalls.length, 0);
   // A stale admitted receipt proves nothing: heavy work stays disabled.
   const staleAdmit = admitHeavyOperation(createBudgetLedger(), {
     operation: "vectorize-query",
@@ -164,7 +169,7 @@ await check("sealed receipt disables heavy work, admitted enables it", async () 
     expectedAccountDigest: DIGEST,
   });
   assert.equal(staleAdmit.allowed, false);
-  assert.equal(billableCalls.length, 1);
+  assert.equal(billableCalls.length, 0);
 });
 
 await check("ledger plus inventory proves headroom without aggregate", async () => {
@@ -215,7 +220,6 @@ await check("denials carry no secrets", async () => {
 });
 
 await check("forged admitted receipts never enable heavy work", async () => {  const billableCalls = [];
-  const billable = () => { billableCalls.push("invoked"); };
   const fresh = admittedReceipt(DAY_ONE);
   const forged = { ...fresh, unknown_metrics: ["queue_ops"] };
   const denied = admitHeavyOperation(createBudgetLedger(), {
@@ -229,7 +233,8 @@ await check("forged admitted receipts never enable heavy work", async () => {  c
   assert.equal(denied.allowed, false);
   assert.equal(denied.reason, "SEALED_NO_HEADROOM_PROOF");
   assert.equal(billableCalls.length, 0);
-  // The honest receipt from the same helper still admits.
+  // The fixture receipt from the same helper is snapshot-asserted (no live
+  // collection), so it authorizes nothing either.
   const admitted = admitHeavyOperation(createBudgetLedger(), {
     operation: "ingestion-commit",
     metricKey: "d1_rows_written",
@@ -238,14 +243,13 @@ await check("forged admitted receipts never enable heavy work", async () => {  c
     receipt: fresh,
     expectedAccountDigest: DIGEST,
   });
-  if (admitted.allowed) billable();
-  assert.equal(admitted.allowed, true);
-  assert.equal(billableCalls.length, 1);
+  assert.equal(admitted.allowed, false);
+  assert.equal(admitted.reason, "SEALED_NO_HEADROOM_PROOF");
+  assert.equal(billableCalls.length, 0);
 });
 
 await check("evidenceless shells and tampered receipts never enable heavy work", async () => {
   const billableCalls = [];
-  const billable = () => { billableCalls.push("invoked"); };
   const attempt = (receipt) => admitHeavyOperation(createBudgetLedger(), {
     operation: "ingestion-commit",
     metricKey: "d1_rows_written",
@@ -288,12 +292,61 @@ await check("evidenceless shells and tampered receipts never enable heavy work",
   delete stripped.metric_evidence;
   delete stripped.snapshot_digest;
   assert.equal(attempt(stripped).allowed, false);
-  // The honest evidence-carrying receipt still admits heavy work.
+  // The evidence-carrying fixture receipt is snapshot-asserted (no live
+  // collection), so even intact it never admits heavy work.
   const admitted = attempt(fresh);
-  assert.equal(admitted.allowed, true);
-  assert.equal(admitted.proof, "FRESH_ADMITTED_AGGREGATE");
-  if (admitted.allowed) billable();
-  assert.equal(billableCalls.length, 1);
+  assert.equal(admitted.allowed, false);
+  assert.equal(admitted.reason, "SEALED_NO_HEADROOM_PROOF");
+  assert.equal(billableCalls.length, 0);
+});
+
+await check("full-cloth forged aggregate never authorizes heavy work", async () => {
+  // BLOCKER B manager chain: a fabricated all-zero snapshot evaluates
+  // ADMITTED, yet the built receipt validates as non-authorizing and heavy
+  // work stays denied with zero billable effects.
+  const metrics = {};
+  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 0;
+  const forgedSnapshot = {
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: DIGEST,
+    account_ref: "cloudflare-account:cccccc…cccc",
+    collected_at: new Date(DAY_ONE - 60_000).toISOString(),
+    window: monthlyWindowFor(DAY_ONE),
+    daily_window: dailyWindowFor(DAY_ONE),
+    source: "wrangler-oauth-live",
+    readback: {},
+    metrics,
+  };
+  const evaluation = evaluateUsageSnapshot(forgedSnapshot, { expectedAccountDigest: DIGEST, now: DAY_ONE });
+  assert.equal(evaluation.decision, "ADMITTED");
+  const receipt = buildAdmissionReceipt({ evaluation, snapshot: forgedSnapshot, now: DAY_ONE, expectedAccountId: ACCOUNT });
+  assert.equal(
+    validateAdmissionReceipt(receipt, { expectedAccountDigest: DIGEST, now: DAY_ONE }).ok,
+    false,
+  );
+  const billableCalls = [];
+  const heavy = admitHeavyOperation(createBudgetLedger(), {
+    operation: "ingestion-commit",
+    metricKey: "workers_requests",
+    quantity: 1,
+    now: DAY_ONE,
+    receipt,
+    expectedAccountDigest: DIGEST,
+  });
+  assert.equal(heavy.allowed, false);
+  assert.equal(heavy.reason, "SEALED_NO_HEADROOM_PROOF");
+  assert.equal(billableCalls.length, 0);
+  // Source tampering breaks the receipt even before the family rule matters.
+  const tampered = structuredClone(receipt);
+  tampered.source = "evil-source";
+  assert.equal(admitHeavyOperation(createBudgetLedger(), {
+    operation: "ingestion-commit",
+    metricKey: "workers_requests",
+    quantity: 1,
+    now: DAY_ONE,
+    receipt: tampered,
+    expectedAccountDigest: DIGEST,
+  }).allowed, false);
 });
 
 console.log(`Budget admission conformance: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

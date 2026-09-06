@@ -138,6 +138,9 @@ await check("live registry includes the billable provider hitting /billable/usag
   });
   assert.equal(snapshot.metrics.workers_requests, "unknown");
   assert.equal(snapshot.metrics.ai_search_instances, 2);
+  // Registry products with mocked transports flow test-only only: the count
+  // is recorded but marked non-authoritative, never trusted-partial.
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "test-only");
   assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("billable-usage")));
 });
 

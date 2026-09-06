@@ -1,8 +1,11 @@
 // Admission-receipt evidence binding: deterministic, mocked, no live calls.
-// FIX9WA: ADMITTED receipts must carry per-metric evidence bound to account,
-// window, provider identity/provenance, coverage, and the snapshot digest. A
-// hand-forged shell without evidence — or any tampering with the binding —
-// fails closed here and can never authorize heavy work downstream.
+// FIX9WA: ADMITTED receipts must carry per-metric evidence bound to source,
+// generation, account, window, provider identity/provenance, coverage, and
+// the snapshot digest. A hand-forged shell without evidence — or any
+// tampering with the binding — fails closed here and can never authorize
+// heavy work downstream. BLOCKER B: ADMITTED additionally requires a live
+// provider evidence family, so even a fully self-consistent
+// snapshot-asserted/test-only receipt never authorizes.
 //
 // Fictional data only (fake hex identifiers). Run with:
 //   node scripts/test-usage-envelope-evidence.mjs
@@ -79,9 +82,28 @@ function honestAdmittedReceipt() {
   return buildAdmissionReceipt({ evaluation, snapshot, now: NOW, expectedAccountId: ACCOUNT });
 }
 
+// A fully live-family receipt: every entry rebuilt as live-trusted with a
+// rebound digest. This is what ADMITTED authorization requires. Structural
+// only — the digest is unkeyed, so this proves integrity of the binding,
+// never proof-of-live-collection (see the receipt-guarantee comment in
+// cloudflare-usage-envelope.mjs).
+function liveFamilyReceipt() {
+  const receipt = honestAdmittedReceipt();
+  receipt.metric_evidence = receipt.metric_evidence.map((entry) => ({
+    ...entry,
+    provider_group: "billable-usage",
+    provider_kind_class: "billing-usage-v2",
+    provenance: "authoritative_billing",
+    coverage_full: true,
+  }));
+  return rebindDigest(receipt);
+}
+
 function rebindDigest(receipt) {
   receipt.snapshot_digest = computeSnapshotDigest({
     accountIdDigest: receipt.account_id_digest,
+    source: receipt.source ?? "missing",
+    generation: receipt.generation ?? "missing",
     windows: receipt.windows,
     metrics: receipt.metrics,
     evidence: receipt.metric_evidence,
@@ -164,8 +186,33 @@ await check("tampered or incoherent evidence never validates as admitted", async
   };
   rebindDigest(crossed);
   assert.equal(validateAdmissionReceipt(crossed, { expectedAccountDigest: DIGEST, now: NOW }).ok, false);
-  // The honest receipt itself still validates.
-  assert.equal(validateAdmissionReceipt(honestAdmittedReceipt(), { expectedAccountDigest: DIGEST, now: NOW }).ok, true);
+  // BLOCKER B: the self-consistent fixture receipt itself (no live
+  // collection) never authorizes: ADMITTED requires a live family, so even
+  // the intact snapshot-asserted receipt validates ok:false.
+  const honest = validateAdmissionReceipt(honestAdmittedReceipt(), { expectedAccountDigest: DIGEST, now: NOW });
+  assert.equal(honest.ok, false);
+  assert.match(honest.reasons.join(";"), /never authorizes heavy work/u);
+  // A fully live-family receipt is what authorization requires: rebuilding
+  // every entry as live-trusted with a rebound digest validates structurally.
+  assert.equal(validateAdmissionReceipt(liveFamilyReceipt(), { expectedAccountDigest: DIGEST, now: NOW }).ok, true);
+});
+
+await check("source and generation tampering breaks the digest binding", async () => {
+  // BLOCKER B: source and generation are bound (not just carried) in the
+  // digest. The live-family baseline below validates, so any refusal after
+  // tampering proves the binding broke — not the family rule.
+  assert.equal(validateAdmissionReceipt(liveFamilyReceipt(), { expectedAccountDigest: DIGEST, now: NOW }).ok, true);
+  for (const mutate of [
+    (receipt) => { receipt.source = "evil-source"; },
+    (receipt) => { receipt.source = "sealed-no-authoritative-aggregate"; },
+    (receipt) => { receipt.generation = "usage-envelope-1999-01-01"; },
+  ]) {
+    const tampered = liveFamilyReceipt();
+    mutate(tampered);
+    const check = validateAdmissionReceipt(tampered, { expectedAccountDigest: DIGEST, now: NOW });
+    assert.equal(check.ok, false);
+    assert.match(check.reasons.join(";"), /digest mismatch|generation binding/u);
+  }
 });
 
 await check("stale, future, or out-of-window receipts never validate as admitted", async () => {

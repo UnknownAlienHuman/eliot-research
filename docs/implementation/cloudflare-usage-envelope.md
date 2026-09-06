@@ -76,24 +76,29 @@ state is never silently waived.
 
 Every admission receipt binds per-metric evidence (metric, value, provider
 group plus kind brand class, provenance, window, full-coverage flag) and a
-snapshot digest over canonical account+windows+metrics+evidence. Validation
-recomputes the digest and requires complete, single-family, trusted evidence
-for `ADMITTED`; an evidenceless shell or any tampering with the binding fails
-closed and can never authorize heavy work.
+snapshot digest over canonical source+generation+account+windows+metrics+
+evidence. Validation recomputes the digest and requires complete, live-family,
+trusted evidence for `ADMITTED`; an evidenceless shell, any tampering with
+the binding (including the source or generation), or a self-consistent
+snapshot-asserted/test-only receipt fails closed and can never authorize
+heavy work.
 
 ### Receipt guarantee: integrity only, never authenticity
 
 The admission receipt scheme proves INTEGRITY / tamper-evidence only — never
 authenticity and never proof-of-live-collection. Anyone knowing the account
-ID can mint a fully self-consistent shell (the digest binds the account
-digest, windows, metrics, and evidence, all of which are computable from
-public shape plus the account ID), so a persisted receipt is a
-tamper-evident locator, not proof that live collection happened. Heavy paths
-stay safe because provisioners, deploy, and the preflight re-collect fresh
-in-process on every run instead of trusting persisted bytes: the sole
-persisted-receipt consumer, `admitHeavyOperation`, must source receipts only
-from the local preflight write path (same-machine, same-run
-`.eliotr-state/cloudflare-usage-admission-receipt.json`), never from
+ID can mint a fully self-consistent shell (the digest binds the source,
+generation, account digest, windows, metrics, and evidence, all of which are
+computable from public shape plus the account ID — the digest is unkeyed), so
+a persisted receipt is a tamper-evident locator, not proof that live
+collection happened. A self-consistent object created without fresh live
+collection NEVER authorizes heavy/billable ops: `ADMITTED` requires a live
+provider evidence family, and test-only / snapshot-asserted families validate
+structurally at most. Heavy paths stay safe because provisioners, deploy, and
+the preflight re-collect fresh in-process on every run instead of trusting
+persisted bytes: the sole persisted-receipt consumer, `admitHeavyOperation`,
+must source receipts only from the local preflight write path (same-machine,
+same-run `.eliotr-state/cloudflare-usage-admission-receipt.json`), never from
 committed fixtures, transported files, or cross-machine copies. A receipt
 that arrives by any other provenance is untrusted input and must be
 re-collected, not validated-then-trusted.
@@ -139,11 +144,23 @@ Fail-closed rules (all typed unknown, never zero):
 
 A numeric enters a snapshot only through an authorized channel, recorded per
 metric as enforced trust state. Authority derives from module-private brand
-registries populated only inside the approved factory closures — never from
-caller-asserted group/kind/provenance strings. A plain, copied,
-spread-cloned, proxied, or lookalike-group object carries no brand and fails
-closed as unknown/untrusted; factory products are frozen so
-post-construction mutation cannot hijack a branded identity:
+registries populated only inside the approved factory closures AND only when
+the product runs on the internal default live transport (default endpoint
+builders plus the default global fetch plus the default frozen-empty metric
+map, selected by omitting every transport key) — never from caller-asserted
+group/kind/provenance strings, and never from factory construction alone. A
+plain, copied, spread-cloned, proxied, or lookalike-group object carries no
+brand and fails closed as unknown/untrusted; so does any genuine factory
+product built with caller-supplied endpoint/fetch/transport/metricMap seams,
+which instead takes the explicitly test-only non-authoritative path
+(test-only trust state end-to-end: no brand, snapshot-asserted receipt
+evidence that can never authorize heavy work). Factory products are frozen so
+post-construction mutation cannot hijack a branded identity. What brand does
+and does not prove: a brand proves the product was constructed for the
+default live transport in this process — it does not prove any particular
+fetch succeeded, any counter is correct, or any persisted receipt derives
+from live collection; counters are still validated per-row (billing) and
+per-page (inventory), and receipts are still integrity-only locators (above):
 
 - `authoritative_billing` only from the branded Usage v2 provider above;
 - `authoritative_inventory` only for branded registry-authorized counts (AI
@@ -172,7 +189,11 @@ The live registry (`buildLiveProviderRegistry`) wires all four inventory
 collectors plus the Usage v2 billing provider: the billing endpoint carries
 account-bound `from`/`to` derived from the intended interval (month start
 through start-of-today, never a future month end, never over 31 days) with
-the reviewed triple mapping. A registry-level billing failure (no
+the reviewed triple mapping. Called with defaults (accountId only) every
+product runs on the default live transport and stays branded, so live
+production keeps working; any caller-supplied `fetchImpl`/`apiBase`/
+`billableMetricMap` override selects the explicit test wiring instead, whose
+products are functional but unbranded test-only. A registry-level billing failure (no
 entitlement etc.) gaps the declared billing covers, leaving those metrics
 unknown rather than dropping the provider silently; billing never covers
 `ai_search_instances`, so an outage cannot clobber the inventory count.
@@ -193,7 +214,9 @@ atomic check-and-reserve against the envelope share minus a 5% safety
 margin, daily fencing at UTC midnight, monthly fencing at the UTC month
 boundary, retry/DLQ delivery accounting against Queue operations,
 concurrency leases (default cap 4), and heavy-operation admission only on a
-fresh `ADMITTED` receipt or a fresh ledger-plus-inventory proof. Denials are
+fresh `ADMITTED` receipt carrying a live provider evidence family (test-only
+and snapshot-asserted families never authorize, no matter how
+self-consistent) or a fresh ledger-plus-inventory proof. Denials are
 non-secret; the caller must never invoke the billable binding when blocked.
 
 ## Exact deployment order

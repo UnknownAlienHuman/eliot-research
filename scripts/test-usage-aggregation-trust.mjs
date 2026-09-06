@@ -17,6 +17,7 @@ import {
   createPaginatedInventoryProvider,
   isAiSearchInventoryProvider,
   isInventoryProvider,
+  isTestTransportProvider,
   isUsageVBillingProvider,
 } from "./lib/cloudflare-usage-collection.mjs";
 
@@ -174,6 +175,15 @@ await check("live registry builds inventory collectors plus billing and rejects 
   assert.ok(registry.some((provider) => provider.group === "ai-search-inventory-list"));
   assert.ok(registry.some((provider) => provider.group === "billable-usage" && provider.kind === "billing-usage"));
   assert.ok(registry.every((provider) => Object.isFrozen(provider)));
+  // Explicit test transports stay test-only: no brand, never authoritative.
+  assert.ok(registry.every((provider) => !isInventoryProvider(provider) && !isUsageVBillingProvider(provider)));
+  assert.ok(registry.every((provider) => isTestTransportProvider(provider)));
+  // Live defaults (no transport overrides) stay branded: production keeps
+  // working, and brand is granted only on the default live transport.
+  const live = buildLiveProviderRegistry({ accountId: ACCOUNT });
+  assert.equal(live.length, 5);
+  assert.ok(live.every((provider) => isInventoryProvider(provider) || isUsageVBillingProvider(provider)));
+  assert.ok(live.every((provider) => !isTestTransportProvider(provider)));
   assert.throws(() => buildLiveProviderRegistry({ accountId: "" }), /accountId is required/u);
   void digestAccountId;
 });
@@ -230,14 +240,15 @@ await check("forged billing providers never admit (plain/copy/spread/Proxy)", as
   }
   // Proxy around a genuinely branded provider: the proxy identity carries no
   // brand, so even genuine collect code behind the membrane stays untrusted.
+  // (The genuine product below uses live-default construction — no transport
+  // overrides — so it carries the brand without touching the network; it is
+  // never collected here.)
   const genuine = createBillableUsageProvider({
     group: "billable-usage",
     covers: ["workers_requests"],
-    endpoint: (id, from, to) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=${from}&to=${to}`,
-    fetchImpl: async () => ({ status: 200, json: async () => ({ success: true, result: [] }) }),
-    metricMap: BILLING_MAP,
   });
   assert.equal(isUsageVBillingProvider(genuine), true);
+  assert.equal(isTestTransportProvider(genuine), false);
   const membrane = new Proxy(genuine, {
     get: (target, property) => property === "collect" ? forgedBillingCollect() : target[property],
   });
@@ -280,14 +291,18 @@ await check("branded providers are frozen and duplicates stay safe", async () =>
     }),
   });
   const endpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`;
+  // Caller-supplied transports take the explicitly test-only path: the
+  // product is functional and frozen but carries no brand, so its numerics
+  // flow marked test-only and can never authorize heavy work.
   const branded = createAiSearchInventoryProvider({
     group: "ai-search-inventory-list",
     covers: ["ai_search_instances"],
     endpoint,
     fetchImpl,
   });
-  assert.equal(isInventoryProvider(branded), true);
-  assert.equal(isAiSearchInventoryProvider(branded), true);
+  assert.equal(isInventoryProvider(branded), false);
+  assert.equal(isAiSearchInventoryProvider(branded), false);
+  assert.equal(isTestTransportProvider(branded), true);
   assert.equal(Object.isFrozen(branded), true);
   assert.throws(() => { branded.collect = async () => ({ values: {}, coverage: null }); });
   assert.throws(() => { branded.covers.push("workers_requests"); });
@@ -297,11 +312,39 @@ await check("branded providers are frozen and duplicates stay safe", async () =>
     providers: [branded, branded],
   });
   assert.equal(snapshot.metrics.ai_search_instances, 2);
-  assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "trusted-partial");
+  const trust = snapshot.readback.metric_trust.ai_search_instances;
+  assert.equal(trust.state, "test-only");
+  assert.equal(trust.testOnly, true);
+  assert.equal(trust.brand, null);
   assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("duplicate")));
+  // Live-default construction (no transport overrides) carries the brand.
+  const live = createAiSearchInventoryProvider({
+    group: "ai-search-inventory-list",
+    covers: ["ai_search_instances"],
+  });
+  assert.equal(isInventoryProvider(live), true);
+  assert.equal(isAiSearchInventoryProvider(live), true);
+  assert.equal(isTestTransportProvider(live), false);
+  // Copies, spreads, and Proxies of either class carry no brand and no
+  // test-only mark: identity alone confers both, strings never do.
+  for (const [shape, copy] of [
+    ["spread", { ...branded }],
+    ["assign", Object.assign({}, branded)],
+    ["proxy", new Proxy(branded, {})],
+  ]) {
+    assert.equal(isInventoryProvider(copy), false, shape);
+    assert.equal(isTestTransportProvider(copy), false, shape);
+  }
+  for (const [shape, copy] of [
+    ["spread", { ...live }],
+    ["proxy", new Proxy(live, {})],
+  ]) {
+    assert.equal(isInventoryProvider(copy), false, shape);
+    assert.equal(isTestTransportProvider(copy), false, shape);
+  }
 });
 
-await check("genuine branded billing and inventory admit through the collector", async () => {
+await check("genuine factory billing with mocked transports stays test-only, never authoritative", async () => {
   const rows = [1, 2, 3, 4, 5].map((day) => ({
     BillingAccountId: ACCOUNT,
     BillingAccountName: "Fictional Account",
@@ -315,6 +358,10 @@ await check("genuine branded billing and inventory admit through the collector",
     x_BillableMetricId: "workers_standard_requests",
     x_BillableMetricName: "workers_standard_requests",
   }));
+  // BLOCKER A negative: custom endpoint + fetchImpl + metricMap through the
+  // genuine billing factory is still caller-supplied transport, so the
+  // product is unbranded test-only and its metric never becomes
+  // authoritative, even though collection itself succeeds.
   const billing = createBillableUsageProvider({
     group: "billable-usage",
     covers: ["workers_requests"],
@@ -322,15 +369,42 @@ await check("genuine branded billing and inventory admit through the collector",
     fetchImpl: async () => ({ status: 200, json: async () => ({ success: true, result: rows }) }),
     metricMap: BILLING_MAP,
   });
-  assert.equal(isUsageVBillingProvider(billing), true);
+  assert.equal(isUsageVBillingProvider(billing), false);
+  assert.equal(isTestTransportProvider(billing), true);
   assert.equal(Object.isFrozen(billing), true);
   const snapshot = await collectAccountUsage({
     bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: whoami, providers: [billing],
   });
   assert.equal(snapshot.metrics.workers_requests, 150);
-  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "trusted-partial");
-  assert.equal(snapshot.readback.metric_trust.workers_requests.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
-  assert.equal(snapshot.readback.metric_trust.workers_requests.brand, "billing-usage-v2");
+  const trust = snapshot.readback.metric_trust.workers_requests;
+  assert.equal(trust.state, "test-only");
+  assert.equal(trust.testOnly, true);
+  assert.equal(trust.brand, null);
+  assert.equal(trust.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+  // BLOCKER A negative: injected AI Search transport through the genuine
+  // factory likewise never yields authoritative inventory.
+  const forgedInventory = createAiSearchInventoryProvider({
+    group: "ai-search-inventory-list",
+    covers: ["ai_search_instances"],
+    endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
+    fetchImpl: async () => ({
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [{ id: "only" }],
+        result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 },
+      }),
+    }),
+  });
+  assert.equal(isInventoryProvider(forgedInventory), false);
+  assert.equal(isTestTransportProvider(forgedInventory), true);
+  const forged = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: whoami, providers: [forgedInventory],
+  });
+  assert.equal(forged.metrics.ai_search_instances, 1);
+  assert.equal(forged.readback.metric_trust.ai_search_instances.state, "test-only");
+  assert.equal(forged.readback.metric_trust.ai_search_instances.testOnly, true);
+  assert.equal(forged.readback.metric_trust.ai_search_instances.brand, null);
 });
 
 console.log(`Aggregation trust: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

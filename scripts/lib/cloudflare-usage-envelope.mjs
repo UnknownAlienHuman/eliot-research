@@ -199,6 +199,20 @@ const RECEIPT_EVIDENCE_CONTRACT = {
   clockSkewMs: CLOCK_SKEW_MS,
 };
 
+// Live-family predicate for authorization boundaries: true only when every
+// per-metric evidence entry carries a live provider brand class
+// (billing-usage-v2 or a registry inventory class). Test-only and
+// snapshot-asserted families return false: they validate structurally at
+// most and never authorize heavy work. The heavy gate re-checks this
+// explicitly even though receipt validation already enforces it.
+export function isLiveEvidenceFamily(receipt) {
+  const evidence = receipt?.metric_evidence;
+  if (!Array.isArray(evidence) || evidence.length === 0) return false;
+  return evidence.every((entry) =>
+    entry?.provider_kind_class === RECEIPT_EVIDENCE_CONTRACT.billingKindClass ||
+    RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses.includes(entry?.provider_kind_class));
+}
+
 // Access contour (one owner-only hostname application, 24h session) is not a
 // usage counter: it is enforced by the Access provisioner plus the core
 // provisioner cross-check. The preflight records receipt presence only.
@@ -387,8 +401,11 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
 // Never carries bearers, tokens, emails, or exact account identifiers.
 // Every receipt binds per-metric evidence (metric, value, provider
 // group+kind brand class, provenance, window, coverage) plus a snapshot
-// digest over canonical account+windows+metrics+evidence, so validation can
-// recompute the binding and refuse forged or tampered shells.
+// digest over canonical source+generation+account+windows+metrics+evidence,
+// so validation can recompute the binding and refuse forged or tampered
+// shells. ADMITTED additionally requires a live provider evidence family
+// (see the helper): test-only and snapshot-asserted families never authorize
+// heavy work, no matter how self-consistent.
 export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), expectedAccountId }) {
   if (!evaluation || !snapshot) throw new Error("evaluation and snapshot are required");
   const metrics = { ...(snapshot.metrics ?? {}) };
@@ -396,9 +413,12 @@ export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), 
     monthly: snapshot.window ?? null,
     daily: snapshot.daily_window ?? null,
   };
+  const source = snapshot.source ?? "unknown";
   const metricEvidence = buildMetricEvidence(snapshot, RECEIPT_EVIDENCE_CONTRACT);
   const snapshotDigest = computeSnapshotDigest({
     accountIdDigest: snapshot.account_id_digest ?? "missing",
+    source,
+    generation: USAGE_ENVELOPE_GENERATION,
     windows,
     metrics,
     evidence: metricEvidence,
@@ -414,7 +434,7 @@ export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), 
       : "cloudflare-account:missing",
     collected_at: snapshot.collected_at ?? null,
     windows,
-    source: snapshot.source ?? "unknown",
+    source,
     metrics,
     metric_evidence: metricEvidence,
     snapshot_digest: snapshotDigest,
@@ -439,12 +459,19 @@ export async function writeAdmissionReceiptAtomic(receiptPath, receipt) {
 export function validateAdmissionReceipt(receipt, options = {}) {
   // Receipt-guarantee discipline (integrity only, never authenticity): this
   // validator proves tamper-evidence — the digest binding recomputes over the
-  // carried account/windows/metrics/evidence — not proof-of-live-collection.
-  // Anyone knowing the account ID can mint a self-consistent shell, so a
-  // persisted receipt is a tamper-evident locator, not live evidence. Heavy
-  // paths stay safe because provisioners/deploy/preflight re-collect fresh
-  // in-process; the sole persisted-receipt consumer (admitHeavyOperation)
-  // must source receipts only from the local preflight write path.
+  // carried source, generation, account, windows, metrics, and evidence — not
+  // proof-of-live-collection. Anyone knowing the account ID can mint a
+  // self-consistent shell (every digest input is computable from public shape
+  // plus the account ID; the digest is unkeyed), so a persisted receipt is a
+  // tamper-evident locator, never proof that live collection happened. A
+  // self-consistent object created without fresh live collection NEVER
+  // authorizes heavy/billable ops: ADMITTED requires a live provider evidence
+  // family (test-only and snapshot-asserted families validate structurally at
+  // most and are refused authorization here), and the heavy gate re-checks
+  // the family explicitly. Heavy paths stay safe because provisioners/deploy/
+  // preflight re-collect fresh in-process; the sole persisted-receipt
+  // consumer (admitHeavyOperation) must source receipts only from the local
+  // preflight write path.
   const { expectedAccountDigest, now = Date.now(), maxAgeMs = RECEIPT_MAX_AGE_MS } = options;
   if (typeof expectedAccountDigest !== "string" || expectedAccountDigest === "") {
     throw new Error("expectedAccountDigest is required for receipt binding");

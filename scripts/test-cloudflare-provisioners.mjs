@@ -332,6 +332,18 @@ try {
     assert.equal(nodeOptionsHasLoaderToken("--experimental-loader ./b.mjs"), true);
     assert.equal(nodeOptionsHasLoaderToken("--require some-module"), true);
     assert.equal(nodeOptionsHasLoaderToken("-r some-module"), true);
+    // Windows-relevant and case-variant regressions: attached-short values,
+    // case-variant heads, and fuzzy loader-like spellings are never benign
+    // (Node itself rejects some of these pre-execution; the detector still
+    // refuses to call them benign).
+    assert.equal(nodeOptionsHasLoaderToken("-rC:\\path"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--IMPORT"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--Require"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--IMPORT x"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--Require x"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--importt ./shim.mjs"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--requier some-module"), true);
+    assert.equal(nodeOptionsHasLoaderToken("--LOADR ./shim.mjs"), true);
     assert.equal(stripNodeOptionsLoaderTokens(undefined), undefined);
     assert.equal(stripNodeOptionsLoaderTokens("--max-old-space-size=4096 --trace-warnings"),
       "--max-old-space-size=4096 --trace-warnings");
@@ -342,6 +354,14 @@ try {
     assert.equal(stripNodeOptionsLoaderTokens("--loader ./a.mjs --experimental-loader ./b.mjs --require c --trace-warnings"),
       "--trace-warnings");
     assert.equal(stripNodeOptionsLoaderTokens("--import ./shim.mjs"), "");
+    // Attached-short, case-variant, and fuzzy forms strip to nothing (or to
+    // the surviving benign flags), and genuinely benign flags — including
+    // Windows paths — survive byte-wise.
+    assert.equal(stripNodeOptionsLoaderTokens("-rC:\\path"), "");
+    assert.equal(stripNodeOptionsLoaderTokens("--IMPORT ./shim.mjs --max-old-space-size=4096"), "--max-old-space-size=4096");
+    assert.equal(stripNodeOptionsLoaderTokens("--Require some-module"), "");
+    assert.equal(stripNodeOptionsLoaderTokens("--importt ./shim.mjs --trace-warnings"), "--trace-warnings");
+    assert.equal(stripNodeOptionsLoaderTokens("--cpu-prof-dir C:\\prof --max-old-space-size=4096"), "--cpu-prof-dir C:\\prof --max-old-space-size=4096");
     const scrubbed = scrubTokenEnv({ CLOUDFLARE_API_TOKEN: "secret",
       NODE_OPTIONS: "--import ./shim.mjs --max-old-space-size=4096" });
     assert.equal(scrubbed.CLOUDFLARE_API_TOKEN, undefined);

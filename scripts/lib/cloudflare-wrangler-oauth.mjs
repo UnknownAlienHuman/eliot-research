@@ -235,16 +235,28 @@ export function injectOAuthBearer(env, bearer) {
 // `--loader` / `--experimental-loader` / `--require`) from NODE_OPTIONS at
 // startup, so a poisoned env would silently register the test-only spawn gate
 // (test-usage-gate-shim.mjs) inside production children. The helpers below
-// detect and strip ONLY those loader flags plus their values; every benign
-// flag (--max-old-space-size, --trace-warnings, ...) passes through intact,
-// and a missing NODE_OPTIONS stays missing. Heads are compared after
-// stripping leading dashes, so `-r`/`--require`, `--import value`, and
-// `--import=value` prefix forms are all covered.
+// detect and strip those loader flags plus their values, including
+// case-variant (`--IMPORT`, `--Require`), attached-short (`-rC:\path`, value
+// glued to the flag), and fuzzy loader-like spellings (typosquats within
+// edit distance 2 of a loader core, or heads containing one); unknown
+// loader-like spellings fail closed = strip, never keep. Every genuinely
+// benign flag (--max-old-space-size, --trace-warnings, ...) passes through
+// byte-wise intact, and a missing NODE_OPTIONS stays missing. Heads are
+// compared case-insensitively after stripping leading dashes, so `-r`/
+// `--require`, `--import value`, and `--import=value` forms are all covered.
+// Note Node itself rejects some of these forms pre-execution — the detector
+// still never calls them benign.
 const NODE_OPTIONS_LOADER_FLAGS = new Set(["import", "loader", "experimental-loader", "require", "r"]);
+
+// Loader cores for the fuzzy fail-closed rule: any flag head that contains
+// one of these (or sits within edit distance 2 of one) is loader-like.
+const NODE_OPTIONS_LOADER_CORES = ["experimental-loader", "import", "loader", "require"];
 
 // Quote-aware NODE_OPTIONS tokenizer (mirrors Node's own splitting closely
 // enough for flag detection: whitespace separates, single/double quotes group,
-// backslash escapes the next character).
+// backslash escapes the next character inside double quotes only). Outside
+// quotes a backslash is literal, so Windows paths (C:\path) survive
+// byte-wise instead of being unescaped into a different value.
 function splitNodeOptionsTokens(text) {
   const tokens = [];
   let current = "";
@@ -253,7 +265,7 @@ function splitNodeOptionsTokens(text) {
   for (let index = 0; index < text.length; index += 1) {
     const ch = text[index];
     if (quote !== null) {
-      if (ch === "\\" && index + 1 < text.length) {
+      if (quote === '"' && ch === "\\" && index + 1 < text.length) {
         current += text[index + 1];
         index += 1;
       } else if (ch === quote) {
@@ -271,10 +283,6 @@ function splitNodeOptionsTokens(text) {
         current = "";
         active = false;
       }
-    } else if (ch === "\\" && index + 1 < text.length) {
-      current += text[index + 1];
-      index += 1;
-      active = true;
     } else {
       current += ch;
       active = true;
@@ -285,28 +293,75 @@ function splitNodeOptionsTokens(text) {
 }
 
 function nodeOptionsFlagHead(token) {
-  return String(token).split("=", 1)[0].replace(/^-+/u, "");
+  return String(token).split("=", 1)[0].replace(/^-+/u, "").toLowerCase();
+}
+
+// Attached-short loader value: a single-dash `-r` with the value glued on
+// (`-rC:\path`, `-r./shim`). Long `--` flags and `=` forms never take this
+// path (they are handled by head matching instead).
+function nodeOptionsAttachedShortLoader(token) {
+  const text = String(token);
+  if (text.startsWith("--")) return false;
+  return /^-r[^=\s]/iu.test(text);
+}
+
+function nodeOptionsEditDistance(left, right) {
+  const rows = left.length + 1;
+  const cols = right.length + 1;
+  const table = Array.from({ length: rows }, (_, row) => [row, ...new Array(cols - 1).fill(0)]);
+  for (let col = 1; col < cols; col += 1) table[0][col] = col;
+  for (let row = 1; row < rows; row += 1) {
+    for (let col = 1; col < cols; col += 1) {
+      const cost = left[row - 1] === right[col - 1] ? 0 : 1;
+      table[row][col] = Math.min(
+        table[row - 1][col] + 1,
+        table[row][col - 1] + 1,
+        table[row - 1][col - 1] + cost,
+      );
+    }
+  }
+  return table[left.length][right.length];
+}
+
+// Fail-closed loader-likeness on a normalized (lowercased, dash-stripped,
+// value-split) head: exact known flags, heads containing a loader core (or
+// contained in one, for truncated spellings), and typosquats within edit
+// distance 2. Short heads (length < 4, besides the exact `r`) never fuzzy
+// match, so single-letter benign flags stay untouched.
+function nodeOptionsLoaderLikeHead(head) {
+  if (head === "") return false;
+  if (NODE_OPTIONS_LOADER_FLAGS.has(head)) return true;
+  if (head.length < 4) return false;
+  for (const core of NODE_OPTIONS_LOADER_CORES) {
+    if (head.includes(core) || core.includes(head)) return true;
+    if (nodeOptionsEditDistance(head, core) <= 2) return true;
+  }
+  return false;
+}
+
+function nodeOptionsTokenIsLoader(token) {
+  return nodeOptionsAttachedShortLoader(token) || nodeOptionsLoaderLikeHead(nodeOptionsFlagHead(token));
 }
 
 // True when the raw NODE_OPTIONS value carries any module-loader token. Used
 // by the test-only gate hooks (Layer 1 refusal) and by the stripping helper.
 export function nodeOptionsHasLoaderToken(raw) {
   if (raw === undefined || raw === null) return false;
-  return splitNodeOptionsTokens(String(raw))
-    .some((token) => NODE_OPTIONS_LOADER_FLAGS.has(nodeOptionsFlagHead(token)));
+  return splitNodeOptionsTokens(String(raw)).some(nodeOptionsTokenIsLoader);
 }
 
 // Remove loader flags plus their values (`--import value` swallows the next
-// token; `--import=value` is a single token). Benign tokens are re-emitted in
-// order, quoted only when they contain whitespace or quotes.
+// token; `--import=value` and attached-short `-rPATH` are single tokens).
+// Benign tokens are re-emitted in order, quoted only when they contain
+// whitespace or quotes.
 export function stripNodeOptionsLoaderTokens(raw) {
   if (raw === undefined || raw === null) return raw;
   const kept = [];
   const tokens = splitNodeOptionsTokens(String(raw));
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index];
-    if (NODE_OPTIONS_LOADER_FLAGS.has(nodeOptionsFlagHead(token))) {
-      if (!token.includes("=")) index += 1;
+    if (nodeOptionsTokenIsLoader(token)) {
+      if (!token.includes("=") && !nodeOptionsAttachedShortLoader(token)) index += 1;
       continue;
     }
     kept.push(/[\s"']/u.test(token) ? `"${token.replace(/"/gu, '\\"')}"` : token);

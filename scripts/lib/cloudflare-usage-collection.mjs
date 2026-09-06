@@ -40,6 +40,9 @@ import {
   billingBrandClass,
   isUsageVBillingProvider,
 } from "./cloudflare-usage-billable.mjs";
+import {
+  isTestTransportProvider,
+} from "./cloudflare-usage-transport-class.mjs";
 
 export { METRIC_PROVENANCE, UNKNOWN_REASONS };
 export { METRIC_SOURCE_REGISTRY, assertLiveRegistryCoversAll };
@@ -66,6 +69,9 @@ export {
   createBillableUsageProvider,
   isUsageVBillingProvider,
 } from "./cloudflare-usage-billable.mjs";
+export {
+  isTestTransportProvider,
+} from "./cloudflare-usage-transport-class.mjs";
 
 export const USAGE_SOURCE_LIVE = "wrangler-oauth-live";
 export const USAGE_SOURCE_SEALED = "sealed-no-authoritative-aggregate";
@@ -270,9 +276,16 @@ export async function collectAccountUsage(options = {}) {
       // Billing admits only the branded Usage v2 provider with full account
       // coverage; inventory admits only branded registry-built providers with
       // full account coverage. Plain, copied, spread-cloned, proxied, or
-      // lookalike-group objects carry no brand and fail closed here.
+      // lookalike-group objects carry no brand and fail closed here. Genuine
+      // factory products built with caller-supplied transports take the
+      // explicitly test-only path instead: their numerics flow (so envelope,
+      // deploy, and provisioner tests exercise the real pipeline) but the
+      // trust record is marked test-only end-to-end (test-only state, no
+      // brand), which builds snapshot-asserted receipt evidence that can
+      // never authorize heavy work.
       let channelProvenance = METRIC_PROVENANCE.UNAVAILABLE;
       let channelBrand = null;
+      let channelTestOnly = false;
       const refuseChannel = (reason, refusedProvenance) => {
         for (const key of claimedKeys) {
           if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
@@ -282,19 +295,23 @@ export async function collectAccountUsage(options = {}) {
         providerResults.push({ group, ok: false, keys: [] });
       };
       if (provenance === METRIC_PROVENANCE.AUTHORITATIVE_BILLING) {
-        if (!isUsageVBillingProvider(provider) || coverage?.fullAccount !== true) {
+        const testOnly = isTestTransportProvider(provider);
+        if ((!isUsageVBillingProvider(provider) && !testOnly) || coverage?.fullAccount !== true) {
           refuseChannel("billing authority requires the validated Usage v2 provider with full account coverage", provenance);
           continue;
         }
         channelProvenance = provenance;
-        channelBrand = billingBrandClass(provider);
+        channelBrand = testOnly ? null : billingBrandClass(provider);
+        channelTestOnly = testOnly;
       } else if (provenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY) {
-        if (!isInventoryProvider(provider) || coverage?.fullAccount !== true) {
+        const testOnly = isTestTransportProvider(provider);
+        if ((!isInventoryProvider(provider) && !testOnly) || coverage?.fullAccount !== true) {
           refuseChannel("inventory authority requires a registry-built inventory provider with full account coverage", provenance);
           continue;
         }
         channelProvenance = provenance;
-        channelBrand = inventoryBrandClass(provider);
+        channelBrand = testOnly ? null : inventoryBrandClass(provider);
+        channelTestOnly = testOnly;
       } else if (provenance === METRIC_PROVENANCE.LEDGER_ESTIMATE) {
         refuseChannel("ledger estimates stay unknown without a complete account-bound ledger contract", provenance);
         continue;
@@ -360,12 +377,13 @@ export async function collectAccountUsage(options = {}) {
           totals[key] = totals[key] + value;
         }
         trust[key] = {
-          state: "trusted-partial",
+          state: channelTestOnly ? "test-only" : "trusted-partial",
           sources: [...new Set([...trust[key].sources, group])],
           coverage: coverage ?? { accountId: expectedAccountId, fullAccount: false },
           gap: null,
           provenance: channelProvenance,
           brand: channelBrand,
+          ...(channelTestOnly ? { testOnly: true } : null),
         };
       }
       // Inventory-only providers prove pagination readback without counters.

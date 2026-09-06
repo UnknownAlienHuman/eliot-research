@@ -20,6 +20,13 @@ import {
   safeFetchMeta,
 } from "./cloudflare-usage-providers.mjs";
 import {
+  LIVE_API_BASE,
+  callerSuppliedTransportKeys,
+  defaultBillingEndpoint,
+  isTestTransportProvider,
+  markTestTransport,
+} from "./cloudflare-usage-transport-class.mjs";
+import {
   createAiSearchInventoryProvider,
   createPaginatedInventoryProvider,
   createR2CursorInventoryProvider,
@@ -27,17 +34,27 @@ import {
 
 // Module-PRIVATE billing brand registry: the non-caller-assertable
 // construction capability for AUTHORITATIVE_BILLING. Populated ONLY inside
-// createBillableUsageProvider below; no registrar is exported, so a forged
-// plain object with kind "billing-usage" can never carry trust. Products are
-// frozen so post-construction collect-replacement cannot hijack identity.
+// createBillableUsageProvider below AND only when the product runs on the
+// internal default live transport (default billing endpoint, default global
+// fetch, default frozen-empty REVIEWED_BILLABLE_TRIPLES map, unpinned
+// window); any caller-supplied endpoint/fetchImpl/metricMap/expectedWindow/
+// apiBase key yields an unbranded test-only product instead. No registrar is
+// exported, so a forged plain object with kind "billing-usage" can never
+// carry trust, and genuine factory construction with mocked transports can
+// never produce production-authoritative evidence either. Products are frozen
+// so post-construction collect-replacement cannot hijack identity.
 const BILLING_BRANDS = new WeakSet();
 
 export const BILLING_BRAND_CLASS = "billing-usage-v2";
 
 // Read-only predicates: the sole trust queries for the billing channel.
+// isTestTransportProvider (re-exported from the transport-class module) is
+// the sole test-only query and never confers authority.
 export function isUsageVBillingProvider(provider) {
   return BILLING_BRANDS.has(provider);
 }
+
+export { isTestTransportProvider };
 
 export function billingBrandClass(provider) {
   return BILLING_BRANDS.has(provider) ? BILLING_BRAND_CLASS : null;
@@ -81,8 +98,29 @@ function billingDayDate(millis) {
   return new Date(millis).toISOString().slice(0, 10);
 }
 
-export function createBillableUsageProvider({ group = "billable-usage", covers = [], endpoint, fetchImpl = fetch, metricMap = {}, expectedWindow = null } = {}) {
-  if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "billable provider endpoint is required");
+export function createBillableUsageProvider(options = {}) {
+  const {
+    group = "billable-usage",
+    covers = [],
+    endpoint,
+    fetchImpl = globalThis.fetch,
+    metricMap = {},
+    expectedWindow = null,
+  } = options ?? {};
+  // Brand is granted ONLY on the internal default live transport: no caller
+  // supplied any transport/map key, so the product uses the default billing
+  // endpoint, the default global fetch, and the default frozen-empty reviewed
+  // triple map with an unpinned (month-start through start-of-today) window —
+  // exactly the live semantics below. ANY caller-supplied key selects the
+  // test-only path: fully functional collection, identity-marked test-only,
+  // never branded. Explicitly passing even a default value still counts as
+  // caller-supplied (key presence, never value comparison).
+  const liveTransport = callerSuppliedTransportKeys(options).length === 0;
+  const liveEndpoint = liveTransport ? defaultBillingEndpoint(LIVE_API_BASE) : endpoint;
+  if (typeof liveEndpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "billable provider endpoint is required");
+  const liveFetch = liveTransport ? globalThis.fetch : fetchImpl;
+  const liveMap = liveTransport ? REVIEWED_BILLABLE_TRIPLES : metricMap;
+  const liveWindow = liveTransport ? null : expectedWindow;
   const product = {
     group,
     covers: [...covers],
@@ -94,9 +132,9 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       const monthStartMs = Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth(), 1);
       const todayStartMs = Date.UTC(clock.getUTCFullYear(), clock.getUTCMonth(), clock.getUTCDate());
       let expectedStartMs = null, expectedEndMs = null;
-      if (expectedWindow !== null && expectedWindow !== undefined) {
-        expectedStartMs = parseBillingTime(expectedWindow.start);
-        expectedEndMs = parseBillingTime(expectedWindow.end);
+      if (liveWindow !== null && liveWindow !== undefined) {
+        expectedStartMs = parseBillingTime(liveWindow.start);
+        expectedEndMs = parseBillingTime(liveWindow.end);
         if (expectedStartMs === null || expectedEndMs === null || !(expectedStartMs < expectedEndMs)) {
           throw new ProviderFailure("WINDOW_MISMATCH", `${group} expected window is not a valid interval`);
         }
@@ -114,7 +152,7 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       }
       const fromDate = billingDayDate(queryFromMs);
       const toDate = billingDayDate(queryToMs);
-      let url = endpoint(accountId, fromDate, toDate);
+      let url = liveEndpoint(accountId, fromDate, toDate);
       // Structural endpoint binding: the exact `/accounts/{accountId}/`
       // path segment must match and the pathname must carry
       // `/billable/usage`. An expected ID in the query/fragment while the
@@ -140,7 +178,7 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       }
       let response;
       try {
-        response = await fetchImpl(url, { headers: { authorization: `Bearer ${bearer}` } });
+        response = await liveFetch(url, { headers: { authorization: `Bearer ${bearer}` } });
       } catch {
         throw new ProviderFailure("HTTP_ERROR", `${group} transport failure`);
       }
@@ -214,7 +252,7 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
         // Reviewed ID+name+unit triple binding only: no bare-metric, no
         // display-name-only, and no ID+unit fallback; an unknown triple fails
         // closed instead of skipping usage.
-        const mapped = metricMap[`${metricId}:${metricName}:${unit}`];
+        const mapped = liveMap[`${metricId}:${metricName}:${unit}`];
         if (mapped === undefined) {
           throw new ProviderFailure("MALFORMED", `${group} unknown billing metric/name/unit triple`, { httpStatus });
         }
@@ -261,7 +299,7 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       // the gapped one under a single fullAccount:true receipt. Metrics NOT
       // in covers stay absent (unknown downstream, never zero).
       if (scoped !== null) {
-        const mappedValues = new Set(Object.values(metricMap));
+        const mappedValues = new Set(Object.values(liveMap));
         for (const metric of scoped) {
           if (mappedValues.has(metric) && !intervalsByMetric.has(metric)) {
             throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} declared cover has no usage rows`, { httpStatus });
@@ -278,9 +316,16 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
       };
     },
   };
-  // Brand and freeze inside the factory closure: the ONLY place trust attaches.
+  // Brand and freeze inside the factory closure — but ONLY on the default
+  // live transport above. Caller-supplied transports take the test-only
+  // path: frozen and fully functional, identity-marked test-only, never
+  // branded, so mocked transports can never produce authoritative evidence.
   Object.freeze(product.covers);
-  BILLING_BRANDS.add(product);
+  if (liveTransport) {
+    BILLING_BRANDS.add(product);
+  } else {
+    markTestTransport(product);
+  }
   return Object.freeze(product);
 }
 
@@ -296,10 +341,30 @@ export function createBillableUsageProvider({ group = "billable-usage", covers =
 // mapping. A registry-level billing failure (no entitlement etc.) gaps the
 // declared billing covers in collectAccountUsage, leaving those metrics
 // unknown rather than dropping the provider silently.
-export function buildLiveProviderRegistry({ fetchImpl = fetch, accountId, apiBase = "https://api.cloudflare.com/client/v4", nowMs = Date.now(), billableMetricMap = REVIEWED_BILLABLE_TRIPLES } = {}) {
+export function buildLiveProviderRegistry(options = {}) {
+  const { accountId, nowMs = Date.now() } = options ?? {};
   if (typeof accountId !== "string" || accountId === "") {
     throw new UsageCollectionError("COLLECTION_INVALID", "accountId is required for the live registry");
   }
+  // Live mode (no transport overrides): every product runs on the internal
+  // default live transport, so every product is branded and production keeps
+  // working byte-identically (default endpoints build the same account-bound
+  // URLs from the collect-time accountId; the billing window defaults to the
+  // same month-start through start-of-today interval). ANY caller-supplied
+  // fetchImpl/apiBase/billableMetricMap key selects test mode: the legacy
+  // explicit wiring below, whose products are functional but unbranded
+  // test-only and can never carry authority.
+  const testMode = callerSuppliedTransportKeys(options).length > 0;
+  if (!testMode) {
+    return [
+      createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [] }),
+      createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [] }),
+      createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [] }),
+      createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"] }),
+      createBillableUsageProvider({ group: "billable-usage", covers: [...BILLABLE_LIVE_COVERS] }),
+    ];
+  }
+  const { fetchImpl = globalThis.fetch, apiBase = LIVE_API_BASE, billableMetricMap = REVIEWED_BILLABLE_TRIPLES } = options;
   const list = (service, page, perPage) =>
     `${apiBase}/accounts/${accountId}/${service}?page=${page}&per_page=${perPage}`;
   const r2CursorList = (id, cursor) =>

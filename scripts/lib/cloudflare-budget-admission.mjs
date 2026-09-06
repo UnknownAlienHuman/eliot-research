@@ -21,6 +21,7 @@ import {
   QUEUE_MESSAGE_OVERHEAD_BYTES,
   RECEIPT_MAX_AGE_MS,
   SAFETY_MARGIN_RATIO,
+  isLiveEvidenceFamily,
   validateAdmissionReceipt,
 } from "./cloudflare-usage-envelope.mjs";
 
@@ -227,13 +228,19 @@ export function releaseLease(ledger, { operation } = {}) {
 // Heavy-operation gate: ingestion, queue produce/consume, Workflow/DO
 // execution, Workers AI calls, AI Search index/query and Vectorize
 // writes/queries stay disabled until EITHER a fresh ADMITTED aggregate
-// receipt OR a fresh controller-owned ledger+inventory proof shows headroom.
-// Denials carry no secrets and must precede any billable call.
+// receipt with a LIVE provider evidence family OR a fresh controller-owned
+// ledger+inventory proof shows headroom. Denials carry no secrets and must
+// precede any billable call.
 // Provenance discipline (receipts are integrity-only locators, never proof of
-// live collection): this function is the sole persisted-receipt consumer, and
-// its `receipt` must come only from the local preflight write path
-// (same-machine, same-run receipt file). Never pass committed fixtures,
-// transported files, or cross-machine copies — re-collect instead.
+// live collection): a self-consistent receipt minted without fresh live
+// collection NEVER authorizes heavy work here. Test-only and
+// snapshot-asserted evidence families are refused even when structurally
+// intact and validator-clean — the family is re-checked explicitly below, so
+// no validator drift can launder a fixture into authorization. This function
+// is the sole persisted-receipt consumer, and its `receipt` must come only
+// from the local preflight write path (same-machine, same-run receipt file).
+// Never pass committed fixtures, transported files, or cross-machine
+// copies — re-collect instead.
 export function admitHeavyOperation(ledger, options = {}) {
   const {
     operation,
@@ -251,6 +258,9 @@ export function admitHeavyOperation(ledger, options = {}) {
   if (receipt && expectedAccountDigest) {
     const check = validateAdmissionReceipt(receipt, { expectedAccountDigest, now, maxAgeMs: receiptMaxAgeMs });
     if (check.ok && check.decision === "ADMITTED") {
+      if (!isLiveEvidenceFamily(receipt)) {
+        return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "SEALED_NO_HEADROOM_PROOF" };
+      }
       const admission = admitOperation(ledger, { metricKey, quantity, now });
       return { ...admission, operation, proof: "FRESH_ADMITTED_AGGREGATE" };
     }

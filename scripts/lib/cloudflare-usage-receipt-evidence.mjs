@@ -2,12 +2,15 @@
 //
 // An ADMITTED receipt is a locator that heavy paths trust across process
 // boundaries, so every admitted metric must bind to its exact account,
-// collection window, provider identity/provenance brand class,
-// coverage/readback status, and snapshot/generation. This module builds that
+// source, envelope generation, collection window, provider
+// identity/provenance brand class, and coverage/readback status. This module builds that
 // evidence from the live evaluation path (snapshot metrics plus
 // readback.metric_trust) and recomputes the snapshot digest on validation, so
-// a hand-forged shell without evidence — or any tampering with account,
-// windows, metrics, or evidence — fails closed.
+// a hand-forged shell without evidence — or any tampering with source,
+// generation, account, windows, metrics, or evidence — fails closed. ADMITTED
+// additionally requires a live provider evidence family: snapshot-asserted
+// and test-only families (self-consistent without any live collection)
+// validate structurally at most and never authorize heavy work.
 //
 // The taxonomy contract (required keys, metric windows, provenance strings,
 // snapshot labels) is injected by cloudflare-usage-envelope.mjs so this
@@ -29,11 +32,16 @@ export function canonicalJson(value) {
   return JSON.stringify(String(value));
 }
 
-// Snapshot digest: sha256 over canonical account + windows + metrics +
-// evidence, exactly as the receipt schema requires.
-export function computeSnapshotDigest({ accountIdDigest, windows, metrics, evidence }) {
+// Snapshot digest: sha256 over canonical account + source + generation +
+// windows + metrics + evidence, exactly as the receipt schema requires.
+// Source and generation are bound (not just carried) so flipping the snapshot
+// source, the envelope generation, or any security-relevant field — account,
+// windows, metrics, per-metric provenance families, evidence — breaks the
+// digest. Provenance families ride inside the evidence entries, which are
+// part of the digest input.
+export function computeSnapshotDigest({ accountIdDigest, source, generation, windows, metrics, evidence }) {
   return createHash("sha256")
-    .update(canonicalJson({ account_id_digest: accountIdDigest, metrics, metric_evidence: evidence, windows }), "utf8")
+    .update(canonicalJson({ account_id_digest: accountIdDigest, generation, metrics, metric_evidence: evidence, source, windows }), "utf8")
     .digest("hex");
 }
 
@@ -84,11 +92,14 @@ function isLiveClass(kindClass, contract) {
 }
 
 // Validate evidence coherence. Always (every decision): presence, shape,
-// account binding, and digest recomputation. Strict (ADMITTED only):
-// completeness (no missing/duplicated/conflicting entries), window binding,
-// single-family uniformity (all live-trusted or all snapshot-asserted, never
-// mixed), trusted provenance pairing with the brand class, coverage flags,
-// and window freshness. Returns an array of reasons (empty = coherent).
+// account binding, and digest recomputation (now covering source and
+// generation too, so source/generation tampering breaks the digest).
+// Strict (ADMITTED only): completeness (no missing/duplicated/conflicting
+// entries), window binding, live-family uniformity (every entry live-trusted:
+// test-only and snapshot-asserted families validate structurally at most and
+// never authorize heavy work), trusted provenance pairing with the brand
+// class, coverage flags, and window freshness. Returns an array of reasons
+// (empty = coherent).
 export function validateMetricEvidence(receipt, contract, { now = Date.now(), strict = false } = {}) {
   const reasons = [];
   const metrics = receipt?.metrics;
@@ -107,6 +118,8 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
   }
   const recomputed = computeSnapshotDigest({
     accountIdDigest: receipt.account_id_digest,
+    source: receipt.source ?? "missing",
+    generation: receipt.generation ?? "missing",
     windows: { monthly: receipt.windows?.monthly ?? null, daily: receipt.windows?.daily ?? null },
     metrics,
     evidence,
@@ -180,8 +193,12 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
   if (liveCount > 0 && snapshotCount > 0) {
     reasons.push("admission receipt mixes provider evidence with snapshot-asserted entries; refusing forged receipt");
   }
-  if (liveCount === 0 && snapshotCount === 0 && contract.requiredKeys.length > 0) {
-    reasons.push("admission receipt carries no trustworthy metric evidence; refusing forged receipt");
+  // ADMITTED authorizes heavy work, so it additionally requires a live
+  // provider family: a fully self-consistent snapshot-asserted or test-only
+  // receipt (mintable by anyone knowing the account ID, without any live
+  // collection) validates structurally at most and never authorizes.
+  if (liveCount === 0 && contract.requiredKeys.length > 0) {
+    reasons.push("admission receipt carries no live provider evidence (snapshot-asserted/test-only family never authorizes heavy work); refusing forged receipt");
   }
   const monthly = receipt.windows?.monthly;
   if (monthly && (Date.parse(monthly.start) > now + contract.clockSkewMs || now > Date.parse(monthly.end))) {

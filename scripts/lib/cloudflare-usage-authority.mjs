@@ -3,13 +3,21 @@
 // Authority derives ONLY from module-private brand registries, never from
 // mutable string fields (group/kind/provenance) a caller can assert on a
 // plain object. The inventory registry below is populated ONLY inside the
-// branded factory closures: no registrar, token, or symbol is exported, so
-// callers cannot attach trust to a forged object. Factory products are frozen
-// so post-construction collect-replacement cannot hijack a branded identity.
-// Read-only predicates (isInventoryProvider / isAiSearchInventoryProvider /
-// inventoryBrandClass) are the sole trust queries; the collector consults
-// them instead of strings. The billing channel brand lives in
-// cloudflare-usage-billable.mjs next to its factory for the same reason.
+// branded factory closures AND only when the product runs on the internal
+// default live transport (default endpoint builders plus the default global
+// fetch, selected by omitting every transport key): any caller-supplied
+// endpoint/fetch/transport/metricMap/test seam yields an unbranded,
+// identity-marked test-only product instead, so factory construction alone —
+// genuine or not — never confers production authority. No registrar, token,
+// or symbol is exported, so callers cannot attach trust to a forged object.
+// Factory products are frozen so post-construction collect-replacement cannot
+// hijack a branded identity. Read-only predicates (isInventoryProvider /
+// isAiSearchInventoryProvider / inventoryBrandClass) are the sole trust
+// queries; isTestTransportProvider is the sole test-only query and never
+// confers authority. The collector grants authority only on brand, and admits
+// test-only products only on the explicitly marked non-authoritative path.
+// The billing channel brand lives in cloudflare-usage-billable.mjs next to
+// its factory for the same reason.
 //
 // This module also owns METRIC_SOURCE_REGISTRY (moved from
 // cloudflare-usage-collection.mjs to keep that file under the 600-line
@@ -26,6 +34,16 @@ import {
   createPaginatedInventoryProvider as rawPaginated,
   createR2CursorInventoryProvider as rawR2Cursor,
 } from "./cloudflare-usage-providers.mjs";
+import {
+  callerSuppliedTransportKeys,
+  defaultAiSearchEndpoint,
+  defaultPaginatedEndpoint,
+  defaultR2CursorEndpoint,
+  isTestTransportProvider,
+  markTestTransport,
+} from "./cloudflare-usage-transport-class.mjs";
+
+export { isTestTransportProvider };
 
 // Module-PRIVATE inventory brand registry: provider object -> brand class.
 // Never exported; populated only by the branded factories below.
@@ -42,19 +60,56 @@ function brandInventoryProvider(product, brand) {
 }
 
 // Branded wrappers delegate construction to the genuine transport factories,
-// then brand and freeze the product inside this closure. Callers receive
-// authority only by running genuine factory code; they cannot brand a
-// lookalike because no branding capability is exported.
+// then brand and freeze the product inside this closure — but ONLY when the
+// caller supplied no transport (no endpoint/fetchImpl/metricMap/
+// expectedWindow/apiBase keys): the product then runs on the internal default
+// live transport (default endpoint builders over LIVE_API_BASE plus the
+// default global fetch). ANY caller-supplied transport key yields a fully
+// functional but UNBRANDED test-only product (identity-marked in the
+// module-private test-transport registry): factory construction alone never
+// confers authority, and no caller-supplied endpoint/fetch/transport can
+// produce production-authoritative evidence. group/covers/perPage stay
+// functional scope parameters on both paths.
+function liveOrTestInventory(rawFactory, options, brand, defaultEndpoint) {
+  const supplied = callerSuppliedTransportKeys(options);
+  if (supplied.length === 0 && typeof defaultEndpoint === "function") {
+    return brandInventoryProvider(
+      rawFactory({ ...options, endpoint: defaultEndpoint, fetchImpl: globalThis.fetch }),
+      brand,
+    );
+  }
+  const { apiBase: _ignored, ...rest } = options ?? {};
+  void _ignored;
+  const product = rawFactory(rest);
+  Object.freeze(product.covers);
+  return markTestTransport(Object.freeze(product));
+}
+
 export function createPaginatedInventoryProvider(options = {}) {
-  return brandInventoryProvider(rawPaginated(options), INVENTORY_BRAND_PAGINATED);
+  return liveOrTestInventory(
+    rawPaginated,
+    options,
+    INVENTORY_BRAND_PAGINATED,
+    defaultPaginatedEndpoint(options?.group),
+  );
 }
 
 export function createR2CursorInventoryProvider(options = {}) {
-  return brandInventoryProvider(rawR2Cursor(options), INVENTORY_BRAND_CURSOR);
+  return liveOrTestInventory(
+    rawR2Cursor,
+    options,
+    INVENTORY_BRAND_CURSOR,
+    defaultR2CursorEndpoint(),
+  );
 }
 
 export function createAiSearchInventoryProvider(options = {}) {
-  return brandInventoryProvider(rawAiSearch(options), INVENTORY_BRAND_AI_SEARCH);
+  return liveOrTestInventory(
+    rawAiSearch,
+    options,
+    INVENTORY_BRAND_AI_SEARCH,
+    defaultAiSearchEndpoint(),
+  );
 }
 
 // Read-only predicates: the only trust queries the collector may use.

@@ -73,7 +73,13 @@ await check("forged admitted receipts fail closed", async () => {
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: DIGEST, now: NOW });
   assert.equal(evaluation.decision, "ADMITTED");
   const honest = buildAdmissionReceipt({ evaluation, snapshot, now: NOW, expectedAccountId: ACCOUNT });
-  assert.equal(validateAdmissionReceipt(honest, { expectedAccountDigest: DIGEST, now: NOW }).ok, true);
+  // BLOCKER B: a fully self-consistent fixture receipt (no live collection)
+  // is snapshot-asserted, so it validates structurally but never authorizes:
+  // ADMITTED requires a live provider evidence family.
+  const honestCheck = validateAdmissionReceipt(honest, { expectedAccountDigest: DIGEST, now: NOW });
+  assert.equal(honestCheck.ok, false);
+  assert.equal(honestCheck.decision, "ADMITTED");
+  assert.match(honestCheck.reasons.join(";"), /never authorizes heavy work/u);
   void USAGE_ENVELOPE_GENERATION;
   // Forged ADMITTED with a non-empty unknown_metrics list validates ok:false.
   const forgedUnknown = { ...honest, unknown_metrics: ["queue_ops"] };

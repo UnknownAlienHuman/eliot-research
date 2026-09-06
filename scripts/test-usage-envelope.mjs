@@ -432,7 +432,9 @@ await check("preflight admits fixture, writes redacted atomic receipt", async ()
   assert.equal(receipt.protocol, USAGE_ADMISSION_PROTOCOL);
   assert.equal(receipt.decision, "ADMITTED");
   const checkReceipt = validateAdmissionReceipt(receipt, { expectedAccountDigest: DIGEST, now: Date.now(), maxAgeMs: 24 * 60 * 60 * 1000 });
-  assert.equal(checkReceipt.ok, true, JSON.stringify(checkReceipt.reasons));
+  // BLOCKER B: fixture receipts are snapshot-asserted, never authorizing (test-only path).
+  assert.equal(checkReceipt.ok, false, JSON.stringify(checkReceipt.reasons));
+  assert.match(checkReceipt.reasons.join(";"), /never authorizes heavy work/u);
   const text = await readFile(env.ELIOTR_USAGE_RECEIPT_PATH, "utf8");
   assert.ok(!text.includes(ACCOUNT), "exact account id leaked into receipt");
   assert.ok(!text.includes("fictional-static-token"), "token leaked into receipt");
