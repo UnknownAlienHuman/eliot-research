@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError, requestApi } from "./api.js";
-import { beginGoogleOAuth, decodeGoogleOAuthBeginEnvelope } from "./google-oauth-api.js";
+import { beginGoogleOAuth, decodeGoogleOAuthBeginEnvelope, newGoogleOAuthOperationRef } from "./google-oauth-api.js";
 
 const begin = (overrides: Record<string, unknown> = {}) => ({
   data: {
@@ -45,6 +45,38 @@ describe("Google OAuth begin decoder", () => {
 
   it("rejects envelope-level unknown fields", () => {
     expect(() => decodeGoogleOAuthBeginEnvelope({ ...begin(), unexpected: true })).toThrow(ApiRequestError);
+  });
+
+  it.each([
+    ["trace with trailing whitespace", { trace_id: "trace-1 " }],
+    ["trace with bad characters", { trace_id: "not an id!" }],
+    ["trace over 128 chars", { trace_id: `t${"a".repeat(128)}` }],
+    ["generation with trailing whitespace", { deployment_generation: "generation-1 " }],
+    ["generation with bad characters", { deployment_generation: "not an id!" }],
+    ["generation over 256 chars", { deployment_generation: `g${"a".repeat(256)}` }],
+    ["intent over canonical 64 chars", { data_intent_id: "i".repeat(65) }],
+    ["intent with trailing whitespace", { data_intent_id: "intent-1 " }],
+    ["authorization URL with trailing whitespace", { data_authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=x " }],
+    ["authorization URL with userinfo", { data_authorization_url: "https://user@accounts.google.com/o/oauth2/v2/auth?client_id=x" }],
+    ["authorization URL with userinfo password", { data_authorization_url: "https://user:pass@accounts.google.com/o/oauth2/v2/auth?client_id=x" }],
+    ["authorization URL with wrong path", { data_authorization_url: "https://accounts.google.com/o/oauth2/auth?client_id=x" }],
+    ["authorization URL with fragment", { data_authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=x#frag" }],
+    ["authorization URL with token-like field", { data_authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?auth_token=secret" }],
+    ["authorization URL with secret-like field", { data_authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?my_secret=x" }],
+    ["authorization URL with credential field", { data_authorization_url: "https://accounts.google.com/o/oauth2/v2/auth?credential=x" }],
+  ])("rejects strict %s", (_label, patch) => {
+    const value = begin() as Record<string, unknown>;
+    const next: Record<string, unknown> = { ...value };
+    for (const [key, entry] of Object.entries(patch)) {
+      if (key === "data_intent_id") {
+        next.data = { ...(value.data as Record<string, unknown>), intent_id: entry };
+      } else if (key === "data_authorization_url") {
+        next.data = { ...(value.data as Record<string, unknown>), authorization_url: entry };
+      } else {
+        next[key] = entry;
+      }
+    }
+    expect(() => decodeGoogleOAuthBeginEnvelope(next)).toThrow(ApiRequestError);
   });
 });
 
@@ -106,5 +138,45 @@ describe("Google OAuth begin transport", () => {
     await expect(requestApi("https://elsewhere.example/api/v1/google/oauth/begin")).rejects.toMatchObject({
       code: "API_PATH_INVALID",
     });
+  });
+
+  it("retains the same operation ref across a lost response and an invalid envelope before success", async () => {
+    const ref = "operation-retry-stable-1";
+    const bodies: string[] = [];
+    let calls = 0;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      calls += 1;
+      bodies.push(String(init.body));
+      if (calls === 1) throw new TypeError("network lost");
+      if (calls === 2) {
+        return Response.json({ ...begin(), data: { ...(begin().data as Record<string, unknown>), intent_id: "not an id!" } });
+      }
+      return Response.json(begin());
+    });
+    await expect(beginGoogleOAuth(ref)).rejects.toMatchObject({ code: "API_UNREACHABLE" });
+    await expect(beginGoogleOAuth(ref)).rejects.toMatchObject({ code: "API_RESPONSE_SCHEMA_MISMATCH" });
+    const ok = await beginGoogleOAuth(ref);
+    expect(ok.operationRef).toBe(ref);
+    expect(ok.begin.intentId).toBe("intent-1");
+    expect(calls).toBe(3);
+    expect(bodies.map((body) => (JSON.parse(body) as Record<string, unknown>).operation_ref)).toEqual([ref, ref, ref]);
+  });
+
+  it("reuses a pre-minted ref across two timeouts then succeeds without minting a new intent", async () => {
+    const ref = newGoogleOAuthOperationRef();
+    const bodies: string[] = [];
+    let calls = 0;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      calls += 1;
+      bodies.push(String(init.body));
+      if (calls <= 2) throw new TypeError("timeout");
+      return Response.json(begin());
+    });
+    await expect(beginGoogleOAuth(ref)).rejects.toMatchObject({ code: "API_UNREACHABLE" });
+    await expect(beginGoogleOAuth(ref)).rejects.toMatchObject({ code: "API_UNREACHABLE" });
+    const ok = await beginGoogleOAuth(ref);
+    expect(ok.operationRef).toBe(ref);
+    expect(calls).toBe(3);
+    expect(bodies.map((body) => (JSON.parse(body) as Record<string, unknown>).operation_ref)).toEqual([ref, ref, ref]);
   });
 });
