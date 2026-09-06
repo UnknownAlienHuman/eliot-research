@@ -1,14 +1,36 @@
-import { BackupEpochSchema, type BackupEpoch, type OperationAttempt, type OperationIntent, type OperationReceipt } from "@eliotr/contracts";
+import { BackupEpochSchema, OperationAttemptSchema, OperationReceiptSchema, type BackupEpoch, type OperationAttempt, type OperationIntent, type OperationReceipt } from "@eliotr/contracts";
 import {
-  backupAborted, backupAttempt, backupIsoDateTime, backupReceipt, backupSha256Hex,
+  backupAborted, backupAttempt, backupReceipt, backupSha256Hex,
   backupUtf8Bytes, bufferBackupStream, canonicalBackupJson, failBackup, ownedBackupBytes,
   assertBackupIdentifier, assertBackupIntent, BackupError, type BackupExportLimits,
 } from "./shared.js";
 import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
 import { assertDestinationPolicy, destinationPolicyDigest, reconcileDestinationDescriptor, type BackupDestinationPolicy, type OffsiteDestinationDescriptor } from "./destination-policy.js";
+import { requireDestinationAuthority } from "./destination-authority.js";
+import { readEpochDraftById } from "./replay-authority.js";
+import { assertO2MigrationAuthority } from "./migration-gate.js";
+import { canonicalOffsiteCopyDigest } from "./intent-digest.js";
+import {
+  allocateCopyNonce, backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
+  deriveBackupNonce, readCopyCheckpoints, readCopyReceipt, recordCopyCheckpoint, resolveControllerClock,
+} from "./offsite-durability.js";
 
-// ER-34 O2 encrypted offsite copy. Encryption happens before the destination
-// boundary; KEK/key bytes never enter the epoch, logs, receipts or fixtures.
+// ER-34 O2 FIX2 encrypted offsite copy. Encryption happens before the
+// destination boundary; KEK/key bytes never enter the epoch, logs, receipts
+// or fixtures.
+//
+// Authority: the destination policy must equal the controller-owned persisted
+// authority bound to the initiating principal + approved policy decision;
+// caller owner/auth refs never self-authorize. The epoch draft must equal the
+// D1-persisted draft bytes (caller drafts never trusted). The admissibility
+// clock is controller-disciplined (caller timestamps beyond skew fail closed).
+//
+// Durability: part checkpoints + the success receipt persist in D1, so restart
+// or cancellation resumes from controller-owned state. Nonces derive
+// deterministically from (key generation, copy, part ref, content digest,
+// policy) or from a controller allocator, recorded durably and unique across
+// restarts and key generations. Exact replay of a committed copy returns the
+// persisted receipt/epoch bytes verbatim.
 
 export interface OffsiteStoredPart {
   readonly ciphertext: Uint8Array;
@@ -95,48 +117,108 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
   assertAes256GcmKey(input.encryption_key);
   const policy = assertDestinationPolicy(input.destination_policy);
   if (policy.destination_id.length === 0) failBackup("BACKUP_INPUT_INVALID", "destination policy is empty");
-  const nowMs = input.now_ms ?? Date.now();
-  const now = backupIsoDateTime(nowMs);
+  const clockMs = resolveControllerClock(input.now_ms);
+  const now = backupIsoNow(clockMs);
   const signal = input.signal;
   const draft = input.draft;
   if (draft.part_index.length === 0) failBackup("BACKUP_INPUT_INVALID", "backup draft carries no audited parts");
   if (draft.vector_digest.length !== 64) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup draft carries no complete authority vector binding");
-  const policyDigest = await destinationPolicyDigest(policy);
+  await assertO2MigrationAuthority(ports.core_db);
+  // Controller-owned authority first: caller policy must equal the persisted
+  // grant for (destination, initiating principal, policy decision).
+  const authority = await requireDestinationAuthority(ports.core_db, intent, policy);
+  // Caller draft bytes are never trusted: the D1-persisted epoch draft is
+  // authority, including its expires_at.
+  const persistedEpoch = await readEpochDraftById(ports.core_db, draft.epoch_id);
+  if (persistedEpoch === null) failBackup("BACKUP_VECTOR_UNVERIFIABLE", "backup epoch is unknown to D1 replay authority; caller drafts never authorize copies");
+  if (canonicalBackupJson(JSON.parse(JSON.stringify(draft)) as unknown) !== canonicalBackupJson(JSON.parse(persistedEpoch.draft_json) as unknown)) {
+    failBackup("BACKUP_INTENT_CONFLICT", "caller epoch draft diverges from D1-persisted bytes", false, {});
+  }
+  let persistedDraft: BackupEpochDraft;
+  try {
+    persistedDraft = JSON.parse(persistedEpoch.draft_json) as BackupEpochDraft;
+  } catch (cause) {
+    failBackup("BACKUP_VECTOR_UNVERIFIABLE", "D1-persisted epoch draft is corrupt", false, {}, cause);
+  }
+  const policyDigest = await destinationPolicyDigest(authority.policy);
   const descriptor = await input.adapter.describe();
-  reconcileDestinationDescriptor(policy, descriptor, primaryDomain);
-  if (descriptor.expires_at !== undefined && Date.parse(descriptor.expires_at) <= nowMs) {
+  reconcileDestinationDescriptor(authority.policy, descriptor, primaryDomain);
+  if (descriptor.expires_at !== undefined && Date.parse(descriptor.expires_at) <= clockMs) {
     failBackup("BACKUP_OFFSITE_EXPIRED", "offsite destination admissibility has expired", false, { destination: descriptor.destination_id });
   }
   if (descriptor.retention_locked) {
     throw new BackupError("BACKUP_PURGE_BLOCKED", "offsite destination is retention-locked; copy withheld for review, nothing deleted", false,
-      { destination: descriptor.destination_id, next_review_at: descriptor.expires_at ?? draft.expires_at });
+      { destination: descriptor.destination_id, next_review_at: descriptor.expires_at ?? persistedDraft.expires_at });
   }
-  const usedNonces = new Set<string>();
-  const freshNonce = (): Uint8Array<ArrayBuffer> => {
-    const nonce = input.generate_nonce !== undefined ? ownedBackupBytes(input.generate_nonce()) : ownedBackupBytes(crypto.getRandomValues(new Uint8Array(12)));
-    if (nonce.byteLength !== 12) failBackup("BACKUP_KEY_INVALID", "offsite nonce must be 96 bits");
-    const hex = [...nonce].map((b) => b.toString(16).padStart(2, "0")).join("");
-    if (usedNonces.has(hex)) failBackup("BACKUP_NONCE_COLLISION", "offsite nonce reuse detected within the copy operation", false, {});
-    usedNonces.add(hex);
-    return nonce;
-  };
+  const storedIntentDigest = await canonicalOffsiteCopyDigest(intent, {
+    epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id, policy_digest: policyDigest,
+    authorization_receipt_ref: authority.authorization_receipt_ref, key_generation: keyGeneration,
+    expires_at: persistedDraft.expires_at, retention_policy_ref: authority.policy.retention_policy_ref,
+    expiry_identity: authority.policy.expiry_identity,
+  });
+  const copyId = await copyIdForDigest({ epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id, key_generation: keyGeneration, policy_digest: policyDigest, intent_digest: storedIntentDigest });
+  // Exact replay of a committed copy returns persisted bytes verbatim.
+  const committed = await readCopyReceipt(ports.core_db, copyId);
+  if (committed !== null) {
+    if (committed.epoch_id !== persistedDraft.epoch_id || committed.destination_id !== authority.destination_id || committed.key_generation !== keyGeneration || committed.policy_digest !== policyDigest || committed.intent_digest !== storedIntentDigest) {
+      failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
+    }
+    let receipt: OperationReceipt;
+    let epoch: BackupEpoch;
+    let attempt: OperationAttempt;
+    try {
+      receipt = OperationReceiptSchema.parse(JSON.parse(committed.receipt_json) as unknown);
+      epoch = BackupEpochSchema.parse(JSON.parse(committed.epoch_json) as unknown);
+      attempt = OperationAttemptSchema.parse(JSON.parse(committed.attempt_json) as unknown);
+    } catch (cause) {
+      failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted offsite copy bytes are corrupt", false, {}, cause);
+    }
+    return { epoch, offsite_copy_ref: epoch.offsite_copy_ref, readback_digest: committed.readback_digest, attempt, receipt };
+  }
+  let checkpoints = await readCopyCheckpoints(ports.core_db, copyId);
   let reconciled = false;
   const remoteRefs: string[] = [];
-  for (const part of draft.part_index) {
+  for (const part of persistedDraft.part_index) {
     if (backupAborted(signal)) failBackup("BACKUP_CANCELLED", "backup offsite copy was cancelled", true);
-    const partRef = `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+    const partRef = `offsite/${persistedDraft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
+    const checkpoint = checkpoints.get(partRef);
+    if (checkpoint !== undefined && checkpoint.content_digest === part.sha256 && checkpoint.size_bytes === part.size_bytes && checkpoint.state === "VERIFIED") {
+      // Durable resume: the recorded nonce must equal the deterministic
+      // derivation (tamper collides), then re-verify remote before skipping.
+      const expected = await deriveBackupNonce({ key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, content_digest: part.sha256, policy_digest: policyDigest });
+      if (backupNonceHex(expected) !== checkpoint.nonce_hex && input.generate_nonce === undefined) {
+        failBackup("BACKUP_NONCE_COLLISION", "backup copy checkpoint nonce was tampered; refusing resume", false, { copy: copyId });
+      }
+      // Durable resume: re-verify the remote part before skipping local work.
+      const present = await input.adapter.get(partRef);
+      if (present === null) failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite checkpointed part is absent on resume; refusing silent skip", true, {});
+      if (present.stored.content_digest !== part.sha256 || present.stored.size_bytes !== part.size_bytes || present.stored.key_generation !== keyGeneration || present.stored.epoch_id !== persistedDraft.epoch_id || present.stored.expires_at !== persistedDraft.expires_at) {
+        failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite checkpointed part metadata was altered", false, {});
+      }
+      reconciled = true;
+      remoteRefs.push(partRef);
+      continue;
+    }
+    if (checkpoint !== undefined && (checkpoint.content_digest !== part.sha256 || checkpoint.size_bytes !== part.size_bytes)) {
+      failBackup("BACKUP_INTENT_CONFLICT", "offsite checkpoint binds this ref to divergent content", false, {});
+    }
     const reopened = await ports.part_sink.open(part.part_key);
     if (reopened === null) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part is absent before offsite copy", false, { manifest: part.manifest });
     const plaintext = await bufferBackupStream(reopened.body, limits.max_object_bytes);
     if (plaintext.byteLength !== part.size_bytes) failBackup("BACKUP_PART_READBACK_MISMATCH", "backup part size disagrees before offsite copy", false, { manifest: part.manifest });
     const aad = await canonicalAad({
-      epoch_id: draft.epoch_id, manifest: part.manifest, index: part.index, part_ref: partRef,
+      epoch_id: persistedDraft.epoch_id, manifest: part.manifest, index: part.index, part_ref: partRef,
       part_sha256: part.sha256, destination_policy_digest: policyDigest,
-      key_generation: keyGeneration, expires_at: draft.expires_at,
-      retention_policy_ref: policy.retention_policy_ref, expiry_identity: policy.expiry_identity,
+      key_generation: keyGeneration, expires_at: persistedDraft.expires_at,
+      retention_policy_ref: authority.policy.retention_policy_ref, expiry_identity: authority.policy.expiry_identity,
     });
-    const ciphertext = await encryptBackupPart(input.encryption_key, aad, freshNonce(), plaintext);
-    const stored = { content_digest: part.sha256, size_bytes: part.size_bytes, key_generation: keyGeneration, epoch_id: draft.epoch_id, expires_at: draft.expires_at };
+    const candidate = input.generate_nonce !== undefined
+      ? ownedBackupBytes(input.generate_nonce())
+      : await deriveBackupNonce({ key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, content_digest: part.sha256, policy_digest: policyDigest });
+    const nonce = await allocateCopyNonce(ports.core_db, copyId, checkpoints, partRef, candidate, now);
+    const nonceHex = backupNonceHex(nonce);
+    const ciphertext = await encryptBackupPart(input.encryption_key, aad, nonce, plaintext);
+    const stored = { content_digest: part.sha256, size_bytes: part.size_bytes, key_generation: keyGeneration, epoch_id: persistedDraft.epoch_id, expires_at: persistedDraft.expires_at };
     let acknowledged = false;
     try {
       await input.adapter.put(partRef, ciphertext, stored);
@@ -157,38 +239,61 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     }
     const remote = await input.adapter.get(partRef);
     if (remote === null) failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part is absent on readback", true, {});
-    if (remote.stored.content_digest !== part.sha256 || remote.stored.size_bytes !== part.size_bytes || remote.stored.key_generation !== keyGeneration || remote.stored.epoch_id !== draft.epoch_id || remote.stored.expires_at !== draft.expires_at) {
+    if (remote.stored.content_digest !== part.sha256 || remote.stored.size_bytes !== part.size_bytes || remote.stored.key_generation !== keyGeneration || remote.stored.epoch_id !== persistedDraft.epoch_id || remote.stored.expires_at !== persistedDraft.expires_at) {
       failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part metadata was altered", false, {});
     }
     const decrypted = await decryptBackupPart(input.encryption_key, aad, remote.ciphertext);
     if (decrypted.byteLength !== part.size_bytes || await backupSha256Hex(decrypted) !== part.sha256) {
       failBackup("BACKUP_OFFSITE_READBACK_MISMATCH", "offsite part plaintext digest disagrees on readback", false, {});
     }
+    await recordCopyCheckpoint(ports.core_db, copyId, { part_ref: partRef, content_digest: part.sha256, size_bytes: part.size_bytes, nonce_hex: nonceHex, state: "VERIFIED" }, now);
+    checkpoints = await readCopyCheckpoints(ports.core_db, copyId);
     remoteRefs.push(partRef);
   }
-  const offsiteCopyRef = `offsite-${(await backupSha256Hex(`offsite-copy\u0000${draft.epoch_id}\u0000${draft.vector_digest}\u0000${policyDigest}\u0000${policy.authorization_receipt_ref}\u0000${keyGeneration}\u0000${remoteRefs.join(",")}`)).slice(0, 48)}`;
+  const offsiteCopyRef = `offsite-${(await backupSha256Hex(`offsite-copy\u0000${persistedDraft.epoch_id}\u0000${persistedDraft.vector_digest}\u0000${policyDigest}\u0000${authority.authorization_receipt_ref}\u0000${keyGeneration}\u0000${remoteRefs.join(",")}`)).slice(0, 48)}`;
   const readbackDigest = await backupSha256Hex(remoteRefs.join("\n"));
   const epoch: BackupEpoch = BackupEpochSchema.parse({
-    epoch_ref: { id: draft.epoch_id, revision: 1 },
-    schema_generation: draft.schema_generation,
-    migration_ledger_digest: draft.migration_ledger_digest,
-    core_export_manifest_ref: draft.group_digests["core"] ?? "",
-    r2_object_manifest_ref: draft.group_digests["r2"] ?? "",
-    head_manifest_ref: draft.group_digests["heads"] ?? "",
-    generation_manifest_ref: draft.group_digests["generations"] ?? "",
-    purge_ledger_revision: draft.purge_ledger_revision,
-    purge_ledger_digest: draft.purge_ledger_digest,
+    epoch_ref: { id: persistedDraft.epoch_id, revision: 1 },
+    schema_generation: persistedDraft.schema_generation,
+    migration_ledger_digest: persistedDraft.migration_ledger_digest,
+    core_export_manifest_ref: persistedDraft.group_digests["core"] ?? "",
+    r2_object_manifest_ref: persistedDraft.group_digests["r2"] ?? "",
+    head_manifest_ref: persistedDraft.group_digests["heads"] ?? "",
+    generation_manifest_ref: persistedDraft.group_digests["generations"] ?? "",
+    purge_ledger_revision: persistedDraft.purge_ledger_revision,
+    purge_ledger_digest: persistedDraft.purge_ledger_digest,
     offsite_copy_ref: offsiteCopyRef,
     offsite_failure_domain: descriptor.failure_domain,
     encryption_key_generation: keyGeneration,
-    audit_sample_receipt_ref: draft.audit_sample_receipt_ref,
-    created_at: draft.created_at,
-    expires_at: draft.expires_at,
+    audit_sample_receipt_ref: persistedDraft.audit_sample_receipt_ref,
+    created_at: persistedDraft.created_at,
+    expires_at: persistedDraft.expires_at,
   });
+  const receipt = backupReceipt(intent, backupAttempt(intent, attemptNumber, "SUCCEEDED", now).attempt_id, "SUCCEEDED",
+    [persistedDraft.epoch_id, offsiteCopyRef], [persistedDraft.audit_sample_receipt_ref, readbackDigest, policyDigest, authority.authorization_receipt_ref], reconciled,
+    reconciled ? ["OFFSITE_ACK_RECONCILED", `POLICY:${authority.policy.policy_version}`] : [`POLICY:${authority.policy.policy_version}`], now);
   const attempt = backupAttempt(intent, attemptNumber, "SUCCEEDED", now);
-  const receipt = backupReceipt(intent, attempt.attempt_id, "SUCCEEDED",
-    [draft.epoch_id, offsiteCopyRef], [draft.audit_sample_receipt_ref, readbackDigest, policyDigest, policy.authorization_receipt_ref], reconciled,
-    reconciled ? ["OFFSITE_ACK_RECONCILED", `POLICY:${policy.policy_version}`] : [`POLICY:${policy.policy_version}`], now);
+  const outcome = await commitCopyReceipt(ports.core_db, {
+    copy_id: copyId, epoch_id: persistedDraft.epoch_id, destination_id: authority.destination_id,
+    key_generation: keyGeneration, policy_digest: policyDigest, intent_digest: storedIntentDigest,
+    receipt_json: JSON.stringify(receipt), epoch_json: JSON.stringify(epoch), attempt_json: JSON.stringify(attempt),
+    readback_digest: readbackDigest, expires_at: persistedDraft.expires_at, created_at: now,
+  });
+  if (!outcome.committed) {
+    // Concurrent duplicate won: its persisted bytes are authority.
+    const winner = outcome.stored;
+    if (winner.epoch_id !== persistedDraft.epoch_id || winner.destination_id !== authority.destination_id || winner.key_generation !== keyGeneration || winner.policy_digest !== policyDigest || winner.intent_digest !== storedIntentDigest) {
+      failBackup("BACKUP_INTENT_CONFLICT", "offsite copy identity reuses divergent content", false, {});
+    }
+    try {
+      const winnerReceipt = OperationReceiptSchema.parse(JSON.parse(winner.receipt_json) as unknown);
+      const winnerEpoch = BackupEpochSchema.parse(JSON.parse(winner.epoch_json) as unknown);
+      const winnerAttempt = OperationAttemptSchema.parse(JSON.parse(winner.attempt_json) as unknown);
+      return { epoch: winnerEpoch, offsite_copy_ref: winnerEpoch.offsite_copy_ref, readback_digest: winner.readback_digest, attempt: winnerAttempt, receipt: winnerReceipt };
+    } catch (cause) {
+      failBackup("BACKUP_VECTOR_UNVERIFIABLE", "persisted offsite copy bytes are corrupt", false, {}, cause);
+    }
+  }
   return { epoch, offsite_copy_ref: offsiteCopyRef, readback_digest: readbackDigest, attempt, receipt };
 }
 
