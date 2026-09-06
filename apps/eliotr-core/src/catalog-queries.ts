@@ -1,8 +1,8 @@
 /** SQL prefilters only narrow candidates. Shared source/read-policy decoding remains authoritative. */
-const eligible = `WITH eligible AS (
- SELECT s.source_id, s.head_rev,
+export const catalogEligibility = (history = false) => `WITH eligible AS (
+ SELECT s.source_id, s.head_rev, r.source_revision_ref,
    CASE WHEN length(CAST(s.title AS BLOB))<=4096 THEN s.title ELSE NULL END AS title
- FROM source s JOIN source_revision r ON r.source_revision_ref = s.head_rev AND r.source_id=s.source_id
+ FROM source s JOIN source_revision r ON r.source_id=s.source_id ${history ? "" : "AND r.source_revision_ref=s.head_rev"}
  JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id AND o.status='ACTIVE'
    AND o.owner_system_id=s.source_owner_system_id AND o.source_owner_generation=r.source_owner_generation
    AND s.source_owner_generation=r.source_owner_generation
@@ -22,6 +22,7 @@ const eligible = `WITH eligible AS (
    AND NOT EXISTS (SELECT 1 FROM json_each(d.allowed_use_json) a
      WHERE NOT EXISTS (SELECT 1 FROM json_each(p.allowed_use_json) b WHERE b.value=a.value))
 )`;
+const eligible = catalogEligibility();
 const membership = "julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2))";
 
 export function catalogStatements(db: D1Database, input: {

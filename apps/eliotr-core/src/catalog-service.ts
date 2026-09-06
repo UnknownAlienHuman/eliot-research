@@ -68,7 +68,7 @@ function validateAuthorityIdentifier(value: unknown, label: string): string {
   return identifier;
 }
 
-function validateRequestIdentifier(value: unknown, label: string): string {
+export function validateRequestIdentifier(value: unknown, label: string): string {
   try {
     return validateAuthorityIdentifier(value, label);
   } catch {
@@ -101,13 +101,11 @@ function decodeBase64Url(value: string): Uint8Array {
   return bytes;
 }
 
-function encodeCursor(cursor: CatalogCursorV2): string {
+export function encodeCatalogCursor(cursor: object): string {
   return encodeBase64Url(new TextEncoder().encode(JSON.stringify(cursor)));
 }
 
-function decodeCursor(raw: string | undefined, projectId: string | undefined): CatalogCursorV2 | null {
-  if (raw === undefined) return null;
-
+export function decodeCatalogCursor(raw: string): unknown {
   let decoded: unknown;
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(decodeBase64Url(raw));
@@ -116,6 +114,13 @@ function decodeCursor(raw: string | undefined, projectId: string | undefined): C
     if (error instanceof CatalogInputError) throw error;
     throw new CatalogInputError("CATALOG_CURSOR_INVALID", "catalog cursor is not UTF-8 JSON");
   }
+  return decoded;
+}
+
+function decodeCursor(raw: string | undefined, projectId: string | undefined): CatalogCursorV2 | null {
+  if (raw === undefined) return null;
+
+  const decoded = decodeCatalogCursor(raw);
   if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
     throw new CatalogInputError("CATALOG_CURSOR_INVALID", "catalog cursor must be an object");
   }
@@ -196,12 +201,18 @@ function decodeSources(rows: readonly SourceRow[]): CatalogResult["sources"] {
   });
 }
 
-/** Metadata authorization uses the same admitted-source/read-policy authority as Corpus Lens.
- * The normal D1 binding is primary-only; do not substitute a first-unconstrained replica session.
- */
-export async function readCatalog(database: D1Database, context: AuthenticatedRequestContext,
-  request: CatalogRequest, deploymentGeneration: string, now: () => number = Date.now): Promise<CatalogResult> {
-  const validated = validateCatalogRequest(request);
+interface CatalogReadFence {
+  readonly started: number;
+  readonly generation: number;
+  readonly identity: string;
+  readonly frontier: number;
+  readonly authority: ReturnType<typeof createOwnerScopeAuthority>;
+  finish(): Promise<void>;
+}
+
+/** Shared primary mutation/time fence for owner-only Library metadata reads. */
+export async function beginCatalogRead(database: D1Database, context: AuthenticatedRequestContext,
+  deploymentGeneration: string, now: () => number): Promise<CatalogReadFence> {
   if (context.client_class !== "owner_pwa") throw new CatalogInputError("CATALOG_OWNER_REQUIRED", "Owner read policy required", 403);
   validateRequestIdentifier(context.principal_ref, "principal");
   validateRequestIdentifier(context.credential_generation, "credential generation");
@@ -225,6 +236,25 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
   const generation = await epoch();
   const identity = await evidenceSha256({ principal: context.principal_ref, client_class: context.client_class,
     credential: context.credential_generation, deployment: deploymentGeneration });
+  const frontier = await catalogTimeFrontier(database, context.principal_ref, started);
+  const authority = createOwnerScopeAuthority(database, context, now);
+  return { started, generation, identity, frontier, authority,
+    async finish() {
+      if (await epoch() !== generation || clock() < started || clock() >= frontier) {
+        throw new CatalogInputError("CATALOG_AUTHORITY_CHANGED", "Catalog changed while reading; reload", 409, true);
+      }
+    },
+  };
+}
+
+/** Metadata authorization uses the same admitted-source/read-policy authority as Corpus Lens.
+ * The normal D1 binding is primary-only; do not substitute a first-unconstrained replica session.
+ */
+export async function readCatalog(database: D1Database, context: AuthenticatedRequestContext,
+  request: CatalogRequest, deploymentGeneration: string, now: () => number = Date.now): Promise<CatalogResult> {
+  const validated = validateCatalogRequest(request);
+  const fence = await beginCatalogRead(database, context, deploymentGeneration, now);
+  const { started, generation, identity, frontier, authority } = fence;
   const cursor = validated.cursor;
   if (cursor && cursor.context_sha256 !== identity) {
     throw new CatalogInputError("CATALOG_CURSOR_CONTEXT_MISMATCH", "Catalog cursor belongs to another session", 403);
@@ -232,10 +262,6 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
   if (cursor && (cursor.authority_generation !== generation || cursor.expires_at <= started || cursor.expires_at > started + 300_000)) {
     throw new CatalogInputError("CATALOG_CURSOR_STALE", "Catalog changed; reload the first page", 409, true);
   }
-  // The frontier is captured before authorization, so a time-only policy/membership change cannot
-  // slip through a mutation epoch. It is a scalar SQL read, never a whole-corpus load into the Worker.
-  const frontier = await catalogTimeFrontier(database, context.principal_ref, started);
-  const authority = createOwnerScopeAuthority(database, context, now);
   await authority.requireReadPolicy();
   const [projectResult, sourceResult] = await database.batch<ProjectRow | SourceRow>(catalogStatements(database, {
     principal: context.principal_ref, observed: new Date(started).toISOString(), project: validated.projectId ?? null,
@@ -262,14 +288,12 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
   }
   const projects = allProjects.slice(0, validated.limit); const sources = allSources.slice(0, validated.limit);
   const hasMore = allProjects.length > validated.limit || allSources.length > validated.limit;
-  const result: CatalogResult = { projects, sources, ...(hasMore ? { next_cursor: encodeCursor({
+  const result: CatalogResult = { projects, sources, ...(hasMore ? { next_cursor: encodeCatalogCursor({
     version: 2, context_sha256: identity, authority_generation: generation,
     expires_at: Math.min(frontier, started + 300_000, cursor?.expires_at ?? Infinity),
     project_id: validated.projectId ?? null, project_after: projects.at(-1)?.id ?? cursor?.project_after ?? "",
     source_after: sources.at(-1)?.id ?? cursor?.source_after ?? "",
   }) } : {}) };
-  if (await epoch() !== generation || clock() < started || clock() >= frontier) {
-    throw new CatalogInputError("CATALOG_AUTHORITY_CHANGED", "Catalog changed while reading; reload", 409, true);
-  }
+  await fence.finish();
   return result;
 }

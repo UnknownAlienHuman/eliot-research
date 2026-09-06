@@ -3,6 +3,7 @@ import type {
   AuthenticatedRequestContext,
   CommitBundleUploadRequest,
   CompleteBundleFileRequest,
+  DiscoverBundleUploadRequest,
   OwnerApi,
   PrepareBundleUploadRequest,
   UploadBundlePartRequest,
@@ -153,9 +154,7 @@ function fileHashes(value: unknown): Readonly<Record<string, string>> {
   return output;
 }
 
-async function prepareRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
-  const input = await jsonBody(request, maximumBytes);
-  exactKeys(input, ["manifest", "total_bytes", "file_hashes", "idempotency_key"], "prepare request");
+function bundleInput(input: Record<string, unknown>): DiscoverBundleUploadRequest {
   let manifest;
   try { manifest = NormalizedBundleManifestSchema.parse(input.manifest); }
   catch (cause) { fail("INGEST_MANIFEST_INVALID", 400, `manifest failed strict validation: ${String(cause)}`); }
@@ -163,8 +162,19 @@ async function prepareRequest(request: Request, maximumBytes: number): Promise<P
     manifest,
     total_bytes: positiveInteger(input.total_bytes, "total_bytes", 50 * 1024 * 1024 * 1024),
     file_hashes: fileHashes(input.file_hashes),
-    idempotency_key: identifier(input.idempotency_key, "idempotency_key"),
   };
+}
+
+async function prepareRequest(request: Request, maximumBytes: number): Promise<PrepareBundleUploadRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["manifest", "total_bytes", "file_hashes", "idempotency_key"], "prepare request");
+  return { ...bundleInput(input), idempotency_key: identifier(input.idempotency_key, "idempotency_key") };
+}
+
+async function discoveryRequest(request: Request, maximumBytes: number): Promise<DiscoverBundleUploadRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["manifest", "total_bytes", "file_hashes"], "discovery request");
+  return bundleInput(input);
 }
 
 async function completeRequest(
@@ -261,6 +271,9 @@ export async function dispatchIngestOperation(
     case "ingest.bundle.commit":
       exactQuery(url, []);
       return owner.commitBundle(context, await commitRequest(request, maximumBytes));
+    case "ingest.bundle.discover":
+      exactQuery(url, []);
+      return owner.discoverBundle(context, await discoveryRequest(request, maximumBytes));
     case "ingest.bundle.recovery":
       exactQuery(url, []);
       return owner.getBundleRecovery(context, identifier(params.operation_id, "operation_id"));

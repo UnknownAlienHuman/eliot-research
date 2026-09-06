@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { prepareBrowserBundle } from "../apps/eliotr-pwa/src/bundle-input.js";
-import { recoverBrowserBundleImport } from "../apps/eliotr-pwa/src/bundle-import.js";
+import { discoverBrowserBundleImport, recoverBrowserBundleImport } from "../apps/eliotr-pwa/src/bundle-import.js";
 import { type ImportTransport } from "../apps/eliotr-pwa/src/bundle-import-api.js";
 import { bundleFixture } from "../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { canonicalDigest } from "../packages/platform-cloudflare/src/d1-ingest-validation.js";
@@ -73,5 +73,63 @@ describe("operation-bound browser recovery", () => {
       return f.envelope(reply);
     } });
     expect(attempt.canResume).toBe(true); attempt.dispose();
+  });
+});
+
+
+describe("read-only exact-folder discovery", () => {
+  it("returns the original identity without preparing or continuing until explicitly run", async () => {
+    const f = await fixture(); const calls: string[] = [];
+    const found = await discoverBrowserBundleImport(f.bundle, { transport: async (path, init) => {
+      calls.push(path); expect(init?.method).toBe("POST");
+      expect(JSON.parse(String(init?.body))).toEqual({ manifest: f.bundle.manifest, file_hashes: f.bundle.hashes, total_bytes: f.bundle.totalBytes });
+      return f.envelope(f.data);
+    } });
+    expect(calls).toEqual(["/api/v1/ingest/bundles/discover"]);
+    expect(found.identity.operation).toBe("ingest-recover"); expect(found.attempt.canResume).toBe(true);
+    found.attempt.dispose();
+  });
+  it("never creates a new operation after missing, denied or interrupted discovery", async () => {
+    const f = await fixture();
+    for (const code of [401, 403, 404, 409, 503]) {
+      let calls = 0;
+      await expect(discoverBrowserBundleImport(f.bundle, { transport: async (path) => {
+        ++calls; expect(path).toBe("/api/v1/ingest/bundles/discover"); throw new Error(`failure-${code}`);
+      } })).rejects.toThrow(`failure-${code}`);
+      expect(calls).toBe(1);
+    }
+  });
+  it("rejects forged discovery status, private fields, generation and exact-file mismatch", async () => {
+    const f = await fixture();
+    for (const changed of [{ ...f.data, token: "forbidden" }, { ...f.data, status: null },
+      { ...f.data, status: { ...f.status, operation_id: "bad id" } },
+      { ...f.data, status: { ...f.status, source_revision_ref: "different-source" } },
+      { ...f.data, total_bytes: f.bundle.totalBytes + 1 },
+      { ...f.data, file_hashes: { ...f.bundle.hashes, "content.md": "a".repeat(64) } }]) {
+      await expect(discoverBrowserBundleImport(f.bundle, { transport: async () => f.envelope(changed) })).rejects.toThrow();
+    }
+    await expect(discoverBrowserBundleImport(f.bundle, { transport: async () => f.envelope(f.data, "bad generation") })).rejects.toThrow();
+  });
+  it("rejects an oversized discovery body before any transport call", async () => {
+    const f = await fixture();
+    const oversized = { ...f.bundle, manifest: { ...f.bundle.manifest,
+      source: { ...f.bundle.manifest.source, original_name: "x".repeat(256 * 1024) } } };
+    await expect(discoverBrowserBundleImport(oversized, { transport: async () => {
+      throw new Error("Oversized discovery must not call transport");
+    } })).rejects.toMatchObject({ code: "BUNDLE_INPUT_INVALID" });
+  });
+  it("honors cancellation before/after lookup and freezes inputs before asynchronous reads", async () => {
+    const f = await fixture();
+    await expect(discoverBrowserBundleImport(f.bundle, { signal: AbortSignal.abort(),
+      transport: async () => { throw new Error("must not request"); } })).rejects.toMatchObject({ code: "BUNDLE_IMPORT_CANCELLED" });
+    const controller = new AbortController();
+    await expect(discoverBrowserBundleImport(f.bundle, { signal: controller.signal, transport: async () => {
+      controller.abort(); return f.envelope(f.data);
+    } })).rejects.toMatchObject({ code: "BUNDLE_IMPORT_CANCELLED" });
+    const found = await discoverBrowserBundleImport(f.bundle, { transport: async () => {
+      const value = structuredClone(f.data);
+      (f.bundle.hashes as Record<string, string>)["content.md"] = "c".repeat(64); return f.envelope(value);
+    } });
+    expect(found.attempt.canResume).toBe(true); found.attempt.dispose();
   });
 });

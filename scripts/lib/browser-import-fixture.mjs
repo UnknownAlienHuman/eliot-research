@@ -54,8 +54,12 @@ export function browserImportFixture() {
         sha256: hashes[body.path], size_bytes: Buffer.byteLength(files[body.path]), etag: `complete-${body.path}`, completed_at: now });
     }
     if (url.pathname.endsWith("/commit")) { committed = true; return json(receipt); }
-    if (url.pathname === `/api/v1/ingest/bundles/${operation}/recovery`) {
-      assert.equal(request.method, "GET"); assert.ok(key);
+    if (url.pathname === `/api/v1/ingest/bundles/${operation}/recovery` || url.pathname === "/api/v1/ingest/bundles/discover") {
+      assert.equal(request.method, url.pathname.endsWith("/discover") ? "POST" : "GET"); assert.ok(key);
+      if (url.pathname.endsWith("/discover")) {
+        assert.deepEqual(JSON.parse(bytes.toString("utf8")), { manifest, file_hashes: hashes,
+          total_bytes: Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0) });
+      }
       return json({ protocol: "eliotr.ingest-recovery.v1", idempotency_key: key,
         manifest_sha256: receipt.manifest_sha256, file_hashes: hashes,
         total_bytes: Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0),

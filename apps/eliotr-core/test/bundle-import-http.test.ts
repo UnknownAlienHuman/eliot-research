@@ -1,10 +1,10 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { canonicalDigest, sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { canonicalDigest, createD1IngestAdmissionAuthority, residencyKeyForManifest, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
-import { createBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../eliotr-pwa/src/bundle-import.js";
+import { createBrowserBundleImport, discoverBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../eliotr-pwa/src/bundle-import.js";
 import { type ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
@@ -272,6 +272,104 @@ describe("actual PWA import protocol through Worker/D1/R2", () => {
     expect(unsigned.status).toBe(401);
     await expect(transport(`${path}?include=credentials`)).rejects.toMatchObject({ status: 400 });
     expect(await delta("bundle_ingest_operation")).toBe(1); expect(await delta("source_revision")).toBe(0);
+  });
+
+  it.each(["prepare-response", "part", "commit-response"])("discovers %s by exact reselected folder with no retained operation ID", async (fault) => {
+    await setup(); const bundle = await input(); let tripped = false;
+    const attempt = createBrowserBundleImport(bundle, `lost-id-${namespace}`);
+    await expect(attempt.run({ transport: async (path, init) => {
+      if (fault === "part" && path.includes("/parts/")) { tripped = true; throw new Error("interrupted"); }
+      const result = await transport(path, init);
+      if (fault === "prepare-response" && path.endsWith("/prepare") || fault === "commit-response" && path.endsWith("/commit")) {
+        tripped = true; throw new Error("lost response and ID");
+      }
+      return result;
+    } })).rejects.toThrow();
+    expect(tripped).toBe(true); attempt.dispose();
+    const before = (await runtime.WORK_BUCKET.list()).objects.map((object) => object.key).sort();
+    const calls: { path: string; method: string }[] = [];
+    const found = await discoverBrowserBundleImport(await prepareBrowserBundle(bundle.files), { transport: async (path, init) => {
+      calls.push({ path, method: init?.method ?? "GET" }); return transport(path, init);
+    } });
+    expect(calls).toEqual([{ path: "/api/v1/ingest/bundles/discover", method: "POST" }]);
+    expect((await runtime.WORK_BUCKET.list()).objects.map((object) => object.key).sort()).toEqual(before);
+    expect(await delta("bundle_ingest_operation")).toBe(1);
+    expect(await delta("source_revision")).toBe(fault === "commit-response" ? 1 : 0);
+    expect((await found.attempt.run({ transport }))?.decision).toBe("ADMITTED");
+    expect(await delta("bundle_ingest_operation")).toBe(1);
+    expect(await delta("source_revision")).toBe(1); expect(await delta("outbox")).toBe(1);
+    expect(await delta("scope_read_policy")).toBe(0); found.attempt.dispose();
+  });
+
+  it("missing discovery cannot reserve a new operation or expose another principal's upload", async () => {
+    await setup(); const bundle = await input();
+    await expect(discoverBrowserBundleImport(bundle, { transport })).rejects.toMatchObject({ code: "INGEST_OPERATION_NOT_FOUND", status: 404 });
+    expect(await delta("bundle_ingest_operation")).toBe(0);
+    await importBrowserBundle(bundle, `foreign-discover-${namespace}`, { transport });
+    const body = JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes, total_bytes: bundle.totalBytes });
+    const request = () => new Request("https://research.example/api/v1/ingest/bundles/discover", {
+      method: "POST", headers: { "content-type": "application/json" }, body });
+    const foreign = await handleHttp(request(), runtime, {} as ExecutionContext, { accessVerifier: { async verify() {
+      return { principal_ref: "different-owner", credential_generation: "credential-1", authentication_method: "cloudflare_access",
+        expires_at: new Date(Date.now() + 3600000).toISOString() };
+    } } });
+    expect(foreign.status).toBe(404);
+    const text = await foreign.text(); expect(text).toContain("INGEST_OPERATION_NOT_FOUND");
+    expect(text).not.toContain(`foreign-discover-${namespace}`); expect(text).not.toContain(revision);
+    const unsigned = await handleHttp(request(), runtime, {} as ExecutionContext);
+    expect(unsigned.status).toBe(401);
+    expect(await delta("bundle_ingest_operation")).toBe(1);
+  });
+
+  it("rejects altered discovery metadata/hash/count and unknown fields without any mutation", async () => {
+    await setup(); const bundle = await input();
+    await importBrowserBundle(bundle, `exact-discover-${namespace}`, { transport });
+    const payload = { manifest: bundle.manifest, file_hashes: bundle.hashes, total_bytes: bundle.totalBytes };
+    const changes = [
+      { ...payload, total_bytes: bundle.totalBytes + 1 },
+      { ...payload, manifest: { ...bundle.manifest, source: { ...bundle.manifest.source, original_name: "changed.md" } } },
+      { ...payload, file_hashes: { ...bundle.hashes, "content.md": "b".repeat(64) } },
+      { ...payload, file_hashes: { ...bundle.hashes, "extra.md": "c".repeat(64) } },
+    ];
+    for (const body of changes) {
+      await expect(transport("/api/v1/ingest/bundles/discover", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(body) })).rejects.toMatchObject({ code: "INGEST_RECOVERY_INPUT_MISMATCH", status: 409 });
+    }
+    for (const extra of [{ idempotency_key: "new-key" }, { token: "do-not-return" }]) {
+      await expect(transport("/api/v1/ingest/bundles/discover", { method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...payload, ...extra }) })).rejects.toMatchObject({ code: "INGEST_UNKNOWN_FIELD", status: 400 });
+    }
+    await expect(transport("/api/v1/ingest/bundles/discover?owner=other", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload) })).rejects.toMatchObject({ status: 400 });
+    await expect(transport("/api/v1/ingest/bundles/discover", { method: "POST", headers: { "content-type": "application/json" },
+      body: "x".repeat(256 * 1024 + 1) })).rejects.toMatchObject({ status: 413 });
+    expect(await delta("bundle_ingest_operation")).toBe(1); expect(await delta("source_revision")).toBe(1);
+  });
+
+  it("expired or withdrawn original reservations cannot be discovered or silently replaced", async () => {
+    await setup(); const bundle = await input(); const attempt = createBrowserBundleImport(bundle, `expiry-discover-${namespace}`);
+    await expect(attempt.run({ transport: async (path, init) => {
+      if (path.includes("/parts/")) throw new Error("stop"); return transport(path, init);
+    } })).rejects.toThrow("stop"); attempt.dispose();
+    await db.prepare("UPDATE bundle_ingest_operation SET expires_at='2000-01-01T00:00:00.000Z' WHERE source_namespace_id=?1").bind(namespace).run();
+    await expect(discoverBrowserBundleImport(bundle, { transport })).rejects.toMatchObject({ code: "INGEST_STATE_CONFLICT", status: 409 });
+    await db.prepare("UPDATE source_admission_policy SET authorized_principal_refs_json='[\"someone-else\"]' WHERE source_namespace_id=?1").bind(namespace).run();
+    await expect(discoverBrowserBundleImport(bundle, { transport })).rejects.toMatchObject({ code: "INGEST_POLICY_DENIED", status: 403 });
+    expect(await delta("bundle_ingest_operation")).toBe(1); expect(await delta("source_revision")).toBe(0);
+  });
+
+  it("discovers a durable PREPARING reservation interrupted before any R2 session exists", async () => {
+    await setup(); const bundle = await input();
+    const authority = createD1IngestAdmissionAuthority(db);
+    const reserved = await authority.prepare({ principal_ref: owner, origin_authentication_receipt_ref: "credential-1",
+      idempotency_key: `before-staging-${namespace}`, manifest: bundle.manifest, file_hashes: bundle.hashes,
+      total_bytes: bundle.totalBytes, residency_key: residencyKeyForManifest(bundle.manifest) });
+    expect(reserved.operation.state).toBe("PREPARING"); expect(reserved.operation.staging_session_ref).toBeNull();
+    const found = await discoverBrowserBundleImport(bundle, { transport });
+    expect(found.identity.operation).toBe(reserved.operation.operation_id);
+    expect((await found.attempt.run({ transport }))?.decision).toBe("ADMITTED"); found.attempt.dispose();
+    expect(await delta("bundle_ingest_operation")).toBe(1);
+    expect(await delta("source_revision")).toBe(1); expect(await delta("outbox")).toBe(1);
   });
 
 });

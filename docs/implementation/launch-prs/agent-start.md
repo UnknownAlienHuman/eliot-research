@@ -1,86 +1,61 @@
-# Local agent dispatch after the Launch 01 checkpoint
+# Start an agent on a launch checkpoint
 
-The owner requested merging the tested #89 checkpoint; it landed as `5d7ea2a`. This does not complete
-Launch 01. Its unchecked L2/L4/L6 work is retained in **#98**. Code completion and remote qualification
-remain distinct. Start from current main, not the old planning baseline `92118fa`.
+Use current main plus the selected existing PR head. Reviewed code baseline is f94bd7a; do not start
+from the old 92118fa/2e554f2 planning tips. Task refresh changes documentation only; it launches no agent,
+implements no missing feature, and authorizes no deployment.
 
-## Start now: at most three independent local agents
+Read [execution-contract.md](execution-contract.md), the selected numbered plan and its cited canonical
+sections/ER packets. The plan's tests and good-result conditions are mandatory, not suggestions.
 
-These are eligible, **unclaimed** tasks, not running agents. Before writing, each agent posts its one
-checkpoint, current base SHA and exact owned-path claim in the existing PR. Resolve overlapping claims
-before coding. One task/worktree/branch per agent; reuse each existing theme branch after incorporating
-current main. Do not create a competing variant branch or force-reset someone else's work.
+## Default first wave: three independent code tasks
 
-| Existing PR | First bounded task | Scope and integration boundary |
+| Agent | PR / checkpoint | Exact assignment |
 |---|---|---|
-| **#90 Retrieval** | Audit existing locator decoding, then implement one missing local D1 exact/lexical lane with its actual projection input and negative tests. | ER-06/07/16/39. Inspect `packages/retrieval/src/lanes.ts`, `packages/cloudflare-ai/src/ai-search-managed-read.ts`, `packages/platform-cloudflare/src/ai-search.ts`, existing projection delivery and evidence ports. No PWA/import edits in parallel with #98; shared Worker composition and migrations require the integrator. |
-| **#95 Google** | G1: verify the currently selected transport and its bounded experiment contract. Then one missing adapter/reconciliation checkpoint within that selected path, with recorded failure tests. | ER-18/19/20/36. `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` is the current profile, not permission to activate a second Drive/OAuth pipeline. Do not independently implement an unused alternative just because `cursor.ts`/`reconciler.ts` are only interfaces. Document the supported active path and expiry before its next change. No source grants, owner impersonation or remote account calls. |
-| **#97 Rust** | Audit/reuse existing M2 shadow primitives and add parity for one uncovered identity family, starting with the new ER-44 initial namespace-owner token. | ER-00/01/02/03/44. Existing code is in `crates/eliotr-canonical/src/{canonical_json,sha256,generation,stable_id,residency_key}.rs` and `crates/eliotr-test-vectors`. Do not rewrite these or promote a family before real TS/native/Wasm differential acceptance. Shared runtime/ABI integration belongs to ER-24. |
+| Retrieval | #90 Q1 | Reuse `lanes.ts`, current managed decoder and real ingest/outbox/projection executor. Implement and test one bounded parameterized D1 lane fed from an admitted source; no pre-seeded finished index and no PWA edits. |
+| Google | #95 G1 | Wire reviewed server configuration and owner-only begin into the existing OAuth admission service. Derive owner/session from verified Access, never request claims. Do not rewrite RSA/state/PKCE/vault or activate an unqualified exchange. Coordinate HTTP/Env through ER-21/24. |
+| Rust | #97 K1 | Audit current shared vectors and close initial namespace-owner identity parity using the actual ER-44 implementation plus native/Wasm execution. Do not rewrite existing primitives, change stored hashes or promote an untested family. |
 
-If a candidate task needs a shared file already claimed elsewhere, narrow it to independent tests or
-wait for the integrator; do not invent a parallel implementation to avoid the collision. The integrator
-serializes exports, package manifests/lockfiles, schemas, migrations, composition, CI and status records.
-The integrator must run the combined main regressions after merges, not infer compatibility from three
-independently green branches.
+A fourth UI/runtime agent is not automatically authorized. #98 L1 may replace one slot to establish the
+shared Playwright/local-storage harness. Other independent checkpoint work may be scheduled only after
+exact-path conflict review. All UI belongs to ER-25; all shared code is integrator-serialized.
 
-### #90 first-task acceptance
+## Start/finish message an agent must post in its PR
 
-Reuse the existing strict managed locator decoders and negatives before deciding anything is missing.
-Prove one admitted normalized source reaches the existing outbox/projection path and yields a bounded,
-parameterized local D1 lane result. With local cron absent and remote AI disabled, explicitly invoke the
-existing dispatcher/executor; never seed the final index and call that import-to-query coverage.
-Reject stale generation/out-of-scope/purged candidates. Distinguish unavailable index, incomplete index
-and a valid empty result. Locator previews are not exact evidence and no top-k result proves absence.
-The full #90 result/trace/HTTP/evidence-viewer checkpoints follow sequentially after this boundary.
+```text
+Claim: <checkpoint ID>, <ER owner>, base main=<SHA>, head=<SHA>
+Files: <exact existing/new paths; shared-file owner approvals>
+Inputs: <accepted predecessor commit/fixture/artifact references>
+Tests: <named success, negative, race, restart and bound tests>
+No account changes: true
+```
 
-### #95 first-task acceptance
+At finish replace intent with evidence: commands, exit codes, before/after regression, durable identity
+and expected/actual states, output SHA, contract/migration impact and unchecked follow-ups. No test count
+alone closes a task. No secrets or source payloads in comments. Keep a theme draft until all its local
+code acceptance passes; preserve live work separately as NOT_EXECUTED. An owner-requested partial merge
+must keep the incomplete theme tracked rather than silently close it.
 
-Read the active profile and ER-36/18/19/20 contracts, including experiment expiry. Verify current official
-provider API/CLI behavior when it affects code; record exact versions and scope. Choose one active
-transport; an expired experiment or a missing authority adapter is an explicit block, not permission to
-fall back to a second service. The first implementation must consume only frozen candidate observations
-and reject identity/hash/generation drift, lost acknowledgement and historical tampering as applicable.
-`eliotr_catalog` is intentionally withheld until service-scoped read grants and post-read currentness
-are implemented: never label a service principal `owner_pwa` to make the old path work. Coordinate its
-Worker wiring with ER-24 rather than editing the same composition root as #90.
+## Existing code agents must not duplicate
 
-### #97 existing code is not full M2 completion
+Library: normalized-folder upload, same-tab/reload/lost-ID recovery, namespace/read-policy local setup,
+Library-to-metadata-Lens and recorded-only revision history are on main. #98 now owns their remaining
+raw-file/project/active-readiness/error/full-browser acceptance.
 
-The current canonical-body implementation accepts null/bool/string/array/object and **safe integers**;
-floats and exponent syntax are outside that family. Its UTF-16 object-key ordering, limits and typed
-failures already have fixtures. Existing SHA-256/stable-ID/residency helpers also have shadow vectors.
-First determine each product family's admitted inputs and exact authoritative bytes. Do not broaden the
-Rust parser or change identities to conceal a mismatch. In particular, use the ER-44 namespace-owner
-preimage specification and actual initializer/reference function, not two copied golden implementations.
+Google: G1a REST/serializer, encrypted vault/D1 refresh and internal first OAuth admission are on main.
+Use `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md`. Required Drive stays IN_PROGRESS;
+optional Gemini is not a substitute. First admission deliberately returns AUTHORIZING, not ACTIVE.
 
-Add current valid/invalid and max+1 vectors, including Unicode/prototype-shaped keys where that family
-allows them, and run identical inputs through TS/native/Wasm. Keep unsupported product families and
-M3–M7 promotion open. No promoted runtime authority, competing TS cache or ABI change merely because
-one helper passes parity. Run every pinned Rust gate, applicable deep checks and the existing Worker gates.
+Rust: M1 plus narrow canonical JSON/SHA/generation/residency shadow primitives exist. They accept their
+current schema domains (including safe-integer canonical-body rules), not every imaginable JSON value.
+M5 is Wasm/shadow, M6 promotion and M7 superseded TS removal. See #97's per-family checklist.
 
-## Subsequent dependency waves
+## When account agents may start
 
-- **#98 Library remainder:** current coordinator finishes known-operation recovery tests, missing-ID
-  recovery discovery, revision/readiness/project views and the complete clean browser/storage loop.
-  Claim one of these before handing it to another UI agent. Do not reopen #89 as a competing queue.
-- **#91 structural Lens** follows #90 exact opening. **#92 governed research** follows #90; #91 is needed
-  only for protocols actually using structural navigation. They must not independently change shared UI.
-- **#93 federation** and **#94 publication/Wiki** consume #90 and #92. Pin an independent peer contract
-  client for federation; exact citation/current-authority publication tests are mandatory for Wiki.
-- **#96 recovery/release:** bounded local receipt/backup-format/probe work may be claimed separately,
-  but final erase/restore/rollback/dependency closure consumes #89–#95, #98 and promoted #97 families.
-  Do not add this as a fourth concurrent shared-runtime task by default.
+They may implement test/probe runners locally now. They may NOT start provisioning/deploy to finish code.
+O6/O7 in #96 and the shared handoff govern first complete staging; O8 governs production qualification.
+`pnpm launch:code` currently must fail. All nine local code checklists, complete integrated user loops,
+critical Rust promotion, full exact-head CI and an explicitly approved isolated target are required.
+Real T4/T6 receipts are generated during/after that first staging trial, not fabricated beforehand.
 
-## Before reporting a checkpoint complete
-
-Read `AGENTS.md`, the current owning packet, `implementation-status.json`, `gap-register.md`, the theme
-plan and adjacent contracts. Run frozen install, `pnpm check:affected`, strict Workers fixture typecheck,
-local Linux/Windows smoke, applicable browser tests, PWA/Worker builds and exact-head CI. Never replace
-missing functionality with disabled controls or mock success and mark the theme complete. Retain open
-follow-ups explicitly. Test-only code receives no production authority and no live qualification label.
-
-**Cloudflare execution is NOT enabled by this dispatch.** All mandatory code, combined user loops,
-Rust promotion, target approval, isolation and the existing launch gate must pass first. Agents can
-implement probe runners and missing-input/failure handling locally. Account-only actions and exact
-receipt requirements remain in [cloudflare-handoff.md](cloudflare-handoff.md). No raw Wrangler bypass,
-partial development deployment, paid provider retries without authority, or secrets in PR comments.
+Use the checkpoint dependency graph in README.md. A blocked integration task does not authorize a stub
+service: take only an independent specified predecessor or report the precise missing dependency.

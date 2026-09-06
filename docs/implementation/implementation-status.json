@@ -46,6 +46,25 @@
       ]
     },
     {
+      "id": "pending-drive-exchange",
+      "path": "packages/google-drive-exchange/src/reconciler.ts",
+      "sentinel": "IN_PROGRESS: ER-19 durable Drive cursor reconciliation and tamper audit are not implemented.",
+      "owner_packets": [
+        "ER-18",
+        "ER-19",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IN_PROGRESS",
+      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner HTTP/PWA connect/callback, configuration/production evidence admission, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
+      "completion_evidence": [
+        "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
+        "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
+        "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
+      ]
+    },
+    {
       "id": "implemented-001",
       "path": "apps/eliotr-core/src/composition-root.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
@@ -53,10 +72,12 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API.",
+      "behavior": "bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable; owner-only bounded metadata orientation and durable trace reads are now active Owner catalog now uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors; Library selection invokes the existing orientation API. Owner-only revision history now reuses the catalog read fence and independently validates historical admissions; per-channel metadata is explicitly RECORDED_ONLY, never active index/evidence qualification.",
       "completion_evidence": [
         "strict TypeScript check",
         "owner/service authorization negative tests",
+        "apps/eliotr-core/test/source-revisions.test.ts: bounded actual D1/HTTP history, recorded readiness, cursor and withdrawal/purge/expiry negatives",
+        "tests/source-revisions.test.ts and built-PWA Chromium fixture: strict decoding, source/generation binding, pagination and private-state clearing",
         "live Access and remote D1 receipts"
       ]
     },
@@ -137,12 +158,13 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Signed gemini-spark identity reaches bounded status, Google planning and candidate-only receipt validation. Unscoped catalog access is withheld from discovery and direct execution until an explicit service-scope policy adapter is composed.",
+      "behavior": "Optional signed Gemini service MCP exposes status, no-effect planning and bounded v1 self-reported observation checks; target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance, write-precondition proof or the required ChatGPT Drive Exchange. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
         "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
-        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited."
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
+        "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]
     },
     {
@@ -158,7 +180,7 @@
         "ER-37"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Missing-ID discovery, revision/readiness/project views and the full initial populated browser loop remain open in #98.",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98.",
       "completion_evidence": [
         "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
         "SQLite migration and commit-guard fixture",
@@ -171,7 +193,11 @@
         "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification",
         "tests/bundle-recovery.test.ts exact-file recovery metadata, generation/auth/cancellation and no implicit mutation",
         "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
-        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open"
+        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open",
+        "apps/eliotr-core/test/bundle-import-http.test.ts read-only exact-folder discovery after lost prepare/commit replies and PREPARING state; missing/foreign denial, altered metadata/bytes, expiry and policy withdrawal",
+        "apps/eliotr-core/src/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
+        "tests/bundle-recovery.test.ts exact discovery transport, bounded metadata, frozen input, cancellation and no fallback mutation",
+        "scripts/test-library-browser.mjs built PWA reload without operation ID -> read-only discovery -> explicit continuation; controlled HTTP backend, not complete real-storage browser qualification"
       ]
     },
     {
@@ -294,6 +320,88 @@
         "Actual PWA API/decoder/rendering against Worker integration",
         "Replay/lost ACK/revocation/expiry and atomic batch rollback cases",
         "Remote Access, D1 and browser session qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-drive-sheet-rest",
+      "path": "packages/google-drive-exchange/src/sheet-port.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 bounded Exchange Sheet/changes REST subset; OAuth, Doc publication and durable cursor composition remain unfinished.",
+      "owner_packets": [
+        "ER-18",
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Five fixed-generation Drive/Sheets REST methods with trusted per-request credential lease/currentness, numeric bounded ranges, exact metadata, ERC-only append guards, bounded stream deadlines and no automatic retries. HTTP receipts and raw cells remain transport observations. No Worker activation or complete connector is claimed.",
+      "completion_evidence": [
+        "contribution-boundary.test.ts: seven baseline failure groups reproduced and rejected; existing v1 sixteen/five-column serialization round-trips.",
+        "sheet-port.test.ts: fixed resource/lease/range bindings, valid and malformed provider JSON, deadline/body/request budgets, cancellation, revocation, no secret reflection and uncertain append outcomes.",
+        "Actual serializer -> bounded numeric range readback -> strict contribution assembly uses controlled Google HTTP fixtures; not a real account or canonical admission receipt.",
+        "Owner OAuth transport/UI, generation/cursor/freeze/publication/composition and complete local-storage/browser acceptance remain required; live Google/Cloudflare NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-vault",
+      "path": "packages/google-drive-exchange/src/token-vault.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 credential encryption; initial OAuth admission and runtime activation remain separate.",
+      "owner_packets": [
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Context-bound AES-256-GCM refresh-token vault with versioned nonextractable keys, cryptographic random nonces, forward key rotation and exact narrow-scope validation. No initial Google identity admission.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-refresh",
+      "path": "packages/google-drive-exchange/src/token-lease.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 persisted-credential refresh leases; no initial OAuth callback/admission or production connector composition.",
+      "owner_packets": [
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "One-attempt, request-scoped OAuth refresh lease from previously admitted encrypted records; deadlines, sticky cancellation, expiry, CAS token rotation and durable REAUTH_REQUIRED. It is not a browser OAuth callback or public connect route.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-credential-store",
+      "path": "apps/eliotr-core/src/google-token-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback; OAuth callback and first verified connection admission remain unfinished.",
+      "owner_packets": [
+        "ER-13",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Actual primary D1 encrypted-credential load/CAS/readback and pinned exchange descriptor checks compose the existing REST lease. Legacy/Testing records fail closed; lost ACKs reconcile exactly and late invalid_grant cannot revoke a replaced grant.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-initial-oauth",
+      "path": "packages/google-drive-exchange/src/oauth-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 initial OAuth admission service; owner HTTP/PWA and provisioned exchange qualification remain separate.",
+      "owner_packets": [
+        "ER-20",
+        "ER-13",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Internal initial OAuth service and real primary-D1 store: encrypted owner/session/client/redirect-bound one-use intent, PKCE/state/nonce, fixed code/JWKS endpoints, actual RS256/dedicated identity/narrow scope/hash/time verification, atomic encrypted credential insertion and exact readback. Only AUTHORIZING admission; no public connect/callback route, UI, provisioning, new source grant or completed Drive Exchange. Trusted operator configuration/production evidence and authenticated owner currentness remain caller dependencies.",
+      "completion_evidence": [
+        "oauth-identity.test.ts: 29 real-RSA/transport/configuration regressions, mandatory access hash, optional code hash, issuer/audience/nonce/subject/email, strict scopes and body/deadline/cancellation failures.",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts: 23 actual local D1/crypto cases including restart, one-use replay, concurrent claim, lost initial/claim/admission ACKs, rollback, owner revocation and preservation of existing artifacts.",
+        "Owner HTTP/PWA integration and complete browser/storage OAuth lifecycle still required; fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
+        "No real Google code exchange, key retrieval, account change or Cloudflare deployment; live qualification NOT_EXECUTED."
       ]
     }
   ]

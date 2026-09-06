@@ -36,11 +36,17 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-http.test.ts`
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
-
 - `apps/eliotr-core/src/catalog-service.ts`
 - `apps/eliotr-core/src/catalog-service.test.ts`
 - `apps/eliotr-core/src/catalog-queries.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
+- `apps/eliotr-core/src/source-revisions.ts`
+- `apps/eliotr-core/test/source-revisions.test.ts`
+- `apps/eliotr-core/src/google-token-store.ts`
+- `apps/eliotr-core/test/google-token-store.test.ts`
+- `apps/eliotr-core/src/google-oauth-store.ts`
+- `apps/eliotr-core/src/google-oauth-service.ts`
+- `apps/eliotr-core/test/google-oauth-admission.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -156,3 +162,28 @@ Opaque v2 navigation cursors bind principal, credential, deployment, project, au
 A cursor is not an access grant; SQL candidates and current authority are rechecked on every page.
 Legacy cursors require refreshing the first page. The primary D1 epoch and temporal frontier are
 rechecked before returning titles. MCP cannot impersonate the owner catalog.
+
+## Read-only Library revision history
+
+`source-revisions.ts` reuses catalog eligibility, the admitted-source/read-policy authority and its
+primary D1 mutation/temporal fence. An accessible LIVE current head is required; only independently
+readable admitted LIVE revisions under the current owner generation may be emitted. Every page
+validates its history admissions, not only the head. Hidden versions and their counts are not exposed.
+
+The page and recorded channel metadata are selected together in a read-only D1 batch, at most ten
+versions plus one lookahead. The source/session/credential/deployment/epoch/expiry-bound cursor is
+navigation, not a grant. Reason payloads are bounded before materialization; malformed stored rows
+fail instead of producing partial successful metadata. Post-read withdrawal/purge/expiry cancels output.
+Recorded channel observations carry their existing generation/receipt references when present; this
+reader does not attest the current D1 Search or managed index. The UI labels that limitation explicitly.
+Actual D1/HTTP tests cover pagination, corruption, hidden histories and read races. Live Access and
+remote history/readiness observations remain NOT_EXECUTED.
+
+## Initial Google OAuth integration
+
+The bounded service, cryptographic verifier and primary-D1 intent/admission store are implemented in
+`drive-oauth-admission.md`. ER-20 owns Google I/O and crypto; ER-24 composes D1, and ER-13 owns migration
+0013. ER-18 retains the package barrel; this integration only adds the reviewed OAuth exports there.
+All shared edits are integrator-serialized. The owner HTTP/PWA adapter is still required: trusted owner
+session/currentness and server configuration cannot be replaced by request-body claims. Admission ends
+in AUTHORIZING, not ACTIVE; no exchange asset, cursor, source grant or runtime activation is implied.

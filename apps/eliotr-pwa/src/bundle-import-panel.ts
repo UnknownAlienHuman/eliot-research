@@ -1,6 +1,6 @@
 import { ApiRequestError } from "./api.js";
 import { prepareBrowserBundle, selectedBundleFiles } from "./bundle-input.js";
-import { createBrowserBundleImport, recoverBrowserBundleImport, type BrowserBundleImport } from "./bundle-import.js";
+import { createBrowserBundleImport, discoverBrowserBundleImport, recoverBrowserBundleImport, type BrowserBundleImport } from "./bundle-import.js";
 import { readImportStatus, type ImportIdentity } from "./bundle-import-api.js";
 
 export function mountBundleImportPanel(element: HTMLElement): () => void {
@@ -13,21 +13,25 @@ export function mountBundleImportPanel(element: HTMLElement): () => void {
       placeholder="Leave empty for a new import"></label>
     <button type="submit">Validate and import / recover</button><button type="button" data-stop disabled>Stop sending</button>
     <button type="button" data-resume disabled>Resume same upload</button>
+    <button type="button" data-discover>Find previous upload from folder</button>
     <button type="button" data-status disabled>Check durable status</button></form>
     <p>Keep the operation ID shown below. After reload or sign-in, reselect the exact original folder and enter that ID.
-    Recovery reads current server state; it does not save source bytes or credentials in browser storage.
+    Lost the ID? Reselect the original folder and use Find previous upload, then Resume.
+    Discovery never creates a new operation. Recovery reads current server state; it does not save source bytes or credentials in browser storage.
     Completed files are verified, unfinished files resend their original parts. Do not create a new operation for an uncertain result.</p>
     <p role="status" aria-live="polite"></p><p data-identity></p></details>`;
   const form = element.querySelector("form"); const input = element.querySelector<HTMLInputElement>('input[name="bundle"]');
   const recovery = element.querySelector<HTMLInputElement>('input[name="recovery"]');
   const start = element.querySelector<HTMLButtonElement>('[type="submit"]'); const stopButton = element.querySelector<HTMLButtonElement>("[data-stop]");
   const resume = element.querySelector<HTMLButtonElement>("[data-resume]");
+  const discover = element.querySelector<HTMLButtonElement>("[data-discover]");
   const inspect = element.querySelector<HTMLButtonElement>("[data-status]"); const status = element.querySelector('[role="status"]');
   const identityText = element.querySelector("[data-identity]");
-  if (!form || !input || !recovery || !start || !stopButton || !resume || !inspect || !status || !identityText) throw new Error("Import panel is incomplete");
+  if (!form || !input || !recovery || !start || !stopButton || !resume || !discover || !inspect || !status || !identityText) throw new Error("Import panel is incomplete");
   let serial = 0; let controller: AbortController | undefined; let identity: ImportIdentity | undefined;
   let attempt: BrowserBundleImport | undefined; let busy = false; let key = crypto.randomUUID();
   const buttons = () => { start.disabled = busy || attempt !== undefined; resume.disabled = busy || !attempt?.canResume;
+    discover.disabled = busy || attempt !== undefined;
     stopButton.disabled = !busy; input.disabled = busy; recovery.disabled = busy; inspect.disabled = busy || identity === undefined; };
   const stop = () => { ++serial; controller?.abort(); stopButton.disabled = true; };
   const message = (error: unknown) => error instanceof ApiRequestError
@@ -66,6 +70,26 @@ export function mountBundleImportPanel(element: HTMLElement): () => void {
   };
   form.onsubmit = (event) => { event.preventDefault(); run(false); };
   resume.onclick = () => run(true);
+  discover.onclick = () => {
+    if (busy || attempt) return;
+    if (!navigator.onLine) { status.textContent = "Offline. No discovery attempted."; return; }
+    const active = ++serial; const local = new AbortController(); controller = local; busy = true; buttons();
+    status.textContent = "Validating selected bytes and looking up the original upload…";
+    void (async () => {
+      const bundle = await prepareBrowserBundle(selectedBundleFiles(Array.from(input.files ?? [])), local.signal);
+      if (active !== serial) return;
+      const found = await discoverBrowserBundleImport(bundle, { signal: local.signal });
+      if (active !== serial) { found.attempt.dispose(); return; }
+      attempt = found.attempt; identity = found.identity; recovery.value = identity.operation;
+      identityText.textContent = `Operation: ${identity.operation} · Existing reservation, not a new import.`;
+      status.textContent = "Previous upload found. No upload or commit was sent. Resume explicitly to reconcile or continue it.";
+    })().catch((error: unknown) => { if (active === serial) {
+      if (error instanceof ApiRequestError && [401, 403].includes(error.status)) clearPrivate();
+      status.textContent = error instanceof ApiRequestError && error.code === "INGEST_OPERATION_NOT_FOUND"
+        ? "No matching upload is available to this signed-in user. Nothing was created. Check the original folder and account before starting a new import."
+        : message(error);
+    } }).finally(() => finish(local));
+  };
   inspect.onclick = () => {
     if (!identity || busy) return;
     const active = ++serial; const local = new AbortController(); controller = local; busy = true; buttons();
@@ -80,7 +104,7 @@ export function mountBundleImportPanel(element: HTMLElement): () => void {
   };
   const clearPrivate = () => { stop(); attempt?.dispose(); attempt = undefined; identity = undefined; identityText.textContent = "";
     controller = undefined; busy = false; input.value = ""; recovery.value = ""; key = crypto.randomUUID(); buttons();
-    status.textContent = "Session interrupted. Private import state cleared. Reselect the folder and enter the original operation ID to recover."; };
+    status.textContent = "Session interrupted. Private import state cleared. Reselect the original folder and find the previous upload or enter its operation ID."; };
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate); window.addEventListener("pagehide", clearPrivate);
   return () => { clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate);
