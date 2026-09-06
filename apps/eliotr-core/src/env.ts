@@ -27,6 +27,15 @@ export interface Env {
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;
   readonly GOOGLE_TOKEN_ENCRYPTION_KEY?: string;
+  /** Active AES-GCM key version for Google OAuth intent/grant ciphertext. Defaults to 1. */
+  readonly GOOGLE_TOKEN_KEY_VERSION?: string;
+  /** Server-owned G1 OAuth admission configuration; never accepted from request bodies. */
+  readonly GOOGLE_OAUTH_CONNECTION_ID?: string;
+  readonly GOOGLE_OAUTH_REDIRECT_URI?: string;
+  readonly GOOGLE_OAUTH_GOOGLE_SUBJECT?: string;
+  readonly GOOGLE_OAUTH_GOOGLE_EMAIL?: string;
+  /** Explicit operator attestation that the OAuth client is published (Production). */
+  readonly GOOGLE_OAUTH_PRODUCTION_EVIDENCE_REF?: string;
   readonly OWNER_NOTIFICATION_WEBHOOK?: string;
   readonly ACCESS_TEST_JWKS_URL?: string;
 }
