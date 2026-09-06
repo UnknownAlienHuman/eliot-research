@@ -403,6 +403,22 @@
         "Owner HTTP/PWA integration and complete browser/storage OAuth lifecycle still required; fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
         "No real Google code exchange, key retrieval, account change or Cloudflare deployment; live qualification NOT_EXECUTED."
       ]
+    },
+    {
+      "id": "implemented-investigation-ledger",
+      "path": "packages/research/src/investigation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with atomic batch append, generation fences and explicit supersession; Workflow/Session composition and live receipts remain separate.",
+      "owner_packets": [
+        "ER-08",
+        "ER-13"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Versioned Investigation ledger heads plus append-only events over D1 Core migration 0014: single-batch CAS plus revision-conditioned event insert with exact readback, principal/scope/policy/deployment/purge fences rechecked at every mutation write boundary, fail-closed portfolio verification, named-verifier acceptance binding, deviated obligations that only leave via explicit cross-linked supersession settled in one atomic batch, and full initial event/idempotency comparison on replay.",
+      "completion_evidence": [
+        "packages/research/src/research.test.ts: 18 cases over the committed Core migration stream covering crash before/between/after atomic append, stale CAS rollback, lost-ACK readback, two-store contention, every mutation under wrong-principal/foreign-scope/stale-policy/stale-deployment/purge/foreign-actor, portfolio missing/mismatch/backend-error fail-closed, verifier impersonation, deviated reaccept rejection, explicit supersession lineage and atomic supersession fault injection.",
+        "apps/eliotr-core/test/investigation-ledger-d1.test.ts: 4 actual workerd D1 cases via cloudflare:test CORE_DB contour covering committed-migration create/readback, stale CAS rollback with no orphan event, fences/verifier/deviation/supersession lineage and conflicting replay with no second effect.",
+        "Workflow/Session composition, research.run enablement and remote D1/Queue/live qualification NOT_EXECUTED."
+      ]
     }
   ]
 }
