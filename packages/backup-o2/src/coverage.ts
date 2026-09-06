@@ -95,6 +95,10 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "sqlite_master",
   "backup_epoch_receipt",
   "backup_offsite_expiry",
+  "backup_destination_authority",
+  "backup_offsite_copy_part",
+  "backup_offsite_copy_receipt",
+  "backup_export_cut",
 ]);
 
 export function classifyDurableTable(table: string): DurableStatus {

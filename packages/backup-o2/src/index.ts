@@ -1,8 +1,14 @@
 // ER-34 O2 composition root. IMPLEMENTED_NOT_LIVE; O3/O4 NOT_IMPLEMENTED.
 export * from "./shared.js";
 export * from "./coverage.js";
+export * from "./intent-digest.js";
+export * from "./migration-gate.js";
+export * from "./coherent-cut.js";
+export * from "./destination-authority.js";
+export * from "./offsite-durability.js";
 export * from "./replay-authority.js";
 export * from "./r2-inventory.js";
+export * from "./r2-conformance.js";
 export * from "./epoch.js";
 export * from "./destination-policy.js";
 export * from "./offsite.js";
