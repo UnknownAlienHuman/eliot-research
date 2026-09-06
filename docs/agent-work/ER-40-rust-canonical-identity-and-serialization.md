@@ -156,12 +156,14 @@ This slice ports the exact `scopeSnapshotIdentityPayload`, `scopeSnapshotDigestP
   (`snapshot_id` plus the identity payload), per the accepted TypeScript behavior;
 - key order is ECMAScript UTF-16 code-unit order, matching the current TypeScript
   `canonicalJson` authority; duplicate, missing, extra and unknown keys fail closed;
-- 52 committed vectors cover derivation and verification, ordering and escaped-equivalent
+- 67 committed vectors cover derivation and verification, ordering and escaped-equivalent
   metamorphism, replay versus conflicting replay, digest/ID mismatch on valid-hex tamper,
   foreign owner/scope/generation/policy inputs, zero/max/max+1 boundaries, malformed UTF-8,
   escapes, non-canonical numbers, surrogates, bounded depth/member/payload ceilings,
-  valid timestamps with 10 and 20 fractional-second digits, and fail-closed derive
-  rejection of caller-supplied `snapshot_id`/`digest` members;
+  valid timestamps with 10 and 20 fractional-second digits, optional-seconds positives
+  (`00:00Z`, `00:00±HH:MM`), leap/non-leap February (`2024`/`2000` admit, `2026`/`1900`
+  reject), 30/31-day boundaries (April 30 admits, April/September 31 reject), offsets,
+  and fail-closed derive rejection of caller-supplied `snapshot_id`/`digest` members;
 - the same corpus executes through the independent JavaScript reference, native Rust and
   compiled Rust/Wasm, with fuzz and branch-coverage reach, plus a direct differential
   oracle replaying the accepted TypeScript schema/functions
@@ -176,10 +178,12 @@ observation receipt is claimed, and promotion still requires a separate rollback
 review packet. This family is `IMPLEMENTED_NOT_LIVE`.
 
 Corpus evidence (`crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt`):
-52 cases, 67,395 bytes, SHA-256
-`4b034739dc45c7aa1e8d85e61b936c7a9c9e42351fe6f761e31f6a428dae64b5`.
-Timestamps track the admitted `IsoDateTimeSchema` (`datetime({ offset: true })`)
-exactly: fractional-second runs have no nine-digit ceiling and are preserved verbatim.
+67 cases, 88,473 bytes, SHA-256
+`f520fffa55db154efaa966e3a666845fd1e653dceab054c48dad76c417fe4862`.
+Timestamps track the admitted `IsoDateTimeSchema` (`datetime({ offset: true })`,
+`zod@4.4.3`) exactly: seconds are optional, Gregorian month/day/leap validity
+holds (century rule included), offsets stay bounded, fractional-second runs have
+no nine-digit ceiling and are preserved verbatim.
 Derive inputs carrying `snapshot_id` or `digest` are fail-closed
 (`ELIOTR_SNAPSHOT_UNKNOWN_FIELD`, no output); the TypeScript authority strips extra
 keys instead, which the differential oracle pins as an explicit divergence.

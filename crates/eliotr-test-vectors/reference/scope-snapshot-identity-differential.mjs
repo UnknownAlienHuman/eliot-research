@@ -11,6 +11,20 @@
 //     payload) is replayed with node:crypto and compared byte-for-byte against
 //     the committed output that native Rust, Rust/Wasm and the reference verify.
 //
+// Symbol evidence: `expectedSnapshotIdentity` is module-private in
+// `packages/cloudflare-navigation/src/scope-service.ts:356`
+// (`async function expectedSnapshotIdentity(`, no `export` keyword; only
+// internal call sites at `:398` and `:527`). It cannot be imported, so the
+// oracle invokes the actual exported production path where possible —
+// `packages/domain/src/scope/snapshot-identity.ts:7`
+// `export function scopeSnapshotIdentityPayload` and `:24`
+// `export function scopeSnapshotDigestPayload` — plus the exact production
+// formula from `scope-service.ts:359-365` (`canonicalJson(identityPayload)` →
+// `scope-` + 48 hex of SHA-256 → `canonicalJson(digestPayload)` → SHA-256
+// digest). This is a compared replay against exported builders, never a silent
+// local-replay-as-service-call: any divergence in builders, key order, hash,
+// or prefix fails the byte comparison below.
+//
 // Derive inputs carrying caller-supplied `snapshot_id`/`digest` are the intentional
 // fail-closed divergence: TypeScript strips extra keys while the M2 derive path
 // rejects them with `ELIOTR_SNAPSHOT_UNKNOWN_FIELD`. The oracle asserts both sides
@@ -81,6 +95,9 @@ export async function verifyScopeSnapshotIdentityDifferential(fixtureUrl, label 
   const cases = parseScopeSnapshotIdentityCases(raw);
   let checked = 0;
   let longFraction = 0;
+  let optionalSeconds = 0;
+  let timestampNegatives = 0;
+  let offsetCases = 0;
   for (const testCase of cases) {
     if (testCase.operation !== "derive_snapshot_identity") continue;
     const named = testCase.caseId === "derive_with_snapshot_id" || testCase.caseId === "derive_with_digest";
@@ -97,13 +114,17 @@ export async function verifyScopeSnapshotIdentityDifferential(fixtureUrl, label 
       continue;
     }
     if (testCase.expected.kind === "ok") {
-      // The accepted authority must admit both timestamps, including runs of more
-      // than nine fractional digits that the previous ports wrongly rejected.
+      // BIDIRECTIONAL row 1/2: Rust/reference admit (ok corpus) → TS must admit.
+      // The accepted authority must admit both timestamps, including optional
+      // seconds (`2026-01-01T00:00Z`), offsets, and runs of more than nine
+      // fractional digits that the previous ports wrongly rejected.
       for (const field of ["created_at", "expires_at"]) {
         if (!IsoDateTimeSchema.safeParse(material[field]).success) {
-          fail(`${testCase.caseId}: accepted TS schema rejected ${field}`);
+          fail(`${testCase.caseId}: accepted TS schema rejected ${field} (Rust admits, TS rejects)`);
         }
         if (/\.\d{10,}/u.test(material[field])) longFraction += 1;
+        if (/T\d{2}:\d{2}(Z|[+-]\d{2}:\d{2})$/u.test(material[field])) optionalSeconds += 1;
+        if (/[+-]\d{2}:\d{2}$/u.test(material[field])) offsetCases += 1;
       }
       const expected = expectedSnapshotBytes(material);
       if (!equalBytes(expected, testCase.expected.output)) {
@@ -129,15 +150,22 @@ export async function verifyScopeSnapshotIdentityDifferential(fixtureUrl, label 
       continue;
     }
     if (testCase.expected.errorCode === "ELIOTR_SNAPSHOT_TIMESTAMP") {
+      // BIDIRECTIONAL row 2/2: Rust/reference reject (TIMESTAMP corpus) → TS
+      // must reject at least one timestamp. Fails either direction: TS admits
+      // what Rust rejects, or (above) TS rejects what Rust admits.
       const createdOk = IsoDateTimeSchema.safeParse(material.created_at).success;
       const expiresOk = IsoDateTimeSchema.safeParse(material.expires_at).success;
-      if (createdOk && expiresOk) fail(`${testCase.caseId}: TS schema admitted a rejected timestamp`);
+      if (createdOk && expiresOk) fail(`${testCase.caseId}: TS schema admitted a rejected timestamp (Rust rejects, TS admits)`);
+      timestampNegatives += 1;
       checked += 1;
     }
   }
   if (checked === 0) fail(`${label}: oracle checked no cases`);
   if (longFraction === 0) fail(`${label}: corpus must contain a committed >9-digit timestamp case`);
+  if (optionalSeconds === 0) fail(`${label}: corpus must contain a committed optional-seconds timestamp case`);
+  if (timestampNegatives === 0) fail(`${label}: corpus must contain a committed TIMESTAMP negative (no success-only parity)`);
+  if (offsetCases === 0) fail(`${label}: corpus must contain a committed offset timestamp case`);
   globalThis.console.log(
-    `${label}: PASS (${checked} derive cases replayed through the accepted TS schema/functions, ${longFraction} >9-digit timestamp fields).`,
+    `${label}: PASS (${checked} derive cases replayed through the accepted TS schema/functions, ${longFraction} >9-digit timestamp fields, ${optionalSeconds} optional-seconds fields, ${timestampNegatives} TIMESTAMP negatives, ${offsetCases} offset fields).`,
   );
 }
