@@ -143,6 +143,33 @@ This is a generic shadow primitive, not a stable-ID cutover for ingest, projecti
 erasure, owner-cutover, receipt or handle families. Those families require their own named vectors,
 observation evidence, rollback and promotion review. Live receipts remain `NOT EXECUTED`.
 
+## Active implementation slice — scope-snapshot-identity.v1
+
+This slice ports the exact `scopeSnapshotIdentityPayload`, `scopeSnapshotDigestPayload` and
+`expectedSnapshotIdentity` formulas while leaving TypeScript authority intact:
+
+- the canonical identity payload binds protocol, revision, resolved expression, participant
+  generations, member source revisions, owner generations, policy authority, disclosure
+  digest, purge revision, the optional client fence, and creation/expiry timestamps;
+- the snapshot ID is `scope-` plus the first 48 lowercase hex characters of SHA-256 over the
+  canonical identity bytes; the snapshot digest is SHA-256 over the canonical digest payload
+  (`snapshot_id` plus the identity payload), per the accepted TypeScript behavior;
+- key order is ECMAScript UTF-16 code-unit order, matching the current TypeScript
+  `canonicalJson` authority; duplicate, missing, extra and unknown keys fail closed;
+- 48 committed vectors cover derivation and verification, ordering and escaped-equivalent
+  metamorphism, replay versus conflicting replay, digest/ID mismatch on valid-hex tamper,
+  foreign owner/scope/generation/policy inputs, zero/max/max+1 boundaries, malformed UTF-8,
+  escapes, non-canonical numbers, surrogates, and bounded depth/member/payload ceilings;
+- the same corpus executes through the independent JavaScript reference, native Rust and
+  compiled Rust/Wasm, with fuzz and branch-coverage reach.
+
+This is identity parity for already-admitted material only. Scope normalization/algebra,
+resolution, authority closure, persistence, expiry/currentness, D1/R2 effects, K1
+cutover/residency/admission/receipt/owner-token semantics and publication identity remain
+TypeScript/Cloudflare authority. No production call site consumes Rust output, no live
+observation receipt is claimed, and promotion still requires a separate rollback-bound
+review packet. This family is `IMPLEMENTED_NOT_LIVE`.
+
 ## Active implementation slice — source.owner-cutover.v1 canonical vectors
 
 This slice ports the first named M2 contract corpus while leaving TypeScript authority intact:
