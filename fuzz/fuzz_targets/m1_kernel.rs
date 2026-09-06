@@ -1,12 +1,13 @@
 #![no_main]
 
 use eliotr_canonical::{
-    ObjectResidencyKeyInput, canonicalize_json, derive_stable_id_frame, serialize_object_residency_key,
-    sha256, validate_canonical_utf8_transport, validate_generation_token, validate_stable_id,
+    ObjectResidencyKeyInput, canonicalize_json, derive_snapshot_identity, derive_stable_id_frame,
+    serialize_object_residency_key, sha256, validate_canonical_utf8_transport,
+    validate_generation_token, validate_stable_id, verify_snapshot_identity,
 };
 use eliotr_test_vectors::{
-    parse_canonical_body_vector_set, parse_residency_key_vector_set, parse_stable_id_vector_set,
-    parse_vector_set,
+    parse_canonical_body_vector_set, parse_residency_key_vector_set,
+    parse_scope_snapshot_identity_vector_set, parse_stable_id_vector_set, parse_vector_set,
 };
 use libfuzzer_sys::fuzz_target;
 
@@ -18,6 +19,8 @@ fuzz_target!(|data: &[u8]| {
     let _ = validate_generation_token(data);
     let _ = derive_stable_id_frame(data);
     let _ = validate_stable_id(data);
+    let _ = derive_snapshot_identity(data);
+    let _ = verify_snapshot_identity(data);
 
     let mut fields = data.splitn(7, |byte| *byte == 0);
     let residency = ObjectResidencyKeyInput {
@@ -36,5 +39,6 @@ fuzz_target!(|data: &[u8]| {
         let _ = parse_canonical_body_vector_set(frame);
         let _ = parse_residency_key_vector_set(frame);
         let _ = parse_stable_id_vector_set(frame);
+        let _ = parse_scope_snapshot_identity_vector_set(frame);
     }
 });

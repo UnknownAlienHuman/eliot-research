@@ -1,22 +1,27 @@
 //! Pure deterministic primitives for bytes crossing the Eliot Research kernel boundary.
 //!
 //! M1 established bounded UTF-8 transport validation. M2 adds bounded canonical JSON, SHA-256,
-//! fixed-width generation tokens, stable IDs, and residency-key shadow primitives without moving
-//! product authority.
+//! fixed-width generation tokens, stable IDs, residency-key and scope-snapshot-identity shadow
+//! primitives without moving product authority.
 
 #![forbid(unsafe_code)]
 
 mod canonical_json;
 mod canonical_json_error;
 mod generation;
+mod owner_token;
+mod owner_token_tuple;
 mod residency_key;
+mod scope_snapshot_identity;
 mod sha256;
 mod stable_id;
 
 pub use canonical_json::*;
 pub use canonical_json_error::*;
 pub use generation::*;
+pub use owner_token::*;
 pub use residency_key::*;
+pub use scope_snapshot_identity::*;
 pub use sha256::sha256;
 pub use stable_id::*;
 
