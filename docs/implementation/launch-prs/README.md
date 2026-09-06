@@ -1,61 +1,52 @@
-# Launch PR series
+# Launch implementation assignments
 
-Baseline: `92118fa010ea0c455356f11c98d279be781c3873` (2026-09-05). Owner requested nine separate PRs.
-All theme PRs target `main`; they are not a stack. Refresh from current main before implementation.
-This index groups existing work packets; it does not create duplicate authority or replace owned paths.
+Code baseline reviewed: `f94bd7a2a8e94df7d5365f120927708d7a287b43`.
+Authority: ELIOT_RESEARCH v29.1; LANGUAGE_RUNTIME_CONTRACT v1.0; accepted ADRs.
+Read [execution-contract.md](execution-contract.md) first. Each theme plan contains small numbered
+checkpoints with files, implementation steps, tests and observable pass conditions. Unchecked means
+not done, even when the surrounding package compiles. The plans are on their named PR heads until merged.
 
-| Theme | Plan | Required integration predecessors |
-|---|---|---|
-| 01 Library / source ingest | 01-library.md | none; reuse existing ingest/session |
-| 02 Content retrieval | 02-retrieval.md | 01 for populated UI; existing scope/evidence ports |
-| 03 Full Corpus Lens | 03-corpus-lens.md | 02 for exact evidence navigation |
-| 04 Research / durable jobs | 04-research.md | 02; 03 for protocols using structural navigation |
-| 05 Memory OS federation | 05-federation.md | 02 and 04 for executable research jobs |
-| 06 Wiki / reports / changes | 06-wiki-reports.md | 02 and 04 for publication |
-| 07 Drive / Google | 07-google.md | 01 for canonical import; no reverse authority |
-| 08 Erasure / recovery / operations | 08-recovery.md | 01–07 plus 09 promoted kernel for final dependency/rollback closure |
-| 09 Rust authority | 09-rust.md | parallel by stable family; integrate current TS tests |
+| PR | Plan on its head | Canonical coverage | First local checkpoint |
+|---|---|---|---|
+| #98 (continuation of merged #89) | `01-library.md` | §§3–4,12.1,19.5; source/project/UI | L1 real-storage Playwright harness |
+| #90 | `02-retrieval.md` | §§6,15.4–15.5,19.2–19.4; exact/lexical/semantic/exhaustive | Q1 import-fed D1 lane |
+| #91 | `03-corpus-lens.md` | §§5.1–5.3,6.11,18 Slice 3; structure/Atlas | N1 coordinate-bound materialization |
+| #92 | `04-research.md` | §§7–8,14,19.3; Investigation/Workflow/session/model budget | W1 durable ledger |
+| #93 | `05-federation.md` | §11,19.11; generic federation and optional ELIOT leaf | F1 authenticated runtime wiring |
+| #94 | `06-wiki-reports.md` | §§5.4–5.5,9,19.6; Wiki/artifacts/atoms/arguments | P1 immutable publication storage |
+| #95 | `07-google.md` | §§12.3–12.10,13.4–13.6,19.7; required Drive Exchange | G1 owner configuration/begin |
+| #96 | `08-recovery.md` | §§10,13.7–13.8,15–16,19; Steward/erasure/restore/release | O1 shared probe/evidence runner |
+| #97 | `09-rust.md` | language §§5–10; M2–M7 per-family migration | K1 missing identity parity |
 
-Each plan is introduced in its own draft PR under this directory, so not-yet-merged plans are found
-on the corresponding PR branch. #89 is merged as an explicitly requested tested checkpoint; unfinished Library work is in #98.
-The initial parallel local tasks and remaining dependencies are in [agent-start.md](agent-start.md). Implement one bounded checkpoint per commit with a negative test.
-Do not merge a theme as complete while mandatory code remains pending. An explicitly owner-authorized
-checkpoint merge must preserve its unchecked acceptance and linked open follow-up issue. Do not label code-only/local results
-LIVE_QUALIFIED. First complete staging trial and production release are separate gates, governed by
-`../production-readiness-plan.md`. Optional Slice 7 is not added to this series.
+These are implementation queues, not nine running agents. Use the nine exact reserved names from
+`infra/github/branch-hygiene.json`, not variant branches. #98 carries the unfinished Library acceptance;
+#89 stays merged and is not reopened. Theme PRs target main, not a stacked speculative branch chain.
 
-Shared edits (composition root, routes, manifests, CI, migrations, status/gap records) require existing
-packet integration permission. Allocate migrations against current main; do not copy competing fixtures
-or barrels. All PWA work belongs to ER-25; a theme may delegate narrowly named panel/transport tests,
-not another theme's UI files. One active implementation worktree per agent; drafts are queue records.
+## Dependency graph without whole-PR cycles
 
-Every theme requires frozen install, lint, strict typecheck including Workers fixtures, packet and
-boundary/budget gates, negative tests, Worker/PWA builds, and exact-head CI. Rust changes additionally
-require all Rust gates. Check local Linux/Windows boot and browser-level user loops for changed UI.
+Checkpoint outputs, not merely PR numbers, release downstream work:
 
-Release verification is shared, not omitted as a tenth feature: each theme supplies representative
-RU/EN/code/table tests, permission/purge/failure cases and cost/budget evidence. Topic 08 assembles
-T4/T5/T6, restore and rollback checks; topic 09 supplies Wasm performance and promotion evidence.
-No partial product deployment, mock provider success, hidden auth bypass or launch-gate removal.
+- Existing governed normalized import can feed Q1 immediately; raw-file L2–L4 consumes the SAME
+  Q1/projection contract, not a second normalization pipeline. L1 is independently implementable.
+- Q2/Q3 exact evidence opens release N2/N3 structural navigation and W3 research retrieval.
+- W1 ledger and P1 immutable section/head storage are independent. W4 freeze/audit releases P3/P4
+  publication integration; W6 final materialization then consumes P2/P3. Do not make all #92 wait for
+  all #94 while all #94 waits for all #92.
+- F1/F2 reservation and authenticated reads reuse existing federation storage; F3 executable research
+  consumes W3/W6. Generic bundle transport tests do not need a fabricated completed Investigation.
+- G1/G2 reuse internal OAuth immediately; G3 reconnect and G4 provisioning release G5/G6 cursor import.
+  G7 publication consumes P3 artifact/terminal receipts. Drive must not become a second source owner.
+- O1/O2/O3 probe, backup and restore-local foundations can run independently. O4 full erasure closure
+  and O7/O8 staging/production integrate every dependency family. Each theme supplies its own probe.
+- K1–K5 run by stable family. K6/K7 promote/remove each family only after its current TS behavior,
+  runtime tests and budgets are accepted; later semantics changes re-open that family's parity gate.
 
+All PWA integration uses one ER-25 owner and L1 harness; shared API/schema/CI edits use one integrator.
+No invented domain authority, permanent TS/Rust duplication or code-only LIVE_QUALIFIED label.
 
-## Integration handoffs
+## Release scope
 
-Admission does not imply index readiness. Topic 02 must execute the actual local outbox/projection path
-with cron absent and remote AI disabled, then prove local lexical/exact fallback independently of
-semantic readiness. Topic 03 consumes admitted coordinate maps, not metadata guesses. Topic 04 records
-unknown paid effects rather than retrying with a new identity. Topic 05 pins an independent peer contract
-client. Topic 06 separates non-published drafts from publication and rechecks authority at head CAS.
-Topic 07 must not treat a service token as a source grant; its unscoped catalog stays withheld.
-Topic 08 assembles local code/recovery evidence before the first complete staging trial, then records
-actual live receipts; the two gates must not depend circularly on each other. Topic 09 preserves each
-integrated family's existing canonical bytes and schema rules before per-family Rust promotion.
-
-
-## Cloudflare execution handoff
-
-[cloudflare-handoff.md](cloudflare-handoff.md) assigns concrete account-only work to the existing
-#89–#97 PRs, including target approval, prerequisites, exact observations, negative cases and redacted
-receipts. No additional queue branches are needed. The current status is BLOCKED by mandatory code;
-local namespace setup and known-operation reload recovery do not finish Library, retrieval or research.
-The account agent must not mistake unfinished local code for a credential-dependent test.
+Mandatory launch profile is Slices 0–6. Specialist Slice 7, optional graph DB/native replacement and
+optional Gemini service are not added as unconditional blockers. Required ChatGPT Drive Exchange is NOT
+optional. See [agent-start.md](agent-start.md) for starting instructions and
+[cloudflare-handoff.md](cloudflare-handoff.md) for account-only observations after complete local code.
