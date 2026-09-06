@@ -10,12 +10,13 @@ one bounded OAuth refresh -> current connection/exchange recheck -> existing Goo
 existing Sheet/changes REST adapter. `createD1GoogleAccessLeaseProvider` composes these actual adapters.
 No new public route, secondary server, dependency, global access-token cache or active transport is added.
 
-This is **not initial connection admission**. Browser authorization-code/state/PKCE/nonce handling,
-Google ID-token signature/issuer/audience/nonce and dedicated subject/email verification, production
-OAuth-client evidence, first encrypted insert, reauthorization UI and disconnect/reconnect orchestration
-are still required. The current code consumes trusted admitted metadata; it does not prove how it was
-admitted. Tests insert controlled fixtures, never real connection credentials. Do not emulate the missing
-callback with pasted tokens, manual SQL, unsigned claims or an always-successful verification port.
+This refresh component consumes previously admitted credentials. The separate internal initial OAuth
+service now creates durable one-use state/PKCE/nonce, verifies actual Google ID-token signatures and
+performs the first encrypted insert: see `drive-oauth-admission.md`. Its owner HTTP/PWA adapter, server
+configuration/production-client attestation admission, provisioning and reconnect UI are still required.
+The new admission remains AUTHORIZING; it cannot use these ACTIVE/DEGRADED refresh leases until the
+remaining exchange qualification is implemented. Tests use controlled credentials, not a real account.
+Do not emulate the missing owner transport with pasted tokens, raw SQL or unsigned identity claims.
 The whole Drive Exchange remains IN_PROGRESS and the complete-application deployment hold stays active.
 
 ## Vault
@@ -93,9 +94,9 @@ consent expiry, generation retirement and preservation of a stored artifact on i
 provider responses are clearly separate from real Google login/refresh/revocation. The full result-publisher
 negative acceptance remains open until that publisher is implemented; storage preservation alone is not it.
 
-Next: the authenticated initial OAuth callback and durable one-use intent/PKCE/nonce/verified ID-token
-admission, then first connection provisioning and explicit reconnect/disconnect. Reuse these vault/store/
-lease modules. Verify migration and return paths with complete local fixtures; never deploy half a connector
+Next: connect the implemented initial OAuth service to authenticated owner HTTP/PWA and reviewed
+server configuration, then provision the first exchange and explicit reconnect/disconnect. Reuse the
+existing intent, verifier, vault, credential store and lease provider; do not write a second OAuth stack. Verify migration and return paths with complete local fixtures; never deploy half a connector
 or relax the current launch hold. Full cursor/freeze/reconciliation, Docs delivery and browser lifecycle
 remain separate #95 checkpoints. Live Google/Cloudflare qualification is NOT_EXECUTED.
 

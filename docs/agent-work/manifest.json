@@ -424,7 +424,14 @@
         "packages/google-drive-exchange/src/token-lease.ts",
         "packages/google-drive-exchange/src/token-vault.test.ts",
         "packages/google-drive-exchange/src/token-lease.test.ts",
-        "docs/implementation/drive-credentials.md"
+        "docs/implementation/drive-credentials.md",
+        "packages/google-drive-exchange/src/oauth-types.ts",
+        "packages/google-drive-exchange/src/oauth-transport.ts",
+        "packages/google-drive-exchange/src/oauth-identity.ts",
+        "packages/google-drive-exchange/src/oauth-admission.ts",
+        "packages/google-drive-exchange/src/oauth-test-fixture.ts",
+        "packages/google-drive-exchange/src/oauth-identity.test.ts",
+        "docs/implementation/drive-oauth-admission.md"
       ],
       "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
       "document": "ER-20-google-oauth-port-and-result-publication.md",
@@ -530,7 +537,10 @@
         "apps/eliotr-core/src/source-revisions.ts",
         "apps/eliotr-core/test/source-revisions.test.ts",
         "apps/eliotr-core/src/google-token-store.ts",
-        "apps/eliotr-core/test/google-token-store.test.ts"
+        "apps/eliotr-core/test/google-token-store.test.ts",
+        "apps/eliotr-core/src/google-oauth-store.ts",
+        "apps/eliotr-core/src/google-oauth-service.ts",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",

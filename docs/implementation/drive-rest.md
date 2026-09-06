@@ -35,8 +35,9 @@ must come from the **admitted dedicated-account OAuth lifecycle**, not an arbitr
 returns a short-lived `GoogleAccessLease` bound to the expected connection/generation and a read-only
 `assertCurrent(signal)` hook for current connection/generation authority. The REST adapter verifies
 lease shape/expiry and calls that hook before sending and after reading. The implemented D1 credential provider in `drive-credentials.md` now supplies this boundary from
-previously admitted records, with encryption/refresh/CAS/currentness checks. Initial browser OAuth and
-verified subject/email admission are still missing, not replaced by a hardcoded credential or test switch.
+previously admitted records, with encryption/refresh/CAS/currentness checks. The internal verified
+first-connection admission is in `drive-oauth-admission.md`; owner browser/HTTP integration and exchange
+qualification are still pending. No hardcoded credential or test switch can activate that missing path.
 
 Only the official Drive v3 and Sheets v4 HTTPS endpoints are used. No redirects, ambient cookies,
 credential-bearing URL parameters or reflected upstream diagnostics. Token acquisition, currentness
@@ -76,10 +77,10 @@ scope, budget and body remains the existing contribution/domain owner's responsi
 ## Remaining implementation and agent acceptance
 
 G1 Sheet/changes code, serializer guards and G2 encrypted credential/refresh machinery are implemented.
-Initial browser OAuth/verified admission (remaining G2), generation provisioning,
+Owner OAuth HTTP/PWA/configuration integration and reconnect (remaining G2), generation provisioning,
 durable leased cursor/audit/freeze/ContributionIntent (G3–G5), Doc/export/publication (G6), runtime/UI
 composition and the complete actual-storage/browser loop (G7–G8) remain open in #95. Do not activate
-DRIVE_EXCHANGE or remove the launch hold based on this subset. Continue with the initial verified OAuth admission into the existing encrypted lease provider
+DRIVE_EXCHANGE or remove the launch hold based on this subset. Continue with the owner integration of the initial OAuth service and qualified provisioning into the existing encrypted lease provider
 and operation-specific adapters; reuse these methods rather than creating another client.
 
 The tests execute the actual serializer, fetch port, response decoder and contribution assembler with

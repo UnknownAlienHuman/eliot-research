@@ -14,7 +14,7 @@ current main. Do not create a competing variant branch or force-reset someone el
 | Existing PR | First bounded task | Scope and integration boundary |
 |---|---|---|
 | **#90 Retrieval** | Audit existing locator decoding, then implement one missing local D1 exact/lexical lane with its actual projection input and negative tests. | ER-06/07/16/39. Inspect `packages/retrieval/src/lanes.ts`, `packages/cloudflare-ai/src/ai-search-managed-read.ts`, `packages/platform-cloudflare/src/ai-search.ts`, existing projection delivery and evidence ports. No PWA/import edits in parallel with #98; shared Worker composition and migrations require the integrator. |
-| **#95 Google** | G2: implement the admitted dedicated-account OAuth lease provider, then durable cursor/freeze/reconciliation. Reuse the implemented Sheet/changes REST subset, not a new client. | ER-18/19/20. Read ELIOT_RESEARCH §§12.3–12.12, ADR-0003 and `../drive-rest.md` first. The existing `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects an optional Gemini helper, not a replacement for ChatGPT Drive. Reuse the existing exchange contracts/serializer; implement the missing ports locally. ER-36 remains a separate candidate-only service surface; no owner impersonation, new ChatGPT write transport or account calls. |
+| **#95 Google** | G2: connect the implemented one-use OAuth admission to owner HTTP/PWA and reviewed server configuration, then complete provisioning/reconnect. Reuse the existing verifier/vault/lease and REST adapters. | ER-18/19/20. Read ELIOT_RESEARCH §§12.3–12.12, ADR-0003 and `../drive-rest.md` first. The existing `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` selects an optional Gemini helper, not a replacement for ChatGPT Drive. Reuse the existing exchange contracts/serializer; implement the missing ports locally. ER-36 remains a separate candidate-only service surface; no owner impersonation, new ChatGPT write transport or account calls. |
 | **#97 Rust** | Audit/reuse existing M2 shadow primitives and add parity for one uncovered identity family, starting with the new ER-44 initial namespace-owner token. | ER-00/01/02/03/44. Existing code is in `crates/eliotr-canonical/src/{canonical_json,sha256,generation,stable_id,residency_key}.rs` and `crates/eliotr-test-vectors`. Do not rewrite these or promote a family before real TS/native/Wasm differential acceptance. Shared runtime/ABI integration belongs to ER-24. |
 
 If a candidate task needs a shared file already claimed elsewhere, narrow it to independent tests or
@@ -40,17 +40,16 @@ append, leased change cursors, bounded ID/hash audit, immutable R2 freeze, D1 Co
 result publication/readback and the narrow offline OAuth lifecycle. The five-method Sheet/changes REST subset and strict contribution guards landed on main `c0729c2`.
 Read `../drive-rest.md` and reuse `sheet-port.ts`, `sheet-ranges.ts`, `rest-transport.ts` and the existing
 serializer/parser. The full `GoogleDrivePort` is not implemented: Doc creation/export, provisioning,
-initial OAuth admission, durable cursor/freeze/reconciliation and result publication remain required.
+owner OAuth integration, durable cursor/freeze/reconciliation and result publication remain required.
 
 The encrypted credential/refresh checkpoint now exists: `token-vault.ts`, `token-lease.ts` and
 `apps/eliotr-core/src/google-token-store.ts`; read `../drive-credentials.md`. Do not rewrite it or
-mistake a stored expected identity for a verified Google login. The next bounded G2 task is the initial
-browser authorization-code flow: authenticated owner intent, durable one-use state/PKCE/nonce binding,
-verified Google ID token subject/email/audience/issuer/nonce, exact scopes, production client status,
-then encrypted connection admission. No manually trusted token or constant-success authority hook.
-Use canonical §12.9 and §13.6 (not §12.8, which is result publication). Retain unknown code-exchange
-outcomes and replay/concurrency tests, then integrate with the existing primary D1 credential provider.
-The complete leased cursor/freeze/reconciler and publication remain subsequent work.
+mistake a stored expected identity for a verified Google login. The internal first-connection OAuth service now exists (`../drive-oauth-admission.md`). The next G2
+integration is its authenticated owner HTTP/PWA transport and reviewed server configuration: bind the
+current owner session, strictly decode the Google callback (including issuer and duplicates), prevent
+CSRF/open redirects and keep codes/tokens out of logs and browser persistence. Reuse durable state/PKCE/
+nonce, real RS256 verification and atomic AUTHORIZING admission. Then complete explicit reconnect and
+asset/cursor qualification; do not make an AUTHORIZING row ACTIVE merely to unlock the refresh port.
 
 The optional ER-36 Gemini service planner is not the ChatGPT write transport. Its caller-supplied v1
 plan and receipt prove neither original issuance nor Google readback/effects. The current mutual-
