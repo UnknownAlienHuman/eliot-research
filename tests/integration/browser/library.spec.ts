@@ -18,9 +18,15 @@ type E2EReceipt = {
   readonly browser_logout: string;
   readonly evidence_readback: string;
   readonly chromium_safe_ports: string;
+  readonly worker_ports: string;
   readonly network_ledger: string;
   readonly ledger_negative: string;
   readonly jwt_negatives: string;
+  readonly jwks_rotation: string;
+  readonly browser_jwt_matrix: string;
+  readonly artifact_ledger: string;
+  readonly cross_client_ledger: string;
+  readonly early_cleanup: string;
   readonly teardown_inventory: unknown;
   readonly live: string;
   readonly browser: unknown;
@@ -60,6 +66,17 @@ test("L1 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "injected unexpected browser response must trip the ledger closure");
   assert.ok(typeof receipt.jwt_negatives === "string" && receipt.jwt_negatives.startsWith("PASS"),
     "real-browser JWT/JWKS negatives with zero D1 mutation must pass");
+  assert.ok(typeof receipt.worker_ports === "string" && receipt.worker_ports.startsWith("PASS"),
+    "every real Worker start must bind an explicit Chromium-safe port with bounded reselect evidence");
+  assert.ok(typeof receipt.jwks_rotation === "string" && receipt.jwks_rotation.startsWith("PASS"),
+    "real JWKS key rollover (old denied, new allowed, Chromium re-pairing) must pass");
+  assert.ok(typeof receipt.browser_jwt_matrix === "string" && receipt.browser_jwt_matrix.startsWith("PASS"),
+    "Chromium page.evaluate JWT matrix with zero D1/R2 mutation must pass");
+  assert.ok(typeof receipt.artifact_ledger === "string" && receipt.artifact_ledger.startsWith("PASS"),
+    "browser-originated artifact lifecycle with replay must be fully asserted");
+  assert.ok(typeof receipt.cross_client_ledger === "string" && receipt.cross_client_ledger.startsWith("PASS"),
+    "cross-client ledger must be gapless, ordered and free of JWT material");
+  assert.equal(receipt.early_cleanup, "PASS", "forced early-migration failure must leave zero run-owned residue");
   assert.ok(receipt.teardown_inventory !== null && typeof receipt.teardown_inventory === "object",
     "immutable before/after teardown inventories must be recorded");
   assert.equal(receipt.live, "NOT_EXECUTED", "remote/live remains NOT_EXECUTED");

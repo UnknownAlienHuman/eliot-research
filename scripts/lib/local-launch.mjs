@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CHROMIUM_UNSAFE_PORTS } from "./local-owner-bridge.mjs";
+import { CHROMIUM_UNSAFE_PORTS, isPortCollisionMessage } from "./local-owner-bridge.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const CORE = resolve(ROOT, "apps/eliotr-core");
@@ -287,8 +287,25 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, paths.config);
   execute([VITE, "build"], { cwd: resolve(ROOT, "apps/eliotr-pwa") });
+  // Both migration streams are mandatory: skipping is never allowed. A retry
+  // happens only when the Wrangler diagnostic classifies as a loopback
+  // port-collision/bad-port refusal; schema, authority, data and config errors
+  // fail closed on the first attempt with no new generation.
   for (const binding of ["CORE_DB", "SEARCH_DB"]) {
-    execute(wranglerArgs(paths, ["d1", "migrations", "apply", binding]));
+    let lastError;
+    let applied = false;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        execute(wranglerArgs(paths, ["d1", "migrations", "apply", binding]));
+        applied = true;
+        break;
+      } catch (error) {
+        const diagnostic = `${error?.message ?? error}\n${error?.cause?.stdout ?? ""}\n${error?.cause?.stderr ?? ""}`;
+        if (!isPortCollisionMessage(diagnostic) || attempt >= 3) throw error;
+        lastError = error;
+      }
+    }
+    if (!applied) throw lastError;
   }
   log("Local PWA and both D1 migration streams prepared. Providers are disabled; Access authentication is unchanged.");
   return { ...paths, generation: config.vars.DEPLOYMENT_GENERATION, config_sha256: createHash("sha256").update(JSON.stringify(config)).digest("hex") };

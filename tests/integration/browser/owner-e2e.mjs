@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, readFile, rm, access, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +9,9 @@ import process from "node:process";
 /* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly */
-import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
-import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
-import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
+import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
+import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
+import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 
@@ -156,6 +157,68 @@ export async function startDuplicateJwksServer(publicJwk, opts) {
   return startLoopbackJsonServer(JSON.stringify({ keys: [publicJwk, { ...publicJwk }] }), opts);
 }
 
+// Mutable JWKS document for the real key-rollover proof. Serves exactly the
+// keys installed via setKeys (bounded, RS256, distinct kids); rotate() swaps
+// the v1 document for a v2 document so a restarted Worker (fresh JWKS fetch,
+// i.e. the production cache-refresh path) allows the v2 token and denies the
+// v1 token with ACCESS_JWT_KEY_UNKNOWN. Distinct from the duplicate-kid 503
+// negative above, which keeps its own server and assertion.
+export async function startRotatingJwksServer(initialKeys, opts) {
+  assert.ok(Array.isArray(initialKeys) && initialKeys.length > 0, "rotating JWKS must start with keys");
+  let current = JSON.stringify({ keys: initialKeys });
+  const serve = (req, res) => {
+    void (async () => {
+      const remote = req.socket.remoteAddress ?? "";
+      const loopback = remote === "127.0.0.1" || remote === "::1" || remote === "::ffff:127.0.0.1";
+      if (!loopback) { res.statusCode = 403; res.end(); return; }
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      if (req.method !== "GET" || url.pathname !== (opts?.path ?? OWNER_E2E_CERTS_PATH) || url.search !== "" || url.hash !== "") {
+        res.statusCode = 404; res.end(); return;
+      }
+      res.setHeader("content-type", "application/json");
+      res.setHeader("cache-control", "no-store");
+      res.end(current);
+    })().catch(() => { try { res.statusCode = 500; res.end(); } catch { /* closed */ } });
+  };
+  // The served document is read per request, so rotation never rebinds: the
+  // Chromium-safe port stays fixed for the life of the server, no race.
+  const bound = await bindChromiumSafeListener((candidate) => new Promise((resolve, reject) => {
+    const attempt = createServer(serve);
+    attempt.once("error", (error) => { attempt.close(() => reject(error)); });
+    attempt.listen(candidate, "127.0.0.1", () => resolve({ server: attempt, port: attempt.address().port }));
+  }), { port: 0 });
+  assert.ok(isChromiumSafePort(bound.port), "rotating JWKS port must be Chromium-safe");
+  const mutable = bound.server;
+  const sockets = new Set();
+  mutable.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => { sockets.delete(socket); });
+  });
+  const server = {
+    url: `http://127.0.0.1:${bound.port}${OWNER_E2E_CERTS_PATH}`,
+    port: bound.port,
+    bindAttempts: bound.attempts,
+    version: 1,
+    setKeys(nextKeys) {
+      assert.ok(Array.isArray(nextKeys) && nextKeys.length > 0 && JSON.stringify(nextKeys).length < 8192,
+        "rotated JWKS document must stay bounded and non-empty");
+      const kids = nextKeys.map((key) => key.kid);
+      assert.deepEqual([...new Set(kids)].sort(), [...kids].sort(), "rotated JWKS kids must be distinct");
+      current = JSON.stringify({ keys: nextKeys });
+      server.version += 1;
+    },
+    async close() {
+      for (const socket of [...sockets]) { try { socket.destroy(); } catch { /* owned only */ } }
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error("rotating JWKS did not close within the strict deadline")), 5000);
+        timer.unref?.();
+        mutable.close((error) => { clearTimeout(timer); if (error) reject(error); else resolve(); });
+      });
+    },
+  };
+  return server;
+}
+
 export async function verifyChromiumSafePortProtocol() {
   // Deterministic regression for the Windows net::ERR_UNSAFE_PORT failure.
   // Forces an unsafe ephemeral candidate (6000) then a collision (EADDRINUSE)
@@ -209,6 +272,58 @@ export async function verifyChromiumSafePortProtocol() {
   await new Promise((resolve, reject) => live.server.close((error) => error ? reject(error) : resolve()));
   pass(opened.slice(before).filter((record) => record.bound && !record.closed).length === 0,
     "no bound fake listener left open after the winner close");
+  // Deterministic REAL collision: hold a live TCP listener on a Chromium-safe
+  // port, then prove the production reserve path reselects to a different safe
+  // port (evidence for the startLocalWorker reselect loop) and that an
+  // explicit bind of the held port fails with a collision diagnostic while
+  // leaking no listener.
+  // Bind the holder through the production reserve path until it holds a
+  // Chromium-safe port (bounded; an unsafe ephemeral draw closes its listener
+  // before the next draw, so no leak). The holder then stays open while the
+  // proof below runs, which is the deterministic collision.
+  let holder;
+  let heldPort = 0;
+  for (let draw = 1; draw <= 25; draw += 1) {
+    const candidate = createTcpServer();
+    const port = await new Promise((resolve, reject) => {
+      candidate.once("error", (error) => { candidate.close(() => reject(error)); });
+      candidate.listen(0, "127.0.0.1", () => resolve(candidate.address().port));
+    }).catch(() => 0);
+    if (port !== 0 && isChromiumSafePort(port)) { holder = candidate; heldPort = port; break; }
+    await new Promise((resolve) => candidate.close(() => resolve()));
+    assert.ok(draw < 25, "holder must draw a Chromium-safe port within the bound");
+  }
+  try {
+    pass(Number.isSafeInteger(heldPort) && isChromiumSafePort(heldPort),
+      `holder must own a Chromium-safe port, got ${heldPort}`);
+    const reselected = await reserveChromiumSafePort();
+    pass(reselected.port !== heldPort,
+      `reserve must reselect away from the held port ${heldPort}, got ${reselected.port}`);
+    pass(isChromiumSafePort(reselected.port),
+      `reselected port ${reselected.port} must be Chromium-safe (evidence: held=${heldPort} winner=${reselected.port} reserveAttempts=${reselected.attempts})`);
+    let explicitFailed = false;
+    try {
+      await bindChromiumSafeListener((candidate) => new Promise((resolve, reject) => {
+        const attempt = createTcpServer();
+        attempt.once("error", (error) => { attempt.close(() => reject(error)); });
+        attempt.listen(candidate, "127.0.0.1", () => resolve({ server: attempt, port: attempt.address().port }));
+      }), { port: heldPort, attempts: 1 });
+    } catch (error) {
+      explicitFailed = isPortCollisionMessage(`${error?.message ?? error}${error?.code ?? ""}`);
+    }
+    pass(explicitFailed, "explicit bind of the held port must fail with a collision diagnostic and leak no listener");
+    // Unsafe-6000 case through the real dev-argument gate: no spawn, just the
+    // fail-closed refusal the Worker path enforces before any listener binds.
+    let unsafeRefused = false;
+    try {
+      devArguments({ config: "wrangler.json", persist: "state", generation: "test" }, 6000);
+    } catch (error) {
+      unsafeRefused = /Chromium-unsafe/.test(String(error?.message ?? error));
+    }
+    pass(unsafeRefused, "devArguments(6000) must fail closed as Chromium-unsafe");
+  } finally {
+    await new Promise((resolve, reject) => holder.close((error) => error ? reject(error) : resolve()));
+  }
   return { protocol: "eliotr.owner-e2e.chromium-safe-ports.v1", state: "PASS", cases };
 }
 
@@ -336,6 +451,87 @@ async function workerJson(origin, path, { token, method = "GET", body, contentTy
     try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
   })();
   return { status: response.status, data, headers: response.headers };
+}
+
+// Single authoritative cross-client ledger sink. Every lifecycle HTTP call the
+// harness originates records exactly one entry proving its client origin:
+// `browser` entries come back from Chromium page.evaluate fetch (same-origin
+// via the current page origin) and carry the page URL as origin proof; `node`
+// entries are attacker-probe/CLI paths that never carry owner authority.
+// Asserted exhaustively at the end: captured-but-unasserted is failure.
+// Serialized entries must never contain JWT material (tokens travel only as
+// opaque lengths, never values).
+export function createCrossClientLedger() {
+  const entries = [];
+  let seq = 0;
+  return {
+    entries,
+    record(entry) {
+      seq += 1;
+      assert.ok(entry && (entry.client === "browser" || entry.client === "node"),
+        "ledger entry must declare an exact client origin");
+      assert.ok(typeof entry.method === "string" && typeof entry.path === "string" &&
+        Number.isSafeInteger(entry.status), "ledger entry must carry exact method/path/status");
+      entries.push({ seq, ...entry });
+      return seq;
+    },
+  };
+}
+
+export function assertCrossClientLedger(ledger, label) {
+  assert.ok(ledger.entries.length > 0, `${label}: cross-client ledger must be non-empty`);
+  const seen = new Set();
+  for (const entry of ledger.entries) {
+    assert.ok(Number.isSafeInteger(entry.seq) && entry.seq > 0, `${label}: ledger seq must be exact`);
+    assert.ok(!seen.has(entry.seq), `${label}: ledger seq must be unique and ordered`);
+    seen.add(entry.seq);
+    assert.ok(entry.client === "browser" || entry.client === "node", `${label}: unknown client origin`);
+    assert.ok(typeof entry.correlation === "string" && entry.correlation.length > 0,
+      `${label}: ledger entry must carry a correlation id`);
+  }
+  for (let index = 1; index <= ledger.entries.length; index += 1) {
+    assert.ok(seen.has(index), `${label}: ledger ordering must be gapless, missing seq ${index}`);
+  }
+  const serialized = JSON.stringify(ledger.entries);
+  assert.ok(!/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(serialized) &&
+    !serialized.includes("cf-access-jwt-assertion"),
+    `${label}: cross-client ledger must never contain JWT material`);
+  return { protocol: "eliotr.owner-e2e.cross-client-ledger.v1", state: "PASS", entries: ledger.entries.length };
+}
+
+// Browser-originated JSON call: runs fetch() inside Chromium via page.evaluate
+// against the page's own origin (same-origin, no CORS egress), so the
+// Playwright request/response ledger independently records the identical
+// method/path/status. Returns the parsed outcome and records one `browser`
+// ledger entry. Tokens are never written into the ledger (opaque length only).
+export async function browserJson(page, ledger, path, { method = "GET", body, contentType, extraHeaders, tokenLength = 0, correlation } = {}) {
+  assert.ok(typeof path === "string" && path.startsWith("/"), "browser call must use an exact same-origin path");
+  assert.ok(typeof correlation === "string" && correlation.length > 0, "browser call must carry a correlation id");
+  // Only the production access-assertion header may be added (JWT matrix);
+  // never cookies, authorization substitutes or forwarded network identity.
+  // Header VALUES stay inside the page; the ledger records presence only.
+  if (extraHeaders !== undefined) {
+    assert.ok(typeof extraHeaders === "object" && extraHeaders !== null &&
+      Object.keys(extraHeaders).every((key) => key === "cf-access-jwt-assertion"),
+      "browser extra headers are limited to the access assertion");
+  }
+  const outcome = await page.evaluate(async ({ pathArg, methodArg, bodyArg, contentTypeArg, extraHeadersArg }) => {
+    const init = { method: methodArg, redirect: "manual", credentials: "same-origin",
+      headers: { Accept: "application/json", ...(extraHeadersArg ?? {}) } };
+    if (contentTypeArg) init.headers["content-type"] = contentTypeArg;
+    if (bodyArg !== undefined) init.body = bodyArg;
+    const response = await fetch(pathArg, init);
+    const text = await response.text();
+    const data = (() => {
+      try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
+    })();
+    return { status: response.status, url: response.url, data };
+  }, { pathArg: path, methodArg: method, bodyArg: body, contentTypeArg: contentType, extraHeadersArg: extraHeaders });
+  ledger.record({ client: "browser", method, path, status: outcome.status,
+    correlation, token_present: tokenLength > 0 || extraHeaders !== undefined });
+  assert.ok(!/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(JSON.stringify(outcome.data ?? null)),
+    `browser response must not reflect credentials: ${method} ${path}`);
+  return outcome;
 }
 
 async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
@@ -632,7 +828,11 @@ function authedNetworkSpec(origin) {
       { method: "POST", path: "/__local/pair", status: 403 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
-      { method: "GET", path: "/manifest.webmanifest", status: 401 },
+      // Exact public shell asset: the bridge proxies /manifest.webmanifest
+      // (GET, no query) without a session because Chromium fetches it
+      // credentialless while the Worker serves it publicly. Must succeed (200);
+      // any other status is drift and fails below.
+      { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
     mutations: ["/__local/pair"],
     aborts: [
@@ -650,7 +850,9 @@ function logoutNetworkSpec(origin) {
       { method: "POST", path: "/__local/logout", status: 204 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 401 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
-      { method: "GET", path: "/manifest.webmanifest", status: 401 },
+      // Same exact public shell asset as the authed phase: proxied without a
+      // session, must succeed (200).
+      { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
     mutations: ["/__local/logout"],
     aborts: [`POST ${origin}/__local/logout :: net::ERR_ABORTED`],
@@ -707,7 +909,7 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
       `${label}: redirect denied: ${response.method} ${response.path} -> ${response.status}`);
     const key = `${response.method} ${response.path}`;
     // Enumerated entries (exact method+path+status, including deliberate
-    // denials like the bridge manifest 401) are checked exactly; unlisted
+    // denials like the unauthenticated catalog 401) are checked exactly; unlisted
     // application prefixes always fail; anything else must be an inert static GET.
     const isAppRoute = apiIndex.has(key) || response.path.startsWith("/api/") || response.path.startsWith("/federation/") ||
       response.path.startsWith("/oauth/") || response.path.startsWith("/__local");
@@ -811,30 +1013,33 @@ async function buildBundleFiles(namespace, ownerGeneration, revisionRef) {
   return { manifest, files, hashes, totalBytes };
 }
 
-async function importBundleViaWorker(origin, token, bundle, idempotencyKey) {
-  const auth = { token };
-  const call = async (path, init) => {
-    const headers = { Accept: "application/json", ...(auth.token ? { "cf-access-jwt-assertion": auth.token } : {}) };
-    const response = await globalThis.fetch(`${origin}${path}`, {
-      ...init, headers: { ...headers, ...(init?.headers ?? {}) },
-      redirect: "manual", signal: globalThis.AbortSignal.timeout(15000),
-    });
-    const text = await response.text();
-    const json = (() => {
-      try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 256) }; }
-    })();
-    if (!response.ok) {
-      const error = new Error(`Worker ingest call failed: ${path} -> ${response.status}`);
-      error.status = response.status;
-      error.body = json;
-      throw error;
-    }
-    assert.ok(json && typeof json.data !== "undefined" && typeof json.deployment_generation === "string");
-    return json;
+// Browser-originated artifact lifecycle (the single authoritative ingest path in
+// this harness): the full prepare/parts/complete/
+// commit/status sequence as importBundleViaWorker, but every HTTP call runs
+// inside Chromium via page.evaluate fetch against the bridge origin (the
+// paired session cookie authenticates; the page never sees the JWT). Each call
+// records one `browser` entry in the shared cross-client ledger with a
+// correlation id binding the lifecycle together, so the end-of-run ledger
+// assertion proves browser origin, exact method/path/status, ordering and
+// correlation for every artifact entry. Bundle bytes are UTF-8 text files, so
+// they cross the evaluate boundary as strings.
+export async function importBundleViaBrowser(page, ledger, bundle, idempotencyKey, correlationPrefix) {
+  const artifactPaths = [];
+  const call = async (path, { method = "GET", body, contentType, correlation } = {}) => {
+    const outcome = await browserJson(page, ledger, path, { method, body, contentType, correlation });
+    assert.ok(outcome.status >= 200 && outcome.status < 300,
+      `browser artifact call failed: ${method} ${path} -> ${outcome.status}`);
+    assert.ok(outcome.data && typeof outcome.data.data !== "undefined" &&
+      typeof outcome.data.deployment_generation === "string",
+      `browser artifact call must return the typed envelope: ${method} ${path}`);
+    artifactPaths.push({ method, path, status: outcome.status, correlation });
+    return outcome.data;
   };
   const prepared = await call("/api/v1/ingest/bundles/prepare", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes, total_bytes: bundle.totalBytes, idempotency_key: idempotencyKey }),
+    method: "POST", contentType: "application/json",
+    body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
+      total_bytes: bundle.totalBytes, idempotency_key: idempotencyKey }),
+    correlation: `${correlationPrefix}/prepare`,
   });
   const data = prepared.data;
   assert.equal(data.disposition, "UPLOAD_REQUIRED", "fresh bundle must require upload");
@@ -846,28 +1051,34 @@ async function importBundleViaWorker(origin, token, bundle, idempotencyKey) {
   for (const file of data.files) {
     const bytes = bundle.files[file.path];
     assert.ok(bytes, `missing bundle bytes for ${file.path}`);
-    const params = new URLSearchParams({ multipart_session_ref: session, path: file.path, size_bytes: String(bytes.byteLength), final_part: "1" });
+    const text = decoder.decode(bytes);
+    const params = new URLSearchParams({ multipart_session_ref: session, path: file.path,
+      size_bytes: String(bytes.byteLength), final_part: "1" });
     const uploaded = await call(`${base}/parts/1?${params.toString()}`, {
-      method: "PUT", headers: { "content-type": "application/octet-stream" }, body: bytes,
+      method: "PUT", contentType: "application/octet-stream", body: text,
+      correlation: `${correlationPrefix}/parts/${file.path}`,
     });
     assert.equal(uploaded.data.path, file.path);
     const completed = await call(`${base}/files/complete`, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", contentType: "application/json",
       body: JSON.stringify({ multipart_session_ref: session, path: file.path,
         parts: [{ part_number: 1, size_bytes: bytes.byteLength, etag: uploaded.data.etag }] }),
+      correlation: `${correlationPrefix}/complete/${file.path}`,
     });
     assert.equal(completed.data.sha256, bundle.hashes[file.path]);
   }
   const committed = await call("/api/v1/ingest/bundles/commit", {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ operation_id: operationId, multipart_session_ref: session, manifest_sha256: data.manifest_sha256 }),
+    method: "POST", contentType: "application/json",
+    body: JSON.stringify({ operation_id: operationId, multipart_session_ref: session,
+      manifest_sha256: data.manifest_sha256 }),
+    correlation: `${correlationPrefix}/commit`,
   });
   assert.equal(committed.data.decision, "ADMITTED");
   assert.equal(committed.data.operation_id, operationId);
-  const status = await call(`${base}`, { method: "GET" });
+  const status = await call(`${base}`, { method: "GET", correlation: `${correlationPrefix}/status` });
   assert.equal(status.data.state, "COMMITTED");
   assert.deepEqual(status.data.receipt, committed.data);
-  return { receipt: committed.data, operationId, manifestSha: data.manifest_sha256 };
+  return { receipt: committed.data, operationId, manifestSha: data.manifest_sha256, artifactPaths };
 }
 
 async function r2ObjectGet(paths, bucket, key) {
@@ -901,17 +1112,102 @@ async function resolveWorkBucket(paths) {
   return String(entry.bucket_name);
 }
 
+// Forced early-failure cleanup proof (fast, no Worker/browser): simulates a run
+// that creates its marker/runId-owned state, profiles, decoys and a loopback
+// listener, then fails during migration/startup. The identical nested-finally
+// discipline as runOwnerE2E must leave zero run-owned residue while unrelated
+// same-prefix entries survive. Exact-path removal only; a foreign marker never
+// authorizes deletion.
+export async function verifyEarlyFailureCleanup() {
+  const runId = `early-${process.pid}-${Date.now()}`;
+  const stateRoot = resolve(root, ".eliotr-state");
+  await mkdir(stateRoot, { recursive: true });
+  // Unrelated same-prefix entries pre-exist and must survive everything below.
+  const unrelatedTmp = resolve(tmpdir(), `eliotr-owner-e2e-profile-unrelated-${runId}`);
+  const unrelatedState = resolve(stateRoot, `owner-e2e-unrelated-${runId}`);
+  for (const path of [unrelatedTmp, unrelatedState]) {
+    await mkdir(path, { recursive: true });
+    await writeFile(resolve(path, "sentinel.txt"), "unrelated\n", { mode: 0o600 });
+  }
+  let directory;
+  let profileDir;
+  let decoy;
+  let listener;
+  let listenerPort = 0;
+  const errors = [];
+  try {
+    directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
+    await writeHarnessMarker(directory, runId, "owner-state");
+    profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
+    await writeHarnessMarker(profileDir, runId, "browser-profile");
+    decoy = resolve(tmpdir(), `eliotr-owner-e2e-profile-decoy-${runId}`);
+    await mkdir(decoy, { recursive: true });
+    listener = createTcpServer();
+    await new Promise((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(0, "127.0.0.1", resolve);
+    });
+    listenerPort = listener.address().port;
+    assert.ok(Number.isSafeInteger(listenerPort) && listenerPort > 0, "early-failure listener must bind");
+    // Simulated early migration/startup failure happens here.
+    throw new Error("simulated early migration failure");
+  } catch (failure) {
+    assert.match(String(failure?.message ?? failure), /simulated early migration failure/,
+      "the only failure in this proof must be the injected one");
+  } finally {
+    // Unconditional nested finally per resource: one failure cannot prevent
+    // the deletion of the remaining owned resources. Exact marker/runId paths
+    // only; unrelated entries are never matched.
+    try {
+      if (listener !== undefined) {
+        await new Promise((resolve) => listener.close(() => resolve()));
+        listener = undefined;
+      }
+    } catch (error) { errors.push(error); }
+    try {
+      if (profileDir !== undefined) {
+        try { await removeHarnessOwned(profileDir, runId); } catch (error) { errors.push(error); }
+        await assert.rejects(access(profileDir), /ENOENT/, "early-failure profile must be removed");
+      }
+    } catch (error) { errors.push(error); }
+    try {
+      if (directory !== undefined) {
+        try { await removeHarnessOwned(directory, runId); } catch (error) { errors.push(error); }
+        await assert.rejects(access(directory), /ENOENT/, "early-failure state must be removed");
+      }
+    } catch (error) { errors.push(error); }
+    try {
+      if (decoy !== undefined) {
+        await rm(decoy, { recursive: true, force: true });
+        await assert.rejects(access(decoy), /ENOENT/, "early-failure decoy must be removed");
+      }
+    } catch (error) { errors.push(error); }
+  }
+  assert.deepEqual(errors, [], `early-failure cleanup must delete every owned resource, got: ${errors.map(String).join("; ").slice(0, 500)}`);
+  // Zero residue: no run-owned tmp/state entry may remain; unrelated entries
+  // survive (proof against prefix-delete), then are removed by exact path.
+  const tmpNames = await readdir(tmpdir()).catch(() => []);
+  assert.ok(!tmpNames.some((name) => name.includes(runId) && !name.includes("unrelated")),
+    "zero run-owned tmp residue must remain after early failure");
+  await access(resolve(unrelatedTmp, "sentinel.txt"));
+  await access(resolve(unrelatedState, "sentinel.txt"));
+  await rm(unrelatedTmp, { recursive: true, force: true });
+  await rm(unrelatedState, { recursive: true, force: true });
+  return { protocol: "eliotr.owner-e2e.early-cleanup.v1", state: "PASS", listenerPort };
+}
+
 export async function runOwnerE2E() {
   const startedAt = new globalThis.Date().toISOString();
   const stateRoot = resolve(root, ".eliotr-state");
   const beforeDirs = new Set(await readdir(stateRoot).catch(() => []));
-  const directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
   // Run-specific ownership marker: teardown deletes only this marker-proven
   // directory inside the OS temp root. Success, assert-failure, Worker-start
   // failure, browser-start failure, timeout and interruption all funnel
   // through the same finally below. Never delete unrelated temp entries.
+  // NOTE: the isolated state directory itself is created INSIDE the try so an
+  // early failure cannot leak an unmarked directory outside the cleanup below.
   const runId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
-  await writeHarnessMarker(directory, runId, "owner-state");
+  let directory;
   let worker;
   let playwright;
   let bridge;
@@ -940,8 +1236,20 @@ export async function runOwnerE2E() {
     network_ledger: "PENDING",
     ledger_negative: "PENDING",
     jwt_negatives: "PENDING",
+    worker_ports: "PENDING",
+    jwks_rotation: "PENDING",
+    browser_jwt_matrix: "PENDING",
+    artifact_ledger: "PENDING",
+    cross_client_ledger: "PENDING",
+    early_cleanup: "PENDING",
     teardown_inventory: "PENDING",
   };
+  // Authoritative cross-client ledger: browser-origin artifact/JWT lifecycle
+  // entries plus node-origin attacker probes, asserted exhaustively at the end.
+  const ledger = createCrossClientLedger();
+  // Every real Worker start in this run must bind an explicit Chromium-safe
+  // port (evidence for the hold-the-listener + bounded reselect discipline).
+  const workerPortEvidence = [];
   // Adversarial teardown decoys: prefix-colliding but unmarked directories plus
   // one foreign-marker directory. Created here with exact known names; the
   // reconciliation below proves they survive every phase including failed and
@@ -961,6 +1269,9 @@ export async function runOwnerE2E() {
   };
   try {
     receipt.chromium_safe_ports = (await verifyChromiumSafePortProtocol()).state;
+    receipt.early_cleanup = (await verifyEarlyFailureCleanup()).state;
+    directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
+    await writeHarnessMarker(directory, runId, "owner-state");
     await mkdir(stateRoot, { recursive: true });
     for (const path of [decoyTmpProfile, decoyTmpSmoke, decoyStateOwner, decoyStateSmoke, foreignProfile]) {
       await mkdir(path, { recursive: true });
@@ -973,7 +1284,10 @@ export async function runOwnerE2E() {
       "foreign marker must refuse deletion under this runId");
     await access(resolve(foreignProfile, "decoy-sentinel.txt"));
     const { privateKey, publicJwk } = await createOwnerE2EKey();
-    jwks = await startJwksServer(publicJwk);
+    // Rotating JWKS from the start (serving exactly [v1]): identical exact-path
+    // semantics to the static server, plus setKeys() for the real rollover
+    // proof later (old token denied, new token allowed after cache refresh).
+    jwks = await startRotatingJwksServer([publicJwk]);
     assert.ok(isChromiumSafePort(jwks.port), `JWKS loopback port must be Chromium-safe, got ${jwks.port}`);
     receipt.jwks_bind = `PASS (port=${jwks.port} attempts=${jwks.bindAttempts})`;
     {
@@ -1039,8 +1353,17 @@ export async function runOwnerE2E() {
           "staging denial must not leak identity");
         receipt.seam_rejection = "PASS";
       } finally {
-        try { await stagingWorker?.stop(); } catch { /* best-effort */ }
-        try { await removeHarnessOwned(stagingDir, stagingId); } catch { /* retain for inspection */ }
+        // Nested finally per resource: a stop failure cannot prevent the
+        // marker-proven staging removal, and a removal failure is recorded
+        // (never silently retained) after every resource had its chance.
+        const stagingErrors = [];
+        try { await stagingWorker?.stop(); } catch (error) { stagingErrors.push(`stop: ${error?.message ?? error}`); }
+        try { await removeHarnessOwned(stagingDir, stagingId); }
+        catch (error) { stagingErrors.push(`remove: ${error?.message ?? error}`); }
+        try {
+          await assert.rejects(access(stagingDir), /ENOENT/, "staging state must be removed");
+        } catch (error) { stagingErrors.push(`verify: ${error?.message ?? error}`); }
+        assert.deepEqual(stagingErrors, [], `staging cleanup must leave no residue: ${stagingErrors.join("; ").slice(0, 400)}`);
       }
       assert.equal(receipt.seam_rejection, "PASS", "production/staging seam rejection must pass");
     }
@@ -1070,9 +1393,17 @@ export async function runOwnerE2E() {
         assert.ok(!JSON.stringify(dupDenied.data).includes("e2e-owner"), "duplicate-JWKS denial must not leak identity");
         dupJwksEvidence = "dup-jwks-503/ACCESS_JWKS_INVALID";
       } finally {
-        try { await dupWorker?.stop(); } catch { /* best-effort */ }
-        try { await dupJwks?.close(); } catch { /* best-effort */ }
-        try { await removeHarnessOwned(dupDir, dupId); } catch { /* retain for inspection */ }
+        // Same nested-finally discipline: every owned resource is released
+        // even when an earlier release fails; failures accumulate, never hide.
+        const dupErrors = [];
+        try { await dupWorker?.stop(); } catch (error) { dupErrors.push(`stop: ${error?.message ?? error}`); }
+        try { await dupJwks?.close(); } catch (error) { dupErrors.push(`jwks: ${error?.message ?? error}`); }
+        try { await removeHarnessOwned(dupDir, dupId); }
+        catch (error) { dupErrors.push(`remove: ${error?.message ?? error}`); }
+        try {
+          await assert.rejects(access(dupDir), /ENOENT/, "duplicate-JWKS staging state must be removed");
+        } catch (error) { dupErrors.push(`verify: ${error?.message ?? error}`); }
+        assert.deepEqual(dupErrors, [], `duplicate-JWKS cleanup must leave no residue: ${dupErrors.join("; ").slice(0, 400)}`);
       }
     }
     const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
@@ -1086,6 +1417,9 @@ export async function runOwnerE2E() {
     receipt.bounds = (await checkBundleLimitsSource()).state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto(privateKey, publicJwk)).state;
     worker = await startLocalWorker(paths);
+    assert.ok(isChromiumSafePort(worker.port),
+      `initial Worker port must be Chromium-safe, got ${worker.port}`);
+    workerPortEvidence.push(`initial=${worker.port}/startAttempts=${worker.startAttempts}`);
     for (const headers of [{}, { "cf-access-jwt-assertion": "forged.token.signature" },
       { "cf-access-client-id": "forged", "cf-access-client-secret": "forged" }]) {
       for (const path of ["/api/v1/research/catalog", "/api/v1/system/session"]) {
@@ -1272,9 +1606,102 @@ export async function runOwnerE2E() {
     assert.equal(grantReplay.policy.generation, 1, "same grant must replay without a new generation");
     const ownerGeneration = namespaceReceipt.ownership.source_owner_generation;
     const bundle = await buildBundleFiles(namespace, ownerGeneration, revisionRef);
-    const imported = await importBundleViaWorker(worker.origin, token, bundle, "e2e-first-import");
+    // Browser-first lifecycle: the real Chromium launches and pairs BEFORE any
+    // artifact exists, so every artifact prepare/parts/complete/commit/status
+    // call below originates inside Chromium (page.evaluate, same-origin via
+    // the paired bridge) and lands in both the Playwright phase ledger and the
+    // cross-client ledger with browser origin. No Node fetch touches ingest.
+    playwright = await launchPlaywright(runId);
+    receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
+    // Every loopback origin the real browser visits. Service workers persist per
+    // origin across restarts (each restart rebinds a fresh port), so the worker
+    // rule allows exactly one /sw.js per visited harness origin, no more.
+    const visitedOrigins = [];
+    const trackOrigin = (origin) => {
+      if (!visitedOrigins.includes(origin)) visitedOrigins.push(origin);
+      return [...visitedOrigins];
+    };
+    await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+    const unauthHasPrivate = await playwright.evaluate(hasPrivateLibraryMarker);
+    assert.equal(unauthHasPrivate, false, "unauthenticated PWA must not render private Library rows");
+    const unauthStorage = await readBrowserStorage(playwright.page);
+    assertNoPrivateStorage(unauthStorage, "unauthenticated");
+    assertUnauthLedger(playwright, "unauthenticated", worker.origin);
+    await settleLedger(playwright.page);
+    assertPhaseNetwork(playwright, "unauthenticated", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
+    receipt.network_ledger_phases = { unauthenticated: summarizePhaseLedger(playwright) };
+    playwright.resetLedger();
+    bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
+    assert.ok(isChromiumSafePort(Number(new URL(bridge.origin).port)),
+      `bridge loopback port must be Chromium-safe, got ${bridge.origin}`);
+    receipt.network_ledger_phases.bridge_first_bind = { attempts: bridge.bindAttempts, origin: "redacted-loopback" };
+    assert.ok(bridge.pairingUrl.includes("/__local/#"), "bridge must issue a one-use fragment link");
+    assert.ok(!bridge.pairingUrl.includes(token.slice(0, 8)), "pairing URL must not embed the JWT");
+    assert.ok(!bridge.pairingUrl.includes("eyJ"), "pairing URL must never carry JWT material");
+    const secret = bridge.pairingUrl.split("#")[1];
+    assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
+    assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
+    await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+    await playwright.page.click("#connect", { timeout: 15000 });
+    await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+    // No source is admitted yet, so pairing proves the session cookie only; the
+    // Library row appears after the browser-originated import below + reload.
+    const pairedCookies = await playwright.context.cookies();
+    const sessionCookies = pairedCookies.filter((item) => item.name.startsWith("eliotr_local_"));
+    assert.equal(sessionCookies.length, 1, "Chromium itself must hold exactly one opaque session cookie from the real bridge response");
+    const sessionCookie = sessionCookies[0];
+    assert.equal(sessionCookie.httpOnly, true, "browser session cookie must be HttpOnly");
+    assert.ok(sessionCookie.sameSite === "Strict" || sessionCookie.sameSite === "StrictLaxAllowUnsafeTokens" || String(sessionCookie.sameSite).toLowerCase().includes("strict"),
+      `browser session cookie must be SameSite=Strict, got ${sessionCookie.sameSite}`);
+    assert.equal(sessionCookie.domain, "127.0.0.1", "browser session cookie must be loopback-bound");
+    assert.equal(sessionCookie.path, "/", "browser session cookie path must be /");
+    assert.ok(typeof sessionCookie.value === "string" && sessionCookie.value.length >= 32, "browser cookie value must be opaque");
+    assert.ok(!sessionCookie.value.includes("eyJ") && !sessionCookie.value.includes("."), "browser cookie must be opaque, never a JWT");
+    assert.ok(!JSON.stringify(pairedCookies).includes("eyJ"), "browser cookie store must hold no JWT");
+    const reuseStatus = await playwright.page.evaluate(async (pairSecret) => {
+      const response = await fetch("/__local/pair", { method: "POST", headers: { "X-Eliotr-Pair": pairSecret } });
+      return response.status;
+    }, secret);
+    assert.equal(reuseStatus, 403, "pairing secret must be one-use even when reused from Chromium itself");
+    receipt.browser_pairing = `PASS (Chromium paired via opaque bridge origin, HttpOnly=${sessionCookie.httpOnly}, SameSite=${sessionCookie.sameSite}, domain=${sessionCookie.domain})`;
+    // Artifact lifecycle through the real browser: prepare/parts/complete/
+    // commit/status via page.evaluate (same-origin bridge session cookie).
+    // Replay where applicable: the same bearer authorizes twice identically,
+    // and prepare with the same idempotency key replays DUPLICATE with the
+    // same operation_id and the existing receipt instead of a second operation.
+    const d1CountsForReplay = () => ({
+      source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
+      operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
+    });
+    const imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
+    const bearerReplayA = await browserJson(playwright.page, ledger, "/api/v1/system/session",
+      { correlation: "e2e-import-1/replay-bearer-a" });
+    const bearerReplayB = await browserJson(playwright.page, ledger, "/api/v1/system/session",
+      { correlation: "e2e-import-1/replay-bearer-b" });
+    assert.equal(bearerReplayA.status, 200, "bearer replay (1/2) must verify through the browser session");
+    assert.equal(bearerReplayB.status, 200, "bearer replay (2/2) must verify through the browser session");
+    assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
+    assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
+      bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
+    const countsBeforePrepareReplay = d1CountsForReplay();
+    const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
+      method: "POST", contentType: "application/json",
+      body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
+        total_bytes: bundle.totalBytes, idempotency_key: "e2e-first-import" }),
+      correlation: "e2e-import-1/replay-prepare",
+    });
+    assert.equal(prepareReplay.status, 200, "prepare replay must answer through the browser session");
+    assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
+    assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
+    assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
+    assert.deepEqual(d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    // The admitted Library row becomes visible to Chromium only after a PWA
+    // reload (the pre-import catalog had no rows); this is the same-origin
+    // browser retrieval the ledger closes over below.
     const sourceRows = d1Query(paths, "CORE_DB", `SELECT source_id, source_namespace_id FROM source WHERE source_namespace_id='${namespace}'`);
     assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist");
     const sourceId = sourceRows[0].source_id;
@@ -1340,68 +1767,111 @@ export async function runOwnerE2E() {
     };
     receipt.evidence_readback = "PASS";
     receipt.authorized_library = "PASS";
-    playwright = await launchPlaywright(runId);
-    receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
-    // Every loopback origin the real browser visits. Service workers persist per
-    // origin across restarts (each restart rebinds a fresh port), so the worker
-    // rule allows exactly one /sw.js per visited harness origin, no more.
-    const visitedOrigins = [];
-    const trackOrigin = (origin) => {
-      if (!visitedOrigins.includes(origin)) visitedOrigins.push(origin);
-      return [...visitedOrigins];
-    };
-    await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
-    await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
-    const unauthHasPrivate = await playwright.evaluate(hasPrivateLibraryMarker);
-    assert.equal(unauthHasPrivate, false, "unauthenticated PWA must not render private Library rows");
-    const unauthStorage = await readBrowserStorage(playwright.page);
-    assertNoPrivateStorage(unauthStorage, "unauthenticated");
-    assertUnauthLedger(playwright, "unauthenticated", worker.origin);
-    await settleLedger(playwright.page);
-    assertPhaseNetwork(playwright, "unauthenticated", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
-    receipt.network_ledger_phases = { unauthenticated: summarizePhaseLedger(playwright) };
-    playwright.resetLedger();
-    bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
-    assert.ok(isChromiumSafePort(Number(new URL(bridge.origin).port)),
-      `bridge loopback port must be Chromium-safe, got ${bridge.origin}`);
-    receipt.network_ledger_phases.bridge_first_bind = { attempts: bridge.bindAttempts, origin: "redacted-loopback" };
-    assert.ok(bridge.pairingUrl.includes("/__local/#"), "bridge must issue a one-use fragment link");
-    assert.ok(!bridge.pairingUrl.includes(token.slice(0, 8)), "pairing URL must not embed the JWT");
-    assert.ok(!bridge.pairingUrl.includes("eyJ"), "pairing URL must never carry JWT material");
-    const secret = bridge.pairingUrl.split("#")[1];
-    assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
-    assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
-    await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
-    await playwright.page.waitForSelector("#connect", { timeout: 15000 });
-    await playwright.page.click("#connect", { timeout: 15000 });
+    // Post-import retrieval through the real browser: reload the paired PWA so
+    // its same-origin catalog fetch (closed over by the phase ledger below)
+    // renders the admitted source row inside Chromium itself.
+    await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
-    const pairedCookies = await playwright.context.cookies();
-    const sessionCookies = pairedCookies.filter((item) => item.name.startsWith("eliotr_local_"));
-    assert.equal(sessionCookies.length, 1, "Chromium itself must hold exactly one opaque session cookie from the real bridge response");
-    const sessionCookie = sessionCookies[0];
-    assert.equal(sessionCookie.httpOnly, true, "browser session cookie must be HttpOnly");
-    assert.ok(sessionCookie.sameSite === "Strict" || sessionCookie.sameSite === "StrictLaxAllowUnsafeTokens" || String(sessionCookie.sameSite).toLowerCase().includes("strict"),
-      `browser session cookie must be SameSite=Strict, got ${sessionCookie.sameSite}`);
-    assert.equal(sessionCookie.domain, "127.0.0.1", "browser session cookie must be loopback-bound");
-    assert.equal(sessionCookie.path, "/", "browser session cookie path must be /");
-    assert.ok(typeof sessionCookie.value === "string" && sessionCookie.value.length >= 32, "browser cookie value must be opaque");
-    assert.ok(!sessionCookie.value.includes("eyJ") && !sessionCookie.value.includes("."), "browser cookie must be opaque, never a JWT");
-    assert.ok(!JSON.stringify(pairedCookies).includes("eyJ"), "browser cookie store must hold no JWT");
-    const reuseStatus = await playwright.page.evaluate(async (pairSecret) => {
-      const response = await fetch("/__local/pair", { method: "POST", headers: { "X-Eliotr-Pair": pairSecret } });
-      return response.status;
-    }, secret);
-    assert.equal(reuseStatus, 403, "pairing secret must be one-use even when reused from Chromium itself");
-    receipt.browser_pairing = `PASS (Chromium paired via ${bridge.origin}/__local/#, HttpOnly=${sessionCookie.httpOnly}, SameSite=${sessionCookie.sameSite}, domain=${sessionCookie.domain})`;
+    const browserCatalog = await browserJson(playwright.page, ledger, "/api/v1/research/catalog?limit=20",
+      { correlation: "e2e-import-1/browser-catalog" });
+    assert.equal(browserCatalog.status, 200, "browser-originated Library catalog must list the admitted source");
+    assert.ok((browserCatalog.data?.data?.sources ?? []).some((entry) => entry.id === sourceId),
+      "browser catalog must contain the admitted source id");
+    const browserRevisions = await browserJson(playwright.page, ledger,
+      `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`,
+      { correlation: "e2e-import-1/browser-revisions" });
+    assert.equal(browserRevisions.status, 200, "browser-originated revision history must succeed");
+    assert.ok(JSON.stringify(browserRevisions.data).includes(revisionRef),
+      "browser revision history must include the admitted revision");
     const authedStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(authedStorage, "authed");
     assert.ok(!playwright.consoleErrors.join("|").includes("eyJ"), "authed console must hold no JWT");
     assertAuthedLedger(playwright, "authed", bridge.origin);
     await settleLedger(playwright.page);
-    assertPhaseNetwork(playwright, "authed", { ...authedNetworkSpec(bridge.origin), workerOrigins: trackOrigin(bridge.origin) });
+    // The authed window closes over pairing AND the full browser-originated
+    // artifact lifecycle: every artifact path returned by the browser import
+    // (exact method/path/status) plus the bearer/prepare replays and the
+    // browser retrieval calls must appear as responded browser traffic.
+    // Anything else, including successful unexpected responses, fails.
+    {
+      const authedSpec = authedNetworkSpec(bridge.origin);
+      const authedApi = [...authedSpec.api,
+        ...imported.artifactPaths,
+        { method: "GET", path: "/api/v1/system/session", status: 200 },
+        { method: "POST", path: "/api/v1/ingest/bundles/prepare", status: 200 },
+        { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
+        { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
+      ];
+      // Every non-GET application route exercised in this window must also be
+      // a listed mutation: the exact browser artifact lifecycle paths
+      // (including the PUT query strings, bound at runtime above) plus the
+      // DUPLICATE prepare replay. Anything else still fails as unlisted.
+      const authedMutations = [...authedSpec.mutations,
+        ...authedApi.filter((entry) => entry.method !== "GET" && entry.method !== "HEAD").map((entry) => entry.path),
+      ];
+      assertPhaseNetwork(playwright, "authed", { ...authedSpec, api: authedApi, mutations: authedMutations, workerOrigins: trackOrigin(bridge.origin) });
+    }
     receipt.network_ledger_phases.authed = summarizePhaseLedger(playwright);
     playwright.resetLedger();
+    // Browser-driven JWT matrix: expired, wrong audience, wrong issuer,
+    // invalid signature, tampered payload and unknown kid, each driven through
+    // Chromium page.evaluate fetch same-origin at the Worker with exact HTTP
+    // denial/error semantics and zero protected D1/R2/owner mutation per case.
+    // Tokens travel only inside the page call; every ledger records presence,
+    // never values. Replay is covered above (identical bearer + DUPLICATE
+    // prepare replay with zero new rows).
+    {
+      const matrixBefore = protectedD1Counts();
+      const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
+      assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
+      await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+      const matrixCases = [
+        { name: "expired", token: await sign({ iat: nowSeconds() - 1000, exp: nowSeconds() - 100 }), status: 401, code: "ACCESS_JWT_EXPIRED" },
+        { name: "wrong-audience", token: await sign({ aud: ["other-audience"] }), status: 401, code: "ACCESS_JWT_AUDIENCE_INVALID" },
+        { name: "wrong-issuer", token: await sign({ iss: "https://other.cloudflareaccess.com" }), status: 401, code: "ACCESS_JWT_ISSUER_INVALID" },
+        { name: "invalid-signature", token: `${(await sign()).split(".").slice(0, 2).join(".")}.AAAA`, status: 401, code: "ACCESS_JWT_SIGNATURE_INVALID" },
+        { name: "tampered-payload", token: tamperedPayloadToken, status: 401, code: "ACCESS_JWT_SIGNATURE_INVALID" },
+        { name: "unknown-kid", token: await sign({}, "unknown-kid"), status: 401, code: "ACCESS_JWT_KEY_UNKNOWN" },
+      ];
+      const matrixEvidence = [];
+      for (const item of matrixCases) {
+        const denied = await browserJson(playwright.page, ledger, "/api/v1/system/session", {
+          extraHeaders: { "cf-access-jwt-assertion": item.token },
+          tokenLength: item.token.length,
+          correlation: `e2e-jwt-matrix/${item.name}`,
+        });
+        assert.equal(denied.status, item.status, `browser ${item.name} must deny with ${item.status}`);
+        assert.equal(denied.data?.code ?? denied.data?.data?.code, item.code,
+          `browser ${item.name} must carry exact code ${item.code}`);
+        assert.ok(!JSON.stringify(denied.data).includes("e2e-owner") || denied.status !== 200,
+          `browser ${item.name} must not leak identity on denial`);
+        const catalogDenied = await browserJson(playwright.page, ledger, "/api/v1/research/catalog?limit=20", {
+          extraHeaders: { "cf-access-jwt-assertion": item.token },
+          tokenLength: item.token.length,
+          correlation: `e2e-jwt-matrix/${item.name}-catalog`,
+        });
+        assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
+        assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
+          `browser ${item.name} must leak no catalog rows`);
+        assert.deepEqual(protectedD1Counts(), matrixBefore,
+          `browser ${item.name} must cause zero protected D1 mutation`);
+        matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
+      }
+      assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
+        "browser JWT matrix must not disturb the admitted evidence object");
+      await settleLedger(playwright.page);
+      {
+        const matrixSpec = unauthNetworkSpec(worker.origin);
+        matrixSpec.api.push({ method: "GET", path: "/api/v1/system/session", status: 401 });
+        assertPhaseNetwork(playwright, "jwt-matrix",
+          { ...matrixSpec, workerOrigins: trackOrigin(worker.origin) });
+      }
+      receipt.network_ledger_phases.jwt_matrix = summarizePhaseLedger(playwright);
+      receipt.browser_jwt_matrix = `PASS (${matrixCases.length} browser cases, D1/R2 unchanged, evidence: ${matrixEvidence.join(",")})`;
+      playwright.resetLedger();
+    }
     const stoppedOrigin = worker.origin;
     const stoppedGeneration = paths.generation;
     await worker.stop();
@@ -1427,6 +1897,9 @@ export async function runOwnerE2E() {
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
     worker = await startLocalWorker(paths);
+    assert.ok(isChromiumSafePort(worker.port),
+      `restart Worker port must be Chromium-safe, got ${worker.port}`);
+    workerPortEvidence.push(`restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     const rebound = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
     assert.equal(rebound.status, 200);
     const reboundBody = await rebound.json();
@@ -1517,6 +1990,125 @@ export async function runOwnerE2E() {
     await settleLedger(playwright.page);
     assertPhaseNetwork(playwright, "post-logout-clean", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases.post_logout_clean = summarizePhaseLedger(playwright);
+    // Real JWKS key rollover (distinct from the duplicate-kid 503 negative):
+    // the rotating server swaps its v1 document for a v2 document (new kid),
+    // the Worker restarts (fresh JWKS fetch = the production cache-refresh
+    // path), the v1 token is denied with ACCESS_JWT_KEY_UNKNOWN while the v2
+    // token is allowed, and Chromium itself re-pairs with the v2 identity and
+    // retrieves the admitted Library source. Zero protected mutation throughout.
+    {
+      const rotationBefore = protectedD1Counts();
+      const ROTATION_KID = "e2e-key-2";
+      const v2keys = await createOwnerE2EKey();
+      const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
+      const signV2 = (overrides = {}) => signOwnerToken(v2keys.privateKey, {
+        iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE], sub: "e2e-owner",
+        type: "app", iat: nowSeconds(), exp: nowSeconds() + 600, ...overrides,
+      }, ROTATION_KID);
+      jwks.setKeys([v2public]);
+      assert.equal(jwks.version, 2, "rotating JWKS must advance to document version 2");
+      try { await bridge?.close(); } catch { /* Stale pre-rotation bridge is replaced below. */ }
+      bridge = undefined;
+      await worker.stop();
+      worker = undefined;
+      await prepareLocal({ stateDirectory: directory, log: () => {} });
+      await applyOwnerE2EProfile(paths, jwks.url);
+      worker = await startLocalWorker(paths);
+      assert.ok(isChromiumSafePort(worker.port),
+        `rotation Worker port must be Chromium-safe, got ${worker.port}`);
+      workerPortEvidence.push(`rotation=${worker.port}`);
+      // Old v1 token: denied on the real path (Node) and through Chromium.
+      const oldDenied = await workerJson(worker.origin, "/api/v1/system/session", { token });
+      assert.equal(oldDenied.status, 401, "rotated-out v1 token must deny with 401");
+      assert.equal(oldDenied.data?.code ?? oldDenied.data?.data?.code, "ACCESS_JWT_KEY_UNKNOWN",
+        "rotated-out v1 token must carry ACCESS_JWT_KEY_UNKNOWN");
+      ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
+        status: oldDenied.status, correlation: "e2e-rotation/v1-denied-node", token_present: true });
+      const newToken = await signV2();
+      const newAllowed = await workerJson(worker.origin, "/api/v1/system/session", { token: newToken });
+      assert.equal(newAllowed.status, 200, "v2 token must verify after rotation + cache refresh");
+      assert.equal(newAllowed.data?.data?.principal_ref, "e2e-owner", "v2 identity must remain the owner subject");
+      assert.ok(String(newAllowed.data?.data?.credential_generation).includes(ROTATION_KID),
+        "v2 generation must bind the new kid");
+      ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
+        status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
+      assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
+      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      playwright.resetLedger();
+      await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+      const oldDeniedBrowser = await browserJson(playwright.page, ledger, "/api/v1/system/session", {
+        extraHeaders: { "cf-access-jwt-assertion": token },
+        tokenLength: token.length, correlation: "e2e-rotation/v1-denied-browser",
+      });
+      assert.equal(oldDeniedBrowser.status, 401, "Chromium must observe the v1 denial");
+      assert.equal(oldDeniedBrowser.data?.code ?? oldDeniedBrowser.data?.data?.code, "ACCESS_JWT_KEY_UNKNOWN");
+      const newAllowedBrowser = await browserJson(playwright.page, ledger, "/api/v1/system/session", {
+        extraHeaders: { "cf-access-jwt-assertion": newToken },
+        tokenLength: newToken.length, correlation: "e2e-rotation/v2-allowed-browser",
+      });
+      assert.equal(newAllowedBrowser.status, 200, "Chromium must observe the v2 allowance");
+      const rotationCatalogBrowser = await browserJson(playwright.page, ledger, "/api/v1/research/catalog?limit=20", {
+        extraHeaders: { "cf-access-jwt-assertion": newToken },
+        tokenLength: newToken.length, correlation: "e2e-rotation/v2-catalog-browser",
+      });
+      assert.equal(rotationCatalogBrowser.status, 200, "v2 catalog through Chromium must succeed");
+      assert.ok((rotationCatalogBrowser.data?.data?.sources ?? []).some((entry) => entry.id === sourceId),
+        "v2 catalog must still list the admitted source after rotation");
+      bridge = await startOwnerBridge({ workerOrigin: worker.origin, token: newToken, generation: paths.generation, port: 0 });
+      assert.ok(isChromiumSafePort(Number(new URL(bridge.origin).port)),
+        "rotation bridge port must be Chromium-safe");
+      receipt.network_ledger_phases.bridge_rotation_bind = { attempts: bridge.bindAttempts, origin: "redacted-loopback" };
+      const rotationSecret = bridge.pairingUrl.split("#")[1];
+      assert.ok(typeof rotationSecret === "string" && rotationSecret.length >= 32 && !rotationSecret.includes("eyJ"),
+        "rotation pairing secret must be opaque");
+      await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+      await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+      await playwright.page.click("#connect", { timeout: 15000 });
+      await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+      await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
+      const rotationCookies = (await playwright.context.cookies()).filter((item) => item.name.startsWith("eliotr_local_"));
+      assert.ok(rotationCookies.length >= 1, "Chromium must hold a fresh opaque session after rotation re-pairing");
+      assert.ok(!JSON.stringify(rotationCookies).includes("eyJ"), "rotation cookie store must hold no JWT");
+      const rotationRetrieval = await browserJson(playwright.page, ledger,
+        `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`,
+        { correlation: "e2e-rotation/v2-revisions-browser" });
+      assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
+      assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
+      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
+      assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
+        "rotation must not disturb the admitted evidence object");
+      await settleLedger(playwright.page);
+      {
+        const rotationOrigins = [worker.origin, bridge.origin];
+        const rotationApi = [
+          { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 401 },
+          { method: "GET", path: "/api/v1/system/health", status: 401 },
+          { method: "GET", path: "/api/v1/system/session", status: 401 },
+          { method: "GET", path: "/api/v1/system/session", status: 200 },
+          { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
+          ...authedNetworkSpec(bridge.origin).api,
+          { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
+        ];
+        const rotationAborts = [
+          `GET ${worker.origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+          `GET ${worker.origin}/api/v1/system/health :: net::ERR_ABORTED`,
+          `GET ${bridge.origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+          `POST ${bridge.origin}/__local/pair :: net::ERR_ABORTED`,
+        ];
+        // The rotation Worker rebound to a fresh port that Chromium visited
+        // (goto + pairing + retrieval above) but no earlier phase tracked: record
+        // it alongside the rotation bridge so the one-shell-worker-per-visited-
+        // origin rule counts exactly the visited origins — no more, no fewer.
+        trackOrigin(worker.origin);
+        assertPhaseNetwork(playwright, "rotation",
+          { origins: rotationOrigins, api: rotationApi, mutations: ["/__local/pair"],
+            aborts: rotationAborts, workerOrigins: trackOrigin(bridge.origin) });
+      }
+      receipt.network_ledger_phases.rotation = summarizePhaseLedger(playwright);
+      receipt.jwks_rotation = `PASS (v1 denied 401/ACCESS_JWT_KEY_UNKNOWN, v2 allowed 200 via Node+Chromium, re-paired in Chromium, D1/R2 unchanged, jwks=v${jwks.version})`;
+      playwright.resetLedger();
+    }
     // Ledger-negative seam: inject a successful unexpected response from the real
     // browser and prove the phase closure trips. The Worker answers 404; the
     // strict ledger must reject it because it is outside the allowlist.
@@ -1536,7 +2128,65 @@ export async function runOwnerE2E() {
     assert.equal(ledgerTripped, true, "injected successful unexpected response must trip the phase ledger");
     receipt.ledger_negative = `PASS (injected /api/v1/e2e-unexpected-probe -> ${injectedStatus} tripped closure)`;
     playwright.resetLedger();
-    receipt.network_ledger = `PASS (5 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
+    // Full asserted lifecycle ledger: every artifact prepare/parts/complete/
+    // commit/status + retrieval + rotation + matrix entry must be present with
+    // browser origin (ingest never leaves Chromium), exact method/path/status,
+    // gapless ordering and correlation. Captured-but-unasserted is failure.
+    {
+      const structural = assertCrossClientLedger(ledger, "lifecycle");
+      const byCorrelation = new Map(ledger.entries.map((entry) => [entry.correlation, entry]));
+      const expectedCorrelations = [
+        "e2e-import-1/prepare",
+        ...imported.artifactPaths.filter((item) => item.correlation.startsWith("e2e-import-1/parts/")).map((item) => item.correlation),
+        ...imported.artifactPaths.filter((item) => item.correlation.startsWith("e2e-import-1/complete/")).map((item) => item.correlation),
+        "e2e-import-1/commit",
+        "e2e-import-1/status",
+        "e2e-import-1/replay-bearer-a",
+        "e2e-import-1/replay-bearer-b",
+        "e2e-import-1/replay-prepare",
+        "e2e-import-1/browser-catalog",
+        "e2e-import-1/browser-revisions",
+        "e2e-jwt-matrix/expired",
+        "e2e-jwt-matrix/expired-catalog",
+        "e2e-jwt-matrix/wrong-audience",
+        "e2e-jwt-matrix/wrong-audience-catalog",
+        "e2e-jwt-matrix/wrong-issuer",
+        "e2e-jwt-matrix/wrong-issuer-catalog",
+        "e2e-jwt-matrix/invalid-signature",
+        "e2e-jwt-matrix/invalid-signature-catalog",
+        "e2e-jwt-matrix/tampered-payload",
+        "e2e-jwt-matrix/tampered-payload-catalog",
+        "e2e-jwt-matrix/unknown-kid",
+        "e2e-jwt-matrix/unknown-kid-catalog",
+        "e2e-rotation/v1-denied-node",
+        "e2e-rotation/v2-allowed-node",
+        "e2e-rotation/v1-denied-browser",
+        "e2e-rotation/v2-allowed-browser",
+        "e2e-rotation/v2-catalog-browser",
+        "e2e-rotation/v2-revisions-browser",
+      ];
+      for (const correlation of expectedCorrelations) {
+        assert.ok(byCorrelation.has(correlation), `lifecycle ledger must contain ${correlation}`);
+      }
+      assert.equal(byCorrelation.size, expectedCorrelations.length,
+        `lifecycle ledger must contain exactly the asserted entries, got ${byCorrelation.size} vs ${expectedCorrelations.length}`);
+      for (const entry of ledger.entries) {
+        const isIngest = entry.path.startsWith("/api/v1/ingest/");
+        if (isIngest) {
+          assert.equal(entry.client, "browser", `ingest route must be browser-origin: ${entry.correlation}`);
+        }
+        if (entry.correlation.startsWith("e2e-import-1/")) {
+          assert.equal(entry.client, "browser", `import lifecycle must be browser-origin: ${entry.correlation}`);
+        }
+      }
+      const ingestEntries = ledger.entries.filter((entry) => entry.path.startsWith("/api/v1/ingest/"));
+      assert.equal(ingestEntries.length, imported.artifactPaths.length + 1,
+        "ingest ledger must hold exactly the lifecycle calls plus the DUPLICATE prepare replay");
+      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay, all browser-origin, exact status/ordering/correlation)`;
+      receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
+    }
+    receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;
+    receipt.network_ledger = `PASS (7 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
     receipt.logout = "PASS";
     receipt.storage = "PASS";
     receipt.console_errors = "PASS";
@@ -1594,37 +2244,68 @@ export async function runOwnerE2E() {
       generation: stoppedGeneration,
     };
   } finally {
+    // Unconditional nested finally: EVERY owned resource is released even when
+    // an earlier release fails. Steps never short-circuit: each runs inside
+    // its own guard, failures accumulate into stepErrors, and the residue
+    // inventory below runs BEFORE any deletion so a failure cannot hide what
+    // was left behind. Exact marker/runId paths only; unrelated same-prefix
+    // entries are inventoried, never touched.
     const teardownStarted = Date.now();
     const teardownDeadlineMs = 60000;
-    const teardownStep = async (label, fn) => {
+    const stepErrors = [];
+    const runStep = async (label, fn) => {
       const remaining = teardownDeadlineMs - (Date.now() - teardownStarted);
-      if (remaining <= 0) throw new Error(`teardown deadline exceeded before ${label}`);
-      await Promise.race([
-        (async () => { await fn(); })(),
-        new Promise((_, reject) => {
-          const timer = setTimeout(() => reject(new Error(`teardown step timed out: ${label}`)), Math.max(1000, remaining));
-          timer.unref?.();
-        }),
-      ]);
+      if (remaining <= 0) {
+        stepErrors.push(`teardown deadline exceeded before ${label}`);
+        return;
+      }
+      try {
+        await Promise.race([
+          (async () => { await fn(); })(),
+          new Promise((_, reject) => {
+            const timer = setTimeout(() => reject(new Error(`teardown step timed out: ${label}`)), Math.max(1000, remaining));
+            timer.unref?.();
+          }),
+        ]);
+      } catch (error) {
+        stepErrors.push(`${label}: ${error?.message ?? error}`);
+      }
     };
-    try {
-      await teardownStep("bridge.close", async () => { try { await bridge?.close(); } catch { /* best-effort */ } });
-      await teardownStep("worker.stop", async () => { try { await worker?.stop(); } catch { /* best-effort */ } });
-      await teardownStep("playwright.close", async () => { try { await playwright?.close(); } catch { /* best-effort */ } });
-      await teardownStep("jwks.close", async () => {
-        const started = Date.now();
-        try { await jwks?.close(); } catch { /* best-effort */ }
-        assert.ok(Date.now() - started < 10000, "JWKS shutdown must stay within its strict deadline");
-      });
-      await teardownStep("removeHarnessOwned", async () => {
-        try { await removeHarnessOwned(directory, runId); } catch (error) { teardownError = teardownError ?? error; }
-      });
-      await teardownStep("assertStateRemoved", async () => {
+    const fail = (message) => { stepErrors.push(message); };
+    await runStep("inventoryResidue", async () => {
+      // Residue inventory BEFORE deleting the current run: every exact-known
+      // run-owned path is recorded present/absent so the post-delete
+      // verification below is evidence-backed, not assumed.
+      const tmpNames = new Set(await readdir(tmpdir()).catch(() => []));
+      const ownTmp = [directory?.split(/[/\\]/).pop()].filter(Boolean);
+      receipt.teardown_inventory = {
+        residue_before: {
+          run_dir_present: directory !== undefined,
+          own_tmp_present: ownTmp.filter((name) => tmpNames.has(name)),
+          decoys_present: decoyPaths.map((path) => path.split(/[/\\]/).pop()),
+        },
+      };
+    });
+    await runStep("bridge.close", async () => { try { await bridge?.close(); } catch (error) { fail(`bridge.close: ${error?.message ?? error}`); } });
+    await runStep("worker.stop", async () => { try { await worker?.stop(); } catch (error) { fail(`worker.stop: ${error?.message ?? error}`); } });
+    await runStep("playwright.close", async () => { try { await playwright?.close(); } catch (error) { fail(`playwright.close: ${error?.message ?? error}`); } });
+    await runStep("jwks.close", async () => {
+      const started = Date.now();
+      try { await jwks?.close(); } catch (error) { fail(`jwks.close: ${error?.message ?? error}`); }
+      if (Date.now() - started >= 10000) fail("JWKS shutdown exceeded its strict deadline");
+    });
+    await runStep("removeHarnessOwned", async () => {
+      if (directory === undefined) { fail("isolated state directory was never created"); return; }
+      try { await removeHarnessOwned(directory, runId); }
+      catch (error) { fail(`removeHarnessOwned: ${error?.message ?? error}`); }
+    });
+      await runStep("assertStateRemoved", async () => {
+        if (directory === undefined) return;
         await assert.rejects(access(directory), /ENOENT/, "isolated state directory must be removed").catch((error) => {
-          teardownError = teardownError ?? error;
+          fail(`assertStateRemoved: ${error?.message ?? error}`);
         });
       });
-      await teardownStep("reconcileStateRoot", async () => {
+      await runStep("reconcileStateRoot", async () => {
         // Marker/runId-only rule: NO deletion by owner-e2e-*/smoke-* prefix exists
         // in this harness. Unexpected shared-state entries are a failure and are
         // left untouched for inspection. Known adversarial decoys (exact names,
@@ -1635,10 +2316,11 @@ export async function runOwnerE2E() {
         const removed = [...beforeDirs].filter((name) => !afterDirs.has(name));
         for (const name of decoyNames.state) {
           if (!afterDirs.has(name)) {
-            teardownError = teardownError ?? new Error(`adversarial decoy was deleted by prefix cleanup: ${name}`);
+            fail(`adversarial decoy was deleted by prefix cleanup: ${name}`);
           }
         }
         receipt.teardown_inventory = {
+          ...receipt.teardown_inventory,
           before: [...beforeDirs].sort(),
           after: [...afterDirs].sort(),
           added,
@@ -1646,13 +2328,13 @@ export async function runOwnerE2E() {
           decoys_survived: [...decoyNames.state].filter((name) => afterDirs.has(name)).sort(),
         };
         if (added.length > 0) {
-          teardownError = teardownError ?? new Error(`teardown created unexpected shared state (left untouched): ${added.join(",")}`);
+          fail(`teardown created unexpected shared state (left untouched): ${added.join(",")}`);
         }
         if (removed.length > 0) {
-          teardownError = teardownError ?? new Error(`teardown removed pre-existing shared state: ${removed.join(",")}`);
+          fail(`teardown removed pre-existing shared state: ${removed.join(",")}`);
         }
       });
-      await teardownStep("reconcileTempProfiles", async () => {
+      await runStep("reconcileTempProfiles", async () => {
         // Only the marker-proven own profileDir may ever be removed (done in
         // playwright.close via removeHarnessOwned). Prefix-colliding entries are
         // inventoried, never touched: own profile must be gone, every decoy and
@@ -1663,47 +2345,51 @@ export async function runOwnerE2E() {
         if (ownName !== "") {
           try {
             await access(playwright.profileDir);
-            teardownError = teardownError ?? new Error("own browser profile survived playwright.close");
+            fail("own browser profile survived playwright.close");
           } catch { /* removed: expected */ }
         }
         for (const name of decoyNames.tmp) {
           if (!names.includes(name)) {
-            teardownError = teardownError ?? new Error(`adversarial temp decoy was deleted by prefix cleanup: ${name}`);
+            fail(`adversarial temp decoy was deleted by prefix cleanup: ${name}`);
           }
         }
         receipt.teardown_inventory.tmp_decoys_survived = [...decoyNames.tmp].filter((name) => names.includes(name)).sort();
         receipt.teardown_inventory.tmp_profile_count = names.filter((name) =>
           name.startsWith("eliotr-owner-e2e-profile-")).length;
       });
-      await teardownStep("reconcileStaging", async () => {
+      await runStep("reconcileStaging", async () => {
         // Staging workers use marker-proven removal with their known runIds;
         // retry here covers interrupted runs without any prefix glob.
         for (const { dir, id } of ownedStaging) {
           try { await removeHarnessOwned(dir, id); } catch { /* already removed */ }
           try {
             await access(dir);
-            teardownError = teardownError ?? new Error(`owned staging residue: ${dir}`);
+            fail(`owned staging residue: ${dir}`);
           } catch { /* removed: expected */ }
         }
       });
-      await teardownStep("removeDecoys", async () => {        // Exact-path removal of this run's own decoys only (created above with
+      await runStep("removeDecoys", async () => {
+        // Exact-path removal of this run's own decoys only (created above with
         // known names). Foreign/unrelated entries are never matched.
         for (const path of decoyPaths) {
           await rm(path, { recursive: true, force: true }).catch((error) => {
-            teardownError = teardownError ?? error;
+            fail(`removeDecoys: ${error?.message ?? error}`);
           });
         }
         for (const path of decoyPaths) {
           try {
             await access(path);
-            teardownError = teardownError ?? new Error(`decoy survived exact-path removal: ${path}`);
+            fail(`decoy survived exact-path removal: ${path}`);
           } catch { /* removed: expected */ }
         }
       });
-      assert.ok(Date.now() - teardownStarted < teardownDeadlineMs, "outer teardown deadline must hold with full reconciliation");
-      receipt.teardown_ms = Date.now() - teardownStarted;
-    } catch (error) {
-      teardownError = teardownError ?? error;
+    if (Date.now() - teardownStarted >= teardownDeadlineMs) {
+      fail("outer teardown deadline exceeded with full reconciliation");
+    }
+    receipt.teardown_ms = Date.now() - teardownStarted;
+    receipt.teardown_step_errors = [...stepErrors];
+    if (teardownError === null && stepErrors.length > 0) {
+      teardownError = new Error(stepErrors[0]);
     }
     receipt.teardown = teardownError === null ? "PASS" : "FAIL";
   }

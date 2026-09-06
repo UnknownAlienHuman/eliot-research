@@ -37,6 +37,17 @@ export const CHROMIUM_UNSAFE_PORTS = new Set([
 
 export const CHROMIUM_SAFE_PORT_RETRIES = 25;
 
+/**
+ * Fail-closed classifier for loopback port-collision / bad-port failures.
+ * Retried: EADDRINUSE/address-in-use, EACCES/denied bind, ERR_UNSAFE_PORT and
+ * the Chromium-unsafe refusal text. Everything else (schema, authority, data,
+ * config, syntax) is fail-closed and must never retry with a new port.
+ */
+export function isPortCollisionMessage(text) {
+  return /EADDRINUSE|address already in use|\bEACCES\b|ERR_UNSAFE_PORT|Chromium-unsafe|bad port|port is already allocated/i
+    .test(String(text ?? ""));
+}
+
 export function isChromiumSafePort(port) {
   return Number.isSafeInteger(port) && port >= 1024 && port <= 65535 && !CHROMIUM_UNSAFE_PORTS.has(port);
 }
@@ -208,13 +219,23 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
         }
         return problem(response, 404, "LOCAL_ROUTE_NOT_FOUND");
       }
-      if (!authenticated(request)) return problem(response, 401, "LOCAL_SESSION_REQUIRED");
+      // Exact public shell asset (no session, no bearer): the Worker serves
+      // /manifest.webmanifest publicly (200 without identity — the
+      // unauthenticated PWA phases prove it), but Chromium fetches the manifest
+      // credentialless (no session cookie) on every PWA document load, so the
+      // session gate below would 401 it and spam the authed console ledger with
+      // deterministic duplicate 401 pairs. Proxy this exact GET with no query
+      // upstream without requiring a session and without attaching the bearer:
+      // no identity is conveyed, no cookie is forwarded, no private content can
+      // result. Any other method, any query, or any other path keeps the gate.
+      const publicManifest = url.pathname === "/manifest.webmanifest" && request.method === "GET" && !url.search && !url.hash;
+      if (!publicManifest && !authenticated(request)) return problem(response, 401, "LOCAL_SESSION_REQUIRED");
       const body = mutation ? await boundedBody(request, controller.signal) : undefined;
       const forwarded = new globalThis.Headers();
       for (const name of ["accept", "content-type", "idempotency-key", "range", "if-none-match"]) {
         if (typeof request.headers[name] === "string") forwarded.set(name, request.headers[name]);
       }
-      forwarded.set("cf-access-jwt-assertion", bearer);
+      if (!publicManifest) forwarded.set("cf-access-jwt-assertion", bearer);
       // Fixed destination, no redirects and no forwarded cookie. The Worker authenticates every API request.
       const upstream = await fetchImpl(`${workerOrigin}${url.pathname}${url.search}`, {
         method: request.method, headers: forwarded, body, redirect: "manual", signal: controller.signal,
@@ -222,10 +243,10 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
       if (upstream.redirected || (upstream.status >= 300 && upstream.status < 400 && upstream.status !== 304)) {
         return problem(response, 502, "LOCAL_REDIRECT_DENIED");
       }
-      if (upstream.status === 401) { invalidate(); return problem(response, 401, "LOCAL_SESSION_REJECTED"); }
+      if (!publicManifest && upstream.status === 401) { invalidate(); return problem(response, 401, "LOCAL_SESSION_REJECTED"); }
       const bytes = await responseBody(upstream, MAX_BODY);
       // A logout or expiry racing the read must not return previously-authorized private content.
-      if (!authenticated(request)) return problem(response, 401, "LOCAL_SESSION_EXPIRED");
+      if (!publicManifest && !authenticated(request)) return problem(response, 401, "LOCAL_SESSION_EXPIRED");
       headers(response, upstream.headers.get("content-type") ?? "application/octet-stream");
       response.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
       for (const name of ["content-range", "accept-ranges", "etag"]) {
