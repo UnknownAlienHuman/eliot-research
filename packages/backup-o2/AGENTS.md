@@ -3,10 +3,12 @@
 O2 only. O3 restore/isolation and O4 source-erasure/purge replay stay
 `NOT_IMPLEMENTED` and fail closed.
 
-- Startup is fail-closed on migration `0018_backup_o2_replay_authority.sql`
-  (`migration-gate.ts`): ledger row plus exact live schema shape required, no
-  runtime CREATE TABLE substitute, no `migration-ledger:ABSENT` tolerance.
-  (Renamed from 0017; W1 FIX5 reserves the 0017 slot, 0014–0016 never landed.)
+- Startup is fail-closed on migrations `0018_backup_o2_replay_authority.sql`
+  (immutable parent) plus `0019_backup_o2_replay_authority_fix.sql` (forward
+  FIX4 upgrade) (`migration-gate.ts`): both ledger rows plus exact live schema
+  shape required, no runtime CREATE TABLE substitute, no
+  `migration-ledger:ABSENT` tolerance. (0018 renamed from 0017; W1 FIX5 reserves
+  the 0017 slot, 0014–0016 never landed; 0019 is the only O2 number after 0018.)
 - Restart-safe replay authority lives in D1 (`replay-authority.ts` + `0018`
   migration) with the canonical full intent digest (`intent-digest.ts`):
   principal, payload, policy decision, timestamps, revisions, vector/manifest

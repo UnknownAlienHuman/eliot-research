@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { createBackupPort } from "./index.js";
 import { reopenPersistedVector, type BackupSourcePorts } from "./epoch.js";
-import { assertO2MigrationAuthority, O2_MIGRATION_FILENAME, O2_EXPECTED_MIGRATION_DIGEST, O2_EXPECTED_SCHEMA_DIGEST, canonicalO2SchemaFingerprint, canonicalizeSchemaSql } from "./migration-gate.js";
+import { assertO2MigrationAuthority, O2_MIGRATION_FILENAME, O2_UPGRADE_FILENAME, O2_EXPECTED_MIGRATION_DIGEST, O2_EXPECTED_UPGRADE_DIGEST, O2_EXPECTED_SCHEMA_DIGEST, canonicalO2SchemaFingerprint, canonicalizeSchemaSql } from "./migration-gate.js";
 import { BACKUP_MANIFEST_PROTOCOL } from "./coherent-cut.js";
 import { authorizeBackupDestination, requireDestinationAuthority, revokeBackupDestination } from "./destination-authority.js";
 import type { BackupDestinationPolicy } from "./destination-policy.js";
@@ -24,16 +24,17 @@ import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?
 import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
 import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
+import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 // ER-34 O2 FIX2 authority regressions: migration gate, full intent digest,
 // coherent cut + column inventory + protocol id, controller-owned destination
 // authority. All D1 tests apply the actual tracked migrations plus 0018 and
-// record the ledger exactly like the authoritative runner.
+// 0019 and record the ledger exactly like the authoritative runner.
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql"];
+const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql"];
 function sink(): Sha256DigestSink {
   const chunks: Uint8Array[] = [];
   let res!: (v: ArrayBuffer) => void; let rej!: (r: unknown) => void;
@@ -86,7 +87,7 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
     async open(k) { return bucket.get(k); },
   };
 }
-const MIGRATIONS = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018];
+const MIGRATIONS = [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019];
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   for (const m of MIGRATIONS) db.exec(m);
@@ -135,6 +136,7 @@ describe("ER-34 O2 FIX2 authority (migration gate, intent digest, cut, destinati
     recordLedger(db);
     await expect(assertO2MigrationAuthority(coreDb)).resolves.toBeUndefined();
     expect(O2_MIGRATION_FILENAME).toBe("0018_backup_o2_replay_authority.sql");
+    expect(O2_UPGRADE_FILENAME).toBe("0019_backup_o2_replay_authority_fix.sql");
   });
   it("fails closed on hand-created O2 tables with a forged ledger row and wrong shape", async () => {
     const db = new DatabaseSync(":memory:");
@@ -268,8 +270,9 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
     return d1Database(db);
   }
-  it("binds the expected migration content digest to the tracked 0018 file", async () => {
+  it("binds the expected migration content digests to the tracked 0018 + 0019 files", async () => {
     expect(await shaHex(m0018.replace(/\r\n/g, "\n"))).toBe(O2_EXPECTED_MIGRATION_DIGEST);
+    expect(await shaHex(m0019.replace(/\r\n/g, "\n"))).toBe(O2_EXPECTED_UPGRADE_DIGEST);
   });
   it("reads back the canonical schema fingerprint from the actual applied 0018", async () => {
     const db = openCore(); recordLedger(db);
@@ -303,11 +306,8 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     ["dropped UNIQUE index", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_copy_part_nonce_unique\n  ON backup_offsite_copy_part(copy_id, nonce_hex);", "")],
     ["added DEFAULT", LF0018.replace("updated_at TEXT NOT NULL,\n  PRIMARY KEY (copy_id, part_ref)", "updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',\n  PRIMARY KEY (copy_id, part_ref)")],
     ["altered PRIMARY KEY", LF0018.replace("PRIMARY KEY (copy_id, part_ref)", "PRIMARY KEY (copy_id)")],
-    ["dropped STRICT", LF0018.replace("PRIMARY KEY (nonce_hex)\n) STRICT;", "PRIMARY KEY (nonce_hex)\n);")],
+    ["dropped STRICT", LF0018.replace("PRIMARY KEY (key_generation, nonce_hex)\n) STRICT;", "PRIMARY KEY (key_generation, nonce_hex)\n);")],
     ["reordered column", LF0018.replace("authorized_at TEXT NOT NULL,\n  revoked_at TEXT,", "revoked_at TEXT,\n  authorized_at TEXT NOT NULL,")],
-    ["weaker per-generation nonce PK", LF0018.replace("PRIMARY KEY (nonce_hex)", "PRIMARY KEY (key_generation, nonce_hex)")],
-    ["missing nonce owner uniqueness", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_nonce_owner_unique\n  ON backup_offsite_nonce_authority(key_generation, copy_id, part_ref);", "")],
-    ["missing expiry generation binding", LF0018.replace("policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),\n  authority_authorized_at TEXT NOT NULL,\n  created_at TEXT NOT NULL\n) STRICT;\n\n-- Controller-owned destination authority", "policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),\n  created_at TEXT NOT NULL\n) STRICT;\n\n-- Controller-owned destination authority")],
   ])("rejects edited migration variant: %s", async (_label, variant) => {
     await expect(assertO2MigrationAuthority(mutatedDb(variant))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
   });

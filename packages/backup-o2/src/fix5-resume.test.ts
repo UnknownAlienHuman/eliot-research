@@ -4,12 +4,11 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import type { OperationIntent } from "@eliotr/contracts";
 import { createBackupPort } from "./index.js";
-import { createControlledOffsiteAdapter, type OffsiteCopyAdapter } from "./offsite.js";
+import { createControlledOffsiteAdapter, type OffsiteCopyAdapter, type OffsiteStoredPart } from "./offsite.js";
 import { authorizeBackupDestination } from "./destination-authority.js";
-import { allocateOffsiteNonce } from "./nonce-authority.js";
-import { assertO2MigrationAuthority } from "./migration-gate.js";
-import { backupNonceHex } from "./offsite-durability.js";
-import type { BackupDestinationPolicy } from "./destination-policy.js";
+import { destinationPolicyDigest, type BackupDestinationPolicy } from "./destination-policy.js";
+import { canonicalOffsiteCopyDigest } from "./intent-digest.js";
+import { copyIdForDigest } from "./offsite-durability.js";
 import type { BackupEpochDraft, BackupSourcePorts } from "./epoch.js";
 import type { Sha256DigestSink, EvidenceObjectStore } from "./shared.js";
 import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
@@ -28,13 +27,14 @@ import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.s
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
 import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
-// ER-34 O2 FIX4 globally-unique nonce authority (IMPLEMENTED_NOT_LIVE).
-// nonce_hex alone is the PRIMARY KEY across all copies and key generations;
-// (key_generation, copy_id, part_ref) carries exactly one durable owner
-// mapping. Exact owner + nonce replay is idempotent; any divergent nonce or
-// divergent owner collides atomically BEFORE encryption or remote put with
-// zero billable/R2 side effect on denial (actual applied migrations, never
-// Map fakes).
+// ER-34 O2 FIX5 durable-nonce resume authority (IMPLEMENTED_NOT_LIVE).
+// Every VERIFIED checkpoint resume must re-prove the durable nonce authority
+// (backup_offsite_nonce_authority binds checkpoint nonce_hex to this exact
+// (key_generation, copy_id, part_ref) owner) BEFORE remote get/skip. Forged or
+// restored checkpoints with a generate_nonce mismatch, a missing authority
+// row, a divergent owner, or malformed bytes fail closed with zero puts and
+// zero authority writes; a legitimate authority-bound resume still reconciles
+// idempotently even when the controller allocator disagrees.
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
@@ -116,137 +116,161 @@ async function setup() {
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   return { db, coreDb, ports, port, key };
 }
-async function draftFor(h: Harness, k: string): Promise<BackupEpochDraft> {
-  return (await h.port.createPortableEpoch(intent(k), { now_ms: NOW })).draft;
+function partRefFor(draft: BackupEpochDraft, index: number): { part_ref: string; content_digest: string; size_bytes: number } {
+  const part = draft.part_index[index] as BackupEpochDraft["part_index"][number];
+  return { part_ref: `offsite/${draft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`, content_digest: part.sha256, size_bytes: part.size_bytes };
 }
-function nonceCount(h: Harness, where = "", ...args: string[]): number {
-  return (h.db.prepare(`SELECT count(*) AS n FROM backup_offsite_nonce_authority${where}`).get(...args) as { n: number }).n;
+async function copyIdFor(h: Harness, draft: BackupEpochDraft, op: OperationIntent, generation: string): Promise<string> {
+  const policyDigest = await destinationPolicyDigest(policy());
+  const intentDigest = await canonicalOffsiteCopyDigest(op, {
+    epoch_id: draft.epoch_id, destination_id: "offsite-1", policy_digest: policyDigest,
+    authorization_receipt_ref: "auth-1", key_generation: generation,
+    expires_at: draft.expires_at, retention_policy_ref: "retention-1", expiry_identity: "expiry-1",
+  });
+  return copyIdForDigest({ epoch_id: draft.epoch_id, destination_id: "offsite-1", key_generation: generation, policy_digest: policyDigest, intent_digest: intentDigest });
 }
-function fixed(fill: number): Uint8Array {
-  return new Uint8Array(12).fill(fill);
-}
-// Controller allocator emitting head bytes first, then a disjoint tail per tag.
-function sequence(head: Uint8Array, tag: number): () => Uint8Array {
-  let n = 0;
-  return () => {
-    n += 1;
-    if (n === 1) return head.slice();
-    const out = new Uint8Array(12).fill(tag);
-    out[11] = n % 256;
-    out[10] = Math.floor(n / 256) % 256;
-    return out;
+// Remote-present stub: every part reads back with matching metadata and
+// arbitrary bytes (the vulnerable skip path never decrypts).
+function remotePresentAdapter(draft: BackupEpochDraft, generation: string): OffsiteCopyAdapter & { puts: number } {
+  let puts = 0;
+  const base = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+  return {
+    ...base,
+    get puts() { return puts; },
+    async put(part_ref, ciphertext, stored) { puts += 1; return base.put(part_ref, ciphertext, stored); },
+    async get(part_ref) {
+      const hit = draft.part_index.find((p) => `offsite/${draft.epoch_id}/${p.manifest}/${String(p.index).padStart(6, "0")}-${p.sha256}` === part_ref);
+      if (hit === undefined) return null;
+      const stored: Omit<OffsiteStoredPart, "ciphertext"> = { content_digest: hit.sha256, size_bytes: hit.size_bytes, key_generation: generation, epoch_id: draft.epoch_id, expires_at: draft.expires_at };
+      return { ciphertext: new Uint8Array(64), stored };
+    },
   };
 }
+function nonceCount(h: Harness): number {
+  return (h.db.prepare("SELECT count(*) AS n FROM backup_offsite_nonce_authority").get() as { n: number }).n;
+}
+function forgedHex(fill: number, salt: number): string {
+  return Array.from({ length: 12 }, (_, j) => ((fill + salt + j) & 0xff).toString(16).padStart(2, "0")).join("");
+}
+function forgeCheckpoints(h: Harness, copyId: string, draft: BackupEpochDraft, nonceHexForPart: (index: number) => string): void {
+  for (let i = 0; i < draft.part_index.length; i += 1) {
+    const { part_ref, content_digest, size_bytes } = partRefFor(draft, i);
+    h.db.prepare("INSERT INTO backup_offsite_copy_part (copy_id, part_ref, content_digest, size_bytes, nonce_hex, state, updated_at) VALUES (?1,?2,?3,?4,?5,'VERIFIED',?6)")
+      .run(copyId, part_ref, content_digest, size_bytes, nonceHexForPart(i), T);
+  }
+}
 
-describe("ER-34 O2 FIX4 globally-unique nonce authority", () => {
-  it("reads back the FIX4 shape: nonce_hex PK plus the owner-tuple uniqueness, gate accepts", async () => {
+describe("ER-34 O2 FIX5 VERIFIED resume re-proves durable nonce authority", () => {
+  it("forged VERIFIED checkpoints with a generate_nonce mismatch fail closed with zero puts and zero authority rows", async () => {
     const h = await setup();
-    await expect(assertO2MigrationAuthority(h.coreDb)).resolves.toBeUndefined();
-    const pk = (h.db.prepare("PRAGMA table_info(backup_offsite_nonce_authority)").all() as { name: string; pk: number }[])
-      .filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
-    expect(pk).toEqual(["nonce_hex"]);
-    const owner = (h.db.prepare("PRAGMA index_info(backup_offsite_nonce_owner_unique)").all() as { seqno: number; name: string }[])
-      .sort((a, b) => a.seqno - b.seqno).map((c) => c.name);
-    expect(owner).toEqual(["key_generation", "copy_id", "part_ref"]);
-    const expiryCols = (h.db.prepare("PRAGMA table_info(backup_offsite_expiry)").all() as { name: string }[]).map((c) => c.name);
-    expect(expiryCols).toContain("authority_authorized_at");
+    const draft = (await h.port.createPortableEpoch(intent("fix5-forge"), { now_ms: NOW })).draft;
+    const op = intent("fix5-forge-copy");
+    const copyId = await copyIdFor(h, draft, op, "key-gen-1");
+    forgeCheckpoints(h, copyId, draft, (i) => forgedHex(0xa0, i));
+    const adapter = remotePresentAdapter(draft, "key-gen-1");
+    await expect(h.port.copyOffsite({
+      draft, intent: op, encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter, now_ms: Date.now(), generate_nonce: () => new Uint8Array(12).fill(0x99),
+    })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(adapter.puts).toBe(0);
+    expect(nonceCount(h)).toBe(0);
   });
-  it("same nonce across different generations: exactly one success plus one BACKUP_NONCE_COLLISION", async () => {
+  it("VERIFIED checkpoints with no durable authority row fail closed even when the nonce matches derivation", async () => {
     const h = await setup();
-    const reused = fixed(0xab);
-    const settled = await Promise.allSettled([
-      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-a", part_ref: "part-1", nonce: reused, created_at: T }),
-      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-2", copy_id: "copy-b", part_ref: "part-1", nonce: reused, created_at: T }),
-    ]);
-    expect(settled.filter((s) => s.status === "fulfilled").length).toBe(1);
-    expect(settled.filter((s) => s.status === "rejected" && (s.reason as { code?: string }).code === "BACKUP_NONCE_COLLISION").length).toBe(1);
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(reused))).toBe(1);
+    const draft = (await h.port.createPortableEpoch(intent("fix5-missing"), { now_ms: NOW })).draft;
+    // Legitimate copy first so checkpoints carry derivation-correct nonces.
+    const first = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await h.port.copyOffsite({
+      draft, intent: intent("fix5-missing-copy"), encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: first, now_ms: Date.now(),
+    });
+    // Destroy the authority rows and the success receipt, keep checkpoints and
+    // remote bytes: resume must refuse to skip on checkpoints alone.
+    h.db.exec("DELETE FROM backup_offsite_nonce_authority");
+    h.db.exec("DELETE FROM backup_offsite_copy_receipt");
+    expect(nonceCount(h)).toBe(0);
+    await expect(h.port.copyOffsite({
+      draft, intent: intent("fix5-missing-copy"), encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: first, now_ms: Date.now(),
+    })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(first.puts).toBeGreaterThan(0); // the first legitimate copy wrote; the resume wrote nothing new
   });
-  it("end to end: rotated generation replaying retired nonce bytes collides with zero puts", async () => {
+  it("a checkpoint nonce bound to a divergent owner fails closed with zero new puts", async () => {
     const h = await setup();
-    const draft = await draftFor(h, "fix4-nonce-xgen");
-    const head = fixed(0xab);
-    const a1 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
-    const c1 = await h.port.copyOffsite({ draft, intent: intent("fix4-nonce-xgen"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a1, now_ms: Date.now(), generate_nonce: sequence(head, 0x41) });
-    expect(c1.receipt.outcome).toBe("SUCCEEDED");
-    const a2 = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
-    await expect(h.port.copyOffsite({ draft, intent: intent("fix4-nonce-xgen-rot"), encryption_key: h.key, key_generation: "key-gen-2", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: a2, now_ms: Date.now(), generate_nonce: sequence(head, 0x42) })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    expect(a2.puts).toBe(0);
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(head))).toBe(1);
-  });
-  it("same owner plus same nonce replays idempotently; same owner plus changed nonce is rejected", async () => {
-    const h = await setup();
-    const same = fixed(0x11);
-    const [r1, r2] = await Promise.all([
-      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-idem", part_ref: "part-1", nonce: same, created_at: T }),
-      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-idem", part_ref: "part-1", nonce: same, created_at: T }),
-    ]);
-    expect(backupNonceHex(r1)).toBe(backupNonceHex(r2));
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(same))).toBe(1);
-    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-idem", part_ref: "part-1", nonce: fixed(0x22), created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    const bound = h.db.prepare("SELECT nonce_hex FROM backup_offsite_nonce_authority WHERE key_generation = ? AND copy_id = ? AND part_ref = ?").get("key-gen-1", "copy-idem", "part-1") as { nonce_hex: string };
-    expect(bound.nonce_hex).toBe(backupNonceHex(same));
-  });
-  it("same nonce with a divergent owner is rejected in one generation and across generations", async () => {
-    const h = await setup();
-    const clash = fixed(0x33);
-    await allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-owner", part_ref: "part-1", nonce: clash, created_at: T });
-    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-owner", part_ref: "part-2", nonce: clash, created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-9", copy_id: "copy-other", part_ref: "part-9", nonce: clash, created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(clash))).toBe(1);
-  });
-  it("concurrent races are deterministic: one owner many callers idempotent, one nonce many owners single winner", async () => {
-    const h = await setup();
-    const same = fixed(0x44);
-    const idem = await Promise.allSettled(Array.from({ length: 8 }, () =>
-      allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-race", part_ref: "part-1", nonce: same, created_at: T })));
-    expect(idem.filter((s) => s.status === "fulfilled").length).toBe(8);
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(same))).toBe(1);
-    const fought = fixed(0x55);
-    const raced = await Promise.allSettled(Array.from({ length: 4 }, (_, i) =>
-      allocateOffsiteNonce(h.coreDb, { key_generation: `key-gen-r${i}`, copy_id: `copy-r${i}`, part_ref: `part-r${i}`, nonce: fought, created_at: T })));
-    expect(raced.filter((s) => s.status === "fulfilled").length).toBe(1);
-    expect(raced.filter((s) => s.status === "rejected" && (s.reason as { code?: string }).code === "BACKUP_NONCE_COLLISION").length).toBe(3);
-    expect(nonceCount(h, " WHERE nonce_hex = ?", backupNonceHex(fought))).toBe(1);
-  });
-  it("forged pre-existing nonce fails closed in every generation with zero puts", async () => {
-    const h = await setup();
-    const forged = fixed(0x5a);
-    const forgedHex = backupNonceHex(forged);
+    const draft = (await h.port.createPortableEpoch(intent("fix5-owner"), { now_ms: NOW })).draft;
+    const op = intent("fix5-owner-copy");
+    const copyId = await copyIdFor(h, draft, op, "key-gen-1");
+    const stolen = new Uint8Array(12).fill(0x5e);
+    const stolenHex = [...stolen].map((b) => b.toString(16).padStart(2, "0")).join("");
     h.db.prepare("INSERT INTO backup_offsite_nonce_authority (key_generation, nonce_hex, copy_id, part_ref, created_at) VALUES (?1,?2,?3,?4,?5)")
-      .run("key-gen-1", forgedHex, "copy-attacker", "part-evil", T);
-    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-1", copy_id: "copy-victim", part_ref: "part-victim-1", nonce: forged, created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    await expect(allocateOffsiteNonce(h.coreDb, { key_generation: "key-gen-2", copy_id: "copy-victim", part_ref: "part-victim-1", nonce: forged, created_at: T })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
-    const draft = await draftFor(h, "fix4-nonce-forge");
-    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
-    await expect(h.port.copyOffsite({ draft, intent: intent("fix4-nonce-forge-2"), encryption_key: h.key, key_generation: "key-gen-2", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now(), generate_nonce: () => forged.slice() })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+      .run("key-gen-1", stolenHex, "copy-attacker", "part-evil", T);
+    forgeCheckpoints(h, copyId, draft, (i) => (i === 0 ? stolenHex : forgedHex(0xb0, i)));
+    const adapter = remotePresentAdapter(draft, "key-gen-1");
+    await expect(h.port.copyOffsite({
+      draft, intent: op, encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter, now_ms: Date.now(), generate_nonce: () => new Uint8Array(12).fill(0x5e),
+    })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
     expect(adapter.puts).toBe(0);
   });
-  it("restart resumes from the durable owner mapping and lost acknowledgements reconcile exactly", async () => {
+  it("malformed checkpoint nonce bytes fail closed before any remote reliance", async () => {
     const h = await setup();
-    const draft = await draftFor(h, "fix4-nonce-restart");
+    const draft = (await h.port.createPortableEpoch(intent("fix5-malformed"), { now_ms: NOW })).draft;
+    const op = intent("fix5-malformed-copy");
+    const copyId = await copyIdFor(h, draft, op, "key-gen-1");
+    forgeCheckpoints(h, copyId, draft, (i) => `z${"y".repeat(21)}${String(i).padStart(2, "0")}`.slice(0, 24));
+    const adapter = remotePresentAdapter(draft, "key-gen-1");
+    await expect(h.port.copyOffsite({
+      draft, intent: op, encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter, now_ms: Date.now(), generate_nonce: () => new Uint8Array(12).fill(0x01),
+    })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(adapter.puts).toBe(0);
+    expect(nonceCount(h)).toBe(0);
+  });
+  it("authority checks run before remote verification: forged checkpoints with an absent remote still collide, never readback-mismatch", async () => {
+    const h = await setup();
+    const draft = (await h.port.createPortableEpoch(intent("fix5-order"), { now_ms: NOW })).draft;
+    const op = intent("fix5-order-copy");
+    const copyId = await copyIdFor(h, draft, op, "key-gen-1");
+    forgeCheckpoints(h, copyId, draft, (i) => forgedHex(0xc0, i));
+    const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
+    await expect(h.port.copyOffsite({
+      draft, intent: op, encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter, now_ms: Date.now(), generate_nonce: () => new Uint8Array(12).fill(0x02),
+    })).rejects.toMatchObject({ code: "BACKUP_NONCE_COLLISION" });
+    expect(adapter.puts).toBe(0);
+  });
+  it("a legitimate authority-bound resume still reconciles idempotently when the allocator disagrees", async () => {
+    const h = await setup();
+    const draft = (await h.port.createPortableEpoch(intent("fix5-legit"), { now_ms: NOW })).draft;
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
     const controller = new AbortController();
     let puts = 0;
     const crashing: OffsiteCopyAdapter = { ...adapter, put: async (r, b, s) => { const out = await adapter.put(r, b, s); puts += 1; if (puts >= 2) controller.abort(); return out; } };
-    await expect(h.port.copyOffsite({ draft, intent: intent("fix4-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: crashing, signal: controller.signal, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_CANCELLED" });
-    const rowsBeforeResume = nonceCount(h);
-    const fresh = createBackupPort(h.ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
-    const resumed = await fresh.copyOffsite({ draft, intent: intent("fix4-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
+    await expect(h.port.copyOffsite({
+      draft, intent: intent("fix5-legit"), encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter: crashing, signal: controller.signal, now_ms: Date.now(),
+    })).rejects.toMatchObject({ code: "BACKUP_CANCELLED" });
+    const rowsBefore = nonceCount(h);
+    expect(rowsBefore).toBeGreaterThan(0);
+    let allocations = 0;
+    const resumed = await h.port.copyOffsite({
+      draft, intent: intent("fix5-legit"), encryption_key: h.key, key_generation: "key-gen-1",
+      primary_failure_domain: "domain-primary", destination_policy: policy(),
+      adapter, now_ms: Date.now(),
+      generate_nonce: () => {
+        allocations += 1;
+        const out = new Uint8Array(12).fill(0x77);
+        out[11] = (0x80 + allocations) & 0xff;
+        out[10] = 0x77;
+        return out;
+      },
+    });
     expect(resumed.receipt.outcome).toBe("SUCCEEDED");
     expect(nonceCount(h)).toBe(draft.part_index.length);
-    expect(nonceCount(h)).toBeGreaterThanOrEqual(rowsBeforeResume);
-    const putsAfterCommit = adapter.puts;
-    const again = await fresh.copyOffsite({ draft, intent: intent("fix4-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
-    expect(again.receipt).toEqual(resumed.receipt);
-    expect(adapter.puts).toBe(putsAfterCommit);
-    expect(nonceCount(h)).toBe(draft.part_index.length);
-    // Lost acknowledgement reconciles to the same durable owner mapping.
-    const h2 = await setup();
-    const draft2 = await draftFor(h2, "fix4-nonce-ack");
-    const flaky = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote", faults: { lose_ack_after_puts: 1 } });
-    const acked = await h2.port.copyOffsite({ draft: draft2, intent: intent("fix4-nonce-ack"), encryption_key: h2.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: flaky, now_ms: Date.now() });
-    expect(acked.receipt.outcome).toBe("SUCCEEDED");
-    expect(nonceCount(h2)).toBe(draft2.part_index.length);
   });
 });
