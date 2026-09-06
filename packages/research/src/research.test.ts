@@ -104,7 +104,7 @@ function setup() {
   };
   const fences = { current: async () => ({ ...fence }) };
   const store = createD1InvestigationLedgerStore(d1);
-  const service = createInvestigationLedgerService(store, fences, handles, () => "2026-09-05T00:00:00.000Z");
+  const service = createInvestigationLedgerService(store, fences, handles, () => new Date().toISOString());
   return { raw, d1, digests, handles, fence, fences, store, service };
 }
 function baseInput(overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInput {
@@ -121,7 +121,7 @@ function baseInput(overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInpu
     deployment_generation: "deploy-gen-1", idempotency_key: "idem-1",
     model_profile_ref: "model-1", event_id: "evt-1",
     payload_handle_ref: "payload-1", payload_digest: "b".repeat(64),
-    created_at: "2026-09-05T00:00:00.000Z", ...overrides,
+    created_at: new Date().toISOString(), ...overrides,
   };
 }
 function nextInput(tag: string, overrides: Partial<CreateLedgerInput> = {}): CreateLedgerInput { return baseInput({ investigation_id: `inv-${tag}`, idempotency_key: `idem-${tag}`, event_id: `evt-${tag}`, ...overrides }); }
@@ -229,7 +229,7 @@ describe("investigation ledger over actual D1 rows", () => {
       },
     }) as LedgerD1Database;
     const flakyStore = createD1InvestigationLedgerStore(flaky);
-    const flakyService = createInvestigationLedgerService(flakyStore, ctx.fences, ctx.handles, () => "2026-09-05T00:00:00.000Z");
+    const flakyService = createInvestigationLedgerService(flakyStore, ctx.fences, ctx.handles, () => new Date().toISOString());
     const firstAttempt = await flakyService.create(input).then((head) => ({ ok: true as const, head }), (error: unknown) => ({ ok: false as const, error }));
     expect(firstAttempt.ok === true || String(firstAttempt).includes("lost")).toBe(true);
     const retry = await ctx.service.create(input);
@@ -254,7 +254,7 @@ describe("investigation ledger over actual D1 rows", () => {
       },
     }) as LedgerD1Database;
     const preStore = createD1InvestigationLedgerStore(preCrash);
-    const preService = createInvestigationLedgerService(preStore, ctx.fences, ctx.handles, () => "2026-09-05T00:00:00.000Z");
+    const preService = createInvestigationLedgerService(preStore, ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(preService.checkpoint("inv-1", 1, 4, "principal-1", "evt-crash", "payload-crash", "c".repeat(64)))).toBe("LEDGER_SETTLEMENT_UNCERTAIN");
     expect((await ctx.service.read("inv-1")).revision).toBe(1);
     expect(ctx.raw.prepare("SELECT * FROM investigation_ledger_event WHERE event_id=?").get("evt-crash")).toBeUndefined();
@@ -273,14 +273,14 @@ describe("investigation ledger over actual D1 rows", () => {
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as LedgerD1Database;
-    const ackService = createInvestigationLedgerService(createD1InvestigationLedgerStore(ackFlaky), ctx.fences, ctx.handles, () => "2026-09-05T00:00:00.000Z");
+    const ackService = createInvestigationLedgerService(createD1InvestigationLedgerStore(ackFlaky), ctx.fences, ctx.handles, () => new Date().toISOString());
     await ackService.checkpoint("inv-1", 1, 5, "principal-1", "evt-ack", "payload-ack", "d".repeat(64)).catch(() => undefined);
     const reconciled = await ctx.service.checkpoint("inv-1", 1, 5, "principal-1", "evt-ack", "payload-ack", "d".repeat(64)).catch(async () => ctx.service.read("inv-1"));
     expect(reconciled.revision).toBe(2);
     expect(eventCount(ctx, "inv-1")).toBe(2);
     // Stale CAS from a second store rolls back the whole effect: no orphan event row.
     ctx.digests.set("payload-stale", "e".repeat(64));
-    const other = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => "2026-09-05T00:00:00.000Z");
+    const other = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(other.checkpoint("inv-1", 1, 6, "principal-1", "evt-stale", "payload-stale", "e".repeat(64)))).toBe("LEDGER_STALE_HEAD");
     expect(ctx.raw.prepare("SELECT * FROM investigation_ledger_event WHERE event_id=?").get("evt-stale")).toBeUndefined();
     expect((await ctx.service.read("inv-1")).revision).toBe(2);
@@ -295,7 +295,7 @@ describe("investigation ledger over actual D1 rows", () => {
     ctx.digests.set("payload-reopen", "d".repeat(64));
     await ctx.service.close("inv-1", 1, "principal-1", "evt-close", "payload-close", "c".repeat(64));
     expect((await ctx.service.read("inv-1")).status).toBe("CLOSED");
-    const restarted = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => "2026-09-05T01:00:00.000Z");
+    const restarted = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => new Date().toISOString());
     await restarted.reopen("inv-1", 2, "principal-1", "evt-reopen", "payload-reopen", "d".repeat(64));
     const head = await restarted.read("inv-1");
     expect(head.status).toBe("OPEN");
@@ -317,7 +317,7 @@ describe("investigation ledger over actual D1 rows", () => {
     expect(after.principal_ref).toBe(before.principal_ref);
     expect(after.input_digest).toBe(before.input_digest);
     expect(after.observed_execution).toBe("exec-1");
-    const swapped = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => "2026-09-05T02:00:00.000Z");
+    const swapped = createInvestigationLedgerService(createD1InvestigationLedgerStore(ctx.d1), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect((await swapped.read("inv-1")).evidence_grade).toBe("E2");
     await invariant(ctx, "inv-1");
   });
@@ -376,7 +376,7 @@ describe("investigation ledger over actual D1 rows", () => {
       get(target, key) {
         if (key === "batch") {
           return async (statements: readonly { sql: string; params: readonly unknown[] }[]) => {
-            if (armed && statements.length === 6) { armed = false; throw new Error("crash inside supersession batch"); }
+            if (armed && statements.length === 1) { armed = false; throw new Error("crash inside supersession command"); }
             return (target as unknown as { batch(stmts: unknown): Promise<unknown> }).batch(statements as never);
           };
         }
@@ -384,7 +384,7 @@ describe("investigation ledger over actual D1 rows", () => {
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as LedgerD1Database;
-    const faultyService = createInvestigationLedgerService(createD1InvestigationLedgerStore(faulty), ctx.fences, ctx.handles, () => "2026-09-05T00:00:00.000Z");
+    const faultyService = createInvestigationLedgerService(createD1InvestigationLedgerStore(faulty), ctx.fences, ctx.handles, () => new Date().toISOString());
     expect(await codeOf(faultyService.supersede("inv-1", 1, replacement, "fault injection", "principal-1"))).toMatch(/LEDGER_SETTLEMENT_UNCERTAIN|LEDGER_CONFLICT/);
     expect((await ctx.service.read("inv-1")).status).toBe("OPEN");
     expect(ctx.raw.prepare("SELECT * FROM investigation_ledger_head WHERE investigation_id=?").get("inv-2")).toBeUndefined();
@@ -513,7 +513,7 @@ describe("investigation ledger over actual D1 rows", () => {
     expect(await codeOf(ctx.service.create(malformed))).toBe("LEDGER_INPUT_INVALID");
     expect((ctx.raw.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_head").get() as unknown as { n: number }).n).toBe(0);
     const backendDown = { has: async () => { throw new Error("backend down"); }, digestFor: async () => null as unknown as string | null };
-    const downService = createInvestigationLedgerService(ctx.store, ctx.fences, backendDown, () => "2026-09-05T00:00:00.000Z");
+    const downService = createInvestigationLedgerService(ctx.store, ctx.fences, backendDown, () => new Date().toISOString());
     const input = baseInput();
     seedHandles(ctx, input);
     expect(await codeOf(downService.create(input))).toBe("LEDGER_HANDLE_MISSING");
