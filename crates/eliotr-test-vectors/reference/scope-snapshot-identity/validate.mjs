@@ -48,19 +48,38 @@ export function parseTimestamp(text) {
   const bytes = encoder.encode(text);
   // The decoded-string ceiling is the only length bound: the admitted Zod
   // `datetime({ offset: true })` schema places no cap on the fractional run.
-  if (bytes.byteLength < 20 || bytes.byteLength > STRING_MAX_BYTES) return false;
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/u.exec(text);
+  // Exact Zod `4.4.3` envelope (`node_modules/zod/v4/core/regexes.cjs`,
+  // `datetime({ offset: true })`): `YYYY-MM-DDTHH:MM[:SS[.fraction]](Z|±HH:MM)`
+  // with Gregorian month/day/leap validity. Seconds are OPTIONAL
+  // (`2026-01-01T00:00Z` admitted); fractions require seconds; impossible
+  // dates (`2026-02-31`, non-leap `2026-02-29`, `2026-04-31`) are rejected.
+  if (bytes.byteLength < 17 || bytes.byteLength > STRING_MAX_BYTES) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})$/u.exec(text);
   if (!match) return false;
-  const [, , month, day, hour, minute, second, , zone] = match;
-  if (Number(month) < 1 || Number(month) > 12) return false;
-  if (Number(day) < 1 || Number(day) > 31) return false;
-  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return false;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, , zone] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > daysInMonth(year, month)) return false;
+  if (Number(hourText) > 23 || Number(minuteText) > 59) return false;
+  if (secondText !== undefined && Number(secondText) > 59) return false;
   if (zone !== "Z") {
     const zoneHour = Number(zone.slice(1, 3));
     const zoneMinute = Number(zone.slice(4, 6));
     if (zoneHour > 23 || zoneMinute > 59) return false;
   }
   return true;
+}
+
+function isLeapYear(year) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function daysInMonth(year, month) {
+  if (month === 2) return isLeapYear(year) ? 29 : 28;
+  if (month === 4 || month === 6 || month === 9 || month === 11) return 30;
+  return 31;
 }
 
 function checkIdentifierRecord(value, maxMembers) {
