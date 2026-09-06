@@ -769,6 +769,10 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/backup.ts",
+        "packages/platform-cloudflare/src/backup-shared.ts",
+        "packages/platform-cloudflare/src/backup-epoch.ts",
+        "packages/platform-cloudflare/src/backup-offsite.ts",
+        "packages/platform-cloudflare/src/backup.test.ts",
         "infra/backup/**"
       ],
       "mandatory_negative_case": "Restore an epoch containing later-purged bytes and prove they are removed/quarantined before any read traffic or index upload.",
