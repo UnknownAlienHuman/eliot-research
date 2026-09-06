@@ -273,7 +273,12 @@ export function decodeApiProblem(value: unknown, fallbackStatus: number): ApiReq
 
 /** Authenticated same-origin transport; the deadline includes streaming body consumption. */
 export async function requestApi(path: string, init: RequestInit = {}): Promise<unknown> {
-  if (!path.startsWith("/api/v1/") || path.includes("\\") || path.includes("..")) {
+  // Check the pathname, not dots in a valid identifier/query. Reject URL normalization
+  // (including encoded parent segments) before attaching same-origin credentials.
+  let unchangedPath = false;
+  try { unchangedPath = new URL(path, "https://local.invalid").pathname === path.split("?")[0]; }
+  catch { /* The typed rejection below covers malformed URLs. */ }
+  if (!path.startsWith("/api/v1/") || /[\\#\u0000-\u0020\u007f]/u.test(path) || !unchangedPath) {
     throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
   }
   const controller = new AbortController();
@@ -292,7 +297,11 @@ export async function requestApi(path: string, init: RequestInit = {}): Promise<
   try {
     const response = await bounded(fetch(path, { ...init, signal: controller.signal, redirect: "manual",
       credentials: "same-origin", cache: "no-store", headers: { accept: "application/json", ...init.headers } }));
-    if (response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400)) {
+    const redirected = response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400);
+    if ((redirected || response.status === 401 || response.status === 403) && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("eliotr:authorization-cleared"));
+    }
+    if (redirected) {
       throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
     }
     if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "application/json" || !response.body) {
@@ -317,7 +326,9 @@ export async function requestApi(path: string, init: RequestInit = {}): Promise<
     let value: unknown;
     try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
     catch { throw new ApiRequestError({ status: 502, code: "MALFORMED_JSON_RESPONSE", message: "API response is not valid UTF-8 JSON" }); }
-    if (!response.ok) throw decodeApiProblem(value, response.status);
+    if (!response.ok) {
+      throw decodeApiProblem(value, response.status);
+    }
     if (response.status !== 200) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
     return value;
   } catch (error) {

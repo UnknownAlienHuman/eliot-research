@@ -46,6 +46,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `docs/implementation/toolchain.md`
 - `docs/implementation/production-readiness-plan.md`
 - `docs/implementation/gap-register.md`
+- `docs/implementation/canonical-alignment.md`
 - `scripts/check-implementation-status.mjs`
 - `packages/cloudflare-navigation/package.json`
 - `packages/cloudflare-navigation/tsconfig.json`

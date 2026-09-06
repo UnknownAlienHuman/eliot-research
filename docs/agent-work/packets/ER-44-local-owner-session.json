@@ -17,7 +17,12 @@
       "scripts/lib/local-worker.mjs",
       "scripts/test-local-owner.mjs",
       "scripts/test-local-read-policy.mjs",
-      "apps/eliotr-core/test/owner-session.test.ts"
+      "apps/eliotr-core/test/owner-session.test.ts",
+      "scripts/lib/local-sql.mjs",
+      "scripts/lib/local-namespace.mjs",
+      "scripts/lib/local-namespace.d.mts",
+      "scripts/test-local-namespace.mjs",
+      "apps/eliotr-core/test/namespace-bootstrap.test.ts"
     ],
     "mandatory_negative_case": "Reject forged/service identities, cross-origin/Host attacks, pairing replay and credential substitution; revoke local session during a read; reject stale policy CAS without a second mutation.",
     "document": "ER-44-local-owner-session.md",

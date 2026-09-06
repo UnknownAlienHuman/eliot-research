@@ -7,6 +7,7 @@
       "packages/platform-cloudflare/src/d1-ingest-types.ts",
       "packages/platform-cloudflare/src/d1-ingest-validation.ts",
       "packages/platform-cloudflare/src/d1-ingest-authority.ts",
+      "packages/platform-cloudflare/src/d1-ingest-policy.ts",
       "packages/platform-cloudflare/src/d1-ingest-commit.ts",
       "packages/platform-cloudflare/src/d1-ingest-authority.test.ts",
       "apps/eliotr-core/src/ingest-http.ts",

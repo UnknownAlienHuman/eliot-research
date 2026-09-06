@@ -6,9 +6,10 @@ import { loginOwner, readOwnerIdentity } from "./lib/local-owner-login.mjs";
 import { startOwnerBridge } from "./lib/local-owner-bridge.mjs";
 import { prepareLocal } from "./lib/local-launch.mjs";
 import { startLocalWorker } from "./lib/local-worker.mjs";
+import { initializeLocalNamespace, validateNamespaceCommand } from "./lib/local-namespace.mjs";
 import { applyLocalReadPolicy, localPolicyQuery, validatePolicyCommand } from "./lib/local-read-policy.mjs";
 
-export async function runLocalOwner({ policyFile, stopSignal, log = console.log } = {}) {
+export async function runLocalOwner({ policyFile, namespaceFile, stopSignal, log = console.log } = {}) {
   // Policy is an explicit local operator command, never a browser-supplied grant.
   let command;
   if (policyFile) {
@@ -19,6 +20,15 @@ export async function runLocalOwner({ policyFile, stopSignal, log = console.log 
     try { decoded = JSON.parse(text); } catch { throw new Error("Policy command is not valid JSON"); }
     command = validatePolicyCommand(decoded);
   }
+  let namespaceCommand;
+  if (namespaceFile) {
+    if ((await stat(resolve(namespaceFile))).size > 8192) throw new Error("Namespace command exceeds 8192 bytes");
+    const text = await readFile(resolve(namespaceFile), "utf8");
+    if (Buffer.byteLength(text) > 8192) throw new Error("Namespace command exceeds 8192 bytes");
+    let decoded;
+    try { decoded = JSON.parse(text); } catch { throw new Error("Namespace command is not valid JSON"); }
+    namespaceCommand = validateNamespaceCommand(decoded);
+  }
   const config = await loadOwnerConfig();
   const paths = await prepareLocal();
   let worker; let bridge;
@@ -28,6 +38,11 @@ export async function runLocalOwner({ policyFile, stopSignal, log = console.log 
     if (stopSignal?.aborted) return;
     worker = await startLocalWorker(paths);
     const identity = await readOwnerIdentity(worker.origin, token, paths.generation);
+    if (stopSignal?.aborted) return;
+    if (namespaceCommand) {
+      const receipt = await initializeLocalNamespace({ command: namespaceCommand, identity, query: localPolicyQuery(paths) });
+      log(JSON.stringify(receipt, null, 2));
+    }
     if (stopSignal?.aborted) return;
     if (command) {
       const receipt = await applyLocalReadPolicy({ command, identity, query: localPolicyQuery(paths) });
@@ -44,13 +59,13 @@ export async function runLocalOwner({ policyFile, stopSignal, log = console.log 
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const args = process.argv.slice(2);
-  if (args.length !== 0 && !(args.length === 2 && args[0] === "--policy")) {
-    console.error("Usage: pnpm local:owner [--policy path/to/local-policy.json]"); process.exitCode = 2;
+  if (args.length !== 0 && !(args.length === 2 && ["--policy", "--initialize-namespace"].includes(args[0]))) {
+    console.error("Usage: pnpm local:owner [--policy path/to/local-policy.json | --initialize-namespace path/to/namespace.json]"); process.exitCode = 2;
   } else {
     const controller = new globalThis.AbortController();
     const stop = () => controller.abort();
     process.once("SIGINT", stop); process.once("SIGTERM", stop);
-    try { await runLocalOwner({ policyFile: args[1], stopSignal: controller.signal }); }
+    try { await runLocalOwner({ ...(args[0] === "--policy" ? { policyFile: args[1] } : { namespaceFile: args[1] }), stopSignal: controller.signal }); }
     catch (error) { console.error(error.message); process.exitCode = 1; }
     finally { process.removeListener("SIGINT", stop); process.removeListener("SIGTERM", stop); }
   }

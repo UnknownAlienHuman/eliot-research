@@ -12,6 +12,7 @@ import {
   IngestAuthorityError,
   type PreparedIngestOperation,
 } from "@eliotr/platform-cloudflare";
+import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
 export { CatalogInputError } from "./catalog-service.js";
@@ -72,7 +73,7 @@ function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
   return {
-    catalog: (_context, request) => readCatalog(env.CORE_DB, request),
+    catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
     query: () => unavailable("research.query"),
     open: (context, ref, range) => evidence.open(context, ref, range),
@@ -130,6 +131,7 @@ function ownerApi(env: Env): OwnerApi {
   });
   return {
     ...ingest,
+    sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     async systemHealth(): Promise<Record<string, unknown>> {
       return { ...await readReadiness(env) };
     },
