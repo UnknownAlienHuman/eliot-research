@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://eliot-research.invalid/schemas/cloudflare/deployment-receipt.schema.json",
   "title": "Eliot Research Cloudflare deployment receipt",
+  "description": "v1 protocol unchanged: account_id, access_app_id, access_aud, access_team_domain, access_hostname and access_owner_email_set_sha256 are optional in schema for backward compatibility with pre-existing receipts, but runtime enforces them fail-closed when present bindings drift. New receipts should include them.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,6 +20,15 @@
     "protocol": { "const": "eliotr.cloudflare-deployment-receipt.v1" },
     "deployment_generation": { "type": "string", "minLength": 1 },
     "environment": { "enum": ["staging", "production"] },
+    "account_id": { "type": "string", "minLength": 1 },
+    "access_app_id": { "type": "string", "minLength": 1 },
+    "access_aud": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
+    "access_team_domain": {
+      "type": "string",
+      "pattern": "^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\.cloudflareaccess\\.com$"
+    },
+    "access_hostname": { "type": "string", "minLength": 1 },
+    "access_owner_email_set_sha256": { "$ref": "#/$defs/sha256" },
     "worker": {
       "type": "object",
       "additionalProperties": false,
