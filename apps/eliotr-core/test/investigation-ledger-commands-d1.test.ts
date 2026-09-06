@@ -378,4 +378,77 @@ describe("atomic ledger commands over actual Cloudflare D1", () => {
     expect(await fullState(input.investigation_id)).toMatch(/^3\/3\/SUPERSEDED:3/);
     expect(await fullState(replacement.investigation_id)).toMatch(/^1\/1\/OPEN:1/);
   });
+  it("10 FIX5 P1-A over workerd D1: forged ordinary events cannot mutate protected families", async () => {
+    const ctx = context();
+    const input = baseInput("fix5a");
+    seedAll(ctx, input);
+    await ctx.service.create(input);
+    ctx.digests.set("payload-cmd-fix5a", DIGEST_C);
+    const snap = await ctx.store.read(input.investigation_id);
+    if (snap === null) throw new Error("missing ledger");
+    const stamp = nowIso();
+    const base: LedgerHead = { ...snap.head, revision: 2, event_head: 2, updated_at: stamp };
+    let tag = 0;
+    const evt = (kind: LedgerEvent["kind"], extra: Partial<LedgerEvent> = {}): LedgerEvent => ({
+      investigation_id: input.investigation_id, sequence: 2, event_id: `evt-cmd-fix5a-${(tag += 1)}`,
+      kind, payload_handle_ref: "payload-cmd-fix5a", payload_digest: DIGEST_C,
+      actor_ref: "principal-1", verifier_ref: null, created_at: stamp, ...extra,
+    });
+    // Luna repro: forged ordinary CHECKPOINT flipping the obligation to ACCEPTED.
+    const luna: LedgerHead = { ...base, obligations: [{ obligation_id: "obl-1", verifier_ref: "verifier-evil", lane: "confirmatory", metric_ref: "metric-evil", status: "ACCEPTED", exposed: true }] };
+    const cases: { name: string; head: LedgerHead; event: LedgerEvent; code: string }[] = [
+      { name: "luna-accept", head: luna, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "hypotheses", head: { ...base, hypotheses: ["h-evil"] }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "lineage", head: { ...base, hypotheses: ["h-1", "h-2"] }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "observed", head: { ...base, observed_execution: "evil" }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "portfolio", head: { ...base, portfolio_ref: "portfolio-evil" }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "debt", head: { ...base, debt_refs: ["debt-evil"] }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "status", head: { ...base, status: "CLOSED" }, event: evt("CHECKPOINT"), code: "LEDGER_INPUT_INVALID" },
+      { name: "created-kind", head: { ...base }, event: evt("CREATED"), code: "LEDGER_INPUT_INVALID" },
+    ];
+    for (const item of cases) {
+      const before = await fullState(input.investigation_id);
+      const beforeBytes = await headBytes(input.investigation_id);
+      expect(await codeOf(ctx.store.append(item.head, 1, item.event)), item.name).toBe(item.code);
+      expect(await fullState(input.investigation_id), `${item.name} rows`).toBe(before);
+      expect(await headBytes(input.investigation_id), `${item.name} head`).toBe(beforeBytes);
+    }
+    // Raw D1: the same Luna bytes without the TS mask must still fail closed.
+    const d = db as unknown as LedgerD1Database;
+    const fence = await readCommandFence(d as unknown as LedgerCommandDatabase, luna);
+    const epoch = await d.prepare(COMMAND_SQL.selectEpoch).bind().first<{ generation: number }>();
+    const rawEvent: LedgerEvent = { ...evt("CHECKPOINT"), event_id: "evt-cmd-fix5a-raw" };
+    const raw = buildAppendCommand(luna, 1, rawEvent, fence, epoch?.generation ?? 1, stamp);
+    const beforeRaw = await fullState(input.investigation_id);
+    await expect(d.batch([d.prepare(COMMAND_SQL.insertCommand).bind(...raw.params)])).rejects.toThrow(/LEDGER_INPUT_INVALID/);
+    expect(await fullState(input.investigation_id)).toBe(beforeRaw);
+  });
+  it("11 FIX5 P1-B over workerd D1: noncanonical timestamps fail at both layers", async () => {
+    const bad = ["not-a-date", "2026-13-01T00:00:00.000Z", "2026-02-30T00:00:00.000Z", "2026-09-06T05:00:00+02:00", "2026-09-06T05:00:00Z", "2026-09-06T05:00:00.00Z", "2026-02-29T00:00:00.000Z"];
+    const d = db as unknown as LedgerD1Database;
+    for (const stamp of bad) {
+      const ctx = context();
+      const tag = `fix5b${bad.indexOf(stamp)}`;
+      const input = baseInput(tag);
+      seedAll(ctx, input);
+      await ctx.service.create(input);
+      ctx.digests.set(`payload-cmd-${tag}`, DIGEST_C);
+      const snap = await ctx.store.read(input.investigation_id);
+      if (snap === null) throw new Error("missing ledger");
+      const before = await fullState(input.investigation_id);
+      const forgedNext: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 3, updated_at: stamp };
+      const forgedEvent: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: `evt-cmd-${tag}-ts`, kind: "CHECKPOINT", payload_handle_ref: `payload-cmd-${tag}`, payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: stamp };
+      expect(await codeOf(ctx.store.append(forgedNext, 1, forgedEvent)), `service:${stamp}`).toBe("LEDGER_INPUT_INVALID");
+      expect(await fullState(input.investigation_id), `service-rows:${stamp}`).toBe(before);
+      const good = nowIso();
+      const validNext: LedgerHead = { ...snap.head, revision: 2, event_head: 2, checkpoint_head: 3, updated_at: good };
+      const validEvent: LedgerEvent = { investigation_id: input.investigation_id, sequence: 2, event_id: `evt-cmd-${tag}-raw`, kind: "CHECKPOINT", payload_handle_ref: `payload-cmd-${tag}`, payload_digest: DIGEST_C, actor_ref: "principal-1", verifier_ref: null, created_at: good };
+      const fence = await readCommandFence(d as unknown as LedgerCommandDatabase, validNext);
+      const epoch = await d.prepare(COMMAND_SQL.selectEpoch).bind().first<{ generation: number }>();
+      const params = [...buildAppendCommand(validNext, 1, validEvent, fence, epoch?.generation ?? 1, good).params];
+      for (const col of ["observed_at", "expires_at", "nh_updated_at", "ne_created_at"]) params[COMMAND_COLUMNS.indexOf(col)] = stamp;
+      await expect(d.batch([d.prepare(COMMAND_SQL.insertCommand).bind(...params)]), `d1:${stamp}`).rejects.toThrow(/LEDGER_INPUT_INVALID/);
+      expect(await fullState(input.investigation_id), `d1-rows:${stamp}`).toBe(before);
+    }
+  });
 });
