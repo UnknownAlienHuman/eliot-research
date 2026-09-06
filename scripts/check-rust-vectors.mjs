@@ -279,6 +279,14 @@ function workspaceIsInstalled() {
 // the same `pnpm install --frozen-lockfile` the verify job runs — pinned via
 // the root `packageManager` field and activated through corepack when needed.
 // Install output lands in git-ignored node_modules only; no tracked file changes.
+//
+// Cross-platform installer routing: never spawn a bare `pnpm` binary after
+// `corepack prepare --activate`. On a clean Linux runner the current process
+// PATH gains no observable new `pnpm` shim (shell:false), so `spawnSync pnpm`
+// fails with ENOENT even though preparation succeeded. Route every pnpm
+// invocation through the already-resolved `corepack` executable
+// (`corepack pnpm --version`, `corepack pnpm install --frozen-lockfile`);
+// Windows keeps its existing shell shim resolution via runGateCommand.
 function ensureWorkspace() {
   if (workspaceIsInstalled()) {
     console.log("rust-vectors gate: frozen workspace dependencies present; reusing the repo toolchain.");
@@ -291,7 +299,7 @@ function ensureWorkspace() {
     fail("rust-vectors gate: root packageManager must pin pnpm (for example pnpm@11.23.0)");
   }
   const pinnedPnpm = match[1];
-  if (captureStdout("pnpm", ["--version"]) !== pinnedPnpm) {
+  if (captureStdout("corepack", ["pnpm", "--version"]) !== pinnedPnpm) {
     runGateCommand(
       "corepack",
       ["prepare", `pnpm@${pinnedPnpm}`, "--activate"],
@@ -299,7 +307,12 @@ function ensureWorkspace() {
       { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
     );
   }
-  runGateCommand("pnpm", ["install", "--frozen-lockfile"], "installing frozen workspace dependencies");
+  runGateCommand(
+    "corepack",
+    ["pnpm", "install", "--frozen-lockfile"],
+    "installing frozen workspace dependencies",
+    { COREPACK_ENABLE_DOWNLOAD_PROMPT: "0" },
+  );
   if (!workspaceIsInstalled()) {
     fail("rust-vectors gate: workspace install completed but dependencies are still unresolvable");
   }
