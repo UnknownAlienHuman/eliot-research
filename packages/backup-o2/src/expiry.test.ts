@@ -24,11 +24,12 @@ import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?
 import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
 import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
+import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
-const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql"];
+const APPLIED = ["0001_initial.sql", "0002_execution_coordination.sql", "0003_delivery_inbox_payload_digest.sql", "0004_outbox_delivery_fence.sql", "0005_ingest_admission.sql", "0006_projection_execution.sql", "0007_evidence_resolution.sql", "0008_erasure_closure.sql", "0009_federation_authority.sql", "0010_navigation_artifacts.sql", "0011_owner_orientation.sql", "0012_google_credentials.sql", "0013_google_oauth_intents.sql", "0018_backup_o2_replay_authority.sql", "0019_backup_o2_replay_authority_fix.sql"];
 function sink(): Sha256DigestSink {
   const chunks: Uint8Array[] = [];
   let res!: (v: ArrayBuffer) => void; let rej!: (r: unknown) => void;
@@ -96,7 +97,7 @@ function seedRows(db: DatabaseSync): void {
 }
 async function setup() {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018]) db.exec(m);
+  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019]) db.exec(m);
   for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
   seedRows(db);
   const evidence = shimBucket(); const work = shimBucket(); const parts = shimBucket();

@@ -21,9 +21,10 @@ import m0011 from "../../../infra/d1/core/migrations/0011_owner_orientation.sql?
 import m0012 from "../../../infra/d1/core/migrations/0012_google_credentials.sql?raw";
 import m0013 from "../../../infra/d1/core/migrations/0013_google_oauth_intents.sql?raw";
 import m0018 from "../../../infra/d1/core/migrations/0018_backup_o2_replay_authority.sql?raw";
+import m0019 from "../../../infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql?raw";
 
 // O2 epoch tests run against real SQLite executing tracked core migrations
-// plus 0018, and byte-exact R2 shims through production readback paths.
+// plus 0018 + 0019, and byte-exact R2 shims through production readback paths.
 const T = "2026-09-06T00:00:00.000Z";
 const HEX = (c: string): string => c.repeat(64);
 const NOW = Date.parse(T);
@@ -120,13 +121,13 @@ function testPartSink(bucket: R2Bucket): EvidenceObjectStore {
 }
 function openCore(): DatabaseSync {
   const db = new DatabaseSync(":memory:");
-  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018]) db.exec(m);
+  for (const m of [m0001, m0002, m0003, m0004, m0005, m0006, m0007, m0008, m0009, m0010, m0011, m0012, m0013, m0018, m0019]) db.exec(m);
   return db;
 }
 // Simulate the authoritative migration runner (wrangler): every applied file
 // is recorded in d1_migrations. The O2 gate requires the 0018 row; nothing
 // here swallows migration errors.
-const APPLIED_MIGRATIONS = ["0001_initial", "0002_execution_coordination", "0003_delivery_inbox_payload_digest", "0004_outbox_delivery_fence", "0005_ingest_admission", "0006_projection_execution", "0007_evidence_resolution", "0008_erasure_closure", "0009_federation_authority", "0010_navigation_artifacts", "0011_owner_orientation", "0012_google_credentials", "0013_google_oauth_intents", "0018_backup_o2_replay_authority"];
+const APPLIED_MIGRATIONS = ["0001_initial", "0002_execution_coordination", "0003_delivery_inbox_payload_digest", "0004_outbox_delivery_fence", "0005_ingest_admission", "0006_projection_execution", "0007_evidence_resolution", "0008_erasure_closure", "0009_federation_authority", "0010_navigation_artifacts", "0011_owner_orientation", "0012_google_credentials", "0013_google_oauth_intents", "0018_backup_o2_replay_authority", "0019_backup_o2_replay_authority_fix"];
 function recordLedger(db: DatabaseSync): void {
   for (const [i, n] of APPLIED_MIGRATIONS.entries()) {
     db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(`${n}.sql`, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);

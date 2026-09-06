@@ -1,15 +1,18 @@
 import { backupSha256Hex, failBackup } from "./shared.js";
 
-// ER-34 O2 FIX4 complete canonical migration authority. Runtime CREATE TABLE is
-// not a migration substitute: every O2 entry point asserts that migration 0018 is
-// present in the authoritative D1 migration ledger AND that every O2 table and
-// index matches its expected canonical shape exactly. FIX4 tightens the FIX3
-// shape: nonce_hex alone is the nonce-authority PRIMARY KEY (globally unique
-// across copies and key generations) with a UNIQUE owner tuple
-// (key_generation, copy_id, part_ref), and the expiry receipt mirrors the
-// controller authority generation (authority_authorized_at); the previous
-// weaker (key_generation, nonce_hex) key and shapes without the owner
-// uniqueness are rejected here.
+// ER-34 O2 FIX5 complete canonical migration authority. Runtime CREATE TABLE is
+// not a migration substitute: every O2 entry point asserts that migrations 0018
+// (immutable parent) and 0019 (forward FIX4 upgrade) are both present in the
+// authoritative D1 migration ledger AND that every O2 table and index matches
+// its expected canonical shape exactly. 0018 was restored to its immutable
+// parent bytes after the FIX4 in-place mutation (per-key nonce PRIMARY KEY
+// (key_generation, nonce_hex), expiry without authority_authorized_at);
+// 0019_backup_o2_replay_authority_fix.sql carries the FIX4 delta forward
+// (globally unique nonce_hex PRIMARY KEY with UNIQUE owner tuple
+// (key_generation, copy_id, part_ref), expiry authority_authorized_at), so
+// fresh databases (0018 + 0019) and parent-0018 databases upgraded by 0019
+// converge to one shape. The previous weaker (key_generation, nonce_hex) key
+// and shapes without the owner uniqueness are rejected here.
 //
 // Compared depth (FIX2 checked only column order/name/affinity/not-null):
 // column order, name, affinity, not-null, DEFAULT (0018 defines none), PRIMARY
@@ -28,16 +31,25 @@ import { backupSha256Hex, failBackup } from "./shared.js";
 // name and expression remains in the digested text.
 
 export const O2_MIGRATION_FILENAME = "0018_backup_o2_replay_authority.sql";
+export const O2_UPGRADE_FILENAME = "0019_backup_o2_replay_authority_fix.sql";
 
-// sha256 (hex) of the tracked migration file above with CRLF normalized to LF.
-// Bound to the ledger check by fix3 tests: any file edit without a matching
-// gate update fails the suite.
-export const O2_EXPECTED_MIGRATION_DIGEST = "af311a7297c291f76db50394e85aae5ce433472ff79e342d2f98fd1847055dee";
+// sha256 (hex) of the tracked parent migration file above with CRLF normalized
+// to LF. Bound to the ledger check by fix5 tests: any file edit without a
+// matching gate update fails the suite. The parent file is immutable; the FIX4
+// delta lives only in 0019 below.
+export const O2_EXPECTED_MIGRATION_DIGEST = "dd6b24611a6f9d7d1ad8b80b2443263bcf1de4e324bb33479f13bc2e2980fa4a";
+
+// sha256 (hex) of the tracked 0019 forward-upgrade file with CRLF normalized
+// to LF. Bound the same way: the gate requires the 0019 ledger row (proof of
+// application through the authoritative path) and the live schema shape plus
+// fingerprint below (proof the applied content matches).
+export const O2_EXPECTED_UPGRADE_DIGEST = "0dfd963f6c548de24511167725bf4e8493d0fb6d9ae053cd215d7115a3149156";
 
 // sha256 (hex) of the canonical schema text (sorted table/index entries, see
-// canonicalO2SchemaFingerprint) read back from a database with 0018 applied.
-// Any dropped/altered constraint, index, default, key or STRICT option changes
-// the live fingerprint and fails closed here.
+// canonicalO2SchemaFingerprint) read back from a database with 0018 + 0019
+// applied. Any dropped/altered constraint, index, default, key or STRICT option changes
+// the live fingerprint and fails closed here. Fresh (0018 + 0019) and upgraded
+// (parent 0018, then 0019) databases share this fingerprint exactly.
 export const O2_EXPECTED_SCHEMA_DIGEST = "63aeb24c0fa6d18e4f0fd3c521a8122f5a75954bf63e56b4e267ba0c1dbbeb75";
 
 type Affinity = "TEXT" | "INTEGER";
@@ -303,8 +315,10 @@ export async function assertO2MigrationAuthority(database: D1Database): Promise<
     failBackup("BACKUP_TABLE_MISSING", `backup migration ledger is unavailable; apply ${O2_MIGRATION_FILENAME} via the authoritative migration path`, true, { migration: O2_MIGRATION_FILENAME }, cause);
   }
   const names = new Set((ledger ?? []).map((row) => row.name));
-  if (!names.has(O2_MIGRATION_FILENAME)) {
-    failBackup("BACKUP_TABLE_MISSING", `backup migration ${O2_MIGRATION_FILENAME} is absent from the authoritative migration ledger; refusing runtime DDL substitute`, false, { migration: O2_MIGRATION_FILENAME });
+  for (const required of [O2_MIGRATION_FILENAME, O2_UPGRADE_FILENAME] as const) {
+    if (!names.has(required)) {
+      failBackup("BACKUP_TABLE_MISSING", `backup migration ${required} is absent from the authoritative migration ledger; refusing runtime DDL substitute`, false, { migration: required });
+    }
   }
   const tableNames = Object.keys(O2_EXPECTED_TABLES);
   const fingerprintEntries: { readonly kind: "table" | "index"; readonly name: string; readonly sql: string }[] = [];

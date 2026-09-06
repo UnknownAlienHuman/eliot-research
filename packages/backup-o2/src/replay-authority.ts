@@ -4,7 +4,7 @@ import { assertO2MigrationAuthority } from "./migration-gate.js";
 
 // ER-34 O2 FIX2 restart-safe replay authority. D1 is the authority; no
 // Map-based durable claims and no runtime CREATE TABLE substitute: every entry
-// point first asserts migration 0018 in the authoritative ledger.
+// point first asserts migrations 0018 + 0019 in the authoritative ledger.
 //
 // The claim binds the canonical full intent digest (principal, payload, policy
 // decision, timestamps, revisions, vector/manifest/epoch) plus the immutable

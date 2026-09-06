@@ -9,7 +9,7 @@ import { assertDestinationPolicy, destinationDescriptorDigest, destinationPolicy
 import { requireDestinationAuthority } from "./destination-authority.js";
 import { readEpochDraftById } from "./replay-authority.js";
 import { assertO2MigrationAuthority } from "./migration-gate.js";
-import { allocateOffsiteNonce } from "./nonce-authority.js";
+import { allocateOffsiteNonce, assertOffsiteNonceBinding } from "./nonce-authority.js";
 import { canonicalOffsiteCopyDigest } from "./intent-digest.js";
 import {
   backupIsoNow, backupNonceHex, commitCopyReceipt, copyIdForDigest,
@@ -188,6 +188,14 @@ export async function copyOffsiteExport(ports: BackupSourcePorts, limits: Backup
     const partRef = `offsite/${persistedDraft.epoch_id}/${part.manifest}/${String(part.index).padStart(6, "0")}-${part.sha256}`;
     const checkpoint = checkpoints.get(partRef);
     if (checkpoint !== undefined && checkpoint.content_digest === part.sha256 && checkpoint.size_bytes === part.size_bytes && checkpoint.state === "VERIFIED") {
+      // FIX5 durable resume: re-prove the checkpoint nonce against the durable
+      // nonce authority BEFORE any remote reliance or skip. A forged or
+      // restored checkpoint (generate_nonce mismatch, missing authority row,
+      // divergent owner, rotated generation, malformed bytes) fails closed
+      // here with zero puts and zero authority writes; this runs whether or
+      // not a controller allocator is set, so allocator disagreement alone
+      // never authorizes a skip — only the durable binding does.
+      await assertOffsiteNonceBinding(ports.core_db, { key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, nonce_hex: checkpoint.nonce_hex });
       // Durable resume: the recorded nonce must equal the deterministic
       // derivation (tamper collides), then re-verify remote before skipping.
       const expected = await deriveBackupNonce({ key_generation: keyGeneration, copy_id: copyId, part_ref: partRef, content_digest: part.sha256, policy_digest: policyDigest });
