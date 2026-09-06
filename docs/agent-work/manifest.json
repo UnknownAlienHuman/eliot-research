@@ -418,7 +418,13 @@
         "packages/google-drive-exchange/src/sheet-ranges.ts",
         "packages/google-drive-exchange/src/sheet-port.ts",
         "packages/google-drive-exchange/src/sheet-port.test.ts",
-        "docs/implementation/drive-rest.md"
+        "docs/implementation/drive-rest.md",
+        "packages/google-drive-exchange/src/token-credentials.ts",
+        "packages/google-drive-exchange/src/token-refresh.ts",
+        "packages/google-drive-exchange/src/token-lease.ts",
+        "packages/google-drive-exchange/src/token-vault.test.ts",
+        "packages/google-drive-exchange/src/token-lease.test.ts",
+        "docs/implementation/drive-credentials.md"
       ],
       "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
       "document": "ER-20-google-oauth-port-and-result-publication.md",
@@ -522,7 +528,9 @@
         "apps/eliotr-core/src/catalog-queries.ts",
         "apps/eliotr-core/test/catalog-http.test.ts",
         "apps/eliotr-core/src/source-revisions.ts",
-        "apps/eliotr-core/test/source-revisions.test.ts"
+        "apps/eliotr-core/test/source-revisions.test.ts",
+        "apps/eliotr-core/src/google-token-store.ts",
+        "apps/eliotr-core/test/google-token-store.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",

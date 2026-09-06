@@ -9,3 +9,6 @@ export * from "./reconciler.js";
 
 export * from "./sheet-port.js";
 export { GoogleRestError, type GoogleRestOptions, type GoogleAccessLease } from "./rest-transport.js";
+
+export * from "./token-credentials.js";
+export * from "./token-lease.js";

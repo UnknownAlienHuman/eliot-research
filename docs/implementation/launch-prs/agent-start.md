@@ -40,15 +40,17 @@ append, leased change cursors, bounded ID/hash audit, immutable R2 freeze, D1 Co
 result publication/readback and the narrow offline OAuth lifecycle. The five-method Sheet/changes REST subset and strict contribution guards landed on main `c0729c2`.
 Read `../drive-rest.md` and reuse `sheet-port.ts`, `sheet-ranges.ts`, `rest-transport.ts` and the existing
 serializer/parser. The full `GoogleDrivePort` is not implemented: Doc creation/export, provisioning,
-OAuth/vault, durable cursor/freeze/reconciliation and result publication remain required.
+initial OAuth admission, durable cursor/freeze/reconciliation and result publication remain required.
 
-The next bounded task is ER-20's admitted OAuth lease provider. Start with the existing
-`packages/google-drive-exchange/src/token-vault.ts`, `packages/contracts/src/drive-exchange.ts`,
-security checklist and canonical §12.8. Bind dedicated subject/email/scopes and connection/generation,
-encrypt refresh tokens, bound access-token lifetime, and persist rotation/revocation/REAUTH_REQUIRED.
-Do not implement `authorize` or `assertCurrent` as a constant success or accept an unverified pasted
-token. Split by state family with recorded OAuth failures and real local persistence; complete the
-leased cursor/freeze/reconciler after this boundary. Verify official API behavior where code depends on it.
+The encrypted credential/refresh checkpoint now exists: `token-vault.ts`, `token-lease.ts` and
+`apps/eliotr-core/src/google-token-store.ts`; read `../drive-credentials.md`. Do not rewrite it or
+mistake a stored expected identity for a verified Google login. The next bounded G2 task is the initial
+browser authorization-code flow: authenticated owner intent, durable one-use state/PKCE/nonce binding,
+verified Google ID token subject/email/audience/issuer/nonce, exact scopes, production client status,
+then encrypted connection admission. No manually trusted token or constant-success authority hook.
+Use canonical §12.9 and §13.6 (not §12.8, which is result publication). Retain unknown code-exchange
+outcomes and replay/concurrency tests, then integrate with the existing primary D1 credential provider.
+The complete leased cursor/freeze/reconciler and publication remain subsequent work.
 
 The optional ER-36 Gemini service planner is not the ChatGPT write transport. Its caller-supplied v1
 plan and receipt prove neither original issuance nor Google readback/effects. The current mutual-

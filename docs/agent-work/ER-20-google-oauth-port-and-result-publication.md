@@ -19,6 +19,12 @@ outside the paths below.
 - `packages/google-drive-exchange/src/sheet-port.ts`
 - `packages/google-drive-exchange/src/sheet-port.test.ts`
 - `docs/implementation/drive-rest.md`
+- `packages/google-drive-exchange/src/token-credentials.ts`
+- `packages/google-drive-exchange/src/token-refresh.ts`
+- `packages/google-drive-exchange/src/token-lease.ts`
+- `packages/google-drive-exchange/src/token-vault.test.ts`
+- `packages/google-drive-exchange/src/token-lease.test.ts`
+- `docs/implementation/drive-credentials.md`
 
 ## Read only
 
