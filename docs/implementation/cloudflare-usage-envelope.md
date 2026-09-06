@@ -74,6 +74,83 @@ Vectorize writes/queries stay disabled until a fresh authoritative aggregate
 OR a controller-owned ledger plus inventory proof shows headroom. Sealed
 state is never silently waived.
 
+## Billing Usage v2 (Alpha, Restricted) source contract
+
+`GET /accounts/{account_id}/billable/usage` returns FinOps FOCUS v1.3 rows
+(one billable metric, one account, one day). Optional `from`/`to` ISO dates
+travel together (max 31 days; omitted defaults start-of-month through today).
+The provider always sends explicit `from`/`to` derived from the intended
+account-bound interval — month start through start-of-today, never a future
+month end — and parses ONLY documented fields: `BillingAccountId`,
+`BillingAccountName`, `ChargeCategory`, `ChargeDescription`,
+`ChargeFrequency`, `ChargePeriodStart` (inclusive), `ChargePeriodEnd`
+(exclusive), `ConsumedQuantity`, `ConsumedUnit`, `x_BillableMetricId`,
+`x_BillableMetricName` (plus tolerated optional cost/pricing/region/
+subaccount/tags/product/zone fields, which never affect counters). Cost
+fields may be absent until billing integration completes.
+
+Fail-closed rules (all typed unknown, never zero):
+
+- Every accepted row must carry exact `BillingAccountId` identity; missing
+  or mismatched rows are `MALFORMED`/`ACCOUNT_MISMATCH` — identity is never
+  inherited from the request or a top-level echo.
+- Every accepted row must carry real `ChargePeriodStart`/`End` evidence
+  inside the queried interval; missing, invalid, outside, future,
+  overlapping-ambiguous, or incomplete (gapped union) evidence is typed
+  unknown. The retired synthetic `{metric,unit,value}` + `window_start` /
+  `window_end` schema is rejected as `MALFORMED`.
+- Mapping binds a reviewed `x_BillableMetricId` + `x_BillableMetricName` +
+  `ConsumedUnit` triple to an envelope metric: the name is identity, never
+  display text — no bare-metric fallback, no display-name-only mapping, no
+  ID+unit fallback. Missing/substituted names and unknown triples fail
+  closed; absent metrics stay unknown (never zero).
+- `401`/`403`/`404`, malformed bodies, and partial intervals stay typed
+  unknown with no entitlement claims. Receipts and failures carry status and
+  window metadata only — never bodies, account IDs, bearers, or emails.
+
+## Provenance enforcement and pagination completeness
+
+A numeric enters a snapshot only through an authorized channel, recorded per
+metric as enforced trust state:
+
+- `authoritative_billing` only from the validated Usage v2 provider above;
+- `authoritative_inventory` only for registry-authorized counts (AI Search
+  instance count from `/ai-search/instances`), never billing counters;
+- `analytics_nonbilling` (GraphQL) stays diagnostic metadata, never metrics
+  — an injected analytics `workers_requests:42` keeps the aggregate unknown;
+- `ledger_estimate` stays unknown (no complete account-bound ledger contract
+  exists); missing/malformed/unknown-provenance/mismatched-coverage numerics
+  stay unknown, as do wrong/missing account bindings, invalid windows,
+  partial pagination, conflicting full-account reporters, and numeric-after-gap.
+
+`fullAccount:true` requires proven completeness: cumulative counts must equal
+a supplied stable `total_count` (drift rejects), coherent page echoes are
+required where the API accounts totals, and R2 cursor walks prove completion
+only with an explicit empty terminal cursor (`PARTIAL_PAGINATION` when the
+hop cap hits with a next cursor pending). AI Search termination is decisive
+on its own shape (`result_info` or `pagination`, never forced D1 semantics):
+a short page WITHOUT totals proves nothing (`PARTIAL_PAGINATION`, never
+`fullAccount:true`), and totals present on page 1 then absent on a later
+page fail closed — ambiguity never admits.
+
+The live registry (`buildLiveProviderRegistry`) wires all four inventory
+collectors plus the Usage v2 billing provider: the billing endpoint carries
+account-bound `from`/`to` derived from the intended interval (month start
+through start-of-today, never a future month end, never over 31 days) with
+the reviewed triple mapping. A registry-level billing failure (no
+entitlement etc.) gaps the declared billing covers, leaving those metrics
+unknown rather than dropping the provider silently; billing never covers
+`ai_search_instances`, so an outage cannot clobber the inventory count.
+
+## Direct-provisioner denial
+
+`BLOCKED` stops every provisioner mode before the first call. `SEALED`
+additionally stops every direct apply path (core, AI Search, Access, AI
+Gateways):
+while sealed, no `POST`/`PUT`/`PATCH`/`DELETE`, Worker upload, or migration
+may occur. Check-only inspection stays read-only metadata. The deploy
+orchestrator requires `ADMITTED` before any remote mutation.
+
 ## Layer 2: runtime budget admission
 
 `scripts/lib/cloudflare-budget-admission.mjs` gates individual operations:

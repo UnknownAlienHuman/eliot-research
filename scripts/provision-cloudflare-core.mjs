@@ -73,9 +73,10 @@ if (authMode === WRANGLER_OAUTH_MODE) {
 
 // FIX1-B usage-envelope gate (narrow): usage preflight before the first
 // remote mutation. In-process shared runner writes the redacted admission
-// receipt; BLOCKED exits here with zero Cloudflare mutations. Api-token/CI
-// runs without a usage seam resolve SEALED inside the runner (metadata-only
-// provisioning may continue, heavy operations stay disabled).
+// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
+// (SEALED) exits in apply mode — SEALED never POSTs/PUTs/PATCHes/DELETEs,
+// uploads a Worker, or applies a migration. Check-only inspection stays
+// read-only metadata (GET inventory lists, local config generation).
 {
   let usageGate;
   try {
@@ -85,8 +86,8 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     console.error(error?.message ?? String(error));
     process.exit(2);
   }
-  if (usageGate.decision === "BLOCKED") {
-    console.error(`Cloudflare usage preflight blocked foundation provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+  if (usageGate.decision === "BLOCKED" || (!checkOnly && usageGate.decision !== "ADMITTED")) {
+    console.error(`Cloudflare usage preflight ${usageGate.decision} denies foundation provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
     process.exit(2);
   }
 }

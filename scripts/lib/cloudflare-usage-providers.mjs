@@ -1,19 +1,12 @@
-// Cloudflare usage providers: paginated/cursor inventory, AI Search
-// instances, restricted Alpha billing usage, and GraphQL analytics
-// (extracted from cloudflare-usage-collection.mjs to keep every source
-// file below the 600-line budget; readable extraction, not compaction).
-//
-// The bearer lives in process memory only: it is accepted as an argument,
-// forwarded to providers in memory, and never written to snapshots,
-// receipts, logs, or errors. This module never reads CLOUDFLARE_API_TOKEN
-// and offers no API-token fallback. Shapes mock only fields observed via
-// Wrangler 4.127.1 (success/result/result_info); undocumented counter
-// fields are never read. Safe receipts carry only status/schema metadata,
-// never bodies or auth material.
+// Usage providers: paginated/cursor inventory, AI Search instances,
+// billing usage (FOCUS v2), GraphQL analytics. The bearer lives in process
+// memory only and never reaches snapshots, receipts, logs, or errors; this
+// module never reads CLOUDFLARE_API_TOKEN. Mocked shapes use only observed
+// fields (success/result/result_info); safe receipts carry status/schema
+// metadata only, never bodies or auth material.
 
 import {
   METRIC_PROVENANCE,
-  REQUIRED_METRIC_KEYS,
   isUnknownReason,
 } from "./cloudflare-usage-envelope.mjs";
 
@@ -25,9 +18,8 @@ export class UsageCollectionError extends Error {
   }
 }
 
-// Typed provider failure with a Luna unknown reason. Providers throw this so
-// collectAccountUsage can poison only covered metrics with a typed reason and
-// record safe metadata (HTTP status, pages/cursors, no bodies).
+// Typed provider failure with a Luna unknown reason, so collectAccountUsage
+// can poison only covered metrics and record safe metadata (no bodies).
 export class ProviderFailure extends UsageCollectionError {
   constructor(reason, message, { httpStatus = null, coverage = null } = {}) {
     super(reason, message);
@@ -51,15 +43,13 @@ export function safeFetchMeta({ httpStatus = null, kind = "inventory", pages = n
 }
 
 // Paginated account-wide inventory provider over the browser-OAuth bearer.
-// `endpoint(accountId, page)` builds a same-account path; `fetchImpl` performs
-// the call. Every page must be success:true with an array result; a missing
-// page, wrong-account echo, or truncated pagination keeps covered metrics
-// unknown fail-closed. D1-style pagination uses total_count/page/per_page
-// safely: when total_count is present the expected page count is
-// ceil(total_count/per_page) and any total_pages mismatch, missing page echo,
-// short final page, or silent truncation throws PARTIAL_PAGINATION/MALFORMED.
-// HTTP 401/403 map to AUTH_SCOPE_DENIED, transport/5xx/429 to HTTP_ERROR,
-// invalid JSON to MALFORMED, success:false to HTTP_ERROR.
+// Every page must be success:true with an array result. D1-style pagination
+// uses total_count/page/per_page safely: total_pages must match
+// ceil(total_count/per_page), echoes must match, metadata must not drift, and
+// the cumulative count must equal a supplied total_count — otherwise
+// PARTIAL_PAGINATION/MALFORMED keeps covered metrics unknown. HTTP 401/403
+// map to AUTH_SCOPE_DENIED, transport/5xx/429 to HTTP_ERROR, invalid JSON to
+// MALFORMED, success:false to HTTP_ERROR.
 export function createPaginatedInventoryProvider({ group, covers = [], endpoint, fetchImpl = fetch, perPage = 100 } = {}) {
   if (typeof group !== "string" || group === "") throw new UsageCollectionError("COLLECTION_INVALID", "paginated provider group is required");
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "paginated provider endpoint is required");
@@ -76,6 +66,15 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
       const seen = [];
       const pagesCompleted = [];
       let lastHttpStatus;
+      // Stable pagination metadata: drift or short cumulative counts fail closed.
+      const stable = {};
+      const requireStable = (name, value) => {
+        if (!Number.isInteger(value)) return;
+        if (stable[name] === undefined) stable[name] = value;
+        if (stable[name] !== value) {
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
+        }
+      };
       do {
         const url = endpoint(accountId, page, perPage);
         if (typeof url !== "string" || !url.includes(accountId)) {
@@ -105,18 +104,23 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         }
         seen.push(...body.result);
         const info = body?.result_info ?? {};
-        // Page echo validation: when the API echoes page/per_page, a missing
-        // or mismatched echo means the wrong slice was served.
-        if (info.page !== undefined && info.page !== page) {
+        // Page echo: with pagination metadata, a missing/mismatched echo is wrong slice.
+        const hasPaginationMeta = info.page !== undefined || info.per_page !== undefined ||
+          info.count !== undefined || info.total_count !== undefined || info.total_pages !== undefined;
+        if (hasPaginationMeta && info.page !== page) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
         }
+        if (info.count !== undefined && info.count !== body.result.length) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
+        }
         const effectivePerPage = Number.isInteger(info.per_page) ? info.per_page : perPage;
+        requireStable("per_page", info.per_page);
+        requireStable("total_count", info.total_count);
+        if (Number.isInteger(info.total_count) && info.total_count < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
         if (Number.isInteger(info.total_count)) {
-          if (info.total_count < 0) {
-            throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
-          }
           expectedPagesFromCount = info.total_count === 0 ? 1 : Math.ceil(info.total_count / Math.max(1, effectivePerPage));
         }
+        requireStable("total_pages", info.total_pages);
         if (Number.isInteger(info.total_pages)) {
           totalPages = info.total_pages;
           if (expectedPagesFromCount !== null && totalPages !== expectedPagesFromCount) {
@@ -127,13 +131,8 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         } else if (Number.isInteger(info.counted_total)) {
           totalPages = info.counted_total > seen.length ? page + 1 : page;
         } else {
-          // No pagination metadata at all: only a single page is admissible.
-          // Any non-empty result without total_count/total_pages cannot prove
-          // completeness, so a second fetch would be required — but without
-          // metadata we fail closed unless this single page is verifiably
-          // complete via an empty next-page probe handled by callers. Here we
-          // accept exactly one page only when the provider documents
-          // single-page semantics; otherwise demand metadata.
+          // No pagination metadata: only a single short page is admissible.
+          // A full page without metadata cannot prove completeness.
           totalPages = page;
           if (body.result.length >= effectivePerPage) {
             throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} full page without pagination metadata`, { httpStatus: lastHttpStatus });
@@ -146,6 +145,9 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         page += 1;
         if (page > 50) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} pagination runaway`, { httpStatus: lastHttpStatus });
       } while (pagesCompleted.length < totalPages);
+      if (stable.total_count !== undefined && seen.length !== stable.total_count) {
+        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stable.total_count}`, { httpStatus: lastHttpStatus });
+      }
       return {
         values: {},
         inventory: seen,
@@ -156,14 +158,10 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
   };
 }
 
-// R2 bucket inventory over cursor pagination (NOT page/per_page). The R2
-// list-buckets shape carries `result.buckets` (array) plus an opaque cursor
-// for the next slice; delayed R2 metrics must never masquerade as billing
-// truth, so this provider returns inventory only and never counters. A
-// repeated or regressing cursor, a missing buckets array, or a loop that ends
-// without an empty cursor marks covered metrics unknown (PARTIAL_PAGINATION /
-// MALFORMED). Stale metric timestamps in the payload are ignored: inventory
-// proves buckets, not GB-mo.
+// R2 bucket inventory over cursor pagination (NOT page/per_page):
+// `result.buckets` plus an opaque next cursor. Inventory only, never
+// counters: a repeated cursor, missing buckets array, or a loop ending
+// without an empty terminal cursor keeps covered metrics unknown.
 export function createR2CursorInventoryProvider({ group = "r2-inventory-list", covers = [], endpoint, fetchImpl = fetch } = {}) {
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "cursor provider endpoint is required");
   return {
@@ -178,6 +176,9 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
       let cursor = null;
       let cursorsCompleted = 0;
       let lastHttpStatus = null;
+      // Only an explicit empty terminal cursor proves completion; the hop
+      // cap with a pending cursor is truncation, never full coverage.
+      let terminated = false;
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, cursor);
         if (typeof url !== "string" || !url.includes(accountId)) {
@@ -216,7 +217,10 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
         seen.push(...buckets);
         const nextCursor = body?.result?.cursor ?? body?.cursor ?? body?.result_info?.cursor ?? null;
         cursorsCompleted += 1;
-        if (nextCursor === null || nextCursor === undefined || nextCursor === "") break;
+        if (nextCursor === null || nextCursor === undefined || nextCursor === "") {
+          terminated = true;
+          break;
+        }
         if (typeof nextCursor !== "string") {
           throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} bad cursor type`, { httpStatus: lastHttpStatus });
         }
@@ -229,6 +233,9 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
       if (cursorsCompleted === 0) {
         throw new ProviderFailure("PARTIAL_PAGINATION", `${group} no cursor pages completed`, { httpStatus: lastHttpStatus });
       }
+      if (!terminated) {
+        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cursor pagination hit the hop cap with a next cursor pending`, { httpStatus: lastHttpStatus });
+      }
       return {
         values: {},
         inventory: seen,
@@ -239,13 +246,10 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
   };
 }
 
-// AI Search instance inventory. The account inventory endpoint is
-// GET /accounts/{account_id}/ai-search/instances (never ai-search/indexes).
-// The documented shape is success:true with an array result (or an object
-// carrying an instances array); every page must be walked to completion and
-// any `degraded:true` flag keeps the count unknown with reason DEGRADED.
-// A complete walk yields provenance authoritative_inventory for
-// ai_search_instances; anything else stays unknown.
+// AI Search instance inventory: GET /accounts/{account_id}/ai-search/instances
+// (never ai-search/indexes); success:true with an array result (or an object
+// carrying instances). A complete walk yields authoritative_inventory for
+// ai_search_instances; degraded:true keeps the count unknown (DEGRADED).
 export function createAiSearchInventoryProvider({ group = "ai-search-inventory-list", covers = ["ai_search_instances"], endpoint, fetchImpl = fetch, perPage = 100 } = {}) {
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "ai-search provider endpoint is required");
   return {
@@ -260,6 +264,16 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
       let totalPages = null;
       const pagesCompleted = [];
       let lastHttpStatus = null;
+      const stable = {};
+      // Totals seen on page 1 must stay visible: disappearance later fails closed.
+      let sawTotalsOnFirstPage = false;
+      const requireStable = (name, value) => {
+        if (!Number.isInteger(value)) return;
+        if (stable[name] === undefined) stable[name] = value;
+        if (stable[name] !== value) {
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
+        }
+      };
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, page, perPage);
         if (typeof url !== "string" || !url.includes(accountId)) {
@@ -300,17 +314,50 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
         }
         seen.push(...items);
         const info = body?.result_info ?? body?.pagination ?? {};
-        if (Number.isInteger(info.total_pages)) totalPages = info.total_pages;
-        else if (Number.isInteger(info.total_count) && Number.isInteger(info.per_page)) {
+        // This API's own shape (result_info or pagination; D1 semantics not
+        // forced): totals require a matching page echo, must not drift, and a
+        // supplied total_count must equal the cumulative count. Termination is
+        // decisive only: a short page WITHOUT totals (this shape carries no
+        // other terminal signal) never proves full coverage, and totals that
+        // disappear after page 1 fail closed instead of fullAccount:true.
+        if ((info.total_count !== undefined || info.total_pages !== undefined) && info.page !== page) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
+        }
+        if (info.page !== undefined && info.page !== page) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} page echo mismatch`, { httpStatus: lastHttpStatus });
+        }
+        if (info.count !== undefined && info.count !== items.length) {
+          throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.total_count) && info.total_count < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
+        requireStable("per_page", info.per_page);
+        requireStable("total_count", info.total_count);
+        requireStable("total_pages", info.total_pages);
+        const pageHasTotals = Number.isInteger(info.total_count) || Number.isInteger(info.total_pages);
+        if (page === 1) {
+          sawTotalsOnFirstPage = pageHasTotals;
+        } else if (sawTotalsOnFirstPage && !pageHasTotals) {
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} pagination totals disappeared`, { httpStatus: lastHttpStatus });
+        }
+        if (Number.isInteger(info.total_pages)) {
+          totalPages = info.total_pages;
+        } else if (Number.isInteger(info.total_count) && Number.isInteger(info.per_page)) {
           totalPages = info.total_count === 0 ? 1 : Math.ceil(info.total_count / Math.max(1, info.per_page));
-        } else if (items.length < perPage) totalPages = page;
-        else totalPages = page + 1;
+        } else {
+          // No totals on this shape: even a short page is
+          // truncation-ambiguous (a boundary-sized page could hide a second
+          // page), so completeness is unprovable and the walk fails closed.
+          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} short page without totals proves no complete walk`, { httpStatus: lastHttpStatus });
+        }
         pagesCompleted.push(page);
         if (pagesCompleted.length >= totalPages) break;
         page += 1;
       }
       if (totalPages === null || pagesCompleted.length < totalPages) {
         throw new ProviderFailure("PARTIAL_PAGINATION", `${group} incomplete pagination`, { httpStatus: lastHttpStatus });
+      }
+      if (stable.total_count !== undefined && seen.length !== stable.total_count) {
+        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stable.total_count}`, { httpStatus: lastHttpStatus });
       }
       return {
         values: { ai_search_instances: seen.length },
@@ -323,104 +370,9 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
   };
 }
 
-// Restricted Alpha billing usage provider: GET
-// /accounts/{account_id}/billable/usage. This entitlement is NOT guaranteed
-// by standard Wrangler OAuth; 401/403/404, unsupported scope, malformed
-// schema, an incomplete window, or an unknown metric/unit all stay typed
-// unknown. Only a fully validated full-window response yields provenance
-// authoritative_billing. `metricMap` translates verified billing metric/unit
-// pairs to envelope keys; anything unmapped stays unknown (MALFORMED) and
-// never invents a counter. Safe receipts carry status + window metadata only.
-export const BILLABLE_USAGE_KNOWN_UNITS = Object.freeze(["count", "bytes", "gb-month", "requests", "operations", "neurons", "dims", "queries"]);
-
-export function createBillableUsageProvider({ group = "billable-usage", covers = [], endpoint, fetchImpl = fetch, metricMap = {}, expectedWindow = null } = {}) {
-  if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "billable provider endpoint is required");
-  return {
-    group,
-    covers: [...covers],
-    kind: "billing-usage",
-    async collect({ accountId, bearer, now }) {
-      void now;
-      if (typeof bearer !== "string" || bearer.length < 1) throw new ProviderFailure("NO_AUTH_ENDPOINT", `${group}: bearer required`);
-      const url = endpoint(accountId);
-      if (typeof url !== "string" || !url.includes(accountId) || !url.includes("/billable/usage")) {
-        throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} left the bound billing endpoint`);
-      }
-      let response;
-      try {
-        response = await fetchImpl(url, { headers: { authorization: `Bearer ${bearer}` } });
-      } catch {
-        throw new ProviderFailure("HTTP_ERROR", `${group} transport failure`);
-      }
-      const httpStatus = Number.isInteger(response?.status) ? response.status : null;
-      if (httpStatus === 401 || httpStatus === 403) {
-        throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} denied (http ${httpStatus}): standard Wrangler OAuth does not guarantee this entitlement`, { httpStatus });
-      }
-      if (httpStatus === 404) {
-        throw new ProviderFailure("NO_AUTH_ENDPOINT", `${group} billing endpoint unavailable (http 404)`, { httpStatus });
-      }
-      if (httpStatus === 429 || (Number.isInteger(httpStatus) && httpStatus >= 500)) {
-        throw new ProviderFailure("HTTP_ERROR", `${group} http ${httpStatus}`, { httpStatus });
-      }
-      let body;
-      try {
-        body = await response.json();
-      } catch {
-        throw new ProviderFailure("MALFORMED", `${group} invalid JSON`, { httpStatus });
-      }
-      if (body?.success !== true) {
-        throw new ProviderFailure("HTTP_ERROR", `${group} malformed (success:false)`, { httpStatus });
-      }
-      const echoedAccount = body?.account_id ?? body?.result?.account_id ?? null;
-      if (typeof echoedAccount === "string" && echoedAccount !== accountId) {
-        throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} wrong account echo`, { httpStatus });
-      }
-      const windowStart = body?.window_start ?? body?.result?.window_start ?? expectedWindow?.start ?? null;
-      const windowEnd = body?.window_end ?? body?.result?.window_end ?? expectedWindow?.end ?? null;
-      if (expectedWindow && (windowStart !== expectedWindow.start || windowEnd !== expectedWindow.end)) {
-        throw new ProviderFailure("WINDOW_MISMATCH", `${group} incomplete window vs expected full window`, { httpStatus });
-      }
-      const rows = Array.isArray(body?.result) ? body.result
-        : Array.isArray(body?.result?.usage) ? body.result.usage : null;
-      if (!Array.isArray(rows)) {
-        throw new ProviderFailure("MALFORMED", `${group} missing usage rows`, { httpStatus });
-      }
-      const values = {};
-      for (const row of rows) {
-        const metric = row?.metric ?? row?.name;
-        const unit = row?.unit;
-        const value = row?.value ?? row?.quantity;
-        if (typeof metric !== "string" || typeof unit !== "string") {
-          throw new ProviderFailure("MALFORMED", `${group} bad metric/unit schema`, { httpStatus });
-        }
-        if (!BILLABLE_USAGE_KNOWN_UNITS.includes(unit)) {
-          throw new ProviderFailure("MALFORMED", `${group} unknown unit ${unit}`, { httpStatus });
-        }
-        const mapped = metricMap[`${metric}:${unit}`] ?? metricMap[metric];
-        if (mapped === undefined) continue; // Unknown billing metric: skip, never invent.
-        if (!REQUIRED_METRIC_KEYS.includes(mapped)) continue;
-        if (!(typeof value === "number" && Number.isFinite(value) && value >= 0)) {
-          throw new ProviderFailure("MALFORMED", `${group} bad value for ${metric}`, { httpStatus });
-        }
-        values[mapped] = value;
-      }
-      return {
-        values,
-        coverage: { accountId, fullAccount: true, windowStart, windowEnd },
-        provenance: METRIC_PROVENANCE.AUTHORITATIVE_BILLING,
-        receiptMeta: safeFetchMeta({ httpStatus, kind: "billing-usage", full: true, authoritative: true, reason: null }),
-      };
-    },
-  };
-}
-
-// Cloudflare GraphQL analytics provider: operational evidence only, NEVER
-// billing authority. The provider may return observed samples, but
-// collectAccountUsage always keeps affected counters unknown with provenance
-// analytics_nonbilling. GraphQL errors, partial data, truncation, wrong
-// account, wrong window, stale payloads, and provider conflicts all keep the
-// metric unknown; unknown is never coerced to zero and later partial data
-// never overwrites the gap.
+// GraphQL analytics: operational evidence only, NEVER billing authority.
+// Samples stay diagnostic with provenance analytics_nonbilling; errors,
+// partial data, wrong account, and conflicts keep metrics unknown, never zero.
 export function createGraphQlAnalyticsProvider({ group = "graphql-analytics", covers = [], endpoint = "https://api.cloudflare.com/client/v4/graphql", fetchImpl = fetch, query = "" } = {}) {
   return {
     group,

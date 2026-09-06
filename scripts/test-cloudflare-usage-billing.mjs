@@ -1,0 +1,467 @@
+// Billing Usage v2 adversarial conformance: deterministic, no live calls.
+// Proves the FIX4W Usage v2 contract over fictional FOCUS v1.3 fixtures:
+// explicit from/to (never a future month end, never over 31 days), FOCUS-only
+// parsing, per-row BillingAccountId identity, real charge-period evidence,
+// reviewed ID+unit mapping, typed-unknown fail-closed, metadata-only
+// receipts, and collector provenance enforcement (including the injected
+// analytics attack). Run with: node scripts/test-cloudflare-usage-billing.mjs
+
+import assert from "node:assert/strict";
+import { METRIC_PROVENANCE } from "./lib/cloudflare-usage-envelope.mjs";
+import {
+  ProviderFailure,
+  collectAccountUsage,
+  createBillableUsageProvider,
+} from "./lib/cloudflare-usage-collection.mjs";
+
+const ACCOUNT = "dddddddddddddddddddddddddddddddd";
+const OTHER = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const BEARER = "fictional-billing-bearer-for-tests-only";
+const WHOAMI = `account ${ACCOUNT} active`;
+const NOW = Date.parse("2026-09-06T12:00:00.000Z");
+const FROM = "2026-09-01";
+const TO = "2026-09-06";
+const MAP = {
+  "workers_standard_requests:workers_standard_requests:Requests": "workers_requests",
+  "queue_affinity_operations:queue_affinity_operations:Operations": "queue_ops",
+};
+
+let cases = 0;
+async function check(name, action) {
+  await action();
+  cases += 1;
+  console.log(`Billing usage v2: ${name}: PASS`);
+}
+
+function okJson(body, status = 200) {
+  return { status, json: async () => body };
+}
+
+function focusRow({ id, unit, quantity, start, end, name = id, account = ACCOUNT, extra = {} }) {
+  return {
+    BillingAccountId: account,
+    BillingAccountName: "Fictional Account",
+    ChargeCategory: "Usage",
+    ChargeDescription: `${name} daily usage`,
+    ChargeFrequency: "Usage-Based",
+    ChargePeriodStart: start,
+    ChargePeriodEnd: end,
+    ConsumedQuantity: quantity,
+    ConsumedUnit: unit,
+    x_BillableMetricId: id,
+    x_BillableMetricName: name,
+    ...extra,
+  };
+}
+
+function septemberDay(day) {
+  const pad = String(day).padStart(2, "0");
+  const next = String(day + 1).padStart(2, "0");
+  return { start: `2026-09-${pad}T00:00:00.000Z`, end: `2026-09-${next}T00:00:00.000Z` };
+}
+
+function fullSeptemberRows() {
+  const rows = [];
+  for (let day = 1; day <= 5; day += 1) {
+    rows.push(focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: day * 10, ...septemberDay(day) }));
+  }
+  return rows;
+}
+
+function providerWith({ rows, status = 200, bodyExtra = {}, options = {} }) {
+  const seenUrls = [];
+  const provider = createBillableUsageProvider({
+    group: "billable-usage",
+    covers: ["workers_requests"],
+    endpoint: (id, from, to) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=${from}&to=${to}`,
+    fetchImpl: async (url) => {
+      seenUrls.push(url);
+      if (status !== 200) return { status, json: async () => ({}) };
+      return okJson({ success: true, result: rows, ...bodyExtra });
+    },
+    metricMap: MAP,
+    ...options,
+  });
+  return { provider, seenUrls };
+}
+
+await check("multi-day and dimensional rows aggregate safely", async () => {
+  const rows = fullSeptemberRows();
+  // Dimensional split: same day, same metric, different zones sum together.
+  rows.push(focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 7, ...septemberDay(2), extra: { x_ZoneId: "zone-a" } }));
+  rows.push(focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 8, ...septemberDay(2), extra: { x_ZoneId: "zone-b" } }));
+  const { provider } = providerWith({ rows });
+  const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.values.workers_requests, 150 + 15);
+  assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+});
+
+await check("from/to ride the endpoint and never a future month end", async () => {
+  const { provider, seenUrls } = providerWith({ rows: fullSeptemberRows() });
+  await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.ok(seenUrls.some((url) => url.includes(`from=${FROM}`) && url.includes(`to=${TO}`)));
+  assert.ok(seenUrls.every((url) => !url.includes("to=2026-10-01")));
+  // A bare endpoint without dates gets explicit from/to appended.
+  const bareUrls = [];
+  const bare = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async (url) => {
+      bareUrls.push(url);
+      return okJson({ success: true, result: fullSeptemberRows() });
+    },
+    metricMap: MAP,
+  });
+  await bare.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.ok(bareUrls.some((url) => url.includes(`from=${FROM}`) && url.includes(`to=${TO}`)));
+  // An endpoint wiring foreign dates is rejected before any parsing.
+  const foreign = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=2020-01-01&to=2020-01-02`,
+    fetchImpl: async () => okJson({ success: true, result: fullSeptemberRows() }),
+    metricMap: MAP,
+  });
+  await assert.rejects(
+    foreign.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+  // A 32-day expected window exceeds the 31-day query limit.
+  const wide = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async () => okJson({ success: true, result: [] }),
+    metricMap: MAP,
+    expectedWindow: { start: "2026-08-01T00:00:00.000Z", end: "2026-09-06T00:00:00.000Z" },
+  });
+  await assert.rejects(
+    wide.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+});
+
+await check("row identity never inherits from the request", async () => {
+  // A correct top-level echo cannot launder a wrong-account row.
+  const laundered = providerWith({
+    rows: [focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, ...septemberDay(1), account: OTHER })],
+    bodyExtra: { account_id: ACCOUNT },
+  });
+  await assert.rejects(
+    laundered.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "ACCOUNT_MISMATCH",
+  );
+  // A missing BillingAccountId is malformed, never inherited.
+  const missing = providerWith({
+    rows: [{ ...focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, ...septemberDay(1) }), BillingAccountId: undefined }],
+  });
+  await assert.rejects(
+    missing.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+});
+
+await check("charge-period evidence is required inside the interval", async () => {
+  const noPeriod = providerWith({
+    rows: [{ ...focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, ...septemberDay(1) }), ChargePeriodStart: undefined }],
+  });
+  await assert.rejects(
+    noPeriod.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // A row from another month is outside evidence, not coverable usage.
+  const outside = providerWith({
+    rows: [
+      ...fullSeptemberRows(),
+      focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, start: "2026-08-30T00:00:00.000Z", end: "2026-08-31T00:00:00.000Z" }),
+    ],
+  });
+  await assert.rejects(
+    outside.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+  // A row ending in the future is incomplete evidence.
+  const future = providerWith({
+    rows: [focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, start: "2026-09-06T00:00:00.000Z", end: "2026-09-07T00:00:00.000Z" })],
+  });
+  await assert.rejects(
+    future.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+  // Days 3-5 without evidence are unknown, never zero.
+  const partial = providerWith({
+    rows: [1, 2].map((day) => focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 10, ...septemberDay(day) })),
+  });
+  await assert.rejects(
+    partial.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+  // An empty result proves no complete window.
+  const empty = providerWith({ rows: [] });
+  await assert.rejects(
+    empty.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+});
+
+await check("synthetic rows are rejected, never mapped", async () => {
+  for (const synthetic of [
+    [{ metric: "workers_requests", unit: "Requests", value: 42 }],
+    [{ name: "workers_requests", quantity: 42, window_start: "2026-09-01T00:00:00.000Z", window_end: "2026-09-06T00:00:00.000Z" }],
+  ]) {
+    const { provider } = providerWith({ rows: synthetic });
+    await assert.rejects(
+      provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+      (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    );
+  }
+});
+
+await check("unknown ID/unit pairs fail closed", async () => {
+  const unknownId = providerWith({
+    rows: [focusRow({ id: "mystery_metric", unit: "Requests", quantity: 1, ...septemberDay(1) })],
+  });
+  await assert.rejects(
+    unknownId.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  const unknownUnit = providerWith({
+    rows: [focusRow({ id: "workers_standard_requests", unit: "Furlongs", quantity: 1, ...septemberDay(1) })],
+  });
+  await assert.rejects(
+    unknownUnit.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+});
+
+await check("bare-metric and display-name mappings never bind", async () => {
+  // A bare-metric key without the unit qualifier must not match.
+  const bareMap = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async () => okJson({ success: true, result: fullSeptemberRows() }),
+    metricMap: { workers_standard_requests: "workers_requests" },
+  });
+  await assert.rejects(
+    bareMap.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // A display-name key must not match either: only x_BillableMetricId binds.
+  const displayMap = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async () => okJson({ success: true, result: fullSeptemberRows().map((row) => ({ ...row, x_BillableMetricName: "Workers Standard Requests" })) }),
+    metricMap: { "Workers Standard Requests:Requests": "workers_requests" },
+  });
+  await assert.rejects(
+    displayMap.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // Overlapping but non-identical charge periods for one metric are ambiguous.
+  const overlapping = providerWith({
+    rows: [
+      ...[1, 2, 3, 4, 5].map((day) => focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 10, ...septemberDay(day) })),
+      focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 10, start: "2026-09-02T12:00:00.000Z", end: "2026-09-03T12:00:00.000Z" }),
+    ],
+  });
+  await assert.rejects(
+    overlapping.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
+  );
+  // Byte-identical duplicate rows are ambiguous double-count risk.
+  const duplicateRow = focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 10, ...septemberDay(1) });
+  const duplicate = providerWith({ rows: [duplicateRow, { ...duplicateRow }] });
+  await assert.rejects(
+    duplicate.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+});
+
+await check("metric name binds together with id, unit, quantity, and period", async () => {
+  // Reviewed triple with an explicit name (name differs from id): the exact
+  // triple is accepted as authoritative billing.
+  const namedMap = { "workers_standard_requests:Workers Standard Requests:Requests": "workers_requests" };
+  const namedRows = [1, 2, 3, 4, 5].map((day) => focusRow({
+    id: "workers_standard_requests", name: "Workers Standard Requests", unit: "Requests", quantity: day * 10, ...septemberDay(day),
+  }));
+  const { provider: namedGood } = providerWith({ rows: namedRows, options: { metricMap: namedMap } });
+  const reported = await namedGood.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.values.workers_requests, 150);
+  assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+  // A missing name is MALFORMED, never an authoritative value.
+  const missing = providerWith({
+    rows: namedRows.map((row) => ({ ...row, x_BillableMetricName: undefined })),
+    options: { metricMap: namedMap },
+  });
+  await assert.rejects(
+    missing.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // A substituted name (same id, unit, quantity, and period) misses the
+  // reviewed triple and is rejected instead of binding the wrong counter.
+  const substituted = providerWith({
+    rows: namedRows.map((row) => ({ ...row, x_BillableMetricName: "Some Other Name" })),
+    options: { metricMap: namedMap },
+  });
+  await assert.rejects(
+    substituted.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // The same substituted rows stay unknown through the collector, never zero.
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [substituted.provider],
+  });
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+});
+
+await check("denied or missing billing endpoints stay typed unknown", async () => {
+  for (const status of [401, 403]) {
+    const { provider } = providerWith({ rows: [], status });
+    await assert.rejects(
+      provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+      (error) => error instanceof ProviderFailure && error.reason === "AUTH_SCOPE_DENIED",
+    );
+  }
+  const { provider } = providerWith({ rows: [], status: 404 });
+  await assert.rejects(
+    provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "NO_AUTH_ENDPOINT",
+  );
+});
+
+await check("receipts and failures carry metadata only", async () => {
+  const { provider } = providerWith({ rows: fullSeptemberRows() });
+  const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  const receiptText = JSON.stringify(reported.receiptMeta);
+  assert.ok(!receiptText.includes(ACCOUNT));
+  assert.ok(!receiptText.includes(BEARER));
+  const laundered = providerWith({
+    rows: [focusRow({ id: "workers_standard_requests", unit: "Requests", quantity: 5, ...septemberDay(1), account: OTHER })],
+  });
+  const failure = await laundered.provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }).then(
+    () => assert.fail("wrong-account row must throw"),
+    (error) => error,
+  );
+  assert.ok(!String(failure.message).includes(ACCOUNT));
+  assert.ok(!String(failure.message).includes(OTHER));
+  assert.ok(!String(failure.message).includes(BEARER));
+});
+
+await check("collector admits validated billing with enforced provenance", async () => {
+  const { provider } = providerWith({ rows: fullSeptemberRows() });
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [provider],
+  });
+  assert.equal(snapshot.metrics.workers_requests, 150);
+  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "trusted-partial");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+});
+
+await check("injected analytics can never admit a billable mutation", async () => {
+  const evil = {
+    group: "evil-analytics",
+    covers: ["workers_requests"],
+    analyticsOnly: true,
+    collect: async () => ({
+      values: { workers_requests: 42 },
+      coverage: { accountId: ACCOUNT, fullAccount: false },
+      provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING,
+    }),
+  };
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [evil],
+  });
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+  assert.equal(snapshot.readback.metric_trust.workers_requests.state, "unknown-untrusted");
+  // The same numeric through an unflagged analytics provenance is also refused.
+  const sneaky = {
+    group: "sneaky-analytics",
+    covers: ["workers_requests"],
+    collect: async () => ({
+      values: { workers_requests: 42 },
+      coverage: { accountId: ACCOUNT, fullAccount: false },
+      provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING,
+    }),
+  };
+  const second = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [sneaky],
+  });
+  assert.equal(second.metrics.workers_requests, "unknown");
+});
+
+await check("ledger estimates and unauthorized channels stay unknown", async () => {
+  const ledger = {
+    group: "controller-ledger",
+    covers: ["queue_ops"],
+    collect: async () => ({
+      values: { queue_ops: 10 },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+      provenance: METRIC_PROVENANCE.LEDGER_ESTIMATE,
+    }),
+  };
+  const ledged = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [ledger],
+  });
+  assert.equal(ledged.metrics.queue_ops, "unknown");
+  // Inventory provenance cannot carry a billing usage counter.
+  const inventoryBilling = {
+    group: "ai-search-inventory-list",
+    covers: ["queue_ops"],
+    kind: "inventory-ai-search",
+    collect: async () => ({
+      values: { queue_ops: 10 },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+      provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+    }),
+  };
+  const smuggled = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [inventoryBilling],
+  });
+  assert.equal(smuggled.metrics.queue_ops, "unknown");
+  // An authority kind without provenance is refused.
+  const bareBilling = {
+    group: "bare-billing",
+    covers: ["queue_ops"],
+    kind: "billing-usage",
+    collect: async () => ({
+      values: { queue_ops: 10 },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+    }),
+  };
+  const bare = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [bareBilling],
+  });
+  assert.equal(bare.metrics.queue_ops, "unknown");
+  // An unrecognized provenance string is refused.
+  const strange = {
+    group: "strange",
+    covers: ["queue_ops"],
+    collect: async () => ({
+      values: { queue_ops: 10 },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+      provenance: "fictional_provenance",
+    }),
+  };
+  const weird = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [strange],
+  });
+  assert.equal(weird.metrics.queue_ops, "unknown");
+});
+
+await check("authorized inventory admits only its contracted count", async () => {
+  const inventory = {
+    group: "ai-search-inventory-list",
+    covers: ["ai_search_instances"],
+    kind: "inventory-ai-search",
+    collect: async () => ({
+      values: { ai_search_instances: 5 },
+      coverage: { accountId: ACCOUNT, fullAccount: true },
+      provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+    }),
+  };
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [inventory],
+  });
+  assert.equal(snapshot.metrics.ai_search_instances, 5);
+  assert.equal(snapshot.readback.metric_trust.ai_search_instances.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
+});
+
+console.log(`Billing usage v2: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

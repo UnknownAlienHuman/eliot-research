@@ -145,10 +145,11 @@ await check("paginated inventory proves pages without fabricating counters", asy
   assert.equal(snapshot.metrics.queue_ops, "unknown");
 });
 
-await check("live registry builds four inventory collectors and rejects bad account", async () => {
+await check("live registry builds inventory collectors plus billing and rejects bad account", async () => {
   const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl: async () => ({ json: async () => ({ success: true, result: [], result_info: { page: 1, total_pages: 1 } }) }) });
-  assert.equal(registry.length, 4);
+  assert.equal(registry.length, 5);
   assert.ok(registry.some((provider) => provider.group === "ai-search-inventory-list"));
+  assert.ok(registry.some((provider) => provider.group === "billable-usage" && provider.kind === "billing-usage"));
   assert.throws(() => buildLiveProviderRegistry({ accountId: "" }), /accountId is required/u);
   void digestAccountId;
 });

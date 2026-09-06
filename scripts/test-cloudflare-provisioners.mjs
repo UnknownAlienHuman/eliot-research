@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = "mock-account";
@@ -200,6 +202,13 @@ const commonEnv = {
   ELIOTR_ENVIRONMENT: "staging",
   ELIOTR_DEPLOYMENT_GENERATION: "mock-generation",
   ELIOTR_CUSTOM_DOMAIN: "1",
+  // Mocked Access authority (Access-first order): core apply refuses
+  // foundation mutations without a verified AUD/team origin, so the harness
+  // establishes the fictional authority the same way
+  // test-deployment-orchestration.mjs does — no live calls, no credentials.
+  ELIOTR_ACCESS_TEAM_DOMAIN: "https://mock-team-example.cloudflareaccess.com",
+  ELIOTR_ACCESS_AUDIENCE: "mock-access-audience",
+  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "eliotr-federation,eliotr-agent",
 };
 
 function run(script, args = [], env = {}) {
@@ -235,11 +244,38 @@ function expectFail(result, label) {
 function mutationCount() { return state.mutations.length; }
 function reset() { state = emptyState(); }
 
+// Fresh ADMITTED usage fixture so apply paths reach provisioning logic.
+// Without it the api-token runner seals and every direct apply must stop
+// before the first Cloudflare call (see the SEALED block below).
+function admittedFixture() {
+  const now = Date.now();
+  const metrics = {};
+  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
+  metrics.ai_search_instances = 5;
+  metrics.r2_storage_gb_month = 1;
+  return JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(accountId),
+    account_ref: "cloudflare-account:mock-a…ount",
+    collected_at: new Date(now - 60_000).toISOString(),
+    window: monthlyWindowFor(now),
+    daily_window: dailyWindowFor(now),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
+}
+function admittedEnv() {
+  return { ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedFixture() };
+}
+
 try {
   await rm(generatedConfigPath, { force: true });
   await rm(stateDirectory, { recursive: true, force: true });
 
   // Check-only must be globally side-effect free when every resource is missing.
+  // (Api-token mode seals here, so this also proves SEALED check-only stays
+  // read-only metadata with zero mutations.)
   reset();
   for (const script of [
     "scripts/provision-cloudflare-core.mjs",
@@ -250,6 +286,22 @@ try {
     expectPass(await run(script, ["--check-only"]), `${script} --check-only`);
   }
   assert.equal(mutationCount(), 0, "check-only sent a mutating request");
+
+  // SEALED denies every direct apply path before the first Cloudflare call:
+  // no POST/PUT/PATCH/DELETE, no Worker upload, no migration — not even a GET.
+  reset();
+  for (const script of [
+    "scripts/provision-cloudflare-core.mjs",
+    "scripts/provision-ai-search.mjs",
+    "scripts/provision-cloudflare-access.mjs",
+    "scripts/provision-ai-gateways.mjs",
+  ]) {
+    const sealed = await run(script);
+    expectFail(sealed, `SEALED ${script} apply`);
+    assert.match(sealed.stderr, /SEALED/u, `${script} SEALED apply hid its decision`);
+  }
+  assert.equal(mutationCount(), 0, "SEALED apply sent a mutating request");
+  assert.equal(state.requests.length, 0, "SEALED apply contacted Cloudflare");
 
   // Route/Access mismatch is rejected before the first Cloudflare read or mutation.
   reset();
@@ -262,13 +314,13 @@ try {
 
   // Foundation provisioning creates exact resources once and generates only the ignored deploy config.
   reset();
-  expectPass(await run("scripts/provision-cloudflare-core.mjs"), "foundation apply");
+  expectPass(await run("scripts/provision-cloudflare-core.mjs", [], admittedEnv()), "foundation apply");
   assert.equal(mutationCount(), 6, "foundation must create exactly two D1, two R2 and two Queues");
   const generated = JSON.parse(await readFile(generatedConfigPath, "utf8"));
   assert.deepEqual(generated.d1_databases.map((item) => item.database_id), ["d1-1", "d1-2"]);
   assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore, "canonical wrangler config was mutated");
   const afterFirstFoundation = mutationCount();
-  expectPass(await run("scripts/provision-cloudflare-core.mjs"), "foundation idempotent apply");
+  expectPass(await run("scripts/provision-cloudflare-core.mjs", [], admittedEnv()), "foundation idempotent apply");
   assert.equal(mutationCount(), afterFirstFoundation, "second foundation apply created duplicate resources");
 
   // Missing stable IDs are unsafe even when names match.
@@ -287,7 +339,9 @@ try {
     embedding_model: "@cf/incompatible/model",
   });
   expectFail(await run("scripts/provision-ai-search.mjs", ["--check-only"]), "AI Search drift check-only");
-  expectFail(await run("scripts/provision-ai-search.mjs"), "AI Search drift apply");
+  const driftApply = await run("scripts/provision-ai-search.mjs", [], admittedEnv());
+  expectFail(driftApply, "AI Search drift apply");
+  assert.match(driftApply.stderr, /differs from generation/u, "AI Search drift apply stopped at the gate instead of the drift");
   assert.equal(mutationCount(), 0, "AI Search drift path mutated resources");
 
   // An undeclared Access policy can broaden access and must block both modes before mutation.
@@ -308,23 +362,26 @@ try {
     { id: "unexpected-policy", name: "Everyone", decision: "allow", include: [{ everyone: {} }], exclude: [], require: [] },
   ]);
   expectFail(await run("scripts/provision-cloudflare-access.mjs", ["--check-only"]), "Access extra policy check-only");
-  expectFail(await run("scripts/provision-cloudflare-access.mjs"), "Access extra policy apply");
+  const extraPolicyApply = await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv());
+  expectFail(extraPolicyApply, "Access extra policy apply");
+  assert.match(extraPolicyApply.stderr, /undeclared additional Access policies/u, "Access apply stopped at the gate instead of the policy check");
   assert.equal(mutationCount(), 0, "Access drift path mutated resources");
 
   // A clean hostname-based Access contour creates once and verifies on repeat.
   reset();
-  expectPass(await run("scripts/provision-cloudflare-access.mjs"), "Access apply");
+  expectPass(await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv()), "Access apply");
   assert.equal(mutationCount(), 1, "Access app and inline owner policy should be one atomic create");
   const accessApp = [...state.accessApps.values()][0];
   assert(accessApp);
   assert.deepEqual(accessApp.destinations, [{ type: "public", uri: accessHostname }]);
   assert.equal((state.accessPolicies.get(accessApp.id) ?? []).length, 1);
   const afterFirstAccess = mutationCount();
-  expectPass(await run("scripts/provision-cloudflare-access.mjs"), "Access idempotent apply");
+  expectPass(await run("scripts/provision-cloudflare-access.mjs", [], admittedEnv()), "Access idempotent apply");
   assert.equal(mutationCount(), afterFirstAccess, "second Access apply created duplicate state");
 
   console.log("Cloudflare provisioner mock conformance: PASS");
   console.log("- check-only mutations: 0");
+  console.log("- SEALED direct apply: DENIED BEFORE FIRST CALL (core, ai-search, access, gateways)");
   console.log("- public route / Access hostname alignment: PASS");
   console.log("- foundation create/idempotency: PASS");
   console.log("- missing stable resource IDs: REJECTED");

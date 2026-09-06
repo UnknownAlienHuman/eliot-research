@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desired = JSON.parse(
@@ -199,6 +201,24 @@ assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
 
 function runProvisioner() {
+  // Fresh ADMITTED usage fixture: direct apply requires ADMITTED past the
+  // usage gate, so reconciliation (not gating) is what this suite proves.
+  const now = Date.now();
+  const metrics = {};
+  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
+  metrics.ai_search_instances = 5;
+  metrics.r2_storage_gb_month = 1;
+  const fixture = JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(accountId),
+    account_ref: "cloudflare-account:mock-a…ount",
+    collected_at: new Date(now - 60_000).toISOString(),
+    window: monthlyWindowFor(now),
+    daily_window: dailyWindowFor(now),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
   return new Promise((resolveRun) => {
     const child = spawn(
       process.execPath,
@@ -210,6 +230,7 @@ function runProvisioner() {
           CLOUDFLARE_ACCOUNT_ID: accountId,
           CLOUDFLARE_API_TOKEN: "mock-token",
           CLOUDFLARE_API_BASE_URL: apiBase,
+          ELIOTR_TEST_USAGE_SNAPSHOT_JSON: fixture,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

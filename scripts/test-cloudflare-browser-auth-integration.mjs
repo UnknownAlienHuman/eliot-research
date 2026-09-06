@@ -24,6 +24,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { loadWranglerOAuthCredential } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BEARER = "browser-oauth-int-bearer-7f3a9c2e";
@@ -185,10 +187,13 @@ const baseEnv = {
 };
 
 function run(script, args = [], env = {}) {
+  // Fresh ADMITTED usage fixture by default: direct apply requires ADMITTED
+  // past the usage gate. Cases that need a different decision override
+  // ELIOTR_TEST_USAGE_SNAPSHOT_JSON explicitly.
   return new Promise((resolveRun) => {
     const argv = [resolve(repositoryRoot, script), ...args];
     const child = spawn(process.execPath, argv, {
-      cwd: repositoryRoot, env: { ...baseEnv, ...env }, stdio: ["ignore", "pipe", "pipe"],
+      cwd: repositoryRoot, env: { ...baseEnv, ELIOTR_TEST_USAGE_SNAPSHOT_JSON: admittedUsageFixture(), ...env }, stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -246,6 +251,24 @@ const check = async (name, action) => { await action(); cases += 1; console.log(
 const reset = () => { state = emptyState(); };
 const mutations = () => state.mutations.length;
 const requests = () => state.requests.length;
+function admittedUsageFixture() {
+  const now = Date.now();
+  const metrics = {};
+  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
+  metrics.ai_search_instances = 5;
+  metrics.r2_storage_gb_month = 1;
+  return JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(ACCOUNT),
+    account_ref: "cloudflare-account:browse…ount",
+    collected_at: new Date(now - 60_000).toISOString(),
+    window: monthlyWindowFor(now),
+    daily_window: dailyWindowFor(now),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
+}
 
 try {
   await rm(generatedConfigPath, { force: true });

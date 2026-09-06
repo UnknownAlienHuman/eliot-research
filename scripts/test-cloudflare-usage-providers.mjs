@@ -1,11 +1,12 @@
 // Provider conformance: deterministic, no live Cloudflare calls.
-// Proves the FIX3W findings over fictional fixtures:
+// Proves the FIX4W findings over fictional fixtures:
 //  A) live registry wires GET /accounts/{id}/ai-search/instances (never
 //     ai-search/indexes) with documented shape + full pagination;
-//  B) D1 total_count/page/per_page guards and R2 cursor pagination over
-//     result.buckets with cursor-progress validation;
+//  B) D1/AI Search total_count/page guards (cumulative counts, echoes,
+//     drift) and R2 cursor pagination over result.buckets with terminal
+//     cursor and hop-cap validation;
 //  C) per-metric provenance taxonomy + typed unknown reasons; GraphQL
-//     analytics never billing authority; billable/usage Alpha gates.
+//     analytics never billing authority; billable/usage v2 FOCUS gates.
 // Run with: node scripts/test-cloudflare-usage-providers.mjs
 
 import assert from "node:assert/strict";
@@ -14,7 +15,6 @@ import {
   UNKNOWN_REASONS,
 } from "./lib/cloudflare-usage-envelope.mjs";
 import {
-  BILLABLE_USAGE_KNOWN_UNITS,
   ProviderFailure,
   buildLiveProviderRegistry,
   collectAccountUsage,
@@ -41,6 +41,28 @@ function okJson(body, status = 200) {
   return { status, json: async () => body };
 }
 
+// Fictional FinOps FOCUS v1.3 row for the Usage v2 billing endpoint.
+function focusRow({ id, unit, quantity, start, end, name = id, account = ACCOUNT }) {
+  return {
+    BillingAccountId: account,
+    BillingAccountName: "Fictional Account",
+    ChargeCategory: "Usage",
+    ChargeDescription: `${name} daily usage`,
+    ChargeFrequency: "Usage-Based",
+    ChargePeriodStart: start,
+    ChargePeriodEnd: end,
+    ConsumedQuantity: quantity,
+    ConsumedUnit: unit,
+    x_BillableMetricId: id,
+    x_BillableMetricName: name,
+  };
+}
+function dayRange(day) {
+  const start = `2026-09-0${day}T00:00:00.000Z`;
+  const end = day === 6 ? "2026-09-06T00:00:00.000Z" : `2026-09-0${day + 1}T00:00:00.000Z`;
+  return { start, end };
+}
+
 await check("live registry wires ai-search/instances and never indexes", async () => {
   const seenUrls = [];
   const fetchImpl = async (url) => {
@@ -57,7 +79,7 @@ await check("live registry wires ai-search/instances and never indexes", async (
     return okJson({ success: true, result: [], result_info: { page, total_pages: 2, per_page: 100 } });
   };
   const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl });
-  assert.equal(registry.length, 4);
+  assert.equal(registry.length, 5);
   const aiSearch = registry.find((provider) => provider.group === "ai-search-inventory-list");
   assert.ok(aiSearch, "ai-search-inventory-list provider missing");
   assert.deepEqual(aiSearch.covers, ["ai_search_instances"]);
@@ -67,6 +89,56 @@ await check("live registry wires ai-search/instances and never indexes", async (
   assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
   assert.ok(seenUrls.some((url) => url.includes(`/accounts/${ACCOUNT}/ai-search/instances`)));
   assert.ok(seenUrls.every((url) => !url.includes("ai-search/indexes")));
+});
+
+const REVIEWED_TRIPLE = { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" };
+function registryFetch({ billableStatus = 200, billableRows = null } = {}) {
+  return async (url) => {
+    if (url.includes("/billable/usage")) {
+      if (billableStatus !== 200) return { status: billableStatus, json: async () => ({}) };
+      const rows = billableRows ?? [1, 2, 3, 4, 5].map((day) => focusRow({
+        id: "workers_standard_requests", unit: "Requests", quantity: day * 10, ...dayRange(day),
+      }));
+      return okJson({ success: true, result: rows });
+    }
+    if (url.includes("/ai-search/instances")) {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { page: 1, total_pages: 2, per_page: 100 } });
+      }
+      return okJson({ success: true, result: [{ id: "two" }], result_info: { page: 2, total_pages: 2, per_page: 100 } });
+    }
+    const page = Number(new URL(url).searchParams.get("page") ?? "1");
+    return okJson({ success: true, result: [], result_info: { page, total_pages: 2, per_page: 100 } });
+  };
+}
+
+await check("live registry includes the billable provider hitting /billable/usage with from+to", async () => {
+  const seenUrls = [];
+  const watching = async (url, init) => {
+    seenUrls.push(url);
+    return registryFetch()(url, init);
+  };
+  const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, nowMs: NOW, billableMetricMap: REVIEWED_TRIPLE, fetchImpl: watching });
+  assert.equal(registry.length, 5);
+  const billable = registry.find((provider) => provider.group === "billable-usage");
+  assert.ok(billable, "billable-usage provider missing from the live registry");
+  assert.equal(billable.kind, "billing-usage");
+  const reported = await billable.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.values.workers_requests, 150);
+  assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+  assert.ok(seenUrls.some((url) => url.includes(`/accounts/${ACCOUNT}/billable/usage`) && url.includes("from=2026-09-01") && url.includes("to=2026-09-06")));
+  assert.ok(seenUrls.every((url) => !url.includes("to=2026-10-01")), "registry queried a future month end");
+  // A registry-level billing failure (no entitlement) leaves billing metrics
+  // unknown rather than dropping the provider silently — while the
+  // inventory-proved instance count survives (billing never covers it).
+  const denied = buildLiveProviderRegistry({ accountId: ACCOUNT, nowMs: NOW, billableMetricMap: REVIEWED_TRIPLE, fetchImpl: registryFetch({ billableStatus: 403 }) });
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: denied,
+  });
+  assert.equal(snapshot.metrics.workers_requests, "unknown");
+  assert.equal(snapshot.metrics.ai_search_instances, 2);
+  assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("billable-usage")));
 });
 
 await check("ai-search provider rejects indexes wiring and degraded payloads", async () => {
@@ -169,22 +241,32 @@ await check("R2 uses cursor pagination over result.buckets with progress validat
   );
 });
 
-await check("billable usage passes only full-window verified responses as billing authority", async () => {
-  const window = { start: "2026-09-01T00:00:00.000Z", end: "2026-10-01T00:00:00.000Z" };
+await check("billable usage v2 aggregates FOCUS rows with explicit from/to", async () => {
+  const seenUrls = [];
+  const rows = [1, 2, 3, 4, 5].map((day) => focusRow({
+    id: "workers_standard_requests", unit: "Requests", quantity: day * 10, ...dayRange(day),
+  }));
   const good = createBillableUsageProvider({
     group: "billable-usage",
-    covers: ["queue_ops"],
-    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
-    fetchImpl: async () => okJson({ success: true, window_start: window.start, window_end: window.end, result: [{ metric: "queue_ops", unit: "operations", value: 42 }] }),
-    metricMap: { "queue_ops:operations": "queue_ops" },
-    expectedWindow: window,
+    covers: ["workers_requests"],
+    endpoint: (id, from, to) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage?from=${from}&to=${to}`,
+    fetchImpl: async (url) => {
+      seenUrls.push(url);
+      return okJson({ success: true, result: rows });
+    },
+    metricMap: { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" },
+    expectedWindow: { start: "2026-09-01T00:00:00.000Z", end: "2026-10-01T00:00:00.000Z" },
   });
   const reported = await good.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
-  assert.equal(reported.values.queue_ops, 42);
+  assert.equal(reported.values.workers_requests, 150);
   assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_BILLING);
+  assert.equal(reported.coverage.windowStart, "2026-09-01T00:00:00.000Z");
+  assert.equal(reported.coverage.windowEnd, "2026-09-06T00:00:00.000Z");
+  assert.ok(seenUrls.some((url) => url.includes("from=2026-09-01") && url.includes("to=2026-09-06")));
+  assert.ok(seenUrls.every((url) => !url.includes("to=2026-10-01")), "queried a future month end");
   for (const status of [401, 403]) {
     const denied = createBillableUsageProvider({
-      covers: ["queue_ops"],
+      covers: ["workers_requests"],
       endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
       fetchImpl: async () => ({ status, json: async () => ({}) }),
     });
@@ -194,7 +276,7 @@ await check("billable usage passes only full-window verified responses as billin
     );
   }
   const missing = createBillableUsageProvider({
-    covers: ["queue_ops"],
+    covers: ["workers_requests"],
     endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
     fetchImpl: async () => ({ status: 404, json: async () => ({}) }),
   });
@@ -202,27 +284,145 @@ await check("billable usage passes only full-window verified responses as billin
     missing.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
     (error) => error instanceof ProviderFailure && error.reason === "NO_AUTH_ENDPOINT",
   );
-  const shortWindow = createBillableUsageProvider({
-    covers: ["queue_ops"],
+  const synthetic = createBillableUsageProvider({
+    covers: ["workers_requests"],
     endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
-    fetchImpl: async () => okJson({ success: true, window_start: window.start, window_end: "2026-09-02T00:00:00.000Z", result: [] }),
-    expectedWindow: window,
+    fetchImpl: async () => okJson({ success: true, result: [{ metric: "workers_requests", unit: "requests", value: 42 }] }),
+    metricMap: { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" },
   });
   await assert.rejects(
-    shortWindow.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-    (error) => error instanceof ProviderFailure && error.reason === "WINDOW_MISMATCH",
-  );
-  const badUnit = createBillableUsageProvider({
-    covers: [],
-    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
-    fetchImpl: async () => okJson({ success: true, window_start: window.start, window_end: window.end, result: [{ metric: "m", unit: "furlongs", value: 1 }] }),
-    expectedWindow: window,
-  });
-  await assert.rejects(
-    badUnit.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    synthetic.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
     (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
   );
-  assert.ok(BILLABLE_USAGE_KNOWN_UNITS.includes("operations"));
+  // A substituted metric name misses the reviewed triple even though id,
+  // unit, quantity, and period are all correct.
+  const substituted = createBillableUsageProvider({
+    covers: ["workers_requests"],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async () => okJson({ success: true, result: [1, 2, 3, 4, 5].map((day) => focusRow({
+      id: "workers_standard_requests", name: "Substituted Name", unit: "Requests", quantity: day * 10, ...dayRange(day),
+    })) }),
+    metricMap: { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" },
+  });
+  await assert.rejects(
+    substituted.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  const unknownPair = createBillableUsageProvider({
+    covers: [],
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/billable/usage`,
+    fetchImpl: async () => okJson({ success: true, result: [focusRow({ id: "unmapped_metric", unit: "Requests", quantity: 1, ...dayRange(1) })] }),
+    metricMap: { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" },
+  });
+  await assert.rejects(
+    unknownPair.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+});
+
+await check("cumulative counts, echoes, and drift fail closed", async () => {
+  const d1Endpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`;
+  // total_count 100 with a single reported item is silent truncation.
+  const truncated = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: ["d1_rows_read"],
+    endpoint: d1Endpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ uuid: "one" }], result_info: { page: 1, per_page: 100, total_count: 100, total_pages: 1 } }),
+  });
+  await assert.rejects(
+    truncated.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
+  // Totals without a page echo leave the slice unplaced.
+  const noEcho = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: ["d1_rows_read"],
+    endpoint: d1Endpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ uuid: "one" }], result_info: { per_page: 100, total_count: 1, total_pages: 1 } }),
+  });
+  await assert.rejects(
+    noEcho.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+  );
+  // Drifting totals across pages fail closed.
+  const drifting = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: [],
+    endpoint: d1Endpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      return okJson({ success: true, result: [{ uuid: `db-${page}` }], result_info: { page, per_page: 1, total_count: page === 1 ? 2 : 3, total_pages: page === 1 ? 2 : 3 } });
+    },
+    perPage: 1,
+  });
+  await assert.rejects(
+    drifting.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
+  // AI Search enforces the same cumulative accounting on its own shape.
+  const aiTruncated = createAiSearchInventoryProvider({
+    endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
+    fetchImpl: async () => okJson({ success: true, result: [{ id: "one" }], result_info: { page: 1, per_page: 100, total_count: 100, total_pages: 1 } }),
+  });
+  await assert.rejects(
+    aiTruncated.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
+});
+
+await check("ai-search short pages without totals never prove full coverage", async () => {
+  const aiEndpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`;
+  // A short page without totals (or any other terminal signal on this shape)
+  // is truncation-ambiguous: it must not yield fullAccount:true.
+  const shortNoTotals = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ id: "one" }] }),
+  });
+  await assert.rejects(
+    shortNoTotals.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
+  const snapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [shortNoTotals],
+  });
+  assert.equal(snapshot.metrics.ai_search_instances, "unknown");
+  assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("ai-search-inventory-list")));
+  // Totals present on page 1 then absent on a later page fail closed too.
+  const vanishing = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "one" }], result_info: { page: 1, total_pages: 2, per_page: 100 } });
+      }
+      return okJson({ success: true, result: [{ id: "two" }] });
+    },
+  });
+  await assert.rejects(
+    vanishing.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
+  const vanished = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [vanishing],
+  });
+  assert.equal(vanished.metrics.ai_search_instances, "unknown");
+});
+
+await check("R2 cursor that never terminates rejects after the hop cap", async () => {
+  const advancing = createR2CursorInventoryProvider({
+    endpoint: (id, cursor) => cursor
+      ? `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
+      : `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets`,
+    fetchImpl: async (url) => {
+      const cursor = new URL(url).searchParams.get("cursor");
+      const next = cursor === null ? "cursor-1" : `${cursor}-next`;
+      return okJson({ success: true, result: { buckets: [{ name: next }], cursor: next } });
+    },
+  });
+  await assert.rejects(
+    advancing.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "PARTIAL_PAGINATION",
+  );
 });
 
 await check("GraphQL analytics never carries billing authority", async () => {

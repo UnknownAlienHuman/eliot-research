@@ -26,6 +26,7 @@ import {
 import {
   METRIC_PROVENANCE,
   REQUIRED_METRIC_KEYS,
+  CLOCK_SKEW_MS,
   SNAPSHOT_MAX_AGE_MS,
   UNKNOWN,
   UNKNOWN_REASONS,
@@ -37,24 +38,25 @@ import {
 } from "./cloudflare-usage-envelope.mjs";
 import {
   UsageCollectionError,
-  createAiSearchInventoryProvider,
-  createPaginatedInventoryProvider,
-  createR2CursorInventoryProvider,
 } from "./cloudflare-usage-providers.mjs";
 
 export { METRIC_PROVENANCE, UNKNOWN_REASONS };
 export {
-  BILLABLE_USAGE_KNOWN_UNITS,
   ProviderFailure,
   UsageCollectionError,
   createAiSearchInventoryProvider,
-  createBillableUsageProvider,
   createGraphQlAnalyticsProvider,
   createPaginatedInventoryProvider,
   createR2CursorInventoryProvider,
   safeFetchMeta,
   toTypedReason,
 } from "./cloudflare-usage-providers.mjs";
+export {
+  BILLABLE_LIVE_COVERS,
+  REVIEWED_BILLABLE_TRIPLES,
+  buildLiveProviderRegistry,
+  createBillableUsageProvider,
+} from "./cloudflare-usage-billable.mjs";
 
 export const USAGE_SOURCE_LIVE = "wrangler-oauth-live";
 export const USAGE_SOURCE_SEALED = "sealed-no-authoritative-aggregate";
@@ -149,29 +151,9 @@ export function assertLiveRegistryCoversAll(registry = METRIC_SOURCE_REGISTRY) {
   return true;
 }
 
-// Providers live in ./cloudflare-usage-providers.mjs (re-exported above).
-
-// Live registry builder: paginated inventory collectors per service where an
-// authoritative list API exists, plus explicit limitations elsewhere. Never
-// fabricates zero and never silently waives an uncovered metric.
-// AI Search uses GET /accounts/{id}/ai-search/instances (never
-// ai-search/indexes). R2 uses cursor pagination over result.buckets.
-export function buildLiveProviderRegistry({ fetchImpl = fetch, accountId, apiBase = "https://api.cloudflare.com/client/v4" } = {}) {
-  if (typeof accountId !== "string" || accountId === "") {
-    collectionFail("COLLECTION_INVALID", "accountId is required for the live registry");
-  }
-  const list = (service, page, perPage) =>
-    `${apiBase}/accounts/${accountId}/${service}?page=${page}&per_page=${perPage}`;
-  const r2CursorList = (id, cursor) =>
-    cursor ? `${apiBase}/accounts/${id}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
-      : `${apiBase}/accounts/${id}/r2/buckets`;
-  return [
-    createPaginatedInventoryProvider({ group: "d1-inventory-list", covers: [], endpoint: (id, page, perPage) => list("d1/database", page, perPage), fetchImpl }),
-    createR2CursorInventoryProvider({ group: "r2-inventory-list", covers: [], endpoint: r2CursorList, fetchImpl }),
-    createPaginatedInventoryProvider({ group: "queue-inventory-list", covers: [], endpoint: (id, page, perPage) => list("queues", page, perPage), fetchImpl }),
-    createAiSearchInventoryProvider({ group: "ai-search-inventory-list", covers: ["ai_search_instances"], endpoint: (id, page, perPage) => list("ai-search/instances", page, perPage), fetchImpl }),
-  ];
-}
+// Providers live in ./cloudflare-usage-providers.mjs (inventory, analytics;
+// re-exported above) and ./cloudflare-usage-billable.mjs (Usage v2 billing
+// plus the live registry builder; re-exported above).
 
 // Collect an account-wide aggregate. `providers` is an explicitly injected
 // extension point (empty by default: every counter stays unknown until a
@@ -199,18 +181,36 @@ export async function collectAccountUsage(options = {}) {
   for (const key of REQUIRED_METRIC_KEYS) {
     totals[key] = null;
     gaps[key] = false;
-    trust[key] = { state: "unknown-untrusted", sources: [], coverage: null };
+    trust[key] = { state: "unknown-untrusted", sources: [], coverage: null, gap: null, provenance: METRIC_PROVENANCE.UNAVAILABLE };
   }
   const providerResults = [];
   const providerErrors = [];
   const fullAccountReporters = {};
   const expectedWindow = monthlyWindowFor(now);
   const expectedDaily = dailyWindowFor(now);
-  const markGap = (key, reason) => {
+  const expectedEndMs = Date.parse(expectedWindow.end);
+  const todayStartMs = Date.parse(expectedDaily.start);
+  const markGap = (key, reason, provenance = METRIC_PROVENANCE.UNAVAILABLE) => {
     gaps[key] = true;
     totals[key] = UNKNOWN;
-    trust[key] = { state: "unknown-untrusted", sources: trust[key].sources, coverage: trust[key].coverage, gap: reason };
+    trust[key] = { state: "unknown-untrusted", sources: trust[key].sources, coverage: trust[key].coverage, gap: reason, provenance };
   };
+  const parseCoverageTime = (value) => {
+    const parsed = typeof value === "string" ? Date.parse(value) : NaN;
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  // Provenance authorization: a numeric enters the snapshot only through an
+  // authorized channel. Analytics samples stay diagnostic metadata; ledger
+  // estimates have no complete account-bound ledger contract in this repo;
+  // inventory counts admit only registry-authorized groups; billing admits
+  // only the validated Usage v2 provider. Reporters without any provenance
+  // or authority signal keep the historic summation path.
+  const isAnalyticsReporter = (provider, reported) =>
+    provider?.analyticsOnly === true || provider?.kind === "analytics-graphql" ||
+    reported?.provenance === METRIC_PROVENANCE.ANALYTICS_NONBILLING;
+  const claimsAuthority = (provider, reported) =>
+    isAnalyticsReporter(provider, reported) || reported?.provenance != null ||
+    provider?.kind === "billing-usage" || provider?.kind === "inventory-ai-search";
   for (const provider of providers) {
     const group = provider?.group ?? "unnamed-provider";
     const declaredCovers = Array.isArray(provider?.covers) ? provider.covers : null;
@@ -219,24 +219,43 @@ export async function collectAccountUsage(options = {}) {
       const reported = await provider.collect({ accountId: expectedAccountId, bearer, now });
       const values = reported?.values ?? {};
       const coverage = reported?.coverage ?? null;
+      const provenance = reported?.provenance ?? null;
+      const analytics = isAnalyticsReporter(provider, reported);
+      const authorityClaimed = claimsAuthority(provider, reported);
       const keys = [];
-      // Coverage binding: wrong account, wrong/reset-crossing window, or
-      // partial pagination fails closed for every metric this provider covers.
+      // Coverage binding: wrong/missing account, invalid/future/mismatched
+      // window, or partial pagination fails closed for every metric this
+      // provider covers. Windows must start at the expected monthly/daily
+      // boundary and never end in the future; billing usage must additionally
+      // span month-start through today (never a future month end).
       let coverageOk = true;
       let coverageReason = "";
       if (coverage !== null) {
         if (coverage.accountId !== undefined && coverage.accountId !== expectedAccountId) {
           coverageOk = false;
           coverageReason = "wrong-account coverage";
-        } else if (coverage.windowStart !== undefined && coverage.windowEnd !== undefined) {
-          const metricWindow = coverage.windowStart;
-          void metricWindow;
-          if (coverage.windowEnd <= coverage.windowStart) {
+        } else if (authorityClaimed && coverage.accountId !== expectedAccountId) {
+          coverageOk = false;
+          coverageReason = "missing account binding";
+        } else if (coverage.windowStart !== undefined || coverage.windowEnd !== undefined) {
+          const startMs = parseCoverageTime(coverage.windowStart);
+          const endMs = parseCoverageTime(coverage.windowEnd);
+          if (startMs === null || endMs === null || !(startMs < endMs)) {
             coverageOk = false;
             coverageReason = "malformed coverage window";
-          } else if (!(coverage.windowStart <= new Date(expectedWindow.start).getTime() + 5 * 60 * 1000 ||
-            coverage.windowStart <= new Date(expectedDaily.start).getTime() + 5 * 60 * 1000)) {
-            void expectedWindow;
+          } else if (endMs > now + CLOCK_SKEW_MS || startMs > now + CLOCK_SKEW_MS) {
+            coverageOk = false;
+            coverageReason = "future coverage window";
+          } else if (coverage.windowStart !== expectedWindow.start && coverage.windowStart !== expectedDaily.start) {
+            coverageOk = false;
+            coverageReason = "mismatched coverage window";
+          } else if (endMs > expectedEndMs) {
+            coverageOk = false;
+            coverageReason = "mismatched coverage window";
+          } else if (provider?.kind === "billing-usage" &&
+            (coverage.windowStart !== expectedWindow.start || endMs < todayStartMs - CLOCK_SKEW_MS)) {
+            coverageOk = false;
+            coverageReason = "partial billing interval";
           }
         }
         if (Number.isInteger(coverage.completedPages) && Number.isInteger(coverage.totalPages) &&
@@ -244,15 +263,67 @@ export async function collectAccountUsage(options = {}) {
           coverageOk = false;
           coverageReason = `partial pagination ${coverage.completedPages}/${coverage.totalPages}`;
         }
+      } else if (authorityClaimed && Object.values(values).some((value) => typeof value === "number")) {
+        coverageOk = false;
+        coverageReason = "missing coverage binding";
       }
       const claimedKeys = declaredCovers ?? Object.keys(values);
+      const reporterProvenance = analytics ? METRIC_PROVENANCE.ANALYTICS_NONBILLING
+        : (provenance ?? METRIC_PROVENANCE.UNAVAILABLE);
       if (!coverageOk) {
         for (const key of claimedKeys) {
           if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
-          markGap(key, `${group}: ${coverageReason}`);
+          markGap(key, `${group}: ${coverageReason}`, reporterProvenance);
           providerErrors.push(`${group} coverage rejected for ${key}: ${coverageReason}; keeping unknown`);
         }
         providerResults.push({ group, ok: false, keys: [] });
+        continue;
+      }
+      // Analytics is diagnostic metadata only: observed samples are recorded
+      // by key, never admitted, and never gap other channels.
+      if (analytics) {
+        const sampleKeys = Object.keys(values).filter((key) =>
+          REQUIRED_METRIC_KEYS.includes(key) && typeof values[key] === "number");
+        if (sampleKeys.length > 0) {
+          providerErrors.push(`${group} analytics samples are diagnostic-only, never billing authority`);
+        }
+        providerResults.push({ group, ok: true, keys: [], analytics: true, sample_keys: sampleKeys });
+        for (const key of sampleKeys) {
+          if (!gaps[key] && totals[key] === null) {
+            trust[key] = { state: "unknown-untrusted", sources: [group], coverage, gap: null, provenance: reporterProvenance };
+          }
+        }
+        continue;
+      }
+      // Channel authorization for reporters that claim a provenance.
+      let channelProvenance = METRIC_PROVENANCE.UNAVAILABLE;
+      const refuseChannel = (reason, refusedProvenance) => {
+        for (const key of claimedKeys) {
+          if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
+          markGap(key, `${group}: ${reason}`, refusedProvenance);
+        }
+        providerErrors.push(`${group} ${reason}; keeping unknown`);
+        providerResults.push({ group, ok: false, keys: [] });
+      };
+      if (provenance === METRIC_PROVENANCE.AUTHORITATIVE_BILLING) {
+        if (provider?.kind !== "billing-usage" || coverage?.fullAccount !== true) {
+          refuseChannel("billing authority requires the validated Usage v2 provider", provenance);
+          continue;
+        }
+        channelProvenance = provenance;
+      } else if (provenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY) {
+        channelProvenance = provenance;
+      } else if (provenance === METRIC_PROVENANCE.LEDGER_ESTIMATE) {
+        refuseChannel("ledger estimates stay unknown without a complete account-bound ledger contract", provenance);
+        continue;
+      } else if (provenance === METRIC_PROVENANCE.UNAVAILABLE) {
+        refuseChannel("reporter declares no verified aggregate", provenance);
+        continue;
+      } else if (provenance !== null) {
+        refuseChannel("unknown provenance", METRIC_PROVENANCE.UNAVAILABLE);
+        continue;
+      } else if (provider?.kind === "billing-usage" || provider?.kind === "inventory-ai-search") {
+        refuseChannel("authority kind without provenance", METRIC_PROVENANCE.UNAVAILABLE);
         continue;
       }
       for (const [key, value] of Object.entries(values)) {
@@ -264,6 +335,18 @@ export async function collectAccountUsage(options = {}) {
           markGap(key, `${group} malformed sample`);
           providerErrors.push(`${group} reported malformed ${key}; keeping unknown`);
           continue;
+        }
+        // Inventory counts admit only explicitly inventory-derived metrics
+        // the contract allows (registry-authorized groups); billing usage
+        // counters never ride inventory provenance.
+        if (channelProvenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY) {
+          const entry = METRIC_SOURCE_REGISTRY[key];
+          if (!entry || entry.provenance !== METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY ||
+            !entry.sources.includes(provider?.group)) {
+            markGap(key, `${group} inventory not authorized for ${key}`, channelProvenance);
+            providerErrors.push(`${group} reported unauthorized inventory ${key}; keeping unknown`);
+            continue;
+          }
         }
         keys.push(key);
         if (value === UNKNOWN) {
@@ -292,6 +375,8 @@ export async function collectAccountUsage(options = {}) {
           state: "trusted-partial",
           sources: [...new Set([...trust[key].sources, group])],
           coverage: coverage ?? { accountId: expectedAccountId, fullAccount: false },
+          gap: null,
+          provenance: channelProvenance,
         };
       }
       // Inventory-only providers prove pagination readback without counters.
