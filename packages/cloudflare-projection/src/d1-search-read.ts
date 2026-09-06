@@ -4,6 +4,7 @@ import type {
   LexicalSearchPort,
   RetrievalRequest,
 } from "@eliotr/retrieval";
+import { projectionDigest } from "./canonical.js";
 
 export const D1_SEARCH_LANE_MAX_LIMIT = 50;
 const MAX_QUERY_UTF8_BYTES = 512;
@@ -40,6 +41,7 @@ interface WatermarkRow {
   readonly state: unknown;
   readonly projection_generation: unknown;
   readonly readback_receipt_ref: unknown;
+  readonly updated_at: unknown;
 }
 
 interface GenerationRow {
@@ -67,6 +69,16 @@ interface ItemRow {
 interface SourceRow {
   readonly purge_state: unknown;
   readonly source_owner_generation: unknown;
+  readonly owner_status: unknown;
+  readonly current_owner_generation: unknown;
+}
+
+interface ActiveItemRow {
+  readonly item_key: unknown;
+  readonly canonical_section_id: unknown;
+  readonly content_sha256: unknown;
+  readonly normalized_start_byte: unknown;
+  readonly normalized_end_byte: unknown;
 }
 
 function utf8Length(value: string): number {
@@ -145,18 +157,24 @@ function scopeIsExpired(request: RetrievalRequest, nowMs: number): boolean {
   return nowMs >= expires;
 }
 
-async function readWatermark(
-  search: D1Database,
-  channel: string,
-  sourceRevisionRef: string,
-): Promise<WatermarkRow | null> {
-  return search
+async function readWatermarks(
+  search: D1Database, channel: string, sourceRevisionRef: string,
+): Promise<readonly WatermarkRow[]> {
+  // One (channel, revision) may carry several generations; the current one is
+  // selected by live active items below, never by an unordered LIMIT 1.
+  const result = await search
     .prepare(
-      "SELECT state, projection_generation, readback_receipt_ref FROM projection_watermark " +
-        "WHERE channel = ?1 AND source_revision_ref = ?2 LIMIT 1",
+      "SELECT state, projection_generation, readback_receipt_ref, updated_at FROM projection_watermark " +
+        "WHERE channel = ?1 AND source_revision_ref = ?2 " +
+        "ORDER BY updated_at DESC, projection_generation DESC LIMIT 65",
     )
     .bind(channel, sourceRevisionRef)
-    .first<WatermarkRow>();
+    .all<WatermarkRow>();
+  const rows = result.results ?? [];
+  if (rows.length > 64) {
+    laneFail("SEARCH_INCOMPLETE", "D1 Search watermark history exceeds its bound");
+  }
+  return rows;
 }
 
 async function readGeneration(
@@ -188,23 +206,44 @@ async function readGuard(
     .first<GuardRow>();
 }
 
-async function readActiveCount(
-  search: D1Database,
-  sourceRevisionRef: string,
-  projectionGeneration: string,
-): Promise<number> {
-  const row = await search
+async function readActiveItemSet(
+  search: D1Database, sourceRevisionRef: string, projectionGeneration: string,
+): Promise<{ readonly count: number; readonly digest: string }> {
+  // Semantic verification: recompute the canonical item-set digest over the
+  // exact active rows (projector shape/order), not the stored 64-hex string.
+  const result = await search
     .prepare(
-      "SELECT COUNT(*) AS active_count FROM projection_item WHERE source_revision_ref = ?1 " +
-        "AND projection_generation = ?2 AND active = 1",
+      "SELECT p.item_key, p.canonical_section_id, p.content_sha256, " +
+        "s.normalized_start_byte, s.normalized_end_byte " +
+        "FROM projection_item p JOIN projection_span s ON s.item_key = p.item_key " +
+        "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
+        "ORDER BY s.normalized_start_byte, p.item_key LIMIT 1025",
     )
     .bind(sourceRevisionRef, projectionGeneration)
-    .first<{ readonly active_count: unknown }>();
-  const count = row?.active_count;
-  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0 || count > 1024) {
-    laneFail("SEARCH_INCOMPLETE", "active projection item count is malformed");
+    .all<ActiveItemRow>();
+  const rows = result.results ?? [];
+  if (rows.length > 1024) {
+    laneFail("SEARCH_INCOMPLETE", "active projection item set exceeds its bound");
   }
-  return count;
+  const decoded = rows.map((row) => {
+    const start = row.normalized_start_byte;
+    const end = row.normalized_end_byte;
+    if (
+      typeof start !== "number" || typeof end !== "number" || !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) || start < 0 || end <= start
+    ) {
+      laneFail("SEARCH_INCOMPLETE", "stored projection span is empty, reversed, or malformed");
+    }
+    return {
+      item_key: assertIdentifier(row.item_key, "stored item_key"),
+      canonical_section_id: assertIdentifier(row.canonical_section_id, "stored canonical_section_id"),
+      content_sha256: assertSha256(row.content_sha256, "stored content_sha256"),
+      start,
+      end,
+    };
+  });
+  const digest = await projectionDigest(decoded);
+  return { count: decoded.length, digest };
 }
 
 interface PinnedGeneration {
@@ -214,80 +253,65 @@ interface PinnedGeneration {
   readonly readback_digest: string;
 }
 
-/** Pin every in-scope revision to its exact READY watermark + receipt + guard + active count. */
+/** Pin every in-scope revision to its current READY generation: receipt, guard, and live active rows. */
 async function pinReadyGenerations(
-  search: D1Database,
-  channel: "exact" | "lexical",
-  members: readonly string[],
-): Promise<{
-  readonly pinned: readonly PinnedGeneration[];
-  readonly missing: readonly string[];
-  readonly stale: readonly string[];
-}> {
+  search: D1Database, channel: "exact" | "lexical", members: readonly string[],
+  ownerGenerations: Readonly<Record<string, string>>,
+): Promise<{ readonly pinned: readonly PinnedGeneration[]; readonly missing: readonly string[]; readonly stale: readonly string[] }> {
   const pinned: PinnedGeneration[] = [];
   const missing: string[] = [];
   const stale: string[] = [];
   for (const member of members) {
-    const watermark = await readWatermark(search, channel, member);
-    if (watermark === null) {
+    const expectedOwner: unknown = ownerGenerations[member];
+    if (typeof expectedOwner !== "string" || !IDENTIFIER.test(expectedOwner)) {
+      laneFail("SEARCH_INCOMPLETE", "scope snapshot omits a valid owner generation for its member");
+    }
+    const watermarks = await readWatermarks(search, channel, member);
+    if (watermarks.length === 0) {
       missing.push(member);
       continue;
     }
-    if (watermark.state !== "READY") {
+    let current: PinnedGeneration | null = null;
+    for (const watermark of watermarks) {
+      if (watermark.state !== "READY") continue;
+      const generation = assertIdentifier(watermark.projection_generation, "stored projection_generation");
+      const receiptRef = assertIdentifier(watermark.readback_receipt_ref, "stored watermark readback_receipt_ref");
+      const generationRow = await readGeneration(search, member, generation);
+      if (generationRow === null || generationRow.state !== "READY") continue;
+      if (
+        typeof generationRow.item_count !== "number" || !Number.isSafeInteger(generationRow.item_count) ||
+        generationRow.item_count < 1 || generationRow.item_count > 1024
+      ) {
+        laneFail("SEARCH_INCOMPLETE", "stored generation item_count is malformed");
+      }
+      const itemSetDigest = assertSha256(generationRow.item_set_digest, "stored item_set_digest");
+      const readbackDigest = assertSha256(generationRow.readback_digest, "stored readback_digest");
+      if (assertIdentifier(generationRow.receipt_ref, "stored receipt_ref") !== receiptRef) continue;
+      const guard = await readGuard(search, member, generation);
+      if (
+        guard === null || guard.receipt_ref !== receiptRef || guard.readback_digest !== readbackDigest ||
+        guard.item_count !== generationRow.item_count || guard.verified !== 1
+      ) {
+        continue;
+      }
+      const active = await readActiveItemSet(search, member, generation);
+      // Superseded generations hold no live active rows and are skipped.
+      // Two generations with live rows are mixed-generation exposure.
+      if (active.count !== generationRow.item_count) continue;
+      if (active.digest !== itemSetDigest) laneFail("SEARCH_INCOMPLETE", "active projection item set digest differs from the generation receipt");
+      if (current !== null) laneFail("SEARCH_INCOMPLETE", "ambiguous current D1 Search generation for its member");
+      current = {
+        source_revision_ref: member,
+        projection_generation: generation,
+        receipt_ref: receiptRef,
+        readback_digest: readbackDigest,
+      };
+    }
+    if (current === null) {
       stale.push(member);
       continue;
     }
-    const generation = assertIdentifier(
-      watermark.projection_generation,
-      "stored projection_generation",
-    );
-    const receiptRef = assertIdentifier(
-      watermark.readback_receipt_ref,
-      "stored watermark readback_receipt_ref",
-    );
-    const generationRow = await readGeneration(search, member, generation);
-    if (generationRow === null || generationRow.state !== "READY") {
-      stale.push(member);
-      continue;
-    }
-    if (
-      typeof generationRow.item_count !== "number" ||
-      !Number.isSafeInteger(generationRow.item_count) ||
-      generationRow.item_count < 1 ||
-      generationRow.item_count > 1024
-    ) {
-      laneFail("SEARCH_INCOMPLETE", "stored generation item_count is malformed");
-    }
-    const itemSetDigest = assertSha256(generationRow.item_set_digest, "stored item_set_digest");
-    void itemSetDigest;
-    const readbackDigest = assertSha256(generationRow.readback_digest, "stored readback_digest");
-    const receiptId = assertIdentifier(generationRow.receipt_ref, "stored receipt_ref");
-    if (receiptId !== receiptRef || readbackDigest.length !== 64) {
-      stale.push(member);
-      continue;
-    }
-    const guard = await readGuard(search, member, generation);
-    if (
-      guard === null ||
-      guard.receipt_ref !== receiptRef ||
-      guard.readback_digest !== readbackDigest ||
-      guard.item_count !== generationRow.item_count ||
-      guard.verified !== 1
-    ) {
-      stale.push(member);
-      continue;
-    }
-    const activeCount = await readActiveCount(search, member, generation);
-    if (activeCount !== generationRow.item_count) {
-      stale.push(member);
-      continue;
-    }
-    pinned.push({
-      source_revision_ref: member,
-      projection_generation: generation,
-      receipt_ref: receiptRef,
-      readback_digest: readbackDigest,
-    });
+    pinned.push(current);
   }
   return { pinned, missing, stale };
 }
@@ -298,8 +322,8 @@ function requirePinnedCoverage(
   stale: readonly string[],
 ): void {
   if (pinned.length === 0) {
-    // A present-but-not-READY generation is stale/incomplete authority, never
-    // an absent index. Only a wholly missing watermark is unavailable.
+    // Present-but-not-READY is incomplete authority, never an absent index.
+    // Only a wholly missing watermark is unavailable.
     if (stale.length > 0) {
       throw new D1SearchLaneError(
         "SEARCH_INCOMPLETE",
@@ -326,32 +350,81 @@ function decodeItemRow(row: ItemRow): {
     item_key: assertIdentifier(row.item_key, "stored item_key"),
     canonical_section_id: assertIdentifier(row.canonical_section_id, "stored canonical_section_id"),
     content_sha256: assertSha256(row.content_sha256, "stored content_sha256"),
-    projection_generation: assertIdentifier(
-      row.projection_generation,
-      "stored projection_generation",
-    ),
+    projection_generation: assertIdentifier(row.projection_generation, "stored projection_generation"),
   };
 }
 
-async function isLiveOwnedRevision(
-  core: D1Database,
-  sourceRevisionRef: string,
-  expectedOwnerGeneration: string | undefined,
-): Promise<boolean> {
-  const row = await core
+async function loadRevisionFence(
+  core: D1Database, sourceRevisionRef: string,
+): Promise<SourceRow | null> {
+  // Revision row plus its source namespace plus the ACTIVE ownership record.
+  return core
     .prepare(
-      "SELECT purge_state, source_owner_generation FROM source_revision " +
-        "WHERE source_revision_ref = ?1 LIMIT 1",
+      "SELECT sr.purge_state, sr.source_owner_generation, o.status AS owner_status, " +
+        "o.source_owner_generation AS current_owner_generation " +
+        "FROM source_revision sr JOIN source s ON s.source_id = sr.source_id " +
+        "LEFT JOIN source_namespace_ownership o ON o.source_namespace_id = s.source_namespace_id " +
+        "AND o.status = 'ACTIVE' WHERE sr.source_revision_ref = ?1 LIMIT 1",
     )
     .bind(sourceRevisionRef)
     .first<SourceRow>();
-  if (row === null) return false;
-  if (row.purge_state !== "LIVE") return false;
-  if (typeof row.source_owner_generation !== "string") return false;
-  if (expectedOwnerGeneration !== undefined && row.source_owner_generation !== expectedOwnerGeneration) {
-    return false;
+}
+
+function fenceDecision(
+  row: SourceRow | null,
+  expectedOwnerGeneration: string,
+): "ok" | "purged" | "conflict" {
+  if (row === null) return "conflict";
+  if (row.purge_state !== "LIVE") return "purged";
+  if (row.source_owner_generation !== expectedOwnerGeneration) return "conflict";
+  if (row.owner_status !== "ACTIVE" || row.current_owner_generation !== expectedOwnerGeneration) return "conflict";
+  return "ok";
+}
+
+async function checkCandidateFence(
+  core: D1Database,
+  ownerGenerations: Readonly<Record<string, string>>,
+  sourceRevisionRef: string,
+): Promise<"ok" | "purged"> {
+  const expected: unknown = ownerGenerations[sourceRevisionRef];
+  if (typeof expected !== "string" || !IDENTIFIER.test(expected)) {
+    laneFail("SEARCH_INCOMPLETE", "scope snapshot omits a valid owner generation for its member");
   }
-  return true;
+  const fence = fenceDecision(await loadRevisionFence(core, sourceRevisionRef), expected);
+  if (fence === "conflict") laneFail("SEARCH_INCOMPLETE", "source ownership authority conflicts with the scope snapshot");
+  return fence;
+}
+
+async function recheckContributingPins(
+  search: D1Database, core: D1Database, channel: "exact" | "lexical",
+  pins: readonly PinnedGeneration[], members: readonly string[],
+  ownerGenerations: Readonly<Record<string, string>>, expiresAt: string, nowMs: number,
+): Promise<void> {
+  // Scope, owner, purge, watermark, generation, and guard are rechecked after
+  // the row reads. A fence that passed but now fails is a race: fail closed.
+  const expires = Date.parse(expiresAt);
+  if (!Number.isFinite(expires)) laneFail("SEARCH_INCOMPLETE", "scope expiry is malformed");
+  if (nowMs >= expires) laneFail("SEARCH_INCOMPLETE", "scope snapshot expired during D1 Search read");
+  if (pins.length === 0) return;
+  const resettled = await pinReadyGenerations(search, channel, members, ownerGenerations);
+  for (const pin of pins) {
+    const match = resettled.pinned.find((row) => row.source_revision_ref === pin.source_revision_ref);
+    if (
+      match === undefined ||
+      match.projection_generation !== pin.projection_generation ||
+      match.receipt_ref !== pin.receipt_ref ||
+      match.readback_digest !== pin.readback_digest
+    ) {
+      laneFail("SEARCH_INCOMPLETE", "D1 Search generation changed during readback");
+    }
+    const expectedOwner: unknown = ownerGenerations[pin.source_revision_ref];
+    if (
+      typeof expectedOwner !== "string" ||
+      fenceDecision(await loadRevisionFence(core, pin.source_revision_ref), expectedOwner) !== "ok"
+    ) {
+      laneFail("SEARCH_INCOMPLETE", "source authority changed during D1 Search readback");
+    }
+  }
 }
 
 function toCandidate(
@@ -394,20 +467,23 @@ export function createD1SearchIdentPort(
     async lookupIdentifiers(request: RetrievalRequest): Promise<readonly LocatorCandidate[]> {
       const limit = validatedLimit(request);
       const identifier = validatedQuery(request);
-      if (!IDENTIFIER.test(identifier) && !SHA256.test(identifier)) {
-        // Bounded probe input that is neither an identifier nor a digest cannot
-        // match a pinned row; it is a valid empty read, not an error.
-        validatedMembers(request);
-        return [];
-      }
       const members = validatedMembers(request);
-      if (members.length === 0) return [];
+      // Authority before valid-empty: expiry and pin coverage precede any
+      // empty read, so neither masks an expired or incomplete scope.
       if (scopeIsExpired(request, now())) {
         throw new D1SearchLaneError("SEARCH_UNAVAILABLE", "scope snapshot is expired");
       }
-      const { pinned, missing, stale } = await pinReadyGenerations(search, "exact", members);
+      if (members.length === 0) return [];
+      const ownerGenerations = request.scope_snapshot.source_owner_generations;
+      const { pinned, missing, stale } = await pinReadyGenerations(search, "exact", members, ownerGenerations);
       requirePinnedCoverage(pinned, missing, stale);
+      if (!IDENTIFIER.test(identifier) && !SHA256.test(identifier)) {
+        // Bounded probe input that is neither identifier nor digest cannot
+        // match a pinned row; authority proven above, so this is valid-empty.
+        return [];
+      }
       const candidates: LocatorCandidate[] = [];
+      const contributing: PinnedGeneration[] = [];
       for (const pin of pinned) {
         const remaining = limit - candidates.length;
         if (remaining <= 0) break;
@@ -430,35 +506,18 @@ export function createD1SearchIdentPort(
           if (item.projection_generation !== pin.projection_generation) {
             laneFail("SEARCH_INCOMPLETE", "projection generation drifted during IDENT read");
           }
-          const memberSet = new Set(members);
-          if (!memberSet.has(pin.source_revision_ref)) continue;
-          const expectedOwner = request.scope_snapshot.source_owner_generations[pin.source_revision_ref];
-          if (
-            !(await isLiveOwnedRevision(core, pin.source_revision_ref, expectedOwner))
-          ) {
-            continue;
-          }
+          if ((await checkCandidateFence(core, ownerGenerations, pin.source_revision_ref)) === "purged") continue;
           candidates.push(
             toCandidate("IDENT", item, pin.source_revision_ref, candidates.length + 1),
           );
+          if (!contributing.includes(pin)) contributing.push(pin);
           if (candidates.length >= limit) break;
         }
       }
-      // Readback: the pinned watermark must still be READY with the same receipt.
-      for (const pin of pinned) {
-        const reread = await readWatermark(search, "exact", pin.source_revision_ref);
-        if (
-          reread === null ||
-          reread.state !== "READY" ||
-          reread.projection_generation !== pin.projection_generation ||
-          reread.readback_receipt_ref !== pin.receipt_ref
-        ) {
-          throw new D1SearchLaneError(
-            "SEARCH_INCOMPLETE",
-            "D1 Search generation changed during IDENT readback",
-          );
-        }
-      }
+      await recheckContributingPins(
+        search, core, "exact", contributing, members, ownerGenerations,
+        request.scope_snapshot.expires_at, now(),
+      );
       return candidates;
     },
   };
@@ -484,14 +543,17 @@ export function createD1SearchLexPort(
       const limit = validatedLimit(request);
       const trimmed = validatedQuery(request);
       const members = validatedMembers(request);
-      if (members.length === 0) return [];
+      // Authority before valid-empty, as in IDENT.
       if (scopeIsExpired(request, now())) {
         throw new D1SearchLaneError("SEARCH_UNAVAILABLE", "scope snapshot is expired");
       }
-      const { pinned, missing, stale } = await pinReadyGenerations(search, "lexical", members);
+      if (members.length === 0) return [];
+      const ownerGenerations = request.scope_snapshot.source_owner_generations;
+      const { pinned, missing, stale } = await pinReadyGenerations(search, "lexical", members, ownerGenerations);
       requirePinnedCoverage(pinned, missing, stale);
       const phrase = sanitizeFts5Phrase(trimmed);
       const candidates: LocatorCandidate[] = [];
+      const contributing: PinnedGeneration[] = [];
       for (const pin of pinned) {
         const remaining = limit - candidates.length;
         if (remaining <= 0) break;
@@ -509,30 +571,18 @@ export function createD1SearchLexPort(
           if (item.projection_generation !== pin.projection_generation) {
             laneFail("SEARCH_INCOMPLETE", "projection generation drifted during LEX read");
           }
-          const expectedOwner = request.scope_snapshot.source_owner_generations[pin.source_revision_ref];
-          if (!(await isLiveOwnedRevision(core, pin.source_revision_ref, expectedOwner))) {
-            continue;
-          }
+          if ((await checkCandidateFence(core, ownerGenerations, pin.source_revision_ref)) === "purged") continue;
           candidates.push(
             toCandidate("LEX", item, pin.source_revision_ref, candidates.length + 1),
           );
+          if (!contributing.includes(pin)) contributing.push(pin);
           if (candidates.length >= limit) break;
         }
       }
-      for (const pin of pinned) {
-        const reread = await readWatermark(search, "lexical", pin.source_revision_ref);
-        if (
-          reread === null ||
-          reread.state !== "READY" ||
-          reread.projection_generation !== pin.projection_generation ||
-          reread.readback_receipt_ref !== pin.receipt_ref
-        ) {
-          throw new D1SearchLaneError(
-            "SEARCH_INCOMPLETE",
-            "D1 Search generation changed during LEX readback",
-          );
-        }
-      }
+      await recheckContributingPins(
+        search, core, "lexical", contributing, members, ownerGenerations,
+        request.scope_snapshot.expires_at, now(),
+      );
       return candidates;
     },
   };
