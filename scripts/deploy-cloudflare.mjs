@@ -5,6 +5,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
+import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
+  verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
 
 import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
 
@@ -41,12 +43,20 @@ async function saveReceipt(receipt) {
 export async function deployCloudflare({ confirmLive = false, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
-  verifyCode = assertLaunchCodeComplete } = {}) {
+  verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami } = {}) {
   const env = { ...environment };
   let input;
+  let oauth = null;
   if (confirmLive) {
     await verifyCode();
     env.ELIOTR_ENVIRONMENT ??= "production";
+    // Local-only credential load (profile file + clock). No remote effect yet,
+    // so launch:code and the local gates below still precede every remote call.
+    if (resolveAuthMode(env) === WRANGLER_OAUTH_MODE) {
+      // OS credential locations come from the host; profile knobs come from the deployment env.
+      oauth = await loadWranglerOAuthCredential({ env: { ...process.env, ...env }, readFile: readWranglerFile ?? read, now: now() });
+      env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, oauth.bearer).CLOUDFLARE_API_TOKEN;
+    }
     if (!env.ELIOTR_DEPLOYMENT_GENERATION) {
       const revision = captureCommand("git", ["rev-parse", "--short=12", "HEAD"], root, env);
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
@@ -62,6 +72,22 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   if (!confirmLive) {
     log("Dry-run gates passed. No remote provisioning or deployment was executed.");
     return null;
+  }
+
+  // Official-profile verification after local gates, before the first remote
+  // mutation. whoami runs with a token-scrubbed env so the browser-OAuth
+  // profile itself (not the injected bearer) is verified.
+  if (oauth) {
+    const getWhoamiOutput = runWranglerWhoami ?? (async () => {
+      const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+        { cwd: root, env: scrubTokenEnv(env), encoding: "utf8", shell: process.platform === "win32" });
+      if (result.error || result.status !== 0) {
+        throw new WranglerOAuthError("OAUTH_UNAVAILABLE",
+          `Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+      }
+      return result.stdout ?? "";
+    });
+    await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.
