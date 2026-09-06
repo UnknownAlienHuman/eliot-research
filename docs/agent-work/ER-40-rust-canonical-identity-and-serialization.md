@@ -156,12 +156,17 @@ This slice ports the exact `scopeSnapshotIdentityPayload`, `scopeSnapshotDigestP
   (`snapshot_id` plus the identity payload), per the accepted TypeScript behavior;
 - key order is ECMAScript UTF-16 code-unit order, matching the current TypeScript
   `canonicalJson` authority; duplicate, missing, extra and unknown keys fail closed;
-- 48 committed vectors cover derivation and verification, ordering and escaped-equivalent
+- 52 committed vectors cover derivation and verification, ordering and escaped-equivalent
   metamorphism, replay versus conflicting replay, digest/ID mismatch on valid-hex tamper,
   foreign owner/scope/generation/policy inputs, zero/max/max+1 boundaries, malformed UTF-8,
-  escapes, non-canonical numbers, surrogates, and bounded depth/member/payload ceilings;
+  escapes, non-canonical numbers, surrogates, bounded depth/member/payload ceilings,
+  valid timestamps with 10 and 20 fractional-second digits, and fail-closed derive
+  rejection of caller-supplied `snapshot_id`/`digest` members;
 - the same corpus executes through the independent JavaScript reference, native Rust and
-  compiled Rust/Wasm, with fuzz and branch-coverage reach.
+  compiled Rust/Wasm, with fuzz and branch-coverage reach, plus a direct differential
+  oracle replaying the accepted TypeScript schema/functions
+  (`scopeSnapshotIdentityPayload`, `scopeSnapshotDigestPayload`, the
+  `expectedSnapshotIdentity` service path) against every committed derive output;
 
 This is identity parity for already-admitted material only. Scope normalization/algebra,
 resolution, authority closure, persistence, expiry/currentness, D1/R2 effects, K1
@@ -169,6 +174,15 @@ cutover/residency/admission/receipt/owner-token semantics and publication identi
 TypeScript/Cloudflare authority. No production call site consumes Rust output, no live
 observation receipt is claimed, and promotion still requires a separate rollback-bound
 review packet. This family is `IMPLEMENTED_NOT_LIVE`.
+
+Corpus evidence (`crates/eliotr-test-vectors/fixtures/scope-snapshot-identity.v1.txt`):
+52 cases, 67,395 bytes, SHA-256
+`4b034739dc45c7aa1e8d85e61b936c7a9c9e42351fe6f761e31f6a428dae64b5`.
+Timestamps track the admitted `IsoDateTimeSchema` (`datetime({ offset: true })`)
+exactly: fractional-second runs have no nine-digit ceiling and are preserved verbatim.
+Derive inputs carrying `snapshot_id` or `digest` are fail-closed
+(`ELIOTR_SNAPSHOT_UNKNOWN_FIELD`, no output); the TypeScript authority strips extra
+keys instead, which the differential oracle pins as an explicit divergence.
 
 ## Active implementation slice — source.owner-cutover.v1 canonical vectors
 

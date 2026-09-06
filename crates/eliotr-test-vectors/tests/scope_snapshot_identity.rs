@@ -1,6 +1,6 @@
 //! Cross-cutting integration tests for `scope-snapshot-identity.v1`.
 //!
-//! The committed 48-case corpus already executes through TypeScript, native Rust and
+//! The committed 52-case corpus already executes through TypeScript, native Rust and
 //! Rust/Wasm. These tests prove the properties the task requires beyond single-case
 //! execution: ordering and escaped-equivalent metamorphism, replay versus conflicting
 //! replay, digest/ID binding on valid-hex tamper, zero/max/max+1 boundaries, parser
@@ -71,7 +71,7 @@ fn corpus_shape_is_committed() {
     let Ok(set) = parsed else {
         return;
     };
-    assert_eq!(set.cases().len(), 48);
+    assert_eq!(set.cases().len(), 52);
 }
 
 #[test]
@@ -290,6 +290,53 @@ fn scope_depth_atom_and_selected_ceilings_hold() {
             max_members: SNAPSHOT_SCOPE_ATOMS_MAX
         })
     );
+}
+
+#[test]
+fn derive_rejects_supplied_snapshot_id_and_digest() {
+    let Ok(base) = core::str::from_utf8(&material_minimal()).map(str::to_owned) else {
+        return;
+    };
+    let Some(stem) = base.strip_suffix('}') else {
+        return;
+    };
+    for derived in [
+        format!("{stem},\"snapshot_id\":\"scope-{}\"}}", "0".repeat(48)),
+        format!("{stem},\"digest\":\"{}\"}}", "0".repeat(64)),
+    ] {
+        assert_eq!(
+            derive_snapshot_identity(derived.as_bytes()),
+            Err(SnapshotIdentityError::UnknownField)
+        );
+    }
+}
+
+#[test]
+fn fractional_seconds_beyond_nine_digits_round_trip() {
+    let cases = [
+        (
+            "2026-01-01T00:00:00.1234567890Z",
+            "2026-01-01T00:15:00.1234567890Z",
+        ),
+        (
+            "2026-01-01T00:00:00.12345678901234567890+05:30",
+            "2026-06-02T12:00:00.00000000000000000001-02:00",
+        ),
+    ];
+    for (created, expires) in cases {
+        let Ok(base) = core::str::from_utf8(&material_minimal()).map(str::to_owned) else {
+            return;
+        };
+        let material = base
+            .replace("2026-01-01T00:00:00.000Z", created)
+            .replace("2026-01-01T00:15:00.000Z", expires);
+        let derived = derive_snapshot_identity(material.as_bytes());
+        assert!(derived.is_ok());
+        if let Ok(bytes) = derived {
+            assert!(core::str::from_utf8(&bytes).unwrap_or("").contains(created));
+            assert_eq!(verify_snapshot_identity(&bytes), Ok(bytes));
+        }
+    }
 }
 
 #[test]
