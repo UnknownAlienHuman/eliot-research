@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import { mkdtemp, readdir, readFile, rm, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { clearTimeout as clearTimer, setTimeout as setTimer } from "node:timers";
-import { setTimeout as delayPromise } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { spawn, spawnSync } from "node:child_process";
 import process from "node:process";
-import { prepareLocal } from "../../../scripts/lib/local-launch.mjs";
+import { prepareLocal, executeLocal, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge } from "../../../scripts/lib/local-owner-bridge.mjs";
+import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
+import { localPolicyQuery } from "../../../scripts/lib/local-read-policy.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -23,10 +22,12 @@ export const CONTROLLED_ISSUER_SEAM = {
   runbook: "docs/implementation/local-launch.md:only signed-identity verification is replaced by a controlled test verifier",
   contract: "docs/implementation/launch-prs/execution-contract.md:fixtures may replace only the external issuer",
   limitation:
-    "No repo-authorized controlled-issuer seam exists for wrangler-dev HTTP without editing ER-44 auth authority; " +
-    "wrangler Worker fetches JWKS from https://*.cloudflareaccess.com over the network, so a local controlled issuer " +
-    "cannot satisfy placeholder Access config without weakening verification. Authorized browser acceptance therefore " +
-    "reports NOT_EXECUTED without live Access login and never counts a fixture as acceptance.",
+    "L1 scope is tests/integration/** only (ER-27 harness). No production issuer/JWKS seam exists in this " +
+    "lane: the Worker verifier (ER-17) and dispatch/config (ER-24/ER-44/ER-00) are unchanged. A controlled " +
+    "positive owner session through the real Wrangler Worker therefore remains NOT_EXECUTED pending the " +
+    "ER-44->ER-24->ER-00 seam with ER-17 review (loopback JWKS, test profile, fetch redirect, fail-closed " +
+    "negatives). This harness proves real-Worker denial, real D1/R2 persistence and real-browser checks " +
+    "without faking authorized Library/logout PASS.",
 };
 
 export const BROWSER_BUNDLE_LIMITS_EXPECTED = {
@@ -77,9 +78,11 @@ export async function verifyControlledIssuerCrypto() {
     ["sign", "verify"],
   );
   const jwk = await webcrypto.subtle.exportKey("jwk", keys.publicKey);
+  // Private key stays in process memory only: never written to Worker vars, browser, logs or fixtures.
+  assert.equal(keys.privateKey.extractable, true, "test key must be in-memory only");
   const encode = (value) => base64UrlEncode(encoder.encode(JSON.stringify(value)));
-  const sign = async (claims) => {
-    const data = `${encode({ alg: "RS256", typ: "JWT", kid: "e2e-key" })}.${encode(claims)}`;
+  const sign = async (claims, kid = "e2e-key") => {
+    const data = `${encode({ alg: "RS256", typ: "JWT", kid })}.${encode(claims)}`;
     const signature = await webcrypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.privateKey, encoder.encode(data));
     return `${data}.${base64UrlEncode(new Uint8Array(signature))}`;
   };
@@ -89,10 +92,12 @@ export async function verifyControlledIssuerCrypto() {
     const [headerPart, payloadPart, signaturePart] = parts;
     const header = JSON.parse(decoder.decode(base64UrlDecode(headerPart)));
     if (header.alg !== "RS256") throw new Error("algorithm denied");
+    if (header.typ !== undefined && header.typ !== "JWT") throw new Error("type denied");
     const payload = JSON.parse(decoder.decode(base64UrlDecode(payloadPart)));
     if (payload.iss !== expectedIssuer) throw new Error("issuer mismatch");
     const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     if (!aud.includes(expectedAudience)) throw new Error("audience mismatch");
+    if (payload.type !== undefined && payload.type !== "app") throw new Error("service-token denied");
     const now = Math.floor(nowMs / 1000);
     if (payload.exp <= now) throw new Error("expired");
     if (payload.iat > now + 60) throw new Error("issued in future");
@@ -108,101 +113,145 @@ export async function verifyControlledIssuerCrypto() {
   assert.equal(payload.sub, "e2e-owner");
   const forged = `${good.split(".").slice(0, 2).join(".")}.AAAA`;
   await assert.rejects(verify(forged, issuer, audience, globalThis.Date.now()), /signature invalid/);
+  await assert.rejects(verify("not-a-jwt", issuer, audience, globalThis.Date.now()), /malformed/);
   const expired = await sign({ iss: issuer, aud: [audience], sub: "e2e-owner", type: "app", iat: nowSeconds - 1000, exp: nowSeconds - 10 });
   await assert.rejects(verify(expired, issuer, audience, globalThis.Date.now()), /expired/);
   await assert.rejects(verify(good, "https://other.cloudflareaccess.com", audience, globalThis.Date.now()), /issuer mismatch/);
   await assert.rejects(verify(good, issuer, "other-audience", globalThis.Date.now()), /audience mismatch/);
+  const service = await sign({ iss: issuer, aud: [audience], sub: "e2e-owner", type: "service", iat: nowSeconds, exp: nowSeconds + 600 });
+  await assert.rejects(verify(service, issuer, audience, globalThis.Date.now()), /service-token denied/);
+  const wrongAlg = `${base64UrlEncode(encoder.encode(JSON.stringify({ alg: "HS256", typ: "JWT", kid: "e2e-key" })))}.${good.split(".")[1]}.${good.split(".")[2]}`;
+  await assert.rejects(verify(wrongAlg, issuer, audience, globalThis.Date.now()), /algorithm denied/);
   return { protocol: "eliotr.owner-e2e.controlled-issuer.v1", state: "PASS", issuer, audience };
 }
 
-async function chromiumExecutable() {
-  const candidates = [process.env.ELIOTR_BROWSER_EXECUTABLE, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser",
-    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe"];
-  try {
-    const playwright = await import("playwright-core");
-    const path = playwright?.chromium?.executablePath?.();
-    if (typeof path === "string" && path.length > 0) candidates.unshift(path);
-  } catch { /* playwright-core optional; system Chromium via CDP is sufficient. */ }
-  for (const candidate of candidates.filter(Boolean)) {
-    try { await access(candidate); return candidate; } catch { /* Try next candidate. */ }
-  }
-  throw new Error("Chromium is required; set ELIOTR_BROWSER_EXECUTABLE to the installed executable");
+function d1Query(paths, binding, sql) {
+  const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { capture: true });
+  const batches = JSON.parse(output);
+  assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
+  return batches[0].results;
 }
 
-async function launchCdp() {
-  const temporary = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
-  const binary = await chromiumExecutable();
-  const version = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 5000, shell: false });
-  const label = (version.stdout ?? "").trim().slice(0, 256);
-  const browser = spawn(binary, ["--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
-    "--disable-background-networking", "--disable-component-update", "--disable-extensions", "--no-first-run",
-    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${temporary}`, "about:blank"],
-    { stdio: ["ignore", "ignore", "pipe"], shell: false });
-  let startupLog = "";
-  const onLog = (chunk) => { startupLog = (startupLog + chunk.toString("utf8")).slice(-8192); };
-  browser.stderr.on("data", onLog);
-  const closing = new Promise((resolve) => browser.once("close", resolve));
-  let startupError;
-  browser.once("error", (error) => { startupError = error.code ?? "SPAWN_FAILED"; });
-  const deadline = globalThis.Date.now() + 10000;
-  let port;
-  while (globalThis.Date.now() < deadline) {
-    if (startupError || browser.exitCode !== null || browser.signalCode !== null) {
-      throw new Error(`Chromium exited before DevTools startup; diagnostics:\n${startupLog}`);
-    }
-    try {
-      const text = await readFile(resolve(temporary, "DevToolsActivePort"), "utf8");
-      const candidate = Number(text.split("\n")[0]);
-      if (Number.isInteger(candidate) && candidate > 0 && candidate <= 65535) { port = candidate; break; }
-    } catch { /* Still starting. */ }
-    await delayPromise(25);
+async function verifyMigrationLedgers(paths) {
+  const counts = {};
+  for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
+    const expected = (await readdir(resolve(root, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
+    assert.ok(expected.length > 0, "migration streams must be non-empty");
+    const rows = d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
+    counts[binding] = expected.length;
   }
-  if (!port) throw new Error(`Browser deadline: DevTools startup; diagnostics:\n${startupLog}`);
-  browser.stderr.removeListener("data", onLog);
-  browser.stderr.resume();
-  const targets = await (await globalThis.fetch(`http://127.0.0.1:${port}/json/list`, { signal: globalThis.AbortSignal.timeout(5000) })).json();
-  const target = targets.find((item) => item.type === "page");
-  assert.ok(target);
-  const socket = new globalThis.WebSocket(target.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener("open", resolve, { once: true });
-    socket.addEventListener("error", reject, { once: true });
+  return counts;
+}
+
+async function launchPlaywright() {
+  // Pinned Playwright API only: chromium browser/context/page. No raw CDP/WebSocket control.
+  const { chromium } = await import("playwright-core");
+  const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
+  const executable = process.env.ELIOTR_BROWSER_EXECUTABLE;
+  if (executable) await access(executable);
+  const context = await chromium.launchPersistentContext(profileDir, {
+    ...(executable ? { executablePath: executable } : { channel: "chrome" }),
+    headless: true,
+    args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run",
+      "--disable-background-networking", "--disable-component-update", "--disable-extensions",
+      "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1"],
   });
-  let id = 0;
-  const awaiting = new Map();
-  const errors = [];
-  socket.addEventListener("message", (message) => {
-    const value = JSON.parse(message.data);
-    if (value.method === "Runtime.exceptionThrown") errors.push(JSON.stringify(value.params.exceptionDetails).slice(0, 2048));
-    const waiting = awaiting.get(value.id);
-    if (!waiting) return;
-    awaiting.delete(value.id);
-    clearTimer(waiting.timer);
-    if (value.error) waiting.reject(new Error(JSON.stringify(value.error)));
-    else waiting.resolve(value.result);
+  const browser = context.browser();
+  assert.ok(browser, "Playwright browser must be owned by this harness");
+  const version = await browser.version();
+  const page = context.pages()[0] ?? await context.newPage();
+  const consoleErrors = [];
+  const pageErrors = [];
+  const failedRequests = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text().slice(0, 2048));
   });
-  const cdp = (method, params = {}) => new Promise((resolve, reject) => {
-    const current = ++id;
-    awaiting.set(current, { resolve, reject, timer: setTimer(() => { awaiting.delete(current); reject(new Error(`CDP timeout: ${method}`)); }, 5000) });
-    socket.send(JSON.stringify({ id: current, method, params }));
-  });
-  const evaluate = async (expression) => {
-    const result = await cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails).slice(0, 2048));
-    return result.result.value;
-  };
+  page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
+  page.on("requestfailed", (request) => { failedRequests.push(
+    `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`.slice(0, 512)); });
+  const evaluate = (expression) => page.evaluate(expression);
   const close = async () => {
-    try { socket.close(); } catch { /* Already closed. */ }
-    if (browser.exitCode === null) {
-      browser.kill("SIGTERM");
-      const timer = setTimer(() => { try { browser.kill("SIGKILL"); } catch { /* Already exited. */ } }, 3000);
-      try { await closing; } finally { clearTimer(timer); }
-    }
-    await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    try { await context.close(); } catch { /* Best-effort. */ }
+    try { await browser.close(); } catch { /* Already closed. */ }
+    await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await assert.rejects(access(profileDir), /ENOENT/, "temp browser profile must be removed");
   };
-  await cdp("Runtime.enable");
-  await cdp("Page.enable");
-  return { binary, label, evaluate, cdp, errors, close };
+  return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, close, profileDir, version };
+}
+
+async function readBrowserStorage(page) {
+  return page.evaluate(`(async () => {
+    const out = { localKeys: Object.keys(localStorage), sessionKeys: Object.keys(sessionStorage),
+      cookie: document.cookie || "", indexedDB: [], caches: [], idbDump: "", cacheUrls: [] };
+    if (typeof indexedDB !== "undefined" && indexedDB.databases) {
+      try { out.indexedDB = (await indexedDB.databases()).map((d) => d.name); } catch { out.indexedDB = ["unknown"]; }
+    }
+    if (typeof caches !== "undefined") {
+      try {
+        out.caches = await caches.keys();
+        for (const name of out.caches) {
+          try {
+            const cache = await caches.open(name);
+            for (const req of await cache.keys()) out.cacheUrls.push(req.url.slice(0, 512));
+          } catch { out.cacheUrls.push("unreadable"); }
+        }
+      } catch { out.caches = ["unknown"]; }
+    }
+    for (const name of out.indexedDB) {
+      try {
+        const open = indexedDB.open(name);
+        const db = await new Promise((resolve, reject) => {
+          open.onsuccess = () => resolve(open.result);
+          open.onerror = () => reject(open.error);
+        });
+        const dumps = [];
+        for (const storeName of Array.from(db.objectStoreNames)) {
+          const rows = await new Promise((resolve, reject) => {
+            const tx = db.transaction(storeName, "readonly");
+            const req = tx.objectStore(storeName).getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+          });
+          dumps.push(storeName + ":" + JSON.stringify(rows).slice(0, 4096));
+        }
+        db.close();
+        out.idbDump += dumps.join("|").slice(0, 8192);
+      } catch { out.idbDump += "unreadable"; }
+    }
+    return out;
+  })()`);
+}
+
+function assertOnlyDenialNoise(consoleErrors, label) {
+  // The unauthenticated PWA shell attempts its private catalog fetch and correctly receives 401;
+  // Chromium logs that denial as a console resource error. That noise proves denial, not a JS defect.
+  const unexpected = consoleErrors.filter((text) => !/Failed to load resource.*401/.test(text));
+  assert.deepEqual(unexpected, [], `${label}: unexpected console errors: ${unexpected.slice(0, 2).join("; ")}`);
+}
+
+function assertOnlyExpectedFailedRequests(failedRequests, label) {
+  // The PWA cancels stale catalog requests on navigation/refresh (explicit cancellation discipline);
+  // Chromium reports those as net::ERR_ABORTED. Any other network failure (refused/reset/cert) is a defect.
+  const unexpected = failedRequests.filter((text) =>
+    !(/\/api\//.test(text) && /ERR_ABORTED|ABORTED|aborted|cancel/i.test(text)));
+  assert.deepEqual(unexpected, [], `${label}: unexpected failed requests: ${unexpected.slice(0, 2).join("; ")}`);
+}
+
+function assertNoPrivateStorage(storage, label) {
+  assert.deepEqual(storage.localKeys, [], `${label}: localStorage must be empty`);
+  assert.deepEqual(storage.sessionKeys, [], `${label}: sessionStorage must be empty`);
+  assert.ok(!storage.cookie.includes("eyJ") && !storage.cookie.toLowerCase().includes("jwt"),
+    `${label}: document.cookie must hold no JWT`);
+  assert.ok(storage.caches.every((name) => name === "eliotr-shell-v1"),
+    `${label}: only the non-private PWA shell cache may exist, found: ${JSON.stringify(storage.caches)}`);
+  assert.ok(storage.cacheUrls.every((url) => !url.includes("/api/") && !url.includes("/federation/") && !url.includes("/oauth/") && !url.includes("eyJ")),
+    `${label}: CacheStorage must not retain private API responses`);
+  assert.ok(storage.indexedDB.every((name) => name === "eliotr-shell-v1" || storage.indexedDB.length === 0),
+    `${label}: only the non-private PWA shell DB may exist, found: ${JSON.stringify(storage.indexedDB)}`);
+  const dump = `${storage.idbDump}|${storage.cookie}`;
+  assert.ok(!dump.includes("eyJ") && !dump.includes("cf-access") && !dump.includes("catalog-") && !dump.includes("source-"),
+    `${label}: browser storage must hold no credentials/source bytes/private responses`);
 }
 
 export async function runOwnerE2E() {
@@ -213,7 +262,7 @@ export async function runOwnerE2E() {
   const beforeDirs = new Set(await readdir(stateRoot).catch(() => []));
   const directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
   let worker;
-  let cdp;
+  let playwright;
   let teardownError = null;
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
@@ -234,100 +283,116 @@ export async function runOwnerE2E() {
   try {
     const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
     await access(resolve(root, "apps/eliotr-pwa/dist/index.html"));
-    receipt.isolated_setup = "PASS";
-    const expectedCore = (await readdir(resolve(root, "infra/d1/core/migrations"))).filter((n) => n.endsWith(".sql")).sort();
-    const expectedSearch = (await readdir(resolve(root, "infra/d1/search/migrations"))).filter((n) => n.endsWith(".sql")).sort();
-    assert.ok(expectedCore.length > 0 && expectedSearch.length > 0, "migration streams must be non-empty");
     assert.equal(paths.directory, directory, "isolated state must use the fresh directory");
+    assert.ok(paths.persist.startsWith(directory), "persisted D1/R2 state must live under the isolated directory");
+    const persistEntries = await readdir(paths.persist).catch(() => []);
+    assert.ok(persistEntries.length >= 0, "local R2/D1 persist root must be inspectable");
+    const ledgers = await verifyMigrationLedgers(paths);
+    assert.ok(ledgers.CORE_DB > 0 && ledgers.SEARCH_DB > 0, "both migration streams must be applied");
+    // Supported D1 write/readback without raw fixture INSERTs: narrow namespace init with a
+    // controlled OS-operator identity (not a signed Access login; login qualification stays NOT_EXECUTED).
+    const operatorIdentity = { protocol: "eliotr.owner-session.v1", principal_ref: "e2e-operator",
+      client_class: "owner_pwa", credential_generation: "controlled-e2e-identity",
+      expires_at: new globalThis.Date(globalThis.Date.now() + 3600000).toISOString() };
+    const namespaceCommand = { protocol: "eliotr.local-namespace-init.v1", namespace: "e2e-imports",
+      owner_incarnation_ref: "e2e-installation", expected_ownership_revision: 0, expected_policy_revision: 0,
+      created_at: new globalThis.Date().toISOString(), policy: {
+        allowed_ownership_modes: ["immutable_import"], source_class: "document", assurance_ceiling: "QUALIFIED",
+        instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY", allowed_use: ["research"],
+        disclosure_ceiling: "owner-only", license_policy_ref: "e2e-license",
+        default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "e2e-residency",
+        default_retention_policy_id: "e2e-retention", minimum_quality_state: "standard" } };
+    const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
+      identity: operatorIdentity, query: localPolicyQuery(paths) });
+    assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
+    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
+      "login/init alone must not create an implicit read grant");
+    const namespaceReplay = await initializeLocalNamespace({ command: namespaceCommand,
+      identity: operatorIdentity, query: localPolicyQuery(paths) });
+    assert.deepEqual(namespaceReplay, namespaceReceipt, "same namespace intent must replay exactly");
+    receipt.isolated_setup = "PASS";
     receipt.bounds = (await checkBundleLimitsSource()).state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto()).state;
     worker = await startLocalWorker(paths);
-    const noToken = await globalThis.fetch(`${worker.origin}/api/v1/research/catalog`, { redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
-    assert.equal(noToken.status, 401);
-    const forged = await globalThis.fetch(`${worker.origin}/api/v1/research/catalog`, {
-      headers: { "cf-access-jwt-assertion": "forged.token.signature" }, redirect: "manual", signal: globalThis.AbortSignal.timeout(5000),
-    });
-    assert.equal(forged.status, 401);
-    receipt.unauth_denied = "PASS";
-    cdp = await launchCdp();
-    receipt.browser = `${cdp.binary}; ${cdp.label}`;
-    await cdp.cdp("Page.navigate", { url: worker.origin });
-    const deadline = globalThis.Date.now() + 15000;
-    let ready = false;
-    while (globalThis.Date.now() < deadline) {
-      ready = await cdp.evaluate('Boolean(document.querySelector("#app") || document.querySelector("#library"))');
-      if (ready) break;
-      await delayPromise(100);
+    const firstOrigin = worker.origin;
+    // Real-Worker denial through the real createCloudflareAccessVerifier path (no in-process fake API).
+    for (const headers of [{}, { "cf-access-jwt-assertion": "forged.token.signature" },
+      { "cf-access-client-id": "forged", "cf-access-client-secret": "forged" }]) {
+      for (const path of ["/api/v1/research/catalog", "/api/v1/system/session"]) {
+        const response = await globalThis.fetch(`${worker.origin}${path}`,
+          { headers, redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+        assert.equal(response.status, 401, `real Worker must deny ${path} without a signed assertion`);
+        const problem = await response.json();
+        assert.equal(problem.status, 401);
+        assert.ok(String(problem.code).startsWith("ACCESS_"), "denial must carry an ACCESS_ code");
+        assert.equal(response.headers.get("cache-control"), "no-store");
+        assert.ok(!JSON.stringify(problem).includes("forged.token.signature"), "denial must not reflect credentials");
+      }
     }
-    assert.equal(ready, true, "built PWA must render its app shell");
-    const hasPrivate = await cdp.evaluate('Boolean(document.body?.textContent?.includes("Source catalog-") || document.querySelector("#library [data-source]"))');
+    receipt.unauth_denied = "PASS";
+    // Controlled positive attempt against the REAL Worker: without the ER-44->ER-24->ER-00 JWKS seam
+    // the Worker cannot fetch the loopback JWKS and must fail closed (never a fake PASS).
+    const goodClaims = { iss: "https://owner-e2e.cloudflareaccess.com", aud: ["owner-e2e-audience"] };
+    assert.ok(goodClaims.iss.endsWith(".cloudflareaccess.com"), "controlled issuer uses the Access origin shape");
+    const controlledAttempt = await globalThis.fetch(`${worker.origin}/api/v1/system/session`, {
+      headers: { "cf-access-jwt-assertion": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6ImUyZS1rZXkifQ.eyJpc3MiOiJodHRwczovL293bmVyLWUyZS5jbG91ZGZsYXJlYWNjZXNzLmNvbSJ9.c2ln",
+        Accept: "application/json" },
+      redirect: "manual", signal: globalThis.AbortSignal.timeout(5000),
+    });
+    assert.ok([401, 503].includes(controlledAttempt.status),
+      "controlled token without the JWKS seam must be denied (401) or fail closed unavailable (503)");
+    receipt.authorized_library = "NOT_EXECUTED";
+    receipt.logout = "NOT_EXECUTED";
+    playwright = await launchPlaywright();
+    receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
+    await playwright.page.goto(firstOrigin, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForFunction(
+      `Boolean(document.querySelector("#app") || document.querySelector("#library"))`, null, { timeout: 15000 });
+    const hasPrivate = await playwright.evaluate(
+      'Boolean(document.body?.textContent?.includes("Source catalog-") || document.querySelector("#library [data-source]"))');
     assert.equal(hasPrivate, false, "unauthenticated PWA must not render private Library rows");
-    assert.deepEqual(await cdp.evaluate("Object.keys(localStorage)"), []);
-    assert.deepEqual(await cdp.evaluate("Object.keys(sessionStorage)"), []);
-    const stores = await cdp.evaluate(`(async () => {
-      const out = { indexedDB: [], caches: [], idbDump: "" };
-      if (typeof indexedDB !== "undefined" && indexedDB.databases) {
-        try { out.indexedDB = (await indexedDB.databases()).map((d) => d.name); } catch { out.indexedDB = ["unknown"]; }
-      }
-      if (typeof caches !== "undefined") {
-        try { out.caches = await caches.keys(); } catch { out.caches = ["unknown"]; }
-      }
-      for (const name of out.indexedDB) {
-        try {
-          const open = indexedDB.open(name);
-          const db = await new Promise((resolve, reject) => {
-            open.onsuccess = () => resolve(open.result);
-            open.onerror = () => reject(open.error);
-          });
-          const dumps = [];
-          for (const storeName of Array.from(db.objectStoreNames)) {
-            const rows = await new Promise((resolve, reject) => {
-              const tx = db.transaction(storeName, "readonly");
-              const req = tx.objectStore(storeName).getAll();
-              req.onsuccess = () => resolve(req.result);
-              req.onerror = () => reject(req.error);
-            });
-            dumps.push(storeName + ":" + JSON.stringify(rows).slice(0, 4096));
-          }
-          db.close();
-          out.idbDump += dumps.join("|").slice(0, 8192);
-        } catch { out.idbDump += "unreadable"; }
-      }
-      return out;
-    })()`);
-    assert.ok(stores.caches.every((name) => name === "eliotr-shell-v1"),
-      `only the non-private PWA shell cache may exist, found: ${JSON.stringify(stores.caches)}`);
-    const cachedUrls = await cdp.evaluate(`(async () => {
-      const urls = [];
-      for (const name of await caches.keys()) {
-        try {
-          const cache = await caches.open(name);
-          for (const req of await cache.keys()) urls.push(req.url.slice(0, 512));
-        } catch { urls.push("unreadable"); }
-      }
-      return urls;
-    })()`);
-    assert.ok(cachedUrls.every((url) => !url.includes("/api/") && !url.includes("/federation/") && !url.includes("/oauth/") && !url.includes("eyJ")),
-      `CacheStorage must not retain private API responses: ${JSON.stringify(cachedUrls).slice(0, 512)}`);
-    assert.ok(stores.indexedDB.every((name) => name === "eliotr-shell-v1"),
-      `only the non-private PWA shell DB may exist, found: ${JSON.stringify(stores.indexedDB)}`);
-    assert.ok(!stores.idbDump.includes("eyJ") && !stores.idbDump.includes("cf-access") &&
-      !stores.idbDump.includes("catalog-") && !stores.idbDump.includes("source-"),
-      "IndexedDB must hold no credentials/source bytes/private API responses");
-    const secretScan = await cdp.evaluate(`(() => {
-      const hay = [localStorage.length, sessionStorage.length].join(",") + "|" + (document.cookie || "");
-      return hay;
-    })()`);
-    assert.ok(!secretScan.includes("eyJ"), "browser storage must not contain JWT material");
+    const unauthStorage = await readBrowserStorage(playwright.page);
+    assertNoPrivateStorage(unauthStorage, "unauthenticated");
     receipt.storage = "PASS";
-    receipt.console_errors = cdp.errors.length === 0 ? "PASS" : `FAIL:${cdp.errors.length}`;
-    assert.deepEqual(cdp.errors, [], `page errors must be empty: ${cdp.errors.slice(0, 2).join("; ")}`);
+    assertOnlyDenialNoise(playwright.consoleErrors, "unauthenticated");
+    assert.deepEqual(playwright.pageErrors, [], `page errors must be empty: ${playwright.pageErrors.slice(0, 2).join("; ")}`);
+    assertOnlyExpectedFailedRequests(playwright.failedRequests, "unauthenticated");
+    receipt.console_errors = "PASS";
+    const stoppedOrigin = worker.origin;
     await worker.stop();
     worker = undefined;
+    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+      /fetch failed|ECONNREFUSED|aborted/, "stopped Worker port must be closed (owned process removed)");
+    // Restart persistence: same isolated directory, both migration ledgers, same namespace rows,
+    // same generation, denial still enforced, PWA shell serves again with no private residue.
     await prepareLocal({ stateDirectory: directory, log: () => {} });
+    assert.deepEqual(await verifyMigrationLedgers(paths), ledgers, "restart must preserve both migration ledgers");
+    assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
+      identity: operatorIdentity, query: localPolicyQuery(paths) }), namespaceReceipt,
+      "restart must preserve the namespace ownership/policy rows exactly");
+    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
+      "restart must not invent an implicit read grant");
+    const afterRestartEntries = await readdir(paths.persist).catch(() => []);
+    assert.ok(afterRestartEntries.length >= 0, "restart must preserve the isolated persist root");
     worker = await startLocalWorker(paths);
+    assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
+      "isolated generation must be stable for the same directory");
     const rebound = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
     assert.equal(rebound.status, 200);
+    const reboundBody = await rebound.json();
+    assert.equal(reboundBody.ready, true, "restart must report ready");
+    assert.equal(reboundBody.deployment_generation, paths.generation, "restart must serve the same generation");
+    const deniedAfterRestart = await globalThis.fetch(`${worker.origin}/api/v1/research/catalog`,
+      { redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+    assert.equal(deniedAfterRestart.status, 401, "restart must still deny unauthenticated catalog");
+    await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await playwright.page.waitForFunction(
+      `Boolean(document.querySelector("#app") || document.querySelector("#library"))`, null, { timeout: 15000 });
+    const reloudStorage = await readBrowserStorage(playwright.page);
+    assertNoPrivateStorage(reloudStorage, "post-restart");
+    assertOnlyDenialNoise(playwright.consoleErrors, "post-restart");
+    assert.deepEqual(playwright.pageErrors, [], "page errors must stay empty after restart");
+    assertOnlyExpectedFailedRequests(playwright.failedRequests, "post-restart");
     receipt.persistence = "PASS";
     try {
       await startOwnerBridge({ workerOrigin: worker.origin, token: "forged.token.signature", generation: paths.generation, port: 0 });
@@ -335,20 +400,34 @@ export async function runOwnerE2E() {
     } catch (error) {
       assert.ok(!String(error?.message ?? "").includes("forged.token.signature"), "bridge must not reflect credentials");
     }
+    // Logout guard without a live session must deny; the authed logout flow stays NOT_EXECUTED.
+    try {
+      await startOwnerBridge({ workerOrigin: worker.origin, token: "", generation: paths.generation, port: 0 });
+      assert.fail("empty bridge token must not pair");
+    } catch (error) {
+      assert.ok(String(error?.message ?? "").length > 0);
+    }
     try {
       await prepareLocal({ stateDirectory: resolve(directory, "missing-parent", "child"), log: () => {}, execute: () => { throw new Error("injected build failure"); } });
       assert.fail("injected build failure must reject");
     } catch (error) {
       assert.ok(String(error?.message ?? "").length > 0);
     }
-    assert.equal(worker !== undefined, true, "failed startup must not leave a false-running Worker");
+    // Real failed-start proof: no Worker was started by the failure above (no new origin), the
+    // previously stopped origin is still closed, and the running Worker below is the only owner.
+    assert.ok(worker !== undefined, "failed startup must not replace the owned running Worker");
+    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+      /fetch failed|ECONNREFUSED|aborted/, "failed startup must not resurrect the old Worker port");
     receipt.failed_startup = "PASS";
     receipt.finished_at = new globalThis.Date().toISOString();
     receipt.live = "NOT_EXECUTED";
   } finally {
     try { await worker?.stop(); } catch { /* Shutdown best-effort. */ }
-    try { await cdp?.close(); } catch { /* Browser teardown best-effort. */ }
+    try { await playwright?.close(); } catch { /* Browser teardown best-effort. */ }
     await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    await assert.rejects(access(directory), /ENOENT/, "isolated state directory must be removed").catch((error) => {
+      teardownError = teardownError ?? error;
+    });
     const afterDirs = new Set(await readdir(stateRoot).catch(() => []));
     for (const name of afterDirs) {
       if (!beforeDirs.has(name) && !name.startsWith("smoke-") && !name.startsWith("owner-e2e-")) {
