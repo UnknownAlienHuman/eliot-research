@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 /* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly */
-import { prepareLocal, executeLocal, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
+import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
@@ -150,10 +150,47 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
 }
 
 function d1Query(paths, binding, sql) {
-  const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { capture: true });
-  const batches = JSON.parse(output);
+  // Authoritative CLI D1 readback shares SQLite files with a running
+  // `wrangler dev` Worker. Bounded retry covers documented transient locks
+  // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
+  // authority and data errors stay fail-closed with no new generation.
+  // While the Worker is running, Worker/API readback (catalog/revisions/
+  // session) is the primary active-runtime signal; CLI reads below reconcile
+  // the same durable state and must replay exactly after restart.
+  const output = executeLocalD1WithRetry(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocal });
+  let batches;
+  try {
+    batches = JSON.parse(output);
+  } catch (error) {
+    assert.fail(`D1 query returned non-JSON readback: ${String(error?.message ?? error).slice(0, 200)}`);
+  }
   assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
   return batches[0].results;
+}
+
+function isRetryableNamespaceObservation(error) {
+  if (isTransientLocalD1Error(error)) return true;
+  const cause = error?.cause;
+  if (cause && isTransientLocalD1Error(cause)) return true;
+  const text = `${error?.message ?? ""}\n${cause?.message ?? ""}\n${cause?.cause?.diagnostic ?? ""}\n${cause?.cause?.stdout ?? ""}\n${cause?.cause?.stderr ?? ""}`;
+  return /TRANSIENT_D1_LOCK|SQLITE_BUSY|SQLITE_LOCKED|database is locked|database is busy|resource busy or locked|\bEBUSY\b|\bEPERM\b|\bETIMEDOUT\b|\bEAGAIN\b|miniflare.*lock|lock.*miniflare/i.test(text)
+    && !/CONFLICT|SETTLEMENT_UNCERTAIN|INPUT_INVALID|PROFILE_UNSUPPORTED|EXISTING_LINEAGE|OWNER_REQUIRED|READBACK_INVALID|no such table|no such column|syntax error/i.test(text);
+}
+
+async function initializeNamespaceWithBoundedRetry(args, { attempts = 6, deadlineMs = 15000, delayMs = 250 } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await initializeLocalNamespace(args);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableNamespaceObservation(error)) throw error;
+      if (attempt >= attempts || Date.now() + delayMs > deadline) throw error;
+      await new Promise((resolve) => globalThis.setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
 }
 
 async function verifyMigrationLedgers(paths) {
@@ -204,14 +241,23 @@ async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
   return { protocol: "eliotr.owner-e2e.controlled-issuer.v1", state: "PASS", issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE };
 }
 
-async function launchPlaywright() {
+async function launchPlaywright(runId) {
   const { chromium } = await import("playwright-core");
   const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
+  // Every temp profile carries a run-specific ownership marker. Cleanup below
+  // deletes only paths with a resolved location inside the OS temp root plus
+  // a marker proving this harness created them. Never touch unrelated
+  // Chrome/Wrangler processes or profiles.
+  await writeHarnessMarker(profileDir, runId, "browser-profile");
   try {
-    const executable = process.env.ELIOTR_BROWSER_EXECUTABLE;
-    if (executable) await access(executable);
+    // Deterministic discovery: explicit ELIOTR_BROWSER_EXECUTABLE wins,
+    // otherwise only fixed OS standard paths (Windows Chrome standard paths,
+    // Linux /usr/bin/*). Clear fail when absent; Linux CI stays stable; no
+    // registry/network probing and no arbitrary executables.
+    const executable = await resolveLocalBrowserExecutable();
+    await access(executable);
     const context = await chromium.launchPersistentContext(profileDir, {
-      ...(executable ? { executablePath: executable } : { channel: "chrome" }),
+      executablePath: executable,
       headless: true,
       args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-first-run",
         "--disable-background-networking", "--disable-component-update", "--disable-extensions",
@@ -237,12 +283,14 @@ async function launchPlaywright() {
     const close = async () => {
       try { await context.close(); } catch { /* Best-effort. */ }
       try { await browser.close(); } catch { /* Already closed. */ }
-      await rm(profileDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      await removeHarnessOwned(profileDir, runId);
       await assert.rejects(access(profileDir), /ENOENT/, "temp browser profile must be removed");
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, close, profileDir };
   } catch (error) {
-    await rm(profileDir, { recursive: true, force: true }).catch(() => {});
+    // Browser-start failure must leave no profile residue, but only delete
+    // the marker-proven owned directory, never unrelated profiles.
+    try { await removeHarnessOwned(profileDir, runId); } catch { /* Marker mismatch: retain for inspection. */ }
     throw error;
   }
 }
@@ -469,6 +517,12 @@ export async function runOwnerE2E() {
   const stateRoot = resolve(root, ".eliotr-state");
   const beforeDirs = new Set(await readdir(stateRoot).catch(() => []));
   const directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
+  // Run-specific ownership marker: teardown deletes only this marker-proven
+  // directory inside the OS temp root. Success, assert-failure, Worker-start
+  // failure, browser-start failure, timeout and interruption all funnel
+  // through the same finally below. Never delete unrelated temp entries.
+  const runId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
+  await writeHarnessMarker(directory, runId, "owner-state");
   let worker;
   let playwright;
   let bridge;
@@ -570,12 +624,16 @@ export async function runOwnerE2E() {
         disclosure_ceiling: "owner-only", license_policy_ref: "e2e-license",
         default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "e2e-residency",
         default_retention_policy_id: "e2e-retention", minimum_quality_state: "standard" } };
-    const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
+    // Setup/replay at the active-runtime boundary: the Worker is running for
+    // identity, so CLI D1 shares SQLite files with Miniflare. Bounded retry
+    // covers documented transient locks only; the second (replay) readback
+    // stays exact and fail-closed for schema/authority/data errors.
+    const namespaceReceipt = await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
       "login/init alone must not create an implicit read grant");
-    const namespaceReplay = await initializeLocalNamespace({ command: namespaceCommand,
+    const namespaceReplay = await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.deepEqual(namespaceReplay, namespaceReceipt, "same namespace intent must replay exactly");
     const grant = await applyLocalReadPolicy({ command: { action: "GRANT", namespace,
@@ -623,7 +681,7 @@ export async function runOwnerE2E() {
     const r2Bytes = await readFile(r2Match);
     assert.ok(r2Bytes.length > 0, "R2 object body must be non-empty");
     receipt.authorized_library = "PASS";
-    playwright = await launchPlaywright();
+    playwright = await launchPlaywright(runId);
     receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
@@ -679,7 +737,10 @@ export async function runOwnerE2E() {
     await prepareLocal({ stateDirectory: directory, log: () => {} });
     await applyOwnerE2EProfile(paths, jwks.url);
     assert.deepEqual(await verifyMigrationLedgers(paths), ledgers, "restart must preserve both migration ledgers");
-    assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
+    // Restart readback happens at the safe lifecycle boundary: the Worker is
+    // stopped, so CLI D1 owns the SQLite files alone. The exact receipt must
+    // replay byte-for-byte; this second readback is never weakened.
+    assert.deepEqual(await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 1 }],
@@ -778,7 +839,7 @@ export async function runOwnerE2E() {
     const savedExecutable = process.env.ELIOTR_BROWSER_EXECUTABLE;
     process.env.ELIOTR_BROWSER_EXECUTABLE = resolve(directory, "missing-browser-executable");
     try {
-      await launchPlaywright();
+      await launchPlaywright(runId);
       assert.fail("injected browser start must reject");
     } catch (error) {
       assert.ok(String(error?.message ?? "").length > 0, "injected browser failure must report");
@@ -803,7 +864,14 @@ export async function runOwnerE2E() {
     try { await worker?.stop(); } catch { /* Shutdown best-effort. */ }
     try { await playwright?.close(); } catch { /* Browser teardown best-effort. */ }
     try { await jwks?.close(); } catch { /* JWKS teardown best-effort. */ }
-    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // Marker-gated teardown: delete only the run-specific owned state dir
+    // proven by its marker inside the OS temp root. Never delete unrelated
+    // temp entries; never kill unrelated Chrome/Wrangler processes.
+    try {
+      await removeHarnessOwned(directory, runId);
+    } catch (error) {
+      teardownError = teardownError ?? error;
+    }
     await assert.rejects(access(directory), /ENOENT/, "isolated state directory must be removed").catch((error) => {
       teardownError = teardownError ?? error;
     });
