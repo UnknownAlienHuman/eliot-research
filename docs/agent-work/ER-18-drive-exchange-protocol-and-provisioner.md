@@ -19,6 +19,8 @@ outside the paths below.
 - `packages/google-drive-exchange/package.json`
 - `packages/google-drive-exchange/tsconfig.json`
 - `packages/google-drive-exchange/AGENTS.md`
+- `packages/google-drive-exchange/src/contribution-boundary.test.ts`
+- `packages/google-drive-exchange/src/drive-test-fixture.ts`
 
 ## Read only
 

@@ -16,6 +16,7 @@ the packets it depends on.
 - `packages/platform-cloudflare/src/d1-ingest-types.ts`
 - `packages/platform-cloudflare/src/d1-ingest-validation.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.ts`
+- `packages/platform-cloudflare/src/d1-ingest-policy.ts`
 - `packages/platform-cloudflare/src/d1-ingest-commit.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.test.ts`
 - `apps/eliotr-core/src/ingest-http.ts`
@@ -104,3 +105,15 @@ pnpm cf:dry-run
 Local fixtures, mocks, typecheck and Wrangler dry-run keep this contour at `IMPLEMENTED_NOT_LIVE`.
 Promotion to `LIVE_QUALIFIED` requires deployed Access, remote D1, real R2 multipart/promotion readback,
 and Queue duplicate/retry/DLQ receipts.
+
+## Launch 01 continuation policy fence
+
+Extract existing owner/policy reads into `d1-ingest-policy.ts`; do not create a second policy authority.
+Every principal-bound continuation/status read rechecks the current ACTIVE owner, exact policy revision
+and snapshot digest, principal, ownership mode, use and expiry. Promotion and final admission check the
+same authority. The D1 source/head/outbox transaction compares all current policy fields with the
+reserved snapshot inside its existing commit guard: a same-revision policy edit racing the batch rolls
+back the whole canonical transaction. Staged/promoted bytes alone do not establish source admission.
+ER-25 may integrate explicit same-tab continuation in the existing importer; its private checkpoint is
+only an upload optimization, never an admission or policy receipt. Existing cross-layer tests remain
+`bundle-import-http.test.ts`. No new route or schema, automatic mutation retry or remote deployment.

@@ -4,6 +4,7 @@ import {
 } from "@eliotr/contracts";
 import type {
   BundleIngestStatus,
+  BundleIngestRecovery,
   CommitBundleUploadRequest,
   CompleteBundleFileRequest,
   CompleteBundleFileResult,
@@ -23,6 +24,7 @@ import {
 import type { SourceAdmissionService } from "./source-admission-service.js";
 
 export type IngestServiceErrorCode =
+  | "INGEST_RECOVERY_INPUT_MISMATCH"
   | "INGEST_OPERATION_NOT_FOUND"
   | "INGEST_PRINCIPAL_DENIED"
   | "INGEST_SESSION_MISMATCH"
@@ -104,6 +106,12 @@ function status(operation: PreparedIngestOperation): BundleIngestStatus {
   };
 }
 
+function recovery(operation: PreparedIngestOperation): BundleIngestRecovery {
+  return { protocol: "eliotr.ingest-recovery.v1", status: status(operation),
+    idempotency_key: operation.idempotency_key, manifest_sha256: operation.manifest_sha256,
+    total_bytes: operation.total_bytes, file_hashes: { ...operation.file_hashes } };
+}
+
 function duplicatePrepare(operation: PreparedIngestOperation): PrepareBundleUploadResult {
   if (operation.bundle_receipt === null) {
     throw new IngestServiceError(
@@ -114,6 +122,7 @@ function duplicatePrepare(operation: PreparedIngestOperation): PrepareBundleUplo
   }
   return {
     operation_id: operation.operation_id,
+    manifest_sha256: operation.manifest_sha256,
     disposition: operation.bundle_receipt.decision === "ADMITTED" ||
       operation.bundle_receipt.decision === "DUPLICATE"
       ? "DUPLICATE"
@@ -146,7 +155,7 @@ function terminalReceipt(
 // IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.
 export function createIngestService(dependencies: IngestServiceDependencies): Pick<
   OwnerApi,
-  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus"
+  "prepareBundle" | "uploadBundlePart" | "completeBundleFile" | "commitBundle" | "getBundleStatus" | "getBundleRecovery" | "discoverBundle"
 > {
   const clock = dependencies.now ?? Date.now;
   return {
@@ -179,6 +188,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       if (staged.disposition === "REJECTED" || staged.session === undefined) {
         return {
           operation_id: prepared.operation.operation_id,
+          manifest_sha256: prepared.operation.manifest_sha256,
           disposition: "REJECTED",
           expires_at: prepared.operation.expires_at,
           reason_codes: staged.reason_codes,
@@ -190,6 +200,7 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
       );
       return {
         operation_id: operation.operation_id,
+        manifest_sha256: operation.manifest_sha256,
         disposition: "UPLOAD_REQUIRED",
         multipart_session_ref: staged.session.session_id,
         files: staged.session.uploads.map((upload) => ({
@@ -310,6 +321,34 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
         promotion_receipt: promotion,
         bundle_receipt: receipt,
       });
+    },
+
+    async getBundleRecovery(context, operationId) {
+      const operation = await dependencies.authority.loadForPrincipal(operationId, context.principal_ref);
+      requireOperation(operation);
+      // loadForPrincipal verifies the current owner and exact admission policy. No R2 effects,
+      // copied credentials, new reservation, or authority inferred from the supplied operation ID.
+      return recovery(operation);
+    },
+
+    async discoverBundle(context, request) {
+      const operation = await dependencies.authority.loadBySourceRevisionForPrincipal(
+        request.manifest.origin.source_revision_ref, context.principal_ref);
+      requireOperation(operation);
+      if (request.total_bytes !== operation.total_bytes ||
+          await canonicalDigest(request.manifest) !== operation.manifest_sha256 ||
+          await canonicalDigest(request.file_hashes) !== await canonicalDigest(operation.file_hashes)) {
+        throw new IngestServiceError("INGEST_RECOVERY_INPUT_MISMATCH", 409,
+          "The selected folder differs from the existing upload. No reservation or upload was created.");
+      }
+      // Re-read authorization after digest work; a withdrawal/expiry during discovery cannot
+      // disclose a reservation key. The response is still not authority for subsequent writes.
+      const current = await dependencies.authority.loadForPrincipal(operation.operation_id, context.principal_ref);
+      requireOperation(current);
+      if (current.input_fingerprint !== operation.input_fingerprint) {
+        throw new IngestServiceError("INGEST_RECOVERY_INPUT_MISMATCH", 409, "The original reservation changed during discovery.");
+      }
+      return recovery(current);
     },
 
     async getBundleStatus(context, operationId) {

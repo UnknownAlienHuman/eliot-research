@@ -52,6 +52,7 @@
         "docs/implementation/toolchain.md",
         "docs/implementation/production-readiness-plan.md",
         "docs/implementation/gap-register.md",
+        "docs/implementation/canonical-alignment.md",
         "scripts/check-implementation-status.mjs",
         "packages/cloudflare-navigation/package.json",
         "packages/cloudflare-navigation/tsconfig.json",
@@ -379,7 +380,9 @@
         "packages/google-drive-exchange/src/drive.test.ts",
         "packages/google-drive-exchange/package.json",
         "packages/google-drive-exchange/tsconfig.json",
-        "packages/google-drive-exchange/AGENTS.md"
+        "packages/google-drive-exchange/AGENTS.md",
+        "packages/google-drive-exchange/src/contribution-boundary.test.ts",
+        "packages/google-drive-exchange/src/drive-test-fixture.ts"
       ],
       "mandatory_negative_case": "Build a request above 128 KiB or with six parts and prove serializer rejects before Drive call.",
       "document": "ER-18-drive-exchange-protocol-and-provisioner.md",
@@ -410,7 +413,25 @@
       "owned_paths": [
         "packages/google-drive-exchange/src/port.ts",
         "packages/google-drive-exchange/src/token-vault.ts",
-        "packages/google-drive-exchange/src/result-publisher.ts"
+        "packages/google-drive-exchange/src/result-publisher.ts",
+        "packages/google-drive-exchange/src/rest-transport.ts",
+        "packages/google-drive-exchange/src/sheet-ranges.ts",
+        "packages/google-drive-exchange/src/sheet-port.ts",
+        "packages/google-drive-exchange/src/sheet-port.test.ts",
+        "docs/implementation/drive-rest.md",
+        "packages/google-drive-exchange/src/token-credentials.ts",
+        "packages/google-drive-exchange/src/token-refresh.ts",
+        "packages/google-drive-exchange/src/token-lease.ts",
+        "packages/google-drive-exchange/src/token-vault.test.ts",
+        "packages/google-drive-exchange/src/token-lease.test.ts",
+        "docs/implementation/drive-credentials.md",
+        "packages/google-drive-exchange/src/oauth-types.ts",
+        "packages/google-drive-exchange/src/oauth-transport.ts",
+        "packages/google-drive-exchange/src/oauth-identity.ts",
+        "packages/google-drive-exchange/src/oauth-admission.ts",
+        "packages/google-drive-exchange/src/oauth-test-fixture.ts",
+        "packages/google-drive-exchange/src/oauth-identity.test.ts",
+        "docs/implementation/drive-oauth-admission.md"
       ],
       "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
       "document": "ER-20-google-oauth-port-and-result-publication.md",
@@ -508,7 +529,18 @@
         "apps/eliotr-core/test/orientation-fixture.ts",
         "apps/eliotr-core/test/orientation-http.test.ts",
         "apps/eliotr-core/test/orientation-resilience.test.ts",
-        "apps/eliotr-core/vitest.config.ts"
+        "apps/eliotr-core/vitest.config.ts",
+        "apps/eliotr-core/src/catalog-service.ts",
+        "apps/eliotr-core/src/catalog-service.test.ts",
+        "apps/eliotr-core/src/catalog-queries.ts",
+        "apps/eliotr-core/test/catalog-http.test.ts",
+        "apps/eliotr-core/src/source-revisions.ts",
+        "apps/eliotr-core/test/source-revisions.test.ts",
+        "apps/eliotr-core/src/google-token-store.ts",
+        "apps/eliotr-core/test/google-token-store.test.ts",
+        "apps/eliotr-core/src/google-oauth-store.ts",
+        "apps/eliotr-core/src/google-oauth-service.ts",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -521,7 +553,12 @@
         "ER-24"
       ],
       "owned_paths": [
-        "apps/eliotr-pwa/**"
+        "apps/eliotr-pwa/**",
+        "tests/library.test.ts",
+        "tests/source-revisions.test.ts",
+        "tests/bundle-recovery.test.ts",
+        "scripts/test-library-browser.mjs",
+        "scripts/lib/browser-import-fixture.mjs"
       ],
       "mandatory_negative_case": "Simulate Drive/model outage and prove core library/retrieval UI remains usable with explicit degraded status.",
       "document": "ER-25-owner-pwa.md",

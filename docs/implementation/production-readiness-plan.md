@@ -305,15 +305,19 @@ D1, R2, Queue, Workflow, provider or model effect.
 - [ ] Make purge invalidate or mark dependent sections pending revalidation.
 - [ ] Enable `research.artifact`, `research.wiki.propose`, `research.trace` and `research.changes`.
 
-### 8.6 Drive and Google transport — ER-18/ER-19/ER-20/ER-36
+### 8.6 Required ChatGPT Drive Exchange — ER-18/ER-19/ER-20; optional Gemini ER-36
 
 - [ ] Finish exact Drive schema provisioning and generation activation.
 - [ ] Implement append/import/readback/reconnect and cursor reconciliation.
 - [ ] Detect historical-row mutation and tamper.
 - [ ] Store refresh tokens encrypted and expose `REAUTH_REQUIRED` without losing canonical artifacts.
-- [ ] Qualify Gemini MCP initialize/tools/list/tools/call.
-- [ ] Qualify disposable Workspace and gcloud mutations with exact post-action readback.
-- [ ] Select exactly one active production Google transport owner; keep the alternative disabled.
+- [ ] Implement the mandatory Day-0 ChatGPT Drive Exchange from canonical §§12.3–12.12 and ADR-0003;
+      interface-only ports and the optional Gemini planner do not satisfy this item.
+- [ ] Select exactly one active ChatGPT write transport; a future qualified native app replaces Drive,
+      rather than adding a simultaneous writer. No accepted ADR currently replaces Drive with Gemini.
+- [ ] When the optional Gemini service is explicitly selected, separately qualify Access/MCP and exact
+      Workspace/gcloud action readbacks. Self-reported v1 observations cannot substitute for these gates.
+      Preserve existing mutual-exclusion guards until the reviewed production profile is composed.
 
 ### 8.7 Owner PWA — ER-25
 
@@ -588,7 +592,7 @@ The immediate sequence from the current baseline is:
 5. **ER-06/16/31:** strict managed-search decoding and Corpus Lens query/orientation.
 6. **ER-09:** governed Research Workflow and durable checkpoints.
 7. **ER-11/12:** minimum Wiki and Artifact Compiler.
-8. **ER-18/19/20/36:** Drive/Gemini live transport completion.
+8. **ER-18/19/20:** mandatory ChatGPT Drive code and real qualification; **ER-36:** optional Gemini service qualification when selected.
 9. **ER-25:** complete owner PWA loops.
 10. **ER-26/27:** staging deployment and T4 live conformance.
 11. **ER-23/31/32:** T2/T3 real corpus and generation promotion.
