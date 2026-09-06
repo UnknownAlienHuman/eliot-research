@@ -147,7 +147,11 @@ await check("R2 cursor that never terminates rejects after the hop cap", async (
 
 await check("invalid pagination totals fail closed on every path", async () => {
   const d1Endpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`;
-  for (const totalPages of [0, -1]) {
+  // FIX8W: presence-first — every present-but-invalid total_pages is typed
+  // MALFORMED, never silent-absent. NaN/Infinity survive in-memory (no JSON
+  // string round-trip here); labels use String() since JSON.stringify(NaN)
+  // collapses to "null".
+  for (const totalPages of [0, -1, 1.5, "2", null, true, NaN, Infinity]) {
     const general = createPaginatedInventoryProvider({
       group: "d1-inventory-list",
       covers: ["d1_rows_read"],
@@ -156,8 +160,8 @@ await check("invalid pagination totals fail closed on every path", async () => {
     });
     await assert.rejects(
       general.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-      (error) => error instanceof ProviderFailure && (error.reason === "MALFORMED" || error.reason === "PARTIAL_PAGINATION"),
-      `general total_pages=${totalPages} must fail closed`,
+      (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+      `general total_pages=${String(totalPages)} must be MALFORMED`,
     );
     const ai = createAiSearchInventoryProvider({
       endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
@@ -165,14 +169,54 @@ await check("invalid pagination totals fail closed on every path", async () => {
     });
     await assert.rejects(
       ai.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
-      (error) => error instanceof ProviderFailure && (error.reason === "MALFORMED" || error.reason === "PARTIAL_PAGINATION"),
-      `ai-search total_pages=${totalPages} must fail closed`,
+      (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+      `ai-search total_pages=${String(totalPages)} must be MALFORMED`,
+    );
+  }
+});
+
+await check("present-but-invalid page/per_page/count/total_count fail closed", async () => {
+  const d1Endpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`;
+  const aiEndpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`;
+  // Each case overrides one field on top of an otherwise-valid single-page
+  // envelope; every override must be typed MALFORMED on both providers.
+  const fieldCases = [
+    ["page", 0], ["page", -1], ["page", 1.5], ["page", "1"], ["page", null], ["page", true], ["page", NaN], ["page", Infinity],
+    ["per_page", 0], ["per_page", -1], ["per_page", 1.5], ["per_page", "100"], ["per_page", null], ["per_page", false], ["per_page", NaN], ["per_page", Infinity],
+    ["count", -1], ["count", 1.5], ["count", "1"], ["count", null], ["count", true], ["count", NaN], ["count", Infinity],
+    ["total_count", -1], ["total_count", 1.5], ["total_count", "1"], ["total_count", null], ["total_count", false], ["total_count", NaN], ["total_count", Infinity],
+  ];
+  for (const [field, bad] of fieldCases) {
+    const base = { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 };
+    const general = createPaginatedInventoryProvider({
+      group: "d1-inventory-list",
+      covers: [],
+      endpoint: d1Endpoint,
+      perPage: 100,
+      fetchImpl: async () => okJson({ success: true, result: [{ uuid: "one" }], result_info: { ...base, [field]: bad } }),
+    });
+    await assert.rejects(
+      general.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+      (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+      `general ${field}=${String(bad)} must be MALFORMED`,
+    );
+    const ai = createAiSearchInventoryProvider({
+      endpoint: aiEndpoint,
+      fetchImpl: async () => okJson({ success: true, result: [{ id: "one" }], result_info: { ...base, [field]: bad } }),
+    });
+    await assert.rejects(
+      ai.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+      (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+      `ai-search ${field}=${String(bad)} must be MALFORMED`,
     );
   }
 });
 
 await check("malformed result_info never reads as absent", async () => {
-  for (const malformed of ["oops", 42, ["page"]]) {
+  // FIX8W: explicit null is present-but-malformed (the old `?? {}` fallback
+  // conflated it with absent). Booleans join the pre-existing
+  // string/number/array cases; every entry must be typed MALFORMED.
+  for (const malformed of ["oops", 42, ["page"], null, true, false]) {
     const general = createPaginatedInventoryProvider({
       group: "d1-inventory-list",
       covers: ["d1_rows_read"],
@@ -183,7 +227,7 @@ await check("malformed result_info never reads as absent", async () => {
     await assert.rejects(
       general.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
       (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
-      `general result_info=${JSON.stringify(malformed)} must be MALFORMED`,
+      `general result_info=${String(malformed)} must be MALFORMED`,
     );
     const ai = createAiSearchInventoryProvider({
       endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`,
@@ -192,19 +236,22 @@ await check("malformed result_info never reads as absent", async () => {
     await assert.rejects(
       ai.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
       (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
-      `ai-search result_info=${JSON.stringify(malformed)} must be MALFORMED`,
+      `ai-search result_info=${String(malformed)} must be MALFORMED`,
     );
   }
-  // Legitimately absent (undefined) single-short response keeps its contract.
-  const singleShort = createPaginatedInventoryProvider({
-    group: "d1-inventory-list",
-    covers: [],
-    endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`,
-    perPage: 100,
-    fetchImpl: async () => okJson({ success: true, result: [{ uuid: "only" }], result_info: {} }),
-  });
-  const reported = await singleShort.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
-  assert.equal(reported.coverage.fullAccount, true);
+  // Legitimately absent (undefined property) single-short response keeps its
+  // contract on general, as does plain {}.
+  for (const legit of [{ name: "missing", body: { success: true, result: [{ uuid: "only" }] } }, { name: "empty-object", body: { success: true, result: [{ uuid: "only" }], result_info: {} } }]) {
+    const singleShort = createPaginatedInventoryProvider({
+      group: "d1-inventory-list",
+      covers: [],
+      endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`,
+      perPage: 100,
+      fetchImpl: async () => okJson(legit.body),
+    });
+    const reported = await singleShort.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+    assert.equal(reported.coverage.fullAccount, true, `general ${legit.name} single-short must stay fullAccount:true`);
+  }
 });
 
 console.log(`Usage pagination: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

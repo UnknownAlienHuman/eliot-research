@@ -60,9 +60,24 @@ export function assertAccountUrl(url, accountId, group, context) {
   }
 }
 
-function assertPlainResultInfo(raw, group, page, context) {
-  if (raw !== undefined && raw !== null && (typeof raw !== "object" || Array.isArray(raw))) {
-    throw new ProviderFailure("MALFORMED", `${group} page ${page} ${context} malformed`);
+function assertPlainResultInfo(raw, group, page, context, lastHttpStatus = null) {
+  // Fail-closed presence check: explicit null is present-but-malformed, never
+  // absent. Only truly absent (undefined) falls back to {} upstream.
+  if (raw === undefined) return;
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ProviderFailure("MALFORMED", `${group} page ${page} ${context} malformed`, { httpStatus: lastHttpStatus });
+  }
+}
+
+// Fail-closed pagination field check: presence is tested FIRST (via
+// !== undefined), then the value must be an exact in-domain integer.
+// Present string/boolean/null/fraction/NaN/Infinity/negative/out-of-domain
+// is typed MALFORMED, never silent-absent.
+function assertPaginationField(info, name, min, group, page, lastHttpStatus) {
+  if (info[name] === undefined) return;
+  const value = info[name];
+  if (!Number.isInteger(value) || value < min) {
+    throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus });
   }
 }
 
@@ -135,12 +150,19 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus });
         }
         seen.push(...body.result);
-        assertPlainResultInfo(body?.result_info, group, page, "result_info");
+        assertPlainResultInfo(body?.result_info, group, page, "result_info", lastHttpStatus);
         const info = body?.result_info ?? {};
-        // Pagination integers are fail-closed: total_pages >= 1,
-        // per_page >= 1, count >= 0 (total_count >= 0 is checked below).
-        // Non-integer wire values stay ignored-as-absent per contract; an
-        // integer that is out of range is MALFORMED, never fullAccount:true.
+        // Pagination integers are fail-closed on PRESENCE first: any present
+        // known key must be an exact in-domain integer, else MALFORMED.
+        // Only truly absent (undefined) stays ignored-as-absent per contract.
+        assertPaginationField(info, "page", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "per_page", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "total_pages", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "count", 0, group, page, lastHttpStatus);
+        assertPaginationField(info, "total_count", 0, group, page, lastHttpStatus);
+        // Range backstop (subsumed by the presence-first checks above, kept
+        // as defense): an in-domain violation is MALFORMED, never
+        // fullAccount:true.
         if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
         }
@@ -271,6 +293,12 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
           throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} missing result.buckets`, { httpStatus: lastHttpStatus });
         }
         seen.push(...buckets);
+        // Audit: result_info is only touched for its cursor here, but a
+        // present-but-malformed result_info must still fail closed, never
+        // read as absent (explicit null included).
+        if (body?.result_info !== undefined && (body.result_info === null || typeof body.result_info !== "object" || Array.isArray(body.result_info))) {
+          throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} result_info malformed`, { httpStatus: lastHttpStatus });
+        }
         const nextCursor = body?.result?.cursor ?? body?.cursor ?? body?.result_info?.cursor ?? null;
         cursorsCompleted += 1;
         if (nextCursor === null || nextCursor === undefined || nextCursor === "") {
@@ -367,9 +395,19 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
           throw new ProviderFailure("MALFORMED", `${group} page ${page} missing instances array`, { httpStatus: lastHttpStatus });
         }
         seen.push(...items);
-        assertPlainResultInfo(body?.result_info, group, page, "result_info");
-        assertPlainResultInfo(body?.pagination, group, page, "pagination");
-        const info = body?.result_info ?? body?.pagination ?? {};
+        assertPlainResultInfo(body?.result_info, group, page, "result_info", lastHttpStatus);
+        assertPlainResultInfo(body?.pagination, group, page, "pagination", lastHttpStatus);
+        // Presence before fallback: explicit null result_info is MALFORMED
+        // (already thrown above), never a silent fallthrough to pagination.
+        // Only truly absent (undefined) falls back.
+        const info = body?.result_info !== undefined ? body.result_info
+          : body?.pagination !== undefined ? body.pagination : {};
+        // Same presence-first strict validation as the general provider.
+        assertPaginationField(info, "page", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "per_page", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "total_pages", 1, group, page, lastHttpStatus);
+        assertPaginationField(info, "count", 0, group, page, lastHttpStatus);
+        assertPaginationField(info, "total_count", 0, group, page, lastHttpStatus);
         if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
         }
