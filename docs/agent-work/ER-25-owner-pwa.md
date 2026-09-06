@@ -138,3 +138,12 @@ clear private state and cancel late responses. Unknown fields, duplicate/out-of-
 channels, foreign revisions and deployment drift fail strict decoding. No browser persistence, source
 policy or grant is added. Unit tests and the built-PWA controlled-HTTP Chrome fixture complement actual
 Worker/D1 tests; they do not close the complete real-storage browser lifecycle in #98.
+
+## Launch 07 G1 begin UI (Writer B, PR #95)
+
+G1 adds the minimal owner-only begin surface under this packet's existing
+`apps/eliotr-pwa/**` ownership (no manifest change): `src/google-oauth-api.ts`
+(strict begin-envelope decoder plus same-origin/CSRF transport),
+`src/google-oauth-api.test.ts`, and `src/google-oauth-panel.ts` (status plus
+authorization link; no private token in URL, log, or browser storage).
+No new read grant, source policy, migration, or provider credential.
