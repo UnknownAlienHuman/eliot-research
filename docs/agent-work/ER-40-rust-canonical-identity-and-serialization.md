@@ -19,6 +19,7 @@ family, its observation window, mismatch policy, rollback switch, and superseded
 - `crates/eliotr-test-vectors/**`
 - `crates/eliotr-kernel-wasm/**`
 - `fuzz/**`
+- `scripts/check-er40-line-budget.mjs`
 - `scripts/check-rust-vectors.mjs`
 - `scripts/check-rust-wasm.mjs`
 - `docs/agent-work/ER-40-rust-canonical-identity-and-serialization.md`
