@@ -1,5 +1,9 @@
 # ELIOT Research
 
+> **Working on this repository?** Start at [docs/START-HERE.md](docs/START-HERE.md) — read order,
+> authority map, how to claim work, verification gates and branch discipline. The non-negotiable
+> boundaries are in [AGENTS.md](AGENTS.md).
+
 **Current runnable slice:** owner metadata Corpus Lens and durable trace via the PWA/API.
 [Local preparation and current launch limits](docs/implementation/local-launch.md).
 Full research/query/Wiki launch remains blocked; do not deploy unfinished slices to Cloudflare.
@@ -130,7 +134,12 @@ infra/
   workflows/              durable workflow stage definitions
 
 docs/
-  architecture/  adr/  contracts/  generated/  implementation/
+  START-HERE.md           the entry point for anyone working on this repository
+  architecture/           the authoritative contracts
+  adr/                    accepted decisions that qualify them
+  agent-work/             work packets: who owns which path, and what each must deliver
+  implementation/         status registry, gap register, runtime/failure contracts, runbooks
+  contracts/  generated/
 
 tests/
   golden-corpus/          versioned real-document corpus

@@ -56,6 +56,13 @@ explicitly discouraged.
 If a packet and the architecture conflict: **stop**, name the exact conflict, and change the shared
 contract through ER-01/ER-00. Do not resolve it locally with a leaf-specific schema.
 
+Every document in this repository is reachable from an index: [docs/README.md](README.md) for the
+directories, [implementation/README.md](implementation/README.md) for the implementation guide, and
+[agent-work/README.md](agent-work/README.md) for the packets. `node scripts/check-docs-index.mjs`
+fails if a document, packet or `docs/` directory is unindexed, if an index link is broken, or if an
+entry point stops pointing here. **If you add a document, add it to its index in the same change** —
+an unindexed document is one nobody will find, which is the same as not writing it.
+
 ## 3. Pick exactly one piece of work
 
 1. Read [agent-work/README.md](agent-work/README.md) and pick a **dependency-ready** packet, or read
@@ -96,6 +103,7 @@ a possibly-paid operation blindly.
 pnpm install --frozen-lockfile
 pnpm check:affected
 pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+node scripts/check-docs-index.mjs   # if you added or moved a document or a packet
 ```
 
 CI runs five jobs — `verify`, `rust`, `windows-tooling`, and `local-launch` on both Ubuntu and
