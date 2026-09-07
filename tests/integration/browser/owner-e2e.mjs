@@ -598,15 +598,63 @@ export function roleCompat(first, second) {
   return first === second && SLOT_ROLES.includes(first);
 }
 
+export const NAV_TOKEN_SCOPE = "harness-navigation";
+export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 204, 304, 401, 403]);
+
+// Single-terminal collector: one reqId → one terminal outcome. A failure
+// notification is suppressed ONLY when the SAME reqId already has a
+// contract-response terminal (its own duplicate delivery report). Cross-reqId,
+// non-contract-status, or duplicate-response cases never suppress and fail
+// closed downstream. No sleep, no retry hiding: suppressed entries are exactly
+// the same-reqId contract-response duplicate, everything else stays ledgered.
+export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT_RESPONSE_STATUSES)) {
+  assert.ok(contractStatuses instanceof Set && contractStatuses.size > 0,
+    "terminal tracker requires an exact non-empty contract status set");
+  const seenResponseIds = new Set();
+  const terminalByReqId = new Map();
+  return {
+    contractStatuses,
+    noteResponse(reqId, status) {
+      assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
+      assert.ok(Number.isSafeInteger(status), `terminal tracker requires an exact status, got ${String(status).slice(0, 32)}`);
+      assert.ok(!seenResponseIds.has(reqId),
+        `duplicate response reqId ${reqId} fails closed (one terminal outcome per request)`);
+      seenResponseIds.add(reqId);
+      const contract = contractStatuses.has(status);
+      terminalByReqId.set(reqId, { kind: "response", status, contract });
+      return contract;
+    },
+    shouldSuppressFailure(reqId) {
+      const terminal = terminalByReqId.get(reqId);
+      return terminal !== undefined && terminal.kind === "response" && terminal.contract === true;
+    },
+    noteFailure(reqId) {
+      assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
+      terminalByReqId.set(reqId, { kind: "failure" });
+    },
+    seenResponseIds: () => [...seenResponseIds],
+    terminalByReqId: () => new Map(terminalByReqId),
+  };
+}
+
 export function createClosedAuthority(label) {
   assert.ok(typeof label === "string" && label.length > 0 && label.length < 128,
     "authority label must be an exact boundary name");
   const operations = new Map();
   const edges = [];
   const slots = new Map();
-  const pendingNav = [];
+  // Causal nav/action tokens: pendingNav keyed by exact tokenId. Tokens are
+  // minted ONLY at harness-navigation boundaries via mintNavToken, bound to
+  // opaque frozen token objects through tokenBindings (WeakMap), and consumed
+  // one-to-one via consumeNavToken. The backward-scan consumeNavSlot(targetDoc)
+  // is deleted: targetDoc scanning is ambiguous (two pendings, same doc) and
+  // can never anchor edges. Token-less or wrong-token frame events register as
+  // unlinked observations and never anchor edges.
+  const pendingNav = new Map();
+  const tokenBindings = new WeakMap();
   let nextOpId = 0;
   let nextSlotId = 0;
+  let nextTokenId = 0;
   const checkEnum = (value, closed, name) => {
     assert.ok(typeof value === "string" && closed.includes(value),
       `${label}: unknown ${name} ${JSON.stringify(String(value)).slice(0, 64)} rejects (closed: ${closed.join("/")}); merely-nonempty is insufficient`);
@@ -635,11 +683,48 @@ export function createClosedAuthority(label) {
         `${label}: undeclared successor ${action} rejects (not in op ${from} successors)`);
     }
     nextOpId += 1;
-    const op = { id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: [...successors] };
+    const op = Object.freeze({ id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: [...successors],
+      navTokenId: null });
     operations.set(op.id, op);
-    if (from !== null) edges.push({ fromOpId: from, toOpId: op.id, scope, cause });
-    if (kind === "harness-navigation") pendingNav.push({ targetDoc, opId: op.id, consumed: false });
+    if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
+    if (kind === "harness-navigation") {
+      const token = mintNavToken(op.id, op.targetDoc);
+      const stamped = Object.freeze({ ...op, navTokenId: token.tokenId, navToken: token });
+      operations.set(stamped.id, stamped);
+      return stamped;
+    }
     return op;
+  };
+  const mintNavToken = (opId, targetDoc) => {
+    const owner = operations.get(opId);
+    assert.ok(owner !== undefined, `${label}: nav token must bind a registered op, got ${String(opId).slice(0, 32)}`);
+    assert.ok(owner.kind === "harness-navigation",
+      `${label}: nav tokens mint only at harness-navigation boundaries (kind=${owner.kind} rejects)`);
+    assert.ok(Number.isSafeInteger(targetDoc) && targetDoc >= 0, `${label}: nav token targetDoc must be exact`);
+    assert.ok(targetDoc === owner.targetDoc,
+      `${label}: nav token targetDoc must equal its minting op targetDoc (stale stamps reject)`);
+    assert.ok(pendingNav.size < 1024, `${label}: pending nav table must stay finite`);
+    nextTokenId += 1;
+    const token = Object.freeze({ scope: NAV_TOKEN_SCOPE, tokenId: nextTokenId, opId, targetDoc });
+    pendingNav.set(token.tokenId, { opId, targetDoc, consumed: false, token });
+    tokenBindings.set(token, token.tokenId);
+    return token;
+  };
+  const resolveNavTokenId = (tokenOrId) => {
+    if (tokenOrId !== null && typeof tokenOrId === "object") {
+      const bound = tokenBindings.get(tokenOrId);
+      return Number.isSafeInteger(bound) ? bound : null;
+    }
+    if (Number.isSafeInteger(tokenOrId)) return pendingNav.has(tokenOrId) ? tokenOrId : null;
+    return null;
+  };
+  const consumeNavToken = (tokenOrId) => {
+    const tokenId = resolveNavTokenId(tokenOrId);
+    if (tokenId === null) return null;
+    const entry = pendingNav.get(tokenId);
+    if (entry === undefined || entry.consumed) return null;
+    entry.consumed = true;
+    return { tokenId, opId: entry.opId, targetDoc: entry.targetDoc, token: entry.token };
   };
   const mintSlot = ({ opId, targetDoc, action, role, method, origin, path }) => {
     assert.ok(Number.isSafeInteger(opId) && operations.has(opId),
@@ -655,21 +740,15 @@ export function createClosedAuthority(label) {
     assert.ok(owner.action === action,
       `${label}: slot action must equal its minting op action (late/unrelated slot use rejects)`);
     nextSlotId += 1;
-    const slot = { id: nextSlotId, opId, targetDoc, action, role, method, origin, path };
+    // Immutable issuance stamp: the slot freezes its minting op/doc/role
+    // context synchronously at the action boundary. Requests verify
+    // request.docId == slot.targetDoc == op.targetDoc downstream.
+    const slot = Object.freeze({ id: nextSlotId, opId, targetDoc, action, role, method, origin, path });
     slots.set(slot.id, slot);
     return slot;
   };
-  const consumeNavSlot = (targetDoc) => {
-    for (let index = pendingNav.length - 1; index >= 0; index -= 1) {
-      const entry = pendingNav[index];
-      if (!entry.consumed && entry.targetDoc === targetDoc) {
-        entry.consumed = true;
-        return entry;
-      }
-    }
-    return null;
-  };
-  return { label, registerOp, mintSlot, consumeNavSlot,
+  return { label, registerOp, mintSlot, mintNavToken, consumeNavToken,
+    pendingNavTokens: () => [...pendingNav.entries()].map(([tokenId, entry]) => ({ tokenId, opId: entry.opId, targetDoc: entry.targetDoc, consumed: entry.consumed })),
     getOp: (id) => operations.get(id),
     operations: () => [...operations.values()], edges: () => [...edges], slots: () => [...slots.values()] };
 }
@@ -723,11 +802,25 @@ async function launchPlaywright(runId) {
     let currentDocId = 0;
     let currentRole = "startup-probe";
     let currentOp = null;
+    // Causal predecessor for the next observed document replacement: the exact
+    // frozen token object minted at the last harness-navigation boundary (or
+    // null when no navigation is pending). Never a docId scan.
+    let pendingNavToken = null;
     const auth = createClosedAuthority(`owner-e2e:${runId}`);
+    // Immutable issuance context: frozen synchronously at every explicit
+    // action/role boundary (registerOp/setRole). Observed request stamps copy
+    // this frozen context verbatim instead of sampling the live navigation
+    // counters, so a straggler that races a document replacement still carries
+    // its issuing action's exact op/doc/role (stale live sampling is deleted).
+    // The frame handler never touches it: navigation takes effect at the next
+    // explicit boundary only. Settle-barrier discipline (settleLedger before
+    // every ledger assert) keeps boundaries from piling up behind callbacks.
+    let frozenIssuance = null;
     const setRole = (role) => {
       assert.ok(SLOT_ROLES.includes(role),
         `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
       currentRole = role;
+      if (frozenIssuance !== null) frozenIssuance = Object.freeze({ ...frozenIssuance, role });
     };
     // Root operation: explicitly registered once; later ops link from it (or
     // from their exact predecessor) through declared successors only.
@@ -735,9 +828,20 @@ async function launchPlaywright(runId) {
       sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
       successors: ["goto-unauthenticated"] });
     currentOp = rootOp;
+    frozenIssuance = Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" });
     const registerOp = (fields) => {
       const op = auth.registerOp(fields);
       currentOp = op;
+      // Freeze the issuing context synchronously at this boundary: every
+      // request issued under this action carries exactly this op/doc/role.
+      frozenIssuance = Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role });
+      // The harness-navigation boundary mints its causal nav token
+      // synchronously inside registerOp (see createClosedAuthority). Keep the
+      // exact token object as the single pending causal predecessor: the next
+      // main-frame framenavigated consumes exactly this token, one-to-one.
+      if (op.kind === "harness-navigation" && op.navToken !== undefined && op.navToken !== null) {
+        pendingNavToken = op.navToken;
+      }
       return op;
     };
     // Finite request slots for the exact abortable identities of the current
@@ -755,15 +859,15 @@ async function launchPlaywright(runId) {
       return minted;
     };
     // Slot bind for an observed request: the open slot for this exact
-    // (method,origin,path) under the current op/role, else an
-    // authority-governed slot with full scope (still finite, still closed
-    // enums; unknown roles already reject at setRole/mint time, never here).
+    // (method,origin,path) under the frozen issuance op/role, else null
+    // (unknown paths fail closed downstream — the bindSlot auto-mint is
+    // deleted, so no request can invent authority outside its synchronous
+    // action boundary).
     const bindSlot = (method, origin, path) => {
-      const open = auth.slots().find((slot) => slot.opId === currentOp.id && slot.method === method &&
-        slot.origin === origin && slot.path === path && slot.role === currentRole);
+      const open = auth.slots().find((slot) => slot.opId === frozenIssuance.opId && slot.method === method &&
+        slot.origin === origin && slot.path === path && slot.role === frozenIssuance.role);
       if (open !== undefined) return open.id;
-      return auth.mintSlot({ opId: currentOp.id, targetDoc: currentDocId, action: currentOp.action,
-        role: currentRole, method, origin, path }).id;
+      return null;
     };
     const frameIdentity = (event) => {
       try {
@@ -780,13 +884,14 @@ async function launchPlaywright(runId) {
           navigationEpoch += 1;
           nextDocId += 1;
           currentDocId = nextDocId;
-          // Validated observed document replacement: links from the pending
-          // navigation slot's op only when the new doc matches a slot minted
-          // by an explicit harness-navigation boundary; otherwise registers
-          // as an unlinked observation (still closed enums). The current
-          // action op is never stolen: anchors traverse explicit action
-          // edges only, never observations.
-          const pending = auth.consumeNavSlot(currentDocId);
+          // Causal token-bound document replacement: consumes exactly the
+          // pending nav token minted at the harness-navigation boundary. A
+          // token-less event (no pending token) or a wrong-token event (stale
+          // or already-consumed token) registers as an unlinked observation
+          // (from: null) and can never anchor edges. The current action op is
+          // never stolen: anchors traverse explicit action edges only.
+          const pending = pendingNavToken !== null ? auth.consumeNavToken(pendingNavToken) : null;
+          pendingNavToken = null;
           if (pending !== null) {
             auth.registerOp({ kind: "observed-navigation", cause: "framenavigated", scope: "document",
               sourceDoc: currentDocId, targetDoc: currentDocId, action: "framenavigated",
@@ -822,16 +927,26 @@ async function launchPlaywright(runId) {
     // uniformly, so every outcome pairs with its request.
     let nextRequestId = 0;
     const requestIds = new WeakMap();
+    // Unique identity + one terminal outcome: the tracker records the single
+    // terminal outcome per reqId and dedupes ONLY the same-reqId
+    // contract-response suppressing its own duplicate failure notification.
+    // Cross-reqId, non-contract, or duplicate-response cases never suppress.
+    const terminals = createRequestTerminalTracker();
     context.on("request", (request) => {
       const entry = ledgerEntry(request.method(), request.url());
       requestSeq += 1;
       nextRequestId += 1;
-      const stamp = { id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
-        opId: currentOp.id, docId: currentDocId, role: currentRole, slotId: bindSlot(entry.method, entry.origin, entry.path) };
+      // Immutable issuance stamp: a frozen copy of the action-boundary
+      // context (op/doc/role) plus the exact bound slot (or null for unknown
+      // paths, which fail closed downstream). The stamp object is frozen so
+      // later boundaries can never mutate it, and no slot is auto-minted here.
+      // Live navigation/doc counters are never sampled for stamps.
+      const stamp = Object.freeze({ id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
+        opId: frozenIssuance.opId, docId: frozenIssuance.docId, role: frozenIssuance.role, slotId: bindSlot(entry.method, entry.origin, entry.path) });
       requestIds.set(request, stamp);
-      requests.push({ ...entry, resourceType: request.resourceType(),
+      requests.push(Object.freeze({ ...entry, resourceType: request.resourceType(),
         reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq,
-        opId: stamp.opId, docId: stamp.docId, role: stamp.role, slotId: stamp.slotId, frame: frameIdentity(request) });
+        opId: stamp.opId, docId: stamp.docId, role: stamp.role, slotId: stamp.slotId, frame: frameIdentity(request) }));
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -842,17 +957,17 @@ async function launchPlaywright(runId) {
     });
     page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
     const failedRequestEntries = [];
-    // One request → one outcome: a contract response dominates a same-request
-    // abort report (observed: Chromium emits net::ERR_ABORTED for an already
-    // completed 204 when a navigation races delivery). The redundant failure
-    // is dropped from both parallel ledgers so the completed request pairs
-    // with its own response; genuine aborts (no own response) still anchor or
-    // fail closed downstream. Synthetic regression rows bypass collection and
-    // keep every negative exact (Luna-10 included).
-    const respondedReqIds = new Set();
+    // One request → one terminal outcome: a same-reqId contract response
+    // suppresses ONLY its own duplicate failure notification (observed:
+    // Chromium emits net::ERR_ABORTED for an already completed 204 when a
+    // navigation races delivery). The suppression is exact: same reqId AND a
+    // contract status recorded via the terminal tracker. Cross-reqId responses,
+    // non-contract responses, and duplicate responses never suppress — the
+    // failure stays ledgered and fails closed downstream. Synthetic regression
+    // rows bypass collection and keep every negative exact (Luna-10 included).
     context.on("requestfailed", (request) => {
       const earlyStamp = requestIds.get(request);
-      if (earlyStamp !== undefined && respondedReqIds.has(earlyStamp.id)) return;
+      if (earlyStamp !== undefined && Number.isSafeInteger(earlyStamp.id) && terminals.shouldSuppressFailure(earlyStamp.id)) return;
       // Legacy failure-time clock retained for message-compat diagnostics only;
       // the anchor never consults it. Pairing uses the failure's OWN reqId join.
       failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
@@ -875,27 +990,16 @@ async function launchPlaywright(runId) {
       // The response carries its OWN request's stamp via response.request().
       // A missing stamp fails closed downstream and never falls back to
       // sampling the live global counter. opId/docId/role join the same way.
+      // The terminal tracker records the single terminal outcome per reqId;
+      // only a same-reqId contract-response suppresses its own duplicate
+      // failure notification below (handled in requestfailed via
+      // shouldSuppressFailure). Retroactive ledger surgery is deleted: already-
+      // recorded failures are never removed here.
       const request = response.request();
       const stamp = requestIds.get(request);
+      const status = response.status();
       if (stamp !== undefined && Number.isSafeInteger(stamp.id)) {
-        respondedReqIds.add(stamp.id);
-        const before = failedRequestEntries.length;
-        if (before > 0) {
-          const keptEntries = [];
-          const keptStrings = [];
-          for (let index = 0; index < failedRequestEntries.length; index += 1) {
-            if (failedRequestEntries[index]?.reqId !== stamp.id) {
-              keptEntries.push(failedRequestEntries[index]);
-              keptStrings.push(failedRequests[index]);
-            }
-          }
-          if (keptEntries.length !== before) {
-            failedRequestEntries.length = 0;
-            failedRequests.length = 0;
-            failedRequestEntries.push(...keptEntries);
-            failedRequests.push(...keptStrings);
-          }
-        }
+        try { terminals.noteResponse(stamp.id, status); } catch { /* duplicate terminal stays ledgered; verifier fails closed */ }
       }
       const entry = ledgerEntry(request.method(), request.url());
       let contentType;
@@ -920,7 +1024,7 @@ async function launchPlaywright(runId) {
       panelSerial += 1;
       consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
-      respondedReqIds.clear();
+      pendingNavToken = null;
     };
     const close = async () => {
       try { await context?.close(); } catch { /* Best-effort. */ }
@@ -1055,14 +1159,22 @@ export function assertAuthedLedger(harness, label, origin) {
 //     method+origin+path+role and a contract status from authedNetworkSpec,
 // (5) a single-step exact edge from the abort opId to the survivor opId: both
 //     endpoints registered, the survivor action a declared successor of the
-//     abort op, the pair in the closed TRANSITIONS set, and doc binding
-//     (survivor sourceDoc === abort targetDoc). Transitive hops deny.
+//     abort op, the pair in the closed TRANSITIONS set, doc binding
+//     (survivor sourceDoc === abort targetDoc), and token binding (exact token
+//     endpoints: when either side carries a navTokenId, both must carry the
+//     same token; an edge carrying a tokenId must match both endpoints).
+//     Transitive hops deny.
 // (6) successor-slot binding: both sides carry registered slots whose scope
-//     equals their own request identity, each bound to its own op, the
-//     survivor slot strictly later than the abort slot; the anchor key is
-//     (method,origin,path,role,actionIds,slotId),
+//     equals their own request identity, each bound to its own op with
+//     request.docId == slot.targetDoc == op.targetDoc (op/doc mismatch and
+//     stale stamps reject), the survivor slot strictly later than the abort
+//     slot AND authenticated order (survivor.request.seq > abort.request.seq);
+//     the anchor key is (method,origin,path,role,actionIds,slotId),
 // (7) one-to-one cardinality via successor-slot consumption (each survivor
-//     slot anchors at most one abort).
+//     slot anchors at most one abort) plus one terminal outcome per reqId
+//     (seenResponseIds; a failure whose reqId already has a response terminal
+//     denies as dedupe overreach — only a same-reqId contract-response may
+//     suppress its own duplicate failure notification, handled in collection).
 // Forbidden and absent: BFS/transitive closure, latest/earliest/positional
 // matching, URL-only role inference, unknown or merely-nonempty roles,
 // broad-phase roles, unregistered endpoints, arbitrary edges, slot replay or
@@ -1136,9 +1248,12 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     slotTable.set(slot.id, slot);
   }
   // Single-step exact edges: registered endpoints, declared successor, closed
-  // TRANSITIONS pair. The BFS supersededBy closure is deleted: transitive hops
-  // (A→B→C anchoring A→C) deny.
+  // TRANSITIONS pair, token-bound endpoints. The BFS supersededBy closure is
+  // deleted: transitive hops (A→B→C anchoring A→C) deny. An edge carrying an
+  // explicit tokenId must match both endpoints' navTokenId; token-less edges
+  // remain valid for action-action pairs minted without navigation tokens.
   const edgeSet = new Set();
+  const edgeTokens = new Map();
   for (const edge of rawEdges) {
     assert.ok(Number.isSafeInteger(edge?.fromOpId) && Number.isSafeInteger(edge?.toOpId),
       `${label}: edge must carry explicit from/to opIds`);
@@ -1152,7 +1267,14 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: undeclared successor ${toOp.action} rejects (not in op ${edge.fromOpId} successors)`);
     assert.ok(OP_TRANSITIONS.includes(`${fromOp.action}→${toOp.action}`),
       `${label}: arbitrary edge ${fromOp.action}→${toOp.action} rejects (closed TRANSITIONS)`);
+    if (edge.tokenId !== undefined && edge.tokenId !== null) {
+      assert.ok(Number.isSafeInteger(edge.tokenId),
+        `${label}: edge tokenId must be exact`);
+      assert.ok(fromOp.navTokenId === edge.tokenId && toOp.navTokenId === edge.tokenId,
+        `${label}: token ambiguity denies: edge token ${edge.tokenId} must match both endpoints (from navToken=${fromOp.navTokenId ?? "none"} to navToken=${toOp.navTokenId ?? "none"})`);
+    }
     edgeSet.add(`${edge.fromOpId}→${edge.toOpId}`);
+    edgeTokens.set(`${edge.fromOpId}→${edge.toOpId}`, edge.tokenId ?? null);
   }
   const linked = (fromOp, toOp) => edgeSet.has(`${fromOp}→${toOp}`);
   // Exact request identity: one reqId per browser request, with explicit
@@ -1185,6 +1307,18 @@ function buildAuthedAbortAnchor(label, harness, origin) {
         `${label}: slot mismatch: slot ${slot.id} scope must equal request identity (reqId ${entry.reqId})`);
       assert.ok(slot.opId === entry.opId,
         `${label}: slot replay or unrelated reuse rejects: slot ${slot.id} is bound to op ${slot.opId}, used by reqId ${entry.reqId} op ${entry.opId}`);
+      // Immutable issuance binding for slotted (anchor-eligible) traffic: the
+      // frozen request stamp must equal its slot and op targetDocs. Op/doc
+      // mismatch and stale stamps reject here. Null-slot static traffic stays
+      // under the phase ledger only (it can never anchor: aborts require a
+      // registered slot below).
+      const issuer = registry.get(entry.opId);
+      assert.ok(entry.docId === issuer.targetDoc,
+        `${label}: request docId ${entry.docId} must equal its op targetDoc ${issuer.targetDoc} (op/doc mismatch and stale stamps reject; reqId ${entry.reqId})`);
+      assert.ok(entry.docId === slot.targetDoc,
+        `${label}: request docId ${entry.docId} must equal its slot targetDoc ${slot.targetDoc} (stale stamp rejects; reqId ${entry.reqId} slot ${slot.id})`);
+      assert.ok(slot.targetDoc === issuer.targetDoc,
+        `${label}: slot targetDoc ${slot.targetDoc} must equal its op targetDoc ${issuer.targetDoc} (slot ${slot.id} op ${entry.opId})`);
       const useKey = `${entry.method} ${entry.origin}${entry.path} ${entry.role} op${entry.opId}`;
       const seen = slotUse.get(entry.slotId);
       assert.ok(seen === undefined || seen === useKey,
@@ -1195,11 +1329,19 @@ function buildAuthedAbortAnchor(label, harness, origin) {
   }
   // Each response joins to its OWN request by exact reqId; opId/docId/role/
   // slotId must match its own request (fail closed on mismatch).
-  // Non-contract outcomes never anchor.
+  // Non-contract outcomes never anchor. Unique identity + one terminal outcome:
+  // seenResponseIds denies duplicate responses for the same reqId, and the
+  // terminal map records every response terminal for the failure-side
+  // dedupe-overreach check below.
   const anchorsByKey = new Map();
+  const seenResponseIds = new Set();
+  const responseTerminalByReqId = new Map();
   for (const response of responses) {
     assert.ok(Number.isSafeInteger(response?.reqId),
       `${label}: response without its own request reqId fails closed (never sample the global counter): ${response?.method ?? "?"} ${response?.origin ?? "?"}${response?.path ?? "?"} -> ${response?.status ?? "?"}`);
+    assert.ok(!seenResponseIds.has(response.reqId),
+      `${label}: duplicate response reqId ${response.reqId} fails closed (one terminal outcome per request)`);
+    seenResponseIds.add(response.reqId);
     const own = requestById.get(response.reqId);
     assert.ok(own !== undefined,
       `${label}: unpaired responded outcome has no browser request: ${response.method} ${response.origin}${response.path} -> ${response.status}`);
@@ -1211,6 +1353,7 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: response opId/docId must equal its own request opId/docId (reqId ${response.reqId})`);
     assert.ok((response.slotId ?? null) === (own.slotId ?? null),
       `${label}: response slotId must equal its own request slotId (reqId ${response.reqId})`);
+    responseTerminalByReqId.set(response.reqId, { status: response.status });
     const key = `${response.method} ${response.origin}${response.path} ${response.role}`;
     const statuses = contract.get(`${response.method} ${response.path}`);
     if (!statuses || !statuses.has(response.status)) continue;
@@ -1258,6 +1401,8 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     const anchors = anchorsByKey.get(key) ?? [];
     let consumed = null;
     let anchorKey = null;
+    let sawSeqInversion = false;
+    let sawTokenMismatch = false;
     for (const candidate of anchors) {
       if (candidate.request.reqId === own.reqId) continue;
       if (candidate.request.opId === own.opId) continue;
@@ -1269,14 +1414,43 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       if (!roleCompat(own.role, candidate.request.role)) continue;
       if (!linked(own.opId, candidate.request.opId)) continue;
       if (survivorOp.sourceDoc !== abortOp.targetDoc) continue;
+      // Token-bound single-step edges: when either side carries a navTokenId,
+      // both must carry the same token (exact token endpoints). Token-less
+      // action pairs pass; ambiguous cross-token pairs never anchor.
+      if (abortOp.navTokenId != null || survivorOp.navTokenId != null) {
+        if (abortOp.navTokenId !== survivorOp.navTokenId) { sawTokenMismatch = true; continue; }
+        const edgeToken = edgeTokens.get(`${own.opId}→${candidate.request.opId}`);
+        if (edgeToken != null && (edgeToken !== abortOp.navTokenId || edgeToken !== survivorOp.navTokenId)) {
+          sawTokenMismatch = true; continue;
+        }
+      }
       if (survivorSlot.id <= abortSlot.id) continue;
+      // Authenticated order IN ADDITION to slot order: the survivor request
+      // must be issued after the abort request (time inversion denies even
+      // when slot ids happen to order correctly). Clock-only matching stays
+      // forbidden: seq is consulted only as a conjunction with slot order.
+      if (!(Number.isSafeInteger(candidate.request.seq) && Number.isSafeInteger(own.seq) &&
+          candidate.request.seq > own.seq)) { sawSeqInversion = true; continue; }
       if (consumedSlots.has(survivorSlot.id)) continue;
       anchorKey = `${entry.method} ${entry.origin}${entry.path} ${entry.role} ${abortOp.action}#${abortSlot.id}→${survivorOp.action}#${survivorSlot.id}`;
       consumed = candidate;
       break;
     }
+    if (consumed === null && sawTokenMismatch) {
+      assert.fail(`${label}: token ambiguity denies: abort op ${own.opId} and survivor carry different nav tokens with no exact token-bound edge: ${text.slice(0, 300)}`);
+    }
+    if (consumed === null && sawSeqInversion) {
+      assert.fail(`${label}: authenticated order denies: no distinct later survivor with survivor.request.seq > abort.request.seq (time inversion): ${text.slice(0, 300)}`);
+    }
     assert.ok(consumed !== null && anchorKey !== null,
       `${label}: unanchored abort has no distinct later same-method+origin+path+role contract response with an explicit single-step supersession edge, closed transition, doc binding and an unconsumed anchor (successor slot): ${text.slice(0, 300)}`);
+    // One terminal outcome: a failure whose reqId already has a response
+    // terminal denies as dedupe overreach (only a same-reqId contract-response
+    // may suppress its own duplicate failure notification, handled during
+    // collection; a retained failure beside its own response is a duplicate
+    // terminal and never anchors).
+    assert.ok(!responseTerminalByReqId.has(entry.reqId),
+      `${label}: dedupe overreach denies: reqId ${entry.reqId} already has a response terminal (one terminal outcome per request): ${text.slice(0, 300)}`);
     consumedSlots.add(slotTable.get(consumed.request.slotId).id);
   };
 }
@@ -1329,6 +1503,21 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
 // reuses the abort slot); 19 is slot mismatch (survivor stamped with a
 // pair-scoped slot). N13-N19 are accepted by the 58a3c46 D5 rule (proven by
 // the old-behavior run: they fail to reject there) and denied post-fix.
+// New negatives 20-25 prove the causal nav/action token design: 20 is op/doc
+// mismatch (request.docId != op.targetDoc); 21 is a duplicate response (same
+// reqId twice — one terminal outcome); 22 is time inversion (survivor seq <
+// abort seq with slot order intact — authenticated order denies); 23 is token
+// ambiguity (abort/survivor carry different nav tokens, no exact token-bound
+// edge — the deleted backward-scan consumeNavSlot would anchor it); 24 is a
+// stale stamp (request.docId != slot.targetDoc after a boundary advanced);
+// 25 is dedupe overreach (the abort reqId already has its own non-contract
+// response terminal, yet a distinct contract survivor exists — the retained
+// failure must deny, never anchor). Collector unit tests D1-D3 prove the live
+// terminal tracker: D1 is the legitimate same-reqId contract-response
+// suppression (PASS retained); D2 proves a non-contract response never
+// suppresses; D3 proves cross-reqId responses never suppress and duplicate
+// responses fail closed. N20-N25/D2-D3 are accepted by 1e771ca (proven by the
+// old-behavior run) and denied post-fix; D1 passes pre/post (retained).
 // Phantom fallback stays deleted. The live owner E2E proves the accompanying
 // window evidence the synthetic ledger cannot carry: the surviving catalog 200
 // lists the admitted source id and Chromium holds exactly one opaque HttpOnly
@@ -1731,9 +1920,131 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
     failures: [failOf(mismatchIssued)],
   }), "epoch-negative-slot-mismatch", origin), /slot mismatch/,
     "survivor with a mismatched slot scope must fail closed");
+  // Negative 20 (op/doc mismatch): the abort stamp carries a docId far from
+  // its own op targetDoc. Doc-blind matching anchors it; the immutable
+  // issuance binding (request.docId == op.targetDoc) denies here. Accepted by
+  // 1e771ca (old-behavior run proves no throw there).
+  const pairOpDoc = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opDocIssued = req("GET", catalog, pairOpDoc.opPre, "catalog-read", pairOpDoc.docPre);
+  opDocIssued.docId = pairOpDoc.docPost + 100;
+  const opDocSurvived = req("GET", catalog, pairOpDoc.opPost, "catalog-read", pairOpDoc.docPost);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [opDocIssued, opDocSurvived],
+    networkResponses: [res(opDocSurvived, 200)],
+    failures: [failOf(opDocIssued)],
+  }), "epoch-negative-op-doc-mismatch", origin), /op\/doc mismatch|must equal its op targetDoc/,
+    "request docId diverging from its op targetDoc must fail closed");
+  // Negative 21 (duplicate response): the survivor reqId answers twice. The
+  // deleted allow-duplicates ledger anchors it; seenResponseIds denies here.
+  const pairDupRes = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const dupResIssued = req("GET", catalog, pairDupRes.opPre, "catalog-read", pairDupRes.docPre);
+  const dupResSurvived = req("GET", catalog, pairDupRes.opPost, "catalog-read", pairDupRes.docPost);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [dupResIssued, dupResSurvived],
+    networkResponses: [res(dupResSurvived, 200), res(dupResSurvived, 200)],
+    failures: [failOf(dupResIssued)],
+  }), "epoch-negative-duplicate-response", origin), /duplicate response reqId|one terminal outcome/,
+    "a duplicated response terminal for one reqId must fail closed");
+  // Negative 22 (time inversion): the survivor request was issued BEFORE the
+  // abort (seq inverted) while slot ids still order correctly. Slot-only
+  // ordering anchors it; authenticated order (survivor seq > abort seq)
+  // denies here.
+  const pairInv = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const invIssued = req("GET", catalog, pairInv.opPre, "catalog-read", pairInv.docPre);
+  const invSurvived = req("GET", catalog, pairInv.opPost, "catalog-read", pairInv.docPost);
+  invSurvived.seq = invIssued.seq - 1;
+  const invSurvivedRes = res(invSurvived, 200);
+  invSurvivedRes.seq = invSurvived.seq;
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [invIssued, invSurvived],
+    networkResponses: [invSurvivedRes],
+    failures: [failOf(invIssued)],
+  }), "epoch-negative-time-inversion", origin), /authenticated order|time inversion/,
+    "a survivor issued before its abort must fail closed despite slot order");
+  // Negative 23 (token ambiguity): abort and survivor lineages carry different
+  // causal nav tokens with no exact token-bound edge. The deleted
+  // backward-scan consumeNavSlot(targetDoc) anchors by doc proximity; exact
+  // token endpoints deny here. Ops are frozen, so token lineage arrives via
+  // table override copies (never mutation).
+  const pairTok = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const tokIssued = req("GET", catalog, pairTok.opPre, "catalog-read", pairTok.docPre);
+  const tokSurvived = req("GET", catalog, pairTok.opPost, "catalog-read", pairTok.docPost);
+  const tokOps = auth.operations().map((op) => {
+    if (op.id === pairTok.opPre.id) return { ...op, navTokenId: 1001 };
+    if (op.id === pairTok.opPost.id) return { ...op, navTokenId: 1002 };
+    return op;
+  });
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [tokIssued, tokSurvived],
+    networkResponses: [res(tokSurvived, 200)],
+    failures: [failOf(tokIssued)],
+    operations: tokOps,
+  }), "epoch-negative-token-ambiguity", origin), /token ambiguity|exact token/,
+    "cross-token abort/survivor pairs must fail closed without an exact token-bound edge");
+  // Negative 24 (stale stamp): the abort slot was minted pre-boundary
+  // (targetDoc stale) while the request stamp moved on. Doc-blind slot reuse
+  // anchors it; request.docId == slot.targetDoc denies here. Slots are frozen,
+  // so staleness arrives via table override copies.
+  const pairStale = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const staleIssued = req("GET", catalog, pairStale.opPre, "catalog-read", pairStale.docPre);
+  const staleSurvived = req("GET", catalog, pairStale.opPost, "catalog-read", pairStale.docPost);
+  const staleSlots = auth.slots().map((slot) =>
+    (slot.id === staleIssued.slotId ? { ...slot, targetDoc: 9999 } : slot));
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [staleIssued, staleSurvived],
+    networkResponses: [res(staleSurvived, 200)],
+    failures: [failOf(staleIssued)],
+    slots: staleSlots,
+  }), "epoch-negative-stale-stamp", origin), /stale stamp|must equal its slot targetDoc/,
+    "a request reused against a stale slot stamp must fail closed");
+  // Negative 25 (dedupe overreach): the abort reqId already has its OWN
+  // non-contract response terminal (500), yet a distinct contract survivor
+  // exists. Indiscriminate same-reqId dedupe (any status suppresses) hides the
+  // failure and anchors; the one-terminal rule denies here because only a
+  // same-reqId contract-response may suppress its own duplicate failure.
+  const pairOver = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const overIssued = req("GET", catalog, pairOver.opPre, "catalog-read", pairOver.docPre);
+  const overSurvived = req("GET", catalog, pairOver.opPost, "catalog-read", pairOver.docPost);
+  const overOwnTerminal = res(overIssued, 500);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [overIssued, overSurvived],
+    networkResponses: [overOwnTerminal, res(overSurvived, 200)],
+    failures: [failOf(overIssued)],
+  }), "epoch-negative-dedupe-overreach", origin), /dedupe overreach|one terminal outcome/,
+    "a retained failure beside its own response terminal must fail closed");
+  // Collector unit tests D1-D3: the live terminal tracker behind
+  // launchPlaywright collection. D1 is the legitimate same-reqId
+  // contract-response suppression (PASS retained pre/post). D2 proves a
+  // non-contract response never suppresses its failure. D3 proves cross-reqId
+  // responses never suppress and duplicate responses fail closed. D2-D3 are
+  // accepted (over-suppressed or allowed) by the 1e771ca inline
+  // respondedReqIds logic, which lacks the tracker export and the contract
+  // gate; denied post-fix.
+  {
+    const trackerD1 = createRequestTerminalTracker(new Set([200, 204, 403]));
+    trackerD1.noteResponse(7001, 200);
+    assert.equal(trackerD1.shouldSuppressFailure(7001), true,
+      "D1: same-reqId contract response must suppress its own duplicate failure notification");
+    const trackerD2 = createRequestTerminalTracker(new Set([200, 204, 403]));
+    trackerD2.noteResponse(7002, 500);
+    assert.equal(trackerD2.shouldSuppressFailure(7002), false,
+      "D2: non-contract response must never suppress its failure (dedupe overreach denies)");
+    const trackerD3 = createRequestTerminalTracker(new Set([200, 204, 403]));
+    trackerD3.noteResponse(7003, 200);
+    assert.equal(trackerD3.shouldSuppressFailure(7004), false,
+      "D3: cross-reqId response must never suppress another request's failure");
+    assert.throws(() => trackerD3.noteResponse(7003, 200), /duplicate response reqId/,
+      "D3: duplicate response for one reqId must fail closed");
+  }
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 19,
-    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption); sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 25, collector: "D1-D3",
+    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens + immutable issuance stamps + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
