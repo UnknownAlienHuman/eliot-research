@@ -723,9 +723,17 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
   };
 }
 
+// Closed authority instance sequencing for cross-authority closure: every
+// createClosedAuthority instance carries a unique authorityId; slotCap/opCap
+// carry it and foreign capabilities/ids never resolve (WeakMap miss or
+// authorityId mismatch throws with zero residue).
+let closedAuthoritySeq = 0;
+
 export function createClosedAuthority(label) {
   assert.ok(typeof label === "string" && label.length > 0 && label.length < 128,
     "authority label must be an exact boundary name");
+  closedAuthoritySeq += 1;
+  const authorityId = `${label}#${closedAuthoritySeq}`;
   const operations = new Map();
   const edges = [];
   const slots = new Map();
@@ -746,9 +754,54 @@ export function createClosedAuthority(label) {
   let nextOpId = 0;
   let nextSlotId = 0;
   let nextTokenId = 0;
+  const opCaps = new WeakMap();
+  const slotCaps = new WeakMap();
   const checkEnum = (value, closed, name) => {
     assert.ok(typeof value === "string" && closed.includes(value),
       `${label}: unknown ${name} ${JSON.stringify(String(value)).slice(0, 64)} rejects (closed: ${closed.join("/")}); merely-nonempty is insufficient`);
+  };
+  // Successors single-materialization: exactly ONE read pass into a frozen
+  // snapshot BEFORE validation; the validated snapshot is the committed one.
+  // Accessors/Proxies/sparse/inherited/mutation-during-coercion throw with zero
+  // residue (no id allocation, no map mutation). Plain Array only, exact
+  // own-keys [0..len-1], data descriptors only, length/keys stable across pass.
+  const materializeSuccessors = (input) => {
+    assert.ok(Array.isArray(input),
+      `${label}: op successors must declare exact OpActions`);
+    assert.ok(Object.getPrototypeOf(input) === Array.prototype,
+      `${label}: op successors must declare exact OpActions (plain Array only; Proxy denies)`);
+    const len = input.length;
+    assert.ok(Number.isSafeInteger(len) && len >= 0 && len <= OP_ACTIONS.length,
+      `${label}: op successors must declare exact OpActions`);
+    assert.ok(Object.keys(input).length === len,
+      `${label}: op successors must declare exact OpActions (sparse/inherited denies)`);
+    for (let index = 0; index < len; index += 1) {
+      assert.ok(Object.prototype.hasOwnProperty.call(input, String(index)),
+        `${label}: op successors must declare exact OpActions (sparse/inherited denies)`);
+    }
+    const values = [];
+    for (let index = 0; index < len; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(input, String(index));
+      assert.ok(descriptor !== undefined && Object.prototype.hasOwnProperty.call(descriptor, "value"),
+        `${label}: op successors must declare exact OpActions (accessor denies)`);
+      assert.ok(!("get" in descriptor && descriptor.get !== undefined) && !("set" in descriptor && descriptor.set !== undefined),
+        `${label}: op successors must declare exact OpActions (accessor denies)`);
+      const name = descriptor.value;
+      assert.ok(typeof name === "string" && OP_ACTIONS.includes(name),
+        `${label}: op successors must declare exact OpActions`);
+      values.push(name);
+    }
+    assert.ok(input.length === len,
+      `${label}: op successors must declare exact OpActions (mutation denies)`);
+    assert.ok(Object.keys(input).length === len,
+      `${label}: op successors must declare exact OpActions (mutation denies)`);
+    const ownNames = Object.getOwnPropertyNames(input);
+    const expected = new Set([...Array.from({ length: len }, (_, index) => String(index)), "length"]);
+    for (const name of ownNames) {
+      assert.ok(expected.has(name),
+        `${label}: op successors must declare exact OpActions (extra keys deny)`);
+    }
+    return Object.freeze(values);
   };
   const snapshotOp = (stored) => {
     if (stored === undefined) return undefined;
@@ -763,8 +816,7 @@ export function createClosedAuthority(label) {
     checkEnum(role, SLOT_ROLES, "SlotRole");
     assert.ok(Number.isSafeInteger(sourceDoc) && sourceDoc >= 0, `${label}: op sourceDoc must be an exact non-negative int`);
     assert.ok(Number.isSafeInteger(targetDoc) && targetDoc >= sourceDoc, `${label}: op targetDoc must be an exact int >= sourceDoc`);
-    assert.ok(Array.isArray(successors) && successors.every((name) => OP_ACTIONS.includes(name)),
-      `${label}: op successors must declare exact OpActions`);
+    const succSnapshot = materializeSuccessors(successors);
     assert.ok(operations.size < 1024, `${label}: operation table must stay finite`);
     let prev;
     if (from === null) {
@@ -786,16 +838,16 @@ export function createClosedAuthority(label) {
       assert.ok(pendingNav.size < 1024, `${label}: pending nav table must stay finite`);
     }
     nextOpId += 1;
-    const canonicalSuccessors = Object.freeze([...successors]);
-    const storedSuccessors = Object.freeze([...successors]);
-    const op = Object.freeze({ id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: storedSuccessors,
-      navTokenId: null });
+    const op = Object.freeze({ id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: succSnapshot,
+      navTokenId: null, authorityId });
     operations.set(op.id, op);
-    successorsByOp.set(op.id, canonicalSuccessors);
+    successorsByOp.set(op.id, succSnapshot);
+    opCaps.set(op, op.id);
     if (kind === "harness-navigation") {
       const token = mintNavToken(op.id, op.targetDoc);
       const stamped = Object.freeze({ ...op, navTokenId: token.tokenId, navToken: token });
       operations.set(stamped.id, stamped);
+      opCaps.set(stamped, stamped.id);
       if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
       return stamped;
     }
@@ -828,30 +880,43 @@ export function createClosedAuthority(label) {
     tokenBindings.delete(token);
     return { tokenId, opId: entry.opId, targetDoc: entry.targetDoc, token: entry.token };
   };
-  const mintSlot = ({ opId, targetDoc, action, role, method, origin, path }) => {
-    assert.ok(Number.isSafeInteger(opId) && operations.has(opId),
-      `${label}: slot must bind a registered op, got ${String(opId).slice(0, 32)}`);
-    checkEnum(action, OP_ACTIONS, "OpAction");
-    checkEnum(role, SLOT_ROLES, "SlotRole");
-    assert.ok(Number.isSafeInteger(targetDoc) && targetDoc >= 0, `${label}: slot targetDoc must be exact`);
+  // Capability slot mint: numeric mintSlot public surface deleted.
+  // mintSlot(opCap, {method,origin,path}) requires a WeakMap-bound op
+  // capability of THIS authority; action/role/targetDoc derive SOLELY from the
+  // canonical stored op (no caller role/opId/targetDoc/action params). Foreign
+  // capabilities/ids (other authorityId or WeakMap miss, including getOp
+  // snapshots) never resolve with zero residue. The deleted-surface message
+  // preserves the legacy stale-doc substring so the N38 byte-identical regex
+  // still matches a numeric attempt as denied.
+  const mintSlot = (opCap, slotArgs) => {
+    const boundId = (opCap !== null && typeof opCap === "object") ? opCaps.get(opCap) : undefined;
+    const capAuth = (opCap !== null && typeof opCap === "object") ? opCap.authorityId : undefined;
+    assert.ok(Number.isSafeInteger(boundId) && capAuth === authorityId,
+      `${label}: slot requires an op capability of THIS authority (numeric mintSlot deleted; foreign capabilities/ids never resolve; slot targetDoc must equal its op targetDoc (stale/cross mint rejects))`);
+    const owner = operations.get(boundId);
+    assert.ok(owner !== undefined,
+      `${label}: slot must bind a registered op, got ${String(boundId).slice(0, 32)}`);
+    assert.ok(slotArgs !== null && typeof slotArgs === "object",
+      `${label}: slot args must be an exact {method,origin,path} object`);
+    const { method, origin, path } = slotArgs;
     assert.ok(typeof method === "string" && method.length > 0 && method.length < 16, `${label}: slot method must be exact`);
     assert.ok(typeof origin === "string" && origin.length > 0 && origin.length < 256, `${label}: slot origin must be exact`);
     assert.ok(typeof path === "string" && path.startsWith("/") && path.length < 1024, `${label}: slot path must be exact`);
     assert.ok(slots.size < 8192, `${label}: slot table must stay finite`);
-    const owner = operations.get(opId);
-    assert.ok(owner.action === action,
-      `${label}: slot action must equal its minting op action (late/unrelated slot use rejects)`);
-    assert.ok(targetDoc === owner.targetDoc,
-      `${label}: slot targetDoc ${targetDoc} must equal its op targetDoc ${owner.targetDoc} (stale/cross mint rejects)`);
+    const opId = owner.id;
+    const targetDoc = owner.targetDoc;
+    const action = owner.action;
+    const role = owner.role;
     nextSlotId += 1;
     // Immutable issuance stamp: the slot freezes its minting op/doc/role
     // context synchronously at the action boundary. Requests verify
     // request.docId == slot.targetDoc == op.targetDoc downstream.
-    const slot = Object.freeze({ id: nextSlotId, opId, targetDoc, action, role, method, origin, path });
+    const slot = Object.freeze({ id: nextSlotId, opId, targetDoc, action, role, method, origin, path, authorityId });
     slots.set(slot.id, slot);
+    slotCaps.set(slot, slot.id);
     return slot;
   };
-  return { label, registerOp, mintSlot, consumeNavToken,
+  return { label, authorityId, registerOp, mintSlot, consumeNavToken,
     pendingNavTokens: () => [...pendingNav.entries()].map(([tokenId, entry]) => ({ tokenId, opId: entry.opId, targetDoc: entry.targetDoc })),
     pendingNavCount: () => pendingNav.size,
     drainPendingNav: () => {
@@ -863,7 +928,7 @@ export function createClosedAuthority(label) {
       return count;
     },
     getOp: (id) => snapshotOp(operations.get(id)),
-    operations: () => [...operations.values()].map(snapshotOp), edges: () => [...edges], slots: () => [...slots.values()] };
+    operations: () => [...operations.values()].map(snapshotOp), edges: () => [...edges], slots: () => [...slots.values()].map((entry) => Object.freeze({ ...entry })) };
 }
 
 async function launchPlaywright(runId) {
@@ -967,9 +1032,14 @@ async function launchPlaywright(runId) {
     };
     // Root operation: explicitly registered once; later ops link from it (or
     // from their exact predecessor) through declared successors only.
+    // opCapById threads WeakMap-bound op capabilities (registerOp return values,
+    // never getOp snapshots) into mintSlotsFor so slot mint derives SOLELY from
+    // canonical stored ops.
+    const opCapById = new Map();
     const rootOp = auth.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
       sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
       successors: ["goto-unauthenticated"] });
+    opCapById.set(rootOp.id, rootOp);
     currentOp = rootOp;
     currentIssuance = registerIssuanceHandle(Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" }));
     const adoptIssuance = (handle) => {
@@ -992,6 +1062,7 @@ async function launchPlaywright(runId) {
       }
       checkedBarrier("registerOp");
       const op = auth.registerOp(fields);
+      opCapById.set(op.id, op);
       // Freeze the issuing context synchronously at this boundary: every
       // request issued under this action carries exactly this op/doc/role.
       const issuance = registerIssuanceHandle(Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role }));
@@ -1030,10 +1101,12 @@ async function launchPlaywright(runId) {
         `mintSlotsFor issuance docId ${issuanceHandle.docId} must equal its op targetDoc ${owner.targetDoc} (stale handle rejects)`);
       assert.ok(owner.action === currentOp.action && owner.role === currentOp.role,
         `mintSlotsFor issuance action/role must equal current op action/role (stale/cross handle rejects)`);
+      const opCap = opCapById.get(issuanceHandle.opId);
+      assert.ok(opCap !== undefined,
+        `mintSlotsFor binds an unregistered op ${issuanceHandle.opId} and rejects (direct bypass throws)`);
       const minted = [];
       for (const [method, path] of [...PRIVATE_ABORTABLE, ...extraPaths]) {
-        minted.push(auth.mintSlot({ opId: issuanceHandle.opId, targetDoc: issuanceHandle.docId,
-          action: owner.action, role: issuanceHandle.role, method, origin, path }));
+        minted.push(auth.mintSlot(opCap, { method, origin, path }));
       }
       return minted;
     };
@@ -1731,6 +1804,15 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
 // unfrozen issuance handles throw); N33 is post-construction mutation (input
 // or returned Set mutation never widens the private contract). Legitimate
 // P1/P2/D1 PASS retained.
+// New negatives N41-N43 prove the capability closure and all fail on a332b4d
+// (proven by the old-behavior run) while denying post-fix: N41 is role forgery
+// (numeric mint with forged role ACCEPTED pre-fix; post-fix numeric deleted and
+// cap mint derives canonical role only); N42 is TOCTOU (sparse/accessor/
+// mutating/inherited successors ACCEPTED pre-fix; post-fix single-
+// materialization throws with zero residue and no id gap); N43 is cross-
+// authority (foreign numeric/opCap ACCEPTED pre-fix via colliding ids; post-fix
+// slotCap/opCap carry authorityId and foreign capabilities/ids never resolve).
+// Legitimate P1/P2/D1 PASS retained.
 // Phantom fallback stays deleted. The live owner E2E proves the accompanying
 // window evidence the synthetic ledger cannot carry: the surviving catalog 200
 // lists the admitted source id and Chromium holds exactly one opaque HttpOnly
@@ -1757,9 +1839,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   const req = (method, path, op, role, docId, resourceType = "fetch") => {
     seq += 1;
     nextReqId += 1;
-    const slot = auth.mintSlot({ opId: op.id, targetDoc: docId, action: op.action, role, method, origin, path });
+    assert.ok(typeof role === "string" && Number.isSafeInteger(docId),
+      "req helper documents the intended role/docId; canonical slot derives SOLELY from the opCap");
+    const slot = auth.mintSlot(op, { method, origin, path });
     return { method, origin, path, resourceType, epoch: 0, serial: 0, seq,
-      reqId: nextReqId, opId: op.id, docId, role, slotId: slot.id, frame: `frame-doc-${docId}@${origin}/` };
+      reqId: nextReqId, opId: slot.opId, docId: slot.targetDoc, role: slot.role, slotId: slot.id, frame: `frame-doc-${slot.targetDoc}@${origin}/` };
   };
   // Raw request row for injected attack tables (bypasses the minting builder
   // so the anchor verifier — not the builder — delivers the denial).
@@ -2123,8 +2207,7 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   const pairMismatch = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
   const mismatchIssued = req("GET", catalog, pairMismatch.opPre, "catalog-read", pairMismatch.docPre);
   const mismatchSurvived = req("GET", catalog, pairMismatch.opPost, "catalog-read", pairMismatch.docPost);
-  const mismatchSlot = auth.mintSlot({ opId: pairMismatch.opPost.id, targetDoc: pairMismatch.docPost,
-    action: "probe-retry", role: "pair-action", method: "POST", origin, path: pair });
+  const mismatchSlot = auth.mintSlot(pairMismatch.opPost, { method: "POST", origin, path: pair });
   mismatchSurvived.slotId = mismatchSlot.id;
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
@@ -2519,8 +2602,7 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
         "N38: stale-doc mint must throw pre-mutation (doc identity gate)");
       assert.equal(auth38.slots().length, slotsBefore38,
         "N38: failed stale mint must leave zero slot residue");
-      const legit38 = auth38.mintSlot({ opId: opA38.id, targetDoc: 1, action: "probe-issue",
-        role: "catalog-read", method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
+      const legit38 = auth38.mintSlot(opA38, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
       assert.ok(Number.isSafeInteger(legit38.id),
         "N38: legitimate current-doc mint still passes");
       const cross38 = createIssuanceHandle(opA38.id, opA38.targetDoc, opA38.role);
@@ -2572,8 +2654,7 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
         from: root40.id, successors: [] });
       const minted40 = [];
       for (const [method, path] of PRIVATE_ABORTABLE) {
-        minted40.push(auth40.mintSlot({ opId: op40.id, targetDoc: 3, action: "probe-issue",
-          role: "catalog-read", method, origin: "http://127.0.0.1:1", path }));
+        minted40.push(auth40.mintSlot(op40, { method, origin: "http://127.0.0.1:1", path }));
       }
       assert.ok(!minted40.some((slot) => slot.path === "/evil-n40"),
         "N40: private canonical policy must never mint publicly mutated nesting (authority reads canonical only)");
@@ -2588,6 +2669,135 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
         "N40: legitimate canonical path still mints");
       void nestedThrew;
     }
+  }
+  // New negatives N41-N43 prove the capability closure. Each fails on a332b4d
+  // (old-behavior run proves acceptance there: numeric role forgery, sparse/
+  // accessor/mutating successors, cross-authority numeric mint all ACCEPTED)
+  // and denies post-fix; legitimate PASS retained.
+  // N41 role forgery: numeric mint with forged role throws the deleted-surface
+  // (THIS authority); cap mint derives canonical role and ignores forged extra
+  // fields. N42 TOCTOU: sparse/accessor/Proxy-mutating/inherited successors
+  // throw the single-materialization gate with zero residue and no id gap.
+  // N43 cross-authority: foreign opCap, numeric foreign id, and getOp snapshot
+  // never resolve in another authority (THIS authority/foreign/never resolve).
+  {
+    // N41 role forgery.
+    const auth41 = createClosedAuthority("n41-role");
+    const root41 = auth41.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["probe-issue"] });
+    const op41 = auth41.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+      from: root41.id, successors: [] });
+    const slotsBefore41 = auth41.slots().length;
+    assert.throws(() => auth41.mintSlot({ opId: op41.id, targetDoc: 1, action: "probe-issue",
+      role: "pair-action", method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" }),
+    /THIS authority|deleted|never resolve/,
+      "N41: numeric role-forgery mint must throw the deleted capability surface");
+    assert.equal(auth41.slots().length, slotsBefore41,
+      "N41: failed forgery must leave zero slot residue");
+    const legit41 = auth41.mintSlot(op41, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
+    assert.equal(legit41.role, "catalog-read",
+      "N41: cap mint must derive the canonical op role, never caller role");
+    assert.equal(legit41.targetDoc, 1,
+      "N41: cap mint must derive the canonical targetDoc");
+    assert.equal(legit41.action, "probe-issue",
+      "N41: cap mint must derive the canonical action");
+    const forgedExtra41 = auth41.mintSlot(op41, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/system/health", role: "pair-action" });
+    assert.equal(forgedExtra41.role, "catalog-read",
+      "N41: extra caller role field must be ignored (canonical derives)");
+    // N42 TOCTOU single-materialization.
+    const auth42 = createClosedAuthority("n42-toctou");
+    const root42 = auth42.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["probe-issue"] });
+    const opsBefore42 = auth42.operations().length;
+    const edgesBefore42 = auth42.edges().length;
+    assert.throws(() => auth42.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+      from: root42.id, successors: new Array(1) }), /must declare exact OpActions/,
+      "N42: sparse successors must throw (single-materialization)");
+    {
+      const accessor42 = [];
+      Object.defineProperty(accessor42, "0", { get() { return "probe-retry"; }, enumerable: true, configurable: true });
+      accessor42.length = 1;
+      assert.throws(() => auth42.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: root42.id, successors: accessor42 }), /must declare exact OpActions/,
+        "N42: accessor successors must throw");
+    }
+    {
+      let reads42 = 0;
+      const evil42 = [];
+      Object.defineProperty(evil42, "0", { enumerable: true, configurable: true, get() { reads42 += 1; return reads42 <= 2 ? "probe-retry" : "probe-mid"; } });
+      evil42.length = 1;
+      assert.throws(() => auth42.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: root42.id, successors: evil42 }), /must declare exact OpActions/,
+        "N42: mutation-during-coercion must throw");
+    }
+    {
+      const inherited42 = new Array(1);
+      Object.setPrototypeOf(inherited42, { 0: "probe-mid" });
+      assert.throws(() => auth42.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: root42.id, successors: inherited42 }), /must declare exact OpActions/,
+        "N42: inherited successors must throw");
+    }
+    assert.equal(auth42.operations().length, opsBefore42,
+      "N42: failed TOCTOU registers must leave zero op residue");
+    assert.equal(auth42.edges().length, edgesBefore42,
+      "N42: failed TOCTOU registers must leave zero edge residue");
+    const legit42 = auth42.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+      from: root42.id, successors: ["probe-retry"] });
+    assert.equal(legit42.id, root42.id + 1,
+      "N42: transactional id must be contiguous with no gap after failed attempts");
+    // N43 cross-authority closure.
+    const authA43 = createClosedAuthority("n43-a");
+    const authB43 = createClosedAuthority("n43-b");
+    assert.ok(authA43.authorityId !== authB43.authorityId,
+      "N43: distinct authorities must carry distinct authorityIds");
+    const rootA43 = authA43.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["probe-issue"] });
+    const rootB43 = authB43.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["probe-issue"] });
+    const opA43 = authA43.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+      from: rootA43.id, successors: [] });
+    const opB43 = authB43.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+      from: rootB43.id, successors: [] });
+    const slotsBeforeB43 = authB43.slots().length;
+    assert.throws(() => authB43.mintSlot(opA43, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" }),
+    /THIS authority|foreign|never resolve/,
+      "N43: foreign opCap must never resolve in another authority");
+    assert.throws(() => authB43.mintSlot({ opId: opA43.id, targetDoc: 1, action: "probe-issue",
+      role: "catalog-read", method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" }),
+    /THIS authority|foreign|never resolve/,
+      "N43: numeric foreign id must never resolve");
+    assert.throws(() => authB43.mintSlot(authB43.getOp(rootB43.id), { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" }),
+    /THIS authority|foreign|never resolve/,
+      "N43: getOp snapshot must never resolve as a capability (WeakMap miss)");
+    assert.equal(authB43.slots().length, slotsBeforeB43,
+      "N43: failed cross-authority mints must leave zero slot residue");
+    const legitSame43 = authB43.mintSlot(opB43, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
+    assert.ok(Number.isSafeInteger(legitSame43.id),
+      "N43: legitimate same-authority cap mint still passes");
+    const capB43 = (() => {
+      const freshB = createClosedAuthority("n43-b-legit");
+      const freshRoot = freshB.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["probe-issue"] });
+      const freshOp = freshB.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: freshRoot.id, successors: [] });
+      return freshB.mintSlot(freshOp, { method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
+    })();
+    assert.ok(Number.isSafeInteger(capB43.id),
+      "N43: legitimate same-authority cap mint still passes");
   }
   {
     const trackerD1 = createRequestTerminalTracker(new Set([200, 204, 403]));
@@ -2606,8 +2816,8 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
       "D3: duplicate response for one reqId must fail closed");
   }
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 40, collector: "D1-D3",
-    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens (closure-private mint, object-only consume, delete-on-consume, FIFO queue, zero-inflight barrier, transactional registerOp) + exact issuance capabilities (registry/prototype/own-keys/triple) + current-op/doc/role/action gates + private canonical successors snapshots + private canonical policy + frozen terminal values/snapshots + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 43, collector: "D1-D3",
+    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens (closure-private mint, object-only consume, delete-on-consume, FIFO queue, zero-inflight barrier, transactional registerOp) + exact issuance capabilities (registry/prototype/own-keys/triple) + current-op/doc/role/action gates + private canonical successors snapshots + private canonical policy + capability slot/op closure (WeakMap-bound opCap of THIS authority, derived action/role/targetDoc, single-materialization successors, authorityId cross-closure) + frozen terminal values/snapshots + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
