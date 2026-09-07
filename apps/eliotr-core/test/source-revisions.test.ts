@@ -24,8 +24,21 @@ async function history(source: string, ref: string, admitted = "2026-08-20T12:00
   const receipt = await db.prepare("SELECT * FROM source_admission_decision WHERE source_revision_ref=?1").bind(`rev-${source}`).first<Record<string, string | number | null>>();
   if (!original || !op || !receipt) throw new Error("Missing test authority");
   await insert("source_revision", { ...original, source_revision_ref: ref, admitted_at: admitted });
+  // N1 FIX3: a cloned historical revision must carry its own durable receipt
+  // identity. The bytes (and therefore manifest ref, residency and promotion
+  // readbacks) are shared with the head, but the receipt's revision binding is
+  // rewritten so orientation reconciliation accepts the clone as self-consistent.
+  let clonedReceiptJson: string | null = typeof op.bundle_receipt_json === "string" ? op.bundle_receipt_json : null;
+  let clonedReceiptSha: string | null = typeof op.bundle_receipt_sha256 === "string" ? op.bundle_receipt_sha256 : null;
+  if (clonedReceiptJson !== null) {
+    const cloned = JSON.parse(clonedReceiptJson) as { source_revision_ref: string };
+    cloned.source_revision_ref = ref;
+    clonedReceiptJson = canonicalEvidenceJson(cloned);
+    clonedReceiptSha = await evidenceSha256(cloned);
+  }
   await insert("bundle_ingest_operation", { ...op, operation_id: `op-${ref}`, source_revision_ref: ref,
-    idempotency_key: `key-${ref}`, candidate_id: `candidate-${ref}` });
+    idempotency_key: `key-${ref}`, candidate_id: `candidate-${ref}`,
+    bundle_receipt_json: clonedReceiptJson, bundle_receipt_sha256: clonedReceiptSha });
   const decision = JSON.parse(String(receipt.decision_json)) as SourceAdmissionDecision;
   const changed = { ...decision, source_revision_ref: ref, decision_receipt_ref: `decision-${ref}` };
   await insert("source_admission_decision", { ...receipt, source_revision_ref: ref, operation_id: `op-${ref}`,
