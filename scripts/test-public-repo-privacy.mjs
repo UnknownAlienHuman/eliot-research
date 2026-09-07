@@ -132,20 +132,29 @@ async function loadForbiddenExact() {
 
 // Canonical JSON test vectors that happen to contain 32-hex substrings.
 // These are hex encodings of JSON numbers (safe-integer boundaries), not
-// account bindings. Narrow: exact tracked file + SHA256(full line) + reason.
-// Only suppresses generic-pattern:account-id-hex on those exact lines; all
-// other patterns still apply.
+// account bindings: hex of ASCII "9007199254740991" (MAX_SAFE_INTEGER) and
+// hex of ASCII "9007199254740992" (overflow probe). Narrow: exact tracked
+// SHA256(LF-normalized full line) + reason. Only suppresses
+// generic-pattern:account-id-hex on those exact lines; all other patterns
+// still apply. Hashes are LF-normalized (trailing \r stripped, see
+// isAllowlistedHexVector) so the same logical line matches on Windows
+// CRLF checkouts and Linux LF CI.
 const HEX_VECTOR_ALLOWLIST = new Set([
   // json_max_safe_integer vector in canonical-body fixture (not a binding).
-  "crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt:dc4b0022dd8c7e29cfb78066bcab3036a2bb1419b76c7db8f4b2482bbba4a1a8",
+  "crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt:e5bdf769bf7c6ac1f70fa0aa9226952fe799cc422c2f08d9da69f974fb906caa",
   // json_integer_overflow vector in canonical-body fixture (not a binding).
-  "crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt:3196500e78fbe6d53e7c34e02f76fc2e7c378d0deaee9c6dcefa9ed46572be00",
+  "crates/eliotr-test-vectors/fixtures/canonical-body.v1.txt:5416a6de6deada8f81cbadb4e956af8e9b8ca2a2307292f00099d7e6ebf152ed",
   // Same max-safe-integer vector in the fuzz seed corpus (not a binding).
-  "fuzz/corpus/m1_kernel/canonical-body-frame.txt:dc4b0022dd8c7e29cfb78066bcab3036a2bb1419b76c7db8f4b2482bbba4a1a8",
+  "fuzz/corpus/m1_kernel/canonical-body-frame.txt:e5bdf769bf7c6ac1f70fa0aa9226952fe799cc422c2f08d9da69f974fb906caa",
 ]);
 
 function isAllowlistedHexVector(rel, line) {
-  const key = `${rel}:${createHash("sha256").update(line).digest("hex")}`;
+  // Normalize one trailing \r: content.split("\n") leaves "\r" on Windows
+  // CRLF checkouts, which previously made the same logical line hash
+  // differently on Windows (CRLF, PASS) vs Linux CI (LF, FAIL). Stripping
+  // keeps the allowlist OS-independent without weakening the scan.
+  const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
+  const key = `${rel}:${createHash("sha256").update(normalized).digest("hex")}`;
   return HEX_VECTOR_ALLOWLIST.has(key);
 }
 
