@@ -578,7 +578,36 @@ async function launchPlaywright(runId) {
     const consoleErrors = [];
     const pageErrors = [];
     const failedRequests = [];
+    const failedRequestClock = [];
     const responses = [];
+    // Navigation-epoch attribution for every browser request/response: the
+    // epoch increments exactly once per committed main-frame navigation
+    // (page.goto, page.reload, in-page location.replace and pairing redirects
+    // all surface as framenavigated), so a request aborted by a navigation
+    // carries the superseded issuing epoch while the surviving retry and its
+    // classified response carry the surviving epoch. panelSerial advances on
+    // every explicit ledger reset (a new observation panel); request seq
+    // orders issuance inside an epoch. Responses record the
+    // responding-document epoch (current counter at response time), never the
+    // issuing epoch. Frame identity is captured as document-identity evidence
+    // alongside the counter.
+    let navigationEpoch = 0;
+    let panelSerial = 0;
+    let requestSeq = 0;
+    const frameIdentity = (event) => {
+      try {
+        const frame = event?.frame?.();
+        const guid = String(frame?._guid ?? "unknown").slice(0, 64);
+        let url = "unknown";
+        try { url = String(frame?.url?.() ?? "unknown").slice(0, 256); } catch { url = "unreadable"; }
+        return `${guid}@${url}`;
+      } catch { return "unknown"; }
+    };
+    page.on("framenavigated", (frame) => {
+      try {
+        if (frame === page.mainFrame()) navigationEpoch += 1;
+      } catch { /* navigation accounting must never break the harness */ }
+    });
     // Full phase-aware traffic ledger: every browser request AND response is
     // recorded with method, normalized origin/path, status and resource type so
     // the phase assertion below closes over ALL traffic, including successful
@@ -602,7 +631,9 @@ async function launchPlaywright(runId) {
     // uniformly, so every outcome pairs with its request.
     context.on("request", (request) => {
       const entry = ledgerEntry(request.method(), request.url());
-      requests.push({ ...entry, resourceType: request.resourceType() });
+      requestSeq += 1;
+      requests.push({ ...entry, resourceType: request.resourceType(),
+        epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, frame: frameIdentity(request) });
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -612,7 +643,8 @@ async function launchPlaywright(runId) {
       }
     });
     page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
-    context.on("requestfailed", (request) => { failedRequests.push(
+    context.on("requestfailed", (request) => { failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
+      failedRequests.push(
       `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`.slice(0, 512)); });
     context.on("response", (response) => {
       const request = response.request();
@@ -620,14 +652,16 @@ async function launchPlaywright(runId) {
       let contentType;
       try { contentType = String(response.headers()["content-type"] ?? "").split(";")[0]?.trim().slice(0, 128) ?? ""; }
       catch { contentType = "unreadable"; }
-      networkResponses.push({ ...entry, status: response.status(), resourceType: request.resourceType(), contentType });
+      networkResponses.push({ ...entry, status: response.status(), resourceType: request.resourceType(), contentType,
+        epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
     page.on("websocket", (socket) => { websockets.push(socket.url().slice(0, 512)); });
     page.on("worker", (worker) => { pageWorkers.push(worker.url().slice(0, 512)); });
     const evaluate = (fn, arg) => page.evaluate(fn, arg);
     const resetLedger = () => {
-      consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; responses.length = 0;
+      panelSerial += 1;
+      consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
     };
     const close = async () => {
@@ -636,8 +670,9 @@ async function launchPlaywright(runId) {
       await removeHarnessOwned(profileDir, runId);
       await assert.rejects(access(profileDir), /ENOENT/, "temp browser profile must be removed");
     };
-    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, responses,
-      requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir };
+    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, responses,
+      requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
+      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq }) };
   } catch (error) {
     try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
     try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
@@ -737,14 +772,129 @@ export function assertAuthedLedger(harness, label, origin) {
     assert.ok(!text.includes("eyJ") && !text.includes("/api/"),
       `${label}: authed console must hold no JWT and no private API 401, got: ${text.slice(0, 200)}`);
   }
-  const allowedFailed = new Set([
-    `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
-    `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
-  ]);
-  assert.ok(failedRequests.length <= 2, `${label}: at most the exact superseded probes may abort, got: ${failedRequests.slice(0, 5).join("; ")}`);
+  const allowedFailedAnchor = buildAuthedAbortAnchor(label, harness, origin);
   for (const text of failedRequests) {
-    assert.ok(allowedFailed.has(text), `${label}: unexpected authed abort, got: ${text.slice(0, 300)}`);
+    allowedFailedAnchor(text);
   }
+}
+
+// Epoch-attributed accounted-anchor rule for authed ERR_ABORTED traffic
+// (replaces the fixed 2-entry allowlist and the absolute abort ceiling).
+// Every abort must name an identical method+origin+path request issued by the
+// browser, and is exempt IFF a classified responded outcome for that exact
+// key carries a contract status (derived from authedNetworkSpec, never
+// invented here) AND the surviving request strictly postdates the aborted one
+// in (epoch, serial, seq) order: the issuing epoch was superseded by a
+// navigation, the observation panel was explicitly reset, or the application
+// itself superseded the probe with a later same-epoch retry. The absolute
+// ceiling is replaced by the structural bound: aborts per key <=
+// contract-status responses per key, so a duplicate abort without its own
+// surviving response still fails. Unanchored aborts, non-abort errors,
+// cross-origin failures and unpaired aborts (no browser request) fail closed.
+function buildAuthedAbortAnchor(label, harness, origin) {
+  const requests = Array.isArray(harness.requests) ? harness.requests : [];
+  const responses = Array.isArray(harness.networkResponses) ? harness.networkResponses : [];
+  const contract = new Map();
+  for (const entry of authedNetworkSpec(origin).api) {
+    const key = `${entry.method} ${entry.path}`;
+    if (!contract.has(key)) contract.set(key, new Set());
+    contract.get(key).add(entry.status);
+  }
+  const orderOf = (entry) => [
+    Number.isSafeInteger(entry?.epoch) ? entry.epoch : 0,
+    Number.isSafeInteger(entry?.serial) ? entry.serial : 0,
+    Number.isSafeInteger(entry?.seq) ? entry.seq : 0,
+  ];
+  const strictlyAfter = (left, right) =>
+    left[0] > right[0] || (left[0] === right[0] && (left[1] > right[1] ||
+      (left[1] === right[1] && left[2] > right[2])));
+  const requestsByKey = new Map();
+  for (const entry of requests) {
+    if (typeof entry?.method !== "string" || typeof entry?.origin !== "string" || typeof entry?.path !== "string") continue;
+    const key = `${entry.method} ${entry.origin}${entry.path}`;
+    if (!requestsByKey.has(key)) requestsByKey.set(key, []);
+    requestsByKey.get(key).push(entry);
+  }
+  for (const list of requestsByKey.values()) list.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  // Each classified response consumes the LATEST unpaired same-key request:
+  // the surviving retry is the last one issued, earlier duplicates are the
+  // superseded probes. Non-contract outcomes never anchor and never consume.
+  const consumedByKey = new Map();
+  const anchorsByKey = new Map();
+  const contractResponsesByKey = new Map();
+  const orderedResponses = [...responses].sort((a, b) => (a?.seq ?? 0) - (b?.seq ?? 0));
+  for (const response of orderedResponses) {
+    if (typeof response?.method !== "string" || typeof response?.origin !== "string" ||
+      typeof response?.path !== "string" || !Number.isSafeInteger(response?.status)) continue;
+    const key = `${response.method} ${response.origin}${response.path}`;
+    const statuses = contract.get(`${response.method} ${response.path}`);
+    if (!statuses || !statuses.has(response.status)) continue;
+    const candidates = requestsByKey.get(key) ?? [];
+    const consumed = consumedByKey.get(key) ?? new Set();
+    let match = null;
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      if (!consumed.has(candidates[index])) { match = candidates[index]; break; }
+    }
+    assert.ok(match !== null,
+      `${label}: unpaired responded outcome has no browser request: ${response.method} ${response.origin}${response.path} -> ${response.status}`);
+    consumed.add(match);
+    consumedByKey.set(key, consumed);
+    if (!anchorsByKey.has(key)) anchorsByKey.set(key, []);
+    anchorsByKey.get(key).push({ response, request: match });
+    contractResponsesByKey.set(key, (contractResponsesByKey.get(key) ?? 0) + 1);
+  }
+  const abortsByKey = new Map();
+  const clocks = Array.isArray(harness.failedRequestClock) ? harness.failedRequestClock : [];
+  let abortIndex = -1;
+  return (text) => {
+    abortIndex += 1;
+    assert.ok(/:: net::ERR_ABORTED$/.test(text),
+      `${label}: non-abort failure denied, only superseded ERR_ABORTED may anchor: ${text.slice(0, 300)}`);
+    const match = /^(GET|HEAD|POST|PUT|DELETE) (https?:\/\/[^ ]+) :: /.exec(text);
+    assert.ok(match !== null, `${label}: failed request must parse: ${text.slice(0, 200)}`);
+    const parsed = new URL(match[2]);
+    assert.ok(parsed.origin === origin, `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
+    const key = `${match[1]} ${parsed.origin}${parsed.pathname}${parsed.search}`;
+    // An abort consumes the EARLIEST unpaired same-key request: the superseded
+    // probe.
+    const candidates = requestsByKey.get(key) ?? [];
+    const consumed = consumedByKey.get(key) ?? new Set();
+    let aborted = null;
+    for (const entry of candidates) {
+      if (!consumed.has(entry)) { aborted = entry; break; }
+    }
+    const anchors = anchorsByKey.get(key) ?? [];
+    if (aborted !== null) {
+      consumed.add(aborted);
+      consumedByKey.set(key, consumed);
+      const abortOrder = orderOf(aborted);
+      const anchored = anchors.some(({ request }) => strictlyAfter(orderOf(request), abortOrder));
+      assert.ok(anchored,
+        `${label}: unanchored abort has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
+    } else {
+      // Phantom duplicate: Chromium reported ERR_ABORTED for an attempt the
+      // harness never observed as a request (aborted before requestWillBeSent;
+      // observed live: a pair POST abort beside the paired 204+403). The
+      // failure-time clock stands in for the issuing epoch: a classified
+      // contract outcome in the same or a surviving epoch anchors it, and the
+      // structural bound below caps phantoms exactly like paired aborts. A
+      // phantom with no anchor still fails.
+      const clock = clocks[abortIndex] ?? { epoch: 0, serial: 0 };
+      const failEpoch = Number.isSafeInteger(clock?.epoch) ? clock.epoch : 0;
+      const failSerial = Number.isSafeInteger(clock?.serial) ? clock.serial : 0;
+      const anchored = anchors.some(({ response }) => {
+        const epoch = Number.isSafeInteger(response?.epoch) ? response.epoch : 0;
+        const serial = Number.isSafeInteger(response?.serial) ? response.serial : 0;
+        return epoch > failEpoch || (epoch === failEpoch && serial >= failSerial);
+      });
+      assert.ok(anchored,
+        `${label}: phantom abort without a browser request has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
+    }
+    const count = (abortsByKey.get(key) ?? 0) + 1;
+    abortsByKey.set(key, count);
+    assert.ok(count <= (contractResponsesByKey.get(key) ?? 0),
+      `${label}: structural bound breached, aborts per key must not exceed contract responses per key: ${key} aborts=${count} responses=${contractResponsesByKey.get(key) ?? 0}`);
+  };
 }
 
 // Regression: a manifest 401 in the authed window must fail closed because the
@@ -765,6 +915,120 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
   assert.doesNotThrow(() => assertAuthedLedger({ consoleErrors: [pair403], pageErrors: [], failedRequests: [] },
     "manifest-regression", origin), "one-use pair 403 reuse noise must pass");
   return { protocol: "eliotr.owner-e2e.authed-manifest-regression.v1", state: "PASS" };
+}
+
+// Deterministic regression proof for the epoch-attributed accounted-anchor
+// rule (no browser required). Positive superseded-epoch exemptions mirror the
+// live authed window: catalog+health probes aborted pre-navigation and
+// surviving as 200s post-navigation, and the pair probe aborted while the
+// 204 pairing response plus the one-use 403 reuse response survive. The three
+// required negatives prove fail-closure: a sole abort of health, catalog, or
+// pair with no paired contract success fails, and a duplicate-bound case (two
+// aborts, one surviving response) fails on the structural bound. Non-abort
+// errors, cross-origin failures, and unpaired aborts fail closed as well.
+// The live owner E2E proves the accompanying window evidence the synthetic
+// ledger cannot carry: the surviving catalog 200 lists the admitted source id
+// and Chromium holds exactly one opaque HttpOnly session cookie.
+export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
+  let seq = 0;
+  const req = (method, path, epoch, resourceType = "fetch") => {
+    seq += 1;
+    return { method, origin, path, resourceType, epoch, serial: 0, seq, frame: `frame-epoch-${epoch}@${origin}/` };
+  };
+  const res = (method, path, status, epoch) => ({ ...req(method, path, epoch), status, contentType: "application/json" });
+  const abort = (method, path) => `${method} ${origin}${path} :: net::ERR_ABORTED`;
+  const catalog = "/api/v1/research/catalog?limit=20";
+  const health = "/api/v1/system/health";
+  const pair = "/__local/pair";
+  const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
+  // Positive 1: catalog+health aborted in the issuing epoch, surviving 200s in
+  // the next navigation epoch.
+  assert.doesNotThrow(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [req("GET", catalog, 0), req("GET", health, 0), req("GET", catalog, 1), req("GET", health, 1)],
+    networkResponses: [res("GET", catalog, 200, 1), res("GET", health, 200, 1)],
+    failedRequests: [abort("GET", catalog), abort("GET", health)],
+  }, "epoch-positive-catalog-health", origin), "superseded catalog+health aborts with surviving 200s must pass");
+  // Positive 2: pair abort anchored by the 204 pairing response with the
+  // one-use 403 reuse response and console noise present.
+  assert.doesNotThrow(() => assertAuthedLedger({
+    consoleErrors: [pair403],
+    pageErrors: [],
+    requests: [req("POST", pair, 1), req("POST", pair, 1), req("POST", pair, 2)],
+    networkResponses: [res("POST", pair, 204, 2), res("POST", pair, 403, 2)],
+    failedRequests: [abort("POST", pair)],
+  }, "epoch-positive-pair", origin), "superseded pair abort with surviving 204+403-reuse must pass");
+  // Positive 3: phantom pair abort (aborted before the harness observed a
+  // request event; the live shape: two paired pair requests with 204+403
+  // beside one phantom abort) anchored by the surviving contract outcomes.
+  assert.doesNotThrow(() => assertAuthedLedger({
+    consoleErrors: [pair403],
+    pageErrors: [],
+    requests: [req("POST", pair, 3), req("POST", pair, 4)],
+    networkResponses: [res("POST", pair, 204, 3), res("POST", pair, 403, 4)],
+    failedRequests: [abort("POST", pair)],
+    failedRequestClock: [{ epoch: 3, serial: 1 }],
+  }, "epoch-positive-pair-phantom", origin), "phantom pair abort with surviving 204+403 must pass");
+  // Negatives 1-3: sole aborts with no paired contract success must fail.
+  for (const [method, path] of [["GET", health], ["GET", catalog], ["POST", pair]]) {
+    assert.throws(() => assertAuthedLedger({
+      consoleErrors: [],
+      pageErrors: [],
+      requests: [req(method, path, 0)],
+      networkResponses: [],
+      failedRequests: [abort(method, path)],
+    }, `epoch-negative-sole-${path}`, origin), /classified responded outcome/,
+      `sole abort of ${method} ${path} with no paired success must fail`);
+  }
+  // Negative 4: duplicate bound (two aborts, one surviving response) fails.
+  assert.throws(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [req("GET", catalog, 0), req("GET", catalog, 0), req("GET", catalog, 1)],
+    networkResponses: [res("GET", catalog, 200, 1)],
+    failedRequests: [abort("GET", catalog), abort("GET", catalog)],
+  }, "epoch-negative-duplicate-bound", origin), /structural bound/,
+    "duplicate abort without its own surviving response must fail");
+  // Negative 5: non-abort failure beside a valid anchor still fails.
+  assert.throws(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [req("GET", catalog, 0), req("GET", catalog, 1)],
+    networkResponses: [res("GET", catalog, 200, 1)],
+    failedRequests: [`GET ${origin}${catalog} :: net::ERR_CONNECTION_REFUSED`],
+  }, "epoch-negative-non-abort", origin), /non-abort failure denied/,
+    "non-abort failure must fail closed even with an anchor");
+  // Negative 6: cross-origin abort fails even when the key matches elsewhere.
+  assert.throws(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [req("GET", catalog, 0), req("GET", catalog, 1)],
+    networkResponses: [res("GET", catalog, 200, 1)],
+    failedRequests: [`GET http://127.0.0.1:2${catalog} :: net::ERR_ABORTED`],
+  }, "epoch-negative-cross-origin", origin), /cross-origin/,
+    "cross-origin abort must fail closed");
+  // Negative 7: phantom abort with no browser request and no anchor fails.
+  assert.throws(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [],
+    networkResponses: [],
+    failedRequests: [abort("GET", catalog)],
+  }, "epoch-negative-phantom-unanchored", origin), /phantom abort/,
+    "phantom abort without a classified anchor must fail closed");
+  // Negative 8: a responded outcome with no browser request fails as unpaired.
+  assert.throws(() => assertAuthedLedger({
+    consoleErrors: [],
+    pageErrors: [],
+    requests: [],
+    networkResponses: [res("GET", catalog, 200, 1)],
+    failedRequests: [],
+  }, "epoch-negative-unpaired-response", origin), /unpaired responded outcome/,
+    "response without a browser request must fail closed");
+  return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
+    positives: 3, negatives: 8,
+    coverage: "synthetic ledger mechanics; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
@@ -810,12 +1074,15 @@ const STATIC_RESOURCE_TYPES = new Set(["document", "stylesheet", "script", "imag
 
 export function summarizePhaseLedger(harness) {
   const serviceWorkers = typeof harness.context?.serviceWorkers === "function" ? harness.context.serviceWorkers() : [];
+  const clock = typeof harness.ledgerClock === "function" ? harness.ledgerClock() : { epoch: "unknown", serial: "unknown" };
   return {
     requests: harness.requests.length,
     responses: harness.networkResponses.length,
     failed: harness.failedRequests.length,
     websockets: harness.websockets.length,
     workers: harness.pageWorkers.length,
+    epoch: clock.epoch,
+    serial: clock.serial,
     service_workers: serviceWorkers.map((entry) => entry.url()),
     console_errors: harness.consoleErrors.length,
     page_errors: harness.pageErrors.length,
@@ -1440,6 +1707,7 @@ export async function runOwnerE2E() {
     assert.ok(ledgers.CORE_DB > 0 && ledgers.SEARCH_DB > 0, "both migration streams must be applied");
     receipt.isolated_setup = "PASS";
     receipt.bounds = (await checkBundleLimitsSource()).state;
+    receipt.authed_epoch_regression = verifyAuthedEpochRegression().state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto(privateKey, publicJwk)).state;
     worker = await startLocalWorker(paths);
     assert.ok(isChromiumSafePort(worker.port),

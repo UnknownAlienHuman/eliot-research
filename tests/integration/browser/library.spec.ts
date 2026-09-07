@@ -12,6 +12,7 @@ type E2EReceipt = {
   readonly failed_startup: string;
   readonly storage: string;
   readonly bounds: string;
+  readonly authed_epoch_regression: string;
   readonly controlled_issuer: string;
   readonly seam_rejection: string;
   readonly browser_pairing: string;
@@ -52,6 +53,7 @@ test("L1 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
   assert.equal(receipt.failed_startup, "PASS", "real failed start must leave no owned Worker/port/profile behind");
   assert.equal(receipt.storage, "PASS", "pinned Playwright browser storage must hold no JWT/source bytes/private responses");
   assert.equal(receipt.bounds, "PASS", "64 files / 16MiB / 32MiB / 256KiB max and max+1 must hold");
+  assert.equal(receipt.authed_epoch_regression, "PASS", "superseded-epoch abort exemptions with sole-abort/duplicate-bound negatives must pass");
   assert.equal(receipt.controlled_issuer, "PASS", "in-memory RSA negatives + real-Worker verification must pass without weakening verification");
   assert.equal(receipt.seam_rejection, "PASS", "staging/production with identical test vars must fail config, never seam");
   assert.equal(receipt.evidence_readback, "PASS", "exact EVIDENCE_BUCKET canonical key must read back with digest/metadata");
