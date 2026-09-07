@@ -16,6 +16,10 @@
       "packages/retrieval/src/structural-projector.ts",
       "packages/retrieval/src/structural-projector.test.ts",
       "packages/cloudflare-projection/**",
+      "packages/cloudflare-projection/src/d1-search-input.ts",
+      "packages/cloudflare-projection/src/d1-search-authority.ts",
+      "packages/cloudflare-projection/src/d1-search-read.test.ts",
+      "packages/cloudflare-projection/src/d1-search-sqlite-fixture.ts",
       "apps/eliotr-core/src/projection-execution-handler.ts",
       "scripts/check-projection-execution.mjs"
     ],
