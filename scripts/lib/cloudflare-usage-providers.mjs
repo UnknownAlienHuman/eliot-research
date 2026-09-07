@@ -1,15 +1,16 @@
 // Usage providers: paginated/cursor inventory, AI Search instances,
-// billing usage (FOCUS v2), GraphQL analytics. The bearer lives in process
-// memory only and never reaches snapshots, receipts, logs, or errors; this
-// module never reads CLOUDFLARE_API_TOKEN. Mocked shapes use only observed
-// fields (success/result/result_info); safe receipts carry status/schema
+// GraphQL analytics. The bearer lives in process memory only and never
+// reaches snapshots, receipts, logs, or errors; this module never reads
+// CLOUDFLARE_API_TOKEN. Mocked shapes use only observed fields
+// (success/result/result_info); safe receipts carry status/schema
 // metadata only, never bodies or auth material.
-
+// Intrinsic independence: security decisions use only typeof/===/indexed-for.
+// Object.keys output is untrusted: enumerated once per object, scanned with
+// ===, read only on match. No Set/Map/has/add/includes/filter/map/spread.
 import {
   METRIC_PROVENANCE,
   isUnknownReason,
 } from "./cloudflare-usage-envelope.mjs";
-
 export class UsageCollectionError extends Error {
   constructor(code, message) {
     super(message);
@@ -17,9 +18,6 @@ export class UsageCollectionError extends Error {
     this.code = code;
   }
 }
-
-// Typed provider failure with a Luna unknown reason, so collectAccountUsage
-// can poison only covered metrics and record safe metadata (no bodies).
 export class ProviderFailure extends UsageCollectionError {
   constructor(reason, message, { httpStatus = null, coverage = null } = {}) {
     super(reason, message);
@@ -28,24 +26,76 @@ export class ProviderFailure extends UsageCollectionError {
     this.coverage = coverage;
   }
 }
-
 export function toTypedReason(error, fallback = "HTTP_ERROR") {
-  const candidate = error?.reason ?? error?.code;
+  let candidate;
+  if (error !== null && error !== undefined && typeof error === "object") {
+    const keys = ownKeysOf(error);
+    if (hasOwnKey(keys, "reason") && typeof error["reason"] === "string") candidate = error["reason"];
+    else if (hasOwnKey(keys, "code") && typeof error["code"] === "string") candidate = error["code"];
+    else candidate = undefined;
+  } else candidate = undefined;
   if (typeof candidate === "string" && isUnknownReason(candidate)) return candidate;
   if (candidate === "WRONG_ACCOUNT" || candidate === "ACCOUNT_MISMATCH") return "ACCOUNT_MISMATCH";
   if (candidate === "PROVIDER_MALFORMED" || candidate === "MALFORMED") return "MALFORMED";
   if (candidate === "COLLECTION_UNAVAILABLE" || candidate === "NO_AUTH_ENDPOINT") return "NO_AUTH_ENDPOINT";
   return fallback;
 }
-
 export function safeFetchMeta({ httpStatus = null, kind = "inventory", pages = null, cursors = null, full = false, authoritative = false, reason = null } = {}) {
   return { httpStatus, kind, pages, cursors, full, authoritative, reason };
 }
-
-// Structural account binding for provider URLs: the expected account must be
-// the exact `/accounts/{accountId}/` path segment. Query/fragment laundering
-// (expected ID in `?...=` while the path binds another account),
-// ambiguity, and unparseable URLs all fail closed.
+function ownKeysOf(value) {
+  if (value === null || value === undefined || typeof value !== "object") return [];
+  let keys;
+  try { keys = Object.keys(value); } catch { return []; }
+  if (keys === null || keys === undefined || typeof keys !== "object" || typeof keys.length !== "number") return [];
+  return keys;
+}
+function hasOwnKey(keys, name) {
+  for (let i = 0; i < keys.length; i += 1) { if (keys[i] === name) return true; }
+  return false;
+}
+function readOwn(value, keys, name) {
+  if (!hasOwnKey(keys, name)) return undefined;
+  return value[name];
+}
+function hasSub(haystack, needle) {
+  if (typeof haystack !== "string" || typeof needle !== "string" || needle === "") return false;
+  for (let i = 0; i + needle.length <= haystack.length; i += 1) {
+    let match = true;
+    for (let j = 0; j < needle.length; j += 1) { if (haystack[i + j] !== needle[j]) { match = false; break; } }
+    if (match) return true;
+  }
+  return false;
+}
+function indexOfExact(list, name) {
+  for (let i = 0; i < list.length; i += 1) { if (list[i] === name) return i; }
+  return -1;
+}
+function copyCovers(covers) {
+  const out = [];
+  if (covers === null || covers === undefined || typeof covers !== "object" || typeof covers.length !== "number") return out;
+  for (let i = 0; i < covers.length; i += 1) { out[out.length] = covers[i]; }
+  return out;
+}
+function readStatus(response) {
+  if (response === null || response === undefined || typeof response !== "object") return null;
+  const keys = ownKeysOf(response);
+  const status = readOwn(response, keys, "status");
+  return Number.isInteger(status) ? status : null;
+}
+function appendValidatedRow(seen, row, group, context, lastHttpStatus) {
+  if (row === null || row === undefined || typeof row !== "object" || Array.isArray(row)) { throw new ProviderFailure("MALFORMED", `${group} ${context} bad row`, { httpStatus: lastHttpStatus }); }
+  const keys = ownKeysOf(row);
+  const names = ["id", "uuid", "name"];
+  for (let i = 0; i < names.length; i += 1) {
+    if (hasOwnKey(keys, names[i]) && typeof row[names[i]] === "string") { seen[seen.length] = row; return; }
+  }
+  throw new ProviderFailure("MALFORMED", `${group} ${context} row without string identity`, { httpStatus: lastHttpStatus });
+}
+function appendRows(seen, rows, group, context, lastHttpStatus) {
+  if (rows === null || rows === undefined || typeof rows !== "object" || typeof rows.length !== "number" || !Array.isArray(rows)) { throw new ProviderFailure("MALFORMED", `${group} ${context} missing rows array`, { httpStatus: lastHttpStatus }); }
+  for (let i = 0; i < rows.length; i += 1) { appendValidatedRow(seen, rows[i], group, context, lastHttpStatus); }
+}
 export function assertAccountUrl(url, accountId, group, context) {
   let parsed;
   try {
@@ -53,48 +103,32 @@ export function assertAccountUrl(url, accountId, group, context) {
   } catch {
     throw new ProviderFailure("MALFORMED", `${group} ${context} unparseable URL`);
   }
-  const segments = parsed.pathname.split("/").filter(Boolean);
-  const index = segments.indexOf("accounts");
-  if (index < 0 || segments[index + 1] !== accountId) {
-    throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} ${context} left the bound account`);
+  if (typeof accountId !== "string" || accountId === "" || accountId === "accounts") { throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} ${context} left the bound account`); }
+  const path = parsed.pathname;
+  if (typeof path !== "string") throw new ProviderFailure("MALFORMED", `${group} ${context} unparseable URL`);
+  const segments = [];
+  let current = "";
+  for (let i = 0; i < path.length; i += 1) {
+    const ch = path[i];
+    if (ch === "/") { if (current !== "") { segments[segments.length] = current; current = ""; } }
+    else { current = current + ch; }
   }
+  if (current !== "") segments[segments.length] = current;
+  let at = -1;
+  let count = 0;
+  for (let i = 0; i < segments.length; i += 1) { if (segments[i] === "accounts") { if (at < 0) at = i; count += 1; } }
+  if (at < 0 || count !== 1 || at + 1 >= segments.length || segments[at + 1] !== accountId) { throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} ${context} left the bound account`); }
 }
-
 function assertPlainResultInfo(raw, group, page, context, lastHttpStatus = null) {
-  // Fail-closed presence check: explicit null is present-but-malformed, never
-  // absent. Only truly absent (undefined) falls back to {} upstream.
   if (raw === undefined) return;
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ProviderFailure("MALFORMED", `${group} page ${page} ${context} malformed`, { httpStatus: lastHttpStatus });
-  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) { throw new ProviderFailure("MALFORMED", `${group} page ${page} ${context} malformed`, { httpStatus: lastHttpStatus }); }
 }
-
-// Fail-closed pagination field check: presence is tested FIRST (via
-// !== undefined), then the value must be an exact in-domain integer.
-// Present string/boolean/null/fraction/NaN/Infinity/negative/out-of-domain
-// is typed MALFORMED, never silent-absent.
-function assertPaginationField(info, name, min, group, page, lastHttpStatus) {
-  if (info[name] === undefined) return;
-  const value = info[name];
-  if (!Number.isInteger(value) || value < min) {
-    throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus });
-  }
-}
-
-// Paginated account-wide inventory provider over the browser-OAuth bearer.
-// Every page must be success:true with an array result. D1-style pagination
-// uses total_count/page/per_page safely: total_pages must match
-// ceil(total_count/per_page), echoes must match, metadata must not drift, and
-// the cumulative count must equal a supplied total_count — otherwise
-// PARTIAL_PAGINATION/MALFORMED keeps covered metrics unknown. HTTP 401/403
-// map to AUTH_SCOPE_DENIED, transport/5xx/429 to HTTP_ERROR, invalid JSON to
-// MALFORMED, success:false to HTTP_ERROR.
 export function createPaginatedInventoryProvider({ group, covers = [], endpoint, fetchImpl = fetch, perPage = 100 } = {}) {
   if (typeof group !== "string" || group === "") throw new UsageCollectionError("COLLECTION_INVALID", "paginated provider group is required");
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "paginated provider endpoint is required");
   return {
     group,
-    covers: [...covers],
+    covers: copyCovers(covers),
     kind: "inventory-paginated",
     async collect({ accountId, bearer, now }) {
       void now;
@@ -105,24 +139,29 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
       const seen = [];
       const pagesCompleted = [];
       let lastHttpStatus;
-      // Stable pagination metadata: drift, disappearance, or short cumulative
-      // counts fail closed. Once an earlier page establishes a multi-page
-      // walk, later pages must keep echoing the established metadata.
-      const stable = {};
-      const establishedMeta = new Set();
+      const stableNames = [];
+      const stableValues = [];
+      const stableGet = (name) => {
+        const at = indexOfExact(stableNames, name);
+        return at >= 0 ? stableValues[at] : undefined;
+      };
+      const stableSet = (name, value) => {
+        const at = indexOfExact(stableNames, name);
+        if (at >= 0) stableValues[at] = value;
+        else { stableNames[stableNames.length] = name; stableValues[stableValues.length] = value; }
+      };
+      const establishedNames = [];
       let multiPageWalk = false;
+      const isEstablished = (name) => indexOfExact(establishedNames, name) >= 0;
       const requireStable = (name, value) => {
         if (!Number.isInteger(value)) {
-          if (multiPageWalk && establishedMeta.has(name)) {
-            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared`, { httpStatus: lastHttpStatus });
-          }
+          if (multiPageWalk && isEstablished(name)) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared`, { httpStatus: lastHttpStatus });
           return;
         }
-        if (stable[name] === undefined) stable[name] = value;
-        if (stable[name] !== value) {
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
-        }
-        establishedMeta.add(name);
+        const current = stableGet(name);
+        if (current === undefined) stableSet(name, value);
+        if (stableGet(name) !== value) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
+        if (!isEstablished(name)) establishedNames[establishedNames.length] = name;
       };
       do {
         const url = endpoint(accountId, page, perPage);
@@ -133,101 +172,80 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         } catch {
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} transport failure`, { httpStatus: null });
         }
-        lastHttpStatus = Number.isInteger(response?.status) ? response.status : null;
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) {
-          throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus });
-        }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus });
-        }
+        lastHttpStatus = readStatus(response);
+        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
+        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
         let body;
         try {
           body = await response.json();
         } catch {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} invalid JSON`, { httpStatus: lastHttpStatus });
         }
-        if (body?.success !== true || !Array.isArray(body?.result)) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus });
+        if (body === null || body === undefined || typeof body !== "object" || Array.isArray(body)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus }); }
+        const bodyKeys = ownKeysOf(body);
+        const successOwn = readOwn(body, bodyKeys, "success");
+        const resultOwn = readOwn(body, bodyKeys, "result");
+        if (successOwn !== true || resultOwn === null || resultOwn === undefined || typeof resultOwn !== "object" || !Array.isArray(resultOwn)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus }); }
+        appendRows(seen, resultOwn, group, `page ${page}`, lastHttpStatus);
+        const resultInfoRaw = readOwn(body, bodyKeys, "result_info");
+        assertPlainResultInfo(resultInfoRaw, group, page, "result_info", lastHttpStatus);
+        const info = {};
+        const infoKeysWanted = ["page", "per_page", "total_pages", "count", "total_count", "counted_total"];
+        if (resultInfoRaw !== undefined) {
+          if (resultInfoRaw === null || typeof resultInfoRaw !== "object" || Array.isArray(resultInfoRaw)) { throw new ProviderFailure("MALFORMED", `${group} page ${page} result_info malformed`, { httpStatus: lastHttpStatus }); }
+          const rawKeys = ownKeysOf(resultInfoRaw);
+          for (let i = 0; i < infoKeysWanted.length; i += 1) { if (hasOwnKey(rawKeys, infoKeysWanted[i])) info[infoKeysWanted[i]] = resultInfoRaw[infoKeysWanted[i]]; }
         }
-        seen.push(...body.result);
-        assertPlainResultInfo(body?.result_info, group, page, "result_info", lastHttpStatus);
-        const info = body?.result_info ?? {};
-        // Pagination integers are fail-closed on PRESENCE first: any present
-        // known key must be an exact in-domain integer, else MALFORMED.
-        // Only truly absent (undefined) stays ignored-as-absent per contract.
-        assertPaginationField(info, "page", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "per_page", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "total_pages", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "count", 0, group, page, lastHttpStatus);
-        assertPaginationField(info, "total_count", 0, group, page, lastHttpStatus);
-        // Range backstop (subsumed by the presence-first checks above, kept
-        // as defense): an in-domain violation is MALFORMED, never
-        // fullAccount:true.
-        if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
-        }
-        if (Number.isInteger(info.per_page) && info.per_page < 1) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus });
-        }
-        if (Number.isInteger(info.count) && info.count < 0) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus });
-        }
-        // Page echo: with pagination metadata, a missing/mismatched echo is wrong slice.
-        // Once a multi-page walk is established, later pages must echo too:
-        // metadata that disappears mid-walk fails closed (Luna case).
-        const hasPaginationMeta = info.page !== undefined || info.per_page !== undefined ||
-          info.count !== undefined || info.total_count !== undefined || info.total_pages !== undefined;
-        if ((hasPaginationMeta || (page > 1 && multiPageWalk)) && info.page !== page) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
-        }
-        if (info.count !== undefined && info.count !== body.result.length) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
-        }
-        // Count echo semantics must not disappear mid-walk either (count
-        // varies per page, so only presence is tracked, never stability).
-        if (info.count !== undefined) {
-          establishedMeta.add("count");
-        } else if (page > 1 && multiPageWalk && establishedMeta.has("count")) {
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared`, { httpStatus: lastHttpStatus });
-        }
-        const effectivePerPage = Number.isInteger(info.per_page) ? info.per_page : perPage;
-        requireStable("per_page", info.per_page);
-        requireStable("total_count", info.total_count);
-        if (Number.isInteger(info.total_count) && info.total_count < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
-        if (Number.isInteger(info.total_count)) {
-          expectedPagesFromCount = info.total_count === 0 ? 1 : Math.ceil(info.total_count / Math.max(1, effectivePerPage));
-        }
-        requireStable("total_pages", info.total_pages);
-        if (Number.isInteger(info.total_pages)) {
-          totalPages = info.total_pages;
-          if (expectedPagesFromCount !== null && totalPages !== expectedPagesFromCount) {
-            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} total_pages/total_count mismatch`, { httpStatus: lastHttpStatus });
-          }
-        } else if (expectedPagesFromCount !== null) {
-          totalPages = expectedPagesFromCount;
-        } else if (Number.isInteger(info.counted_total)) {
-          totalPages = info.counted_total > seen.length ? page + 1 : page;
-        } else {
-          // No pagination metadata: only a single short page is admissible.
-          // A full page without metadata cannot prove completeness.
+        const infoKeys = ownKeysOf(info);
+        const hasInfo = (n) => hasOwnKey(infoKeys, n);
+        const valInfo = (n) => (hasInfo(n) ? info[n] : undefined);
+        const checkField = (name, min) => {
+          if (!hasInfo(name)) return;
+          const value = valInfo(name);
+          if (!Number.isInteger(value) || value < min) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus }); }
+        };
+        checkField("page", 1);
+        checkField("per_page", 1);
+        checkField("total_pages", 1);
+        checkField("count", 0);
+        checkField("total_count", 0);
+        const pageOwn = valInfo("page");
+        const perPageOwn = valInfo("per_page");
+        const totalPagesOwn = valInfo("total_pages");
+        const countOwn = valInfo("count");
+        const totalCountOwn = valInfo("total_count");
+        const countedTotalOwn = valInfo("counted_total");
+        if (Number.isInteger(totalPagesOwn) && totalPagesOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(perPageOwn) && perPageOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(countOwn) && countOwn < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus }); }
+        const hasPaginationMeta = hasInfo("page") || hasInfo("per_page") || hasInfo("count") || hasInfo("total_count") || hasInfo("total_pages");
+        if ((hasPaginationMeta || (page > 1 && multiPageWalk)) && pageOwn !== page) { throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus }); }
+        if (hasInfo("count") && countOwn !== resultOwn.length) { throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus }); }
+        if (hasInfo("count")) { if (!isEstablished("count")) establishedNames[establishedNames.length] = "count"; }
+        else if (page > 1 && multiPageWalk && isEstablished("count")) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared`, { httpStatus: lastHttpStatus }); }
+        const effectivePerPage = Number.isInteger(perPageOwn) ? perPageOwn : perPage;
+        requireStable("per_page", perPageOwn);
+        requireStable("total_count", totalCountOwn);
+        if (Number.isInteger(totalCountOwn) && totalCountOwn < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
+        if (Number.isInteger(totalCountOwn)) { expectedPagesFromCount = totalCountOwn === 0 ? 1 : Math.ceil(totalCountOwn / Math.max(1, effectivePerPage)); }
+        requireStable("total_pages", totalPagesOwn);
+        if (Number.isInteger(totalPagesOwn)) {
+          totalPages = totalPagesOwn;
+          if (expectedPagesFromCount !== null && totalPages !== expectedPagesFromCount) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} total_pages/total_count mismatch`, { httpStatus: lastHttpStatus }); }
+        } else if (expectedPagesFromCount !== null) { totalPages = expectedPagesFromCount; }
+        else if (Number.isInteger(countedTotalOwn)) { totalPages = countedTotalOwn > seen.length ? page + 1 : page; }
+        else {
           totalPages = page;
-          if (body.result.length >= effectivePerPage) {
-            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} full page without pagination metadata`, { httpStatus: lastHttpStatus });
-          }
+          if (resultOwn.length >= effectivePerPage) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} full page without pagination metadata`, { httpStatus: lastHttpStatus }); }
         }
-        if (!Number.isInteger(totalPages) || totalPages < page) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad pagination`, { httpStatus: lastHttpStatus });
-        }
-        // An implied totalPages>1 establishes a multi-page walk: every later
-        // page must keep echoing the metadata above instead of going quiet.
+        if (!Number.isInteger(totalPages) || totalPages < page) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad pagination`, { httpStatus: lastHttpStatus }); }
         if (totalPages > 1) multiPageWalk = true;
-        pagesCompleted.push(page);
+        pagesCompleted[pagesCompleted.length] = page;
         page += 1;
         if (page > 50) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} pagination runaway`, { httpStatus: lastHttpStatus });
       } while (pagesCompleted.length < totalPages);
-      if (stable.total_count !== undefined && seen.length !== stable.total_count) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stable.total_count}`, { httpStatus: lastHttpStatus });
-      }
+      const stableTotal = stableGet("total_count");
+      if (stableTotal !== undefined && seen.length !== stableTotal) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stableTotal}`, { httpStatus: lastHttpStatus }); }
       return {
         values: {},
         inventory: seen,
@@ -237,89 +255,80 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
     },
   };
 }
-
-// R2 bucket inventory over cursor pagination (NOT page/per_page):
-// `result.buckets` plus an opaque next cursor. Inventory only, never
-// counters: a repeated cursor, missing buckets array, or a loop ending
-// without an empty terminal cursor keeps covered metrics unknown.
 export function createR2CursorInventoryProvider({ group = "r2-inventory-list", covers = [], endpoint, fetchImpl = fetch } = {}) {
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "cursor provider endpoint is required");
   return {
     group,
-    covers: [...covers],
+    covers: copyCovers(covers),
     kind: "inventory-cursor",
     async collect({ accountId, bearer, now }) {
       void now;
       if (typeof bearer !== "string" || bearer.length < 1) throw new ProviderFailure("NO_AUTH_ENDPOINT", `${group}: bearer required`);
       const seen = [];
-      const seenCursors = new Set();
+      const seenCursorList = [];
       let cursor = null;
       let cursorsCompleted = 0;
       let lastHttpStatus = null;
-      // Only an explicit empty terminal cursor proves completion; the hop
-      // cap with a pending cursor is truncation, never full coverage.
       let terminated = false;
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, cursor);
         assertAccountUrl(url, accountId, group, `cursor hop ${hop}`);
-        if (url.includes("per_page=") || url.includes("page=")) {
-          throw new ProviderFailure("MALFORMED", `${group} R2 inventory must use cursor pagination, not page/per_page`);
-        }
+        if (typeof url !== "string" || hasSub(url, "per_page=") || hasSub(url, "page=")) { throw new ProviderFailure("MALFORMED", `${group} R2 inventory must use cursor pagination, not page/per_page`); }
         let response;
         try {
           response = await fetchImpl(url, { headers: { authorization: `Bearer ${bearer}` } });
         } catch {
           throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} transport failure`);
         }
-        lastHttpStatus = Number.isInteger(response?.status) ? response.status : null;
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) {
-          throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} cursor hop ${hop} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus });
-        }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus });
-        }
+        lastHttpStatus = readStatus(response);
+        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} cursor hop ${hop} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
+        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
         let body;
         try {
           body = await response.json();
         } catch {
           throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} invalid JSON`, { httpStatus: lastHttpStatus });
         }
-        if (body?.success !== true) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} malformed (success:false)`, { httpStatus: lastHttpStatus });
+        if (body === null || body === undefined || typeof body !== "object" || Array.isArray(body)) { throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} malformed (success:false)`, { httpStatus: lastHttpStatus }); }
+        const bKeys = ownKeysOf(body);
+        if (readOwn(body, bKeys, "success") !== true) { throw new ProviderFailure("HTTP_ERROR", `${group} cursor hop ${hop} malformed (success:false)`, { httpStatus: lastHttpStatus }); }
+        const resultOwn = readOwn(body, bKeys, "result");
+        let buckets = null;
+        if (resultOwn !== null && resultOwn !== undefined && typeof resultOwn === "object" && !Array.isArray(resultOwn)) {
+          const rKeys = ownKeysOf(resultOwn);
+          const bucketsOwn = readOwn(resultOwn, rKeys, "buckets");
+          if (bucketsOwn !== undefined) buckets = bucketsOwn;
+          else buckets = null;
+        } else if (Array.isArray(resultOwn)) { buckets = resultOwn; }
+        appendRows(seen, buckets, group, `cursor hop ${hop}`, lastHttpStatus);
+        if (hasOwnKey(bKeys, "result_info")) {
+          const riRaw = body["result_info"];
+          if (riRaw === null || typeof riRaw !== "object" || Array.isArray(riRaw)) { throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} result_info malformed`, { httpStatus: lastHttpStatus }); }
         }
-        const buckets = Array.isArray(body?.result?.buckets) ? body.result.buckets
-          : Array.isArray(body?.result) ? body.result : null;
-        if (!Array.isArray(buckets)) {
-          throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} missing result.buckets`, { httpStatus: lastHttpStatus });
+        let nextCursor = null;
+        let nextFound = false;
+        if (resultOwn !== null && resultOwn !== undefined && typeof resultOwn === "object" && !Array.isArray(resultOwn)) {
+          const rKeys = ownKeysOf(resultOwn);
+          if (hasOwnKey(rKeys, "cursor")) { nextCursor = resultOwn["cursor"]; nextFound = true; }
         }
-        seen.push(...buckets);
-        // Audit: result_info is only touched for its cursor here, but a
-        // present-but-malformed result_info must still fail closed, never
-        // read as absent (explicit null included).
-        if (body?.result_info !== undefined && (body.result_info === null || typeof body.result_info !== "object" || Array.isArray(body.result_info))) {
-          throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} result_info malformed`, { httpStatus: lastHttpStatus });
+        if (!nextFound && hasOwnKey(bKeys, "cursor")) { nextCursor = body["cursor"]; nextFound = true; }
+        if (!nextFound && hasOwnKey(bKeys, "result_info")) {
+          const ri = body["result_info"];
+          if (ri !== null && typeof ri === "object" && !Array.isArray(ri)) {
+            const riKeys = ownKeysOf(ri);
+            if (hasOwnKey(riKeys, "cursor")) { nextCursor = ri["cursor"]; nextFound = true; }
+          }
         }
-        const nextCursor = body?.result?.cursor ?? body?.cursor ?? body?.result_info?.cursor ?? null;
+        if (!nextFound) nextCursor = null;
         cursorsCompleted += 1;
-        if (nextCursor === null || nextCursor === undefined || nextCursor === "") {
-          terminated = true;
-          break;
-        }
-        if (typeof nextCursor !== "string") {
-          throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} bad cursor type`, { httpStatus: lastHttpStatus });
-        }
-        if (seenCursors.has(nextCursor) || nextCursor === cursor) {
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} repeated cursor without progress`, { httpStatus: lastHttpStatus });
-        }
-        seenCursors.add(nextCursor);
+        if (nextCursor === null || nextCursor === undefined || nextCursor === "") { terminated = true; break; }
+        if (typeof nextCursor !== "string") { throw new ProviderFailure("MALFORMED", `${group} cursor hop ${hop} bad cursor type`, { httpStatus: lastHttpStatus }); }
+        if (indexOfExact(seenCursorList, nextCursor) >= 0 || nextCursor === cursor) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} repeated cursor without progress`, { httpStatus: lastHttpStatus }); }
+        seenCursorList[seenCursorList.length] = nextCursor;
         cursor = nextCursor;
       }
-      if (cursorsCompleted === 0) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} no cursor pages completed`, { httpStatus: lastHttpStatus });
-      }
-      if (!terminated) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cursor pagination hit the hop cap with a next cursor pending`, { httpStatus: lastHttpStatus });
-      }
+      if (cursorsCompleted === 0) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} no cursor pages completed`, { httpStatus: lastHttpStatus }); }
+      if (!terminated) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cursor pagination hit the hop cap with a next cursor pending`, { httpStatus: lastHttpStatus }); }
       return {
         values: {},
         inventory: seen,
@@ -329,16 +338,11 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
     },
   };
 }
-
-// AI Search instance inventory: GET /accounts/{account_id}/ai-search/instances
-// (never ai-search/indexes); success:true with an array result (or an object
-// carrying instances). A complete walk yields authoritative_inventory for
-// ai_search_instances; degraded:true keeps the count unknown (DEGRADED).
 export function createAiSearchInventoryProvider({ group = "ai-search-inventory-list", covers = ["ai_search_instances"], endpoint, fetchImpl = fetch, perPage = 100 } = {}) {
   if (typeof endpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "ai-search provider endpoint is required");
   return {
     group,
-    covers: [...covers],
+    covers: copyCovers(covers),
     kind: "inventory-ai-search",
     async collect({ accountId, bearer, now }) {
       void now;
@@ -348,155 +352,140 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
       let totalPages = null;
       const pagesCompleted = [];
       let lastHttpStatus = null;
-      const stable = {};
-      // Established-field invariant: once ANY known pagination field is
-      // established on page 1, later pages must retain it with correct
-      // stable/echo/cumulative semantics. Disappearance of page, per_page,
-      // count, total_count, or total_pages fails closed. The container that
-      // established each field (result_info vs pagination) is tracked so a
-      // container switch cannot hide a disappearance.
-      const establishedMeta = new Set();
-      const establishedSource = {};
+      const stableNames = [];
+      const stableValues = [];
+      const stableAiGet = (name) => {
+        const at = indexOfExact(stableNames, name);
+        return at >= 0 ? stableValues[at] : undefined;
+      };
+      const stableAiSet = (name, value) => {
+        const at = indexOfExact(stableNames, name);
+        if (at >= 0) stableValues[at] = value;
+        else { stableNames[stableNames.length] = name; stableValues[stableValues.length] = value; }
+      };
+      const establishedNames = [];
+      const establishedSources = [];
+      const estIndex = (name) => indexOfExact(establishedNames, name);
+      const estSourceOf = (name) => {
+        const i = estIndex(name);
+        return i >= 0 ? establishedSources[i] : "unknown";
+      };
+      const markEstablished = (name, source) => { if (estIndex(name) < 0) { establishedNames[establishedNames.length] = name; establishedSources[establishedSources.length] = source; } };
       const requireStable = (name, value, source) => {
         if (!Number.isInteger(value)) {
-          if (establishedMeta.has(name)) {
-            const from = establishedSource[name] ?? "unknown";
-            const hop = from !== source ? ` via container switch ${from}->${source}` : "";
-            throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared${hop}`, { httpStatus: lastHttpStatus });
-          }
+          if (estIndex(name) >= 0) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} disappeared${estSourceOf(name) !== source ? ` via container switch ${estSourceOf(name)}->${source}` : ""}`, { httpStatus: lastHttpStatus }); }
           return;
         }
-        if (stable[name] === undefined) stable[name] = value;
-        if (stable[name] !== value) {
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
-        }
-        establishedMeta.add(name);
-        if (establishedSource[name] === undefined) establishedSource[name] = source;
+        const current = stableAiGet(name);
+        if (current === undefined) stableAiSet(name, value);
+        if (stableAiGet(name) !== value) throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} ${name} drift`, { httpStatus: lastHttpStatus });
+        markEstablished(name, source);
       };
       for (let hop = 0; hop < 50; hop += 1) {
         const url = endpoint(accountId, page, perPage);
         assertAccountUrl(url, accountId, group, `page ${page}`);
-        if (url.includes("ai-search/indexes")) {
-          throw new ProviderFailure("MALFORMED", `${group} must use /ai-search/instances, never ai-search/indexes`);
-        }
+        if (typeof url !== "string" || hasSub(url, "ai-search/indexes")) { throw new ProviderFailure("MALFORMED", `${group} must use /ai-search/instances, never ai-search/indexes`); }
         let response;
         try {
           response = await fetchImpl(url, { headers: { authorization: `Bearer ${bearer}` } });
         } catch {
           throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} transport failure`);
         }
-        lastHttpStatus = Number.isInteger(response?.status) ? response.status : null;
-        if (lastHttpStatus === 401 || lastHttpStatus === 403) {
-          throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus });
-        }
-        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus });
-        }
+        lastHttpStatus = readStatus(response);
+        if (lastHttpStatus === 401 || lastHttpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} page ${page} denied (http ${lastHttpStatus})`, { httpStatus: lastHttpStatus }); }
+        if (lastHttpStatus === 429 || (Number.isInteger(lastHttpStatus) && lastHttpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} http ${lastHttpStatus}`, { httpStatus: lastHttpStatus }); }
         let body;
         try {
           body = await response.json();
         } catch {
           throw new ProviderFailure("MALFORMED", `${group} page ${page} invalid JSON`, { httpStatus: lastHttpStatus });
         }
-        if (body?.success !== true) {
-          throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false)`, { httpStatus: lastHttpStatus });
+        if (body === null || body === undefined || typeof body !== "object" || Array.isArray(body)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false)`, { httpStatus: lastHttpStatus }); }
+        const aKeys = ownKeysOf(body);
+        if (readOwn(body, aKeys, "success") !== true) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false)`, { httpStatus: lastHttpStatus }); }
+        let degradedOwn = false;
+        if (hasOwnKey(aKeys, "degraded") && body["degraded"] === true) degradedOwn = true;
+        const resultOwn = readOwn(body, aKeys, "result");
+        if (resultOwn !== null && resultOwn !== undefined && typeof resultOwn === "object" && !Array.isArray(resultOwn)) {
+          const rKeys = ownKeysOf(resultOwn);
+          if (hasOwnKey(rKeys, "degraded") && resultOwn["degraded"] === true) degradedOwn = true;
         }
-        if (body?.degraded === true || body?.result?.degraded === true) {
-          throw new ProviderFailure("DEGRADED", `${group} page ${page} degraded:true`, { httpStatus: lastHttpStatus });
+        if (degradedOwn) { throw new ProviderFailure("DEGRADED", `${group} page ${page} degraded:true`, { httpStatus: lastHttpStatus }); }
+        let items = null;
+        if (Array.isArray(resultOwn)) { items = resultOwn; }
+        else if (resultOwn !== null && resultOwn !== undefined && typeof resultOwn === "object" && !Array.isArray(resultOwn)) {
+          const rKeys = ownKeysOf(resultOwn);
+          const instancesOwn = readOwn(resultOwn, rKeys, "instances");
+          if (Array.isArray(instancesOwn)) items = instancesOwn;
         }
-        const items = Array.isArray(body?.result) ? body.result
-          : Array.isArray(body?.result?.instances) ? body.result.instances : null;
-        if (!Array.isArray(items)) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} missing instances array`, { httpStatus: lastHttpStatus });
+        appendRows(seen, items === null ? null : items, group, `page ${page}`, lastHttpStatus);
+        if (!Array.isArray(items)) { throw new ProviderFailure("MALFORMED", `${group} page ${page} missing instances array`, { httpStatus: lastHttpStatus }); }
+        const itemsLength = items.length;
+        if (hasOwnKey(aKeys, "result_info")) assertPlainResultInfo(body["result_info"], group, page, "result_info", lastHttpStatus);
+        else assertPlainResultInfo(undefined, group, page, "result_info", lastHttpStatus);
+        if (hasOwnKey(aKeys, "pagination")) assertPlainResultInfo(body["pagination"], group, page, "pagination", lastHttpStatus);
+        else assertPlainResultInfo(undefined, group, page, "pagination", lastHttpStatus);
+        const wanted = ["page", "per_page", "total_pages", "count", "total_count"];
+        const resultInfoVals = {};
+        const paginationVals = {};
+        if (hasOwnKey(aKeys, "result_info")) {
+          const raw = body["result_info"];
+          const rawKeys = ownKeysOf(raw);
+          for (let i = 0; i < wanted.length; i += 1) { if (hasOwnKey(rawKeys, wanted[i])) resultInfoVals[wanted[i]] = raw[wanted[i]]; }
         }
-        seen.push(...items);
-        assertPlainResultInfo(body?.result_info, group, page, "result_info", lastHttpStatus);
-        assertPlainResultInfo(body?.pagination, group, page, "pagination", lastHttpStatus);
-        // Presence before merge: explicit null result_info/pagination is
-        // MALFORMED (already thrown above), never a silent fallthrough.
-        // Only truly absent (undefined) containers are skipped. Both present
-        // containers merge (result_info wins) so a container switch that
-        // preserves every established field stays admissible, while a switch
-        // that drops one fails closed via the established checks below.
-        const resultInfo = body?.result_info !== undefined ? body.result_info : {};
-        const pagination = body?.pagination !== undefined ? body.pagination : {};
-        const info = { ...pagination, ...resultInfo };
-        const fieldSource = (name) => (resultInfo[name] !== undefined ? "result_info" : pagination[name] !== undefined ? "pagination" : "none");
-        // Same presence-first strict validation as the general provider.
-        assertPaginationField(info, "page", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "per_page", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "total_pages", 1, group, page, lastHttpStatus);
-        assertPaginationField(info, "count", 0, group, page, lastHttpStatus);
-        assertPaginationField(info, "total_count", 0, group, page, lastHttpStatus);
-        if (Number.isInteger(info.total_pages) && info.total_pages < 1) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus });
+        if (hasOwnKey(aKeys, "pagination")) {
+          const raw = body["pagination"];
+          const rawKeys = ownKeysOf(raw);
+          for (let i = 0; i < wanted.length; i += 1) { if (hasOwnKey(rawKeys, wanted[i])) paginationVals[wanted[i]] = raw[wanted[i]]; }
         }
-        if (Number.isInteger(info.per_page) && info.per_page < 1) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus });
-        }
-        if (Number.isInteger(info.count) && info.count < 0) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus });
-        }
-        // This API's own shape (result_info or pagination; D1 semantics not
-        // forced): totals require a matching page echo, must not drift, and a
-        // supplied total_count must equal the cumulative count. Termination is
-        // decisive only: a short page WITHOUT totals (this shape carries no
-        // other terminal signal) never proves full coverage, and established
-        // fields that disappear after page 1 fail closed instead of
-        // fullAccount:true.
-        if ((info.total_count !== undefined || info.total_pages !== undefined) && info.page !== page) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus });
-        }
-        if (info.page !== undefined && info.page !== page) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} page echo mismatch`, { httpStatus: lastHttpStatus });
-        }
-        if (info.count !== undefined && info.count !== items.length) {
-          throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus });
-        }
-        if (Number.isInteger(info.total_count) && info.total_count < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
-        // Page echo must not disappear mid-walk either (echo varies per page,
-        // so only presence is tracked once established, never stability).
-        if (Number.isInteger(info.page)) {
-          establishedMeta.add("page");
-          if (establishedSource.page === undefined) establishedSource.page = fieldSource("page");
-        } else if (establishedMeta.has("page")) {
-          const from = establishedSource.page ?? "unknown";
-          const hop = from !== fieldSource("page") ? ` via container switch ${from}->${fieldSource("page")}` : "";
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} page echo disappeared${hop}`, { httpStatus: lastHttpStatus });
-        }
-        // Count echo semantics must not disappear mid-walk either (count
-        // varies per page, so only presence is tracked, never stability).
-        if (Number.isInteger(info.count)) {
-          establishedMeta.add("count");
-          if (establishedSource.count === undefined) establishedSource.count = fieldSource("count");
-        } else if (establishedMeta.has("count")) {
-          const from = establishedSource.count ?? "unknown";
-          const hop = from !== fieldSource("count") ? ` via container switch ${from}->${fieldSource("count")}` : "";
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared${hop}`, { httpStatus: lastHttpStatus });
-        }
-        requireStable("per_page", info.per_page, fieldSource("per_page"));
-        requireStable("total_count", info.total_count, fieldSource("total_count"));
-        requireStable("total_pages", info.total_pages, fieldSource("total_pages"));
-        if (Number.isInteger(info.total_pages)) {
-          totalPages = info.total_pages;
-        } else if (Number.isInteger(info.total_count) && Number.isInteger(info.per_page)) {
-          totalPages = info.total_count === 0 ? 1 : Math.ceil(info.total_count / Math.max(1, info.per_page));
-        } else {
-          // No totals on this shape: even a short page is
-          // truncation-ambiguous (a boundary-sized page could hide a second
-          // page), so completeness is unprovable and the walk fails closed.
-          throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} short page without totals proves no complete walk`, { httpStatus: lastHttpStatus });
-        }
-        pagesCompleted.push(page);
+        const info = {};
+        const pagKeys = ownKeysOf(paginationVals);
+        const riKeys = ownKeysOf(resultInfoVals);
+        for (let i = 0; i < wanted.length; i += 1) { if (hasOwnKey(pagKeys, wanted[i])) info[wanted[i]] = paginationVals[wanted[i]]; }
+        for (let i = 0; i < wanted.length; i += 1) { if (hasOwnKey(riKeys, wanted[i])) info[wanted[i]] = resultInfoVals[wanted[i]]; }
+        const infoKeys = ownKeysOf(info);
+        const hasI = (n) => hasOwnKey(infoKeys, n);
+        const valI = (n) => (hasI(n) ? info[n] : undefined);
+        const fieldSource = (name) => (hasOwnKey(riKeys, name) ? "result_info" : hasOwnKey(pagKeys, name) ? "pagination" : "none");
+        const checkAi = (name, min) => {
+          if (!hasI(name)) return;
+          const value = valI(name);
+          if (!Number.isInteger(value) || value < min) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus }); }
+        };
+        checkAi("page", 1);
+        checkAi("per_page", 1);
+        checkAi("total_pages", 1);
+        checkAi("count", 0);
+        checkAi("total_count", 0);
+        const aiPage = valI("page");
+        const aiPerPage = valI("per_page");
+        const aiTotalPages = valI("total_pages");
+        const aiCount = valI("count");
+        const aiTotalCount = valI("total_count");
+        if (Number.isInteger(aiTotalPages) && aiTotalPages < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(aiPerPage) && aiPerPage < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(aiCount) && aiCount < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus }); }
+        if ((hasI("total_count") || hasI("total_pages")) && aiPage !== page) { throw new ProviderFailure("MALFORMED", `${group} page ${page} missing page echo`, { httpStatus: lastHttpStatus }); }
+        if (hasI("page") && aiPage !== page) { throw new ProviderFailure("MALFORMED", `${group} page ${page} page echo mismatch`, { httpStatus: lastHttpStatus }); }
+        if (hasI("count") && aiCount !== itemsLength) { throw new ProviderFailure("MALFORMED", `${group} page ${page} count echo mismatch`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(aiTotalCount) && aiTotalCount < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
+        if (Number.isInteger(aiPage)) { markEstablished("page", fieldSource("page")); }
+        else if (estIndex("page") >= 0) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} page echo disappeared${estSourceOf("page") !== fieldSource("page") ? ` via container switch ${estSourceOf("page")}->${fieldSource("page")}` : ""}`, { httpStatus: lastHttpStatus }); }
+        if (Number.isInteger(aiCount)) { markEstablished("count", fieldSource("count")); }
+        else if (estIndex("count") >= 0) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} count echo disappeared${estSourceOf("count") !== fieldSource("count") ? ` via container switch ${estSourceOf("count")}->${fieldSource("count")}` : ""}`, { httpStatus: lastHttpStatus }); }
+        requireStable("per_page", aiPerPage, fieldSource("per_page"));
+        requireStable("total_count", aiTotalCount, fieldSource("total_count"));
+        requireStable("total_pages", aiTotalPages, fieldSource("total_pages"));
+        if (Number.isInteger(aiTotalPages)) { totalPages = aiTotalPages; }
+        else if (Number.isInteger(aiTotalCount) && Number.isInteger(aiPerPage)) { totalPages = aiTotalCount === 0 ? 1 : Math.ceil(aiTotalCount / Math.max(1, aiPerPage)); }
+        else { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} page ${page} short page without totals proves no complete walk`, { httpStatus: lastHttpStatus }); }
+        pagesCompleted[pagesCompleted.length] = page;
         if (pagesCompleted.length >= totalPages) break;
         page += 1;
       }
-      if (totalPages === null || pagesCompleted.length < totalPages) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} incomplete pagination`, { httpStatus: lastHttpStatus });
-      }
-      if (stable.total_count !== undefined && seen.length !== stable.total_count) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stable.total_count}`, { httpStatus: lastHttpStatus });
-      }
+      if (totalPages === null || pagesCompleted.length < totalPages) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} incomplete pagination`, { httpStatus: lastHttpStatus }); }
+      const stableAiTotal = stableAiGet("total_count");
+      if (stableAiTotal !== undefined && seen.length !== stableAiTotal) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} cumulative count ${seen.length} vs total_count ${stableAiTotal}`, { httpStatus: lastHttpStatus }); }
       return {
         values: { ai_search_instances: seen.length },
         inventory: seen,
@@ -507,14 +496,10 @@ export function createAiSearchInventoryProvider({ group = "ai-search-inventory-l
     },
   };
 }
-
-// GraphQL analytics: operational evidence only, NEVER billing authority.
-// Samples stay diagnostic with provenance analytics_nonbilling; errors,
-// partial data, wrong account, and conflicts keep metrics unknown, never zero.
 export function createGraphQlAnalyticsProvider({ group = "graphql-analytics", covers = [], endpoint = "https://api.cloudflare.com/client/v4/graphql", fetchImpl = fetch, query = "" } = {}) {
   return {
     group,
-    covers: [...covers],
+    covers: copyCovers(covers),
     kind: "analytics-graphql",
     analyticsOnly: true,
     async collect({ accountId, bearer, now }) {
@@ -522,40 +507,61 @@ export function createGraphQlAnalyticsProvider({ group = "graphql-analytics", co
       if (typeof bearer !== "string" || bearer.length < 1) throw new ProviderFailure("NO_AUTH_ENDPOINT", `${group}: bearer required`);
       let response;
       try {
-        response = await fetchImpl(endpoint, {
-          method: "POST",
-          headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
-          body: JSON.stringify({ query }),
-        });
+        response = await fetchImpl(endpoint, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" }, body: JSON.stringify({ query }) });
       } catch {
         throw new ProviderFailure("HTTP_ERROR", `${group} transport failure`);
       }
-      const httpStatus = Number.isInteger(response?.status) ? response.status : null;
-      if (httpStatus === 401 || httpStatus === 403) {
-        throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} denied (http ${httpStatus})`, { httpStatus });
-      }
-      if (httpStatus === 429 || (Number.isInteger(httpStatus) && httpStatus >= 500)) {
-        throw new ProviderFailure("HTTP_ERROR", `${group} http ${httpStatus}`, { httpStatus });
-      }
+      const httpStatus = readStatus(response);
+      if (httpStatus === 401 || httpStatus === 403) { throw new ProviderFailure("AUTH_SCOPE_DENIED", `${group} denied (http ${httpStatus})`, { httpStatus }); }
+      if (httpStatus === 429 || (Number.isInteger(httpStatus) && httpStatus >= 500)) { throw new ProviderFailure("HTTP_ERROR", `${group} http ${httpStatus}`, { httpStatus }); }
       let body;
       try {
         body = await response.json();
       } catch {
         throw new ProviderFailure("MALFORMED", `${group} invalid JSON`, { httpStatus });
       }
-      if (Array.isArray(body?.errors) && body.errors.length > 0) {
-        throw new ProviderFailure("HTTP_ERROR", `${group} GraphQL errors`, { httpStatus });
+      if (body === null || body === undefined || typeof body !== "object" || Array.isArray(body)) { throw new ProviderFailure("MALFORMED", `${group} invalid JSON`, { httpStatus }); }
+      const gKeys = ownKeysOf(body);
+      if (hasOwnKey(gKeys, "errors")) {
+        const errorsOwn = body["errors"];
+        if (errorsOwn === undefined || errorsOwn === null) { /* absent-as-empty: ignore */ }
+        else if (Array.isArray(errorsOwn)) {
+          if (errorsOwn.length > 0) { throw new ProviderFailure("HTTP_ERROR", `${group} GraphQL errors`, { httpStatus }); }
+        } else { throw new ProviderFailure("MALFORMED", `${group} GraphQL errors malformed`, { httpStatus }); }
       }
-      const echoedAccount = body?.account_id ?? body?.data?.account_id ?? null;
-      if (typeof echoedAccount === "string" && echoedAccount !== accountId) {
-        throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} wrong account echo`, { httpStatus });
+      let dataOwn = null;
+      let hasData = false;
+      if (hasOwnKey(gKeys, "data")) {
+        const candidate = body["data"];
+        if (candidate === undefined || candidate === null) { /* absent-as-empty: ignore */ }
+        else if (typeof candidate === "object" && !Array.isArray(candidate)) { dataOwn = candidate; hasData = true; }
+        else { throw new ProviderFailure("MALFORMED", `${group} GraphQL data malformed`, { httpStatus }); }
       }
-      if (body?.partial === true || body?.data?.partial === true || body?.truncated === true) {
-        throw new ProviderFailure("PARTIAL_PAGINATION", `${group} GraphQL partial/truncated`, { httpStatus });
+      const dataKeys = hasData ? ownKeysOf(dataOwn) : [];
+      let topEcho;
+      let nestedEcho;
+      if (hasOwnKey(gKeys, "account_id")) {
+        const candidate = body["account_id"];
+        if (candidate !== undefined && candidate !== null && typeof candidate !== "string") { throw new ProviderFailure("MALFORMED", `${group} wrong account echo type`, { httpStatus }); }
+        topEcho = candidate;
+      } else topEcho = undefined;
+      if (hasData && hasOwnKey(dataKeys, "account_id")) {
+        const candidate = dataOwn["account_id"];
+        if (candidate !== undefined && candidate !== null && typeof candidate !== "string") { throw new ProviderFailure("MALFORMED", `${group} wrong account echo type`, { httpStatus }); }
+        nestedEcho = candidate;
+      } else nestedEcho = undefined;
+      if (typeof topEcho === "string" && topEcho !== accountId) { throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} wrong account echo`, { httpStatus }); }
+      if (typeof nestedEcho === "string" && nestedEcho !== accountId) { throw new ProviderFailure("ACCOUNT_MISMATCH", `${group} wrong account echo`, { httpStatus }); }
+      let partialOwn = false;
+      if (hasOwnKey(gKeys, "partial") && body["partial"] === true) partialOwn = true;
+      if (hasData && hasOwnKey(dataKeys, "partial") && dataOwn["partial"] === true) partialOwn = true;
+      if (hasOwnKey(gKeys, "truncated") && body["truncated"] === true) partialOwn = true;
+      if (partialOwn) { throw new ProviderFailure("PARTIAL_PAGINATION", `${group} GraphQL partial/truncated`, { httpStatus }); }
+      let samples = {};
+      if (hasData && hasOwnKey(dataKeys, "samples")) {
+        const candidate = dataOwn["samples"];
+        if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) samples = candidate;
       }
-      // Operational samples are returned for observability but flagged
-      // analytics-only; the collector refuses them billing authority.
-      const samples = body?.data?.samples ?? {};
       return {
         values: {},
         analyticsSamples: typeof samples === "object" && samples !== null ? samples : {},
