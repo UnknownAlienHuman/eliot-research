@@ -211,7 +211,11 @@
       "owned_paths": [
         "packages/research/src/workflow.ts",
         "apps/eliotr-core/src/research-workflow.ts",
-        "infra/workflows/**"
+        "infra/workflows/**",
+        "packages/cloudflare-research/**",
+        "apps/eliotr-core/test/research-workflow.test.ts",
+        "apps/eliotr-core/test/research-workflow-fixture.ts",
+        "docs/implementation/workflow-checkpoints.md"
       ],
       "mandatory_negative_case": "Inject a lost acknowledgement after model output persistence and prove retry does not execute/pay for the call twice.",
       "document": "ER-09-durable-research-workflow.md",

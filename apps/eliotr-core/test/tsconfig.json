@@ -60,6 +60,9 @@
     },
     {
       "path": "../../eliotr-pwa"
+    },
+    {
+      "path": "../../../packages/cloudflare-research"
     }
   ]
 }

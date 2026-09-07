@@ -58,7 +58,7 @@
       "state": "IN_PROGRESS",
       "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
-        "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
         "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
         "G1 owner begin: apps/eliotr-core/test/google-oauth-begin-http.test.ts (12 actual local HTTP/D1/crypto cases: forged owner/session/config, service principal, Origin/CSRF, unknown/max+1 fields, invalid Production attestation, replay/concurrency/lost response/currentness revocation, D1 cap/expiry, secret leakage; invalid requests cause zero token/provider calls or credential writes; valid retry returns the same pending intent) and apps/eliotr-pwa strict begin decoder/transport/panel with no private token in URL, log, or browser storage.",
@@ -421,6 +421,22 @@
         "apps/eliotr-core/test/investigation-ledger-d1.test.ts: 13 actual workerd D1 cases via cloudflare:test CORE_DB contour covering committed-migration create/readback/restart, stale append CAS with no orphan event, fences/verifier/deviation/supersession lineage, conflicting replay with no second effect, supersession CAS loss at the single-command boundary (old winner complete, no replacement rows), throw-before-command plus lost-ACK-after-commit single-effect reconciliation, divergent event-id reuse with exact store replay, per-mutation provider fence flips after preflight denied with zero effect, per-dim D1 authority mutations after preflight (scope invalidated, grant revoked, policy gen/ref rotated, deployment rotated, global purge inserted, epoch bumped) each aborting with typed code and byte-identical row state, direct unguarded head/event writes failing via triggers, same-ID divergence on every event field plus head conflicting with identical DB state, concurrent divergent appends electing one winner, and rival-replacement supersede rollback leaving the old ledger OPEN with CREATED-only lineage.",
         "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts: 9 FIX4 actual workerd D1 cases proving separate transactions cannot resume a command or guard, stale CAS leaves no orphan event or stray command, create/append/supersede boundary faults roll back every row with epoch unchanged, direct head delete plus every unguarded insert/update/delete fails, forged actor/verifier plus immutable head bytes fail byte-identical with a forged raw command rejected, D1-time bounds reject expired/future/skewed/over-TTL commands, authority/ledger failures leave rows byte-identical with zero authority writes and no epoch bump on success, exact replay/lost-ACK/concurrent exact-divergent settle once with one winner, and restart/readback reconstructs contiguous lineage.",
         "Workflow/Session composition, research.run enablement and remote D1/Queue/live qualification NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-workflow-checkpoints-w2a",
+      "path": "packages/cloudflare-research/src/executor.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-09 durable single-stage D1/R2 checkpoints; governed handlers, public Workflow composition and live qualification remain separate.",
+      "owner_packets": [
+        "ER-09",
+        "ER-13"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Executable W2a single-stage checkpoint boundary with canonical 18-stage ordering, immutable bounded R2 outputs, one durable attempt per handler, exact ACK reconciliation, currentness/cancellation/budget checks, and W1 CHECKPOINT plus outbox in one D1 batch. Engine completion never upgrades research disposition. Public Workflow, governed W3/W4 handlers, branch scheduler, notification consumer and metadata retention/erasure/restore integration remain uncomposed.",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-workflow.test.ts: actual local D1/R2 ordering, duplicate/lost ACK, concurrent attempts, cancellation/withdrawal rollback, exact content/residency, 8 MiB/64 KiB bounds, unknown-settlement and strict v1 vector checks.",
+        "infra/workflows/checkpoint-vectors.v1.json; deterministic migration target eliotr-research-core, not promoted Rust authority.",
+        "Live Workflow/provider/settlement/erasure/restore qualification NOT_EXECUTED; keep public scaffold and launch holds."
       ]
     }
   ]
