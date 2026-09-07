@@ -1,5 +1,7 @@
 # Agent work packets
 
+New to the repository? Read [`docs/START-HERE.md`](../START-HERE.md) first.
+
 The manifest is the swarm scheduler contract. One agent claims one packet and edits only its exact
 `owned_paths`. Dependencies must be complete before implementation is merged; independent packets may
 run in parallel. A packet is not complete without its mandatory negative case and, where named, its
@@ -57,6 +59,30 @@ Contract conflicts return to ER-01/ER-00; do not create a leaf-local alternate s
 | [ER-33](ER-33-research-steward.md) | 5 | Research Steward | ER-07, ER-12, ER-15, ER-17, ER-32 |
 | [ER-34](ER-34-backup-restore-and-platform-exit.md) | 6 | Backup restore and platform exit | ER-13, ER-14, ER-17 |
 | [ER-35](ER-35-specialist-corpus-profiles.md) | 7 | Specialist corpus profiles | ER-07, ER-31, ER-32 |
+| [ER-40](ER-40-rust-canonical-identity-and-serialization.md) | — | Rust canonical identity and serialization | ER-00, ER-01, ER-02, ER-23 |
+
+## Additive packet fragments
+
+Packets added after the original generated manifest live as one-file fragments in
+[`packets/`](packets/) with protocol `eliotr.agent-work.packet.v1`. `scripts/check-work-packets.mjs`
+merges them only after checking that they introduce no duplicate ID, no overlapping ownership and no
+dependency cycle; a fragment can never override an existing packet. **They carry exactly the same
+ownership authority as a manifest packet** — treat this table as part of the index above, not as an
+appendix.
+
+| Packet | Slice | Title | Depends on |
+|---|---:|---|---|
+| [ER-36](ER-36-gemini-spark-mcp-and-google-orchestration.md) | — | Gemini Spark MCP and Google orchestration | ER-17, ER-18, ER-20, ER-21, ER-24, ER-26 |
+| [ER-37](ER-37-governed-ingest-admission-composition.md) | — | Governed ingest admission composition | ER-13, ER-14, ER-21, ER-24, ER-29 |
+| [ER-38](ER-38-governed-projection-generation-execution.md) | — | Governed projection-generation execution | ER-05, ER-06, ER-13, ER-15, ER-16, ER-24, ER-29, ER-37 |
+| [ER-39](ER-39-exact-evidence-resolution.md) | — | Exact evidence resolution and citation gate | ER-01, ER-02, ER-03, ER-06, ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-37, ER-38 |
+| [ER-41](ER-41-federation-d1-runtime.md) | — | Federation D1 runtime authority | ER-13, ER-22, ER-24 |
+| [ER-43](ER-43-local-launch.md) | — | Local runtime isolation and restart regression | ER-00, ER-24, ER-26 |
+| [ER-44](ER-44-local-owner-session.md) | — | Local signed owner session and explicit read-policy setup | ER-21, ER-24, ER-26, ER-43 |
+
+Slice is left unset for packets that were introduced against an existing slice plan rather than as a
+new vertical slice. `pnpm work-packets:check` is authoritative for the full set: it prints the merged
+packet count, and `node scripts/check-docs-index.mjs` fails if any packet is missing from this file.
 
 ## Before starting a packet
 
