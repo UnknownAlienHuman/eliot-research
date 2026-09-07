@@ -13,7 +13,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -244,6 +244,11 @@ const fakeBinDir = await mkdtemp(join(tmpdir(), "eliotr-fake-pnpm-"));
 const fakeWhoamiLine = `account ${ACCOUNT} active`.replace(/"/gu, "");
 await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  echo ${fakeWhoamiLine}\r\n  exit /b 0\r\n)\r\nexit /b 1\r\n`);
 await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then echo "${fakeWhoamiLine}"; exit 0; fi\nexit 1\n`);
+// Linux CI resolves `pnpm` via PATH with shell:false, so the shim must be
+// executable; without +x libuv skips it, the real `pnpm exec wrangler whoami`
+// runs (exit 0 "not authenticated" when no profile), and verification fails
+// with OAUTH_ACCOUNT_MISMATCH. Windows uses pnpm.cmd via shell:true.
+await chmod(join(fakeBinDir, "pnpm"), 0o755);
 const fakePath = `${fakeBinDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
 const provisionEnv = {
