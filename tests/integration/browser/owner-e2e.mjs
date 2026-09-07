@@ -601,26 +601,77 @@ export function roleCompat(first, second) {
 export const NAV_TOKEN_SCOPE = "harness-navigation";
 export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 204, 304, 401, 403]);
 
+// Closed issuance handles: frozen {opId,docId,role} threaded as arguments.
+// Pure constructors/validators with no global mutation; direct bypass (missing,
+// unfrozen, or malformed handle) throws. The live harness threads these
+// handles through mintSlotsFor/bindSlot/stamp; setRole issues a new handle.
+export function createIssuanceHandle(opId, docId, role) {
+  assert.ok(Number.isSafeInteger(opId) && opId > 0,
+    `issuance handle opId must be exact, got ${String(opId).slice(0, 32)}`);
+  assert.ok(Number.isSafeInteger(docId) && docId >= 0,
+    `issuance handle docId must be exact, got ${String(docId).slice(0, 32)}`);
+  assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
+    `issuance handle role must be an exact SlotRole, got ${JSON.stringify(String(role)).slice(0, 64)}`);
+  return Object.freeze({ opId, docId, role });
+}
+
+export function checkIssuanceHandle(handle, where = "issuance") {
+  assert.ok(handle !== null && typeof handle === "object" && Object.isFrozen(handle),
+    `${where} requires an explicit frozen issuance handle {opId,docId,role} (direct bypass throws)`);
+  assert.ok(Number.isSafeInteger(handle.opId) && Number.isSafeInteger(handle.docId) && handle.docId >= 0,
+    `${where} issuance handle opId/docId must be exact`);
+  assert.ok(typeof handle.role === "string" && SLOT_ROLES.includes(handle.role),
+    `${where} issuance handle role must be an exact SlotRole`);
+  return handle;
+}
+
+export function deriveRoleHandle(baseHandle, role) {
+  checkIssuanceHandle(baseHandle, "setRole");
+  assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
+    `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
+  return Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role });
+}
+
+// Checked nav barrier: zero in-flight nav handles required at
+// registerOp/setRole. Direct bypass (overlapping navigation without
+// consumption) throws; the caller must drain via FIFO consume first.
+export function assertZeroNavInflight(pendingCount, where = "barrier") {
+  assert.ok(Number.isSafeInteger(pendingCount) && pendingCount >= 0,
+    `${where}: pending nav count must be exact`);
+  assert.ok(pendingCount === 0,
+    `${where}: zero in-flight nav handles required, got ${pendingCount} (direct bypass throws)`);
+}
+
 // Single-terminal collector: one reqId → one terminal outcome. A failure
 // notification is suppressed ONLY when the SAME reqId already has a
 // contract-response terminal (its own duplicate delivery report). Cross-reqId,
 // non-contract-status, or duplicate-response cases never suppress and fail
 // closed downstream. No sleep, no retry hiding: suppressed entries are exactly
 // the same-reqId contract-response duplicate, everything else stays ledgered.
+// Closed construction: the caller Set is copied+validated into private
+// immutable state (non-empty, subset of CONTRACT_RESPONSE_STATUSES); the
+// caller Set is never stored or exposed, and noteResponse/shouldSuppressFailure
+// consult the private copy only (post-construction mutation has no effect).
 export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT_RESPONSE_STATUSES)) {
-  assert.ok(contractStatuses instanceof Set && contractStatuses.size > 0,
+  assert.ok(contractStatuses instanceof Set,
+    "terminal tracker requires an exact contract status Set");
+  assert.ok(contractStatuses.size > 0,
     "terminal tracker requires an exact non-empty contract status set");
+  const allowedList = [...contractStatuses];
+  assert.ok(allowedList.every((status) => Number.isSafeInteger(status) && CONTRACT_RESPONSE_STATUSES.includes(status)),
+    `terminal tracker contract statuses must be a non-empty subset of ${CONTRACT_RESPONSE_STATUSES.join("/")}`);
+  const allowed = new Set(allowedList);
   const seenResponseIds = new Set();
   const terminalByReqId = new Map();
   return {
-    contractStatuses,
+    contractStatuses: new Set(allowed),
     noteResponse(reqId, status) {
       assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
       assert.ok(Number.isSafeInteger(status), `terminal tracker requires an exact status, got ${String(status).slice(0, 32)}`);
       assert.ok(!seenResponseIds.has(reqId),
         `duplicate response reqId ${reqId} fails closed (one terminal outcome per request)`);
       seenResponseIds.add(reqId);
-      const contract = contractStatuses.has(status);
+      const contract = allowed.has(status);
       terminalByReqId.set(reqId, { kind: "response", status, contract });
       return contract;
     },
@@ -646,10 +697,13 @@ export function createClosedAuthority(label) {
   // Causal nav/action tokens: pendingNav keyed by exact tokenId. Tokens are
   // minted ONLY at harness-navigation boundaries via mintNavToken, bound to
   // opaque frozen token objects through tokenBindings (WeakMap), and consumed
-  // one-to-one via consumeNavToken. The backward-scan consumeNavSlot(targetDoc)
-  // is deleted: targetDoc scanning is ambiguous (two pendings, same doc) and
-  // can never anchor edges. Token-less or wrong-token frame events register as
-  // unlinked observations and never anchor edges.
+  // one-to-one via consumeNavToken(tokenObject) ONLY. The numeric
+  // consumeNavToken(tokenId) branch is deleted: primitives never resolve
+  // (WeakMap miss or non-object → null, no state change). A successful consume
+  // deletes from pendingNav (no reuse/stale/enumeration). The backward-scan
+  // consumeNavSlot(targetDoc) is deleted: targetDoc scanning is ambiguous (two
+  // pendings, same doc) and can never anchor edges. Token-less or wrong-token
+  // frame events register as unlinked observations and never anchor edges.
   const pendingNav = new Map();
   const tokenBindings = new WeakMap();
   let nextOpId = 0;
@@ -688,6 +742,8 @@ export function createClosedAuthority(label) {
     operations.set(op.id, op);
     if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
     if (kind === "harness-navigation") {
+      assert.ok(pendingNav.size === 0,
+        `${label}: zero in-flight nav handles required at registerOp, got ${pendingNav.size} (concurrent navigation denies; direct bypass throws)`);
       const token = mintNavToken(op.id, op.targetDoc);
       const stamped = Object.freeze({ ...op, navTokenId: token.tokenId, navToken: token });
       operations.set(stamped.id, stamped);
@@ -706,24 +762,19 @@ export function createClosedAuthority(label) {
     assert.ok(pendingNav.size < 1024, `${label}: pending nav table must stay finite`);
     nextTokenId += 1;
     const token = Object.freeze({ scope: NAV_TOKEN_SCOPE, tokenId: nextTokenId, opId, targetDoc });
-    pendingNav.set(token.tokenId, { opId, targetDoc, consumed: false, token });
+    pendingNav.set(token.tokenId, { opId, targetDoc, token });
     tokenBindings.set(token, token.tokenId);
     return token;
   };
-  const resolveNavTokenId = (tokenOrId) => {
-    if (tokenOrId !== null && typeof tokenOrId === "object") {
-      const bound = tokenBindings.get(tokenOrId);
-      return Number.isSafeInteger(bound) ? bound : null;
-    }
-    if (Number.isSafeInteger(tokenOrId)) return pendingNav.has(tokenOrId) ? tokenOrId : null;
-    return null;
-  };
-  const consumeNavToken = (tokenOrId) => {
-    const tokenId = resolveNavTokenId(tokenOrId);
-    if (tokenId === null) return null;
+  const consumeNavToken = (token) => {
+    if (token === null || typeof token !== "object") return null;
+    const tokenId = tokenBindings.get(token);
+    if (!Number.isSafeInteger(tokenId)) return null;
     const entry = pendingNav.get(tokenId);
-    if (entry === undefined || entry.consumed) return null;
-    entry.consumed = true;
+    if (entry === undefined) return null;
+    if (entry.token !== token) return null;
+    pendingNav.delete(tokenId);
+    tokenBindings.delete(token);
     return { tokenId, opId: entry.opId, targetDoc: entry.targetDoc, token: entry.token };
   };
   const mintSlot = ({ opId, targetDoc, action, role, method, origin, path }) => {
@@ -748,7 +799,16 @@ export function createClosedAuthority(label) {
     return slot;
   };
   return { label, registerOp, mintSlot, mintNavToken, consumeNavToken,
-    pendingNavTokens: () => [...pendingNav.entries()].map(([tokenId, entry]) => ({ tokenId, opId: entry.opId, targetDoc: entry.targetDoc, consumed: entry.consumed })),
+    pendingNavTokens: () => [...pendingNav.entries()].map(([tokenId, entry]) => ({ tokenId, opId: entry.opId, targetDoc: entry.targetDoc })),
+    pendingNavCount: () => pendingNav.size,
+    drainPendingNav: () => {
+      const count = pendingNav.size;
+      for (const [, entry] of [...pendingNav.entries()]) {
+        try { tokenBindings.delete(entry.token); } catch { /* best-effort */ }
+      }
+      pendingNav.clear();
+      return count;
+    },
     getOp: (id) => operations.get(id),
     operations: () => [...operations.values()], edges: () => [...edges], slots: () => [...slots.values()] };
 }
@@ -800,27 +860,37 @@ async function launchPlaywright(runId) {
     let requestSeq = 0;
     let nextDocId = 0;
     let currentDocId = 0;
-    let currentRole = "startup-probe";
     let currentOp = null;
-    // Causal predecessor for the next observed document replacement: the exact
-    // frozen token object minted at the last harness-navigation boundary (or
-    // null when no navigation is pending). Never a docId scan.
-    let pendingNavToken = null;
+    let currentIssuance = null;
+    // Explicit one-use nav-handle queue (FIFO): each harness-navigation
+    // registerOp pushes its frozen token object; each main-frame
+    // framenavigated shifts exactly one handle. Zero handles → unlinked
+    // observation; >1 pending + one frame → unlinked (fail closed), never
+    // latest-for-earliest (the single-global overwrite is deleted).
+    const pendingNavHandles = [];
     const auth = createClosedAuthority(`owner-e2e:${runId}`);
-    // Immutable issuance context: frozen synchronously at every explicit
-    // action/role boundary (registerOp/setRole). Observed request stamps copy
-    // this frozen context verbatim instead of sampling the live navigation
-    // counters, so a straggler that races a document replacement still carries
-    // its issuing action's exact op/doc/role (stale live sampling is deleted).
-    // The frame handler never touches it: navigation takes effect at the next
-    // explicit boundary only. Settle-barrier discipline (settleLedger before
-    // every ledger assert) keeps boundaries from piling up behind callbacks.
-    let frozenIssuance = null;
-    const setRole = (role) => {
+    const checkedBarrier = (where) => {
+      assert.ok(pendingNavHandles.length === 0,
+        `owner-e2e:${runId} barrier at ${where}: zero in-flight nav handles required, got ${pendingNavHandles.length} (direct bypass throws)`);
+    };
+    const checkIssuanceHandle = (handle, where) => {
+      assert.ok(handle !== null && typeof handle === "object" && Object.isFrozen(handle),
+        `owner-e2e:${runId} ${where} requires an explicit frozen issuance handle {opId,docId,role} (direct bypass throws)`);
+      assert.ok(Number.isSafeInteger(handle.opId) && Number.isSafeInteger(handle.docId) && handle.docId >= 0,
+        `owner-e2e:${runId} ${where} issuance handle opId/docId must be exact`);
+      assert.ok(SLOT_ROLES.includes(handle.role),
+        `owner-e2e:${runId} ${where} issuance handle role must be an exact SlotRole`);
+      return handle;
+    };
+    // Pure issuance: issues a new frozen handle from a base handle, no global
+    // mutation. The caller threads the returned handle into registerOp /
+    // mintSlotsFor / adoptIssuance explicitly.
+    const setRole = (baseHandle, role) => {
+      checkIssuanceHandle(baseHandle, "setRole");
+      checkedBarrier("setRole");
       assert.ok(SLOT_ROLES.includes(role),
         `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
-      currentRole = role;
-      if (frozenIssuance !== null) frozenIssuance = Object.freeze({ ...frozenIssuance, role });
+      return Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role });
     };
     // Root operation: explicitly registered once; later ops link from it (or
     // from their exact predecessor) through declared successors only.
@@ -828,44 +898,65 @@ async function launchPlaywright(runId) {
       sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
       successors: ["goto-unauthenticated"] });
     currentOp = rootOp;
-    frozenIssuance = Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" });
-    const registerOp = (fields) => {
+    currentIssuance = Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" });
+    const adoptIssuance = (handle) => {
+      checkIssuanceHandle(handle, "adoptIssuance");
+      const owner = auth.getOp(handle.opId);
+      assert.ok(owner !== undefined,
+        `owner-e2e:${runId} adoptIssuance binds an unregistered op ${handle.opId} and rejects`);
+      currentIssuance = handle;
+      currentOp = owner;
+      return handle;
+    };
+    const registerOp = (fields, baseHandle) => {
+      if (baseHandle !== undefined) checkIssuanceHandle(baseHandle, "registerOp");
+      checkedBarrier("registerOp");
       const op = auth.registerOp(fields);
-      currentOp = op;
       // Freeze the issuing context synchronously at this boundary: every
       // request issued under this action carries exactly this op/doc/role.
-      frozenIssuance = Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role });
+      const issuance = Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role });
       // The harness-navigation boundary mints its causal nav token
-      // synchronously inside registerOp (see createClosedAuthority). Keep the
-      // exact token object as the single pending causal predecessor: the next
-      // main-frame framenavigated consumes exactly this token, one-to-one.
+      // synchronously inside registerOp (see createClosedAuthority). Push the
+      // exact token object onto the FIFO queue and return it as the explicit
+      // one-use NavHandle to the initiating helper.
+      let navHandle = null;
       if (op.kind === "harness-navigation" && op.navToken !== undefined && op.navToken !== null) {
-        pendingNavToken = op.navToken;
+        pendingNavHandles.push(op.navToken);
+        navHandle = op.navToken;
       }
-      return op;
+      currentOp = op;
+      currentIssuance = issuance;
+      return { op, issuance, navHandle };
     };
     // Finite request slots for the exact abortable identities of the current
     // action (scoped targetDoc/action/role/method-origin-path). Dynamic
     // artifact paths arrive via extraPaths at their own action boundary.
-    const mintSlotsFor = ({ origin, extraPaths = [] }) => {
+    // Takes an explicit issuance handle (no global sampling, no auto-mint).
+    const mintSlotsFor = (issuanceHandle, { origin, extraPaths = [] } = {}) => {
+      checkIssuanceHandle(issuanceHandle, "mintSlotsFor");
       assert.ok(typeof origin === "string" && origin.length > 0 && origin.length < 256,
         "slot origin must be an exact loopback origin");
       assert.ok(Array.isArray(extraPaths), "slot extra paths must be exact");
+      const owner = auth.getOp(issuanceHandle.opId);
+      assert.ok(owner !== undefined,
+        `mintSlotsFor binds an unregistered op ${issuanceHandle.opId} and rejects (direct bypass throws)`);
+      assert.ok(owner.targetDoc === issuanceHandle.docId,
+        `mintSlotsFor issuance docId ${issuanceHandle.docId} must equal its op targetDoc ${owner.targetDoc} (stale handle rejects)`);
       const minted = [];
       for (const [method, path] of [...ABORTABLE_SLOT_PATHS, ...extraPaths]) {
-        minted.push(auth.mintSlot({ opId: currentOp.id, targetDoc: currentOp.targetDoc,
-          action: currentOp.action, role: currentOp.role, method, origin, path }));
+        minted.push(auth.mintSlot({ opId: issuanceHandle.opId, targetDoc: issuanceHandle.docId,
+          action: owner.action, role: issuanceHandle.role, method, origin, path }));
       }
       return minted;
     };
     // Slot bind for an observed request: the open slot for this exact
-    // (method,origin,path) under the frozen issuance op/role, else null
-    // (unknown paths fail closed downstream — the bindSlot auto-mint is
-    // deleted, so no request can invent authority outside its synchronous
-    // action boundary).
-    const bindSlot = (method, origin, path) => {
-      const open = auth.slots().find((slot) => slot.opId === frozenIssuance.opId && slot.method === method &&
-        slot.origin === origin && slot.path === path && slot.role === frozenIssuance.role);
+    // (method,origin,path) under the explicit issuance handle op/role, else
+    // null (unknown paths fail closed downstream — no auto-mint, so no request
+    // can invent authority outside its synchronous action boundary).
+    const bindSlot = (issuanceHandle, method, origin, path) => {
+      checkIssuanceHandle(issuanceHandle, "bindSlot");
+      const open = auth.slots().find((slot) => slot.opId === issuanceHandle.opId && slot.method === method &&
+        slot.origin === origin && slot.path === path && slot.role === issuanceHandle.role);
       if (open !== undefined) return open.id;
       return null;
     };
@@ -884,22 +975,35 @@ async function launchPlaywright(runId) {
           navigationEpoch += 1;
           nextDocId += 1;
           currentDocId = nextDocId;
-          // Causal token-bound document replacement: consumes exactly the
-          // pending nav token minted at the harness-navigation boundary. A
-          // token-less event (no pending token) or a wrong-token event (stale
-          // or already-consumed token) registers as an unlinked observation
-          // (from: null) and can never anchor edges. The current action op is
-          // never stolen: anchors traverse explicit action edges only.
-          const pending = pendingNavToken !== null ? auth.consumeNavToken(pendingNavToken) : null;
-          pendingNavToken = null;
+          // Causal token-bound document replacement via the FIFO nav-handle
+          // queue: exactly one queued handle shifts per frame event. Zero
+          // handles → unlinked observation; >1 pending + one frame → unlinked
+          // (fail closed, queue drained), never latest-for-earliest. A consumed
+          // handle anchors via its minting op; otherwise from:null and no edge.
+          // The frame handler never touches issuance: navigation takes effect
+          // at the next explicit boundary only. The current action op is never
+          // stolen.
+          let pending = null;
+          if (pendingNavHandles.length === 1) {
+            const handle = pendingNavHandles.shift();
+            pending = auth.consumeNavToken(handle);
+          } else if (pendingNavHandles.length === 0) {
+            pending = null;
+          } else {
+            pendingNavHandles.length = 0;
+            pending = null;
+          }
+          const observedRole = pending !== null
+            ? (auth.getOp(pending.opId)?.role ?? currentIssuance.role)
+            : currentIssuance.role;
           if (pending !== null) {
             auth.registerOp({ kind: "observed-navigation", cause: "framenavigated", scope: "document",
               sourceDoc: currentDocId, targetDoc: currentDocId, action: "framenavigated",
-              role: currentRole, from: pending.opId, successors: [] });
+              role: observedRole, from: pending.opId, successors: [] });
           } else {
             auth.registerOp({ kind: "observed-navigation", cause: "framenavigated", scope: "document",
               sourceDoc: currentDocId, targetDoc: currentDocId, action: "framenavigated",
-              role: currentRole, from: null, successors: [] });
+              role: observedRole, from: null, successors: [] });
           }
         }
       } catch { /* navigation accounting must never break the harness */ }
@@ -936,13 +1040,14 @@ async function launchPlaywright(runId) {
       const entry = ledgerEntry(request.method(), request.url());
       requestSeq += 1;
       nextRequestId += 1;
-      // Immutable issuance stamp: a frozen copy of the action-boundary
-      // context (op/doc/role) plus the exact bound slot (or null for unknown
-      // paths, which fail closed downstream). The stamp object is frozen so
-      // later boundaries can never mutate it, and no slot is auto-minted here.
-      // Live navigation/doc counters are never sampled for stamps.
+      // Immutable issuance stamp: a frozen copy of the explicitly adopted
+      // issuance handle (op/doc/role) plus the exact bound slot (or null for
+      // unknown paths, which fail closed downstream). The stamp object is
+      // frozen so later boundaries can never mutate it, and no slot is
+      // auto-minted here. Live navigation/doc counters are never sampled.
+      const handle = currentIssuance;
       const stamp = Object.freeze({ id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
-        opId: frozenIssuance.opId, docId: frozenIssuance.docId, role: frozenIssuance.role, slotId: bindSlot(entry.method, entry.origin, entry.path) });
+        opId: handle.opId, docId: handle.docId, role: handle.role, slotId: bindSlot(handle, entry.method, entry.origin, entry.path) });
       requestIds.set(request, stamp);
       requests.push(Object.freeze({ ...entry, resourceType: request.resourceType(),
         reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq,
@@ -1024,7 +1129,8 @@ async function launchPlaywright(runId) {
       panelSerial += 1;
       consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
-      pendingNavToken = null;
+      pendingNavHandles.length = 0;
+      auth.drainPendingNav();
     };
     const close = async () => {
       try { await context?.close(); } catch { /* Best-effort. */ }
@@ -1034,11 +1140,13 @@ async function launchPlaywright(runId) {
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
       requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
-      registerOp, mintSlotsFor, setRole,
+      registerOp, mintSlotsFor, setRole, adoptIssuance, bindSlot,
       currentOp: () => currentOp,
       currentDocId: () => currentDocId,
+      currentIssuance: () => currentIssuance,
+      pendingNavQueueLength: () => pendingNavHandles.length,
       operationTable: () => auth.operations(), edgeTable: () => auth.edges(), slotTable: () => auth.slots(),
-      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOp.id, docId: currentDocId, role: currentRole }) };
+      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOp.id, docId: currentDocId, role: currentIssuance.role }) };
   } catch (error) {
     try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
     try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
@@ -1518,6 +1626,19 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
 // suppresses; D3 proves cross-reqId responses never suppress and duplicate
 // responses fail closed. N20-N25/D2-D3 are accepted by 1e771ca (proven by the
 // old-behavior run) and denied post-fix; D1 passes pre/post (retained).
+// New negatives N26-N33 prove the closed nav/issuance/terminal design and all
+// fail on 3e17f33 (proven by the old-behavior run) while denying post-fix:
+// N26 is primitive forgery (numeric tokenId consume → null); N27 is
+// copy/lookalike (spread-copy object and copy numeric → null, original still
+// consumable); N28 is stale/reuse (second consume → null with pending empty,
+// no stale enumeration); N29 is cross-authority (foreign numeric/object →
+// null); N30 is concurrent (second navigation while one pending throws the
+// zero-in-flight barrier, never latest-for-earliest); N31 is delayed callback
+// (delayed reuse and malformed inputs → null with pending 0 unchanged); N32 is
+// barrier bypass (contract superset/non-Set/empty construction and missing or
+// unfrozen issuance handles throw); N33 is post-construction mutation (input
+// or returned Set mutation never widens the private contract). Legitimate
+// P1/P2/D1 PASS retained.
 // Phantom fallback stays deleted. The live owner E2E proves the accompanying
 // window evidence the synthetic ledger cannot carry: the surviving catalog 200
 // lists the admitted source id and Chromium holds exactly one opaque HttpOnly
@@ -2026,6 +2147,163 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   // accepted (over-suppressed or allowed) by the 1e771ca inline
   // respondedReqIds logic, which lacks the tracker export and the contract
   // gate; denied post-fix.
+  // New negatives N26-N33 prove the closed nav/issuance/terminal design.
+  // Each fails on 3e17f33 (old-behavior run proves acceptance there) and
+  // denies post-fix; legitimate PASS (P1/P2/D1) retained.
+  // N26 primitive forgery: numeric tokenId consume → null (old numeric branch
+  // accepted). N27 copy/lookalike: spread-copy object → null with no state
+  // change and copy.tokenId numeric → null (old numeric accepted the copy id).
+  // N28 stale/reuse: second consume → null with pending empty, no stale
+  // enumeration (old kept consumed:true entries). N29 cross-authority: foreign
+  // numeric and foreign object → null (old numeric cross-auth accepted via
+  // sequential ids). N30 concurrent: second harness-navigation while one
+  // pending throws the zero-in-flight barrier, never latest-for-earliest (old
+  // global overwrite anchored latest). N31 delayed callback: delayed reuse
+  // after delete → null with pending 0 unchanged; null/undefined/string/miss
+  // → null no state change (old kept stale count 1). N32 barrier bypass:
+  // contract-superset construction and missing/unfrozen issuance handles throw
+  // (old accepted superset, ignored handles). N33 post-construction mutation:
+  // mutating the input Set or the returned Set never affects suppression (old
+  // stored/exposed the caller Set).
+  {
+    // N26 primitive forgery.
+    const auth26 = createClosedAuthority("n26-primitive");
+    const root26 = auth26.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const nav26 = auth26.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: root26.id, successors: [] });
+    assert.equal(auth26.consumeNavToken(nav26.navTokenId), null,
+      "N26: numeric primitive forgery must return null (no numeric branch)");
+    assert.equal(auth26.pendingNavCount(), 1,
+      "N26: failed primitive consume must leave pending unchanged (no state change)");
+    assert.ok(auth26.consumeNavToken(nav26.navToken) !== null,
+      "N26: legitimate object consume still passes");
+    assert.equal(auth26.pendingNavCount(), 0, "N26: legitimate consume deletes");
+    // N27 copy/lookalike.
+    const auth27 = createClosedAuthority("n27-copy");
+    const root27 = auth27.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const nav27 = auth27.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: root27.id, successors: [] });
+    const copy27 = { ...nav27.navToken };
+    assert.equal(auth27.consumeNavToken(copy27), null,
+      "N27: copy/lookalike object must return null (WeakMap miss, no state change)");
+    assert.equal(auth27.pendingNavCount(), 1, "N27: failed copy consume leaves pending unchanged");
+    assert.equal(auth27.consumeNavToken(copy27.tokenId), null,
+      "N27: copy tokenId numeric must return null (no numeric branch)");
+    assert.ok(auth27.consumeNavToken(nav27.navToken) !== null,
+      "N27: legitimate original still passes after copy attempts");
+    // N28 stale/reuse (no enumeration of consumed).
+    const auth28 = createClosedAuthority("n28-reuse");
+    const root28 = auth28.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const nav28 = auth28.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: root28.id, successors: [] });
+    assert.ok(auth28.consumeNavToken(nav28.navToken) !== null, "N28: first consume passes");
+    assert.equal(auth28.consumeNavToken(nav28.navToken), null,
+      "N28: stale reuse must return null");
+    assert.deepEqual(auth28.pendingNavTokens(), [],
+      "N28: successful consume deletes (no stale/enumeration)");
+    assert.equal(auth28.pendingNavCount(), 0, "N28: pending count zero after delete");
+    // N29 cross-authority.
+    const authA29 = createClosedAuthority("n29-a");
+    const authB29 = createClosedAuthority("n29-b");
+    const rootA29 = authA29.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const rootB29 = authB29.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const navA29 = authA29.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: rootA29.id, successors: [] });
+    authB29.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: rootB29.id, successors: [] });
+    assert.equal(authB29.consumeNavToken(navA29.navTokenId), null,
+      "N29: cross-authority numeric must return null");
+    assert.equal(authB29.consumeNavToken(navA29.navToken), null,
+      "N29: cross-authority object must return null (foreign WeakMap miss)");
+    // N30 concurrent: second navigation while one pending throws the barrier,
+    // never latest-for-earliest.
+    const auth30 = createClosedAuthority("n30-concurrent");
+    const root30 = auth30.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const first30 = auth30.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: root30.id, successors: ["goto-pairing"] });
+    assert.throws(() => auth30.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+      sourceDoc: 1, targetDoc: 2, action: "goto-pairing", role: "startup-probe",
+      from: first30.id, successors: [] }), /zero in-flight/,
+      "N30: concurrent second navigation while one pending must fail closed");
+    assert.throws(() => assertZeroNavInflight(2, "N30"), /zero in-flight/,
+      "N30: FIFO barrier with >1 pending + one frame denies (unlinked, never latest-for-earliest)");
+    assert.doesNotThrow(() => assertZeroNavInflight(0, "N30"), "N30: zero pending passes");
+    // N31 delayed callback: delayed reuse after delete stays null with no state
+    // change; malformed inputs never resolve.
+    const auth31 = createClosedAuthority("n31-delayed");
+    const root31 = auth31.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    const nav31 = auth31.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+      from: root31.id, successors: [] });
+    assert.ok(auth31.consumeNavToken(nav31.navToken) !== null, "N31: first consume passes");
+    assert.equal(auth31.pendingNavCount(), 0, "N31: pending empty after delete");
+    assert.equal(auth31.consumeNavToken(nav31.navToken), null,
+      "N31: delayed callback reuse must return null with no state change");
+    assert.equal(auth31.pendingNavCount(), 0, "N31: delayed reuse leaves pending 0");
+    for (const bad of [null, undefined, 0, "1", {}, { tokenId: 1 }]) {
+      assert.equal(auth31.consumeNavToken(bad), null,
+        "N31: malformed token must return null with no state change");
+    }
+    assert.equal(auth31.pendingNavCount(), 0, "N31: malformed consumes leave pending 0");
+    // N32 barrier bypass: contract-superset construction and issuance-handle
+    // bypass throw; direct use without a frozen handle throws.
+    assert.throws(() => createRequestTerminalTracker(new Set([200, 500])), /subset/,
+      "N32: contract superset with non-contract 500 must fail closed at construction");
+    assert.throws(() => createRequestTerminalTracker(new Set()), /non-empty/,
+      "N32: empty contract set must fail closed");
+    assert.throws(() => createRequestTerminalTracker([200]), /exact contract status Set/,
+      "N32: non-Set contract must fail closed");
+    assert.throws(() => checkIssuanceHandle(null, "N32"), /explicit frozen issuance handle/,
+      "N32: missing issuance handle must throw (direct bypass)");
+    assert.throws(() => checkIssuanceHandle({ opId: 1, docId: 0, role: "startup-probe" }, "N32"), /frozen/,
+      "N32: unfrozen lookalike handle must throw");
+    assert.throws(() => checkIssuanceHandle(Object.freeze({ opId: 1, docId: 0, role: "superuser" }), "N32"), /exact SlotRole/,
+      "N32: unknown-role handle must throw");
+    assert.throws(() => deriveRoleHandle(Object.freeze({ opId: 1, docId: 0, role: "startup-probe" }), "superuser"), /exact SlotRole/,
+      "N32: setRole-equivalent with unknown role must throw");
+    assert.throws(() => assertZeroNavInflight(1, "N32"), /zero in-flight/,
+      "N32: non-zero in-flight at registerOp/setRole must throw");
+    // N33 post-construction mutation: mutating the input Set or the returned
+    // Set never affects suppression (private immutable copy).
+    {
+      const input33 = new Set([200]);
+      const tracker33 = createRequestTerminalTracker(input33);
+      assert.ok(tracker33.contractStatuses !== input33,
+        "N33: tracker must never store/expose the caller Set");
+      input33.add(500);
+      assert.equal(tracker33.noteResponse(8001, 500), false,
+        "N33: input-Set mutation post-construction must not widen the contract");
+      assert.equal(tracker33.shouldSuppressFailure(8001), false,
+        "N33: non-contract 500 must never suppress even after input mutation");
+      tracker33.contractStatuses.add(500);
+      const tracker33b = createRequestTerminalTracker(new Set([200]));
+      tracker33b.noteResponse(8002, 200);
+      assert.equal(tracker33b.shouldSuppressFailure(8002), true,
+        "N33: mutating a different tracker copy never affects private state");
+      assert.throws(() => createRequestTerminalTracker(new Set([200, 500])), /subset/,
+        "N33: superset construction still fails closed");
+    }
+  }
   {
     const trackerD1 = createRequestTerminalTracker(new Set([200, 204, 403]));
     trackerD1.noteResponse(7001, 200);
@@ -2043,8 +2321,8 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
       "D3: duplicate response for one reqId must fail closed");
   }
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 25, collector: "D1-D3",
-    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens + immutable issuance stamps + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 33, collector: "D1-D3",
+    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens (object-only consume, delete-on-consume, FIFO queue, zero-inflight barrier) + explicit issuance handles + private terminal contract copy + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
@@ -2955,12 +3233,12 @@ export async function runOwnerE2E() {
       if (!visitedOrigins.includes(origin)) visitedOrigins.push(origin);
       return [...visitedOrigins];
     };
-    playwright.setRole("startup-probe");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "startup-probe"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-unauthenticated", role: "startup-probe",
       from: playwright.currentOp().id, successors: ["goto-pairing", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: worker.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const unauthHasPrivate = await playwright.evaluate(hasPrivateLibraryMarker);
@@ -2982,19 +3260,19 @@ export async function runOwnerE2E() {
     const secret = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
     assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
-    playwright.setRole("pair-action");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "pair-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-pairing", role: "pair-action",
       from: playwright.currentOp().id, successors: ["click-connect", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
     playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
       action: "click-connect", role: "pair-action",
       from: playwright.currentOp().id, successors: ["reload-authed-retrieval"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     // No source is admitted yet, so pairing proves the session cookie only; the
@@ -3125,7 +3403,7 @@ export async function runOwnerE2E() {
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "reload-authed-retrieval", role: "pair-action",
       from: playwright.currentOp().id, successors: ["goto-jwt-matrix", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: bridge.origin,
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin,
       extraPaths: [["GET", `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`]] });
     await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
@@ -3182,12 +3460,12 @@ export async function runOwnerE2E() {
       const matrixBefore = protectedD1Counts();
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
-      playwright.setRole("jwt-matrix");
+      playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
       playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
         sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
         action: "goto-jwt-matrix", role: "jwt-matrix",
         from: playwright.currentOp().id, successors: ["goto-post-restart", "framenavigated"] });
-      playwright.mintSlotsFor({ origin: worker.origin });
+      playwright.mintSlotsFor(playwright.currentIssuance(), { origin: worker.origin });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       const matrixCases = [
@@ -3280,12 +3558,12 @@ export async function runOwnerE2E() {
     try { await bridge?.close(); } catch { /* Close stale pre-restart bridge before post-restart PWA readback. */ }
     bridge = undefined;
     playwright.resetLedger();
-    playwright.setRole("startup-probe");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "startup-probe"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-post-restart", role: "startup-probe",
       from: playwright.currentOp().id, successors: ["goto-repairing", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: worker.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const restartStorage = await readBrowserStorage(playwright.page);
@@ -3303,19 +3581,19 @@ export async function runOwnerE2E() {
     assert.ok(!bridge.pairingUrl.includes("eyJ"), "re-pairing URL must never carry JWT material");
     const secret2 = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret2 === "string" && secret2.length >= 32 && !secret2.includes("eyJ"), "re-pairing secret must be opaque");
-    playwright.setRole("pair-action");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "pair-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-repairing", role: "pair-action",
       from: playwright.currentOp().id, successors: ["click-reconnect", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
     playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
       action: "click-reconnect", role: "pair-action",
       from: playwright.currentOp().id, successors: ["goto-logout"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -3326,19 +3604,19 @@ export async function runOwnerE2E() {
     assert.ok(!String(reNew[0].value).includes("eyJ"), "re-paired cookie must be opaque");
     const reSessionName = reNew[0].name;
     playwright.resetLedger();
-    playwright.setRole("logout-action");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "logout-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-logout", role: "logout-action",
       from: playwright.currentOp().id, successors: ["click-logout", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.goto(`${bridge.origin}/__local/`, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#logout", { timeout: 15000 });
     playwright.registerOp({ kind: "harness-action", cause: "logout-action", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
       action: "click-logout", role: "logout-action",
       from: playwright.currentOp().id, successors: ["goto-post-logout-clean"] });
-    playwright.mintSlotsFor({ origin: bridge.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.click("#logout", { timeout: 15000 });
     await playwright.page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Local session closed"), null, { timeout: 15000 });
     const clearedCookies = await playwright.context.cookies();
@@ -3371,12 +3649,12 @@ export async function runOwnerE2E() {
     assertPhaseNetwork(playwright, "logout", { ...logoutNetworkSpec(bridge.origin), workerOrigins: trackOrigin(bridge.origin) });
     receipt.network_ledger_phases.logout = summarizePhaseLedger(playwright);
     playwright.resetLedger();
-    playwright.setRole("startup-probe");
+    playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "startup-probe"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
       action: "goto-post-logout-clean", role: "startup-probe",
       from: playwright.currentOp().id, successors: ["goto-rotation", "framenavigated"] });
-    playwright.mintSlotsFor({ origin: worker.origin });
+    playwright.mintSlotsFor(playwright.currentIssuance(), { origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const loggedOutHasPrivate = await playwright.evaluate(bodyIncludes, sourceId);
@@ -3432,12 +3710,12 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
       assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       playwright.resetLedger();
-      playwright.setRole("rotation-read");
+      playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
       playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
         sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
         action: "goto-rotation", role: "rotation-read",
         from: playwright.currentOp().id, successors: ["goto-rotation-pairing", "framenavigated"] });
-      playwright.mintSlotsFor({ origin: worker.origin,
+      playwright.mintSlotsFor(playwright.currentIssuance(), { origin: worker.origin,
         extraPaths: [["GET", `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`]] });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
@@ -3470,14 +3748,14 @@ export async function runOwnerE2E() {
         sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
         action: "goto-rotation-pairing", role: "rotation-read",
         from: playwright.currentOp().id, successors: ["click-rotation-connect", "framenavigated"] });
-      playwright.mintSlotsFor({ origin: bridge.origin });
+      playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
       await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForSelector("#connect", { timeout: 15000 });
       playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
         sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
         action: "click-rotation-connect", role: "rotation-read",
         from: playwright.currentOp().id, successors: [] });
-      playwright.mintSlotsFor({ origin: bridge.origin });
+      playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
       await playwright.page.click("#connect", { timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
