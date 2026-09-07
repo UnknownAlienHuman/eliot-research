@@ -1,14 +1,3 @@
-import type { BackupEpoch, RestoreVerificationReceipt } from "@eliotr/contracts";
-
-export interface BackupPort {
-  createPortableEpoch(): Promise<BackupEpoch>;
-  copyOffsite(epoch: BackupEpoch): Promise<{ offsite_copy_ref: string; readback_digest: string }>;
-  markEpochForPurgeReplay(epochRef: string, purgeLedgerRevision: number): Promise<void>;
-}
-
-export interface RestorePort {
-  restoreIsolated(epoch: BackupEpoch): Promise<string>;
-  applyPurgeLedger(isolatedEnvironmentRef: string, revision: number): Promise<void>;
-  rebuildProjections(isolatedEnvironmentRef: string): Promise<readonly string[]>;
-  verifyBeforeTraffic(isolatedEnvironmentRef: string): Promise<RestoreVerificationReceipt>;
-}
+// ER-34 O2 thin facade; substantive implementation lives in @eliotr/backup-o2.
+export { createBackupPort, createPendingRestorePort, claimEpochReceipt, peekEpochReplay, parsePersistedEpochReplay, readCommittedEpochReceipt, readEpochDraftById, createBackupEpochPort, reopenPersistedVector, copyOffsiteExport, createControlledOffsiteAdapter, expireOffsiteCopy, authorizeBackupDestination, revokeBackupDestination, requireDestinationAuthority, assertO2MigrationAuthority, createConformantR2Bucket, canonicalEpochIntentDigest, canonicalOffsiteCopyDigest, openExportCut, sealExportCut, BackupError, BACKUP_MANIFEST_PROTOCOL, O2_MIGRATION_FILENAME } from "@eliotr/backup-o2";
+export type { BackupEpochDraft, BackupEpochResult, BackupEpochPort, BackupExportContext, BackupSourcePorts, BackupPartRef, AuthorityVector, BackupExportLimits, BackupErrorCode, OffsiteCopyInput, OffsiteCopyResult, OffsiteCopyAdapter, OffsiteStoredPart, BackupDestinationPolicy, OffsiteDestinationDescriptor, ExpiryIntent, ExpiryReceipt, BackupPort, RestorePort, EpochReplayClaim, PersistedEpochReplay, DestinationAuthorityGrant, StoredDestinationAuthority, StoredCopyReceipt, CopyCheckpoint, CutInputs, OpenCut, TableSpec } from "@eliotr/backup-o2";
