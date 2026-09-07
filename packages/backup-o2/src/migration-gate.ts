@@ -43,7 +43,7 @@ export const O2_EXPECTED_MIGRATION_DIGEST = "dd6b24611a6f9d7d1ad8b80b2443263bcf1
 // to LF. Bound the same way: the gate requires the 0019 ledger row (proof of
 // application through the authoritative path) and the live schema shape plus
 // fingerprint below (proof the applied content matches).
-export const O2_EXPECTED_UPGRADE_DIGEST = "0dfd963f6c548de24511167725bf4e8493d0fb6d9ae053cd215d7115a3149156";
+export const O2_EXPECTED_UPGRADE_DIGEST = "a42f4c8dcff5d08c5a0ab0875c3c35bf106def8265dbefa17bf057fff225058b";
 
 // sha256 (hex) of the canonical schema text (sorted table/index entries, see
 // canonicalO2SchemaFingerprint) read back from a database with 0018 + 0019

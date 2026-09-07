@@ -155,9 +155,76 @@ describe("ER-34 O2 FIX5 forward upgrade 0019", () => {
       .run("gen-1", "bb".repeat(12), "copy-1", "part-1", T);
     expect(() => crossOwner.exec(m0019)).toThrow();
   });
+  it("failed cross-generation rebuild leaves prior authority intact, readable and retry-closed", async () => {
+    // Adversarial direct SQLite probe (raw DatabaseSync.exec, no runner
+    // rollback): the duplicate aborts on the STAGING copy, so every canonical
+    // table keeps the parent shape and every prior row.
+    const db = openEarly();
+    db.exec(m0018);
+    recordLedger(db, APPLIED_PARENT);
+    db.prepare("INSERT INTO backup_offsite_expiry (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)")
+      .run("exp-9", "epoch-9", "dest-9", "[]", "BLOCKED", 0, "domain-x", D64, D64, T);
+    const rows = [
+      { key_generation: "gen-1", nonce_hex: "ab".repeat(12), copy_id: "copy-1", part_ref: "part-1" },
+      { key_generation: "gen-2", nonce_hex: "cd".repeat(12), copy_id: "copy-2", part_ref: "part-1" },
+      { key_generation: "gen-1", nonce_hex: "ef".repeat(12), copy_id: "copy-9", part_ref: "part-9" },
+      { key_generation: "gen-2", nonce_hex: "ef".repeat(12), copy_id: "copy-8", part_ref: "part-8" },
+    ];
+    for (const row of rows) {
+      db.prepare("INSERT INTO backup_offsite_nonce_authority (key_generation, nonce_hex, copy_id, part_ref, created_at) VALUES (?1,?2,?3,?4,?5)")
+        .run(row.key_generation, row.nonce_hex, row.copy_id, row.part_ref, T);
+    }
+    expect(() => db.exec(m0019)).toThrow();
+    // Prior schema still authoritative: parent expiry columns (no generation
+    // binding yet) and parent per-key nonce PRIMARY KEY.
+    const expiryCols = (db.prepare("PRAGMA table_info(backup_offsite_expiry)").all() as { name: string }[]).map((c) => c.name);
+    expect(expiryCols).toEqual(["expiry_intent_key", "epoch_id", "destination_id", "journal_refs_json", "state", "absent_parts", "failure_domain", "descriptor_digest", "policy_digest", "created_at"]);
+    const noncePk = (db.prepare("PRAGMA table_info(backup_offsite_nonce_authority)").all() as { name: string; pk: number }[])
+      .filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+    expect(noncePk).toEqual(["key_generation", "nonce_hex"]);
+    // Every prior row still readable under its canonical name.
+    expect(db.prepare("SELECT count(*) AS c FROM backup_offsite_expiry").get() as { c: number }).toEqual({ c: 1 });
+    const nonces = db.prepare("SELECT key_generation, nonce_hex, copy_id, part_ref, created_at FROM backup_offsite_nonce_authority ORDER BY key_generation, copy_id").all();
+    expect(nonces).toEqual(rows.map((r) => ({ ...r, created_at: T })).sort((a, b) => a.key_generation.localeCompare(b.key_generation) || a.copy_id.localeCompare(b.copy_id)));
+    // No swap ever started: no rename leftovers hold stranded authority.
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_0018'").all()).toEqual([]);
+    // Failure state is "not upgraded", not "destroyed": the gate refuses the
+    // absent upgrade while the parent rows stay queryable above.
+    await expect(assertO2MigrationAuthority(d1Database(db))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+    // Retry fails closed identically with rows still intact.
+    expect(() => db.exec(m0019)).toThrow();
+    expect((db.prepare("SELECT count(*) AS c FROM backup_offsite_nonce_authority").get() as { c: number }).c).toBe(4);
+  });
+  it("failed same-owner rebuild leaves prior authority intact, readable and retry-closed", async () => {
+    // Same-owner duplicates are legal without the owner UNIQUE index; the
+    // staging owner index build aborts BEFORE any canonical mutation.
+    const db = openEarly();
+    db.exec(m0018);
+    recordLedger(db, APPLIED_PARENT);
+    db.prepare("INSERT INTO backup_offsite_nonce_authority (key_generation, nonce_hex, copy_id, part_ref, created_at) VALUES (?1,?2,?3,?4,?5)")
+      .run("gen-1", "aa".repeat(12), "copy-1", "part-1", T);
+    db.prepare("INSERT INTO backup_offsite_nonce_authority (key_generation, nonce_hex, copy_id, part_ref, created_at) VALUES (?1,?2,?3,?4,?5)")
+      .run("gen-1", "bb".repeat(12), "copy-1", "part-1", T);
+    expect(() => db.exec(m0019)).toThrow();
+    const noncePk = (db.prepare("PRAGMA table_info(backup_offsite_nonce_authority)").all() as { name: string; pk: number }[])
+      .filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk).map((c) => c.name);
+    expect(noncePk).toEqual(["key_generation", "nonce_hex"]);
+    expect(db.prepare("SELECT nonce_hex FROM backup_offsite_nonce_authority ORDER BY nonce_hex").all()).toEqual([
+      { nonce_hex: "aa".repeat(12) },
+      { nonce_hex: "bb".repeat(12) },
+    ]);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_0018'").all()).toEqual([]);
+    await expect(assertO2MigrationAuthority(d1Database(db))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+    expect(() => db.exec(m0019)).toThrow();
+    expect((db.prepare("SELECT count(*) AS c FROM backup_offsite_nonce_authority").get() as { c: number }).c).toBe(2);
+  });
   it("0019 without its parent 0018 predecessor aborts: the predecessor is mandatory", async () => {
     const db = openEarly();
     expect(() => db.exec(m0019)).toThrow();
+    // The aborted staging copy creates no canonical authority and destroys
+    // nothing: early tables stay readable, no O2 canonicals exist.
+    expect((db.prepare("SELECT count(*) AS c FROM source").get() as { c: number }).c).toBe(0);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('backup_offsite_expiry','backup_offsite_nonce_authority')").all()).toEqual([]);
   });
   it("a forged 0019 ledger row without the applied upgrade still fails the gate", async () => {
     const db = openEarly();
@@ -166,12 +233,18 @@ describe("ER-34 O2 FIX5 forward upgrade 0019", () => {
     await expect(assertO2MigrationAuthority(d1Database(db))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
   });
   it.each([
-    ["weaker per-generation nonce PK", (v: string) => v.replace("  PRIMARY KEY (nonce_hex)", "  PRIMARY KEY (key_generation, nonce_hex)")],
+    // NOTE (FIX6): 0019 stages each rebuild in a _validate_ table before the
+    // canonical swap, so upgrade-variant edits must cover staging AND final
+    // text consistently (replaceAll); editing only one half is a malformed
+    // variant the migration itself rejects at apply time, not a shape the
+    // gate must refuse.
+    ["weaker per-generation nonce PK", (v: string) => v.replaceAll("  PRIMARY KEY (nonce_hex)", "  PRIMARY KEY (key_generation, nonce_hex)")],
     ["missing nonce owner uniqueness", (v: string) => v.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_nonce_owner_unique\n  ON backup_offsite_nonce_authority(key_generation, copy_id, part_ref);", "")],
     ["missing expiry generation binding", (v: string) => v
-      .replace("  authority_authorized_at TEXT NOT NULL,\n", "")
-      .replace("policy_digest, authority_authorized_at, created_at)", "policy_digest, created_at)")
-      .replace("descriptor_digest, policy_digest, created_at, created_at\n  FROM _backup_offsite_expiry_0018", "descriptor_digest, policy_digest, created_at\n  FROM _backup_offsite_expiry_0018")],
+      .replaceAll("  authority_authorized_at TEXT NOT NULL,\n", "")
+      .replaceAll("policy_digest, authority_authorized_at, created_at)", "policy_digest, created_at)")
+      .replace("descriptor_digest, policy_digest, created_at, created_at\n  FROM _backup_offsite_expiry_0018", "descriptor_digest, policy_digest, created_at\n  FROM _backup_offsite_expiry_0018")
+      .replace("descriptor_digest, policy_digest, created_at, created_at\n  FROM backup_offsite_expiry;", "descriptor_digest, policy_digest, created_at\n  FROM backup_offsite_expiry;")],
   ])("rejects edited upgrade variant: %s", async (_label, mutate) => {
     const db = openEarly();
     db.exec(m0018);

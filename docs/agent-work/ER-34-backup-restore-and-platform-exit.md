@@ -29,9 +29,12 @@ outside the paths below.
 - `infra/backup/**`
 
 Integration dependencies (not owned): `infra/d1/core/migrations/0018_backup_o2_replay_authority.sql`
-is ER-13-owned additive state required for D1 restart-safe replay authority (renamed from
+(immutable parent) plus the forward upgrade `infra/d1/core/migrations/0019_backup_o2_replay_authority_fix.sql`
+are ER-13-owned additive state required for D1 restart-safe replay authority (renamed from
 `0017_backup_o2_replay_authority.sql` in FIX2: W1 FIX5 reserves the 0017 slot with
-`0017_investigation_ledger_fix5.sql`, and 0014–0016 never landed on this lane); `scripts/check-boundaries.mjs`,
+`0017_investigation_ledger_fix5.sql`, and 0014–0016 never landed on this lane; 0019 is the only
+O2 number after 0018 and carries the replay-authority delta forward so fresh and upgraded
+databases converge); `scripts/check-boundaries.mjs`,
 `tsconfig.json`, `packages/platform-cloudflare/package.json` and `packages/platform-cloudflare/tsconfig.json`
 are workspace/barrel adjustments only. O2 is IMPLEMENTED_NOT_LIVE; O3 restore/isolation and O4
 source-erasure/purge replay remain explicit fail-closed NOT_IMPLEMENTED with no live receipts.

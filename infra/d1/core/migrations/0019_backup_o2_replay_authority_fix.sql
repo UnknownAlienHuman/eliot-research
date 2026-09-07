@@ -1,4 +1,4 @@
--- ER-34 O2 FIX5 forward replay-authority upgrade (additive; ER-13 integration dependency).
+-- ER-34 O2 FIX6 self-atomic forward replay-authority upgrade (additive; ER-13 integration dependency).
 -- One mutable owner per source namespace is unchanged; this only upgrades O2
 -- idempotency, authority, checkpoint and coherent-cut receipts. Never edit earlier migrations.
 --
@@ -16,6 +16,26 @@
 -- and no W1 product code is copied.
 --
 -- Upgrade mechanics (D1/SQLite-valid, forward-only, no down migration):
+-- 0. VALIDATE BEFORE MUTATE (FIX6 self-atomicity): both rebuilds are first
+--    copied into staging tables (_validate_backup_offsite_expiry_0019 and
+--    _validate_backup_offsite_nonce_authority_0019) and the tightened PRIMARY
+--    KEY plus the UNIQUE owner tuple are enforced there. Any duplicate nonce
+--    bytes inherited from the parent key abort on the staging copy --
+--    cross-generation duplicates on the staging PRIMARY KEY (nonce_hex),
+--    same-owner duplicates on the staging owner index -- BEFORE any canonical
+--    table is renamed, created, copied or dropped. The staging tables are
+--    dropped again before the swap, so a failed validation leaves every
+--    canonical table and row exactly as parent 0018 left it: post-failure the
+--    prior schema still answers reads and still holds every prior row, and a
+--    retry fails closed the same way. No explicit BEGIN/COMMIT wraps this
+--    file: D1 rejects transaction control inside migration SQL ("cannot start
+--    a transaction within a transaction"; wrangler applies each migration as
+--    its own batch and rolls a failed migration back to the last successful
+--    state), and the same file must also run under raw SQLite
+--    DatabaseSync.exec in local tests with no runner rollback. The supported
+--    failure-safe ordering is therefore validation-before-mutation: under D1
+--    the runner rolls back, under raw exec there is nothing to roll back
+--    because no canonical mutation precedes validation.
 -- 1. backup_offsite_expiry is rebuilt (rename, create, copy, drop) to add the
 --    controller generation binding authority_authorized_at ahead of created_at
 --    (ADD COLUMN would append it last and change column order, and would fail
@@ -42,9 +62,47 @@
 -- backup. O2 is pre-live (IMPLEMENTED_NOT_LIVE, no live receipts), so no
 -- production data depends on either shape.
 -- Applying this file to a database that never applied parent 0018 aborts on
--- the first rename (no such table): the predecessor is mandatory, never
+-- the staging copy (no such table): the predecessor is mandatory, never
 -- skipped or substituted.
 PRAGMA foreign_keys = OFF;
+
+-- 0. Staging validation: enforce the tightened constraints on copies BEFORE
+--    any canonical mutation. Any abort below leaves canonical tables and rows
+--    untouched (only _validate_ staging leftovers remain, which a retry drops
+--    and rebuilds deterministically).
+DROP TABLE IF EXISTS _validate_backup_offsite_expiry_0019;
+CREATE TABLE _validate_backup_offsite_expiry_0019 (
+  expiry_intent_key TEXT PRIMARY KEY,
+  epoch_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  journal_refs_json TEXT NOT NULL CHECK (json_valid(journal_refs_json)),
+  state TEXT NOT NULL CHECK (state IN ('DELETED','BLOCKED')),
+  absent_parts INTEGER NOT NULL CHECK (absent_parts >= 0),
+  failure_domain TEXT NOT NULL,
+  descriptor_digest TEXT NOT NULL CHECK (length(descriptor_digest) = 64),
+  policy_digest TEXT NOT NULL CHECK (length(policy_digest) = 64),
+  authority_authorized_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+) STRICT;
+INSERT INTO _validate_backup_offsite_expiry_0019 (expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, authority_authorized_at, created_at)
+  SELECT expiry_intent_key, epoch_id, destination_id, journal_refs_json, state, absent_parts, failure_domain, descriptor_digest, policy_digest, created_at, created_at
+  FROM backup_offsite_expiry;
+DROP TABLE IF EXISTS _validate_backup_offsite_nonce_authority_0019;
+CREATE TABLE _validate_backup_offsite_nonce_authority_0019 (
+  key_generation TEXT NOT NULL,
+  nonce_hex TEXT NOT NULL CHECK (length(nonce_hex) = 24),
+  copy_id TEXT NOT NULL,
+  part_ref TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (nonce_hex)
+) STRICT;
+INSERT INTO _validate_backup_offsite_nonce_authority_0019 (key_generation, nonce_hex, copy_id, part_ref, created_at)
+  SELECT key_generation, nonce_hex, copy_id, part_ref, created_at
+  FROM backup_offsite_nonce_authority;
+CREATE UNIQUE INDEX _validate_backup_offsite_nonce_owner_unique_0019
+  ON _validate_backup_offsite_nonce_authority_0019(key_generation, copy_id, part_ref);
+DROP TABLE _validate_backup_offsite_expiry_0019;
+DROP TABLE _validate_backup_offsite_nonce_authority_0019;
 
 -- 1. Terminal expiry replay authority: bind the controller generation.
 ALTER TABLE backup_offsite_expiry RENAME TO _backup_offsite_expiry_0018;
