@@ -197,8 +197,15 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
   // provider family: a fully self-consistent snapshot-asserted or test-only
   // receipt (mintable by anyone knowing the account ID, without any live
   // collection) validates structurally at most and never authorizes.
-  if (liveCount === 0 && contract.requiredKeys.length > 0) {
+  // Non-empty exact coverage is enforced independently here: a zero-length
+  // authority set never admits, even if every() would be vacuously true.
+  const requiredLen = Array.isArray(contract.requiredKeys) ? contract.requiredKeys.length : 0;
+  if (requiredLen === 0) {
+    reasons.push("authority metric set is empty; refusing vacuous admission");
+  } else if (liveCount === 0) {
     reasons.push("admission receipt carries no live provider evidence (snapshot-asserted/test-only family never authorizes heavy work); refusing forged receipt");
+  } else if (liveCount !== requiredLen) {
+    reasons.push("admission receipt live evidence does not exactly cover the required set; refusing forged receipt");
   }
   const monthly = receipt.windows?.monthly;
   if (monthly && (Date.parse(monthly.start) > now + contract.clockSkewMs || now > Date.parse(monthly.end))) {

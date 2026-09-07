@@ -10,6 +10,7 @@ import {
 import {
   METRIC_PROVENANCE,
   REQUIRED_METRIC_KEYS,
+  USAGE_METRICS,
   CLOCK_SKEW_MS,
   UNKNOWN,
   UNKNOWN_REASONS,
@@ -89,14 +90,31 @@ export function dailyWindowFor(nowMs) {
   return { kind: "daily", start: start.toISOString(), end: end.toISOString() };
 }
 
+// Local canonical snapshot: re-derived from the frozen USAGE_METRICS source at
+// call time, then validated non-empty and exact. Mutating an export throws
+// (frozen) and is ignored here regardless, so collection completeness cannot
+// be emptied by a caller.
+function canonicalRequiredSnapshot() {
+  const fromMetrics = USAGE_METRICS.map((metric) => metric.key);
+  const snapshotted = [...REQUIRED_METRIC_KEYS];
+  if (snapshotted.length === 0 || fromMetrics.length === 0) {
+    collectionFail("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous collection");
+  }
+  if (snapshotted.length !== fromMetrics.length || !fromMetrics.every((key) => snapshotted.includes(key))) {
+    collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
+  }
+  return snapshotted;
+}
+
 // All-unknown snapshot: honest shape when no provider exposes a counter;
 // fresh windows plus sealed source so evaluation seals, never admits.
 export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), source = USAGE_SOURCE_SEALED, readback = {} } = {}) {
   if (typeof expectedAccountId !== "string" || expectedAccountId.trim() === "") {
     collectionFail("COLLECTION_INVALID", "expectedAccountId is required for account binding");
   }
+  const required = canonicalRequiredSnapshot();
   const metrics = {};
-  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = UNKNOWN;
+  for (const key of required) metrics[key] = UNKNOWN;
   return {
     protocol: "eliotr.cloudflare-usage-snapshot.v1",
     account_id_digest: digestAccountId(expectedAccountId),
@@ -133,7 +151,8 @@ export async function collectAccountUsage(options = {}) {
   const totals = {};
   const gaps = {};
   const trust = {};
-  for (const key of REQUIRED_METRIC_KEYS) {
+  const required = canonicalRequiredSnapshot();
+  for (const key of required) {
     totals[key] = null;
     gaps[key] = false;
     trust[key] = { state: "unknown-untrusted", sources: [], coverage: null, gap: null, provenance: METRIC_PROVENANCE.UNAVAILABLE };
@@ -238,7 +257,7 @@ export async function collectAccountUsage(options = {}) {
         : (provenance ?? METRIC_PROVENANCE.UNAVAILABLE);
       if (!coverageOk) {
         for (const key of claimedKeys) {
-          if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
+          if (!required.includes(key)) continue;
           markGap(key, `${group}: ${coverageReason}`, reporterProvenance);
           providerErrors.push(`${group} coverage rejected for ${key}: ${coverageReason}; keeping unknown`);
         }
@@ -249,7 +268,7 @@ export async function collectAccountUsage(options = {}) {
       // by key, never admitted, and never gap other channels.
       if (analytics) {
         const sampleKeys = Object.keys(values).filter((key) =>
-          REQUIRED_METRIC_KEYS.includes(key) && typeof values[key] === "number");
+          required.includes(key) && typeof values[key] === "number");
         if (sampleKeys.length > 0) {
           providerErrors.push(`${group} analytics samples are diagnostic-only, never billing authority`);
         }
@@ -277,7 +296,7 @@ export async function collectAccountUsage(options = {}) {
       let channelTestOnly = false;
       const refuseChannel = (reason, refusedProvenance) => {
         for (const key of claimedKeys) {
-          if (!REQUIRED_METRIC_KEYS.includes(key)) continue;
+          if (!required.includes(key)) continue;
           markGap(key, `${group}: ${reason}`, refusedProvenance);
         }
         providerErrors.push(`${group} ${reason}; keeping unknown`);
@@ -321,7 +340,7 @@ export async function collectAccountUsage(options = {}) {
         continue;
       }
       for (const [key, value] of Object.entries(values)) {
-        if (!REQUIRED_METRIC_KEYS.includes(key)) {
+        if (!required.includes(key)) {
           providerErrors.push(`${group} reported unknown metric ${key}`);
           continue;
         }
@@ -395,13 +414,13 @@ export async function collectAccountUsage(options = {}) {
       // never poison unrelated counters.
       if (declaredCovers) {
         for (const key of declaredCovers) {
-          if (REQUIRED_METRIC_KEYS.includes(key)) markGap(key, message);
+          if (required.includes(key)) markGap(key, message);
         }
       }
     }
   }
   const metrics = {};
-  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = totals[key] === null ? UNKNOWN : totals[key];
+  for (const key of required) metrics[key] = totals[key] === null ? UNKNOWN : totals[key];
   return {
     protocol: "eliotr.cloudflare-usage-snapshot.v1",
     account_id_digest: digestAccountId(expectedAccountId),
@@ -416,7 +435,7 @@ export async function collectAccountUsage(options = {}) {
       provider_errors: providerErrors,
       metric_trust: trust,
       registry_limitations: Object.fromEntries(
-        REQUIRED_METRIC_KEYS.map((key) => [key, METRIC_SOURCE_REGISTRY[key]?.limitation ?? "unregistered"]),
+        required.map((key) => [key, METRIC_SOURCE_REGISTRY[key]?.limitation ?? "unregistered"]),
       ),
     },
     metrics,

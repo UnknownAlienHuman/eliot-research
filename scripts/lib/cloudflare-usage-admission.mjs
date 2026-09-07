@@ -71,7 +71,16 @@ export function isLiveAdmissibleForCapability(snapshot, evaluation) {
   if (snapshot?.readback?.whoami_verified !== true) return false;
   const trust = snapshot?.readback?.metric_trust;
   if (!trust || typeof trust !== "object" || Array.isArray(trust)) return false;
-  for (const key of REQUIRED_METRIC_KEYS) {
+  // Snapshot-then-validate over a local canonical copy: no vacuous every()
+  // or zero-length set may admit. Exact coverage is required independently
+  // here, even though collection and the envelope enforce it too.
+  const required = [...REQUIRED_METRIC_KEYS];
+  if (required.length === 0) return false;
+  if (!required.every((key) => typeof key === "string" && key !== "")) return false;
+  if (new Set(required).size !== required.length) return false;
+  const trustKeys = Object.keys(trust);
+  if (trustKeys.length !== required.length) return false;
+  for (const key of required) {
     const entry = trust[key];
     if (!entry || typeof entry !== "object") return false;
     if (entry.state !== "trusted-partial") return false;

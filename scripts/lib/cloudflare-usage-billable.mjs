@@ -12,6 +12,7 @@ import {
   CLOCK_SKEW_MS,
   METRIC_PROVENANCE,
   REQUIRED_METRIC_KEYS,
+  USAGE_METRICS,
 } from "./cloudflare-usage-envelope.mjs";
 import {
   ProviderFailure,
@@ -71,10 +72,14 @@ export const REVIEWED_BILLABLE_TRIPLES = Object.freeze({});
 // instance counts are inventory authority, never billing: the billing
 // provider must not cover ai_search_instances, so a billing outage (no
 // entitlement, partial interval) can never clobber the inventory-proved
-// count with an unknown gap.
-export const BILLABLE_LIVE_COVERS = Object.freeze(
-  REQUIRED_METRIC_KEYS.filter((key) => key !== "ai_search_instances"),
-);
+// count with an unknown gap. Re-derived from the frozen USAGE_METRICS source
+// (never the exported key list) so export mutation cannot change coverage;
+// the snapshot length is enforced where the registry is built.
+const CANONICAL_BILLABLE_COVERS = USAGE_METRICS.map((metric) => metric.key).filter((key) => key !== "ai_search_instances");
+if (CANONICAL_BILLABLE_COVERS.length === 0) throw new Error("billing live covers must be non-empty");
+const CANONICAL_KEY_SET = new Set(USAGE_METRICS.map((metric) => metric.key));
+export const BILLABLE_LIVE_COVERS = Object.freeze([...CANONICAL_BILLABLE_COVERS]);
+void REQUIRED_METRIC_KEYS;
 
 // Billing usage provider: GET /accounts/{account_id}/billable/usage
 // (Version 2, Alpha, Restricted; FinOps FOCUS v1.3 rows). Sends explicit
@@ -256,7 +261,7 @@ export function createBillableUsageProvider(options = {}) {
         if (mapped === undefined) {
           throw new ProviderFailure("MALFORMED", `${group} unknown billing metric/name/unit triple`, { httpStatus });
         }
-        if (!REQUIRED_METRIC_KEYS.includes(mapped) || (scoped !== null && !scoped.has(mapped))) continue;
+        if (!CANONICAL_KEY_SET.has(mapped) || (scoped !== null && !scoped.has(mapped))) continue;
         const rowDigest = JSON.stringify(row);
         if (seenRows.has(rowDigest)) {
           throw new ProviderFailure("MALFORMED", `${group} duplicate usage row is ambiguous`, { httpStatus });

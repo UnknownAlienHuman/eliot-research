@@ -139,7 +139,8 @@ export function inventoryBrandClass(provider) {
 // counters: Workers AI neurons, Queue billable ops, R2 Class A/B, AI Search
 // aggregate queries, and Vectorize queried dims stay unknown unless verified
 // billing usage or a demonstrably complete account-bound ledger proves them.
-export const METRIC_SOURCE_REGISTRY = Object.freeze({
+export const METRIC_SOURCE_REGISTRY = (() => {
+  const registry = {
   workers_requests: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   workers_cpu_ms: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   d1_storage_bytes: { sources: ["d1-inventory-list"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "inventory proves existence, not byte totals; ledger+inventory required" },
@@ -159,12 +160,26 @@ export const METRIC_SOURCE_REGISTRY = Object.freeze({
   ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
-});
+  };
+  for (const entry of Object.values(registry)) { Object.freeze(entry.sources); Object.freeze(entry); }
+  return Object.freeze(registry);
+})();
 
 export function assertLiveRegistryCoversAll(registry = METRIC_SOURCE_REGISTRY) {
-  const missing = REQUIRED_METRIC_KEYS.filter((key) => !registry[key]);
+  const required = [...REQUIRED_METRIC_KEYS];
+  if (required.length === 0) {
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous admission");
+  }
+  const missing = required.filter((key) => !registry[key]);
   if (missing.length > 0) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${missing.join(", ")}`);
+  }
+  const extra = Object.keys(registry).filter((key) => !required.includes(key));
+  if (extra.length > 0) {
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry carries unknown metrics: ${extra.join(", ")}`);
+  }
+  if (Object.keys(registry).length !== required.length) {
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry metric set is not exactly the required set");
   }
   return true;
 }

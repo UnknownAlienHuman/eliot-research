@@ -43,3 +43,4 @@ await import("./test-cloudflare-usage-pagination.mjs");
 await import("./test-usage-envelope-receipt.mjs");
 await import("./test-usage-preflight-children.mjs");
 await import("./test-usage-admission-capability.mjs");
+await import("./test-usage-metric-immutability.mjs");

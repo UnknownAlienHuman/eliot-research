@@ -97,7 +97,7 @@ export const QUEUE_MESSAGE_OVERHEAD_BYTES = 100;
 // windows are UTC calendar-month approximations of subscription-renewal
 // months; daily windows reset at UTC midnight. A snapshot whose window does
 // not cover `now` (wrong window or reset crossing) seals/blocks fail-closed.
-export const PLAN_SCOPE = {
+export const PLAN_SCOPE = Object.freeze({
   deployment: "Workers Paid monthly inclusions + R2 paid inclusions",
   workersPlan: "Workers Paid",
   r2Plan: "R2 paid inclusions",
@@ -105,13 +105,13 @@ export const PLAN_SCOPE = {
   monthlySemantics: "subscription-renewal month approximated as UTC calendar month",
   dailySemantics: "UTC midnight to UTC midnight",
   unitBasis: "decimal GB/KB (1 GB = 1,000,000,000 bytes) unless docs state otherwise",
-};
+});
 
 // Official Cloudflare pricing/limits sources (truth for quotas/units).
 // Retrieved 2026-09-06. Validated against installed Wrangler 4.127.1 schemas;
 // response/pagination shapes in tests mock only fields observed in that
 // toolchain. No undocumented counter fields are guessed.
-export const DOC_SOURCES = [
+export const DOC_SOURCES = Object.freeze([
   { url: "https://developers.cloudflare.com/workers/pricing/", covers: "workers_requests, workers_cpu_ms", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/workers/platform/limits/", covers: "workers limits", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/d1/pricing/", covers: "d1_storage, d1_rows_read, d1_rows_written", retrieved: "2026-09-06" },
@@ -121,7 +121,8 @@ export const DOC_SOURCES = [
   { url: "https://developers.cloudflare.com/workers-ai/pricing/", covers: "workers_ai_neurons_per_day", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/ai-search/limits-pricing/", covers: "ai_search_instances, ai_search_queries_month", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/vectorize/pricing/", covers: "vectorize_queried_dims, vectorize_stored_dims", retrieved: "2026-09-06" },
-];
+]);
+for (const entry of DOC_SOURCES) Object.freeze(entry);
 
 export function bytesFromDecimalGb(gb) {
   if (typeof gb !== "number" || !Number.isFinite(gb) || gb < 0) throw new Error("gb must be a non-negative finite number");
@@ -181,14 +182,24 @@ export const USAGE_METRICS = [
   { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Vectorize" },
 ];
 
-export const REQUIRED_METRIC_KEYS = USAGE_METRICS.map((metric) => metric.key);
-export const METRIC_BY_KEY = new Map(USAGE_METRICS.map((metric) => [metric.key, metric]));
+export const REQUIRED_METRIC_KEYS = Object.freeze(USAGE_METRICS.map((metric) => metric.key));
+for (const metric of USAGE_METRICS) Object.freeze(metric);
+Object.freeze(USAGE_METRICS);
+// Module-private canonical authority copies: every boundary below reads these,
+// never the exported bindings, so mutating an export cannot change decisions.
+// Exports are frozen (mutation throws) AND ignored internally (defense in depth).
+const CANONICAL_REQUIRED_KEYS = REQUIRED_METRIC_KEYS;
+const CANONICAL_BY_KEY = new Map(USAGE_METRICS.map((metric) => [metric.key, metric]));
+export const METRIC_BY_KEY = new Map(CANONICAL_BY_KEY);
+for (const method of ["set", "delete", "clear"]) {
+  METRIC_BY_KEY[method] = () => { throw new Error("METRIC_BY_KEY is read-only authority state"); };
+}
 
 // Evidence taxonomy contract (injected into the receipt-evidence helper so
 // canonical strings live in exactly one place and no import cycle exists).
 const RECEIPT_EVIDENCE_CONTRACT = {
-  requiredKeys: REQUIRED_METRIC_KEYS,
-  windowKindOf: (key) => METRIC_BY_KEY.get(key)?.window ?? "monthly",
+  requiredKeys: CANONICAL_REQUIRED_KEYS,
+  windowKindOf: (key) => CANONICAL_BY_KEY.get(key)?.window ?? "monthly",
   billingProvenance: METRIC_PROVENANCE.AUTHORITATIVE_BILLING,
   inventoryProvenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
   billingKindClass: "billing-usage-v2",
@@ -208,6 +219,8 @@ const RECEIPT_EVIDENCE_CONTRACT = {
 export function isLiveEvidenceFamily(receipt) {
   const evidence = receipt?.metric_evidence;
   if (!Array.isArray(evidence) || evidence.length === 0) return false;
+  if (CANONICAL_REQUIRED_KEYS.length === 0) return false;
+  if (evidence.length !== CANONICAL_REQUIRED_KEYS.length) return false;
   return evidence.every((entry) =>
     entry?.provider_kind_class === RECEIPT_EVIDENCE_CONTRACT.billingKindClass ||
     RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses.includes(entry?.provider_kind_class));
@@ -216,12 +229,12 @@ export function isLiveEvidenceFamily(receipt) {
 // Access contour (one owner-only hostname application, 24h session) is not a
 // usage counter: it is enforced by the Access provisioner plus the core
 // provisioner cross-check. The preflight records receipt presence only.
-export const ACCESS_CONTOUR = {
+export const ACCESS_CONTOUR = Object.freeze({
   applications: 1,
   sessionDuration: "24h",
   contour: "HOSTNAME_BASED_ACCESS",
   workerLevelAccess: "PROHIBITED_FOR_RESEARCH_SESSION_WEBSOCKETS",
-};
+});
 
 export function digestAccountId(accountId) {
   if (typeof accountId !== "string" || accountId.trim() === "") {
@@ -300,12 +313,15 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     return blocked(["snapshot.metrics must be an object keyed by required metric"]);
   }
   const metricKeys = Object.keys(snapshot.metrics);
-  const missing = REQUIRED_METRIC_KEYS.filter((key) => !metricKeys.includes(key));
-  const unexpected = metricKeys.filter((key) => !METRIC_BY_KEY.has(key));
+  if (CANONICAL_REQUIRED_KEYS.length === 0) return blocked(["authority metric set is empty; refusing vacuous admission"]);
+  const missing = CANONICAL_REQUIRED_KEYS.filter((key) => !metricKeys.includes(key));
+  const unexpected = metricKeys.filter((key) => !CANONICAL_BY_KEY.has(key));
   if (missing.length > 0) return blocked([`snapshot is missing required metrics: ${missing.join(", ")}`]);
   if (unexpected.length > 0) return blocked([`snapshot carries unknown metric keys: ${unexpected.join(", ")}`]);
-  for (const key of REQUIRED_METRIC_KEYS) {
+  if (metricKeys.length !== CANONICAL_REQUIRED_KEYS.length) return blocked(["snapshot metric set is not exactly the required set"]);
+  for (const key of CANONICAL_REQUIRED_KEYS) {
     const value = snapshot.metrics[key];
+    if (value === undefined || value === null) return blocked([`metric ${key} is absent; refusing vacuous admission`]);
     if (!isUnknown(value) && !isValidCounter(value)) {
       return blocked([`metric ${key} must be a non-negative finite number or "unknown"`]);
     }
@@ -331,6 +347,8 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
 
   for (const metric of USAGE_METRICS) {
     const value = snapshot.metrics[metric.key];
+    if (value === undefined || value === null) return blocked([`metric ${metric.key} is absent; refusing vacuous admission`]);
+    if (!isUnknown(value) && !isValidCounter(value)) return blocked([`metric ${metric.key} must be a non-negative finite number or "unknown"`]);
     if (isUnknown(value)) {
       unknown.push(metric.key);
       continue;
