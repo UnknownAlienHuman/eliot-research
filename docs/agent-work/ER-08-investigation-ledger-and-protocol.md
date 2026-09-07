@@ -14,7 +14,9 @@ outside the paths below.
 - `packages/research/src/index.ts`
 - `packages/research/src/ports.ts`
 - `packages/research/src/investigation-service.ts`
+- `packages/research/src/ledger-commands.ts`
 - `packages/research/src/research.test.ts`
+- `packages/research/src/ledger-commands.test.ts`
 - `packages/research/package.json`
 - `packages/research/tsconfig.json`
 - `packages/research/AGENTS.md`

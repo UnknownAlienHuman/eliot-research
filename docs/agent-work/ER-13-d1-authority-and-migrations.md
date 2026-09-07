@@ -24,6 +24,8 @@ D1 authority transaction.
 - `packages/platform-cloudflare/src/execution-lease.test.ts`
 - `packages/platform-cloudflare/src/index.ts`
 - `infra/d1/**`
+- `apps/eliotr-core/test/investigation-ledger-d1.test.ts`
+- `apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts`
 - `scripts/check-delivery-authority.mjs`
 
 ## Implemented contour

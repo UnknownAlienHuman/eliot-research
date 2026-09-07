@@ -190,7 +190,9 @@
         "packages/research/src/index.ts",
         "packages/research/src/ports.ts",
         "packages/research/src/investigation-service.ts",
+        "packages/research/src/ledger-commands.ts",
         "packages/research/src/research.test.ts",
+        "packages/research/src/ledger-commands.test.ts",
         "packages/research/package.json",
         "packages/research/tsconfig.json",
         "packages/research/AGENTS.md"
@@ -278,6 +280,8 @@
         "packages/platform-cloudflare/src/execution-lease.test.ts",
         "packages/platform-cloudflare/src/index.ts",
         "infra/d1/**",
+        "apps/eliotr-core/test/investigation-ledger-d1.test.ts",
+        "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts",
         "scripts/check-delivery-authority.mjs"
       ],
       "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
