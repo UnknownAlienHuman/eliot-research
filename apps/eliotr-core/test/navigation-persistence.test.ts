@@ -852,6 +852,7 @@ describe("N1 FIX3 durable promotion readbacks end to end", () => {
     for (const entry of promoted) {
       const object = await bucket.get(entry.canonical_key);
       expect(object, entry.logical_path).not.toBeNull();
+      if (object === null) throw new Error(`promoted R2 object missing for ${entry.logical_path}`);
       expect(object?.etag).toBe(entry.etag);
       expect((object as unknown as { version?: unknown })?.version).toBe(entry.version);
       expect(object?.size).toBe(entry.size_bytes);
