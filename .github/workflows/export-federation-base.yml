@@ -8,37 +8,105 @@ on:
       - .github/workflows/export-federation-base.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.sha }}
+          ref: 70f99c4f6c24bded3e1d73231a0f81e993a053b6
           fetch-depth: 1
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
-      - name: Install exact validation dependencies
-        run: |
-          npm install --global pnpm@11.23.0
-          pnpm install --frozen-lockfile
-      - name: Archive isolated validation checkout
+      - name: Verify and stage exact offline implementation objects (no ref updates)
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD > SNAPSHOT_HEAD_SHA
-          tar --exclude=.git --exclude=.wrangler -czf /tmp/eliot-validation-checkout.tgz .
-          tar -C "$(npm root -g)" -czf /tmp/eliot-pnpm.tgz pnpm
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          repo = 'UnknownAlienHuman/eliot-research'
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert os.environ['GITHUB_REF'] == 'refs/heads/agent/er-09-workflow-checkpoints-20260907'
+          def api(path, body=None):
+              data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
+              req = urllib.request.Request('https://api.github.com/repos/' + repo + path, data=data,
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                           'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                           'X-GitHub-Api-Version': '2022-11-28'})
+              with urllib.request.urlopen(req, timeout=45) as response:
+                  return json.load(response)
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          def blob_sha(data):
+              return hashlib.sha1(('blob ' + str(len(data)) + '\0').encode() + data).hexdigest()
+          parts = []
+          for sha in ['c68f27a926a6fba3da571381e0c364ea81848ce1', '824f28d7c6e9567c5baf3dbe68a565fe1afd7435']:
+              obj = api('/git/blobs/' + sha)
+              value = base64.b64decode(obj['content'])
+              assert blob_sha(value) == sha
+              parts.append(value)
+          # Correct the independently diagnosed single-character transport omission; verify exact bytes.
+          encoded = base64.b64encode(parts[0]).decode().rstrip('=')
+          assert len(encoded) == 15999
+          encoded = encoded[:2519] + 'i' + encoded[2519:]
+          parts[0] = base64.b64decode(encoded[:-1] + 'u', validate=True)
+          assert blob_sha(parts[0]) == 'f52c2f6a55b3b947bf14cca97e46959c784ecf14'
+          compressed = b''.join(parts)
+          assert hashlib.sha256(compressed).hexdigest() == '6be8e47de087f2a4591699a18f01556f5c8d24af29c39091fe45f6e6def04559'
+          patch = gzip.decompress(compressed)
+          assert len(patch) == 101075
+          assert hashlib.sha256(patch).hexdigest() == '385f9c4894a28cd644b352cea7e7e3a28cd9a02102c98c69742628096b92746d'
+          assert git('rev-parse', 'HEAD').decode().strip() == '70f99c4f6c24bded3e1d73231a0f81e993a053b6'
+          base_tree = git('rev-parse', 'HEAD^{tree}').decode().strip()
+          pathlib.Path('/tmp/eliot-w2a.patch').write_bytes(patch)
+          subprocess.run(['git', 'apply', '--index', '--binary', '/tmp/eliot-w2a.patch'], check=True)
+          paths = git('diff', '--cached', '--name-only', '-z').decode().rstrip('\0').split('\0')
+          allowed = {
+              'apps/eliotr-core/package.json', 'apps/eliotr-core/tsconfig.json',
+              'apps/eliotr-core/test/tsconfig.json', 'apps/eliotr-core/test/research-workflow.test.ts',
+              'apps/eliotr-core/test/research-workflow-fixture.ts',
+              'docs/agent-work/ER-09-durable-research-workflow.md', 'docs/agent-work/manifest.json',
+              'docs/implementation/gap-register.md', 'docs/implementation/implementation-status.json',
+              'docs/implementation/workflow-checkpoints.md',
+              'infra/d1/core/migrations/0020_research_workflow_checkpoints.sql',
+              'infra/workflows/checkpoint-vectors.v1.json', 'packages/cloudflare-research/AGENTS.md',
+              'packages/cloudflare-research/package.json', 'packages/cloudflare-research/tsconfig.json',
+              'packages/cloudflare-research/src/index.ts', 'packages/cloudflare-research/src/types.ts',
+              'packages/cloudflare-research/src/objects.ts', 'packages/cloudflare-research/src/store.ts',
+              'packages/cloudflare-research/src/executor.ts', 'pnpm-lock.yaml',
+              'scripts/check-boundaries.mjs', 'tsconfig.json',
+          }
+          assert len(paths) == len(allowed) and set(paths) == allowed
+          expected_tree = 'a85cff1ac060aa67d2dc017746dbc153297ef22c'
+          actual_tree = git('write-tree').decode().strip()
+          assert actual_tree == expected_tree, (actual_tree, expected_tree)
+          entries, hashes = [], []
+          for path in paths:
+              value = git('show', ':' + path)
+              entries.append({'path': path, 'mode': '100644', 'type': 'blob', 'content': value.decode('utf8')})
+              hashes.append({'path': path, 'sha': blob_sha(value)})
+          result = api('/git/trees', {'base_tree': base_tree, 'tree': entries})
+          assert result['sha'] == expected_tree
+          pathlib.Path('/tmp/tree.json').write_text(json.dumps({
+              'protocol': 'eliotr.offline-tree-readback.v1', 'base_commit': '70f99c4f6c24bded3e1d73231a0f81e993a053b6',
+              'tree_sha': result['sha'], 'patch_sha256': hashlib.sha256(patch).hexdigest(), 'files': hashes,
+              'ref_mutations': 0,
+          }, indent=2) + '\n')
+          print('Exact staged tree:', result['sha'], 'files:', len(paths), 'ref mutations: 0')
+          PY
+          cp "$(command -v node)" /tmp/eliot-node
+          node --version > /tmp/node-version.txt
+          tar -C /tmp -czf /tmp/eliot-w2a-validation.tgz tree.json eliot-node node-version.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: eliot-validation-checkout
-          path: |
-            /tmp/eliot-validation-checkout.tgz
-            /tmp/eliot-pnpm.tgz
+          name: w2a-tree-and-node
+          path: /tmp/eliot-w2a-validation.tgz
           if-no-files-found: error
           retention-days: 1
