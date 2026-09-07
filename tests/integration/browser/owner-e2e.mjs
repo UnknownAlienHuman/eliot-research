@@ -741,7 +741,7 @@ export function assertAuthedLedger(harness, label, origin) {
     `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
     `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
   ]);
-  assert.ok(failedRequests.length <= 2, `${label}: at most the exact superseded probes may abort`);
+  assert.ok(failedRequests.length <= 2, `${label}: at most the exact superseded probes may abort, got: ${failedRequests.slice(0, 5).join("; ")}`);
   for (const text of failedRequests) {
     assert.ok(allowedFailed.has(text), `${label}: unexpected authed abort, got: ${text.slice(0, 300)}`);
   }
