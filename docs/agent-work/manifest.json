@@ -190,7 +190,9 @@
         "packages/research/src/index.ts",
         "packages/research/src/ports.ts",
         "packages/research/src/investigation-service.ts",
+        "packages/research/src/ledger-commands.ts",
         "packages/research/src/research.test.ts",
+        "packages/research/src/ledger-commands.test.ts",
         "packages/research/package.json",
         "packages/research/tsconfig.json",
         "packages/research/AGENTS.md"
@@ -278,6 +280,8 @@
         "packages/platform-cloudflare/src/execution-lease.test.ts",
         "packages/platform-cloudflare/src/index.ts",
         "infra/d1/**",
+        "apps/eliotr-core/test/investigation-ledger-d1.test.ts",
+        "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts",
         "scripts/check-delivery-authority.mjs"
       ],
       "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
@@ -764,6 +768,20 @@
         "ER-17"
       ],
       "owned_paths": [
+        "packages/backup-o2/**",
+        "packages/backup-o2/src/intent-digest.ts",
+        "packages/backup-o2/src/migration-gate.ts",
+        "packages/backup-o2/src/coherent-cut.ts",
+        "packages/backup-o2/src/destination-authority.ts",
+        "packages/backup-o2/src/offsite-durability.ts",
+        "packages/backup-o2/src/r2-conformance.ts",
+        "packages/backup-o2/src/fix2-authority.test.ts",
+        "packages/backup-o2/src/fix2-durability.test.ts",
+        "packages/backup-o2/src/hold-authority.ts",
+        "packages/backup-o2/src/nonce-authority.ts",
+        "packages/backup-o2/src/fix3-expiry.test.ts",
+        "packages/backup-o2/src/fix3-nonce.test.ts",
+        "packages/backup-o2/vitest.config.ts",
         "packages/platform-cloudflare/src/backup.ts",
         "infra/backup/**"
       ],

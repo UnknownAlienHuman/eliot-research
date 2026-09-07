@@ -107,6 +107,12 @@ importers:
         specifier: 8.2.2
         version: 8.2.2(@types/node@26.4.0)(esbuild@0.28.1)
 
+  packages/backup-o2:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+
   packages/cloudflare-ai:
     dependencies:
       '@eliotr/contracts':
@@ -223,6 +229,9 @@ importers:
 
   packages/platform-cloudflare:
     dependencies:
+      '@eliotr/backup-o2':
+        specifier: workspace:*
+        version: link:../backup-o2
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -259,6 +268,9 @@ importers:
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/retrieval:
     dependencies:

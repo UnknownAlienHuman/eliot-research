@@ -17,6 +17,7 @@
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
     "@eliotr/policy": "workspace:*",
-    "@eliotr/retrieval": "workspace:*"
+    "@eliotr/retrieval": "workspace:*",
+    "zod": "4.4.3"
   }
 }
