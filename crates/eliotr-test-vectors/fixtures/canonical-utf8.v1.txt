@@ -7,3 +7,5 @@ empty_zero_budget|0|-|ok|-|-
 invalid_utf8|1|ff|error|-|ELIOTR_UTF8_INVALID
 oversized_before_utf8|0|ff|error|-|ELIOTR_UTF8_TOO_LARGE
 limit_plus_one|2|616263|error|-|ELIOTR_UTF8_TOO_LARGE
+overlong_encoding|2|c0af|error|-|ELIOTR_UTF8_INVALID
+truncated_continuation|2|e282|error|-|ELIOTR_UTF8_INVALID
