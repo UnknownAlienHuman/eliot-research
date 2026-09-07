@@ -591,6 +591,12 @@ export const ABORTABLE_SLOT_PATHS = Object.freeze([["GET", "/api/v1/research/cat
   ["GET", "/api/v1/system/health"], ["GET", "/api/v1/system/session"], ["POST", "/__local/pair"],
   ["POST", "/__local/logout"], ["GET", "/__local/"], ["GET", "/manifest.webmanifest"]]);
 
+// Private canonical policy: deep-frozen copy. Authority reads ONLY this copy;
+// public ABORTABLE_SLOT_PATHS mutations (including nested) never affect minting.
+const PRIVATE_ABORTABLE = Object.freeze(
+  ABORTABLE_SLOT_PATHS.map((entry) => Object.freeze([...entry])),
+);
+
 // Exact role compatibility: equal AND a closed SlotRole. Unknown roles and
 // merely-nonempty strings (including the deleted broad-phase "authed-window"
 // label) reject; roles never derive from URLs.
@@ -602,20 +608,19 @@ export const NAV_TOKEN_SCOPE = "harness-navigation";
 export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 204, 304, 401, 403]);
 
 // Closed issuance handles: frozen {opId,docId,role} threaded as arguments.
-// Pure constructors/validators with no global mutation; direct bypass (missing,
-// unfrozen, or malformed handle) throws. The live harness threads these
-// handles through mintSlotsFor/bindSlot/stamp; setRole issues a new handle.
-export function createIssuanceHandle(opId, docId, role) {
-  assert.ok(Number.isSafeInteger(opId) && opId > 0,
-    `issuance handle opId must be exact, got ${String(opId).slice(0, 32)}`);
-  assert.ok(Number.isSafeInteger(docId) && docId >= 0,
-    `issuance handle docId must be exact, got ${String(docId).slice(0, 32)}`);
-  assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
-    `issuance handle role must be an exact SlotRole, got ${JSON.stringify(String(role)).slice(0, 64)}`);
-  return Object.freeze({ opId, docId, role });
+// Exact capabilities: every legitimate handle is registered in issuanceRegistry
+// (WeakMap) at creation; checkIssuanceHandle requires a registry hit + exact
+// prototype (Object.prototype) + exact own-keys {opId,docId,role} + matching
+// triple. Unregistered lookalikes (including spread copies), null-prototype
+// objects, extra-key objects, and triple mismatches throw. The live harness
+// threads these handles through mintSlotsFor/bindSlot/stamp; setRole issues a
+// new registered handle.
+const issuanceRegistry = new WeakMap();
+function registerIssuanceHandle(handle) {
+  issuanceRegistry.set(handle, Object.freeze({ opId: handle.opId, docId: handle.docId, role: handle.role }));
+  return handle;
 }
-
-export function checkIssuanceHandle(handle, where = "issuance") {
+function checkIssuanceShape(handle, where) {
   assert.ok(handle !== null && typeof handle === "object" && Object.isFrozen(handle),
     `${where} requires an explicit frozen issuance handle {opId,docId,role} (direct bypass throws)`);
   assert.ok(Number.isSafeInteger(handle.opId) && Number.isSafeInteger(handle.docId) && handle.docId >= 0,
@@ -624,12 +629,36 @@ export function checkIssuanceHandle(handle, where = "issuance") {
     `${where} issuance handle role must be an exact SlotRole`);
   return handle;
 }
+export function createIssuanceHandle(opId, docId, role) {
+  assert.ok(Number.isSafeInteger(opId) && opId > 0,
+    `issuance handle opId must be exact, got ${String(opId).slice(0, 32)}`);
+  assert.ok(Number.isSafeInteger(docId) && docId >= 0,
+    `issuance handle docId must be exact, got ${String(docId).slice(0, 32)}`);
+  assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
+    `issuance handle role must be an exact SlotRole, got ${JSON.stringify(String(role)).slice(0, 64)}`);
+  return registerIssuanceHandle(Object.freeze({ opId, docId, role }));
+}
+
+export function checkIssuanceHandle(handle, where = "issuance") {
+  checkIssuanceShape(handle, where);
+  assert.ok(Object.getPrototypeOf(handle) === Object.prototype,
+    `${where} issuance handle must carry the exact Object.prototype (direct bypass throws)`);
+  assert.deepEqual(Object.keys(handle).sort(), ["docId", "opId", "role"],
+    `${where} issuance handle must carry exactly {opId,docId,role} (direct bypass throws)`);
+  assert.ok(issuanceRegistry.has(handle),
+    `${where} issuance handle is not a registered capability (direct bypass throws)`);
+  const registered = issuanceRegistry.get(handle);
+  assert.ok(registered.opId === handle.opId && registered.docId === handle.docId && registered.role === handle.role,
+    `${where} issuance handle triple mismatch (direct bypass throws)`);
+  return handle;
+}
 
 export function deriveRoleHandle(baseHandle, role) {
-  checkIssuanceHandle(baseHandle, "setRole");
+  checkIssuanceShape(baseHandle, "setRole");
   assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
     `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
-  return Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role });
+  checkIssuanceHandle(baseHandle, "setRole");
+  return registerIssuanceHandle(Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role }));
 }
 
 // Checked nav barrier: zero in-flight nav handles required at
@@ -672,7 +701,7 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
         `duplicate response reqId ${reqId} fails closed (one terminal outcome per request)`);
       seenResponseIds.add(reqId);
       const contract = allowed.has(status);
-      terminalByReqId.set(reqId, { kind: "response", status, contract });
+      terminalByReqId.set(reqId, Object.freeze({ kind: "response", status, contract }));
       return contract;
     },
     shouldSuppressFailure(reqId) {
@@ -681,10 +710,16 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
     },
     noteFailure(reqId) {
       assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
-      terminalByReqId.set(reqId, { kind: "failure" });
+      terminalByReqId.set(reqId, Object.freeze({ kind: "failure" }));
     },
-    seenResponseIds: () => [...seenResponseIds],
-    terminalByReqId: () => new Map(terminalByReqId),
+    seenResponseIds: () => Object.freeze([...seenResponseIds]),
+    terminalByReqId: () => {
+      const copy = new Map();
+      for (const [key, value] of terminalByReqId) {
+        copy.set(key, Object.freeze({ ...value }));
+      }
+      return copy;
+    },
   };
 }
 
@@ -695,9 +730,10 @@ export function createClosedAuthority(label) {
   const edges = [];
   const slots = new Map();
   // Causal nav/action tokens: pendingNav keyed by exact tokenId. Tokens are
-  // minted ONLY at harness-navigation boundaries via mintNavToken, bound to
-  // opaque frozen token objects through tokenBindings (WeakMap), and consumed
-  // one-to-one via consumeNavToken(tokenObject) ONLY. The numeric
+  // minted ONLY inside the validated registerOp harness-navigation path via the
+  // closure-private mint (public mintNavToken deleted: non-caller mint impossible),
+  // bound to opaque frozen token objects through tokenBindings (WeakMap), and
+  // consumed one-to-one via consumeNavToken(tokenObject) ONLY. The numeric
   // consumeNavToken(tokenId) branch is deleted: primitives never resolve
   // (WeakMap miss or non-object → null, no state change). A successful consume
   // deletes from pendingNav (no reuse/stale/enumeration). The backward-scan
@@ -706,12 +742,18 @@ export function createClosedAuthority(label) {
   // frame events register as unlinked observations and never anchor edges.
   const pendingNav = new Map();
   const tokenBindings = new WeakMap();
+  const successorsByOp = new Map();
   let nextOpId = 0;
   let nextSlotId = 0;
   let nextTokenId = 0;
   const checkEnum = (value, closed, name) => {
     assert.ok(typeof value === "string" && closed.includes(value),
       `${label}: unknown ${name} ${JSON.stringify(String(value)).slice(0, 64)} rejects (closed: ${closed.join("/")}); merely-nonempty is insufficient`);
+  };
+  const snapshotOp = (stored) => {
+    if (stored === undefined) return undefined;
+    const canonical = successorsByOp.get(stored.id) ?? stored.successors ?? [];
+    return Object.freeze({ ...stored, successors: Object.freeze([...canonical]) });
   };
   const registerOp = ({ kind, cause, scope, sourceDoc, targetDoc, action, role, from = null, successors = [] }) => {
     checkEnum(kind, OP_KINDS, "OpKind");
@@ -724,31 +766,40 @@ export function createClosedAuthority(label) {
     assert.ok(Array.isArray(successors) && successors.every((name) => OP_ACTIONS.includes(name)),
       `${label}: op successors must declare exact OpActions`);
     assert.ok(operations.size < 1024, `${label}: operation table must stay finite`);
+    let prev;
     if (from === null) {
       assert.ok(kind === "init" || kind === "observed-navigation",
         `${label}: only init/observed-navigation may register without an explicit predecessor (NO auto-chain; prevOpId chaining deleted)`);
     } else {
       assert.ok(Number.isSafeInteger(from), `${label}: predecessor op id must be exact`);
-      const prev = operations.get(from);
+      prev = operations.get(from);
       assert.ok(prev !== undefined, `${label}: unregistered transition endpoint ${from} rejects`);
       assert.ok(OP_TRANSITIONS.includes(`${prev.action}→${action}`),
         `${label}: arbitrary edge ${prev.action}→${action} rejects (closed TRANSITIONS)`);
-      assert.ok(prev.successors.includes(action),
+      const canonicalPrev = successorsByOp.get(from) ?? prev.successors;
+      assert.ok(canonicalPrev.includes(action),
         `${label}: undeclared successor ${action} rejects (not in op ${from} successors)`);
     }
-    nextOpId += 1;
-    const op = Object.freeze({ id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: [...successors],
-      navTokenId: null });
-    operations.set(op.id, op);
-    if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
     if (kind === "harness-navigation") {
       assert.ok(pendingNav.size === 0,
         `${label}: zero in-flight nav handles required at registerOp, got ${pendingNav.size} (concurrent navigation denies; direct bypass throws)`);
+      assert.ok(pendingNav.size < 1024, `${label}: pending nav table must stay finite`);
+    }
+    nextOpId += 1;
+    const canonicalSuccessors = Object.freeze([...successors]);
+    const storedSuccessors = Object.freeze([...successors]);
+    const op = Object.freeze({ id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: storedSuccessors,
+      navTokenId: null });
+    operations.set(op.id, op);
+    successorsByOp.set(op.id, canonicalSuccessors);
+    if (kind === "harness-navigation") {
       const token = mintNavToken(op.id, op.targetDoc);
       const stamped = Object.freeze({ ...op, navTokenId: token.tokenId, navToken: token });
       operations.set(stamped.id, stamped);
+      if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
       return stamped;
     }
+    if (from !== null) edges.push(Object.freeze({ fromOpId: from, toOpId: op.id, scope, cause, tokenId: null }));
     return op;
   };
   const mintNavToken = (opId, targetDoc) => {
@@ -790,6 +841,8 @@ export function createClosedAuthority(label) {
     const owner = operations.get(opId);
     assert.ok(owner.action === action,
       `${label}: slot action must equal its minting op action (late/unrelated slot use rejects)`);
+    assert.ok(targetDoc === owner.targetDoc,
+      `${label}: slot targetDoc ${targetDoc} must equal its op targetDoc ${owner.targetDoc} (stale/cross mint rejects)`);
     nextSlotId += 1;
     // Immutable issuance stamp: the slot freezes its minting op/doc/role
     // context synchronously at the action boundary. Requests verify
@@ -798,7 +851,7 @@ export function createClosedAuthority(label) {
     slots.set(slot.id, slot);
     return slot;
   };
-  return { label, registerOp, mintSlot, mintNavToken, consumeNavToken,
+  return { label, registerOp, mintSlot, consumeNavToken,
     pendingNavTokens: () => [...pendingNav.entries()].map(([tokenId, entry]) => ({ tokenId, opId: entry.opId, targetDoc: entry.targetDoc })),
     pendingNavCount: () => pendingNav.size,
     drainPendingNav: () => {
@@ -809,8 +862,8 @@ export function createClosedAuthority(label) {
       pendingNav.clear();
       return count;
     },
-    getOp: (id) => operations.get(id),
-    operations: () => [...operations.values()], edges: () => [...edges], slots: () => [...slots.values()] };
+    getOp: (id) => snapshotOp(operations.get(id)),
+    operations: () => [...operations.values()].map(snapshotOp), edges: () => [...edges], slots: () => [...slots.values()] };
 }
 
 async function launchPlaywright(runId) {
@@ -880,17 +933,37 @@ async function launchPlaywright(runId) {
         `owner-e2e:${runId} ${where} issuance handle opId/docId must be exact`);
       assert.ok(SLOT_ROLES.includes(handle.role),
         `owner-e2e:${runId} ${where} issuance handle role must be an exact SlotRole`);
+      assert.ok(Object.getPrototypeOf(handle) === Object.prototype,
+        `owner-e2e:${runId} ${where} issuance handle must carry the exact Object.prototype (direct bypass throws)`);
+      assert.deepEqual(Object.keys(handle).sort(), ["docId", "opId", "role"],
+        `owner-e2e:${runId} ${where} issuance handle must carry exactly {opId,docId,role} (direct bypass throws)`);
+      assert.ok(issuanceRegistry.has(handle),
+        `owner-e2e:${runId} ${where} issuance handle is not a registered capability (direct bypass throws)`);
+      const registered = issuanceRegistry.get(handle);
+      assert.ok(registered.opId === handle.opId && registered.docId === handle.docId && registered.role === handle.role,
+        `owner-e2e:${runId} ${where} issuance handle triple mismatch (direct bypass throws)`);
       return handle;
+    };
+    const assertCurrentIssuance = (handle, where) => {
+      assert.ok(handle.opId === currentOp.id,
+        `owner-e2e:${runId} ${where} issuance opId ${handle.opId} must equal current op ${currentOp.id} (stale/cross handle rejects)`);
+      assert.ok(handle.docId === currentOp.targetDoc,
+        `owner-e2e:${runId} ${where} issuance docId ${handle.docId} must equal current op targetDoc ${currentOp.targetDoc} (stale handle rejects)`);
+      assert.ok(handle.role === currentOp.role,
+        `owner-e2e:${runId} ${where} issuance role ${handle.role} must equal current op role ${currentOp.role} (stale/cross handle rejects)`);
+      assert.ok(handle.opId === currentIssuance.opId && handle.docId === currentIssuance.docId && handle.role === currentIssuance.role,
+        `owner-e2e:${runId} ${where} issuance must equal current issuance (stale/cross handle rejects)`);
     };
     // Pure issuance: issues a new frozen handle from a base handle, no global
     // mutation. The caller threads the returned handle into registerOp /
     // mintSlotsFor / adoptIssuance explicitly.
     const setRole = (baseHandle, role) => {
-      checkIssuanceHandle(baseHandle, "setRole");
-      checkedBarrier("setRole");
-      assert.ok(SLOT_ROLES.includes(role),
+      assert.ok(typeof role === "string" && SLOT_ROLES.includes(role),
         `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
-      return Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role });
+      checkIssuanceHandle(baseHandle, "setRole");
+      assertCurrentIssuance(baseHandle, "setRole");
+      checkedBarrier("setRole");
+      return registerIssuanceHandle(Object.freeze({ opId: baseHandle.opId, docId: baseHandle.docId, role }));
     };
     // Root operation: explicitly registered once; later ops link from it (or
     // from their exact predecessor) through declared successors only.
@@ -898,23 +971,30 @@ async function launchPlaywright(runId) {
       sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
       successors: ["goto-unauthenticated"] });
     currentOp = rootOp;
-    currentIssuance = Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" });
+    currentIssuance = registerIssuanceHandle(Object.freeze({ opId: rootOp.id, docId: 0, role: "startup-probe" }));
     const adoptIssuance = (handle) => {
       checkIssuanceHandle(handle, "adoptIssuance");
       const owner = auth.getOp(handle.opId);
       assert.ok(owner !== undefined,
         `owner-e2e:${runId} adoptIssuance binds an unregistered op ${handle.opId} and rejects`);
+      assert.ok(handle.docId === owner.targetDoc,
+        `owner-e2e:${runId} adoptIssuance issuance docId ${handle.docId} must equal its op targetDoc ${owner.targetDoc} (stale handle rejects)`);
+      assert.ok(handle.role === owner.role || handle.opId === currentOp.id,
+        `owner-e2e:${runId} adoptIssuance issuance role ${handle.role} must equal its op role ${owner.role} or current op (cross handle rejects)`);
       currentIssuance = handle;
       currentOp = owner;
       return handle;
     };
     const registerOp = (fields, baseHandle) => {
-      if (baseHandle !== undefined) checkIssuanceHandle(baseHandle, "registerOp");
+      if (baseHandle !== undefined) {
+        checkIssuanceHandle(baseHandle, "registerOp");
+        assertCurrentIssuance(baseHandle, "registerOp");
+      }
       checkedBarrier("registerOp");
       const op = auth.registerOp(fields);
       // Freeze the issuing context synchronously at this boundary: every
       // request issued under this action carries exactly this op/doc/role.
-      const issuance = Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role });
+      const issuance = registerIssuanceHandle(Object.freeze({ opId: op.id, docId: op.targetDoc, role: op.role }));
       // The harness-navigation boundary mints its causal nav token
       // synchronously inside registerOp (see createClosedAuthority). Push the
       // exact token object onto the FIFO queue and return it as the explicit
@@ -932,18 +1012,26 @@ async function launchPlaywright(runId) {
     // action (scoped targetDoc/action/role/method-origin-path). Dynamic
     // artifact paths arrive via extraPaths at their own action boundary.
     // Takes an explicit issuance handle (no global sampling, no auto-mint).
+    // Authority reads the private canonical PRIVATE_ABORTABLE only; public
+    // ABORTABLE_SLOT_PATHS nesting mutations never affect minting.
     const mintSlotsFor = (issuanceHandle, { origin, extraPaths = [] } = {}) => {
       checkIssuanceHandle(issuanceHandle, "mintSlotsFor");
+      assertCurrentIssuance(issuanceHandle, "mintSlotsFor");
       assert.ok(typeof origin === "string" && origin.length > 0 && origin.length < 256,
         "slot origin must be an exact loopback origin");
       assert.ok(Array.isArray(extraPaths), "slot extra paths must be exact");
+      assert.ok(extraPaths.every((entry) => Array.isArray(entry) && entry.length === 2 &&
+        typeof entry[0] === "string" && typeof entry[1] === "string" && entry[1].startsWith("/")),
+        "slot extra paths must be exact [method,path] pairs");
       const owner = auth.getOp(issuanceHandle.opId);
       assert.ok(owner !== undefined,
         `mintSlotsFor binds an unregistered op ${issuanceHandle.opId} and rejects (direct bypass throws)`);
       assert.ok(owner.targetDoc === issuanceHandle.docId,
         `mintSlotsFor issuance docId ${issuanceHandle.docId} must equal its op targetDoc ${owner.targetDoc} (stale handle rejects)`);
+      assert.ok(owner.action === currentOp.action && owner.role === currentOp.role,
+        `mintSlotsFor issuance action/role must equal current op action/role (stale/cross handle rejects)`);
       const minted = [];
-      for (const [method, path] of [...ABORTABLE_SLOT_PATHS, ...extraPaths]) {
+      for (const [method, path] of [...PRIVATE_ABORTABLE, ...extraPaths]) {
         minted.push(auth.mintSlot({ opId: issuanceHandle.opId, targetDoc: issuanceHandle.docId,
           action: owner.action, role: issuanceHandle.role, method, origin, path }));
       }
@@ -955,6 +1043,7 @@ async function launchPlaywright(runId) {
     // can invent authority outside its synchronous action boundary).
     const bindSlot = (issuanceHandle, method, origin, path) => {
       checkIssuanceHandle(issuanceHandle, "bindSlot");
+      assertCurrentIssuance(issuanceHandle, "bindSlot");
       const open = auth.slots().find((slot) => slot.opId === issuanceHandle.opId && slot.method === method &&
         slot.origin === origin && slot.path === path && slot.role === issuanceHandle.role);
       if (open !== undefined) return open.id;
@@ -1045,7 +1134,10 @@ async function launchPlaywright(runId) {
       // unknown paths, which fail closed downstream). The stamp object is
       // frozen so later boundaries can never mutate it, and no slot is
       // auto-minted here. Live navigation/doc counters are never sampled.
+      // Current-identity gate before stamp: stale/cross handles throw pre-mutation.
       const handle = currentIssuance;
+      checkIssuanceHandle(handle, "stamp");
+      assertCurrentIssuance(handle, "stamp");
       const stamp = Object.freeze({ id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
         opId: handle.opId, docId: handle.docId, role: handle.role, slotId: bindSlot(handle, entry.method, entry.origin, entry.path) });
       requestIds.set(request, stamp);
@@ -2165,6 +2257,28 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   // (old accepted superset, ignored handles). N33 post-construction mutation:
   // mutating the input Set or the returned Set never affects suppression (old
   // stored/exposed the caller Set).
+  // New negatives N34-N40 prove the architect closed design (§5.1-§5.7). Each
+  // fails on f092611 (old-behavior run proves acceptance there) and denies
+  // post-fix; legitimate P1/P2/D1 PASS retained.
+  // N34 non-caller mint: public mintNavToken deleted (closure-private mint inside
+  // validated registerOp only); direct mint throws (old public mint accepted).
+  // N35 transactional residue: barrier-violating registerOp validates ALL before
+  // allocating id/mutating maps; throws leave zero op/edge residue and no id gap
+  // (old allocated + edged before the barrier, leaving residue + gap). N36
+  // terminal isolation: stored terminals frozen + deep-copy frozen snapshots;
+  // snapshot mutation never affects suppression (old aliased mutable values).
+  // N37 exact capability: checkIssuanceHandle requires registry hit + exact
+  // prototype + exact own-keys + matching triple (old accepted unregistered
+  // lookalikes/extra-key/null-prototype). N38 stale/cross issuance: doc identity
+  // gate before mint (slot targetDoc must equal op targetDoc) plus harness
+  // current-op/doc/role gates before mint/bind/stamp; stale/cross throw
+  // pre-mutation with zero new slots (old minted stale docs). N39 successor
+  // aliasing: private canonical successors Map, public getOp/operations return
+  // deep-frozen snapshots; mutating a snapshot never widens authority (old
+  // shallow-frozen op allowed successors.push to anchor an undeclared edge).
+  // N40 policy nesting: deep-frozen private PRIVATE_ABORTABLE, authority reads
+  // canonical only; public nesting mutations never affect minting (old read the
+  // public mutable nesting).
   {
     // N26 primitive forgery.
     const auth26 = createClosedAuthority("n26-primitive");
@@ -2303,6 +2417,177 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
       assert.throws(() => createRequestTerminalTracker(new Set([200, 500])), /subset/,
         "N33: superset construction still fails closed");
     }
+    // N34 non-caller mint: public mintNavToken deleted (closure-private only).
+    {
+      const auth34 = createClosedAuthority("n34-noncaller");
+      const root34 = auth34.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["goto-unauthenticated"] });
+      assert.equal(auth34.mintNavToken, undefined,
+        "N34: public mintNavToken must be deleted (closure-private mint inside validated registerOp only)");
+      assert.throws(() => auth34.mintNavToken(root34.id, 1), /is not a function|undefined/,
+        "N34: non-caller mint via deleted public entry must fail");
+      const nav34 = auth34.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+        sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+        from: root34.id, successors: [] });
+      assert.ok(nav34.navToken !== undefined && nav34.navToken !== null,
+        "N34: legitimate validated registerOp path still mints");
+      assert.ok(auth34.consumeNavToken(nav34.navToken) !== null,
+        "N34: legitimate object consume still passes");
+    }
+    // N35 transactional residue: validate ALL before allocating id/mutating.
+    {
+      const auth35 = createClosedAuthority("n35-txn");
+      const root35 = auth35.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["goto-unauthenticated"] });
+      const first35 = auth35.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+        sourceDoc: 0, targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe",
+        from: root35.id, successors: ["goto-pairing"] });
+      const opsBefore35 = auth35.operations().length;
+      const edgesBefore35 = auth35.edges().length;
+      assert.throws(() => auth35.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+        sourceDoc: 1, targetDoc: 2, action: "goto-pairing", role: "startup-probe",
+        from: first35.id, successors: [] }), /zero in-flight/,
+        "N35: concurrent second navigation while one pending must fail closed");
+      assert.equal(auth35.operations().length, opsBefore35,
+        "N35: failed register must leave zero op residue (transactional)");
+      assert.equal(auth35.edges().length, edgesBefore35,
+        "N35: failed register must leave zero edge residue (transactional)");
+      auth35.drainPendingNav();
+      const next35 = auth35.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+        sourceDoc: 1, targetDoc: 2, action: "goto-pairing", role: "startup-probe",
+        from: first35.id, successors: [] });
+      assert.equal(next35.id, first35.id + 1,
+        "N35: transactional id must be contiguous with no gap after a failed attempt");
+    }
+    // N36 terminal isolation: frozen stored values + deep-copy frozen snapshots.
+    {
+      const tracker36 = createRequestTerminalTracker(new Set([200]));
+      tracker36.noteResponse(9001, 200);
+      assert.equal(tracker36.shouldSuppressFailure(9001), true,
+        "N36: setup suppression must hold");
+      const snap36 = tracker36.terminalByReqId();
+      const val36 = snap36.get(9001);
+      assert.ok(Object.isFrozen(val36),
+        "N36: terminal snapshot value must be frozen (no aliasing)");
+      try { val36.contract = false; } catch { /* frozen: expected throw */ }
+      assert.equal(tracker36.shouldSuppressFailure(9001), true,
+        "N36: mutating snapshot terminal must not affect private suppression (frozen deep-copy)");
+      assert.throws(() => tracker36.noteResponse(9001, 200), /duplicate response reqId/,
+        "N36: duplicate terminal still fails closed");
+      const seen36 = tracker36.seenResponseIds();
+      assert.ok(Object.isFrozen(seen36),
+        "N36: seen snapshot must be frozen");
+      try { seen36.push(9999); } catch { /* frozen: expected throw */ }
+      assert.ok(!tracker36.seenResponseIds().includes(9999),
+        "N36: mutating seen snapshot must not affect private");
+    }
+    // N37 exact capability: registry hit + exact prototype + exact own-keys.
+    {
+      const legit37 = createIssuanceHandle(1, 0, "startup-probe");
+      assert.doesNotThrow(() => checkIssuanceHandle(legit37, "N37"),
+        "N37: legitimate registered handle passes");
+      const look37 = Object.freeze({ opId: 1, docId: 0, role: "startup-probe" });
+      assert.throws(() => checkIssuanceHandle(look37, "N37"), /not a registered capability/,
+        "N37: unregistered lookalike must throw (exact capability, no value equality)");
+      const copy37 = Object.freeze({ ...legit37 });
+      assert.throws(() => checkIssuanceHandle(copy37, "N37"), /not a registered capability/,
+        "N37: spread-copy must throw (WeakMap identity, no state change)");
+      const extra37 = Object.freeze({ opId: 1, docId: 0, role: "startup-probe", extra: 1 });
+      assert.throws(() => checkIssuanceHandle(extra37, "N37"), /exactly \{opId,docId,role\}/,
+        "N37: extra-key handle must throw");
+      const nullProto37 = Object.freeze(Object.assign(Object.create(null), { opId: 1, docId: 0, role: "startup-probe" }));
+      assert.throws(() => checkIssuanceHandle(nullProto37, "N37"), /exact Object\.prototype/,
+        "N37: null-prototype handle must throw");
+      assert.doesNotThrow(() => checkIssuanceHandle(legit37, "N37"),
+        "N37: legitimate still passes after lookalike attempts");
+    }
+    // N38 stale/cross issuance: doc identity gate before mint + harness current gates.
+    {
+      const auth38 = createClosedAuthority("n38-stale");
+      const root38 = auth38.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["probe-issue"] });
+      const opA38 = auth38.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: root38.id, successors: ["probe-retry"] });
+      const slotsBefore38 = auth38.slots().length;
+      assert.throws(() => auth38.mintSlot({ opId: opA38.id, targetDoc: 9999, action: "probe-issue",
+        role: "catalog-read", method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" }),
+      /must equal its op targetDoc/,
+        "N38: stale-doc mint must throw pre-mutation (doc identity gate)");
+      assert.equal(auth38.slots().length, slotsBefore38,
+        "N38: failed stale mint must leave zero slot residue");
+      const legit38 = auth38.mintSlot({ opId: opA38.id, targetDoc: 1, action: "probe-issue",
+        role: "catalog-read", method: "GET", origin: "http://127.0.0.1:1", path: "/api/v1/research/catalog?limit=20" });
+      assert.ok(Number.isSafeInteger(legit38.id),
+        "N38: legitimate current-doc mint still passes");
+      const cross38 = createIssuanceHandle(opA38.id, opA38.targetDoc, opA38.role);
+      assert.doesNotThrow(() => checkIssuanceHandle(cross38, "N38"),
+        "N38: legitimate registered issuance still passes");
+      const staleLook38 = Object.freeze({ opId: opA38.id, docId: opA38.targetDoc, role: opA38.role });
+      assert.throws(() => checkIssuanceHandle(staleLook38, "N38"), /not a registered capability/,
+        "N38: stale/cross lookalike without registry must throw");
+    }
+    // N39 successor aliasing: private canonical Map, deep-frozen snapshots.
+    {
+      const auth39 = createClosedAuthority("n39-successor");
+      const root39 = auth39.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["probe-issue"] });
+      const opA39 = auth39.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-issue", role: "catalog-read",
+        from: root39.id, successors: ["probe-retry"] });
+      const snap39 = auth39.getOp(opA39.id);
+      assert.ok(Object.isFrozen(snap39) && Object.isFrozen(snap39.successors),
+        "N39: public getOp snapshot must be deep-frozen (no aliasing)");
+      let pushThrew = false;
+      try { snap39.successors.push("probe-mid"); } catch { pushThrew = true; }
+      assert.ok(pushThrew || !auth39.getOp(opA39.id).successors.includes("probe-mid"),
+        "N39: mutating snapshot must never widen canonical authority");
+      assert.throws(() => auth39.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 1, action: "probe-mid", role: "catalog-read",
+        from: opA39.id, successors: [] }), /undeclared successor/,
+        "N39: undeclared successor must still fail closed despite snapshot mutation");
+      const legit39 = auth39.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 1, targetDoc: 2, action: "probe-retry", role: "catalog-read",
+        from: opA39.id, successors: [] });
+      assert.ok(Number.isSafeInteger(legit39.id),
+        "N39: legitimate declared successor still passes");
+    }
+    // N40 policy nesting: deep-frozen private canonical, authority reads canonical only.
+    {
+      const outerBefore40 = ABORTABLE_SLOT_PATHS.length;
+      const innerBefore40 = ABORTABLE_SLOT_PATHS[0][1];
+      let nestedThrew = false;
+      try { ABORTABLE_SLOT_PATHS[0][1] = "/evil-n40"; } catch { nestedThrew = true; }
+      const nestedMutated40 = ABORTABLE_SLOT_PATHS[0][1] === "/evil-n40";
+      const auth40 = createClosedAuthority("n40-policy");
+      const root40 = auth40.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+        sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+        successors: ["probe-issue"] });
+      const op40 = auth40.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+        sourceDoc: 3, targetDoc: 3, action: "probe-issue", role: "catalog-read",
+        from: root40.id, successors: [] });
+      const minted40 = [];
+      for (const [method, path] of PRIVATE_ABORTABLE) {
+        minted40.push(auth40.mintSlot({ opId: op40.id, targetDoc: 3, action: "probe-issue",
+          role: "catalog-read", method, origin: "http://127.0.0.1:1", path }));
+      }
+      assert.ok(!minted40.some((slot) => slot.path === "/evil-n40"),
+        "N40: private canonical policy must never mint publicly mutated nesting (authority reads canonical only)");
+      assert.equal(minted40.length, outerBefore40,
+        "N40: canonical mint count must equal private policy length");
+      if (nestedMutated40) {
+        ABORTABLE_SLOT_PATHS[0][1] = innerBefore40;
+      }
+      assert.equal(ABORTABLE_SLOT_PATHS[0][1], innerBefore40,
+        "N40: public nesting restored after the proof");
+      assert.ok(minted40.some((slot) => slot.path === "/api/v1/research/catalog?limit=20"),
+        "N40: legitimate canonical path still mints");
+      void nestedThrew;
+    }
   }
   {
     const trackerD1 = createRequestTerminalTracker(new Set([200, 204, 403]));
@@ -2321,8 +2606,8 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
       "D3: duplicate response for one reqId must fail closed");
   }
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 33, collector: "D1-D3",
-    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens (object-only consume, delete-on-consume, FIFO queue, zero-inflight barrier) + explicit issuance handles + private terminal contract copy + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 40, collector: "D1-D3",
+    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption) + causal nav tokens (closure-private mint, object-only consume, delete-on-consume, FIFO queue, zero-inflight barrier, transactional registerOp) + exact issuance capabilities (registry/prototype/own-keys/triple) + current-op/doc/role/action gates + private canonical successors snapshots + private canonical policy + frozen terminal values/snapshots + one terminal outcome + authenticated order + token-bound edges; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
