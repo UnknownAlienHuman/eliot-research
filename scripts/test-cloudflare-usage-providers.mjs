@@ -193,11 +193,12 @@ await check("D1 pagination guards total_pages mismatch and missing page echo", a
   assert.equal(snapshot.metrics.d1_rows_read, "unknown");
   assert.ok(snapshot.readback.provider_errors.some((line) => line.includes("d1-inventory-list")));
   // Full page without pagination metadata fails closed (silent truncation).
+  // Distinct identities: duplicate rows must hit MALFORMED, not this path.
   const silent = createPaginatedInventoryProvider({
     group: "d1-inventory-list",
     covers: [],
     endpoint: (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`,
-    fetchImpl: async () => okJson({ success: true, result: new Array(100).fill({ uuid: "x" }), result_info: {} }),
+    fetchImpl: async () => okJson({ success: true, result: Array.from({ length: 100 }, (_, i) => ({ uuid: `db-${i}` })), result_info: {} }),
     perPage: 100,
   });
   await assert.rejects(
@@ -225,9 +226,11 @@ await check("R2 uses cursor pagination over result.buckets with progress validat
   assert.equal(reported.inventory.length, 2);
   assert.equal(reported.coverage.completedCursors, 2);
   // Repeated cursor without progress fails closed.
+  // Distinct bucket per hop: duplicate identity must hit MALFORMED, not this path.
+  let loopingHop = 0;
   const looping = createR2CursorInventoryProvider({
     endpoint: (id, cursor) => `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets${cursor ? `?cursor=${cursor}` : ""}`,
-    fetchImpl: async () => okJson({ success: true, result: { buckets: [{ name: "a" }], cursor: "stuck" } }),
+    fetchImpl: async () => okJson({ success: true, result: { buckets: [{ name: `a-${loopingHop++}` }], cursor: "stuck" } }),
   });
   await assert.rejects(
     looping.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
@@ -429,6 +432,126 @@ await check("wrong-path urls with the expected id in query never fetch", async (
       (error) => error instanceof ProviderFailure && (error.reason === "ACCOUNT_MISMATCH" || error.reason === "MALFORMED"),
     );
   }
+});
+
+await check("ai-search duplicate identity fails closed same-page and cross-page (#108)", async () => {
+  const aiEndpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/ai-search/instances?page=${page}&per_page=${perPage}`;
+  // Same-page: exact #108 repro — self-consistent count/total_count (2/2)
+  // must not satisfy the guards; distinct count is 1, not 2.
+  const samePage = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ id: "same" }, { id: "same" }], result_info: { page: 1, per_page: 100, total_pages: 1, count: 2, total_count: 2 } }),
+  });
+  await assert.rejects(
+    samePage.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "ai-search same-page duplicate id must be MALFORMED",
+  );
+  const sameSnapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [samePage],
+  });
+  assert.equal(sameSnapshot.metrics.ai_search_instances, "unknown");
+  assert.ok(sameSnapshot.readback.provider_errors.some((line) => line.includes("ai-search-inventory-list")));
+  // Persisted values: two distinct identities still admit authoritative 2.
+  const distinct = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ id: "one" }, { id: "two" }], result_info: { page: 1, per_page: 100, total_pages: 1, count: 2, total_count: 2 } }),
+  });
+  const reported = await distinct.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.values.ai_search_instances, 2);
+  assert.equal(reported.inventory.length, 2);
+  assert.equal(reported.inventory[0].id, "one");
+  assert.equal(reported.inventory[1].id, "two");
+  // Cross-page: same id on page 1 and page 2 must also fail closed.
+  const crossPage = createAiSearchInventoryProvider({
+    endpoint: aiEndpoint,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ id: "same" }], result_info: { page: 1, per_page: 1, total_count: 2, total_pages: 2, count: 1 } });
+      }
+      return okJson({ success: true, result: [{ id: "same" }], result_info: { page: 2, per_page: 1, total_count: 2, total_pages: 2, count: 1 } });
+    },
+  });
+  await assert.rejects(
+    crossPage.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "ai-search cross-page duplicate id must be MALFORMED",
+  );
+  const crossSnapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [crossPage],
+  });
+  assert.equal(crossSnapshot.metrics.ai_search_instances, "unknown");
+  assert.ok(crossSnapshot.readback.provider_errors.some((line) => line.includes("ai-search-inventory-list")));
+});
+
+await check("paginated and cursor inventory duplicate identity fails closed", async () => {
+  const d1Endpoint = (id, page, perPage) => `https://api.cloudflare.com/client/v4/accounts/${id}/d1/database?page=${page}&per_page=${perPage}`;
+  // Same-page uuid duplicate with self-consistent counts.
+  const samePage = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: [],
+    endpoint: d1Endpoint,
+    fetchImpl: async () => okJson({ success: true, result: [{ uuid: "same" }, { uuid: "same" }], result_info: { page: 1, per_page: 100, total_pages: 1, count: 2, total_count: 2 } }),
+  });
+  await assert.rejects(
+    samePage.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "paginated same-page duplicate uuid must be MALFORMED",
+  );
+  // Cross-page uuid duplicate.
+  const crossPage = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: [],
+    endpoint: d1Endpoint,
+    perPage: 1,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ uuid: "same" }], result_info: { page: 1, per_page: 1, total_count: 2, total_pages: 2 } });
+      }
+      return okJson({ success: true, result: [{ uuid: "same" }], result_info: { page: 2, per_page: 1, total_count: 2, total_pages: 2 } });
+    },
+  });
+  await assert.rejects(
+    crossPage.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "paginated cross-page duplicate uuid must be MALFORMED",
+  );
+  // Distinct uuids across pages still accumulate persisted inventory length 2.
+  const distinct = createPaginatedInventoryProvider({
+    group: "d1-inventory-list",
+    covers: [],
+    endpoint: d1Endpoint,
+    perPage: 1,
+    fetchImpl: async (url) => {
+      const page = Number(new URL(url).searchParams.get("page"));
+      if (page <= 1) {
+        return okJson({ success: true, result: [{ uuid: "one" }], result_info: { page: 1, per_page: 1, total_count: 2, total_pages: 2 } });
+      }
+      return okJson({ success: true, result: [{ uuid: "two" }], result_info: { page: 2, per_page: 1, total_count: 2, total_pages: 2 } });
+    },
+  });
+  const reported = await distinct.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(reported.inventory.length, 2);
+  assert.equal(reported.inventory[0].uuid, "one");
+  assert.equal(reported.inventory[1].uuid, "two");
+  // R2 cursor: same bucket name on consecutive hops is a duplicate identity.
+  const cursorDup = createR2CursorInventoryProvider({
+    endpoint: (id, cursor) => cursor
+      ? `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets?cursor=${encodeURIComponent(cursor)}`
+      : `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets`,
+    fetchImpl: async (url) => {
+      const cursor = new URL(url).searchParams.get("cursor");
+      if (cursor === null) return okJson({ success: true, result: { buckets: [{ name: "same" }], cursor: "next-1" } });
+      return okJson({ success: true, result: { buckets: [{ name: "same" }] } });
+    },
+  });
+  await assert.rejects(
+    cursorDup.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "cursor duplicate name must be MALFORMED",
+  );
 });
 
 console.log(`Usage providers: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

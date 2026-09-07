@@ -87,9 +87,21 @@ function appendValidatedRow(seen, row, group, context, lastHttpStatus) {
   if (row === null || row === undefined || typeof row !== "object" || Array.isArray(row)) { throw new ProviderFailure("MALFORMED", `${group} ${context} bad row`, { httpStatus: lastHttpStatus }); }
   const keys = ownKeysOf(row);
   const names = ["id", "uuid", "name"];
+  let hasIdentity = false;
   for (let i = 0; i < names.length; i += 1) {
-    if (hasOwnKey(keys, names[i]) && typeof row[names[i]] === "string") { seen[seen.length] = row; return; }
+    const field = names[i];
+    if (hasOwnKey(keys, field) && typeof row[field] === "string") {
+      hasIdentity = true;
+      const value = row[field];
+      for (let s = 0; s < seen.length; s += 1) {
+        const prev = seen[s];
+        if (prev === null || prev === undefined || typeof prev !== "object" || Array.isArray(prev)) continue;
+        const prevKeys = ownKeysOf(prev);
+        if (hasOwnKey(prevKeys, field) && prev[field] === value) { throw new ProviderFailure("MALFORMED", `${group} ${context} duplicate identity`, { httpStatus: lastHttpStatus }); }
+      }
+    }
   }
+  if (hasIdentity) { seen[seen.length] = row; return; }
   throw new ProviderFailure("MALFORMED", `${group} ${context} row without string identity`, { httpStatus: lastHttpStatus });
 }
 function appendRows(seen, rows, group, context, lastHttpStatus) {
