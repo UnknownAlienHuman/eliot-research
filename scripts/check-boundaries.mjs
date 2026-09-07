@@ -31,6 +31,7 @@ const PACKAGE_RULES = new Map([
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/backup-o2", new Set(["@eliotr/contracts"])],
   ["packages/platform-cloudflare", new Set(["@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
+  ["packages/cloudflare-research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/research"])],
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-erasure", new Set(["@eliotr/contracts"])],
@@ -51,6 +52,7 @@ const PACKAGE_RULES = new Map([
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["apps/eliotr-pwa", new Set(["@eliotr/contracts"])],
   ["apps/eliotr-core", new Set([
+    "@eliotr/cloudflare-research",
     "@eliotr/cloudflare-navigation",
     "@eliotr/cloudflare-ai",
     "@eliotr/cloudflare-projection",

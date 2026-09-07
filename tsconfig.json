@@ -54,6 +54,9 @@
     },
     {
       "path": "packages/cloudflare-navigation"
+    },
+    {
+      "path": "packages/cloudflare-research"
     }
   ]
 }

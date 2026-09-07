@@ -41,6 +41,9 @@ importers:
 
   apps/eliotr-core:
     dependencies:
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../../packages/cloudflare-ai
@@ -181,6 +184,21 @@ importers:
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
+
+  packages/cloudflare-research:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
 
   packages/contracts:
     dependencies:

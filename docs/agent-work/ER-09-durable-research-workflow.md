@@ -14,11 +14,16 @@ outside the paths below.
 - `packages/research/src/workflow.ts`
 - `apps/eliotr-core/src/research-workflow.ts`
 - `infra/workflows/**`
+- `packages/cloudflare-research/**`
+- `apps/eliotr-core/test/research-workflow.test.ts`
+- `apps/eliotr-core/test/research-workflow-fixture.ts`
+- `docs/implementation/workflow-checkpoints.md`
 
 ## Read only
 
 - `packages/research/src/ports.ts`
 - `docs/implementation/runtime-contract.md`
+- `docs/implementation/workflow-checkpoints.md`
 
 ## Architecture extracts
 
