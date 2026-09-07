@@ -86,9 +86,15 @@ export interface StagedBundleVerification {
 export interface PromotedObjectReceipt {
   readonly logical_path: string;
   readonly canonical_key: string;
+  /** Per-file complete residency digest (residency key + this file's content digest). */
+  readonly residency_key_digest?: string | undefined;
   readonly sha256: string;
   readonly size_bytes: number;
   readonly etag: string;
+  /** R2 versioned object identity when the bucket issues one. */
+  readonly version?: string | undefined;
+  /** Canonical media type bound at promotion (contentType(logical_path)). */
+  readonly content_type?: string | undefined;
   readonly existed_identically: boolean;
 }
 
