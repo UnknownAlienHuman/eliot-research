@@ -185,15 +185,22 @@ export const USAGE_METRICS = [
 export const REQUIRED_METRIC_KEYS = Object.freeze(USAGE_METRICS.map((metric) => metric.key));
 for (const metric of USAGE_METRICS) Object.freeze(metric);
 Object.freeze(USAGE_METRICS);
-// Module-private canonical authority copies: every boundary below reads these,
-// never the exported bindings, so mutating an export cannot change decisions.
-// Exports are frozen (mutation throws) AND ignored internally (defense in depth).
-const CANONICAL_REQUIRED_KEYS = REQUIRED_METRIC_KEYS;
-const CANONICAL_BY_KEY = new Map(USAGE_METRICS.map((metric) => [metric.key, metric]));
-export const METRIC_BY_KEY = new Map(CANONICAL_BY_KEY);
-for (const method of ["set", "delete", "clear"]) {
-  METRIC_BY_KEY[method] = () => { throw new Error("METRIC_BY_KEY is read-only authority state"); };
-}
+// Module-private canonical authority (never exported): independent frozen
+// copies, so mutating an export cannot change decisions. Exports are frozen
+// (mutation throws) AND ignored internally (defense in depth).
+const CANONICAL_METRICS = Object.freeze(USAGE_METRICS.map((m) => Object.freeze({ ...m })));
+const CANONICAL_REQUIRED_KEYS = Object.freeze(CANONICAL_METRICS.map((m) => m.key));
+const CANONICAL_BY_KEY = new Map(CANONICAL_METRICS.map((m) => [m.key, m]));
+const CANONICAL_KEY_SET = new Set(CANONICAL_REQUIRED_KEYS);
+function readOnlyAuthorityError() { throw new Error("METRIC_BY_KEY is read-only authority state"); }
+// Legacy export: immutable non-Map facade, ignored by authority. Not a Map,
+// so Map.prototype.*.call throws; frozen so overwrite/defineProperty throws.
+export const METRIC_BY_KEY = Object.freeze({ has(k) { return CANONICAL_KEY_SET.has(k); }, get(k) { return CANONICAL_BY_KEY.get(k); }, get size() { return CANONICAL_REQUIRED_KEYS.length; }, set: readOnlyAuthorityError, delete: readOnlyAuthorityError, clear: readOnlyAuthorityError });
+export function hasCanonicalMetric(k) { return CANONICAL_KEY_SET.has(k); }
+export function getCanonicalMetric(k) { return CANONICAL_BY_KEY.get(k) ?? null; }
+export function listCanonicalRequiredKeys() { return [...CANONICAL_REQUIRED_KEYS]; }
+export function listCanonicalMetrics() { return [...CANONICAL_METRICS]; }
+export function canonicalWindowOf(k) { return CANONICAL_BY_KEY.get(k)?.window ?? "monthly"; }
 
 // Evidence taxonomy contract (injected into the receipt-evidence helper so
 // canonical strings live in exactly one place and no import cycle exists).
@@ -345,7 +352,7 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     (snapshot.daily_window === undefined || windowCovers(snapshot.daily_window, now));
   if (!windowOk) reasons.push("snapshot window does not cover now; aggregate belongs to another billing window");
 
-  for (const metric of USAGE_METRICS) {
+  for (const metric of CANONICAL_METRICS) {
     const value = snapshot.metrics[metric.key];
     if (value === undefined || value === null) return blocked([`metric ${metric.key} is absent; refusing vacuous admission`]);
     if (!isUnknown(value) && !isValidCounter(value)) return blocked([`metric ${metric.key} must be a non-negative finite number or "unknown"`]);

@@ -26,12 +26,12 @@ import {
   verifyWranglerOAuthAccount,
 } from "./cloudflare-wrangler-oauth.mjs";
 import {
-  REQUIRED_METRIC_KEYS,
   SNAPSHOT_MAX_AGE_MS,
   accountRef,
   buildAdmissionReceipt,
   digestAccountId,
   evaluateUsageSnapshot,
+  listCanonicalRequiredKeys,
   writeAdmissionReceiptAtomic,
 } from "./cloudflare-usage-envelope.mjs";
 import {
@@ -74,7 +74,7 @@ export function isLiveAdmissibleForCapability(snapshot, evaluation) {
   // Snapshot-then-validate over a local canonical copy: no vacuous every()
   // or zero-length set may admit. Exact coverage is required independently
   // here, even though collection and the envelope enforce it too.
-  const required = [...REQUIRED_METRIC_KEYS];
+  const required = listCanonicalRequiredKeys();
   if (required.length === 0) return false;
   if (!required.every((key) => typeof key === "string" && key !== "")) return false;
   if (new Set(required).size !== required.length) return false;

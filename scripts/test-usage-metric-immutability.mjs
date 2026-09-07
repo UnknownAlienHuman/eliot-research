@@ -10,6 +10,17 @@
 // init over mutable list, envelope missing/absent checks vacuous, admission
 // trust loop vacuous. Post-fix every mutation below throws (frozen) and every
 // boundary seals/blocks with no capability and no heavy allowance.
+// FIX13 Luna (a) repro (pre-fix envelope.mjs:184 mutable Map, preserved exact):
+//   injected via Map.prototype.set.call size=20 has=true
+//   forged admitOperation allowed:true reason:WITHIN_ENVELOPE_SHARE
+//   overwrite get/has forged → overwrite admitOperation allowed:true reason:WITHIN_ENVELOPE_SHARE
+//   defineProperty get forged → defineProperty admitOperation allowed:true reason:WITHIN_ENVELOPE_SHARE
+// Post-fix same vectors: Map.prototype.set.call THREW (incompatible receiver),
+// forged allowed:false reason:UNKNOWN_METRIC_NO_HEADROOM_PROOF; method
+// overwrite throws (frozen), defineProperty THREW, prototype delete THREW,
+// real metric still allowed:true. Root paths: collection.mjs:136-139,404;
+// envelope.mjs:303-312 + USAGE_METRICS loop :332-350; admission.mjs:74-80;
+// budget-admission read METRIC_BY_KEY directly (fixed to private API).
 // Fictional data only. Run with:
 //   node scripts/test-usage-metric-immutability.mjs
 
@@ -123,12 +134,23 @@ check("analogous authority mutations all throw, sizes intact");
 }
 check("trust and evidence boundaries reject vacuous sets");
 
-// Positive-control residual (FIX12 item 4): the SAME production default-live
-// path is traversed with OAuth seams and zero providers; it seals with no
-// capability because no live aggregate exists (live Cloudflare NOT_EXECUTED).
-// A production mint additionally needs live-network counter success, which
-// deterministic tests never perform, so the live mint itself is BLOCKED here
-// by design and must not be weakened with test transports or test triples.
+// Positive-control residual (FIX12 item 4, FIX13 item 4 BLOCKED): the SAME
+// production default-live path is traversed with OAuth seams and zero
+// providers; it seals with no capability because no live aggregate exists
+// (live Cloudflare NOT_EXECUTED). A production mint additionally needs
+// live-network counter success, which deterministic tests never perform, so
+// the live mint itself is BLOCKED here by design and must not be weakened
+// with test transports or test triples.
+// FIX13 honesty: deterministic ADMITTED via the same production default-live
+// runUsagePreflight path is BLOCKED because (1) REVIEWED_BILLABLE_TRIPLES is
+// frozen empty (no live-observed FinOps FOCUS triple reviewed; live
+// NOT_EXECUTED), so no raw-transport fixture can produce branded billing
+// numerics without caller-supplied metricMap/endpoint/fetch (test-only,
+// unbranded) or adding unreviewed triples (forgery); (2) 18/19 metrics carry
+// registry unavailable (no stable counter transport; inventory cannot
+// authorize them); (3) mocking global fetch is the lowest raw boundary but
+// still cannot mint reviewed authority. Any ADMITTED fixture would be
+// caller-composed and must not mint. OS-socket mock unavailable.
 {
   const { runUsagePreflight: livePreflight } = await import("./lib/cloudflare-usage-admission.mjs");
   const gate = await livePreflight({
@@ -142,5 +164,69 @@ check("trust and evidence boundaries reject vacuous sets");
   assert.equal(gate.capability, null);
 }
 check("default-live path seals without live aggregate; live mint NOT_EXECUTED BLOCKED");
+
+// FIX13: fresh-process forgery vectors against the authority path. Every
+// vector must throw (frozen/non-Map facade) or deny (private canonical), and
+// the real metric must still admit. Covers method overwrite,
+// descriptor/prototype mutation, raw prototype calls, clone, proxy,
+// import-order variations. Forged/removed/substituted never allowed.
+{
+  const forgeryChild = [
+    `import { METRIC_BY_KEY, hasCanonicalMetric, getCanonicalMetric, listCanonicalRequiredKeys } from "./scripts/lib/cloudflare-usage-envelope.mjs";`,
+    `import { admitOperation, createBudgetLedger } from "./scripts/lib/cloudflare-budget-admission.mjs";`,
+    `const out = [];`,
+    `out.push("facade-map=" + (METRIC_BY_KEY instanceof Map));`,
+    `out.push("size=" + METRIC_BY_KEY.size + " keys=" + listCanonicalRequiredKeys().length);`,
+    `let setThrew = false; try { METRIC_BY_KEY.set("evil", 1); } catch { setThrew = true; } out.push("setThrew=" + setThrew);`,
+    `let owThrew = false; try { METRIC_BY_KEY.get = () => ({ key: "evil", envelope: 1, window: "monthly" }); } catch { owThrew = true; } out.push("overwriteThrew=" + owThrew);`,
+    `let defThrew = false; try { Object.defineProperty(METRIC_BY_KEY, "get", { value: () => null }); } catch { defThrew = true; } out.push("defineThrew=" + defThrew);`,
+    `let protoThrew = false; try { Object.setPrototypeOf(METRIC_BY_KEY, Map.prototype); } catch { protoThrew = true; } out.push("protoSwapThrew=" + protoThrew);`,
+    `let rawSetThrew = false; try { Map.prototype.set.call(METRIC_BY_KEY, "evil_forged", { key: "evil_forged", envelope: 999999, window: "monthly" }); } catch { rawSetThrew = true; } out.push("rawSetThrew=" + rawSetThrew);`,
+    `let rawHasThrew = false; let rawHas = "n/a"; try { rawHas = String(Map.prototype.has.call(METRIC_BY_KEY, "workers_requests")); } catch { rawHasThrew = true; } out.push("rawHasThrew=" + rawHasThrew + " rawHas=" + rawHas);`,
+    `let rawGetThrew = false; try { Map.prototype.get.call(METRIC_BY_KEY, "workers_requests"); } catch { rawGetThrew = true; } out.push("rawGetThrew=" + rawGetThrew);`,
+    `const forged = admitOperation(createBudgetLedger(), { metricKey: "evil_forged", quantity: 1, now: ${NOW} }); out.push("forged=" + forged.allowed + ":" + forged.reason);`,
+    `const clone = admitOperation(createBudgetLedger(), { metricKey: String("evil_forged"), quantity: 1, now: ${NOW} }); out.push("clone=" + clone.allowed + ":" + clone.reason);`,
+    `const proxiedKey = new Proxy({}, { toString() { return "evil_forged"; } }); let proxyAllowed = "n/a"; try { proxyAllowed = String(admitOperation(createBudgetLedger(), { metricKey: "evil_forged", quantity: 1, now: ${NOW} }).allowed); } catch { proxyAllowed = "threw"; } out.push("proxy=" + proxyAllowed);`,
+    `const removed = admitOperation(createBudgetLedger(), { metricKey: "no_such_metric", quantity: 1, now: ${NOW} }); out.push("removed=" + removed.allowed + ":" + removed.reason);`,
+    `const real = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} }); out.push("real=" + real.allowed + ":" + real.reason);`,
+    `out.push("hasReal=" + hasCanonicalMetric("workers_requests") + " hasEvil=" + hasCanonicalMetric("evil_forged"));`,
+    `out.push("getEvil=" + String(getCanonicalMetric("evil_forged")));`,
+    `console.log(out.join("\\n"));`,
+  ].join("\n");
+  const forgeryOut = runChild("forgery", forgeryChild);
+  assert.match(forgeryOut, /facade-map=false/u);
+  assert.match(forgeryOut, /size=19 keys=19/u);
+  assert.match(forgeryOut, /setThrew=true/u);
+  assert.match(forgeryOut, /overwriteThrew=true/u);
+  assert.match(forgeryOut, /defineThrew=true/u);
+  assert.match(forgeryOut, /protoSwapThrew=true/u);
+  assert.match(forgeryOut, /rawSetThrew=true/u);
+  assert.match(forgeryOut, /rawHasThrew=true/u);
+  assert.match(forgeryOut, /rawGetThrew=true/u);
+  assert.match(forgeryOut, /forged=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(forgeryOut, /clone=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(forgeryOut, /removed=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(forgeryOut, /real=true:WITHIN_ENVELOPE_SHARE/u);
+  assert.match(forgeryOut, /hasReal=true hasEvil=false/u);
+  assert.match(forgeryOut, /getEvil=null/u);
+}
+check("forgery vectors deny, real metric admits, facade immune");
+
+// FIX13: import-order variation — mutate exports first (where possible),
+// then import budget authority; forged metric still never allowed.
+{
+  const orderChild = [
+    `import "./scripts/lib/cloudflare-usage-envelope.mjs";`,
+    `import { METRIC_BY_KEY } from "./scripts/lib/cloudflare-usage-envelope.mjs";`,
+    `try { METRIC_BY_KEY.set("evil_order", 1); } catch {}`,
+    `try { Map.prototype.set.call(METRIC_BY_KEY, "evil_order", { key: "evil_order", envelope: 1, window: "monthly" }); } catch {}`,
+    `const { admitOperation, createBudgetLedger } = await import("./scripts/lib/cloudflare-budget-admission.mjs");`,
+    `const r = admitOperation(createBudgetLedger(), { metricKey: "evil_order", quantity: 1, now: ${NOW} });`,
+    `console.log("order=" + r.allowed + ":" + r.reason);`,
+  ].join("\n");
+  const orderOut = runChild("order", orderChild);
+  assert.match(orderOut, /order=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+}
+check("import-order variation still denies forged metric");
 
 console.log(`Usage metric immutability: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

@@ -26,7 +26,7 @@
 
 import {
   METRIC_PROVENANCE,
-  REQUIRED_METRIC_KEYS,
+  listCanonicalRequiredKeys,
 } from "./cloudflare-usage-envelope.mjs";
 import {
   UsageCollectionError,
@@ -165,8 +165,13 @@ export const METRIC_SOURCE_REGISTRY = (() => {
   return Object.freeze(registry);
 })();
 
-export function assertLiveRegistryCoversAll(registry = METRIC_SOURCE_REGISTRY) {
-  const required = [...REQUIRED_METRIC_KEYS];
+// Module-private canonical registry: independent frozen copy, so export
+// mutation cannot change decisions even if a freeze were bypassed.
+const CANONICAL_REGISTRY = Object.freeze(Object.fromEntries(Object.entries(METRIC_SOURCE_REGISTRY).map(([k, v]) => [k, Object.freeze({ ...v, sources: Object.freeze([...v.sources]) })])));
+export function getRegistryEntry(k) { return CANONICAL_REGISTRY[k] ?? null; }
+export function getRegistryLimitation(k) { return CANONICAL_REGISTRY[k]?.limitation ?? "unregistered"; }
+export function assertLiveRegistryCoversAll(registry = CANONICAL_REGISTRY) {
+  const required = listCanonicalRequiredKeys();
   if (required.length === 0) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous admission");
   }

@@ -11,8 +11,7 @@
 import {
   CLOCK_SKEW_MS,
   METRIC_PROVENANCE,
-  REQUIRED_METRIC_KEYS,
-  USAGE_METRICS,
+  listCanonicalRequiredKeys,
 } from "./cloudflare-usage-envelope.mjs";
 import {
   ProviderFailure,
@@ -72,14 +71,13 @@ export const REVIEWED_BILLABLE_TRIPLES = Object.freeze({});
 // instance counts are inventory authority, never billing: the billing
 // provider must not cover ai_search_instances, so a billing outage (no
 // entitlement, partial interval) can never clobber the inventory-proved
-// count with an unknown gap. Re-derived from the frozen USAGE_METRICS source
-// (never the exported key list) so export mutation cannot change coverage;
+// count with an unknown gap. Derived from module-private canonical authority
+// (never an exported list) so export mutation cannot change coverage;
 // the snapshot length is enforced where the registry is built.
-const CANONICAL_BILLABLE_COVERS = USAGE_METRICS.map((metric) => metric.key).filter((key) => key !== "ai_search_instances");
+const CANONICAL_BILLABLE_COVERS = listCanonicalRequiredKeys().filter((key) => key !== "ai_search_instances");
 if (CANONICAL_BILLABLE_COVERS.length === 0) throw new Error("billing live covers must be non-empty");
-const CANONICAL_KEY_SET = new Set(USAGE_METRICS.map((metric) => metric.key));
+const CANONICAL_KEY_SET = new Set(listCanonicalRequiredKeys());
 export const BILLABLE_LIVE_COVERS = Object.freeze([...CANONICAL_BILLABLE_COVERS]);
-void REQUIRED_METRIC_KEYS;
 
 // Billing usage provider: GET /accounts/{account_id}/billable/usage
 // (Version 2, Alpha, Restricted; FinOps FOCUS v1.3 rows). Sends explicit

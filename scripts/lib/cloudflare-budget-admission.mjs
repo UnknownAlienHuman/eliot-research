@@ -16,12 +16,14 @@
 // known envelope share or without headroom proof is denied.
 
 import {
-  METRIC_BY_KEY,
   QUEUE_CHUNK_BYTES,
   QUEUE_MESSAGE_OVERHEAD_BYTES,
   RECEIPT_MAX_AGE_MS,
   SAFETY_MARGIN_RATIO,
+  getCanonicalMetric,
+  hasCanonicalMetric,
   isLiveEvidenceFamily,
+  listCanonicalRequiredKeys,
   validateAdmissionReceipt,
 } from "./cloudflare-usage-envelope.mjs";
 import {
@@ -49,7 +51,7 @@ function monthKeyFor(nowMs) {
 }
 
 function windowForMetric(metricKey) {
-  const metric = METRIC_BY_KEY.get(metricKey);
+  const metric = getCanonicalMetric(metricKey);
   if (!metric) {
     throw new BudgetAdmissionError("UNKNOWN_METRIC", `metric ${metricKey} is not part of the usage envelope`);
   }
@@ -103,7 +105,10 @@ function assertQuantity(quantity) {
 export function admitOperation(ledger, { metricKey, quantity, now = Date.now() } = {}) {
   if (!ledger) throw new BudgetAdmissionError("INVALID_LEDGER", "ledger is required");
   assertQuantity(quantity);
-  const metric = METRIC_BY_KEY.get(metricKey);
+  if (listCanonicalRequiredKeys().length === 0) {
+    return { allowed: false, metric: metricKey, reason: "UNKNOWN_METRIC_NO_HEADROOM_PROOF", used: 0, remaining: 0, projected: quantity };
+  }
+  const metric = getCanonicalMetric(metricKey);
   if (!metric) {
     return { allowed: false, metric: metricKey, reason: "UNKNOWN_METRIC_NO_HEADROOM_PROOF", used: 0, remaining: 0, projected: quantity };
   }
@@ -294,7 +299,8 @@ export function admitHeavyOperation(ledger, options = {}) {
     if (typeof known !== "number") {
       return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "SEALED_NO_HEADROOM_PROOF" };
     }
-    const metric = METRIC_BY_KEY.get(metricKey);
+    const metric = getCanonicalMetric(metricKey);
+    if (!metric) return { allowed: false, operation, metric: metricKey, proof: "NONE", reason: "SEALED_NO_HEADROOM_PROOF" };
     const cap = Math.floor(metric.envelope * (1 - SAFETY_MARGIN_RATIO));
     if (known + quantity > cap) {
       return { allowed: false, operation, metric: metricKey, proof: "LEDGER_INVENTORY", reason: "OVER_ENVELOPE_SHARE" };
@@ -327,7 +333,7 @@ function validateInventoryProof(proof, { expectedAccountDigest, now, maxAgeMs })
     reasons.push("inventory proof must carry perMetric headroom counters");
   } else {
     for (const [key, value] of Object.entries(proof.perMetric)) {
-      if (!METRIC_BY_KEY.has(key) || typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      if (!hasCanonicalMetric(key) || typeof value !== "number" || !Number.isFinite(value) || value < 0) {
         reasons.push(`inventory proof carries invalid counter ${key}`);
       } else {
         perMetric[key] = value;

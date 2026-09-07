@@ -9,20 +9,20 @@ import {
 } from "./cloudflare-wrangler-oauth.mjs";
 import {
   METRIC_PROVENANCE,
-  REQUIRED_METRIC_KEYS,
-  USAGE_METRICS,
   CLOCK_SKEW_MS,
   UNKNOWN,
   UNKNOWN_REASONS,
   accountRef,
   digestAccountId,
+  listCanonicalMetrics,
+  listCanonicalRequiredKeys,
 } from "./cloudflare-usage-envelope.mjs";
 import {
   UsageCollectionError,
 } from "./cloudflare-usage-providers.mjs";
 import {
-  METRIC_SOURCE_REGISTRY,
-  assertLiveRegistryCoversAll,
+  getRegistryEntry,
+  getRegistryLimitation,
   inventoryBrandClass,
   isInventoryProvider,
 } from "./cloudflare-usage-authority.mjs";
@@ -35,7 +35,7 @@ import {
 } from "./cloudflare-usage-transport-class.mjs";
 
 export { METRIC_PROVENANCE, UNKNOWN_REASONS };
-export { METRIC_SOURCE_REGISTRY, assertLiveRegistryCoversAll };
+export { METRIC_SOURCE_REGISTRY, assertLiveRegistryCoversAll } from "./cloudflare-usage-authority.mjs";
 export {
   ProviderFailure,
   UsageCollectionError,
@@ -90,18 +90,20 @@ export function dailyWindowFor(nowMs) {
   return { kind: "daily", start: start.toISOString(), end: end.toISOString() };
 }
 
-// Local canonical snapshot: re-derived from the frozen USAGE_METRICS source at
-// call time, then validated non-empty and exact. Mutating an export throws
-// (frozen) and is ignored here regardless, so collection completeness cannot
-// be emptied by a caller.
+// Local canonical snapshot: module-private authority via read-only API at
+// call time, then validated non-empty and exact independently (keys vs metric
+// objects, never an export). Exports are never read here.
 function canonicalRequiredSnapshot() {
-  const fromMetrics = USAGE_METRICS.map((metric) => metric.key);
-  const snapshotted = [...REQUIRED_METRIC_KEYS];
+  const snapshotted = listCanonicalRequiredKeys();
+  const fromMetrics = listCanonicalMetrics().map((m) => m.key);
   if (snapshotted.length === 0 || fromMetrics.length === 0) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous collection");
   }
-  if (snapshotted.length !== fromMetrics.length || !fromMetrics.every((key) => snapshotted.includes(key))) {
+  if (snapshotted.length !== fromMetrics.length || !fromMetrics.every((k) => snapshotted.includes(k))) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
+  }
+  if (new Set(snapshotted).size !== snapshotted.length) {
+    collectionFail("REGISTRY_INCOMPLETE", "authority metric set carries duplicates; refusing vacuous collection");
   }
   return snapshotted;
 }
@@ -353,7 +355,7 @@ export async function collectAccountUsage(options = {}) {
         // the contract allows (registry-authorized groups); billing usage
         // counters never ride inventory provenance.
         if (channelProvenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY) {
-          const entry = METRIC_SOURCE_REGISTRY[key];
+          const entry = getRegistryEntry(key);
           if (!entry || entry.provenance !== METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY ||
             !entry.sources.includes(provider?.group)) {
             markGap(key, `${group} inventory not authorized for ${key}`, channelProvenance);
@@ -435,7 +437,7 @@ export async function collectAccountUsage(options = {}) {
       provider_errors: providerErrors,
       metric_trust: trust,
       registry_limitations: Object.fromEntries(
-        required.map((key) => [key, METRIC_SOURCE_REGISTRY[key]?.limitation ?? "unregistered"]),
+        required.map((key) => [key, getRegistryLimitation(key)]),
       ),
     },
     metrics,
