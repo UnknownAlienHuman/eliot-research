@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 /* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
-  Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly */
+  Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
+  requestAnimationFrame: readonly */
 import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
@@ -582,23 +583,47 @@ async function launchPlaywright(runId) {
     const responses = [];
     // Request-identity attribution for every browser request/response/failure:
     // a reqId is minted exactly once per observed request event and pinned to
-    // the Playwright Request object via a WeakMap, so the (epoch, serial, seq)
-    // stamp a response or failure carries is always its OWN request's issuing
-    // stamp, never a sample of the live global counter. The epoch increments
-    // exactly once per committed main-frame navigation (page.goto,
-    // page.reload, in-page location.replace and pairing redirects all surface
-    // as framenavigated); panelSerial advances on every explicit ledger reset
-    // (a new observation panel); request seq orders issuance. A request
-    // aborted by a navigation therefore carries the superseded issuing stamp
-    // while the surviving retry (a different reqId) and its classified
-    // response carry the surviving stamp. Frame identity is captured as
-    // document-identity evidence alongside the stamp. Failures keep their
-    // string form for message compatibility only; pairing never reads it.
+    // the Playwright Request object via a WeakMap, so the stamp a response or
+    // failure carries is always its OWN request's issuing stamp, never a
+    // sample of the live global counter. opId {kind,id,reason,prevOpId} is
+    // minted before every harness-initiated navigation/replacement and on
+    // every observed main-frame framenavigated (document replacement); the
+    // supersedes table {fromOpId,toOpId,scope,cause} records the explicit edge.
+    // Requests carry {reqId,opId,docId,role}; role comes from the explicit
+    // startup/action boundary via setRole(), NEVER from URL inference.
+    // Responses/failures carry their OWN request's reqId/opId/docId/role join
+    // and fail closed on mismatch. The legacy (epoch,serial,seq) counters are
+    // retained for diagnostics only and are NEVER consulted for pairing.
     // There is no phantom fallback: an abort without its own reqId join fails
     // closed.
     let navigationEpoch = 0;
     let panelSerial = 0;
     let requestSeq = 0;
+    let nextOpId = 0;
+    let nextDocId = 0;
+    const operations = [];
+    const supersedes = [];
+    let currentOpId = null;
+    let currentRole = "startup-probe";
+    let currentDocId = 0;
+    const mintOp = (kind, reason, { scope = "document", cause = null } = {}) => {
+      assert.ok(typeof kind === "string" && kind.length > 0, "op kind must be explicit");
+      assert.ok(typeof reason === "string" && reason.length > 0, "op reason must be explicit");
+      nextOpId += 1;
+      const op = { kind, id: nextOpId, reason, prevOpId: currentOpId };
+      operations.push(op);
+      if (op.prevOpId !== null && op.prevOpId !== undefined) {
+        supersedes.push({ fromOpId: op.prevOpId, toOpId: op.id, scope, cause: cause ?? reason });
+      }
+      currentOpId = op.id;
+      return op;
+    };
+    const setRole = (role) => {
+      assert.ok(typeof role === "string" && role.length > 0, "role must be an explicit boundary label");
+      currentRole = role;
+    };
+    // Root operation: every later op chains to it, so supersession is explicit.
+    mintOp("init", "harness-start", { scope: "harness", cause: "init" });
     const frameIdentity = (event) => {
       try {
         const frame = event?.frame?.();
@@ -610,7 +635,14 @@ async function launchPlaywright(runId) {
     };
     page.on("framenavigated", (frame) => {
       try {
-        if (frame === page.mainFrame()) navigationEpoch += 1;
+        if (frame === page.mainFrame()) {
+          navigationEpoch += 1;
+          nextDocId += 1;
+          currentDocId = nextDocId;
+          // Observed document replacement: explicit supersession edge even for
+          // PWA-initiated navigations, so later retries chain transitively.
+          mintOp("observed-navigation", "framenavigated", { scope: "document", cause: "framenavigated" });
+        }
       } catch { /* navigation accounting must never break the harness */ }
     });
     // Full phase-aware traffic ledger: every browser request AND response is
@@ -640,10 +672,12 @@ async function launchPlaywright(runId) {
       const entry = ledgerEntry(request.method(), request.url());
       requestSeq += 1;
       nextRequestId += 1;
-      const stamp = { id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq };
+      const stamp = { id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
+        opId: currentOpId, docId: currentDocId, role: currentRole };
       requestIds.set(request, stamp);
       requests.push({ ...entry, resourceType: request.resourceType(),
-        reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq, frame: frameIdentity(request) });
+        reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq,
+        opId: stamp.opId, docId: stamp.docId, role: stamp.role, frame: frameIdentity(request) });
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -656,7 +690,7 @@ async function launchPlaywright(runId) {
     const failedRequestEntries = [];
     context.on("requestfailed", (request) => {
       // Legacy failure-time clock retained for message-compat diagnostics only;
-      // the anchor never consults it. Pairing uses the failure's OWN reqId.
+      // the anchor never consults it. Pairing uses the failure's OWN reqId join.
       failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
       const failure = request.failure()?.errorText ?? "unknown";
       const text = `${request.method()} ${request.url()} :: ${failure}`.slice(0, 512);
@@ -667,12 +701,15 @@ async function launchPlaywright(runId) {
         reqId: typeof stamp?.id === "number" ? stamp.id : null,
         epoch: typeof stamp?.epoch === "number" ? stamp.epoch : null,
         serial: typeof stamp?.serial === "number" ? stamp.serial : null,
-        seq: typeof stamp?.seq === "number" ? stamp.seq : null });
+        seq: typeof stamp?.seq === "number" ? stamp.seq : null,
+        opId: typeof stamp?.opId === "number" ? stamp.opId : null,
+        docId: typeof stamp?.docId === "number" ? stamp.docId : null,
+        role: typeof stamp?.role === "string" ? stamp.role : null });
     });
     context.on("response", (response) => {
       // The response carries its OWN request's stamp via response.request().
       // A missing stamp fails closed downstream and never falls back to
-      // sampling the live global counter.
+      // sampling the live global counter. opId/docId/role join the same way.
       const request = response.request();
       const stamp = requestIds.get(request);
       const entry = ledgerEntry(request.method(), request.url());
@@ -684,6 +721,9 @@ async function launchPlaywright(runId) {
         epoch: typeof stamp?.epoch === "number" ? stamp.epoch : null,
         serial: typeof stamp?.serial === "number" ? stamp.serial : null,
         seq: typeof stamp?.seq === "number" ? stamp.seq : null,
+        opId: typeof stamp?.opId === "number" ? stamp.opId : null,
+        docId: typeof stamp?.docId === "number" ? stamp.docId : null,
+        role: typeof stamp?.role === "string" ? stamp.role : null,
         frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
@@ -703,7 +743,9 @@ async function launchPlaywright(runId) {
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
       requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
-      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq }) };
+      operations, supersedes, mintOp, setRole,
+      navigateOp: (kind, reason, opts) => mintOp(kind, reason, opts),
+      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOpId, docId: currentDocId, role: currentRole }) };
   } catch (error) {
     try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
     try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
@@ -810,24 +852,31 @@ export function assertAuthedLedger(harness, label, origin) {
   }
 }
 
-// Exact-reqId accounted-anchor rule for authed ERR_ABORTED traffic (no URL
-// allowlist, no absolute abort ceiling, no blanket exemption, no phantom
-// fallback). Every request carries the reqId minted once at its request event;
-// every response carries its OWN response.request() reqId; every failure
-// carries its OWN reqId in its structured entry (the string form is retained
-// for message compatibility only and is never read for pairing). An abort
-// with reqId=A is exempt IFF a classified contract-status response (derived
-// from authedNetworkSpec, never invented here) carries reqId=B with B≠A, the
-// same method+origin+path, and B strictlyAfter A in (epoch, serial, seq) — a
-// true surviving stamp. Duplicate reqIds, missing reqIds, non-abort errors,
-// cross-origin failures and unpaired entries fail closed. The structural bound
-// is retained: aborts per key <= contract-status responses per key, so a
-// duplicate abort without its own surviving response still fails.
+// D5 accounted-anchor rule for authed ERR_ABORTED traffic (settle-then-assert,
+// opId/supersedes, explicit roles, one-to-one consumption, phantom deleted).
+// Requests carry {reqId,opId,docId,role} with role from the explicit
+// startup/action boundary (never URL-derived); responses/failures carry their
+// OWN request's reqId join and fail closed on mismatch (including opId/docId/
+// role mismatch with their own request). Acceptance is the conjunction of:
+// (1) exact identity (method/origin/path/role equal own request),
+// (2) ERR_ABORTED only,
+// (3) same origin as the asserted window,
+// (4) a distinct (reqId B≠A, opId differs) later response with the same
+//     method+origin+path+role and a contract status from authedNetworkSpec,
+// (5) an explicit supersession edge from the abort opId to the survivor opId
+//     (transitive closure over the supersedes table),
+// (6) one-to-one cardinality via anchor consumption (each survivor anchors at
+//     most one abort).
+// Forbidden and absent: latest/earliest/positional matching, URL-only role
+// inference, generic epoch/clock matching, phantom fallback, broader
+// allowlist, absolute ceiling, sleep-only timing, hidden retries. The legacy
+// (epoch,serial,seq) counters are diagnostics only and are never consulted.
 function buildAuthedAbortAnchor(label, harness, origin) {
   const requests = Array.isArray(harness.requests) ? harness.requests : [];
   const responses = Array.isArray(harness.networkResponses) ? harness.networkResponses : [];
   const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
   const compatStrings = Array.isArray(harness.failedRequests) ? harness.failedRequests : [];
+  const supersedes = Array.isArray(harness.supersedes) ? harness.supersedes : [];
   assert.equal(failures.length, compatStrings.length,
     `${label}: failure ledger drift: ${compatStrings.length} compat strings vs ${failures.length} structured entries (string form is message-compat only, never pairing)`);
   const contract = new Map();
@@ -836,28 +885,51 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     if (!contract.has(key)) contract.set(key, new Set());
     contract.get(key).add(entry.status);
   }
-  const orderOf = (entry) => [
-    Number.isSafeInteger(entry?.epoch) ? entry.epoch : 0,
-    Number.isSafeInteger(entry?.serial) ? entry.serial : 0,
-    Number.isSafeInteger(entry?.seq) ? entry.seq : 0,
-  ];
-  const strictlyAfter = (left, right) =>
-    left[0] > right[0] || (left[0] === right[0] && (left[1] > right[1] ||
-      (left[1] === right[1] && left[2] > right[2])));
-  // Exact request identity: one reqId per browser request. Missing or
-  // duplicate reqIds fail closed here, never at the first abort.
+  // Explicit supersession closure: edge from->to, transitively. No clocks.
+  const succ = new Map();
+  for (const edge of supersedes) {
+    assert.ok(Number.isSafeInteger(edge?.fromOpId) && Number.isSafeInteger(edge?.toOpId),
+      `${label}: supersedes edge must carry explicit from/to opIds`);
+    assert.ok(typeof edge?.scope === "string" && edge.scope.length > 0, `${label}: supersedes edge must carry scope`);
+    assert.ok(typeof edge?.cause === "string" && edge.cause.length > 0, `${label}: supersedes edge must carry cause`);
+    if (!succ.has(edge.fromOpId)) succ.set(edge.fromOpId, new Set());
+    succ.get(edge.fromOpId).add(edge.toOpId);
+  }
+  const supersededBy = (fromOp, toOp) => {
+    if (!Number.isSafeInteger(fromOp) || !Number.isSafeInteger(toOp) || fromOp === toOp) return false;
+    const seen = new Set([fromOp]);
+    const queue = [fromOp];
+    while (queue.length > 0) {
+      const cur = queue.shift();
+      const next = succ.get(cur);
+      if (!next) continue;
+      if (next.has(toOp)) return true;
+      for (const n of next) {
+        if (!seen.has(n)) { seen.add(n); queue.push(n); }
+      }
+    }
+    return false;
+  };
+  // Exact request identity: one reqId per browser request, with explicit
+  // opId/docId/role. Missing or duplicate reqIds fail closed here.
   const requestById = new Map();
   for (const entry of requests) {
     assert.ok(Number.isSafeInteger(entry?.reqId),
       `${label}: request without reqId fails closed: ${entry?.method ?? "?"} ${entry?.origin ?? "?"}${entry?.path ?? "?"}`);
     assert.ok(!requestById.has(entry.reqId),
       `${label}: duplicate reqId ${entry.reqId} fails closed`);
+    assert.ok(Number.isSafeInteger(entry?.opId),
+      `${label}: request without opId fails closed (reqId ${entry.reqId})`);
+    assert.ok(Number.isSafeInteger(entry?.docId),
+      `${label}: request without docId fails closed (reqId ${entry.reqId})`);
+    assert.ok(typeof entry?.role === "string" && entry.role.length > 0,
+      `${label}: request without explicit role fails closed (reqId ${entry.reqId}); role never derives from URL`);
     requestById.set(entry.reqId, entry);
   }
-  // Each response joins to its OWN request by exact reqId. Missing or unpaired
-  // reqIds fail closed; non-contract outcomes never anchor.
+  // Each response joins to its OWN request by exact reqId; opId/docId/role must
+  // match its own request (fail closed on mismatch). Non-contract outcomes
+  // never anchor.
   const anchorsByKey = new Map();
-  const contractResponsesByKey = new Map();
   for (const response of responses) {
     assert.ok(Number.isSafeInteger(response?.reqId),
       `${label}: response without its own request reqId fails closed (never sample the global counter): ${response?.method ?? "?"} ${response?.origin ?? "?"}${response?.path ?? "?"} -> ${response?.status ?? "?"}`);
@@ -866,17 +938,18 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: unpaired responded outcome has no browser request: ${response.method} ${response.origin}${response.path} -> ${response.status}`);
     assert.ok(response.method === own.method && response.origin === own.origin && response.path === own.path,
       `${label}: response identity must equal its own request identity: ${response.method} ${response.origin}${response.path} vs reqId ${response.reqId}`);
-    assert.deepEqual([response.epoch, response.serial, response.seq], [own.epoch, own.serial, own.seq],
-      `${label}: response stamp must equal its own request stamp (reqId ${response.reqId})`);
-    const key = `${response.method} ${response.origin}${response.path}`;
+    assert.ok(response.role === own.role,
+      `${label}: response role must equal its own request role (reqId ${response.reqId}); role never derives from URL`);
+    assert.ok(response.opId === own.opId && response.docId === own.docId,
+      `${label}: response opId/docId must equal its own request opId/docId (reqId ${response.reqId})`);
+    const key = `${response.method} ${response.origin}${response.path} ${response.role}`;
     const statuses = contract.get(`${response.method} ${response.path}`);
     if (!statuses || !statuses.has(response.status)) continue;
     if (!anchorsByKey.has(key)) anchorsByKey.set(key, []);
     anchorsByKey.get(key).push({ response, request: own });
-    contractResponsesByKey.set(key, (contractResponsesByKey.get(key) ?? 0) + 1);
   }
-  const abortsByKey = new Map();
   const seenFailureIds = new Set();
+  const consumedAnchors = new Set();
   return (entry) => {
     assert.ok(entry !== null && typeof entry === "object",
       `${label}: failure without a structured entry fails closed`);
@@ -887,7 +960,9 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     assert.ok(typeof entry?.method === "string" && typeof entry?.origin === "string" && typeof entry?.path === "string",
       `${label}: failed request must carry exact method/origin/path: ${text.slice(0, 200)}`);
     assert.ok(entry.origin === origin, `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
-    const key = `${entry.method} ${entry.origin}${entry.path}`;
+    assert.ok(typeof entry?.role === "string" && entry.role.length > 0,
+      `${label}: failure without explicit role fails closed: ${text.slice(0, 200)}`);
+    const key = `${entry.method} ${entry.origin}${entry.path} ${entry.role}`;
     assert.ok(Number.isSafeInteger(entry?.reqId),
       `${label}: phantom abort without a browser request has no reqId join (missing reqId fails closed): ${text.slice(0, 300)}`);
     assert.ok(!seenFailureIds.has(entry.reqId),
@@ -898,17 +973,23 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: unpaired abort has no browser request: ${text.slice(0, 300)}`);
     assert.ok(entry.method === own.method && entry.origin === own.origin && entry.path === own.path,
       `${label}: failure identity must equal its own request identity: ${text.slice(0, 200)} vs reqId ${entry.reqId}`);
-    assert.deepEqual([entry.epoch, entry.serial, entry.seq], [own.epoch, own.serial, own.seq],
-      `${label}: failure stamp must equal its own request stamp (reqId ${entry.reqId})`);
+    assert.ok(entry.role === own.role,
+      `${label}: failure role must equal its own request role (reqId ${entry.reqId}); role never derives from URL`);
+    assert.ok(entry.opId === own.opId && entry.docId === own.docId,
+      `${label}: failure opId/docId must equal its own request opId/docId (reqId ${entry.reqId})`);
     const anchors = anchorsByKey.get(key) ?? [];
-    const abortOrder = orderOf(own);
-    const anchored = anchors.some(({ request }) => request.reqId !== own.reqId && strictlyAfter(orderOf(request), abortOrder));
-    assert.ok(anchored,
-      `${label}: unanchored abort has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
-    const count = (abortsByKey.get(key) ?? 0) + 1;
-    abortsByKey.set(key, count);
-    assert.ok(count <= (contractResponsesByKey.get(key) ?? 0),
-      `${label}: structural bound breached, aborts per key must not exceed contract responses per key: ${key} aborts=${count} responses=${contractResponsesByKey.get(key) ?? 0}`);
+    let consumed = null;
+    for (const candidate of anchors) {
+      if (candidate.request.reqId === own.reqId) continue;
+      if (candidate.request.opId === own.opId) continue;
+      if (consumedAnchors.has(candidate.request.reqId)) continue;
+      if (!supersededBy(own.opId, candidate.request.opId)) continue;
+      consumed = candidate;
+      break;
+    }
+    assert.ok(consumed !== null,
+      `${label}: unanchored abort has no distinct later same-method+origin+path+role contract response with an explicit supersession edge and an unconsumed anchor: ${text.slice(0, 300)}`);
+    consumedAnchors.add(consumed.request.reqId);
   };
 }
 
@@ -932,115 +1013,154 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
   return { protocol: "eliotr.owner-e2e.authed-manifest-regression.v1", state: "PASS" };
 }
 
-// Deterministic regression proof for the exact-reqId accounted-anchor rule (no
-// browser required). Requests carry reqIds minted once at observation; each
-// response carries its OWN request's reqId; each failure carries its OWN reqId
-// in its structured entry (strings retained for message compat only, never
-// pairing). Positive superseded exemptions mirror the live authed window:
-// catalog+health probes aborted pre-navigation and surviving as 200s
-// post-navigation, and the pair probe aborted while the 204 pairing response
-// plus the one-use 403 reuse response survive. Negatives 1-3 prove sole aborts
-// fail; negative 4 proves the structural duplicate bound; negatives 5-8 prove
+// Deterministic regression proof for the D5 accounted-anchor rule (no browser
+// required). Requests carry {reqId,opId,docId,role} with role from the explicit
+// boundary (never URL-derived); responses/failures carry their OWN reqId join
+// and fail closed on mismatch. Positives mirror the live authed window:
+// reload-linked catalog+health probes aborted pre-navigation and surviving as
+// 200s post-navigation (roles catalog-read/health-read), and the pair-action
+// probe aborted while the 204 pairing response plus the one-use 403 reuse
+// response survive (role pair-action). Each positive carries an explicit
+// supersedes edge and consumes its anchor one-to-one. Negatives 1-3 prove sole
+// aborts fail; negative 4 proves one-to-one consumption; negatives 5-8 prove
 // non-abort, cross-origin, phantom and unpaired-response fail closure. Luna
-// negatives 9-10 prove the removed phantom heuristic stays dead: 9 is a
-// same-clock phantom (abort without a browser request beside a same-clock
-// contract response — the legacy failure-time clock would have anchored it);
-// 10 is a duplicate ambiguity (abort reusing the surviving response's own
-// reqId — positional earliest/latest accounting would have anchored it). Both
-// are accepted by the 0e5b275 heuristic and rejected by the exact reqId join.
-// The live owner E2E proves the accompanying window evidence the synthetic
-// ledger cannot carry: the surviving catalog 200 lists the admitted source id
-// and Chromium holds exactly one opaque HttpOnly session cookie.
+// negatives 9-10 prove the removed phantom/positional heuristics stay dead.
+// New negatives 11-12 prove the D5 conjuncts: 11 is a no-edge later-duplicate
+// (later contract response exists but no supersession edge — epoch-only
+// matching would anchor it); 12 is an unrelated-role survivor (same
+// method+origin+path, edge present, but role differs — role-blind matching
+// would anchor it). Both are accepted by the c4bcf2a epoch/role-blind rule and
+// rejected post-fix. Phantom fallback stays deleted. The live owner E2E proves
+// the accompanying window evidence the synthetic ledger cannot carry: the
+// surviving catalog 200 lists the admitted source id and Chromium holds exactly
+// one opaque HttpOnly session cookie.
 export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   let seq = 0;
   let nextReqId = 0;
-  const req = (method, path, epoch, resourceType = "fetch", serial = 0) => {
+  let nextOpId = 0;
+  let nextDocId = 0;
+  const mintOpId = () => { nextOpId += 1; return nextOpId; };
+  const mintDocId = () => { nextDocId += 1; return nextDocId; };
+  const edge = (fromOpId, toOpId, cause) => ({ fromOpId, toOpId, scope: "document", cause });
+  const req = (method, path, opId, role, docId, resourceType = "fetch") => {
     seq += 1;
     nextReqId += 1;
-    return { method, origin, path, resourceType, epoch, serial, seq, reqId: nextReqId, frame: `frame-epoch-${epoch}@${origin}/` };
+    return { method, origin, path, resourceType, epoch: 0, serial: 0, seq,
+      reqId: nextReqId, opId, docId, role, frame: `frame-doc-${docId}@${origin}/` };
   };
   const res = (request, status) => ({ method: request.method, origin: request.origin, path: request.path,
     resourceType: request.resourceType, epoch: request.epoch, serial: request.serial, seq: request.seq,
-    reqId: request.reqId, frame: request.frame, status, contentType: "application/json" });
+    reqId: request.reqId, opId: request.opId, docId: request.docId, role: request.role,
+    frame: request.frame, status, contentType: "application/json" });
   const failOf = (request, errorText = "net::ERR_ABORTED") => ({ text: `${request.method} ${request.origin}${request.path} :: ${errorText}`,
     method: request.method, origin: request.origin, path: request.path, errorText,
-    reqId: request.reqId, epoch: request.epoch, serial: request.serial, seq: request.seq });
-  const phantomOf = (method, path) => ({ text: `${method} ${origin}${path} :: net::ERR_ABORTED`,
-    method, origin, path, errorText: "net::ERR_ABORTED", reqId: null, epoch: null, serial: null, seq: null });
-  const harnessOf = ({ consoleErrors = [], requests = [], networkResponses = [], failures = [], ...rest }) => ({
-    consoleErrors, pageErrors: [], requests, networkResponses,
+    reqId: request.reqId, epoch: request.epoch, serial: request.serial, seq: request.seq,
+    opId: request.opId, docId: request.docId, role: request.role });
+  const phantomOf = (method, path, role = "catalog-read") => ({ text: `${method} ${origin}${path} :: net::ERR_ABORTED`,
+    method, origin, path, errorText: "net::ERR_ABORTED", reqId: null, epoch: null, serial: null, seq: null,
+    opId: null, docId: null, role });
+  const harnessOf = ({ consoleErrors = [], requests = [], networkResponses = [], failures = [], supersedes = [], ...rest }) => ({
+    consoleErrors, pageErrors: [], requests, networkResponses, supersedes,
     failedRequests: failures.map((entry) => entry.text),
     failedRequestEntries: failures, ...rest });
   const catalog = "/api/v1/research/catalog?limit=20";
   const health = "/api/v1/system/health";
   const pair = "/__local/pair";
   const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
-  // Positive 1: catalog+health aborted in the issuing epoch, surviving 200s in
-  // the next navigation epoch. Each abort joins by its OWN reqId; each 200
-  // carries its surviving retry's reqId.
-  const catalogIssued = req("GET", catalog, 0);
-  const healthIssued = req("GET", health, 0);
-  const catalogSurvived = req("GET", catalog, 1);
-  const healthSurvived = req("GET", health, 1);
+  // Positive 1: reload-linked catalog+health aborts with surviving 200s, explicit
+  // edge, matching roles, one-to-one consumption.
+  const opPre1 = mintOpId();
+  const docPre1 = mintDocId();
+  const opPost1 = mintOpId();
+  const docPost1 = mintDocId();
+  const catalogIssued = req("GET", catalog, opPre1, "catalog-read", docPre1);
+  const healthIssued = req("GET", health, opPre1, "health-read", docPre1);
+  const catalogSurvived = req("GET", catalog, opPost1, "catalog-read", docPost1);
+  const healthSurvived = req("GET", health, opPost1, "health-read", docPost1);
   assert.doesNotThrow(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [catalogIssued, healthIssued, catalogSurvived, healthSurvived],
     networkResponses: [res(catalogSurvived, 200), res(healthSurvived, 200)],
     failures: [failOf(catalogIssued), failOf(healthIssued)],
-  }), "epoch-positive-catalog-health", origin), "superseded catalog+health aborts with surviving 200s must pass");
-  // Positive 2: pair abort anchored by the 204 pairing response with the
+    supersedes: [edge(opPre1, opPost1, "reload")],
+  }), "epoch-positive-catalog-health", origin), "reload-linked catalog+health aborts with surviving 200s must pass");
+  // Positive 2: pair-action abort anchored by the 204 pairing response with the
   // one-use 403 reuse response and console noise present.
-  const pairProbe = req("POST", pair, 1);
-  const pairRetry = req("POST", pair, 1);
-  const pairSurvived = req("POST", pair, 2);
+  const opPre2 = mintOpId();
+  const docPre2 = mintDocId();
+  const opPost2 = mintOpId();
+  const docPost2 = mintDocId();
+  const pairProbe = req("POST", pair, opPre2, "pair-action", docPre2);
+  const pairRetry = req("POST", pair, opPost2, "pair-action", docPost2);
+  const pairSurvivedDistinct = req("POST", pair, opPost2, "pair-action", docPost2);
   assert.doesNotThrow(() => assertAuthedLedger(harnessOf({
     consoleErrors: [pair403],
-    requests: [pairProbe, pairRetry, pairSurvived],
-    networkResponses: [res(pairSurvived, 204), res(pairRetry, 403)],
+    requests: [pairProbe, pairRetry, pairSurvivedDistinct],
+    networkResponses: [res(pairSurvivedDistinct, 204), res(pairRetry, 403)],
     failures: [failOf(pairProbe)],
-  }), "epoch-positive-pair", origin), "superseded pair abort with surviving 204+403-reuse must pass");
+    supersedes: [edge(opPre2, opPost2, "pair-action")],
+  }), "epoch-positive-pair", origin), "pair-action abort with surviving 204+403-reuse must pass");
   // Negatives 1-3: sole aborts with no paired contract success must fail.
+  const soleRoles = { [health]: "health-read", [catalog]: "catalog-read", [pair]: "pair-action" };
   for (const [method, path] of [["GET", health], ["GET", catalog], ["POST", pair]]) {
-    const issued = req(method, path, 0);
+    const opSole = mintOpId();
+    const docSole = mintDocId();
+    const issued = req(method, path, opSole, soleRoles[path], docSole);
     assert.throws(() => assertAuthedLedger(harnessOf({
       consoleErrors: [],
       requests: [issued],
       networkResponses: [],
       failures: [failOf(issued)],
-    }), `epoch-negative-sole-${path}`, origin), /classified responded outcome/,
+      supersedes: [],
+    }), `epoch-negative-sole-${path}`, origin), /distinct later same-method/,
       `sole abort of ${method} ${path} with no paired success must fail`);
   }
-  // Negative 4: duplicate bound (two aborts, one surviving response) fails.
-  const dupIssuedA = req("GET", catalog, 0);
-  const dupIssuedB = req("GET", catalog, 0);
-  const dupSurvived = req("GET", catalog, 1);
+  // Negative 4: one-to-one consumption (two aborts, one surviving anchor) fails.
+  const opDupPre = mintOpId();
+  const docDupPre = mintDocId();
+  const opDupPost = mintOpId();
+  const docDupPost = mintDocId();
+  const dupIssuedA = req("GET", catalog, opDupPre, "catalog-read", docDupPre);
+  const dupIssuedB = req("GET", catalog, opDupPre, "catalog-read", docDupPre);
+  const dupSurvived = req("GET", catalog, opDupPost, "catalog-read", docDupPost);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [dupIssuedA, dupIssuedB, dupSurvived],
     networkResponses: [res(dupSurvived, 200)],
     failures: [failOf(dupIssuedA), failOf(dupIssuedB)],
-  }), "epoch-negative-duplicate-bound", origin), /structural bound/,
-    "duplicate abort without its own surviving response must fail");
+    supersedes: [edge(opDupPre, opDupPost, "reload")],
+  }), "epoch-negative-duplicate-bound", origin), /unconsumed anchor/,
+    "duplicate abort without its own surviving anchor must fail");
   // Negative 5: non-abort failure beside a valid anchor still fails.
-  const connIssued = req("GET", catalog, 0);
-  const connSurvived = req("GET", catalog, 1);
+  const opConnPre = mintOpId();
+  const docConnPre = mintDocId();
+  const opConnPost = mintOpId();
+  const docConnPost = mintDocId();
+  const connIssued = req("GET", catalog, opConnPre, "catalog-read", docConnPre);
+  const connSurvived = req("GET", catalog, opConnPost, "catalog-read", docConnPost);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [connIssued, connSurvived],
     networkResponses: [res(connSurvived, 200)],
     failures: [{ ...failOf(connIssued), errorText: "net::ERR_CONNECTION_REFUSED",
       text: `GET ${origin}${catalog} :: net::ERR_CONNECTION_REFUSED` }],
+    supersedes: [edge(opConnPre, opConnPost, "reload")],
   }), "epoch-negative-non-abort", origin), /non-abort failure denied/,
     "non-abort failure must fail closed even with an anchor");
   // Negative 6: cross-origin abort fails even when the key matches elsewhere.
-  const crossIssued = req("GET", catalog, 0);
-  const crossSurvived = req("GET", catalog, 1);
+  const opCrossPre = mintOpId();
+  const docCrossPre = mintDocId();
+  const opCrossPost = mintOpId();
+  const docCrossPost = mintDocId();
+  const crossIssued = req("GET", catalog, opCrossPre, "catalog-read", docCrossPre);
+  const crossSurvived = req("GET", catalog, opCrossPost, "catalog-read", docCrossPost);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [crossIssued, crossSurvived],
     networkResponses: [res(crossSurvived, 200)],
     failures: [{ ...failOf(crossIssued), origin: "http://127.0.0.1:2",
       text: `GET http://127.0.0.1:2${catalog} :: net::ERR_ABORTED` }],
+    supersedes: [edge(opCrossPre, opCrossPost, "reload")],
   }), "epoch-negative-cross-origin", origin), /cross-origin/,
     "cross-origin abort must fail closed");
   // Negative 7: phantom abort with no browser request and no anchor fails.
@@ -1049,48 +1169,89 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
     requests: [],
     networkResponses: [],
     failures: [phantomOf("GET", catalog)],
+    supersedes: [],
   }), "epoch-negative-phantom-unanchored", origin), /phantom abort/,
     "phantom abort without a classified anchor must fail closed");
   // Negative 8: a responded outcome with no browser request fails as unpaired.
-  const orphan = req("GET", catalog, 1);
+  const opOrphan = mintOpId();
+  const docOrphan = mintDocId();
+  const orphan = req("GET", catalog, opOrphan, "catalog-read", docOrphan);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [],
     networkResponses: [res(orphan, 200)],
     failures: [],
+    supersedes: [],
   }), "epoch-negative-unpaired-response", origin), /unpaired responded outcome/,
     "response without a browser request must fail closed");
   // Luna negative 9 (same-clock phantom): the abort has no browser request
-  // (missing reqId) beside a same-clock classified 200. The removed
-  // failure-time-clock heuristic anchors it (same epoch, serial >= failure
-  // serial, so the legacy clock below would exempt); the exact reqId join has
-  // no A to join and fails closed. Accepted by 0e5b275, rejected post-fix.
-  const luna9Survived = req("GET", health, 1);
+  // (missing reqId) beside a classified 200. Accepted by 0e5b275, rejected here.
+  const opLuna9 = mintOpId();
+  const docLuna9 = mintDocId();
+  const luna9Survived = req("GET", health, opLuna9, "health-read", docLuna9);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [luna9Survived],
     networkResponses: [res(luna9Survived, 200)],
-    failures: [phantomOf("GET", health)],
+    failures: [phantomOf("GET", health, "health-read")],
+    supersedes: [],
     failedRequestClock: [{ epoch: 1, serial: 0 }],
   }), "epoch-negative-luna9-same-clock-phantom", origin), /phantom abort without a browser request/,
     "same-clock phantom abort without a browser request must fail closed");
-  // Luna negative 10 (duplicate ambiguity): the abort reuses the surviving
-  // response's OWN reqId. Positional earliest/latest accounting splits them
-  // (abort takes the superseded probe, the response takes the retry) and
-  // anchors; the exact join requires B≠A and fails closed. Accepted by
-  // 0e5b275, rejected post-fix.
-  const luna10Superseded = req("GET", catalog, 0);
-  const luna10Survived = req("GET", catalog, 1);
+  // Luna negative 10 (reused reqId): the abort reuses the surviving response's
+  // OWN reqId, so no distinct later anchor exists. Accepted by 0e5b275,
+  // rejected here.
+  const opLuna10Pre = mintOpId();
+  const docLuna10Pre = mintDocId();
+  const opLuna10Post = mintOpId();
+  const docLuna10Post = mintDocId();
+  const luna10Superseded = req("GET", catalog, opLuna10Pre, "catalog-read", docLuna10Pre);
+  const luna10Survived = req("GET", catalog, opLuna10Post, "catalog-read", docLuna10Post);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
     requests: [luna10Superseded, luna10Survived],
     networkResponses: [res(luna10Survived, 200)],
     failures: [failOf(luna10Survived)],
-  }), "epoch-negative-luna10-duplicate-ambiguity", origin), /unanchored abort/,
+    supersedes: [edge(opLuna10Pre, opLuna10Post, "reload")],
+  }), "epoch-negative-luna10-duplicate-ambiguity", origin), /distinct later same-method/,
     "abort reusing the surviving response reqId must fail closed");
+  // Negative 11 (no-edge later-duplicate): a later contract response exists
+  // with the same identity+role, but no supersession edge links abort->survivor.
+  // Epoch-only matching (c4bcf2a) anchors it; D5 denies for missing edge.
+  const opNoEdgePre = mintOpId();
+  const docNoEdgePre = mintDocId();
+  const opNoEdgePost = mintOpId();
+  const docNoEdgePost = mintDocId();
+  const noEdgeIssued = req("GET", catalog, opNoEdgePre, "catalog-read", docNoEdgePre);
+  const noEdgeSurvived = req("GET", catalog, opNoEdgePost, "catalog-read", docNoEdgePost);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [noEdgeIssued, noEdgeSurvived],
+    networkResponses: [res(noEdgeSurvived, 200)],
+    failures: [failOf(noEdgeIssued)],
+    supersedes: [],
+  }), "epoch-negative-no-edge-later-duplicate", origin), /explicit supersession edge/,
+    "later duplicate without an explicit supersession edge must fail closed");
+  // Negative 12 (unrelated-role): same method+origin+path and an edge exist,
+  // but the survivor carries a different role. Role-blind matching (c4bcf2a)
+  // anchors it; D5 denies on role mismatch.
+  const opRolePre = mintOpId();
+  const docRolePre = mintDocId();
+  const opRolePost = mintOpId();
+  const docRolePost = mintDocId();
+  const roleIssued = req("GET", catalog, opRolePre, "catalog-read", docRolePre);
+  const roleSurvived = req("GET", catalog, opRolePost, "pair-action", docRolePost);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [roleIssued, roleSurvived],
+    networkResponses: [res(roleSurvived, 200)],
+    failures: [failOf(roleIssued)],
+    supersedes: [edge(opRolePre, opRolePost, "reload")],
+  }), "epoch-negative-unrelated-role", origin), /distinct later same-method/,
+    "survivor with an unrelated role must fail closed");
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 10,
-    coverage: "synthetic ledger mechanics; sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 12,
+    coverage: "D5 ledger mechanics (opId/supersedes/role/consumption); sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
@@ -1151,9 +1312,34 @@ export function summarizePhaseLedger(harness) {
   };
 }
 
-async function settleLedger(page) {
-  // Let straggler responses land before pairing; leftovers still fail below.
+async function settleLedger(page, harness) {
+  // Settle-then-assert: networkidle is primary (existing 10s bound), then a
+  // bounded pending-callback drain lets already-queued Playwright
+  // request/response/requestfailed callbacks land before any ledger assert.
+  // No sleep-only timing: without networkidle this drain alone proves nothing;
+  // leftovers still fail closed downstream. Never hides retries: retry state
+  // stays in the ledger and must still pair or anchor.
+  const deadline = Date.now() + 10000;
   try { await page.waitForLoadState("networkidle", { timeout: 10000 }); } catch { /* unpaired traffic fails closed */ }
+  try {
+    for (let round = 0; round < 5; round += 1) {
+      if (Date.now() >= deadline) break;
+      try {
+        await page.evaluate(() => new Promise((resolve) => {
+          try { requestAnimationFrame(() => setTimeout(resolve, 0)); }
+          catch { setTimeout(resolve, 0); }
+        }));
+      } catch { /* in-page drain is best-effort; ledger asserts stay exact */ }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (!harness || !Array.isArray(harness.requests)) break;
+      const count = harness.requests.length + harness.networkResponses.length +
+        (Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries.length : harness.failedRequests.length);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const recount = harness.requests.length + harness.networkResponses.length +
+        (Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries.length : harness.failedRequests.length);
+      if (count === recount) break;
+    }
+  } catch { /* drain failures still fail closed downstream */ }
 }
 
 // Exact per-phase traffic contracts. Allowlists are upper bounds: every entry is
@@ -1976,14 +2162,16 @@ export async function runOwnerE2E() {
       if (!visitedOrigins.includes(origin)) visitedOrigins.push(origin);
       return [...visitedOrigins];
     };
+    playwright.setRole("startup-probe");
+    playwright.mintOp("harness-navigation", "goto-unauthenticated", { scope: worker.origin, cause: "goto" });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const unauthHasPrivate = await playwright.evaluate(hasPrivateLibraryMarker);
     assert.equal(unauthHasPrivate, false, "unauthenticated PWA must not render private Library rows");
     const unauthStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(unauthStorage, "unauthenticated");
+    await settleLedger(playwright.page, playwright);
     assertUnauthLedger(playwright, "unauthenticated", worker.origin);
-    await settleLedger(playwright.page);
     assertPhaseNetwork(playwright, "unauthenticated", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases = { unauthenticated: summarizePhaseLedger(playwright) };
     playwright.resetLedger();
@@ -1997,8 +2185,11 @@ export async function runOwnerE2E() {
     const secret = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
     assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
+    playwright.setRole("authed-window");
+    playwright.mintOp("harness-navigation", "goto-pairing", { scope: bridge.origin, cause: "goto-pairing" });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+    playwright.mintOp("harness-action", "click-connect", { scope: bridge.origin, cause: "pair-action" });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     // No source is admitted yet, so pairing proves the session cookie only; the
@@ -2125,6 +2316,7 @@ export async function runOwnerE2E() {
     // Post-import retrieval through the real browser: reload the paired PWA so
     // its same-origin catalog fetch (closed over by the phase ledger below)
     // renders the admitted source row inside Chromium itself.
+    playwright.mintOp("harness-navigation", "reload-authed-retrieval", { scope: bridge.origin, cause: "reload" });
     await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -2142,8 +2334,8 @@ export async function runOwnerE2E() {
     const authedStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(authedStorage, "authed");
     assert.ok(!playwright.consoleErrors.join("|").includes("eyJ"), "authed console must hold no JWT");
+    await settleLedger(playwright.page, playwright);
     assertAuthedLedger(playwright, "authed", bridge.origin);
-    await settleLedger(playwright.page);
     // The authed window closes over pairing AND the full browser-originated
     // artifact lifecycle: every artifact path returned by the browser import
     // (exact method/path/status) plus the bearer/prepare replays and the
@@ -2180,6 +2372,8 @@ export async function runOwnerE2E() {
       const matrixBefore = protectedD1Counts();
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
+      playwright.setRole("jwt-matrix");
+      playwright.mintOp("harness-navigation", "goto-jwt-matrix", { scope: worker.origin, cause: "goto" });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       const matrixCases = [
@@ -2216,7 +2410,7 @@ export async function runOwnerE2E() {
       }
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "browser JWT matrix must not disturb the admitted evidence object");
-      await settleLedger(playwright.page);
+      await settleLedger(playwright.page, playwright);
       {
         const matrixSpec = unauthNetworkSpec(worker.origin);
         matrixSpec.api.push({ method: "GET", path: "/api/v1/system/session", status: 401 });
@@ -2272,12 +2466,14 @@ export async function runOwnerE2E() {
     try { await bridge?.close(); } catch { /* Close stale pre-restart bridge before post-restart PWA readback. */ }
     bridge = undefined;
     playwright.resetLedger();
+    playwright.setRole("startup-probe");
+    playwright.mintOp("harness-navigation", "goto-post-restart", { scope: worker.origin, cause: "goto" });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const restartStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(restartStorage, "post-restart");
+    await settleLedger(playwright.page, playwright);
     assertUnauthLedger(playwright, "post-restart", worker.origin);
-    await settleLedger(playwright.page);
     assertPhaseNetwork(playwright, "post-restart", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases.post_restart = summarizePhaseLedger(playwright);
     receipt.persistence = "PASS";
@@ -2289,8 +2485,11 @@ export async function runOwnerE2E() {
     assert.ok(!bridge.pairingUrl.includes("eyJ"), "re-pairing URL must never carry JWT material");
     const secret2 = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret2 === "string" && secret2.length >= 32 && !secret2.includes("eyJ"), "re-pairing secret must be opaque");
+    playwright.setRole("authed-window");
+    playwright.mintOp("harness-navigation", "goto-repairing", { scope: bridge.origin, cause: "goto-pairing" });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+    playwright.mintOp("harness-action", "click-reconnect", { scope: bridge.origin, cause: "pair-action" });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -2301,8 +2500,11 @@ export async function runOwnerE2E() {
     assert.ok(!String(reNew[0].value).includes("eyJ"), "re-paired cookie must be opaque");
     const reSessionName = reNew[0].name;
     playwright.resetLedger();
+    playwright.setRole("logout-action");
+    playwright.mintOp("harness-navigation", "goto-logout", { scope: bridge.origin, cause: "goto" });
     await playwright.page.goto(`${bridge.origin}/__local/`, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#logout", { timeout: 15000 });
+    playwright.mintOp("harness-action", "click-logout", { scope: bridge.origin, cause: "logout-action" });
     await playwright.page.click("#logout", { timeout: 15000 });
     await playwright.page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Local session closed"), null, { timeout: 15000 });
     const clearedCookies = await playwright.context.cookies();
@@ -2316,6 +2518,7 @@ export async function runOwnerE2E() {
     assert.equal(deniedViaBrowser.status, 401, "browser-originated private API must be exact 401 after logout");
     assert.ok(deniedViaBrowser.url.includes("/api/v1/research/catalog"), "denied URL must be the exact private catalog route");
     assert.deepEqual(playwright.pageErrors, [], "page errors must stay empty after browser logout");
+    await settleLedger(playwright.page, playwright);
     {
       const allowedLogoutAbort = `POST ${bridge.origin}/__local/logout :: net::ERR_ABORTED`;
       assert.ok(playwright.failedRequests.length <= 1,
@@ -2331,18 +2534,19 @@ export async function runOwnerE2E() {
         `deliberate post-logout denial must be the exact catalog 401, got: ${logoutConsole[0].slice(0, 300)}`);
       assert.ok(!logoutConsole[0].includes("eyJ"), "deliberate denial must not leak JWT");
     }
-    await settleLedger(playwright.page);
     assertPhaseNetwork(playwright, "logout", { ...logoutNetworkSpec(bridge.origin), workerOrigins: trackOrigin(bridge.origin) });
     receipt.network_ledger_phases.logout = summarizePhaseLedger(playwright);
     playwright.resetLedger();
+    playwright.setRole("startup-probe");
+    playwright.mintOp("harness-navigation", "goto-post-logout-clean", { scope: worker.origin, cause: "goto" });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const loggedOutHasPrivate = await playwright.evaluate(bodyIncludes, sourceId);
     assert.equal(loggedOutHasPrivate, false, "Library must hide the source after logout");
     const loggedOutStorage = await readBrowserStorage(playwright.page);
     assertNoPrivateStorage(loggedOutStorage, "post-logout");
+    await settleLedger(playwright.page, playwright);
     assertUnauthLedger(playwright, "post-logout-clean", worker.origin);
-    await settleLedger(playwright.page);
     assertPhaseNetwork(playwright, "post-logout-clean", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases.post_logout_clean = summarizePhaseLedger(playwright);
     // Real JWKS key rollover (distinct from the duplicate-kid 503 negative):
@@ -2390,6 +2594,8 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
       assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       playwright.resetLedger();
+      playwright.setRole("rotation-window");
+      playwright.mintOp("harness-navigation", "goto-rotation", { scope: worker.origin, cause: "goto" });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       const oldDeniedBrowser = await browserJson(playwright.page, ledger, "/api/v1/system/session", {
@@ -2417,8 +2623,10 @@ export async function runOwnerE2E() {
       const rotationSecret = bridge.pairingUrl.split("#")[1];
       assert.ok(typeof rotationSecret === "string" && rotationSecret.length >= 32 && !rotationSecret.includes("eyJ"),
         "rotation pairing secret must be opaque");
+      playwright.mintOp("harness-navigation", "goto-rotation-pairing", { scope: bridge.origin, cause: "goto-pairing" });
       await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForSelector("#connect", { timeout: 15000 });
+      playwright.mintOp("harness-action", "click-rotation-connect", { scope: bridge.origin, cause: "pair-action" });
       await playwright.page.click("#connect", { timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -2433,7 +2641,7 @@ export async function runOwnerE2E() {
       assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "rotation must not disturb the admitted evidence object");
-      await settleLedger(playwright.page);
+      await settleLedger(playwright.page, playwright);
       {
         const rotationOrigins = [worker.origin, bridge.origin];
         const rotationApi = [
@@ -2473,7 +2681,7 @@ export async function runOwnerE2E() {
       return response.status;
     });
     assert.equal(injectedStatus, 404, "injected unexpected route must answer 404 from the real Worker");
-    await settleLedger(playwright.page);
+    await settleLedger(playwright.page, playwright);
     let ledgerTripped = false;
     try {
       assertPhaseNetwork(playwright, "ledger-negative", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
