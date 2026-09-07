@@ -263,12 +263,17 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     copy.set(bytes);
     return [...new Uint8Array(await crypto.subtle.digest("SHA-256", copy.buffer))].map((v) => v.toString(16).padStart(2, "0")).join("");
   }
-  function mutatedDb(variant0018: string): D1Database {
+  function mutatedDb(variant0018: string): { db: DatabaseSync; coreDb: D1Database } {
     const db = new DatabaseSync(":memory:");
     for (const m of MIGRATIONS.slice(0, 13)) db.exec(m);
     db.exec(variant0018);
+    // Complete intended chain: the forward 0019 upgrade runs over the edited
+    // 0018, exactly as the authoritative runner would apply it. Rejection
+    // below is therefore mutation/digest/fingerprint detection, never an
+    // absent-schema artifact from a skipped 0019.
+    db.exec(m0019);
     for (const [i, n] of APPLIED.entries()) db.prepare("INSERT INTO d1_migrations (name, applied_at) VALUES (?1,?2)").run(n, `${T.slice(0, 10)}T00:00:${String(i).padStart(2, "0")}.000Z`);
-    return d1Database(db);
+    return { db, coreDb: d1Database(db) };
   }
   it("binds the expected migration content digests to the tracked 0018 + 0019 files", async () => {
     expect(await shaHex(m0018.replace(/\r\n/g, "\n"))).toBe(O2_EXPECTED_MIGRATION_DIGEST);
@@ -306,9 +311,24 @@ describe("ER-34 O2 FIX3 canonical migration authority", () => {
     ["dropped UNIQUE index", LF0018.replace("CREATE UNIQUE INDEX IF NOT EXISTS backup_offsite_copy_part_nonce_unique\n  ON backup_offsite_copy_part(copy_id, nonce_hex);", "")],
     ["added DEFAULT", LF0018.replace("updated_at TEXT NOT NULL,\n  PRIMARY KEY (copy_id, part_ref)", "updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z',\n  PRIMARY KEY (copy_id, part_ref)")],
     ["altered PRIMARY KEY", LF0018.replace("PRIMARY KEY (copy_id, part_ref)", "PRIMARY KEY (copy_id)")],
-    ["dropped STRICT", LF0018.replace("PRIMARY KEY (key_generation, nonce_hex)\n) STRICT;", "PRIMARY KEY (key_generation, nonce_hex)\n);")],
+    ["dropped STRICT", LF0018.replace("state TEXT NOT NULL CHECK (state IN ('OPEN','ACCEPTED','REJECTED')),\n  created_at TEXT NOT NULL\n) STRICT;", "state TEXT NOT NULL CHECK (state IN ('OPEN','ACCEPTED','REJECTED')),\n  created_at TEXT NOT NULL\n);")],
     ["reordered column", LF0018.replace("authorized_at TEXT NOT NULL,\n  revoked_at TEXT,", "revoked_at TEXT,\n  authorized_at TEXT NOT NULL,")],
   ])("rejects edited migration variant: %s", async (_label, variant) => {
-    await expect(assertO2MigrationAuthority(mutatedDb(variant))).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
+    // File binding: the edited variant digest differs from the pinned parent
+    // digest, so the content check binds the gate to the exact tracked bytes.
+    expect(await shaHex(variant)).not.toBe(O2_EXPECTED_MIGRATION_DIGEST);
+    const { db, coreDb } = mutatedDb(variant);
+    // Non-vacuous chain proof: BOTH ledger rows are recorded, every O2 table
+    // is present, and 0019 applied cleanly over the variant -- so the gate
+    // rejection below is shape/fingerprint detection of the mutation itself,
+    // not an absent ledger row or an unapplied upgrade.
+    const ledger = (db.prepare("SELECT name FROM d1_migrations").all() as { name: string }[]).map((r) => r.name);
+    expect(ledger).toContain("0018_backup_o2_replay_authority.sql");
+    expect(ledger).toContain("0019_backup_o2_replay_authority_fix.sql");
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'backup_%'").all() as { name: string }[]).map((r) => r.name);
+    for (const required of ["backup_epoch_receipt", "backup_offsite_expiry", "backup_destination_authority", "backup_offsite_copy_part", "backup_offsite_copy_receipt", "backup_export_cut", "backup_offsite_nonce_authority"]) {
+      expect(tables).toContain(required);
+    }
+    await expect(assertO2MigrationAuthority(coreDb)).rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
   });
 });
