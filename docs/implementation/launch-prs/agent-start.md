@@ -1,23 +1,36 @@
 # Start an agent on a launch checkpoint
 
-Use current main plus the selected existing PR head. Reviewed code baseline is f94bd7a; do not start
-from the old 92118fa/2e554f2 planning tips. Task refresh changes documentation only; it launches no agent,
-implements no missing feature, and authorizes no deployment.
+New to the repository? Read [`docs/START-HERE.md`](../../START-HERE.md) first; this file covers only
+the launch-checkpoint procedure.
+
+Start from current `main` plus the selected existing theme PR head. Task refresh changes documentation
+only; it launches no agent, implements no missing feature, and authorizes no deployment.
 
 Read [execution-contract.md](execution-contract.md), the selected numbered plan and its cited canonical
 sections/ER packets. The plan's tests and good-result conditions are mandatory, not suggestions.
 
-## Default first wave: three independent code tasks
+## Selecting a checkpoint
 
-| Agent | PR / checkpoint | Exact assignment |
-|---|---|---|
-| Retrieval | #90 Q1 | Reuse `lanes.ts`, current managed decoder and real ingest/outbox/projection executor. Implement and test one bounded parameterized D1 lane fed from an admitted source; no pre-seeded finished index and no PWA edits. |
-| Google | #95 G1 | Wire reviewed server configuration and owner-only begin into the existing OAuth admission service. Derive owner/session from verified Access, never request claims. Do not rewrite RSA/state/PKCE/vault or activate an unqualified exchange. Coordinate HTTP/Env through ER-21/24. |
-| Rust | #97 K1 | Audit current shared vectors and close initial namespace-owner identity parity using the actual ER-44 implementation plus native/Wasm execution. Do not rewrite existing primitives, change stored hashes or promote an untested family. |
+**Do not hardcode a wave of assignments into this document.** An earlier revision named three specific
+first-wave tasks; all three were completed and merged while this file kept telling new agents to start
+them. Derive the open work instead:
 
-A fourth UI/runtime agent is not automatically authorized. #98 L1 may replace one slot to establish the
-shared Playwright/local-storage harness. Other independent checkpoint work may be scheduled only after
-exact-path conflict review. All UI belongs to ER-25; all shared code is integrator-serialized.
+```bash
+git fetch origin --prune && git log --oneline -15 origin/main
+gh pr list --state open --limit 20        # which themes are open, and which are red
+gh pr view <theme-PR> --json body         # unchecked boxes in the plan are the remaining work
+pnpm check:implementation-status
+```
+
+An unchecked box in a theme plan is remaining work even when the surrounding package compiles. A
+checked box plus a merged checkpoint PR is done. The dependency graph in [README.md](README.md) says
+which checkpoint outputs release which downstream work — a blocked integration task never authorizes
+a stub service; take an independent predecessor or report the precise missing dependency.
+
+Concurrency is bounded by [`branch-discipline.md`](../branch-discipline.md), not by the number of open
+themes: one agent holds one theme, one branch and one worktree at a time. The nine reserved branch
+names in `infra/github/branch-hygiene.json` are planning reservations, not authorized parallel
+worktrees. All UI belongs to ER-25; all shared code is integrator-serialized.
 
 ## Start/finish message an agent must post in its PR
 
@@ -47,7 +60,8 @@ optional Gemini is not a substitute. First admission deliberately returns AUTHOR
 
 Rust: M1 plus narrow canonical JSON/SHA/generation/residency shadow primitives exist. They accept their
 current schema domains (including safe-integer canonical-body rules), not every imaginable JSON value.
-M5 is Wasm/shadow, M6 promotion and M7 superseded TS removal. See #97's per-family checklist.
+M5 is Wasm/shadow, M6 promotion and M7 superseded TS removal. The per-family checklist is
+[09-rust.md](09-rust.md), merged to main; PR #97 is closed and is not the current reference.
 
 ## When account agents may start
 

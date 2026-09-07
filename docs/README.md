@@ -1,5 +1,7 @@
 # docs
 
+Start at [START-HERE.md](START-HERE.md) — the single entry point for an agent joining this repository.
+
 | Directory | Contents |
 |---|---|
 | `architecture/` | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md) — the standalone authoritative architecture and implementation master for this service. |

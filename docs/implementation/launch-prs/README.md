@@ -1,10 +1,15 @@
 # Launch implementation assignments
 
-Code baseline reviewed: `f94bd7a2a8e94df7d5365f120927708d7a287b43`.
 Authority: ELIOT_RESEARCH v29.1; LANGUAGE_RUNTIME_CONTRACT v1.0; accepted ADRs.
-Read [execution-contract.md](execution-contract.md) first. Each theme plan contains small numbered
-checkpoints with files, implementation steps, tests and observable pass conditions. Unchecked means
-not done, even when the surrounding package compiles. The plans are on their named PR heads until merged.
+Read [`docs/START-HERE.md`](../../START-HERE.md) if you are new, then
+[execution-contract.md](execution-contract.md). Each theme plan contains small numbered checkpoints
+with files, implementation steps, tests and observable pass conditions. Unchecked means not done, even
+when the surrounding package compiles. Plans live on their named PR heads until merged.
+
+The table below is the **theme map, not a status board.** PR numbers and checkpoint names age; the
+"first local checkpoint" column records where each theme originally started, not what is open now.
+Derive current status with `gh pr list --state open` and the theme's own checklist, as described in
+[agent-start.md](agent-start.md).
 
 | PR | Plan on its head | Canonical coverage | First local checkpoint |
 |---|---|---|---|
@@ -16,7 +21,7 @@ not done, even when the surrounding package compiles. The plans are on their nam
 | #94 | `06-wiki-reports.md` | §§5.4–5.5,9,19.6; Wiki/artifacts/atoms/arguments | P1 immutable publication storage |
 | #95 | `07-google.md` | §§12.3–12.10,13.4–13.6,19.7; required Drive Exchange | G1 owner configuration/begin |
 | #96 | `08-recovery.md` | §§10,13.7–13.8,15–16,19; Steward/erasure/restore/release | O1 shared probe/evidence runner |
-| #97 | `09-rust.md` | language §§5–10; M2–M7 per-family migration | K1 missing identity parity |
+| Rust (#97 closed; plan `09-rust.md` merged to main) | `09-rust.md` | language §§5–10; M2–M7 per-family migration | K1 missing identity parity |
 
 These are implementation queues, not nine running agents. Use the nine exact reserved names from
 `infra/github/branch-hygiene.json`, not variant branches. #98 carries the unfinished Library acceptance;

@@ -1,5 +1,10 @@
 # Eliot Research implementation rules
 
+**New here? Read [`docs/START-HERE.md`](docs/START-HERE.md) first.** It is the single entry point:
+read order, how to orient by running commands instead of trusting prose, how to claim work, the
+verification gates and the branch discipline. This file states the boundaries; that one states the
+procedure.
+
 This repository is governed by:
 
 - `docs/architecture/ELIOT_RESEARCH.md` for product and authority architecture;
