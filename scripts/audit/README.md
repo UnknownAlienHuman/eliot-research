@@ -5,17 +5,28 @@ one workstation. They existed in no branch and no commit, so their results could
 or reviewed. They are retained here under branch-discipline rules 9–10: evidence belongs in commits,
 pull requests, CI logs, immutable receipts or named artifacts — not in untracked scratch directories.
 
-They are **not** wired into `pnpm check:affected` or CI. Each imports production modules from a
-branch that is not on `main`, so a plain run from `main` will fail to resolve its target.
+They are **not** wired into `pnpm check:affected` or CI. Wiring `scripts/audit/**` into a suite means
+editing `package.json`, which is an ER-00 `owned_path`; that remains a request, not a change made here.
+
+## Two of them are now regression tests
+
+Both findings these harnesses recorded have since been closed, so the two affected harnesses were
+**inverted**: instead of asserting that the defect reproduces, they now assert that it is denied.
+They exit 0 today and will exit 1 if the fix is ever reverted. That is the only useful end state for a
+recorded counterexample — otherwise a fixed defect turns its own evidence into a permanently failing
+script that everyone learns to ignore.
 
 ## What each harness does
 
-| File | Target module | Lives on |
-| --- | --- | --- |
-| `independent-usage-attacks.mjs` | `scripts/lib/cloudflare-usage-providers.mjs` | `agent/cloudflare-browser-auth-profile-20260906` @ `532cac2` |
-| `independent-proxy-attacks.mjs` | `scripts/lib/cloudflare-usage-providers.mjs` | same |
-| `independent-billing-proto-attack.mjs` | `scripts/lib/cloudflare-usage-billable.mjs` | same |
-| `owner-adversarial.mjs` | `tests/integration/browser/owner-e2e.mjs` | `agent/launch-01-library-20260905` @ `1272d8c` (PR #98) |
+| File | Target module | Lives on | Kind |
+| --- | --- | --- | --- |
+| `independent-usage-attacks.mjs` | `scripts/lib/cloudflare-usage-providers.mjs` | **`main`** (merged by #110) | regression + informational |
+| `independent-proxy-attacks.mjs` | `scripts/lib/cloudflare-usage-providers.mjs` | **`main`** | informational |
+| `independent-billing-proto-attack.mjs` | `scripts/lib/cloudflare-usage-billable.mjs` | **`main`** | informational |
+| `owner-adversarial.mjs` | `tests/integration/browser/owner-e2e.mjs` | `agent/launch-01-library-20260905` @ `1272d8c` (PR #98) | regression |
+
+The three Cloudflare harnesses now resolve their target from `main` with no `ELIOTR_AUDIT_REPO`
+override. `owner-adversarial.mjs` still needs the override, because Launch 01 is unmerged.
 
 The three Cloudflare harnesses attack the usage/inventory collection boundary. Each poisons a JS
 intrinsic in a fresh Node process, then imports the production module and feeds it in-memory
@@ -25,12 +36,9 @@ placeholders (`aaaa…`, `bbbb…`) and all bearers are literal strings containi
 `owner-adversarial.mjs` attacks the L1 browser owner-E2E ledger assertions with forged operation /
 slot / sequence identities.
 
-## Reproduced results — 2026-09-07
+## Results — re-run 2026-09-07 against `main` `6f5be1b`
 
-Re-run before retention against the exact heads in the table above, so these are current
-observations rather than stale notes.
-
-### `independent-usage-attacks.mjs` — target `532cac2`, exit 0
+### `independent-usage-attacks.mjs` — exit 0
 
 ```
 PASS Object.keys + inherited own-looking fields forge acceptance: allow=1
@@ -42,43 +50,55 @@ PASS double accounts: deny=ACCOUNT_MISMATCH
 PASS encoded accounts segment: deny=ACCOUNT_MISMATCH
 PASS wrong account: deny=ACCOUNT_MISMATCH
 PASS encoded slash account: deny=ACCOUNT_MISMATCH
-COUNTEREXAMPLE duplicate identity admitted: ai_search_instances=2
+PASS duplicate identity fails closed: deny=MALFORMED (#108 regression)
 PASS secret/receipt metadata does not leak bearer or payload
 ```
 
-### `independent-proxy-attacks.mjs` — target `532cac2`, exit 0
+The last-but-one line is the inverted assertion. It previously read
+`COUNTEREXAMPLE duplicate identity admitted: ai_search_instances=2`; #108 was closed by #110, which
+added the fail-closed check in `appendValidatedRow` plus same-page, cross-page and shared-helper
+negatives in `scripts/test-cloudflare-usage-providers.mjs`. This harness now fails if that is reverted.
+
+### `independent-proxy-attacks.mjs` — exit 0, informational
 
 ```
 proxy-getter=DENY MALFORMED
 proxy-row=ALLOW forged-proxy-row
 ```
 
-A throwing `json` getter is correctly rejected; a `Proxy` row that forges `ownKeys` /
-`getOwnPropertyDescriptor` is still admitted as a real inventory row.
-
-### `independent-billing-proto-attack.mjs` — target `532cac2`, exit 0
+### `independent-billing-proto-attack.mjs` — exit 0, informational
 
 ```
 billing=ALLOW {"workers_requests":1}
 ```
 
-An empty `{}` billing response is accepted as one billable-usage record, every field resolved
-through a poisoned `Object.prototype`.
+These two report rather than assert, because what they report is a *bounded-severity* observation
+(see Findings) rather than a defect with an agreed fix. Do not convert them into assertions of the
+current behaviour: that would lock in a weakness as expected.
 
-### `owner-adversarial.mjs` — target `1272d8c`, exit 1 (target has since hardened)
-
-The harness now aborts before printing, at the concurrent-navigation setup:
+### `owner-adversarial.mjs` — exit 0 against `agent/launch-01-library-20260905` @ `1272d8c`
 
 ```
-AssertionError: pending-nav: zero in-flight nav handles required at registerOp, got 1
-  (concurrent navigation denies; direct bypass throws)
-  at owner-e2e.mjs:836
+{
+  "operationDocumentMismatch":      "rejected: …slot requires an op capability of THIS authority…",
+  "duplicateResponseIdentity":      "rejected: …slot requires an op capability of THIS authority…",
+  "responseBeforeAbortSeq":         "rejected: …slot requires an op capability of THIS authority…",
+  "concurrentPendingNavigation":    "rejected: pending-nav: zero in-flight nav handles required at
+                                     registerOp, got 1 (concurrent navigation denies…)"
+}
+PASS every adversarial owner-ledger probe fails closed
 ```
 
-The condition this harness was written to probe — positional selection of a pending navigation
-slot — is now enforced by the L1 ledger itself, so the second `registerOp` is denied outright.
-The script is retained unmodified so the record shows what was probed and that the target closed
-it; it is not evidence of a current defect.
+**Read this one carefully.** Only `concurrentPendingNavigation` proves what it names: the L1 ledger
+now refuses a second in-flight navigation registration, which is exactly the positional-selection
+weakness this harness was written to probe.
+
+The other three are denied *earlier than intended* — `mintSlot` now requires an op capability of the
+same authority, so the adversarial fixture can no longer be constructed at all. The assertion "these
+probes fail closed" holds, but it does not demonstrate that the original document-mismatch, duplicate-
+response and sequence-ordering paths are individually guarded; it demonstrates that the harness cannot
+reach them. Rebuilding those three fixtures against the current `mintSlot` API is open work, and it
+belongs to ER-25/L1 rather than here.
 
 ## Findings
 
@@ -106,29 +126,44 @@ through `JSON.parse`, which never produces a `Proxy` and never sets own properti
 prototype chain. Treat these as hardening observations about how much the collector trusts
 intrinsics, not as remote-exploitable findings.
 
-**One result needs no poisoning at all** and is the substantive finding:
+**One result needed no poisoning at all — and it is now CLOSED.**
 
-```
-COUNTEREXAMPLE duplicate identity admitted: ai_search_instances=2
-```
-
-`createAiSearchInventoryProvider` accepts two rows with the identical `id` (`{id:"same"}` twice) and
-reports an inventory count of 2. Duplicate identities inflate what is treated as authoritative
-inventory. This is plain provider logic on ordinary input and should be closed on its own merits.
+`createAiSearchInventoryProvider` used to accept two rows with an identical `id` (`{id:"same"}` twice)
+and report an inventory count of 2, inflating what is treated as authoritative inventory on ordinary
+input. Tracked as [#108](https://github.com/UnknownAlienHuman/eliot-research/issues/108), fixed by
+[#110](https://github.com/UnknownAlienHuman/eliot-research/pull/110): `appendValidatedRow` now raises
+`MALFORMED` on a repeated identity, and `scripts/test-cloudflare-usage-providers.mjs` covers the
+same-page, cross-page and shared-helper (`createPaginatedInventoryProvider`) variants. The assertion in
+this harness is inverted accordingly and guards the fix.
 
 The harness also asserts, and confirms, that neither the bearer nor the response payload leaks into
 error messages or serialized error metadata.
 
 ## Running them
 
+The three Cloudflare harnesses now resolve from `main` directly:
+
 ```bash
-ELIOTR_AUDIT_REPO=/path/to/checkout/of/target/branch node scripts/audit/independent-usage-attacks.mjs
+node scripts/audit/independent-usage-attacks.mjs        # regression, exits non-zero on regression
+node scripts/audit/independent-proxy-attacks.mjs        # informational
+node scripts/audit/independent-billing-proto-attack.mjs # informational
 ```
 
-`ELIOTR_AUDIT_REPO` defaults to this repository root, which is correct only once the target modules
-reach `main` or when the harness is run from the target branch's worktree.
+`owner-adversarial.mjs` targets a module that is not yet on `main`, so it needs the override:
+
+```bash
+ELIOTR_AUDIT_REPO=/path/to/launch-01-worktree node scripts/audit/owner-adversarial.mjs
+```
+
+`ELIOTR_AUDIT_REPO` defaults to this repository root. Drop the override for that harness once
+Launch 01 (#98) merges.
 
 ## Status
 
-These are audit artifacts, not product code and not a live-qualification receipt. They register no
-work-packet ownership and change no `implementation-status.json` state.
+Audit artifacts, not product code and not a live-qualification receipt. They register no work-packet
+ownership and change no `implementation-status.json` state.
+
+Two of them are now regression tests and would be worth running in CI. That needs a `package.json`
+script entry, which is an ER-00 `owned_path`; a suggested wiring is a single
+`"audit:regressions": "node scripts/audit/independent-usage-attacks.mjs"` entry, since the owner
+harness cannot run from `main` until #98 lands.

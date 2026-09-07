@@ -116,15 +116,28 @@ for (const [label, url] of [
   console.log(`PASS ${label}: deny=${reason}`);
 }
 
-// Duplicate identity rows are currently accepted by the provider and inflate
-// the authoritative inventory count. This is an independent counterexample.
+// Duplicate identity rows must fail closed rather than inflate the authoritative
+// inventory count. Originally an accepted counterexample (ai_search_instances=2);
+// closed by #108/#110 and kept here as a regression assertion.
 const duplicate = P.createAiSearchInventoryProvider({
   endpoint: (a, p, pp) => `https://api.cloudflare.com/client/v4/accounts/${a}/ai-search/instances?page=${p}&per_page=${pp}`,
   fetchImpl: async () => ({ status: 200, json: async () => ({ success: true, result: [{ id: "same" }, { id: "same" }], result_info: { page: 1, per_page: 100, total_pages: 1, count: 2, total_count: 2 } }) }),
 });
-const duplicateOut = await duplicate.collect({ accountId: ACCOUNT, bearer: BEARER, now: 1 });
-assert.equal(duplicateOut.values.ai_search_instances, 2);
-console.log(`COUNTEREXAMPLE duplicate identity admitted: ai_search_instances=${duplicateOut.values.ai_search_instances}`);
+let duplicateReason = "ACCEPTED";
+let duplicateAdmitted = null;
+try {
+  const duplicateOut = await duplicate.collect({ accountId: ACCOUNT, bearer: BEARER, now: 1 });
+  duplicateAdmitted = duplicateOut.values.ai_search_instances;
+} catch (error) {
+  duplicateReason = error?.reason ?? "UNtyped";
+}
+assert.equal(
+  duplicateReason,
+  "MALFORMED",
+  `REGRESSION (#108): duplicate identity must fail closed, got ${duplicateReason}` +
+    (duplicateAdmitted === null ? "" : ` with ai_search_instances=${duplicateAdmitted}`),
+);
+console.log("PASS duplicate identity fails closed: deny=MALFORMED (#108 regression)");
 
 // Independent secret/receipt check: success output and failure message must
 // not contain bearer or response payload.

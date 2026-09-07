@@ -56,15 +56,32 @@ try {
   results.responseBeforeAbortSeq = "ACCEPTED (ordering not checked)";
 } catch (error) { results.responseBeforeAbortSeq = `rejected: ${error.message}`; }
 
+// Originally this probed positional selection of a pending navigation slot: two
+// concurrent in-flight navigations were registered and `consumeNavSlot` picked the
+// most recent rather than the awaited one. The ledger now refuses the second
+// registration outright, so the probe is kept as a regression assertion: the
+// concurrent registration must be denied, not silently ordered.
 const nav = createClosedAuthority("pending-nav");
 const root = nav.registerOp({ kind: "init", cause: "harness-start", scope: "harness", sourceDoc: 0,
   targetDoc: 0, action: "harness-start", role: "startup-probe", successors: ["goto-unauthenticated"] });
-const first = nav.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: 0,
+nav.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: 0,
   targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe", from: root.id,
   successors: ["framenavigated"] });
-const second = nav.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: 0,
-  targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe", from: root.id,
-  successors: ["framenavigated"] });
-const consumed = nav.consumeNavSlot(1);
-results.pendingNavigationSelection = { expected: first.id, actual: consumed?.opId, positionalMostRecent: consumed?.opId === second.id };
+let concurrentNavigation = "ACCEPTED";
+try {
+  nav.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document", sourceDoc: 0,
+    targetDoc: 1, action: "goto-unauthenticated", role: "startup-probe", from: root.id,
+    successors: ["framenavigated"] });
+} catch (error) { concurrentNavigation = `rejected: ${error.message}`; }
+assert.match(
+  concurrentNavigation,
+  /^rejected: /u,
+  "REGRESSION: a second in-flight navigation registration must be denied, not ordered positionally",
+);
+results.concurrentPendingNavigation = concurrentNavigation;
+
 console.log(JSON.stringify(results, null, 2));
+for (const [name, outcome] of Object.entries(results)) {
+  assert.match(String(outcome), /^rejected: /u, `REGRESSION: ${name} must fail closed, got ${outcome}`);
+}
+console.log("PASS every adversarial owner-ledger probe fails closed");
