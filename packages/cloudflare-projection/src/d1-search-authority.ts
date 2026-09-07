@@ -95,11 +95,13 @@ async function readActiveItemSet(
 ): Promise<{ readonly count: number; readonly digest: string }> {
   // Semantic verification: recompute the canonical item-set digest over the
   // exact active rows (projector shape/order), not the stored 64-hex string.
+  // Retain active items with no span so validation rejects them rather than
+  // silently hashing a joined subset while IDENT/LEX can still return the item.
   const result = await search
     .prepare(
       "SELECT p.item_key, p.canonical_section_id, p.content_sha256, " +
         "s.normalized_start_byte, s.normalized_end_byte " +
-        "FROM projection_item p JOIN projection_span s ON s.item_key = p.item_key " +
+        "FROM projection_item p LEFT JOIN projection_span s ON s.item_key = p.item_key " +
         "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
         "ORDER BY s.normalized_start_byte, p.item_key LIMIT 1025",
     )
