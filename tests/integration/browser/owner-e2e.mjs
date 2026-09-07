@@ -580,17 +580,22 @@ async function launchPlaywright(runId) {
     const failedRequests = [];
     const failedRequestClock = [];
     const responses = [];
-    // Navigation-epoch attribution for every browser request/response: the
-    // epoch increments exactly once per committed main-frame navigation
-    // (page.goto, page.reload, in-page location.replace and pairing redirects
-    // all surface as framenavigated), so a request aborted by a navigation
-    // carries the superseded issuing epoch while the surviving retry and its
-    // classified response carry the surviving epoch. panelSerial advances on
-    // every explicit ledger reset (a new observation panel); request seq
-    // orders issuance inside an epoch. Responses record the
-    // responding-document epoch (current counter at response time), never the
-    // issuing epoch. Frame identity is captured as document-identity evidence
-    // alongside the counter.
+    // Request-identity attribution for every browser request/response/failure:
+    // a reqId is minted exactly once per observed request event and pinned to
+    // the Playwright Request object via a WeakMap, so the (epoch, serial, seq)
+    // stamp a response or failure carries is always its OWN request's issuing
+    // stamp, never a sample of the live global counter. The epoch increments
+    // exactly once per committed main-frame navigation (page.goto,
+    // page.reload, in-page location.replace and pairing redirects all surface
+    // as framenavigated); panelSerial advances on every explicit ledger reset
+    // (a new observation panel); request seq orders issuance. A request
+    // aborted by a navigation therefore carries the superseded issuing stamp
+    // while the surviving retry (a different reqId) and its classified
+    // response carry the surviving stamp. Frame identity is captured as
+    // document-identity evidence alongside the stamp. Failures keep their
+    // string form for message compatibility only; pairing never reads it.
+    // There is no phantom fallback: an abort without its own reqId join fails
+    // closed.
     let navigationEpoch = 0;
     let panelSerial = 0;
     let requestSeq = 0;
@@ -629,11 +634,16 @@ async function launchPlaywright(runId) {
     // worker-scope requests while still reporting their failures, which breaks
     // request/response pairing. Context events cover page and worker scopes
     // uniformly, so every outcome pairs with its request.
+    let nextRequestId = 0;
+    const requestIds = new WeakMap();
     context.on("request", (request) => {
       const entry = ledgerEntry(request.method(), request.url());
       requestSeq += 1;
+      nextRequestId += 1;
+      const stamp = { id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq };
+      requestIds.set(request, stamp);
       requests.push({ ...entry, resourceType: request.resourceType(),
-        epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, frame: frameIdentity(request) });
+        reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq, frame: frameIdentity(request) });
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -643,17 +653,38 @@ async function launchPlaywright(runId) {
       }
     });
     page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
-    context.on("requestfailed", (request) => { failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
-      failedRequests.push(
-      `${request.method()} ${request.url()} :: ${request.failure()?.errorText ?? "unknown"}`.slice(0, 512)); });
+    const failedRequestEntries = [];
+    context.on("requestfailed", (request) => {
+      // Legacy failure-time clock retained for message-compat diagnostics only;
+      // the anchor never consults it. Pairing uses the failure's OWN reqId.
+      failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
+      const failure = request.failure()?.errorText ?? "unknown";
+      const text = `${request.method()} ${request.url()} :: ${failure}`.slice(0, 512);
+      failedRequests.push(text);
+      const stamp = requestIds.get(request);
+      const entry = ledgerEntry(request.method(), request.url());
+      failedRequestEntries.push({ text, ...entry, errorText: failure,
+        reqId: typeof stamp?.id === "number" ? stamp.id : null,
+        epoch: typeof stamp?.epoch === "number" ? stamp.epoch : null,
+        serial: typeof stamp?.serial === "number" ? stamp.serial : null,
+        seq: typeof stamp?.seq === "number" ? stamp.seq : null });
+    });
     context.on("response", (response) => {
+      // The response carries its OWN request's stamp via response.request().
+      // A missing stamp fails closed downstream and never falls back to
+      // sampling the live global counter.
       const request = response.request();
+      const stamp = requestIds.get(request);
       const entry = ledgerEntry(request.method(), request.url());
       let contentType;
       try { contentType = String(response.headers()["content-type"] ?? "").split(";")[0]?.trim().slice(0, 128) ?? ""; }
       catch { contentType = "unreadable"; }
       networkResponses.push({ ...entry, status: response.status(), resourceType: request.resourceType(), contentType,
-        epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, frame: frameIdentity(request) });
+        reqId: typeof stamp?.id === "number" ? stamp.id : null,
+        epoch: typeof stamp?.epoch === "number" ? stamp.epoch : null,
+        serial: typeof stamp?.serial === "number" ? stamp.serial : null,
+        seq: typeof stamp?.seq === "number" ? stamp.seq : null,
+        frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
     page.on("websocket", (socket) => { websockets.push(socket.url().slice(0, 512)); });
@@ -661,7 +692,7 @@ async function launchPlaywright(runId) {
     const evaluate = (fn, arg) => page.evaluate(fn, arg);
     const resetLedger = () => {
       panelSerial += 1;
-      consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; responses.length = 0;
+      consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
     };
     const close = async () => {
@@ -670,7 +701,7 @@ async function launchPlaywright(runId) {
       await removeHarnessOwned(profileDir, runId);
       await assert.rejects(access(profileDir), /ENOENT/, "temp browser profile must be removed");
     };
-    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, responses,
+    return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
       requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
       ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq }) };
   } catch (error) {
@@ -755,7 +786,7 @@ function assertNoPrivateStorage(storage, label) {
 }
 
 export function assertAuthedLedger(harness, label, origin) {
-  const { consoleErrors, pageErrors, failedRequests } = harness;
+  const { consoleErrors, pageErrors } = harness;
   assert.deepEqual(pageErrors, [], `${label}: pageerror must be empty`);
   // Contract: /manifest.webmanifest is an exact public shell asset proxied
   // without a session and served exact 200 (see authedNetworkSpec). A manifest
@@ -773,27 +804,32 @@ export function assertAuthedLedger(harness, label, origin) {
       `${label}: authed console must hold no JWT and no private API 401, got: ${text.slice(0, 200)}`);
   }
   const allowedFailedAnchor = buildAuthedAbortAnchor(label, harness, origin);
-  for (const text of failedRequests) {
-    allowedFailedAnchor(text);
+  const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
+  for (const entry of failures) {
+    allowedFailedAnchor(entry);
   }
 }
 
-// Epoch-attributed accounted-anchor rule for authed ERR_ABORTED traffic
-// (replaces the fixed 2-entry allowlist and the absolute abort ceiling).
-// Every abort must name an identical method+origin+path request issued by the
-// browser, and is exempt IFF a classified responded outcome for that exact
-// key carries a contract status (derived from authedNetworkSpec, never
-// invented here) AND the surviving request strictly postdates the aborted one
-// in (epoch, serial, seq) order: the issuing epoch was superseded by a
-// navigation, the observation panel was explicitly reset, or the application
-// itself superseded the probe with a later same-epoch retry. The absolute
-// ceiling is replaced by the structural bound: aborts per key <=
-// contract-status responses per key, so a duplicate abort without its own
-// surviving response still fails. Unanchored aborts, non-abort errors,
-// cross-origin failures and unpaired aborts (no browser request) fail closed.
+// Exact-reqId accounted-anchor rule for authed ERR_ABORTED traffic (no URL
+// allowlist, no absolute abort ceiling, no blanket exemption, no phantom
+// fallback). Every request carries the reqId minted once at its request event;
+// every response carries its OWN response.request() reqId; every failure
+// carries its OWN reqId in its structured entry (the string form is retained
+// for message compatibility only and is never read for pairing). An abort
+// with reqId=A is exempt IFF a classified contract-status response (derived
+// from authedNetworkSpec, never invented here) carries reqId=B with B≠A, the
+// same method+origin+path, and B strictlyAfter A in (epoch, serial, seq) — a
+// true surviving stamp. Duplicate reqIds, missing reqIds, non-abort errors,
+// cross-origin failures and unpaired entries fail closed. The structural bound
+// is retained: aborts per key <= contract-status responses per key, so a
+// duplicate abort without its own surviving response still fails.
 function buildAuthedAbortAnchor(label, harness, origin) {
   const requests = Array.isArray(harness.requests) ? harness.requests : [];
   const responses = Array.isArray(harness.networkResponses) ? harness.networkResponses : [];
+  const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
+  const compatStrings = Array.isArray(harness.failedRequests) ? harness.failedRequests : [];
+  assert.equal(failures.length, compatStrings.length,
+    `${label}: failure ledger drift: ${compatStrings.length} compat strings vs ${failures.length} structured entries (string form is message-compat only, never pairing)`);
   const contract = new Map();
   for (const entry of authedNetworkSpec(origin).api) {
     const key = `${entry.method} ${entry.path}`;
@@ -808,88 +844,67 @@ function buildAuthedAbortAnchor(label, harness, origin) {
   const strictlyAfter = (left, right) =>
     left[0] > right[0] || (left[0] === right[0] && (left[1] > right[1] ||
       (left[1] === right[1] && left[2] > right[2])));
-  const requestsByKey = new Map();
+  // Exact request identity: one reqId per browser request. Missing or
+  // duplicate reqIds fail closed here, never at the first abort.
+  const requestById = new Map();
   for (const entry of requests) {
-    if (typeof entry?.method !== "string" || typeof entry?.origin !== "string" || typeof entry?.path !== "string") continue;
-    const key = `${entry.method} ${entry.origin}${entry.path}`;
-    if (!requestsByKey.has(key)) requestsByKey.set(key, []);
-    requestsByKey.get(key).push(entry);
+    assert.ok(Number.isSafeInteger(entry?.reqId),
+      `${label}: request without reqId fails closed: ${entry?.method ?? "?"} ${entry?.origin ?? "?"}${entry?.path ?? "?"}`);
+    assert.ok(!requestById.has(entry.reqId),
+      `${label}: duplicate reqId ${entry.reqId} fails closed`);
+    requestById.set(entry.reqId, entry);
   }
-  for (const list of requestsByKey.values()) list.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
-  // Each classified response consumes the LATEST unpaired same-key request:
-  // the surviving retry is the last one issued, earlier duplicates are the
-  // superseded probes. Non-contract outcomes never anchor and never consume.
-  const consumedByKey = new Map();
+  // Each response joins to its OWN request by exact reqId. Missing or unpaired
+  // reqIds fail closed; non-contract outcomes never anchor.
   const anchorsByKey = new Map();
   const contractResponsesByKey = new Map();
-  const orderedResponses = [...responses].sort((a, b) => (a?.seq ?? 0) - (b?.seq ?? 0));
-  for (const response of orderedResponses) {
-    if (typeof response?.method !== "string" || typeof response?.origin !== "string" ||
-      typeof response?.path !== "string" || !Number.isSafeInteger(response?.status)) continue;
+  for (const response of responses) {
+    assert.ok(Number.isSafeInteger(response?.reqId),
+      `${label}: response without its own request reqId fails closed (never sample the global counter): ${response?.method ?? "?"} ${response?.origin ?? "?"}${response?.path ?? "?"} -> ${response?.status ?? "?"}`);
+    const own = requestById.get(response.reqId);
+    assert.ok(own !== undefined,
+      `${label}: unpaired responded outcome has no browser request: ${response.method} ${response.origin}${response.path} -> ${response.status}`);
+    assert.ok(response.method === own.method && response.origin === own.origin && response.path === own.path,
+      `${label}: response identity must equal its own request identity: ${response.method} ${response.origin}${response.path} vs reqId ${response.reqId}`);
+    assert.deepEqual([response.epoch, response.serial, response.seq], [own.epoch, own.serial, own.seq],
+      `${label}: response stamp must equal its own request stamp (reqId ${response.reqId})`);
     const key = `${response.method} ${response.origin}${response.path}`;
     const statuses = contract.get(`${response.method} ${response.path}`);
     if (!statuses || !statuses.has(response.status)) continue;
-    const candidates = requestsByKey.get(key) ?? [];
-    const consumed = consumedByKey.get(key) ?? new Set();
-    let match = null;
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-      if (!consumed.has(candidates[index])) { match = candidates[index]; break; }
-    }
-    assert.ok(match !== null,
-      `${label}: unpaired responded outcome has no browser request: ${response.method} ${response.origin}${response.path} -> ${response.status}`);
-    consumed.add(match);
-    consumedByKey.set(key, consumed);
     if (!anchorsByKey.has(key)) anchorsByKey.set(key, []);
-    anchorsByKey.get(key).push({ response, request: match });
+    anchorsByKey.get(key).push({ response, request: own });
     contractResponsesByKey.set(key, (contractResponsesByKey.get(key) ?? 0) + 1);
   }
   const abortsByKey = new Map();
-  const clocks = Array.isArray(harness.failedRequestClock) ? harness.failedRequestClock : [];
-  let abortIndex = -1;
-  return (text) => {
-    abortIndex += 1;
-    assert.ok(/:: net::ERR_ABORTED$/.test(text),
+  const seenFailureIds = new Set();
+  return (entry) => {
+    assert.ok(entry !== null && typeof entry === "object",
+      `${label}: failure without a structured entry fails closed`);
+    const text = typeof entry?.text === "string" ? entry.text
+      : `${entry?.method ?? "?"} ${entry?.origin ?? "?"}${entry?.path ?? "?"} :: ${entry?.errorText ?? "unknown"}`;
+    assert.ok(/net::ERR_ABORTED$/.test(entry?.errorText ?? ""),
       `${label}: non-abort failure denied, only superseded ERR_ABORTED may anchor: ${text.slice(0, 300)}`);
-    const match = /^(GET|HEAD|POST|PUT|DELETE) (https?:\/\/[^ ]+) :: /.exec(text);
-    assert.ok(match !== null, `${label}: failed request must parse: ${text.slice(0, 200)}`);
-    const parsed = new URL(match[2]);
-    assert.ok(parsed.origin === origin, `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
-    const key = `${match[1]} ${parsed.origin}${parsed.pathname}${parsed.search}`;
-    // An abort consumes the EARLIEST unpaired same-key request: the superseded
-    // probe.
-    const candidates = requestsByKey.get(key) ?? [];
-    const consumed = consumedByKey.get(key) ?? new Set();
-    let aborted = null;
-    for (const entry of candidates) {
-      if (!consumed.has(entry)) { aborted = entry; break; }
-    }
+    assert.ok(typeof entry?.method === "string" && typeof entry?.origin === "string" && typeof entry?.path === "string",
+      `${label}: failed request must carry exact method/origin/path: ${text.slice(0, 200)}`);
+    assert.ok(entry.origin === origin, `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
+    const key = `${entry.method} ${entry.origin}${entry.path}`;
+    assert.ok(Number.isSafeInteger(entry?.reqId),
+      `${label}: phantom abort without a browser request has no reqId join (missing reqId fails closed): ${text.slice(0, 300)}`);
+    assert.ok(!seenFailureIds.has(entry.reqId),
+      `${label}: duplicate failure reqId ${entry.reqId} fails closed: ${text.slice(0, 200)}`);
+    seenFailureIds.add(entry.reqId);
+    const own = requestById.get(entry.reqId);
+    assert.ok(own !== undefined,
+      `${label}: unpaired abort has no browser request: ${text.slice(0, 300)}`);
+    assert.ok(entry.method === own.method && entry.origin === own.origin && entry.path === own.path,
+      `${label}: failure identity must equal its own request identity: ${text.slice(0, 200)} vs reqId ${entry.reqId}`);
+    assert.deepEqual([entry.epoch, entry.serial, entry.seq], [own.epoch, own.serial, own.seq],
+      `${label}: failure stamp must equal its own request stamp (reqId ${entry.reqId})`);
     const anchors = anchorsByKey.get(key) ?? [];
-    if (aborted !== null) {
-      consumed.add(aborted);
-      consumedByKey.set(key, consumed);
-      const abortOrder = orderOf(aborted);
-      const anchored = anchors.some(({ request }) => strictlyAfter(orderOf(request), abortOrder));
-      assert.ok(anchored,
-        `${label}: unanchored abort has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
-    } else {
-      // Phantom duplicate: Chromium reported ERR_ABORTED for an attempt the
-      // harness never observed as a request (aborted before requestWillBeSent;
-      // observed live: a pair POST abort beside the paired 204+403). The
-      // failure-time clock stands in for the issuing epoch: a classified
-      // contract outcome in the same or a surviving epoch anchors it, and the
-      // structural bound below caps phantoms exactly like paired aborts. A
-      // phantom with no anchor still fails.
-      const clock = clocks[abortIndex] ?? { epoch: 0, serial: 0 };
-      const failEpoch = Number.isSafeInteger(clock?.epoch) ? clock.epoch : 0;
-      const failSerial = Number.isSafeInteger(clock?.serial) ? clock.serial : 0;
-      const anchored = anchors.some(({ response }) => {
-        const epoch = Number.isSafeInteger(response?.epoch) ? response.epoch : 0;
-        const serial = Number.isSafeInteger(response?.serial) ? response.serial : 0;
-        return epoch > failEpoch || (epoch === failEpoch && serial >= failSerial);
-      });
-      assert.ok(anchored,
-        `${label}: phantom abort without a browser request has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
-    }
+    const abortOrder = orderOf(own);
+    const anchored = anchors.some(({ request }) => request.reqId !== own.reqId && strictlyAfter(orderOf(request), abortOrder));
+    assert.ok(anchored,
+      `${label}: unanchored abort has no classified responded outcome with contract status in a surviving epoch: ${text.slice(0, 300)}`);
     const count = (abortsByKey.get(key) ?? 0) + 1;
     abortsByKey.set(key, count);
     assert.ok(count <= (contractResponsesByKey.get(key) ?? 0),
@@ -917,117 +932,164 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
   return { protocol: "eliotr.owner-e2e.authed-manifest-regression.v1", state: "PASS" };
 }
 
-// Deterministic regression proof for the epoch-attributed accounted-anchor
-// rule (no browser required). Positive superseded-epoch exemptions mirror the
-// live authed window: catalog+health probes aborted pre-navigation and
-// surviving as 200s post-navigation, and the pair probe aborted while the
-// 204 pairing response plus the one-use 403 reuse response survive. The three
-// required negatives prove fail-closure: a sole abort of health, catalog, or
-// pair with no paired contract success fails, and a duplicate-bound case (two
-// aborts, one surviving response) fails on the structural bound. Non-abort
-// errors, cross-origin failures, and unpaired aborts fail closed as well.
+// Deterministic regression proof for the exact-reqId accounted-anchor rule (no
+// browser required). Requests carry reqIds minted once at observation; each
+// response carries its OWN request's reqId; each failure carries its OWN reqId
+// in its structured entry (strings retained for message compat only, never
+// pairing). Positive superseded exemptions mirror the live authed window:
+// catalog+health probes aborted pre-navigation and surviving as 200s
+// post-navigation, and the pair probe aborted while the 204 pairing response
+// plus the one-use 403 reuse response survive. Negatives 1-3 prove sole aborts
+// fail; negative 4 proves the structural duplicate bound; negatives 5-8 prove
+// non-abort, cross-origin, phantom and unpaired-response fail closure. Luna
+// negatives 9-10 prove the removed phantom heuristic stays dead: 9 is a
+// same-clock phantom (abort without a browser request beside a same-clock
+// contract response — the legacy failure-time clock would have anchored it);
+// 10 is a duplicate ambiguity (abort reusing the surviving response's own
+// reqId — positional earliest/latest accounting would have anchored it). Both
+// are accepted by the 0e5b275 heuristic and rejected by the exact reqId join.
 // The live owner E2E proves the accompanying window evidence the synthetic
 // ledger cannot carry: the surviving catalog 200 lists the admitted source id
 // and Chromium holds exactly one opaque HttpOnly session cookie.
 export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   let seq = 0;
-  const req = (method, path, epoch, resourceType = "fetch") => {
+  let nextReqId = 0;
+  const req = (method, path, epoch, resourceType = "fetch", serial = 0) => {
     seq += 1;
-    return { method, origin, path, resourceType, epoch, serial: 0, seq, frame: `frame-epoch-${epoch}@${origin}/` };
+    nextReqId += 1;
+    return { method, origin, path, resourceType, epoch, serial, seq, reqId: nextReqId, frame: `frame-epoch-${epoch}@${origin}/` };
   };
-  const res = (method, path, status, epoch) => ({ ...req(method, path, epoch), status, contentType: "application/json" });
-  const abort = (method, path) => `${method} ${origin}${path} :: net::ERR_ABORTED`;
+  const res = (request, status) => ({ method: request.method, origin: request.origin, path: request.path,
+    resourceType: request.resourceType, epoch: request.epoch, serial: request.serial, seq: request.seq,
+    reqId: request.reqId, frame: request.frame, status, contentType: "application/json" });
+  const failOf = (request, errorText = "net::ERR_ABORTED") => ({ text: `${request.method} ${request.origin}${request.path} :: ${errorText}`,
+    method: request.method, origin: request.origin, path: request.path, errorText,
+    reqId: request.reqId, epoch: request.epoch, serial: request.serial, seq: request.seq });
+  const phantomOf = (method, path) => ({ text: `${method} ${origin}${path} :: net::ERR_ABORTED`,
+    method, origin, path, errorText: "net::ERR_ABORTED", reqId: null, epoch: null, serial: null, seq: null });
+  const harnessOf = ({ consoleErrors = [], requests = [], networkResponses = [], failures = [], ...rest }) => ({
+    consoleErrors, pageErrors: [], requests, networkResponses,
+    failedRequests: failures.map((entry) => entry.text),
+    failedRequestEntries: failures, ...rest });
   const catalog = "/api/v1/research/catalog?limit=20";
   const health = "/api/v1/system/health";
   const pair = "/__local/pair";
   const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
   // Positive 1: catalog+health aborted in the issuing epoch, surviving 200s in
-  // the next navigation epoch.
-  assert.doesNotThrow(() => assertAuthedLedger({
+  // the next navigation epoch. Each abort joins by its OWN reqId; each 200
+  // carries its surviving retry's reqId.
+  const catalogIssued = req("GET", catalog, 0);
+  const healthIssued = req("GET", health, 0);
+  const catalogSurvived = req("GET", catalog, 1);
+  const healthSurvived = req("GET", health, 1);
+  assert.doesNotThrow(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
-    requests: [req("GET", catalog, 0), req("GET", health, 0), req("GET", catalog, 1), req("GET", health, 1)],
-    networkResponses: [res("GET", catalog, 200, 1), res("GET", health, 200, 1)],
-    failedRequests: [abort("GET", catalog), abort("GET", health)],
-  }, "epoch-positive-catalog-health", origin), "superseded catalog+health aborts with surviving 200s must pass");
+    requests: [catalogIssued, healthIssued, catalogSurvived, healthSurvived],
+    networkResponses: [res(catalogSurvived, 200), res(healthSurvived, 200)],
+    failures: [failOf(catalogIssued), failOf(healthIssued)],
+  }), "epoch-positive-catalog-health", origin), "superseded catalog+health aborts with surviving 200s must pass");
   // Positive 2: pair abort anchored by the 204 pairing response with the
   // one-use 403 reuse response and console noise present.
-  assert.doesNotThrow(() => assertAuthedLedger({
+  const pairProbe = req("POST", pair, 1);
+  const pairRetry = req("POST", pair, 1);
+  const pairSurvived = req("POST", pair, 2);
+  assert.doesNotThrow(() => assertAuthedLedger(harnessOf({
     consoleErrors: [pair403],
-    pageErrors: [],
-    requests: [req("POST", pair, 1), req("POST", pair, 1), req("POST", pair, 2)],
-    networkResponses: [res("POST", pair, 204, 2), res("POST", pair, 403, 2)],
-    failedRequests: [abort("POST", pair)],
-  }, "epoch-positive-pair", origin), "superseded pair abort with surviving 204+403-reuse must pass");
-  // Positive 3: phantom pair abort (aborted before the harness observed a
-  // request event; the live shape: two paired pair requests with 204+403
-  // beside one phantom abort) anchored by the surviving contract outcomes.
-  assert.doesNotThrow(() => assertAuthedLedger({
-    consoleErrors: [pair403],
-    pageErrors: [],
-    requests: [req("POST", pair, 3), req("POST", pair, 4)],
-    networkResponses: [res("POST", pair, 204, 3), res("POST", pair, 403, 4)],
-    failedRequests: [abort("POST", pair)],
-    failedRequestClock: [{ epoch: 3, serial: 1 }],
-  }, "epoch-positive-pair-phantom", origin), "phantom pair abort with surviving 204+403 must pass");
+    requests: [pairProbe, pairRetry, pairSurvived],
+    networkResponses: [res(pairSurvived, 204), res(pairRetry, 403)],
+    failures: [failOf(pairProbe)],
+  }), "epoch-positive-pair", origin), "superseded pair abort with surviving 204+403-reuse must pass");
   // Negatives 1-3: sole aborts with no paired contract success must fail.
   for (const [method, path] of [["GET", health], ["GET", catalog], ["POST", pair]]) {
-    assert.throws(() => assertAuthedLedger({
+    const issued = req(method, path, 0);
+    assert.throws(() => assertAuthedLedger(harnessOf({
       consoleErrors: [],
-      pageErrors: [],
-      requests: [req(method, path, 0)],
+      requests: [issued],
       networkResponses: [],
-      failedRequests: [abort(method, path)],
-    }, `epoch-negative-sole-${path}`, origin), /classified responded outcome/,
+      failures: [failOf(issued)],
+    }), `epoch-negative-sole-${path}`, origin), /classified responded outcome/,
       `sole abort of ${method} ${path} with no paired success must fail`);
   }
   // Negative 4: duplicate bound (two aborts, one surviving response) fails.
-  assert.throws(() => assertAuthedLedger({
+  const dupIssuedA = req("GET", catalog, 0);
+  const dupIssuedB = req("GET", catalog, 0);
+  const dupSurvived = req("GET", catalog, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
-    requests: [req("GET", catalog, 0), req("GET", catalog, 0), req("GET", catalog, 1)],
-    networkResponses: [res("GET", catalog, 200, 1)],
-    failedRequests: [abort("GET", catalog), abort("GET", catalog)],
-  }, "epoch-negative-duplicate-bound", origin), /structural bound/,
+    requests: [dupIssuedA, dupIssuedB, dupSurvived],
+    networkResponses: [res(dupSurvived, 200)],
+    failures: [failOf(dupIssuedA), failOf(dupIssuedB)],
+  }), "epoch-negative-duplicate-bound", origin), /structural bound/,
     "duplicate abort without its own surviving response must fail");
   // Negative 5: non-abort failure beside a valid anchor still fails.
-  assert.throws(() => assertAuthedLedger({
+  const connIssued = req("GET", catalog, 0);
+  const connSurvived = req("GET", catalog, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
-    requests: [req("GET", catalog, 0), req("GET", catalog, 1)],
-    networkResponses: [res("GET", catalog, 200, 1)],
-    failedRequests: [`GET ${origin}${catalog} :: net::ERR_CONNECTION_REFUSED`],
-  }, "epoch-negative-non-abort", origin), /non-abort failure denied/,
+    requests: [connIssued, connSurvived],
+    networkResponses: [res(connSurvived, 200)],
+    failures: [{ ...failOf(connIssued), errorText: "net::ERR_CONNECTION_REFUSED",
+      text: `GET ${origin}${catalog} :: net::ERR_CONNECTION_REFUSED` }],
+  }), "epoch-negative-non-abort", origin), /non-abort failure denied/,
     "non-abort failure must fail closed even with an anchor");
   // Negative 6: cross-origin abort fails even when the key matches elsewhere.
-  assert.throws(() => assertAuthedLedger({
+  const crossIssued = req("GET", catalog, 0);
+  const crossSurvived = req("GET", catalog, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
-    requests: [req("GET", catalog, 0), req("GET", catalog, 1)],
-    networkResponses: [res("GET", catalog, 200, 1)],
-    failedRequests: [`GET http://127.0.0.1:2${catalog} :: net::ERR_ABORTED`],
-  }, "epoch-negative-cross-origin", origin), /cross-origin/,
+    requests: [crossIssued, crossSurvived],
+    networkResponses: [res(crossSurvived, 200)],
+    failures: [{ ...failOf(crossIssued), origin: "http://127.0.0.1:2",
+      text: `GET http://127.0.0.1:2${catalog} :: net::ERR_ABORTED` }],
+  }), "epoch-negative-cross-origin", origin), /cross-origin/,
     "cross-origin abort must fail closed");
   // Negative 7: phantom abort with no browser request and no anchor fails.
-  assert.throws(() => assertAuthedLedger({
+  assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
     requests: [],
     networkResponses: [],
-    failedRequests: [abort("GET", catalog)],
-  }, "epoch-negative-phantom-unanchored", origin), /phantom abort/,
+    failures: [phantomOf("GET", catalog)],
+  }), "epoch-negative-phantom-unanchored", origin), /phantom abort/,
     "phantom abort without a classified anchor must fail closed");
   // Negative 8: a responded outcome with no browser request fails as unpaired.
-  assert.throws(() => assertAuthedLedger({
+  const orphan = req("GET", catalog, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
-    pageErrors: [],
     requests: [],
-    networkResponses: [res("GET", catalog, 200, 1)],
-    failedRequests: [],
-  }, "epoch-negative-unpaired-response", origin), /unpaired responded outcome/,
+    networkResponses: [res(orphan, 200)],
+    failures: [],
+  }), "epoch-negative-unpaired-response", origin), /unpaired responded outcome/,
     "response without a browser request must fail closed");
+  // Luna negative 9 (same-clock phantom): the abort has no browser request
+  // (missing reqId) beside a same-clock classified 200. The removed
+  // failure-time-clock heuristic anchors it (same epoch, serial >= failure
+  // serial, so the legacy clock below would exempt); the exact reqId join has
+  // no A to join and fails closed. Accepted by 0e5b275, rejected post-fix.
+  const luna9Survived = req("GET", health, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [luna9Survived],
+    networkResponses: [res(luna9Survived, 200)],
+    failures: [phantomOf("GET", health)],
+    failedRequestClock: [{ epoch: 1, serial: 0 }],
+  }), "epoch-negative-luna9-same-clock-phantom", origin), /phantom abort without a browser request/,
+    "same-clock phantom abort without a browser request must fail closed");
+  // Luna negative 10 (duplicate ambiguity): the abort reuses the surviving
+  // response's OWN reqId. Positional earliest/latest accounting splits them
+  // (abort takes the superseded probe, the response takes the retry) and
+  // anchors; the exact join requires B≠A and fails closed. Accepted by
+  // 0e5b275, rejected post-fix.
+  const luna10Superseded = req("GET", catalog, 0);
+  const luna10Survived = req("GET", catalog, 1);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [luna10Superseded, luna10Survived],
+    networkResponses: [res(luna10Survived, 200)],
+    failures: [failOf(luna10Survived)],
+  }), "epoch-negative-luna10-duplicate-ambiguity", origin), /unanchored abort/,
+    "abort reusing the surviving response reqId must fail closed");
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 3, negatives: 8,
+    positives: 2, negatives: 10,
     coverage: "synthetic ledger mechanics; sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
