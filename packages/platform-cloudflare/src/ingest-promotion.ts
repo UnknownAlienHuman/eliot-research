@@ -106,9 +106,12 @@ export async function promoteStagedSession(input: {
     promoted.push({
       logical_path: upload.path,
       canonical_key: receipt.key,
+      residency_key_digest: residencyDigest,
       sha256: receipt.readback_sha256,
       size_bytes: receipt.size_bytes,
       etag: receipt.etag,
+      ...(receipt.version === undefined ? {} : { version: receipt.version }),
+      content_type: contentType(upload.path),
       existed_identically: receipt.existed_identically,
     });
   }
