@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { projectionDigest, projectionSha256Utf8 } from "./canonical.js";
