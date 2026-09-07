@@ -55,6 +55,7 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | Document | Purpose |
 |---|---|
 | [cloudflare-runbook.md](cloudflare-runbook.md) | Provision, migrate, dry-run, deploy, verify, roll back. |
+| [cloudflare-usage-envelope.md](cloudflare-usage-envelope.md) | Usage envelope (80% guard), preflight admission receipt, SEALED/BLOCKED discipline. |
 | [local-launch.md](local-launch.md) | The owner loop that runs locally today, and its current limits. |
 | [deployment-audit-2026-09-04.md](deployment-audit-2026-09-04.md) | Dated readiness audit for a local-to-Cloudflare product trial. |
 
