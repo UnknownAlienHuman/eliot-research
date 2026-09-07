@@ -124,7 +124,7 @@ for (const lane of ["IDENT", "LEX"] as const) {
 test("IDENT: nonidentifier fast-empty still settles its pinned generation", async () => {
   await withSearchWorld(async (w) => {
     w.hooks.afterRead = (observation) => {
-      if (observation.sql.includes("FROM projection_item p JOIN projection_span")) w.stale();
+      if (observation.sql.includes("JOIN projection_span s")) w.stale();
     };
     await assert.rejects(w.ident.lookupIdentifiers(w.request("!!!")), incomplete);
   });
@@ -251,5 +251,43 @@ for (const lane of ["IDENT", "LEX"] as const) {
       w.search.exec("DELETE FROM projection_watermark WHERE source_revision_ref = 'rev-b'");
       await assert.rejects(read(w, lane, w.request("absent")), incomplete);
     }, ["rev-a", "rev-b"]);
+  });
+}
+
+function addSpanlessItem(world: SearchWorld, active = 1): void {
+  world.search.prepare(
+    "INSERT INTO projection_item " +
+      "SELECT 'orphan-rev-a', source_revision_ref, 'orphan-section', content_sha256, " +
+      "projection_generation, ? FROM projection_item WHERE item_key = 'item-rev-a'",
+  ).run(active);
+  world.search.prepare("INSERT INTO section_fts VALUES (?, ?)").run("orphan-rev-a", "Orphan");
+}
+
+for (const lane of ["IDENT", "LEX"] as const) {
+  for (const query of [lane === "IDENT" ? "orphan-rev-a" : "Orphan", "absent"]) {
+    test(`${lane}: an active item without a span invalidates the generation (${query})`, async () => {
+      await withSearchWorld(async (w) => {
+        addSpanlessItem(w);
+        await assert.rejects(read(w, lane, w.request(query)), incomplete);
+        assert.ok(!w.observations.some(isCandidateRead));
+      });
+    });
+  }
+  test(`${lane}: settlement detects a spanless active item added after the candidate read`, async () => {
+    await withSearchWorld(async (w) => {
+      w.hooks.afterRead = (observation) => {
+        if (isCandidateRead(observation)) addSpanlessItem(w);
+      };
+      await assert.rejects(read(w, lane, w.request(lane === "IDENT" ? "item-rev-a" : "Pinned")), incomplete);
+    });
+  });
+  test(`${lane}: an inactive spanless item does not invalidate the active generation`, async () => {
+    await withSearchWorld(async (w) => {
+      addSpanlessItem(w, 0);
+      const hits = await read(w, lane, w.request(lane === "IDENT" ? "item-rev-a" : "Pinned"));
+      assert.equal(hits.length, 1);
+      assert.equal(hits[0]?.candidate_id, "item-rev-a");
+      assert.deepEqual(await read(w, lane, w.request(lane === "IDENT" ? "orphan-rev-a" : "Orphan")), []);
+    });
   });
 }
