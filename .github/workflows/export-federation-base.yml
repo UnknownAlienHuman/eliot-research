@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/p0-durable-federation-20260901
+      - agent/er-09-workflow-checkpoints-20260907
     paths:
       - .github/workflows/export-federation-base.yml
 
@@ -17,8 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent/p0-durable-federation-20260901
+          ref: ${{ github.sha }}
           fetch-depth: 1
+          persist-credentials: false
       - name: Archive repository source
         shell: bash
         run: |
