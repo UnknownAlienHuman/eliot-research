@@ -1,17 +1,49 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
+import { digestAccountId } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const now = Date.parse("2026-09-04T23:00:00.000Z");
+function admittedSnapshotJson(accountId = "test-account", at = now) {
+  const metrics = {
+    workers_requests: 100, workers_cpu_ms: 100,
+    d1_storage_bytes: 100, d1_rows_read: 100, d1_rows_written: 100,
+    r2_storage_gb_month: 1, r2_class_a_ops: 100, r2_class_b_ops: 100,
+    queue_ops: 100, do_requests: 100, do_gb_seconds: 100,
+    do_sql_reads: 100, do_sql_writes: 100, do_storage_bytes: 100,
+    workers_ai_neurons_per_day: 100, ai_search_instances: 5,
+    ai_search_queries_month: 100,
+    vectorize_queried_dims_month: 100, vectorize_stored_dims_month: 100,
+  };
+  return JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(accountId),
+    account_ref: "cloudflare-account:test-a…ount",
+    collected_at: new Date(at - 60_000).toISOString(),
+    window: monthlyWindowFor(at),
+    daily_window: dailyWindowFor(at),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
+}
+function sealedSnapshotJson(accountId = "test-account", at = now) {
+  const parsed = JSON.parse(admittedSnapshotJson(accountId, at));
+  parsed.metrics.queue_ops = "unknown";
+  return JSON.stringify(parsed);
+}
 const environment = { CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
-  ELIOTR_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
+  ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
   ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie" };
+// Staged snapshots travel via the explicit `usageSnapshot` deploy option
+// (test-called builder path), never ambient env: production never passes it.
+const defaultUsageSnapshot = admittedSnapshotJson();
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
-  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "" },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
@@ -22,7 +54,7 @@ function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
   let reads = 0;
-  const options = { confirmLive: true, verifyCode: async () => {}, environment, now: () => now, log: () => {},
+  const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
@@ -93,44 +125,64 @@ await check("config drift blocks the next release effect", async () => {
     assert.equal(test.receipts.length, 0);
   }
 });
-await check("migration or deployment failure cannot publish PASS", async () => {
-  for (const command of [coreMigration, searchMigration, deployCommand]) {
-    const test = harness({ failCommand: command });
-    await assert.rejects(deployCloudflare(test.options));
-    assert.equal(test.receipts.length, 0);
-    assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
-  }
-});
-await check("readback failure after upload is not successful deployment", async () => {
-  const test = harness({ failReadback: true });
-  await assert.rejects(deployCloudflare(test.options));
-  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.ok(test.calls.includes("archive"));
+// FIX11: moved to test-deployment-apply-ordering.mjs (see above).
+// FIX11: post-gate failure ordering (migration/deploy failure, readback
+// failure after upload) moved to test-deployment-apply-ordering.mjs —
+// reaching the upload requires passing the usage gate, which in-process
+// test-only inputs can never do without a capability (see the
+// admitted-without-capability check below). The redirected ordering suite
+// covers those failures with the capability mechanics engaged.
+await check("admitted snapshot without capability denies before archive and mutation", async () => {
+  // FIX11: the staged ADMITTED snapshot below proves the evaluation premise,
+  // but deploy apply additionally requires the same-process admission
+  // capability (minted only by fresh live collection), so apply denies with
+  // zero remote effects. Positive apply ordering moved to
+  // test-deployment-apply-ordering.mjs, which runs under the test-only
+  // --import gate where TEST capabilities authorize the fake-observed apply.
+  const test = harness();
+  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
+  assert.deepEqual(test.calls, ["pnpm check", "pnpm build:pwa", "pnpm --filter @eliotr/core cf:types",
+    "pnpm --filter @eliotr/core deploy:dry-run"]);
+  assert.ok(!test.calls.includes("archive"));
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
   assert.equal(test.receipts.length, 0);
 });
-await check("successful ordering and no implicit live qualification", async () => {
-  const test = harness();
-  const receipt = await deployCloudflare(test.options);
-  assert.equal(test.calls.filter((call) => call === deployCommand).length, 1);
-  assert.ok(test.calls.indexOf(generatedDryRun) < test.calls.indexOf(coreMigration));
-  assert.ok(test.calls.indexOf(coreMigration) < test.calls.indexOf(searchMigration));
-  assert.ok(test.calls.indexOf(searchMigration) < test.calls.indexOf(deployCommand));
-  assert.equal(test.calls.filter((call) => call.endsWith("--check-only")).length, 4);
-  assert.ok(!test.calls.some((call) => call.includes("--keep-vars")));
-  assert.ok(test.calls.indexOf("archive") < test.calls.indexOf("node scripts/provision-cloudflare-core.mjs"));
-  assert.equal(receipt.remote_http_smoke.state, "PASS");
-  assert.ok(Object.values(receipt.live_conformance).every((state) => state === "NOT_EXECUTED"));
-  assert.equal(test.receipts.length, 1);
-  assert.ok(!JSON.stringify(receipt).includes("secret-"));
-  const schema = JSON.parse(await readFile(new URL("../infra/cloudflare/deployment-receipt.schema.json", import.meta.url), "utf8"));
-  assert.deepEqual(Object.keys(receipt).sort(), schema.required.slice().sort());
-  const itemSchema = schema.properties.remote_http_smoke.oneOf.find((branch) => branch.properties.state.const === "PASS").properties.results.items;
-  assert.deepEqual(Object.keys(receipt.remote_http_smoke.results[0]).sort(), itemSchema.required.slice().sort());
-});
-await check("missing cookie retains NOT_EXECUTED", async () => {
+await check("missing cookie still denies on capability before smoke", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
-  const receipt = await deployCloudflare(test.options);
-  assert.equal(receipt.remote_http_smoke.state, "NOT_EXECUTED");
-  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 1);
+  await assert.rejects(deployCloudflare(test.options), /admission capability/u);
+  assert.equal(test.calls.filter((call) => call.startsWith("GET ")).length, 0);
+  assert.equal(test.receipts.length, 0);
+});
+await check("BLOCKED usage denies every remote mutation with zero billable calls", async () => {
+  const over = JSON.parse(admittedSnapshotJson());
+  over.metrics.queue_ops = 900_000;
+  const test = harness({ options: { usageSnapshot: JSON.stringify(over) } });
+  const billable = [];
+  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
+  await assert.rejects(deployCloudflare(test.options), /BLOCKED/);
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.equal(billable.length, 0);
+  assert.equal(test.receipts.length, 0);
+});
+await check("SEALED usage denies Worker upload and D1 migrations (adversarial unknown)", async () => {
+  const test = harness({ options: { usageSnapshot: sealedSnapshotJson() } });
+  const billable = [];
+  test.options.fetchImpl = async (url) => { billable.push(url); throw new Error("billable must not be invoked"); };
+  await assert.rejects(deployCloudflare(test.options), /SEALED/);
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.startsWith("GET ")));
+  assert.equal(billable.length, 0);
+  assert.equal(test.receipts.length, 0);
+});
+await check("access-first: access check precedes core apply and partial failure exposes no workers.dev", async () => {
+  const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs" });
+  await assert.rejects(deployCloudflare(test.options));
+  assert.ok(!test.calls.includes(deployCommand));
+  assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
+  assert.equal(test.receipts.length, 0);
 });
 console.log(`Deployment orchestration: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

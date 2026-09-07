@@ -5,6 +5,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { readDeploymentWorker, validateDeploymentInput, validateGeneratedDeployment,
   verifyDeploymentSmoke } from "./lib/deployment-verification.mjs";
+import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
+  stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
 
@@ -12,8 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
 const deployConfig = "wrangler.deploy.jsonc";
 const receiptPath = resolve(root, ".eliotr-state/cloudflare-deployment-receipt.json");
-const provisioners = ["provision-cloudflare-core", "provision-ai-search",
-  "provision-ai-gateways", "provision-cloudflare-access"];
+const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core", "provision-ai-search",
+  "provision-ai-gateways"];
 
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
@@ -41,12 +44,32 @@ async function saveReceipt(receipt) {
 export async function deployCloudflare({ confirmLive = false, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
-  verifyCode = assertLaunchCodeComplete } = {}) {
+  verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
+  usageProviders = [], usageSnapshot = null } = {}) {
   const env = { ...environment };
+  // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
+  // module-loader tokens (--import/--loader/--experimental-loader/--require
+  // plus values) from NODE_OPTIONS so a poisoned env can never auto-load test
+  // hooks into provisioner/wrangler children. Benign flags pass through
+  // intact; a missing NODE_OPTIONS stays missing. Bearer/token handling above
+  // and below is untouched.
+  if (env.NODE_OPTIONS !== undefined && env.NODE_OPTIONS !== null) {
+    const stripped = stripNodeOptionsLoaderTokens(env.NODE_OPTIONS);
+    if (String(stripped).trim() === "") delete env.NODE_OPTIONS;
+    else env.NODE_OPTIONS = stripped;
+  }
   let input;
+  let oauth = null;
   if (confirmLive) {
     await verifyCode();
     env.ELIOTR_ENVIRONMENT ??= "production";
+    // Local-only credential load (profile file + clock). No remote effect yet,
+    // so launch:code and the local gates below still precede every remote call.
+    if (resolveAuthMode(env) === WRANGLER_OAUTH_MODE) {
+      // OS credential locations come from the host; profile knobs come from the deployment env.
+      oauth = await loadWranglerOAuthCredential({ env: { ...process.env, ...env }, readFile: readWranglerFile ?? read, now: now() });
+      env.CLOUDFLARE_API_TOKEN = injectOAuthBearer(env, oauth.bearer).CLOUDFLARE_API_TOKEN;
+    }
     if (!env.ELIOTR_DEPLOYMENT_GENERATION) {
       const revision = captureCommand("git", ["rev-parse", "--short=12", "HEAD"], root, env);
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
@@ -62,6 +85,64 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   if (!confirmLive) {
     log("Dry-run gates passed. No remote provisioning or deployment was executed.");
     return null;
+  }
+
+  // Official-profile verification after local gates, before the first remote
+  // mutation. whoami runs with a token-scrubbed env so the browser-OAuth
+  // profile itself (not the injected bearer) is verified.
+  if (oauth) {
+    const getWhoamiOutput = runWranglerWhoami ?? (async () => {
+      const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+        { cwd: root, env: scrubTokenEnv(env), encoding: "utf8", shell: process.platform === "win32" });
+      if (result.error || result.status !== 0) {
+        throw new WranglerOAuthError("OAUTH_UNAVAILABLE",
+          `Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+      }
+      return result.stdout ?? "";
+    });
+    await verifyWranglerOAuthAccount({ expectedAccountId: env.CLOUDFLARE_ACCOUNT_ID, getWhoamiOutput });
+  }
+
+  // FIX1-B usage-envelope gate (strict deny-by-default): usage preflight
+  // before the first remote mutation. Local gates above (pnpm check, PWA
+  // build, cf:types, deploy:dry-run, provisioner --check-only) are the
+  // enumerated proven metadata-only/zero-billable SEALED allowlist. BLOCKED
+  // denies everything; SEALED authorizes only that allowlist after fresh
+  // account binding/inventory receipt. Worker upload/exposure, route/domain,
+  // D1 migrations/queries, R2 writes, Queue create/config/produce/consume,
+  // Workflow/DO exec, Workers AI, AI Search index/query and Vectorize
+  // writes/queries must not occur while any required metric is
+  // unknown/stale/untrusted — so ADMITTED alone never suffices: the gate
+  // additionally requires the same-process admission capability minted by the
+  // fresh live collection lifecycle above. Injected providers, staged
+  // snapshots, and persisted receipts can yield the ADMITTED label but never
+  // the capability, so they deny here before the first remote mutation.
+  // Access runs first in both check-only and apply loops and is read back
+  // before any Worker surface exists; any partial failure aborts before the
+  // single Worker deploy, leaving no public workers.dev path
+  // (preview_urls=false is enforced by validateGeneratedDeployment).
+  // Injected usage evidence only: forwarded verbatim as `providers` (or an
+  // explicit `usageSnapshot` built by test-called builders) to the preflight.
+  // Absent (defaults) the gate keeps today's live-registry, fail-closed
+  // behavior byte-identical; no decision logic changes here. Production CLI
+  // entry below never passes either capability.
+  {
+    const usageGate = await runUsagePreflight({
+      env: { ...process.env, ...env },
+      nowMs: now(),
+      readFile: readWranglerFile ?? read,
+      getWhoamiOutput: runWranglerWhoami,
+      providers: usageProviders,
+      snapshot: usageSnapshot,
+      writeReceipt: false,
+      cwd: root,
+    });
+    if (usageGate.decision === "BLOCKED") {
+      throw new Error(`Cloudflare usage preflight BLOCKED deployment before any mutation. ${usageGate.evaluation.reasons.join("; ")}`);
+    }
+    if (usageGate.decision !== "ADMITTED" || !isUsageAdmissionCapability(usageGate.capability)) {
+      throw new Error(`Cloudflare usage preflight ${usageGate.decision} denies remote deployment: only a fresh ADMITTED aggregate with a same-process admission capability authorizes Worker upload, D1 migrations, and provisioner apply. ${usageGate.evaluation.reasons.join("; ")} Zero billable bindings were invoked.`);
+    }
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.

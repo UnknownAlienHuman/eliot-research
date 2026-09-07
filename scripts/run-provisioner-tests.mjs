@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 
-process.env.ELIOTR_ACCESS_TEAM_DOMAIN ??= "https://mock-team.cloudflareaccess.com";
+process.env.ELIOTR_ACCESS_TEAM_DOMAIN ??= "https://mock-team-example.cloudflareaccess.com";
 process.env.ELIOTR_ACCESS_AUDIENCE ??= "mock-access-audience";
 process.env.ELIOTR_ACCESS_SERVICE_PRINCIPALS ??= "eliotr-federation,eliotr-agent";
 await import("./test-launch-code.mjs");
@@ -32,3 +32,15 @@ if (build.error !== undefined) throw build.error;
 if (build.status !== 0) process.exit(build.status ?? 1);
 
 await import("./test-ai-search-generation-operator.mjs");
+await import("./test-provisioner-exit-regression.mjs");
+await import("./test-cloudflare-usage-providers.mjs");
+await import("./test-usage-aggregation-trust.mjs");
+await import("./test-privacy-large-line-regression.mjs");
+await import("./test-queues-chunk-accounting.mjs");
+await import("./test-cloudflare-usage-billing.mjs");
+await import("./test-cloudflare-usage-billing-collector.mjs");
+await import("./test-cloudflare-usage-pagination.mjs");
+await import("./test-usage-envelope-receipt.mjs");
+await import("./test-usage-preflight-children.mjs");
+await import("./test-usage-admission-capability.mjs");
+await import("./test-usage-metric-immutability.mjs");

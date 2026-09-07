@@ -1,15 +1,91 @@
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
+  scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
+// gitignored .eliotr-state so parallel/serial runs never communicate through
+// leftover receipts. Production default is unchanged.
+const stateDirectory = process.env.ELIOTR_STATE_DIRECTORY ? resolve(process.env.ELIOTR_STATE_DIRECTORY) : resolve(repositoryRoot, ".eliotr-state");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-const token = process.env.CLOUDFLARE_API_TOKEN;
+let token = process.env.CLOUDFLARE_API_TOKEN;
 const apiBase = process.env.CLOUDFLARE_API_BASE_URL ??
   "https://api.cloudflare.com/client/v4";
 const checkOnly = process.argv.includes("--check-only");
+const showHelp = process.argv.includes("--help") || process.argv.includes("-h");
+if (showHelp) {
+  console.log("Usage: scripts/provision-ai-search.mjs [--check-only] [--help]\nProvisions the AI Search namespace and instances from infra/ai-search/instances.json. --check-only prints the plan with zero mutations.");
+  process.exitCode = 0;
+}
+if (!showHelp) {
 const namespaceDescription =
   "Eliot Research private managed retrieval namespace";
-if (!accountId || !token) {
+let authMode = "api-token";
+try {
+  authMode = resolveAuthMode(process.env);
+} catch (error) {
+  console.error(error?.message ?? String(error));
+  process.exit(2);
+}
+if (authMode === WRANGLER_OAUTH_MODE) {
+  // Direct-invocation OAuth path: bearer stays in process memory only.
+  if (!accountId) {
+    console.error(`CLOUDFLARE_ACCOUNT_ID is required. ${LOGIN_INSTRUCTION}`);
+    process.exit(2);
+  }
+  try {
+    const credential = await loadWranglerOAuthCredential({ env: process.env, now: Date.now() });
+    token = credential.bearer;
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+  try {
+    // Official-profile account pin before the first Cloudflare GET. Always
+    // spawns the official `wrangler whoami` with a token-scrubbed env. No
+    // ambient test seam is honored here.
+    const scrubbed = scrubTokenEnv(process.env);
+    const result = spawnSync("pnpm", ["exec", "wrangler", "whoami"],
+      { cwd: repositoryRoot, env: scrubbed, encoding: "utf8", shell: process.platform === "win32" });
+    if (result.error || result.status !== 0) {
+      console.error(`Wrangler verification (wrangler whoami exit ${result.status ?? "unknown"}) failed. ${LOGIN_INSTRUCTION}`);
+      process.exit(2);
+    }
+    await verifyWranglerOAuthAccount({ expectedAccountId: accountId, getWhoamiOutput: async () => result.stdout ?? "" });
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+} else if (!accountId || !token) {
   console.error("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN are required");
   process.exit(2);
+}
+
+// FIX1-B usage-envelope gate (narrow): usage preflight before the first
+// remote mutation. In-process shared runner writes the redacted admission
+// receipt. BLOCKED exits in every mode; any other non-ADMITTED decision
+// (SEALED) exits in apply mode — SEALED never POSTs instance or namespace
+// creates. ADMITTED alone never suffices in apply mode: the same-process
+// admission capability minted by fresh live collection is additionally
+// required. Check-only inspection stays read-only metadata.
+{
+  let usageGate;
+  try {
+    usageGate = await runUsagePreflight({ env: process.env, nowMs: Date.now(), writeReceipt: true,
+      receiptPath: resolve(stateDirectory, "cloudflare-usage-admission-receipt.json"), cwd: repositoryRoot });
+  } catch (error) {
+    console.error(error?.message ?? String(error));
+    process.exit(2);
+  }
+  const admittedWithCapability = usageGate.decision === "ADMITTED" && isUsageAdmissionCapability(usageGate.capability);
+  if (usageGate.decision === "BLOCKED" || (!checkOnly && !admittedWithCapability)) {
+    console.error(`Cloudflare usage preflight ${usageGate.decision} denies AI Search provisioning before any mutation. ${usageGate.evaluation.reasons.join("; ")}${usageGate.decision === "ADMITTED" ? " Missing same-process admission capability: ADMITTED alone never authorizes mutations." : ""}`);
+    process.exit(2);
+  }
 }
 
 const desired = JSON.parse(
@@ -308,8 +384,9 @@ if (namespace === null && checkOnly) {
       2,
     ),
   );
-  process.exit(0);
+  process.exitCode = 0;
 }
+if (namespace !== null || !checkOnly) {
 if (namespace === null) {
   let createError;
   try {
@@ -401,3 +478,5 @@ console.log(
     2,
   ),
 );
+}
+}

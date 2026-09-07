@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { digestAccountId, REQUIRED_METRIC_KEYS } from "./lib/cloudflare-usage-envelope.mjs";
+import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desired = JSON.parse(
@@ -198,22 +201,63 @@ const address = server.address();
 assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
 
-function runProvisioner() {
+// Explicit spawn gate (see scripts/test-usage-gate-shim.mjs): children that
+// must exercise real apply paths are spawned with `node --import <shim>`,
+// which substitutes the usage-collection module with a test standin honoring
+// ELIOTR_TEST_SPAWN_SNAPSHOT_JSON for that child only. Production never
+// registers the hooks and never reads the variable.
+// Isolated scratch state: the provisioner writes usage receipts under
+// ELIOTR_STATE_DIRECTORY (temp, per-run), never the shared .eliotr-state.
+const GATE_SHIM = pathToFileURL(resolve(root, "scripts/test-usage-gate-shim.mjs")).href;
+const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "ai-search-recon-state-"));
+
+function buildFixture() {
+  // Genuinely admittable usage evidence: fresh windows, bound account, full
+  // numeric metrics. Evaluated through the real envelope inside the child.
+  const now = Date.now();
+  const metrics = {};
+  for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
+  metrics.ai_search_instances = 5;
+  metrics.r2_storage_gb_month = 1;
+  return JSON.stringify({
+    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    account_id_digest: digestAccountId(accountId),
+    account_ref: "cloudflare-account:mock-a…ount",
+    collected_at: new Date(now - 60_000).toISOString(),
+    window: monthlyWindowFor(now),
+    daily_window: dailyWindowFor(now),
+    source: "test-fixture",
+    readback: { whoami_verified: true },
+    metrics,
+  });
+}
+
+function runProvisioner({ useGate = true } = {}) {
+  // Direct apply requires ADMITTED past the usage gate, so reconciliation
+  // (not gating) is what this suite proves. Without the gate shim the same
+  // ambient variable is ignored and the child seals (see poisoned case).
+  const fixture = buildFixture();
+  const argv = useGate
+    ? ["--import", GATE_SHIM, resolve(root, "scripts/provision-ai-search.mjs")]
+    : [resolve(root, "scripts/provision-ai-search.mjs")];
+  const env = {
+    ...process.env,
+    CLOUDFLARE_ACCOUNT_ID: accountId,
+    CLOUDFLARE_API_TOKEN: "mock-token",
+    CLOUDFLARE_API_BASE_URL: apiBase,
+    ELIOTR_STATE_DIRECTORY: isolatedStateDirectory,
+  };
+  // The snapshot variable is always present in the child env: with the shim
+  // it admits via the standin; without the shim production ignores it and
+  // seals (the poisoned case below proves ambient presence alone never
+  // admits).
+  env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON = fixture;
   return new Promise((resolveRun) => {
-    const child = spawn(
-      process.execPath,
-      [resolve(root, "scripts/provision-ai-search.mjs")],
-      {
-        cwd: root,
-        env: {
-          ...process.env,
-          CLOUDFLARE_ACCOUNT_ID: accountId,
-          CLOUDFLARE_API_TOKEN: "mock-token",
-          CLOUDFLARE_API_BASE_URL: apiBase,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+    const child = spawn(process.execPath, argv, {
+      cwd: root,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");
@@ -272,6 +316,12 @@ function expectMutationCounts(namespaceCount, instanceCount, label) {
 }
 
 try {
+  // Poisoned ambient env without the gate shim is denied before the first
+  // mutation: production ignores the snapshot variable and seals.
+  resetNamespace("normal");
+  expectFailure(await runProvisioner({ useGate: false }), "SEALED");
+  expectMutationCounts(0, 0, "poisoned env");
+
   resetNamespace("normal");
   expectPass(await runProvisioner(), "namespace_disposition", "CREATED");
   expectMutationCounts(1, 0, "acknowledged namespace create");
@@ -323,4 +373,5 @@ try {
       error ? rejectClose(error) : resolveClose(),
     );
   });
+  await rm(isolatedStateDirectory, { recursive: true, force: true });
 }

@@ -39,7 +39,7 @@ export async function loadOwnerConfig({ directory = localPaths().directory, prom
     const io = createInterface({ input: process.stdin, output: process.stdout });
     try {
       settings = validateOwnerConfig({ app: (await io.question("Access application origin (https://research.example.com): ")).trim(),
-        team: (await io.question("Access team origin (https://TEAM.cloudflareaccess.com): ")).trim(),
+        team: (await io.question("Access team origin (https://TEAM-example.cloudflareaccess.com): ")).trim(),
         audience: (await io.question("Access application AUD tag: ")).trim() });
     } finally { io.close(); }
     await mkdir(directory, { recursive: true });

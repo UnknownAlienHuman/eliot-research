@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Env } from "./env.js";
 import { handleGeminiMcp } from "./gemini-mcp.js";
 
-const CLIENT_ID = "0123456789abcdef0123456789abcdef.access";
+const CLIENT_ID = "00000000000000000000000000000000.access";
 
 function environment(clientId: string = CLIENT_ID): Env {
   return {
@@ -11,7 +11,7 @@ function environment(clientId: string = CLIENT_ID): Env {
     DEPLOYMENT_GENERATION: "generation-1",
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     MCP_HOSTNAME: "mcp.example",
-    MCP_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+    MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     MCP_ACCESS_AUDIENCE: "mcp-audience",
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: clientId,
   } as unknown as Env;

@@ -8,43 +8,139 @@ all normative code, security and live qualification gates.
 This runbook deploys one Worker/PWA contour without committing Cloudflare account state. It is safe to
 hand to a deployment agent; no step requires reading the architecture master document.
 
+## Operator identity (non-secret, browser OAuth only)
+
+Browser OAuth through the local Wrangler profile is the ONLY operator auth method.
+No API key, API token, or service token is used by this flow, and none may be added to tracked
+files. The tracked file `infra/cloudflare/operator-profile.json` is an account-neutral template
+with fictional placeholders only (protocol `eliotr.cloudflare-operator-profile.v1`). Real operator
+values live only in the ignored local profile `.eliotr-state/cloudflare/operator-profile.json`
+or in explicit env vars (see your local MCP map, which is ignored and never committed, for
+operator-specific endpoints). Verify the template and the local binding before every deployment:
+
+```bash
+node scripts/test-operator-profile.mjs
+node scripts/test-public-repo-privacy.mjs
+```
+
+| Field | Value source |
+|---|---|
+| Account name | local ignored profile (read back via `wrangler whoami`) |
+| Account ID | local ignored profile; exact 32-hex readback, never committed |
+| Operator email | local ignored profile (single owner email) |
+| Wrangler profile | local browser-OAuth profile (example: `default`) |
+| Workers.dev subdomain | local ignored profile |
+| Worker | `eliotr-core` |
+| Hostname (only public route) | local ignored profile (`<worker>.<subdomain>.workers.dev`) |
+| `ELIOTR_CUSTOM_DOMAIN` | `0` (workers.dev only; Custom Domain out of scope) |
+| Access team origin | local ignored profile (`https://<team>.cloudflareaccess.com`) |
+| Access owner email (only) | local ignored profile (single exact owner email) |
+
+Single account, single Worker, single hostname. Any drift between the supplied expectations, the
+local profile, and live readback fails closed before any Cloudflare mutation. Browser login and
+any financial/billing consent cannot be automated: a human completes them in the browser; scripts
+only consume the resulting local OAuth profile. A $1 usage alert is advisory monitoring only and does not enforce a billing cap.
+
 ## Preconditions
 
 - Node.js and Corepack satisfy the root `package.json` engines.
+- The operator has completed `wrangler login` in a browser for the account in the local ignored
+  profile (`ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth`). The deployer verifies the active profile
+  with `wrangler whoami` against the exact account ID from the local ignored profile before any
+  mutation.
 - The Cloudflare account has Zero Trust enabled.
-- The API token is least-privilege but can read/write Workers, D1, R2, Queues, AI Search, AI Gateway and
-  Access applications/policies.
-- `ELIOTR_ACCESS_HOSTNAME` names the **only** production URL: either the intended Custom Domain or the
-  exact `eliotr-core.<account-subdomain>.workers.dev` hostname.
-- `ELIOTR_ACCESS_TEAM_DOMAIN` is the exact `https://<team>.cloudflareaccess.com` issuer origin.
-- `ELIOTR_ACCESS_AUDIENCE` is the exact Access application AUD tag used by Worker JWT verification.
-- `ELIOTR_OWNER_EMAILS` contains comma-separated exact owner emails. Never use `everyone` or a generic
-  valid-email selector.
+- No `CLOUDFLARE_API_TOKEN` is required for the operator flow. (A static token remains only for
+  non-interactive CI, where browser login is impossible; it is never the documented operator path.)
+- `ELIOTR_ACCESS_HOSTNAME` exactly matches the hostname in the local ignored profile (hostname
+  only; no scheme/path/wildcard).
+- `ELIOTR_ACCESS_TEAM_DOMAIN` exactly matches the team origin in the local ignored profile on
+  re-deploy; it may be empty on first deploy (live organization readback wins).
+- `ELIOTR_ACCESS_AUDIENCE` is left empty on first deploy: the AUD tag is Cloudflare-generated
+  on Access-application create and read back into the ignored receipt. On re-deploy it must
+  reconcile exactly with the receipt; a mismatch fails instead of overriding.
+- `ELIOTR_OWNER_EMAILS` exactly matches the owner email list in the local ignored profile.
+  Never use `everyone` or a generic valid-email selector.
 
 ## Environment
 
 ```text
-CLOUDFLARE_ACCOUNT_ID              required
-CLOUDFLARE_API_TOKEN               required
-ELIOTR_ACCESS_HOSTNAME             required, hostname only; no scheme/path/wildcard
-ELIOTR_ACCESS_TEAM_DOMAIN          required, exact HTTPS cloudflareaccess.com origin
-ELIOTR_ACCESS_AUDIENCE             required, exact Access application AUD tag
+ELIOTR_CLOUDFLARE_AUTH_MODE       required: wrangler-oauth (operator browser flow; unset means CI API-token mode)
+ELIOTR_WRANGLER_PROFILE           optional: local browser-OAuth Wrangler profile name
+CLOUDFLARE_ACCOUNT_ID              required: account ID from the local ignored profile (exact readback)
+CLOUDFLARE_API_TOKEN               CI-only; leave unset for browser-OAuth operation (the deployer injects
+                                   the short-lived OAuth bearer into child-process memory only)
+ELIOTR_ACCESS_HOSTNAME             required: hostname from the local ignored profile (hostname only)
+ELIOTR_ACCESS_TEAM_DOMAIN          required on re-deploy: team origin from the local ignored profile;
+                                   may be empty on first deploy (live organization readback wins)
+ELIOTR_ACCESS_AUDIENCE             empty on first deploy (Cloudflare-generated on create, then read back);
+                                   exact receipt AUD on re-deploy; any override attempt fails
 ELIOTR_ACCESS_SERVICE_PRINCIPALS   optional comma-separated signed service-token common_name allow-list;
                                     empty denies every service principal
-ELIOTR_OWNER_EMAILS                required, comma-separated exact emails
+ELIOTR_OWNER_EMAILS                required: owner email list from the local ignored profile
 ELIOTR_ENVIRONMENT                 optional: staging|production; live default is production
 ELIOTR_DEPLOYMENT_GENERATION       optional; defaults to git-<short-sha>
-ELIOTR_CUSTOM_DOMAIN               required: 1 for Custom Domain only; 0 for workers.dev only
+ELIOTR_CUSTOM_DOMAIN               required: 0 for this profile (workers.dev only; 1 is out of scope here)
 ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS
                                     optional explicit allow-list for reviewed service policies
 ELIOTR_ACCESS_SMOKE_COOKIE         optional CF_Authorization value for authenticated HTTP smoke
 ELIOTR_SMOKE_BASE_URL              optional; must equal https://ELIOTR_ACCESS_HOSTNAME (optional trailing slash)
 ```
 
-Google credentials, provider keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with
-`wrangler secret put` or approved secret automation; never place them in tracked JSON or `.env` files.
+See `.env.example` for placeholder shapes (fictional values only). Google credentials, provider
+keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with `wrangler secret put`
+or approved secret automation; never place them in tracked JSON or `.env` files.
 
-## First environment or repeat deployment
+## Browser login, read-only preflight, first deploy, re-deploy
+
+Every mutation in this runbook follows Intent → Attempt → Receipt → Readback → Reconciliation:
+the provisioner declares a plan (Intent), performs create-or-verify calls (Attempt), persists an
+ignored non-secret receipt (Receipt), re-reads live state (Readback), and refuses drift on the
+next run instead of silently overwriting it (Reconciliation). The exact binding (account ID,
+hostname, team origin, AUD, owner set) is read back from live state and compared against the
+local ignored profile before any mutation; drift fails closed.
+
+Step 0 — browser login (human, one time per OAuth expiry; cannot be automated):
+
+```bash
+pnpm exec wrangler login
+pnpm exec wrangler whoami   # must show the account in the local ignored profile
+```
+
+If `whoami` shows any other account, log in with the correct account and retry. Never paste an
+API token to work around a wrong profile; the deployer rejects account mismatch before mutation.
+
+Step 1 — read-only preflight (zero mutating calls; safe on any account state):
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+node scripts/test-operator-profile.mjs
+node scripts/test-public-repo-privacy.mjs
+node scripts/test-wrangler-oauth.mjs
+node scripts/test-cloudflare-browser-auth-integration.mjs
+ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth pnpm cf:preflight:remote
+```
+
+On an empty account the Access preflight reports a `CREATE` plan with `aud: null` and
+`GENERATED_ON_CREATE`: the AUD does not exist yet and must not be invented. The foundation
+preflight reports `RUN_ACCESS_PROVISIONER_FIRST` until the Access receipt exists.
+
+Step 2 — first deploy (Access provisioner runs before foundation; no manual dashboard step —
+the scripts create-or-verify the hostname-based Access application and the single exact-email
+owner policy; Worker-level Access stays prohibited for `ResearchSession` WebSockets):
+
+```bash
+ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth pnpm cf:deploy -- --confirm-live
+```
+
+Lost responses reconcile: a create that succeeded without a usable readback is recovered by
+exact-name re-list, never by creating a duplicate. A short-lived OAuth bearer is injected into
+child-process memory only; it never appears in argv, logs, or receipts.
+
+Step 3 — re-deploy: repeat steps 1–2 unchanged. The second run replays as `VERIFIED` with no
+new mutations when live state matches the receipts. AUD, team origin, owner set, account, and
+hostname drift against the prior receipt fail closed; fix the cause (usually: re-run the Access
+provisioner after a reviewed change) instead of deleting receipts.
 
 ```bash
 corepack enable
@@ -76,7 +172,9 @@ depend on Wrangler's automatic D1 config mutation.
 ### R2
 
 Bucket jurisdiction and default storage class are treated as immutable profile fields. A mismatch fails;
-it is never patched under an existing generation.
+it is never patched under an existing generation. R2 free-tier allowances are operational thresholds
+only (monitor usage, stay within the free tier by process): until a verified hard control exists,
+no platform cutoff is assumed and no hard stop is asserted.
 
 ### Queues
 
@@ -91,11 +189,16 @@ change; the provisioner does not update it silently.
 
 ### Access
 
-The provisioner creates a hostname-based self-hosted application and one exact-email owner policy.
+There is no manual Access step: `scripts/provision-cloudflare-access.mjs` creates-or-verifies the
+hostname-based self-hosted application and the one exact-email owner policy, and
+`scripts/provision-cloudflare-core.mjs` consumes the verified AUD plus exact team origin from the
+ignored receipt. Do not create Access applications or policies in the dashboard; unmanaged entries
+fail the undeclared-policy check.
 Worker-level Access is prohibited because `ResearchSession` uses WebSockets. Extra service policies fail
 unless their IDs are explicitly allow-listed. Hostname Access protects only the exact URL, so the
 foundation provisioner enforces one of two exclusive contours: a Custom Domain with `workers.dev`
-disabled, or the exact `eliotr-core.<account-subdomain>.workers.dev` hostname with no Custom Domain.
+disabled, or the exact `<worker>.<subdomain>.workers.dev` hostname from the local ignored profile
+with no Custom Domain.
 The foundation generator writes the exact team domain, AUD tag, and bounded service-principal allow-list
 into the ignored deploy config. Invalid values fail before the first Cloudflare request. ER-17 verifies
 issuer, audience, signature, time, token class, and service principal; none is inferred merely from the
@@ -143,11 +246,5 @@ All deeper T4/T6 gates remain explicit `NOT_EXECUTED` until ER-27 performs real:
 - AI Search locator-to-`EvidenceHandle` resolution;
 - Google Drive append/readback/reconnect.
 
-No mock, missing credential or omitted command may be reported as `PASS`.
-
-## Rollback
-
-Worker rollback does not undo schema or purge history. Keep migrations additive, retain the previous AI
-Search generation and old code read path through the observation window, then switch the expected
-Worker/index/config heads back explicitly. Never restore D1/R2 before replaying the current purge ledger;
-otherwise erased content can be resurrected.
+No mock, missing credential or omitted command may be reported as `PASS`. Live status stays
+`NOT_EXECUTED` / `IMPLEMENTED_NOT_LIVE` until real receipts exist.
