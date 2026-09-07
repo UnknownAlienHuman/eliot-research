@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { access, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,9 @@ async function setFakeWhoami(output) {
   const line = String(output).replace(/"/gu, "");
   await writeFile(join(fakeBinDir, "pnpm.cmd"), `@echo off\r\nif "%1"=="exec" if "%2"=="wrangler" if "%3"=="whoami" (\r\n  echo ${line}\r\n  exit /b 0\r\n)\r\necho unexpected pnpm invocation: %* 1>&2\r\nexit /b 1\r\n`);
   await writeFile(join(fakeBinDir, "pnpm"), `#!/bin/sh\nif [ "$1" = "exec" ] && [ "$2" = "wrangler" ] && [ "$3" = "whoami" ]; then\n  echo "${line}"\n  exit 0\nfi\necho "unexpected pnpm invocation: $*" >&2\nexit 1\n`);
+  // Same Linux determinism as test-usage-preflight-children: +x required,
+  // otherwise the real wrangler runs and the test becomes env-dependent.
+  await chmod(join(fakeBinDir, "pnpm"), 0o755);
 }
 await setFakeWhoami(`Account ${ACCOUNT} via browser OAuth`);
 const fakePath = `${fakeBinDir}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
