@@ -51,7 +51,7 @@ function sliceUtf8(
   }
   const selected = bytes.slice(range.start, range.end);
   let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(selected); }
+  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(selected); }
   catch { throw new RangeError("requested evidence response range cuts a UTF-8 code point"); }
   return { text, bytes: selected, partial: true };
 }
