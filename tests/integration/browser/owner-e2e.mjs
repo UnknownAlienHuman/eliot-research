@@ -557,6 +557,123 @@ async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
   return { protocol: "eliotr.owner-e2e.controlled-issuer.v1", state: "PASS", issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE };
 }
 
+// ---- Closed operation/slot authority (architect): closed enums, explicit
+// registration at action/navigation boundaries only, finite request slots
+// minted per action, and single-step exact transition validation. This
+// replaces the D5 mintOp/prevOpId auto-chain and the BFS supersededBy closure
+// (both deleted): unknown or merely-nonempty enum values reject, operations
+// link only through declared successors in the closed TRANSITIONS set, and
+// the abort anchor key is (method,origin,path,role,actionIds,slotId).
+export const OP_KINDS = Object.freeze(["init", "harness-navigation", "harness-action", "observed-navigation"]);
+export const OP_CAUSES = Object.freeze(["harness-start", "init", "goto", "goto-pairing", "pair-action", "reload", "logout-action", "framenavigated"]);
+export const EDGE_SCOPES = Object.freeze(["harness", "document"]);
+export const SLOT_ROLES = Object.freeze(["startup-probe", "catalog-read", "health-read", "pair-action", "jwt-matrix", "logout-action", "rotation-read"]);
+export const OP_ACTIONS = Object.freeze(["harness-start", "goto-unauthenticated", "goto-pairing", "click-connect",
+  "reload-authed-retrieval", "goto-jwt-matrix", "goto-post-restart", "goto-repairing", "click-reconnect",
+  "goto-logout", "click-logout", "goto-post-logout-clean", "goto-rotation", "goto-rotation-pairing",
+  "click-rotation-connect", "probe-issue", "probe-mid", "probe-retry", "probe-rogue", "pair-probe", "pair-retry",
+  "framenavigated"]);
+export const OP_TRANSITIONS = Object.freeze(["harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
+  "goto-pairing→click-connect", "click-connect→reload-authed-retrieval", "reload-authed-retrieval→goto-jwt-matrix",
+  "goto-jwt-matrix→goto-post-restart", "goto-post-restart→goto-repairing", "goto-repairing→click-reconnect",
+  "click-reconnect→goto-logout", "goto-logout→click-logout", "click-logout→goto-post-logout-clean",
+  "goto-post-logout-clean→goto-rotation", "goto-rotation→goto-rotation-pairing", "goto-rotation-pairing→click-rotation-connect",
+  "goto-unauthenticated→framenavigated", "goto-pairing→framenavigated", "reload-authed-retrieval→framenavigated",
+  "goto-jwt-matrix→framenavigated", "goto-post-restart→framenavigated", "goto-repairing→framenavigated",
+  "goto-logout→framenavigated", "goto-post-logout-clean→framenavigated", "goto-rotation→framenavigated",
+  "goto-rotation-pairing→framenavigated", "harness-start→probe-issue", "harness-start→pair-probe",
+  "probe-issue→probe-retry", "probe-issue→probe-mid", "probe-mid→probe-retry", "pair-probe→pair-retry"]);
+
+// Abortable application identities pre-minted per action (finite request
+// slots, scoped method+origin+path). Dynamic artifact paths mint through the
+// same authority at their action boundary via extraPaths.
+export const ABORTABLE_SLOT_PATHS = Object.freeze([["GET", "/api/v1/research/catalog?limit=20"],
+  ["GET", "/api/v1/system/health"], ["GET", "/api/v1/system/session"], ["POST", "/__local/pair"],
+  ["POST", "/__local/logout"], ["GET", "/__local/"], ["GET", "/manifest.webmanifest"]]);
+
+// Exact role compatibility: equal AND a closed SlotRole. Unknown roles and
+// merely-nonempty strings (including the deleted broad-phase "authed-window"
+// label) reject; roles never derive from URLs.
+export function roleCompat(first, second) {
+  return first === second && SLOT_ROLES.includes(first);
+}
+
+export function createClosedAuthority(label) {
+  assert.ok(typeof label === "string" && label.length > 0 && label.length < 128,
+    "authority label must be an exact boundary name");
+  const operations = new Map();
+  const edges = [];
+  const slots = new Map();
+  const pendingNav = [];
+  let nextOpId = 0;
+  let nextSlotId = 0;
+  const checkEnum = (value, closed, name) => {
+    assert.ok(typeof value === "string" && closed.includes(value),
+      `${label}: unknown ${name} ${JSON.stringify(String(value)).slice(0, 64)} rejects (closed: ${closed.join("/")}); merely-nonempty is insufficient`);
+  };
+  const registerOp = ({ kind, cause, scope, sourceDoc, targetDoc, action, role, from = null, successors = [] }) => {
+    checkEnum(kind, OP_KINDS, "OpKind");
+    checkEnum(cause, OP_CAUSES, "OpCause");
+    checkEnum(scope, EDGE_SCOPES, "EdgeScope");
+    checkEnum(action, OP_ACTIONS, "OpAction");
+    checkEnum(role, SLOT_ROLES, "SlotRole");
+    assert.ok(Number.isSafeInteger(sourceDoc) && sourceDoc >= 0, `${label}: op sourceDoc must be an exact non-negative int`);
+    assert.ok(Number.isSafeInteger(targetDoc) && targetDoc >= sourceDoc, `${label}: op targetDoc must be an exact int >= sourceDoc`);
+    assert.ok(Array.isArray(successors) && successors.every((name) => OP_ACTIONS.includes(name)),
+      `${label}: op successors must declare exact OpActions`);
+    assert.ok(operations.size < 1024, `${label}: operation table must stay finite`);
+    if (from === null) {
+      assert.ok(kind === "init" || kind === "observed-navigation",
+        `${label}: only init/observed-navigation may register without an explicit predecessor (NO auto-chain; prevOpId chaining deleted)`);
+    } else {
+      assert.ok(Number.isSafeInteger(from), `${label}: predecessor op id must be exact`);
+      const prev = operations.get(from);
+      assert.ok(prev !== undefined, `${label}: unregistered transition endpoint ${from} rejects`);
+      assert.ok(OP_TRANSITIONS.includes(`${prev.action}→${action}`),
+        `${label}: arbitrary edge ${prev.action}→${action} rejects (closed TRANSITIONS)`);
+      assert.ok(prev.successors.includes(action),
+        `${label}: undeclared successor ${action} rejects (not in op ${from} successors)`);
+    }
+    nextOpId += 1;
+    const op = { id: nextOpId, kind, cause, scope, sourceDoc, targetDoc, action, role, successors: [...successors] };
+    operations.set(op.id, op);
+    if (from !== null) edges.push({ fromOpId: from, toOpId: op.id, scope, cause });
+    if (kind === "harness-navigation") pendingNav.push({ targetDoc, opId: op.id, consumed: false });
+    return op;
+  };
+  const mintSlot = ({ opId, targetDoc, action, role, method, origin, path }) => {
+    assert.ok(Number.isSafeInteger(opId) && operations.has(opId),
+      `${label}: slot must bind a registered op, got ${String(opId).slice(0, 32)}`);
+    checkEnum(action, OP_ACTIONS, "OpAction");
+    checkEnum(role, SLOT_ROLES, "SlotRole");
+    assert.ok(Number.isSafeInteger(targetDoc) && targetDoc >= 0, `${label}: slot targetDoc must be exact`);
+    assert.ok(typeof method === "string" && method.length > 0 && method.length < 16, `${label}: slot method must be exact`);
+    assert.ok(typeof origin === "string" && origin.length > 0 && origin.length < 256, `${label}: slot origin must be exact`);
+    assert.ok(typeof path === "string" && path.startsWith("/") && path.length < 1024, `${label}: slot path must be exact`);
+    assert.ok(slots.size < 8192, `${label}: slot table must stay finite`);
+    const owner = operations.get(opId);
+    assert.ok(owner.action === action,
+      `${label}: slot action must equal its minting op action (late/unrelated slot use rejects)`);
+    nextSlotId += 1;
+    const slot = { id: nextSlotId, opId, targetDoc, action, role, method, origin, path };
+    slots.set(slot.id, slot);
+    return slot;
+  };
+  const consumeNavSlot = (targetDoc) => {
+    for (let index = pendingNav.length - 1; index >= 0; index -= 1) {
+      const entry = pendingNav[index];
+      if (!entry.consumed && entry.targetDoc === targetDoc) {
+        entry.consumed = true;
+        return entry;
+      }
+    }
+    return null;
+  };
+  return { label, registerOp, mintSlot, consumeNavSlot,
+    getOp: (id) => operations.get(id),
+    operations: () => [...operations.values()], edges: () => [...edges], slots: () => [...slots.values()] };
+}
+
 async function launchPlaywright(runId) {
   const { chromium } = await import("playwright-core");
   const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
@@ -585,45 +702,69 @@ async function launchPlaywright(runId) {
     // a reqId is minted exactly once per observed request event and pinned to
     // the Playwright Request object via a WeakMap, so the stamp a response or
     // failure carries is always its OWN request's issuing stamp, never a
-    // sample of the live global counter. opId {kind,id,reason,prevOpId} is
-    // minted before every harness-initiated navigation/replacement and on
-    // every observed main-frame framenavigated (document replacement); the
-    // supersedes table {fromOpId,toOpId,scope,cause} records the explicit edge.
-    // Requests carry {reqId,opId,docId,role}; role comes from the explicit
-    // startup/action boundary via setRole(), NEVER from URL inference.
-    // Responses/failures carry their OWN request's reqId/opId/docId/role join
-    // and fail closed on mismatch. The legacy (epoch,serial,seq) counters are
-    // retained for diagnostics only and are NEVER consulted for pairing.
-    // There is no phantom fallback: an abort without its own reqId join fails
-    // closed.
+    // sample of the live global counter. Operations register ONLY at explicit
+    // harness action/navigation boundaries via registerOp with exact
+    // kind/cause/scope/sourceDoc/targetDoc/action/role/successors; the
+    // observed main-frame framenavigated registers only against a matching
+    // pending navigation slot, otherwise as an unlinked observation. There is
+    // NO auto-chain and no prevOpId field: every edge is an explicit
+    // from-declared successor inside the closed TRANSITIONS set. Requests
+    // carry {reqId,opId,docId,role,slotId}; role and slot role come from the
+    // explicit startup/action boundary via setRole(), NEVER from URL
+    // inference. Responses/failures carry their OWN request's reqId/opId/
+    // docId/role/slotId join and fail closed on mismatch. The legacy
+    // (epoch,serial,seq) counters are retained for diagnostics only and are
+    // NEVER consulted for pairing. There is no phantom fallback: an abort
+    // without its own reqId join fails closed.
     let navigationEpoch = 0;
     let panelSerial = 0;
     let requestSeq = 0;
-    let nextOpId = 0;
     let nextDocId = 0;
-    const operations = [];
-    const supersedes = [];
-    let currentOpId = null;
-    let currentRole = "startup-probe";
     let currentDocId = 0;
-    const mintOp = (kind, reason, { scope = "document", cause = null } = {}) => {
-      assert.ok(typeof kind === "string" && kind.length > 0, "op kind must be explicit");
-      assert.ok(typeof reason === "string" && reason.length > 0, "op reason must be explicit");
-      nextOpId += 1;
-      const op = { kind, id: nextOpId, reason, prevOpId: currentOpId };
-      operations.push(op);
-      if (op.prevOpId !== null && op.prevOpId !== undefined) {
-        supersedes.push({ fromOpId: op.prevOpId, toOpId: op.id, scope, cause: cause ?? reason });
-      }
-      currentOpId = op.id;
-      return op;
-    };
+    let currentRole = "startup-probe";
+    let currentOp = null;
+    const auth = createClosedAuthority(`owner-e2e:${runId}`);
     const setRole = (role) => {
-      assert.ok(typeof role === "string" && role.length > 0, "role must be an explicit boundary label");
+      assert.ok(SLOT_ROLES.includes(role),
+        `role must be an exact SlotRole (unknown/merely-nonempty rejects), got ${JSON.stringify(String(role)).slice(0, 64)}`);
       currentRole = role;
     };
-    // Root operation: every later op chains to it, so supersession is explicit.
-    mintOp("init", "harness-start", { scope: "harness", cause: "init" });
+    // Root operation: explicitly registered once; later ops link from it (or
+    // from their exact predecessor) through declared successors only.
+    const rootOp = auth.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+      sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+      successors: ["goto-unauthenticated"] });
+    currentOp = rootOp;
+    const registerOp = (fields) => {
+      const op = auth.registerOp(fields);
+      currentOp = op;
+      return op;
+    };
+    // Finite request slots for the exact abortable identities of the current
+    // action (scoped targetDoc/action/role/method-origin-path). Dynamic
+    // artifact paths arrive via extraPaths at their own action boundary.
+    const mintSlotsFor = ({ origin, extraPaths = [] }) => {
+      assert.ok(typeof origin === "string" && origin.length > 0 && origin.length < 256,
+        "slot origin must be an exact loopback origin");
+      assert.ok(Array.isArray(extraPaths), "slot extra paths must be exact");
+      const minted = [];
+      for (const [method, path] of [...ABORTABLE_SLOT_PATHS, ...extraPaths]) {
+        minted.push(auth.mintSlot({ opId: currentOp.id, targetDoc: currentOp.targetDoc,
+          action: currentOp.action, role: currentOp.role, method, origin, path }));
+      }
+      return minted;
+    };
+    // Slot bind for an observed request: the open slot for this exact
+    // (method,origin,path) under the current op/role, else an
+    // authority-governed slot with full scope (still finite, still closed
+    // enums; unknown roles already reject at setRole/mint time, never here).
+    const bindSlot = (method, origin, path) => {
+      const open = auth.slots().find((slot) => slot.opId === currentOp.id && slot.method === method &&
+        slot.origin === origin && slot.path === path && slot.role === currentRole);
+      if (open !== undefined) return open.id;
+      return auth.mintSlot({ opId: currentOp.id, targetDoc: currentDocId, action: currentOp.action,
+        role: currentRole, method, origin, path }).id;
+    };
     const frameIdentity = (event) => {
       try {
         const frame = event?.frame?.();
@@ -639,9 +780,22 @@ async function launchPlaywright(runId) {
           navigationEpoch += 1;
           nextDocId += 1;
           currentDocId = nextDocId;
-          // Observed document replacement: explicit supersession edge even for
-          // PWA-initiated navigations, so later retries chain transitively.
-          mintOp("observed-navigation", "framenavigated", { scope: "document", cause: "framenavigated" });
+          // Validated observed document replacement: links from the pending
+          // navigation slot's op only when the new doc matches a slot minted
+          // by an explicit harness-navigation boundary; otherwise registers
+          // as an unlinked observation (still closed enums). The current
+          // action op is never stolen: anchors traverse explicit action
+          // edges only, never observations.
+          const pending = auth.consumeNavSlot(currentDocId);
+          if (pending !== null) {
+            auth.registerOp({ kind: "observed-navigation", cause: "framenavigated", scope: "document",
+              sourceDoc: currentDocId, targetDoc: currentDocId, action: "framenavigated",
+              role: currentRole, from: pending.opId, successors: [] });
+          } else {
+            auth.registerOp({ kind: "observed-navigation", cause: "framenavigated", scope: "document",
+              sourceDoc: currentDocId, targetDoc: currentDocId, action: "framenavigated",
+              role: currentRole, from: null, successors: [] });
+          }
         }
       } catch { /* navigation accounting must never break the harness */ }
     });
@@ -673,11 +827,11 @@ async function launchPlaywright(runId) {
       requestSeq += 1;
       nextRequestId += 1;
       const stamp = { id: nextRequestId, epoch: navigationEpoch, serial: panelSerial, seq: requestSeq,
-        opId: currentOpId, docId: currentDocId, role: currentRole };
+        opId: currentOp.id, docId: currentDocId, role: currentRole, slotId: bindSlot(entry.method, entry.origin, entry.path) };
       requestIds.set(request, stamp);
       requests.push({ ...entry, resourceType: request.resourceType(),
         reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq,
-        opId: stamp.opId, docId: stamp.docId, role: stamp.role, frame: frameIdentity(request) });
+        opId: stamp.opId, docId: stamp.docId, role: stamp.role, slotId: stamp.slotId, frame: frameIdentity(request) });
     });
     page.on("console", (message) => {
       if (message.type() === "error") {
@@ -688,7 +842,17 @@ async function launchPlaywright(runId) {
     });
     page.on("pageerror", (error) => { pageErrors.push(String(error?.stack ?? error).slice(0, 2048)); });
     const failedRequestEntries = [];
+    // One request → one outcome: a contract response dominates a same-request
+    // abort report (observed: Chromium emits net::ERR_ABORTED for an already
+    // completed 204 when a navigation races delivery). The redundant failure
+    // is dropped from both parallel ledgers so the completed request pairs
+    // with its own response; genuine aborts (no own response) still anchor or
+    // fail closed downstream. Synthetic regression rows bypass collection and
+    // keep every negative exact (Luna-10 included).
+    const respondedReqIds = new Set();
     context.on("requestfailed", (request) => {
+      const earlyStamp = requestIds.get(request);
+      if (earlyStamp !== undefined && respondedReqIds.has(earlyStamp.id)) return;
       // Legacy failure-time clock retained for message-compat diagnostics only;
       // the anchor never consults it. Pairing uses the failure's OWN reqId join.
       failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
@@ -704,7 +868,8 @@ async function launchPlaywright(runId) {
         seq: typeof stamp?.seq === "number" ? stamp.seq : null,
         opId: typeof stamp?.opId === "number" ? stamp.opId : null,
         docId: typeof stamp?.docId === "number" ? stamp.docId : null,
-        role: typeof stamp?.role === "string" ? stamp.role : null });
+        role: typeof stamp?.role === "string" ? stamp.role : null,
+        slotId: typeof stamp?.slotId === "number" ? stamp.slotId : null });
     });
     context.on("response", (response) => {
       // The response carries its OWN request's stamp via response.request().
@@ -712,6 +877,26 @@ async function launchPlaywright(runId) {
       // sampling the live global counter. opId/docId/role join the same way.
       const request = response.request();
       const stamp = requestIds.get(request);
+      if (stamp !== undefined && Number.isSafeInteger(stamp.id)) {
+        respondedReqIds.add(stamp.id);
+        const before = failedRequestEntries.length;
+        if (before > 0) {
+          const keptEntries = [];
+          const keptStrings = [];
+          for (let index = 0; index < failedRequestEntries.length; index += 1) {
+            if (failedRequestEntries[index]?.reqId !== stamp.id) {
+              keptEntries.push(failedRequestEntries[index]);
+              keptStrings.push(failedRequests[index]);
+            }
+          }
+          if (keptEntries.length !== before) {
+            failedRequestEntries.length = 0;
+            failedRequests.length = 0;
+            failedRequestEntries.push(...keptEntries);
+            failedRequests.push(...keptStrings);
+          }
+        }
+      }
       const entry = ledgerEntry(request.method(), request.url());
       let contentType;
       try { contentType = String(response.headers()["content-type"] ?? "").split(";")[0]?.trim().slice(0, 128) ?? ""; }
@@ -724,6 +909,7 @@ async function launchPlaywright(runId) {
         opId: typeof stamp?.opId === "number" ? stamp.opId : null,
         docId: typeof stamp?.docId === "number" ? stamp.docId : null,
         role: typeof stamp?.role === "string" ? stamp.role : null,
+        slotId: typeof stamp?.slotId === "number" ? stamp.slotId : null,
         frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
@@ -734,6 +920,7 @@ async function launchPlaywright(runId) {
       panelSerial += 1;
       consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
+      respondedReqIds.clear();
     };
     const close = async () => {
       try { await context?.close(); } catch { /* Best-effort. */ }
@@ -743,9 +930,11 @@ async function launchPlaywright(runId) {
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
       requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
-      operations, supersedes, mintOp, setRole,
-      navigateOp: (kind, reason, opts) => mintOp(kind, reason, opts),
-      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOpId, docId: currentDocId, role: currentRole }) };
+      registerOp, mintSlotsFor, setRole,
+      currentOp: () => currentOp,
+      currentDocId: () => currentDocId,
+      operationTable: () => auth.operations(), edgeTable: () => auth.edges(), slotTable: () => auth.slots(),
+      ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOp.id, docId: currentDocId, role: currentRole }) };
   } catch (error) {
     try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
     try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
@@ -852,23 +1041,32 @@ export function assertAuthedLedger(harness, label, origin) {
   }
 }
 
-// D5 accounted-anchor rule for authed ERR_ABORTED traffic (settle-then-assert,
-// opId/supersedes, explicit roles, one-to-one consumption, phantom deleted).
-// Requests carry {reqId,opId,docId,role} with role from the explicit
-// startup/action boundary (never URL-derived); responses/failures carry their
-// OWN request's reqId join and fail closed on mismatch (including opId/docId/
-// role mismatch with their own request). Acceptance is the conjunction of:
+// Closed accounted-anchor rule for authed ERR_ABORTED traffic
+// (settle-then-assert, registered ops/slots, explicit SlotRoles, one-to-one
+// consumption, phantom deleted). Requests carry {reqId,opId,docId,role,slotId}
+// with role/slot from the explicit startup/action boundary (never
+// URL-derived); responses/failures carry their OWN request's reqId join
+// (including opId/docId/role/slotId) and fail closed on mismatch. Acceptance
+// is the conjunction of:
 // (1) exact identity (method/origin/path/role equal own request),
 // (2) ERR_ABORTED only,
 // (3) same origin as the asserted window,
 // (4) a distinct (reqId B≠A, opId differs) later response with the same
 //     method+origin+path+role and a contract status from authedNetworkSpec,
-// (5) an explicit supersession edge from the abort opId to the survivor opId
-//     (transitive closure over the supersedes table),
-// (6) one-to-one cardinality via anchor consumption (each survivor anchors at
-//     most one abort).
-// Forbidden and absent: latest/earliest/positional matching, URL-only role
-// inference, generic epoch/clock matching, phantom fallback, broader
+// (5) a single-step exact edge from the abort opId to the survivor opId: both
+//     endpoints registered, the survivor action a declared successor of the
+//     abort op, the pair in the closed TRANSITIONS set, and doc binding
+//     (survivor sourceDoc === abort targetDoc). Transitive hops deny.
+// (6) successor-slot binding: both sides carry registered slots whose scope
+//     equals their own request identity, each bound to its own op, the
+//     survivor slot strictly later than the abort slot; the anchor key is
+//     (method,origin,path,role,actionIds,slotId),
+// (7) one-to-one cardinality via successor-slot consumption (each survivor
+//     slot anchors at most one abort).
+// Forbidden and absent: BFS/transitive closure, latest/earliest/positional
+// matching, URL-only role inference, unknown or merely-nonempty roles,
+// broad-phase roles, unregistered endpoints, arbitrary edges, slot replay or
+// slot mismatch, generic epoch/clock matching, phantom fallback, broader
 // allowlist, absolute ceiling, sleep-only timing, hidden retries. The legacy
 // (epoch,serial,seq) counters are diagnostics only and are never consulted.
 function buildAuthedAbortAnchor(label, harness, origin) {
@@ -876,7 +1074,11 @@ function buildAuthedAbortAnchor(label, harness, origin) {
   const responses = Array.isArray(harness.networkResponses) ? harness.networkResponses : [];
   const failures = Array.isArray(harness.failedRequestEntries) ? harness.failedRequestEntries : [];
   const compatStrings = Array.isArray(harness.failedRequests) ? harness.failedRequests : [];
-  const supersedes = Array.isArray(harness.supersedes) ? harness.supersedes : [];
+  const rawOps = typeof harness.operationTable === "function" ? harness.operationTable() : (harness.operations ?? []);
+  const rawEdges = typeof harness.edgeTable === "function" ? harness.edgeTable() : (harness.supersedes ?? []);
+  const rawSlots = typeof harness.slotTable === "function" ? harness.slotTable() : (harness.slots ?? []);
+  assert.ok(rawOps.length <= 1024 && rawSlots.length <= 8192 && rawEdges.length <= 2048,
+    `${label}: operation/edge/slot tables must stay finite`);
   assert.equal(failures.length, compatStrings.length,
     `${label}: failure ledger drift: ${compatStrings.length} compat strings vs ${failures.length} structured entries (string form is message-compat only, never pairing)`);
   const contract = new Map();
@@ -885,34 +1087,79 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     if (!contract.has(key)) contract.set(key, new Set());
     contract.get(key).add(entry.status);
   }
-  // Explicit supersession closure: edge from->to, transitively. No clocks.
-  const succ = new Map();
-  for (const edge of supersedes) {
-    assert.ok(Number.isSafeInteger(edge?.fromOpId) && Number.isSafeInteger(edge?.toOpId),
-      `${label}: supersedes edge must carry explicit from/to opIds`);
-    assert.ok(typeof edge?.scope === "string" && edge.scope.length > 0, `${label}: supersedes edge must carry scope`);
-    assert.ok(typeof edge?.cause === "string" && edge.cause.length > 0, `${label}: supersedes edge must carry cause`);
-    if (!succ.has(edge.fromOpId)) succ.set(edge.fromOpId, new Set());
-    succ.get(edge.fromOpId).add(edge.toOpId);
-  }
-  const supersededBy = (fromOp, toOp) => {
-    if (!Number.isSafeInteger(fromOp) || !Number.isSafeInteger(toOp) || fromOp === toOp) return false;
-    const seen = new Set([fromOp]);
-    const queue = [fromOp];
-    while (queue.length > 0) {
-      const cur = queue.shift();
-      const next = succ.get(cur);
-      if (!next) continue;
-      if (next.has(toOp)) return true;
-      for (const n of next) {
-        if (!seen.has(n)) { seen.add(n); queue.push(n); }
-      }
+  const checkClosed = (value, closed, name) => {
+    if (value === "authed-window") {
+      assert.fail(`${label}: broad-phase role "authed-window" is deleted; split into SlotRoles, got ${name}`);
     }
-    return false;
+    assert.ok(typeof value === "string" && closed.includes(value),
+      `${label}: unknown ${name} ${JSON.stringify(String(value)).slice(0, 64)} rejects (closed: ${closed.join("/")}); merely-nonempty is insufficient`);
   };
+  // Closed operation table: every row carries exact closed enums.
+  const registry = new Map();
+  for (const op of rawOps) {
+    assert.ok(Number.isSafeInteger(op?.id),
+      `${label}: operation without an exact id fails closed`);
+    assert.ok(!registry.has(op.id),
+      `${label}: duplicate operation id ${op.id} fails closed`);
+    checkClosed(op?.kind, OP_KINDS, "OpKind");
+    checkClosed(op?.cause, OP_CAUSES, "OpCause");
+    checkClosed(op?.scope, EDGE_SCOPES, "EdgeScope");
+    checkClosed(op?.action, OP_ACTIONS, "OpAction");
+    checkClosed(op?.role, SLOT_ROLES, "SlotRole");
+    assert.ok(Number.isSafeInteger(op?.sourceDoc) && op.sourceDoc >= 0,
+      `${label}: op ${op.id} sourceDoc must be exact`);
+    assert.ok(Number.isSafeInteger(op?.targetDoc) && op.targetDoc >= op.sourceDoc,
+      `${label}: op ${op.id} targetDoc must be exact and >= sourceDoc`);
+    assert.ok(Array.isArray(op?.successors) && op.successors.every((name) => OP_ACTIONS.includes(name)),
+      `${label}: op ${op.id} successors must declare exact OpActions`);
+    registry.set(op.id, op);
+  }
+  // Closed slot table: every slot binds a registered op with exact scope.
+  const slotTable = new Map();
+  for (const slot of rawSlots) {
+    assert.ok(Number.isSafeInteger(slot?.id),
+      `${label}: slot without an exact id fails closed`);
+    assert.ok(!slotTable.has(slot.id),
+      `${label}: duplicate slot id ${slot.id} fails closed`);
+    assert.ok(Number.isSafeInteger(slot?.opId) && registry.has(slot.opId),
+      `${label}: slot ${slot.id} binds an unregistered op and rejects`);
+    checkClosed(slot?.action, OP_ACTIONS, "OpAction");
+    checkClosed(slot?.role, SLOT_ROLES, "SlotRole");
+    assert.ok(Number.isSafeInteger(slot?.targetDoc) && slot.targetDoc >= 0,
+      `${label}: slot ${slot.id} targetDoc must be exact`);
+    assert.ok(typeof slot?.method === "string" && slot.method.length > 0 &&
+      typeof slot?.origin === "string" && slot.origin.length > 0 &&
+      typeof slot?.path === "string" && slot.path.startsWith("/"),
+      `${label}: slot ${slot.id} scope (method/origin/path) must be exact`);
+    assert.ok(slot.action === registry.get(slot.opId).action,
+      `${label}: slot ${slot.id} action must equal its minting op action (late/unrelated slot use rejects)`);
+    slotTable.set(slot.id, slot);
+  }
+  // Single-step exact edges: registered endpoints, declared successor, closed
+  // TRANSITIONS pair. The BFS supersededBy closure is deleted: transitive hops
+  // (A→B→C anchoring A→C) deny.
+  const edgeSet = new Set();
+  for (const edge of rawEdges) {
+    assert.ok(Number.isSafeInteger(edge?.fromOpId) && Number.isSafeInteger(edge?.toOpId),
+      `${label}: edge must carry explicit from/to opIds`);
+    checkClosed(edge?.scope, EDGE_SCOPES, "EdgeScope");
+    checkClosed(edge?.cause, OP_CAUSES, "OpCause");
+    const fromOp = registry.get(edge.fromOpId);
+    const toOp = registry.get(edge.toOpId);
+    assert.ok(fromOp !== undefined && toOp !== undefined,
+      `${label}: unregistered transition endpoint ${edge.fromOpId}→${edge.toOpId} rejects`);
+    assert.ok(fromOp.successors.includes(toOp.action),
+      `${label}: undeclared successor ${toOp.action} rejects (not in op ${edge.fromOpId} successors)`);
+    assert.ok(OP_TRANSITIONS.includes(`${fromOp.action}→${toOp.action}`),
+      `${label}: arbitrary edge ${fromOp.action}→${toOp.action} rejects (closed TRANSITIONS)`);
+    edgeSet.add(`${edge.fromOpId}→${edge.toOpId}`);
+  }
+  const linked = (fromOp, toOp) => edgeSet.has(`${fromOp}→${toOp}`);
   // Exact request identity: one reqId per browser request, with explicit
-  // opId/docId/role. Missing or duplicate reqIds fail closed here.
+  // opId/docId/role/slotId. Missing or duplicate reqIds fail closed here.
+  // Slots bind one (identity,op) use: replay or unrelated reuse rejects.
   const requestById = new Map();
+  const slotUse = new Map();
   for (const entry of requests) {
     assert.ok(Number.isSafeInteger(entry?.reqId),
       `${label}: request without reqId fails closed: ${entry?.method ?? "?"} ${entry?.origin ?? "?"}${entry?.path ?? "?"}`);
@@ -924,11 +1171,31 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: request without docId fails closed (reqId ${entry.reqId})`);
     assert.ok(typeof entry?.role === "string" && entry.role.length > 0,
       `${label}: request without explicit role fails closed (reqId ${entry.reqId}); role never derives from URL`);
+    checkClosed(entry?.role, SLOT_ROLES, "SlotRole");
+    assert.ok(registry.has(entry.opId),
+      `${label}: request binds an unregistered op and rejects (reqId ${entry.reqId})`);
+    if (entry.slotId !== null && entry.slotId !== undefined) {
+      assert.ok(Number.isSafeInteger(entry.slotId),
+        `${label}: request slot id must be exact (reqId ${entry.reqId})`);
+      const slot = slotTable.get(entry.slotId);
+      assert.ok(slot !== undefined,
+        `${label}: request binds an unknown slot and rejects (reqId ${entry.reqId})`);
+      assert.ok(slot.method === entry.method && slot.origin === entry.origin &&
+        slot.path === entry.path && slot.role === entry.role,
+        `${label}: slot mismatch: slot ${slot.id} scope must equal request identity (reqId ${entry.reqId})`);
+      assert.ok(slot.opId === entry.opId,
+        `${label}: slot replay or unrelated reuse rejects: slot ${slot.id} is bound to op ${slot.opId}, used by reqId ${entry.reqId} op ${entry.opId}`);
+      const useKey = `${entry.method} ${entry.origin}${entry.path} ${entry.role} op${entry.opId}`;
+      const seen = slotUse.get(entry.slotId);
+      assert.ok(seen === undefined || seen === useKey,
+        `${label}: duplicate slot use rejects: slot ${entry.slotId} shared across identities or ops`);
+      slotUse.set(entry.slotId, useKey);
+    }
     requestById.set(entry.reqId, entry);
   }
-  // Each response joins to its OWN request by exact reqId; opId/docId/role must
-  // match its own request (fail closed on mismatch). Non-contract outcomes
-  // never anchor.
+  // Each response joins to its OWN request by exact reqId; opId/docId/role/
+  // slotId must match its own request (fail closed on mismatch).
+  // Non-contract outcomes never anchor.
   const anchorsByKey = new Map();
   for (const response of responses) {
     assert.ok(Number.isSafeInteger(response?.reqId),
@@ -942,6 +1209,8 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: response role must equal its own request role (reqId ${response.reqId}); role never derives from URL`);
     assert.ok(response.opId === own.opId && response.docId === own.docId,
       `${label}: response opId/docId must equal its own request opId/docId (reqId ${response.reqId})`);
+    assert.ok((response.slotId ?? null) === (own.slotId ?? null),
+      `${label}: response slotId must equal its own request slotId (reqId ${response.reqId})`);
     const key = `${response.method} ${response.origin}${response.path} ${response.role}`;
     const statuses = contract.get(`${response.method} ${response.path}`);
     if (!statuses || !statuses.has(response.status)) continue;
@@ -949,7 +1218,7 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     anchorsByKey.get(key).push({ response, request: own });
   }
   const seenFailureIds = new Set();
-  const consumedAnchors = new Set();
+  const consumedSlots = new Set();
   return (entry) => {
     assert.ok(entry !== null && typeof entry === "object",
       `${label}: failure without a structured entry fails closed`);
@@ -962,6 +1231,7 @@ function buildAuthedAbortAnchor(label, harness, origin) {
     assert.ok(entry.origin === origin, `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
     assert.ok(typeof entry?.role === "string" && entry.role.length > 0,
       `${label}: failure without explicit role fails closed: ${text.slice(0, 200)}`);
+    checkClosed(entry?.role, SLOT_ROLES, "SlotRole");
     const key = `${entry.method} ${entry.origin}${entry.path} ${entry.role}`;
     assert.ok(Number.isSafeInteger(entry?.reqId),
       `${label}: phantom abort without a browser request has no reqId join (missing reqId fails closed): ${text.slice(0, 300)}`);
@@ -977,19 +1247,37 @@ function buildAuthedAbortAnchor(label, harness, origin) {
       `${label}: failure role must equal its own request role (reqId ${entry.reqId}); role never derives from URL`);
     assert.ok(entry.opId === own.opId && entry.docId === own.docId,
       `${label}: failure opId/docId must equal its own request opId/docId (reqId ${entry.reqId})`);
+    assert.ok((entry.slotId ?? null) === (own.slotId ?? null),
+      `${label}: failure slotId must equal its own request slotId (reqId ${entry.reqId})`);
+    assert.ok(Number.isSafeInteger(entry?.slotId) && slotTable.has(entry.slotId),
+      `${label}: abort without a registered request slot fails closed: ${text.slice(0, 300)}`);
+    const abortOp = registry.get(own.opId);
+    const abortSlot = slotTable.get(entry.slotId);
+    assert.ok(abortOp !== undefined && abortSlot !== undefined,
+      `${label}: abort binds an unregistered op or slot and rejects: ${text.slice(0, 200)}`);
     const anchors = anchorsByKey.get(key) ?? [];
     let consumed = null;
+    let anchorKey = null;
     for (const candidate of anchors) {
       if (candidate.request.reqId === own.reqId) continue;
       if (candidate.request.opId === own.opId) continue;
-      if (consumedAnchors.has(candidate.request.reqId)) continue;
-      if (!supersededBy(own.opId, candidate.request.opId)) continue;
+      if (!Number.isSafeInteger(candidate.request.slotId) || !slotTable.has(candidate.request.slotId)) continue;
+      if (candidate.request.slotId === entry.slotId) continue;
+      const survivorOp = registry.get(candidate.request.opId);
+      const survivorSlot = slotTable.get(candidate.request.slotId);
+      if (survivorOp === undefined || survivorSlot === undefined) continue;
+      if (!roleCompat(own.role, candidate.request.role)) continue;
+      if (!linked(own.opId, candidate.request.opId)) continue;
+      if (survivorOp.sourceDoc !== abortOp.targetDoc) continue;
+      if (survivorSlot.id <= abortSlot.id) continue;
+      if (consumedSlots.has(survivorSlot.id)) continue;
+      anchorKey = `${entry.method} ${entry.origin}${entry.path} ${entry.role} ${abortOp.action}#${abortSlot.id}→${survivorOp.action}#${survivorSlot.id}`;
       consumed = candidate;
       break;
     }
-    assert.ok(consumed !== null,
-      `${label}: unanchored abort has no distinct later same-method+origin+path+role contract response with an explicit supersession edge and an unconsumed anchor: ${text.slice(0, 300)}`);
-    consumedAnchors.add(consumed.request.reqId);
+    assert.ok(consumed !== null && anchorKey !== null,
+      `${label}: unanchored abort has no distinct later same-method+origin+path+role contract response with an explicit single-step supersession edge, closed transition, doc binding and an unconsumed anchor (successor slot): ${text.slice(0, 300)}`);
+    consumedSlots.add(slotTable.get(consumed.request.slotId).id);
   };
 }
 
@@ -1013,66 +1301,100 @@ export function verifyAuthedManifestRegression(origin = "http://127.0.0.1:1") {
   return { protocol: "eliotr.owner-e2e.authed-manifest-regression.v1", state: "PASS" };
 }
 
-// Deterministic regression proof for the D5 accounted-anchor rule (no browser
-// required). Requests carry {reqId,opId,docId,role} with role from the explicit
-// boundary (never URL-derived); responses/failures carry their OWN reqId join
-// and fail closed on mismatch. Positives mirror the live authed window:
-// reload-linked catalog+health probes aborted pre-navigation and surviving as
-// 200s post-navigation (roles catalog-read/health-read), and the pair-action
-// probe aborted while the 204 pairing response plus the one-use 403 reuse
-// response survive (role pair-action). Each positive carries an explicit
-// supersedes edge and consumes its anchor one-to-one. Negatives 1-3 prove sole
-// aborts fail; negative 4 proves one-to-one consumption; negatives 5-8 prove
-// non-abort, cross-origin, phantom and unpaired-response fail closure. Luna
-// negatives 9-10 prove the removed phantom/positional heuristics stay dead.
-// New negatives 11-12 prove the D5 conjuncts: 11 is a no-edge later-duplicate
-// (later contract response exists but no supersession edge — epoch-only
-// matching would anchor it); 12 is an unrelated-role survivor (same
-// method+origin+path, edge present, but role differs — role-blind matching
-// would anchor it). Both are accepted by the c4bcf2a epoch/role-blind rule and
-// rejected post-fix. Phantom fallback stays deleted. The live owner E2E proves
-// the accompanying window evidence the synthetic ledger cannot carry: the
-// surviving catalog 200 lists the admitted source id and Chromium holds exactly
-// one opaque HttpOnly session cookie.
+// Deterministic regression proof for the closed accounted-anchor rule (no
+// browser required). Operations register through the closed authority with
+// exact OpKind/OpCause/EdgeScope/SlotRole/OpAction and declared successors in
+// the closed TRANSITIONS set; every request mints a finite slot scoped to its
+// op's action/role/identity. Requests carry {reqId,opId,docId,role,slotId};
+// responses/failures carry their OWN reqId join and fail closed on mismatch.
+// Positives mirror the live authed window: reload-linked catalog+health probes
+// aborted pre-navigation and surviving as 200s post-navigation (roles
+// catalog-read/health-read), and the pair-action probe aborted while the 204
+// pairing response plus the one-use 403 reuse response survive (role
+// pair-action). Each positive carries a single-step exact edge, closed
+// transition, doc binding and an unconsumed successor slot, consumed
+// one-to-one. Negatives 1-3 prove sole aborts fail; negative 4 proves
+// one-to-one consumption; negatives 5-8 prove non-abort, cross-origin,
+// phantom and unpaired-response fail closure. Luna negatives 9-10 prove the
+// removed phantom/positional heuristics stay dead. Negatives 11-12 prove the
+// accounted conjuncts: 11 is a no-edge later-duplicate (later contract
+// response exists but no single-step edge); 12 is an unrelated-role survivor.
+// New negatives 13-19 prove the closed authority: 13 is an arbitrary edge
+// (registered endpoints, declared successor, but outside closed TRANSITIONS);
+// 14 is an unknown enum role (merely-nonempty "superuser"); 15 is a
+// transitive hop (A→B→C edges, abort in A, survivor in C, no direct edge —
+// the deleted BFS closure would anchor it); 16 is the deleted broad-phase
+// role "authed-window" (split into SlotRoles at live call sites); 17 is an
+// unregistered endpoint (path through op 9999); 18 is slot replay (survivor
+// reuses the abort slot); 19 is slot mismatch (survivor stamped with a
+// pair-scoped slot). N13-N19 are accepted by the 58a3c46 D5 rule (proven by
+// the old-behavior run: they fail to reject there) and denied post-fix.
+// Phantom fallback stays deleted. The live owner E2E proves the accompanying
+// window evidence the synthetic ledger cannot carry: the surviving catalog 200
+// lists the admitted source id and Chromium holds exactly one opaque HttpOnly
+// session cookie.
 export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
+  const auth = createClosedAuthority("epoch-regression");
   let seq = 0;
   let nextReqId = 0;
-  let nextOpId = 0;
   let nextDocId = 0;
-  const mintOpId = () => { nextOpId += 1; return nextOpId; };
   const mintDocId = () => { nextDocId += 1; return nextDocId; };
-  const edge = (fromOpId, toOpId, cause) => ({ fromOpId, toOpId, scope: "document", cause });
-  const req = (method, path, opId, role, docId, resourceType = "fetch") => {
+  const root = auth.registerOp({ kind: "init", cause: "harness-start", scope: "harness",
+    sourceDoc: 0, targetDoc: 0, action: "harness-start", role: "startup-probe", from: null,
+    successors: ["probe-issue", "pair-probe"] });
+  const registerPair = (preAction, postAction, preRole, postRole, { cause = "reload", preSuccessors = [postAction] } = {}) => {
+    const docPre = mintDocId();
+    const docPost = mintDocId();
+    const opPre = auth.registerOp({ kind: "harness-action", cause, scope: "document",
+      sourceDoc: docPre, targetDoc: docPre, action: preAction, role: preRole, from: root.id, successors: preSuccessors });
+    const opPost = auth.registerOp({ kind: "harness-action", cause, scope: "document",
+      sourceDoc: docPre, targetDoc: docPost, action: postAction, role: postRole, from: opPre.id, successors: [] });
+    return { docPre, docPost, opPre, opPost };
+  };
+  const edge = (from, to, cause) => ({ fromOpId: from?.id ?? from, toOpId: to?.id ?? to, scope: "document", cause });
+  const req = (method, path, op, role, docId, resourceType = "fetch") => {
     seq += 1;
     nextReqId += 1;
+    const slot = auth.mintSlot({ opId: op.id, targetDoc: docId, action: op.action, role, method, origin, path });
     return { method, origin, path, resourceType, epoch: 0, serial: 0, seq,
-      reqId: nextReqId, opId, docId, role, frame: `frame-doc-${docId}@${origin}/` };
+      reqId: nextReqId, opId: op.id, docId, role, slotId: slot.id, frame: `frame-doc-${docId}@${origin}/` };
+  };
+  // Raw request row for injected attack tables (bypasses the minting builder
+  // so the anchor verifier — not the builder — delivers the denial).
+  const rawReq = (method, path, opId, role, docId, slotId) => {
+    seq += 1;
+    nextReqId += 1;
+    return { method, origin, path, resourceType: "fetch", epoch: 0, serial: 0, seq,
+      reqId: nextReqId, opId, docId, role, slotId, frame: `frame-doc-${docId}@${origin}/` };
   };
   const res = (request, status) => ({ method: request.method, origin: request.origin, path: request.path,
     resourceType: request.resourceType, epoch: request.epoch, serial: request.serial, seq: request.seq,
-    reqId: request.reqId, opId: request.opId, docId: request.docId, role: request.role,
+    reqId: request.reqId, opId: request.opId, docId: request.docId, role: request.role, slotId: request.slotId,
     frame: request.frame, status, contentType: "application/json" });
   const failOf = (request, errorText = "net::ERR_ABORTED") => ({ text: `${request.method} ${request.origin}${request.path} :: ${errorText}`,
-    method: request.method, origin: request.origin, path: request.path, errorText,
+    method: request.method, origin: request.origin, path: request.path, errorText, slotId: request.slotId,
     reqId: request.reqId, epoch: request.epoch, serial: request.serial, seq: request.seq,
     opId: request.opId, docId: request.docId, role: request.role });
   const phantomOf = (method, path, role = "catalog-read") => ({ text: `${method} ${origin}${path} :: net::ERR_ABORTED`,
     method, origin, path, errorText: "net::ERR_ABORTED", reqId: null, epoch: null, serial: null, seq: null,
-    opId: null, docId: null, role });
-  const harnessOf = ({ consoleErrors = [], requests = [], networkResponses = [], failures = [], supersedes = [], ...rest }) => ({
-    consoleErrors, pageErrors: [], requests, networkResponses, supersedes,
+    opId: null, docId: null, role, slotId: null });
+  const tables = (overrides = {}) => ({ operations: auth.operations(),
+    supersedes: auth.edges(), slots: auth.slots(), ...overrides });
+  const harnessOf = ({ consoleErrors = [], requests = [], networkResponses = [], failures = [], ...rest }) => ({
+    consoleErrors, pageErrors: [], requests, networkResponses,
     failedRequests: failures.map((entry) => entry.text),
-    failedRequestEntries: failures, ...rest });
+    failedRequestEntries: failures, ...tables(), ...rest });
   const catalog = "/api/v1/research/catalog?limit=20";
   const health = "/api/v1/system/health";
   const pair = "/__local/pair";
   const pair403 = `Failed to load resource: the server responded with a status of 403 (Forbidden) @${origin}/__local/pair`;
   // Positive 1: reload-linked catalog+health aborts with surviving 200s, explicit
   // edge, matching roles, one-to-one consumption.
-  const opPre1 = mintOpId();
-  const docPre1 = mintDocId();
-  const opPost1 = mintOpId();
-  const docPost1 = mintDocId();
+  const pair1 = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opPre1 = pair1.opPre;
+  const docPre1 = pair1.docPre;
+  const opPost1 = pair1.opPost;
+  const docPost1 = pair1.docPost;
   const catalogIssued = req("GET", catalog, opPre1, "catalog-read", docPre1);
   const healthIssued = req("GET", health, opPre1, "health-read", docPre1);
   const catalogSurvived = req("GET", catalog, opPost1, "catalog-read", docPost1);
@@ -1086,10 +1408,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   }), "epoch-positive-catalog-health", origin), "reload-linked catalog+health aborts with surviving 200s must pass");
   // Positive 2: pair-action abort anchored by the 204 pairing response with the
   // one-use 403 reuse response and console noise present.
-  const opPre2 = mintOpId();
-  const docPre2 = mintDocId();
-  const opPost2 = mintOpId();
-  const docPost2 = mintDocId();
+  const pair2 = registerPair("pair-probe", "pair-retry", "pair-action", "pair-action", { cause: "pair-action" });
+  const opPre2 = pair2.opPre;
+  const docPre2 = pair2.docPre;
+  const opPost2 = pair2.opPost;
+  const docPost2 = pair2.docPost;
   const pairProbe = req("POST", pair, opPre2, "pair-action", docPre2);
   const pairRetry = req("POST", pair, opPost2, "pair-action", docPost2);
   const pairSurvivedDistinct = req("POST", pair, opPost2, "pair-action", docPost2);
@@ -1103,8 +1426,9 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   // Negatives 1-3: sole aborts with no paired contract success must fail.
   const soleRoles = { [health]: "health-read", [catalog]: "catalog-read", [pair]: "pair-action" };
   for (const [method, path] of [["GET", health], ["GET", catalog], ["POST", pair]]) {
-    const opSole = mintOpId();
     const docSole = mintDocId();
+    const opSole = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: docSole, targetDoc: docSole, action: "probe-issue", role: soleRoles[path], from: root.id, successors: [] });
     const issued = req(method, path, opSole, soleRoles[path], docSole);
     assert.throws(() => assertAuthedLedger(harnessOf({
       consoleErrors: [],
@@ -1116,10 +1440,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
       `sole abort of ${method} ${path} with no paired success must fail`);
   }
   // Negative 4: one-to-one consumption (two aborts, one surviving anchor) fails.
-  const opDupPre = mintOpId();
-  const docDupPre = mintDocId();
-  const opDupPost = mintOpId();
-  const docDupPost = mintDocId();
+  const pairDup = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opDupPre = pairDup.opPre;
+  const docDupPre = pairDup.docPre;
+  const opDupPost = pairDup.opPost;
+  const docDupPost = pairDup.docPost;
   const dupIssuedA = req("GET", catalog, opDupPre, "catalog-read", docDupPre);
   const dupIssuedB = req("GET", catalog, opDupPre, "catalog-read", docDupPre);
   const dupSurvived = req("GET", catalog, opDupPost, "catalog-read", docDupPost);
@@ -1132,10 +1457,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   }), "epoch-negative-duplicate-bound", origin), /unconsumed anchor/,
     "duplicate abort without its own surviving anchor must fail");
   // Negative 5: non-abort failure beside a valid anchor still fails.
-  const opConnPre = mintOpId();
-  const docConnPre = mintDocId();
-  const opConnPost = mintOpId();
-  const docConnPost = mintDocId();
+  const pairConn = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opConnPre = pairConn.opPre;
+  const docConnPre = pairConn.docPre;
+  const opConnPost = pairConn.opPost;
+  const docConnPost = pairConn.docPost;
   const connIssued = req("GET", catalog, opConnPre, "catalog-read", docConnPre);
   const connSurvived = req("GET", catalog, opConnPost, "catalog-read", docConnPost);
   assert.throws(() => assertAuthedLedger(harnessOf({
@@ -1148,10 +1474,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   }), "epoch-negative-non-abort", origin), /non-abort failure denied/,
     "non-abort failure must fail closed even with an anchor");
   // Negative 6: cross-origin abort fails even when the key matches elsewhere.
-  const opCrossPre = mintOpId();
-  const docCrossPre = mintDocId();
-  const opCrossPost = mintOpId();
-  const docCrossPost = mintDocId();
+  const pairCross = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opCrossPre = pairCross.opPre;
+  const docCrossPre = pairCross.docPre;
+  const opCrossPost = pairCross.opPost;
+  const docCrossPost = pairCross.docPost;
   const crossIssued = req("GET", catalog, opCrossPre, "catalog-read", docCrossPre);
   const crossSurvived = req("GET", catalog, opCrossPost, "catalog-read", docCrossPost);
   assert.throws(() => assertAuthedLedger(harnessOf({
@@ -1173,8 +1500,9 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   }), "epoch-negative-phantom-unanchored", origin), /phantom abort/,
     "phantom abort without a classified anchor must fail closed");
   // Negative 8: a responded outcome with no browser request fails as unpaired.
-  const opOrphan = mintOpId();
   const docOrphan = mintDocId();
+  const opOrphan = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docOrphan, targetDoc: docOrphan, action: "probe-issue", role: "catalog-read", from: root.id, successors: [] });
   const orphan = req("GET", catalog, opOrphan, "catalog-read", docOrphan);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
@@ -1186,8 +1514,9 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
     "response without a browser request must fail closed");
   // Luna negative 9 (same-clock phantom): the abort has no browser request
   // (missing reqId) beside a classified 200. Accepted by 0e5b275, rejected here.
-  const opLuna9 = mintOpId();
   const docLuna9 = mintDocId();
+  const opLuna9 = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docLuna9, targetDoc: docLuna9, action: "probe-issue", role: "health-read", from: root.id, successors: [] });
   const luna9Survived = req("GET", health, opLuna9, "health-read", docLuna9);
   assert.throws(() => assertAuthedLedger(harnessOf({
     consoleErrors: [],
@@ -1201,10 +1530,11 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   // Luna negative 10 (reused reqId): the abort reuses the surviving response's
   // OWN reqId, so no distinct later anchor exists. Accepted by 0e5b275,
   // rejected here.
-  const opLuna10Pre = mintOpId();
-  const docLuna10Pre = mintDocId();
-  const opLuna10Post = mintOpId();
-  const docLuna10Post = mintDocId();
+  const pairLuna10 = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opLuna10Pre = pairLuna10.opPre;
+  const docLuna10Pre = pairLuna10.docPre;
+  const opLuna10Post = pairLuna10.opPost;
+  const docLuna10Post = pairLuna10.docPost;
   const luna10Superseded = req("GET", catalog, opLuna10Pre, "catalog-read", docLuna10Pre);
   const luna10Survived = req("GET", catalog, opLuna10Post, "catalog-read", docLuna10Post);
   assert.throws(() => assertAuthedLedger(harnessOf({
@@ -1216,12 +1546,14 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
   }), "epoch-negative-luna10-duplicate-ambiguity", origin), /distinct later same-method/,
     "abort reusing the surviving response reqId must fail closed");
   // Negative 11 (no-edge later-duplicate): a later contract response exists
-  // with the same identity+role, but no supersession edge links abort->survivor.
-  // Epoch-only matching (c4bcf2a) anchors it; D5 denies for missing edge.
-  const opNoEdgePre = mintOpId();
-  const docNoEdgePre = mintDocId();
-  const opNoEdgePost = mintOpId();
-  const docNoEdgePost = mintDocId();
+  // with the same identity+role, but no single-step edge links
+  // abort->survivor. Accepted by the D5/BFS rule only when transitively
+  // chained; denied here for the missing explicit single-step edge.
+  const pairNoEdge = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const opNoEdgePre = pairNoEdge.opPre;
+  const docNoEdgePre = pairNoEdge.docPre;
+  const opNoEdgePost = pairNoEdge.opPost;
+  const docNoEdgePost = pairNoEdge.docPost;
   const noEdgeIssued = req("GET", catalog, opNoEdgePre, "catalog-read", docNoEdgePre);
   const noEdgeSurvived = req("GET", catalog, opNoEdgePost, "catalog-read", docNoEdgePost);
   assert.throws(() => assertAuthedLedger(harnessOf({
@@ -1230,15 +1562,19 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
     networkResponses: [res(noEdgeSurvived, 200)],
     failures: [failOf(noEdgeIssued)],
     supersedes: [],
-  }), "epoch-negative-no-edge-later-duplicate", origin), /explicit supersession edge/,
-    "later duplicate without an explicit supersession edge must fail closed");
+  }), "epoch-negative-no-edge-later-duplicate", origin), /explicit single-step/,
+    "later duplicate without an explicit single-step edge must fail closed");
   // Negative 12 (unrelated-role): same method+origin+path and an edge exist,
-  // but the survivor carries a different role. Role-blind matching (c4bcf2a)
-  // anchors it; D5 denies on role mismatch.
-  const opRolePre = mintOpId();
+  // but the survivor carries a different role. Role-blind matching anchors
+  // it; the closed rule denies on role mismatch.
   const docRolePre = mintDocId();
-  const opRolePost = mintOpId();
   const docRolePost = mintDocId();
+  const opRolePre = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docRolePre, targetDoc: docRolePre, action: "probe-issue", role: "catalog-read",
+    from: root.id, successors: ["probe-retry"] });
+  const opRolePost = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docRolePre, targetDoc: docRolePost, action: "probe-retry", role: "pair-action",
+    from: opRolePre.id, successors: [] });
   const roleIssued = req("GET", catalog, opRolePre, "catalog-read", docRolePre);
   const roleSurvived = req("GET", catalog, opRolePost, "pair-action", docRolePost);
   assert.throws(() => assertAuthedLedger(harnessOf({
@@ -1249,9 +1585,155 @@ export function verifyAuthedEpochRegression(origin = "http://127.0.0.1:1") {
     supersedes: [edge(opRolePre, opRolePost, "reload")],
   }), "epoch-negative-unrelated-role", origin), /distinct later same-method/,
     "survivor with an unrelated role must fail closed");
+  // Negative 13 (arbitrary edge): both endpoints are registered, the edge is
+  // declared as a successor, but probe-issue→pair-retry is outside the closed
+  // TRANSITIONS set. The 58a3c46 rule accepts any explicit edge; denied here.
+  const docPre13 = mintDocId();
+  const docPost13 = mintDocId();
+  const opPre13 = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docPre13, targetDoc: docPre13, action: "probe-issue", role: "catalog-read",
+    from: root.id, successors: ["pair-retry"] });
+  const opPair13 = auth.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
+    sourceDoc: docPre13, targetDoc: docPre13, action: "pair-probe", role: "pair-action",
+    from: root.id, successors: ["pair-retry"] });
+  const opSurv13 = auth.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
+    sourceDoc: docPre13, targetDoc: docPost13, action: "pair-retry", role: "catalog-read",
+    from: opPair13.id, successors: [] });
+  const arbIssued = req("GET", catalog, opPre13, "catalog-read", docPre13);
+  const arbSurvived = req("GET", catalog, opSurv13, "catalog-read", docPost13);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [arbIssued, arbSurvived],
+    networkResponses: [res(arbSurvived, 200)],
+    failures: [failOf(arbIssued)],
+    supersedes: [edge(opPre13, opSurv13, "reload")],
+  }), "epoch-negative-arbitrary-edge", origin), /arbitrary edge.*closed TRANSITIONS/,
+    "edge outside the closed TRANSITIONS set must fail closed");
+  // Negative 14 (unknown enum): merely-nonempty role "superuser" on both
+  // sides with a complete edge. Accepted by any nonempty-string role check;
+  // the closed SlotRole set rejects it here. Raw rows bypass the minting
+  // builder so the anchor verifier delivers the denial.
+  const unknownOps = [
+    { id: 9001, kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 50, targetDoc: 50, action: "probe-issue", role: "superuser", successors: ["probe-retry"] },
+    { id: 9002, kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 50, targetDoc: 51, action: "probe-retry", role: "superuser", successors: [] },
+  ];
+  const unknownSlots = [
+    { id: 9101, opId: 9001, targetDoc: 50, action: "probe-issue", role: "superuser",
+      method: "GET", origin, path: catalog },
+    { id: 9102, opId: 9002, targetDoc: 51, action: "probe-retry", role: "superuser",
+      method: "GET", origin, path: catalog },
+  ];
+  const unknownIssued = rawReq("GET", catalog, 9001, "superuser", 50, 9101);
+  const unknownSurvived = rawReq("GET", catalog, 9002, "superuser", 51, 9102);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [unknownIssued, unknownSurvived],
+    networkResponses: [res(unknownSurvived, 200)],
+    failures: [failOf(unknownIssued)],
+    operations: [...auth.operations(), ...unknownOps],
+    supersedes: [...auth.edges(), edge(9001, 9002, "reload")],
+    slots: [...auth.slots(), ...unknownSlots],
+  }), "epoch-negative-unknown-enum", origin), /unknown SlotRole/,
+    "merely-nonempty unknown roles must fail closed");
+  // Negative 15 (transitive hop): edges A→B and B→C exist, abort in A,
+  // survivor in C, but no direct single-step edge A→C. The deleted BFS
+  // closure anchors it; denied here.
+  const docMid1 = mintDocId();
+  const docMid2 = mintDocId();
+  const opHopA = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docMid1, targetDoc: docMid1, action: "probe-issue", role: "catalog-read",
+    from: root.id, successors: ["probe-mid"] });
+  const opHopB = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docMid1, targetDoc: docMid1, action: "probe-mid", role: "catalog-read",
+    from: opHopA.id, successors: ["probe-retry"] });
+  const opHopC = auth.registerOp({ kind: "harness-action", cause: "reload", scope: "document",
+    sourceDoc: docMid1, targetDoc: docMid2, action: "probe-retry", role: "catalog-read",
+    from: opHopB.id, successors: [] });
+  const hopIssued = req("GET", catalog, opHopA, "catalog-read", docMid1);
+  const hopSurvived = req("GET", catalog, opHopC, "catalog-read", docMid2);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [hopIssued, hopSurvived],
+    networkResponses: [res(hopSurvived, 200)],
+    failures: [failOf(hopIssued)],
+  }), "epoch-negative-transitive-hop", origin), /single-step/,
+    "transitive hop without a direct single-step edge must fail closed");
+  // Negative 16 (broad-phase role): the deleted "authed-window" label on both
+  // sides with a complete edge and slots. Live call sites split it into
+  // SlotRoles; the closed set rejects the broad label here.
+  const broadOps = [
+    { id: 9011, kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 60, targetDoc: 60, action: "probe-issue", role: "authed-window", successors: ["probe-retry"] },
+    { id: 9012, kind: "harness-action", cause: "reload", scope: "document",
+      sourceDoc: 60, targetDoc: 61, action: "probe-retry", role: "authed-window", successors: [] },
+  ];
+  const broadSlots = [
+    { id: 9111, opId: 9011, targetDoc: 60, action: "probe-issue", role: "authed-window",
+      method: "GET", origin, path: catalog },
+    { id: 9112, opId: 9012, targetDoc: 61, action: "probe-retry", role: "authed-window",
+      method: "GET", origin, path: catalog },
+  ];
+  const broadIssued = rawReq("GET", catalog, 9011, "authed-window", 60, 9111);
+  const broadSurvived = rawReq("GET", catalog, 9012, "authed-window", 61, 9112);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [broadIssued, broadSurvived],
+    networkResponses: [res(broadSurvived, 200)],
+    failures: [failOf(broadIssued)],
+    operations: [...auth.operations(), ...broadOps],
+    supersedes: [...auth.edges(), edge(9011, 9012, "reload")],
+    slots: [...auth.slots(), ...broadSlots],
+  }), "epoch-negative-broad-phase-role", origin), /broad-phase/,
+    "the deleted broad-phase role must fail closed");
+  // Negative 17 (unregistered endpoint): the only path from abort to survivor
+  // runs through op 9999, which is in no operation table. The old
+  // registration-blind closure anchors it; denied here.
+  const pairUnreg = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const unregIssued = req("GET", catalog, pairUnreg.opPre, "catalog-read", pairUnreg.docPre);
+  const unregSurvived = req("GET", catalog, pairUnreg.opPost, "catalog-read", pairUnreg.docPost);
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [unregIssued, unregSurvived],
+    networkResponses: [res(unregSurvived, 200)],
+    failures: [failOf(unregIssued)],
+    supersedes: [...auth.edges().filter((item) =>
+      !(item.fromOpId === pairUnreg.opPre.id && item.toOpId === pairUnreg.opPost.id)),
+      edge(pairUnreg.opPre, 9999, "reload"), edge(9999, pairUnreg.opPost, "reload")],
+  }), "epoch-negative-unregistered-endpoint", origin), /unregistered transition endpoint/,
+    "path through an unregistered endpoint must fail closed");
+  // Negative 18 (slot replay): the survivor reuses the abort request's slot.
+  // Slot-agnostic matching anchors it; the one-use slot binding denies here.
+  const pairReplay = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const replayIssued = req("GET", catalog, pairReplay.opPre, "catalog-read", pairReplay.docPre);
+  const replaySurvived = req("GET", catalog, pairReplay.opPost, "catalog-read", pairReplay.docPost);
+  replaySurvived.slotId = replayIssued.slotId;
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [replayIssued, replaySurvived],
+    networkResponses: [res(replaySurvived, 200)],
+    failures: [failOf(replayIssued)],
+  }), "epoch-negative-slot-replay", origin), /slot replay or unrelated reuse/,
+    "survivor reusing the abort slot must fail closed");
+  // Negative 19 (slot mismatch): the survivor is stamped with a slot scoped
+  // to POST /__local/pair. Scope-blind matching anchors it; denied here.
+  const pairMismatch = registerPair("probe-issue", "probe-retry", "catalog-read", "catalog-read");
+  const mismatchIssued = req("GET", catalog, pairMismatch.opPre, "catalog-read", pairMismatch.docPre);
+  const mismatchSurvived = req("GET", catalog, pairMismatch.opPost, "catalog-read", pairMismatch.docPost);
+  const mismatchSlot = auth.mintSlot({ opId: pairMismatch.opPost.id, targetDoc: pairMismatch.docPost,
+    action: "probe-retry", role: "pair-action", method: "POST", origin, path: pair });
+  mismatchSurvived.slotId = mismatchSlot.id;
+  assert.throws(() => assertAuthedLedger(harnessOf({
+    consoleErrors: [],
+    requests: [mismatchIssued, mismatchSurvived],
+    networkResponses: [res(mismatchSurvived, 200)],
+    failures: [failOf(mismatchIssued)],
+  }), "epoch-negative-slot-mismatch", origin), /slot mismatch/,
+    "survivor with a mismatched slot scope must fail closed");
   return { protocol: "eliotr.owner-e2e.authed-epoch-regression.v1", state: "PASS",
-    positives: 2, negatives: 12,
-    coverage: "D5 ledger mechanics (opId/supersedes/role/consumption); sourceId+session-cookie window evidence proven live in the authed phase" };
+    positives: 2, negatives: 19,
+    coverage: "closed ledger mechanics (registered ops/slots/roles/single-step/consumption); sourceId+session-cookie window evidence proven live in the authed phase" };
 }
 
 function assertUnauthLedger(harness, label, origin) {
@@ -2163,7 +2645,11 @@ export async function runOwnerE2E() {
       return [...visitedOrigins];
     };
     playwright.setRole("startup-probe");
-    playwright.mintOp("harness-navigation", "goto-unauthenticated", { scope: worker.origin, cause: "goto" });
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-unauthenticated", role: "startup-probe",
+      from: playwright.currentOp().id, successors: ["goto-pairing", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const unauthHasPrivate = await playwright.evaluate(hasPrivateLibraryMarker);
@@ -2185,11 +2671,19 @@ export async function runOwnerE2E() {
     const secret = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret === "string" && secret.length >= 32, "pairing secret must be present");
     assert.ok(!secret.includes("eyJ") && !secret.includes("."), "pairing secret must be opaque, never a JWT");
-    playwright.setRole("authed-window");
-    playwright.mintOp("harness-navigation", "goto-pairing", { scope: bridge.origin, cause: "goto-pairing" });
+    playwright.setRole("pair-action");
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-pairing", role: "pair-action",
+      from: playwright.currentOp().id, successors: ["click-connect", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
-    playwright.mintOp("harness-action", "click-connect", { scope: bridge.origin, cause: "pair-action" });
+    playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+      action: "click-connect", role: "pair-action",
+      from: playwright.currentOp().id, successors: ["reload-authed-retrieval"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     // No source is admitted yet, so pairing proves the session cookie only; the
@@ -2316,7 +2810,12 @@ export async function runOwnerE2E() {
     // Post-import retrieval through the real browser: reload the paired PWA so
     // its same-origin catalog fetch (closed over by the phase ledger below)
     // renders the admitted source row inside Chromium itself.
-    playwright.mintOp("harness-navigation", "reload-authed-retrieval", { scope: bridge.origin, cause: "reload" });
+    playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "reload-authed-retrieval", role: "pair-action",
+      from: playwright.currentOp().id, successors: ["goto-jwt-matrix", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: bridge.origin,
+      extraPaths: [["GET", `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`]] });
     await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -2373,7 +2872,11 @@ export async function runOwnerE2E() {
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.setRole("jwt-matrix");
-      playwright.mintOp("harness-navigation", "goto-jwt-matrix", { scope: worker.origin, cause: "goto" });
+      playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+        sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+        action: "goto-jwt-matrix", role: "jwt-matrix",
+        from: playwright.currentOp().id, successors: ["goto-post-restart", "framenavigated"] });
+      playwright.mintSlotsFor({ origin: worker.origin });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       const matrixCases = [
@@ -2467,7 +2970,11 @@ export async function runOwnerE2E() {
     bridge = undefined;
     playwright.resetLedger();
     playwright.setRole("startup-probe");
-    playwright.mintOp("harness-navigation", "goto-post-restart", { scope: worker.origin, cause: "goto" });
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-post-restart", role: "startup-probe",
+      from: playwright.currentOp().id, successors: ["goto-repairing", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const restartStorage = await readBrowserStorage(playwright.page);
@@ -2485,11 +2992,19 @@ export async function runOwnerE2E() {
     assert.ok(!bridge.pairingUrl.includes("eyJ"), "re-pairing URL must never carry JWT material");
     const secret2 = bridge.pairingUrl.split("#")[1];
     assert.ok(typeof secret2 === "string" && secret2.length >= 32 && !secret2.includes("eyJ"), "re-pairing secret must be opaque");
-    playwright.setRole("authed-window");
-    playwright.mintOp("harness-navigation", "goto-repairing", { scope: bridge.origin, cause: "goto-pairing" });
+    playwright.setRole("pair-action");
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-repairing", role: "pair-action",
+      from: playwright.currentOp().id, successors: ["click-reconnect", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#connect", { timeout: 15000 });
-    playwright.mintOp("harness-action", "click-reconnect", { scope: bridge.origin, cause: "pair-action" });
+    playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+      action: "click-reconnect", role: "pair-action",
+      from: playwright.currentOp().id, successors: ["goto-logout"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
@@ -2501,10 +3016,18 @@ export async function runOwnerE2E() {
     const reSessionName = reNew[0].name;
     playwright.resetLedger();
     playwright.setRole("logout-action");
-    playwright.mintOp("harness-navigation", "goto-logout", { scope: bridge.origin, cause: "goto" });
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-logout", role: "logout-action",
+      from: playwright.currentOp().id, successors: ["click-logout", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.goto(`${bridge.origin}/__local/`, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForSelector("#logout", { timeout: 15000 });
-    playwright.mintOp("harness-action", "click-logout", { scope: bridge.origin, cause: "logout-action" });
+    playwright.registerOp({ kind: "harness-action", cause: "logout-action", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+      action: "click-logout", role: "logout-action",
+      from: playwright.currentOp().id, successors: ["goto-post-logout-clean"] });
+    playwright.mintSlotsFor({ origin: bridge.origin });
     await playwright.page.click("#logout", { timeout: 15000 });
     await playwright.page.waitForFunction(() => document.getElementById("status")?.textContent?.includes("Local session closed"), null, { timeout: 15000 });
     const clearedCookies = await playwright.context.cookies();
@@ -2538,7 +3061,11 @@ export async function runOwnerE2E() {
     receipt.network_ledger_phases.logout = summarizePhaseLedger(playwright);
     playwright.resetLedger();
     playwright.setRole("startup-probe");
-    playwright.mintOp("harness-navigation", "goto-post-logout-clean", { scope: worker.origin, cause: "goto" });
+    playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+      sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+      action: "goto-post-logout-clean", role: "startup-probe",
+      from: playwright.currentOp().id, successors: ["goto-rotation", "framenavigated"] });
+    playwright.mintSlotsFor({ origin: worker.origin });
     await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     const loggedOutHasPrivate = await playwright.evaluate(bodyIncludes, sourceId);
@@ -2594,8 +3121,13 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
       assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       playwright.resetLedger();
-      playwright.setRole("rotation-window");
-      playwright.mintOp("harness-navigation", "goto-rotation", { scope: worker.origin, cause: "goto" });
+      playwright.setRole("rotation-read");
+      playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
+        sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+        action: "goto-rotation", role: "rotation-read",
+        from: playwright.currentOp().id, successors: ["goto-rotation-pairing", "framenavigated"] });
+      playwright.mintSlotsFor({ origin: worker.origin,
+        extraPaths: [["GET", `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`]] });
       await playwright.page.goto(worker.origin, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       const oldDeniedBrowser = await browserJson(playwright.page, ledger, "/api/v1/system/session", {
@@ -2623,10 +3155,18 @@ export async function runOwnerE2E() {
       const rotationSecret = bridge.pairingUrl.split("#")[1];
       assert.ok(typeof rotationSecret === "string" && rotationSecret.length >= 32 && !rotationSecret.includes("eyJ"),
         "rotation pairing secret must be opaque");
-      playwright.mintOp("harness-navigation", "goto-rotation-pairing", { scope: bridge.origin, cause: "goto-pairing" });
+      playwright.registerOp({ kind: "harness-navigation", cause: "goto-pairing", scope: "document",
+        sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+        action: "goto-rotation-pairing", role: "rotation-read",
+        from: playwright.currentOp().id, successors: ["click-rotation-connect", "framenavigated"] });
+      playwright.mintSlotsFor({ origin: bridge.origin });
       await playwright.page.goto(bridge.pairingUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
       await playwright.page.waitForSelector("#connect", { timeout: 15000 });
-      playwright.mintOp("harness-action", "click-rotation-connect", { scope: bridge.origin, cause: "pair-action" });
+      playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
+        sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+        action: "click-rotation-connect", role: "rotation-read",
+        from: playwright.currentOp().id, successors: [] });
+      playwright.mintSlotsFor({ origin: bridge.origin });
       await playwright.page.click("#connect", { timeout: 15000 });
       await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
       await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
