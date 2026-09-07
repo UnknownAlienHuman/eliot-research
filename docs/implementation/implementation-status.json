@@ -261,12 +261,15 @@
         "ER-31"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; full structural/Atlas materialization and live conformance remain open",
+      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner research.orient profile; N1 structural SourceCard/DocumentMap materialization runs in the supported orientation path from admitted R2 normalized bundles (canonical key, verified digest/metadata, manifest/coordinate-map binding, authority barriers) through the pure materializer into immutable D1 persistence with honest STRUCTURAL trace lanes; CommonMark fence closers and code-point-safe titles fixed; unstaged sources stay on the explicit metadata-only profile; N2/N3/N4 Atlas and source-span expansion plus live conformance remain open",
       "completion_evidence": [
-        "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
+        "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path returns structural SourceCard/DocumentMap with honest STRUCTURAL trace lanes",
         "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
         "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
-        "Full structural/Atlas navigation, R2 source-span expansion and remote live receipts NOT_EXECUTED"
+        "packages/retrieval/src/projection.ts materializeStructuralNavigation bounded exact-byte derivation through existing ER-31 builders/codec/identity; no inferred page/table/code/native coords; CommonMark opener-matched closers; code-point-safe title truncation",
+        "packages/retrieval/src/navigation.test.ts N1 controlled-parser cases: nested RU+EN+code+table, non-ASCII offsets, reordered headings, missing/partial/duplicate/invalid/cross-source/scope/revision, divergent bytes, max/max+1 bounds, explicit gaps, publication-ineligible",
+        "apps/eliotr-core/test/navigation-persistence.test.ts actual R2+D1/Miniflare through the supported structural contour: real R2 put then product-port read of exact Markdown plus coordinate objects, digest/metadata binding, structural parse, D1 save plus readback and byte-range reopen; altered/missing/foreign key/body/digest/metadata/coordinate-map/manifest bindings fail closed with zero new artifacts; authority barrier denial; fence/info-string/mixed/shorter/longer/indented regressions; IMPLEMENTED_NOT_LIVE",
+        "N2/N3/N4 full Atlas/source-span expansion and remote live receipts NOT_EXECUTED"
       ]
     },
     {
