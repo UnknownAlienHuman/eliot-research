@@ -30,6 +30,41 @@ import {
   computeSnapshotDigest,
   validateMetricEvidence,
 } from "./cloudflare-usage-receipt-evidence.mjs";
+import {
+  METRIC_PROVENANCE,
+  canonicalWindowOf,
+  hasCanonicalMetric,
+  listCanonicalMetrics,
+  listCanonicalRequiredKeys,
+} from "./cloudflare-usage-canonical.mjs";
+
+// Canonical taxonomy + metric authority live in
+// ./cloudflare-usage-canonical.mjs (capability split for the 600-line
+// budget); re-exported here so existing import paths keep working. The
+// re-exported facades are non-authoritative views; authority reads only the
+// private null-prototype table in that module.
+export {
+  DECIMAL_BYTES_PER_GB,
+  DECIMAL_BYTES_PER_KB,
+  QUEUE_CHUNK_BYTES,
+  QUEUE_MESSAGE_OVERHEAD_BYTES,
+  METRIC_PROVENANCE,
+  UNKNOWN_REASONS,
+  isProvenance,
+  isUnknownReason,
+  bytesFromDecimalGb,
+  decimalGbFromBytes,
+  SEALED_ALLOWLIST,
+  isSealedAllowlistedOperation,
+  USAGE_METRICS,
+  REQUIRED_METRIC_KEYS,
+  METRIC_BY_KEY,
+  hasCanonicalMetric,
+  getCanonicalMetric,
+  listCanonicalRequiredKeys,
+  listCanonicalMetrics,
+  canonicalWindowOf,
+} from "./cloudflare-usage-canonical.mjs";
 
 export { computeSnapshotDigest };
 
@@ -43,52 +78,6 @@ export const SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 export const RECEIPT_MAX_AGE_MS = 60 * 60 * 1000;
 export const CLOCK_SKEW_MS = 5 * 60 * 1000;
 export const UNKNOWN = "unknown";
-
-// Metric provenance taxonomy (Luna FIX3G): every reported counter carries one
-// provenance. `unknown` metrics carry a typed reason below, never a zero.
-//   authoritative_billing   - Restricted Alpha GET /accounts/{id}/billable/usage
-//                             with account/date/metric/unit/full-window validation.
-//   authoritative_inventory - Complete account-bound inventory proving a
-//                             point-in-time count (for example AI Search
-//                             instance count from /ai-search/instances).
-//   analytics_nonbilling    - Cloudflare GraphQL analytics: operational evidence
-//                             only, never billing authority.
-//   ledger_estimate         - Controller-owned ledger + fresh full inventory
-//                             proof (budget admission Layer 2).
-//   unavailable             - No verified aggregate; metric stays unknown.
-export const METRIC_PROVENANCE = Object.freeze({
-  AUTHORITATIVE_BILLING: "authoritative_billing",
-  AUTHORITATIVE_INVENTORY: "authoritative_inventory",
-  ANALYTICS_NONBILLING: "analytics_nonbilling",
-  LEDGER_ESTIMATE: "ledger_estimate",
-  UNAVAILABLE: "unavailable",
-});
-
-// Typed unknown reasons (Luna FIX3G): every unknown metric names one.
-export const UNKNOWN_REASONS = Object.freeze([
-  "NO_AUTH_ENDPOINT",
-  "AUTH_SCOPE_DENIED",
-  "HTTP_ERROR",
-  "MALFORMED",
-  "PARTIAL_PAGINATION",
-  "WINDOW_MISMATCH",
-  "STALE",
-  "ACCOUNT_MISMATCH",
-  "DEGRADED",
-]);
-
-export function isProvenance(value) {
-  return Object.values(METRIC_PROVENANCE).includes(value);
-}
-
-export function isUnknownReason(value) {
-  return UNKNOWN_REASONS.includes(value);
-}
-
-export const DECIMAL_BYTES_PER_GB = 1_000_000_000;
-export const DECIMAL_BYTES_PER_KB = 1_000;
-export const QUEUE_CHUNK_BYTES = 64_000;
-export const QUEUE_MESSAGE_OVERHEAD_BYTES = 100;
 
 // Plan scope (explicit, no mislabeling): this deployment budgets Workers Paid
 // monthly inclusions and R2 paid inclusions. Free-tier daily limits are a
@@ -122,91 +111,15 @@ export const DOC_SOURCES = Object.freeze([
   { url: "https://developers.cloudflare.com/ai-search/limits-pricing/", covers: "ai_search_instances, ai_search_queries_month", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/vectorize/pricing/", covers: "vectorize_queried_dims, vectorize_stored_dims", retrieved: "2026-09-06" },
 ]);
-for (const entry of DOC_SOURCES) Object.freeze(entry);
-
-export function bytesFromDecimalGb(gb) {
-  if (typeof gb !== "number" || !Number.isFinite(gb) || gb < 0) throw new Error("gb must be a non-negative finite number");
-  return Math.round(gb * DECIMAL_BYTES_PER_GB);
-}
-
-export function decimalGbFromBytes(bytes) {
-  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) throw new Error("bytes must be a non-negative finite number");
-  return bytes / DECIMAL_BYTES_PER_GB;
-}
-
-// SEALED allowlist: the ONLY remote effects authorized while sealed (stale /
-// wrong-window / unknown-untrusted), and only after fresh account binding
-// (verified whoami digest) plus a fresh inventory receipt. Everything else —
-// Worker upload/exposure, route/domain, D1 migrations/queries, R2 writes,
-// Queue create/config/produce/consume, Workflow/DO exec, Workers AI, AI
-// Search index/query, Vectorize writes/queries — stays denied until ADMITTED
-// or a controller-owned ledger + full inventory proof shows headroom.
-export const SEALED_ALLOWLIST = Object.freeze([
-  "wrangler-whoami-verify",
-  "access-app-readback",
-  "d1-inventory-list",
-  "r2-inventory-list",
-  "queue-inventory-list",
-  "ai-search-inventory-list",
-  "local-config-generate",
-  "preflight-receipt-write",
-]);
-
-export function isSealedAllowlistedOperation(operation) {
-  return typeof operation === "string" && SEALED_ALLOWLIST.includes(operation);
-}
-
-// quota is the included Cloudflare plan quota (100%); envelope is the local
-// 80% admission boundary. window selects the fencing discipline; `exact`
-// marks point-in-time counts (AI Search instance inventory) rather than
-// cumulative counters. Storage bytes are decimal-GB derived (see above).
-export const USAGE_METRICS = [
-  { key: "workers_requests", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Workers Paid" },
-  { key: "workers_cpu_ms", quota: 30_000_000, envelope: 24_000_000, window: "monthly", plan: "Workers Paid" },
-  { key: "d1_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "D1 paid inclusion (decimal GB)" },
-  { key: "d1_rows_read", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly", plan: "D1 paid inclusion" },
-  { key: "d1_rows_written", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "D1 paid inclusion" },
-  { key: "r2_storage_gb_month", quota: 10, envelope: 8, window: "monthly", plan: "R2 paid inclusion (decimal GB-mo)", unit: "decimal-GB-mo" },
-  { key: "r2_class_a_ops", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "R2 paid inclusion" },
-  { key: "r2_class_b_ops", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "R2 paid inclusion" },
-  { key: "queue_ops", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "Queues paid inclusion (64,000-byte chunks)" },
-  { key: "do_requests", quota: 1_000_000, envelope: 800_000, window: "monthly", plan: "Durable Objects paid inclusion" },
-  { key: "do_gb_seconds", quota: 400_000, envelope: 320_000, window: "monthly", plan: "Durable Objects paid inclusion" },
-  { key: "do_sql_reads", quota: 25_000_000_000, envelope: 20_000_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
-  { key: "do_sql_writes", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
-  { key: "do_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "Durable Objects paid inclusion (decimal GB)" },
-  { key: "workers_ai_neurons_per_day", quota: 10_000, envelope: 8_000, window: "daily", plan: "Workers AI paid inclusion" },
-  { key: "ai_search_instances", quota: 5, envelope: 5, window: "point", exact: true, plan: "AI Search (exactly 5)" },
-  { key: "ai_search_queries_month", quota: 25_000, envelope: 20_000, window: "monthly", plan: "AI Search" },
-  { key: "vectorize_queried_dims_month", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Vectorize" },
-  { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Vectorize" },
-];
-
-export const REQUIRED_METRIC_KEYS = Object.freeze(USAGE_METRICS.map((metric) => metric.key));
-for (const metric of USAGE_METRICS) Object.freeze(metric);
-Object.freeze(USAGE_METRICS);
-// Module-private canonical authority (never exported): independent frozen
-// copies, so mutating an export cannot change decisions. Exports are frozen
-// (mutation throws) AND ignored internally (defense in depth).
-const CANONICAL_METRICS = Object.freeze(USAGE_METRICS.map((m) => Object.freeze({ ...m })));
-const CANONICAL_REQUIRED_KEYS = Object.freeze(CANONICAL_METRICS.map((m) => m.key));
-const CANONICAL_BY_KEY = new Map(CANONICAL_METRICS.map((m) => [m.key, m]));
-const CANONICAL_KEY_SET = new Set(CANONICAL_REQUIRED_KEYS);
-function readOnlyAuthorityError() { throw new Error("METRIC_BY_KEY is read-only authority state"); }
-// Legacy export: immutable non-Map facade, ignored by authority. Not a Map,
-// so Map.prototype.*.call throws; frozen so overwrite/defineProperty throws.
-export const METRIC_BY_KEY = Object.freeze({ has(k) { return CANONICAL_KEY_SET.has(k); }, get(k) { return CANONICAL_BY_KEY.get(k); }, get size() { return CANONICAL_REQUIRED_KEYS.length; }, set: readOnlyAuthorityError, delete: readOnlyAuthorityError, clear: readOnlyAuthorityError });
-export function hasCanonicalMetric(k) { return CANONICAL_KEY_SET.has(k); }
-export function getCanonicalMetric(k) { return CANONICAL_BY_KEY.get(k) ?? null; }
-export function listCanonicalRequiredKeys() { return [...CANONICAL_REQUIRED_KEYS]; }
-export function listCanonicalMetrics() { return [...CANONICAL_METRICS]; }
-export function canonicalWindowOf(k) { return CANONICAL_BY_KEY.get(k)?.window ?? "monthly"; }
+for (let i = 0; i < DOC_SOURCES.length; i += 1) Object.freeze(DOC_SOURCES[i]);
 
 // Evidence taxonomy contract (injected into the receipt-evidence helper so
 // canonical strings live in exactly one place and no import cycle exists).
+// Note: requiredKeys references the canonical module's private list through
+// the re-exported accessor below (never a caller-supplied array).
 const RECEIPT_EVIDENCE_CONTRACT = {
-  requiredKeys: CANONICAL_REQUIRED_KEYS,
-  windowKindOf: (key) => CANONICAL_BY_KEY.get(key)?.window ?? "monthly",
+  requiredKeys: Object.freeze(listCanonicalRequiredKeys()),
+  windowKindOf: (key) => canonicalWindowOf(key),
   billingProvenance: METRIC_PROVENANCE.AUTHORITATIVE_BILLING,
   inventoryProvenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
   billingKindClass: "billing-usage-v2",
@@ -226,11 +139,20 @@ const RECEIPT_EVIDENCE_CONTRACT = {
 export function isLiveEvidenceFamily(receipt) {
   const evidence = receipt?.metric_evidence;
   if (!Array.isArray(evidence) || evidence.length === 0) return false;
-  if (CANONICAL_REQUIRED_KEYS.length === 0) return false;
-  if (evidence.length !== CANONICAL_REQUIRED_KEYS.length) return false;
-  return evidence.every((entry) =>
-    entry?.provider_kind_class === RECEIPT_EVIDENCE_CONTRACT.billingKindClass ||
-    RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses.includes(entry?.provider_kind_class));
+  const canonicalKeys = listCanonicalRequiredKeys();
+  if (canonicalKeys.length === 0) return false;
+  if (evidence.length !== canonicalKeys.length) return false;
+  for (let i = 0; i < evidence.length; i += 1) {
+    const kindClass = evidence[i]?.provider_kind_class;
+    if (kindClass === RECEIPT_EVIDENCE_CONTRACT.billingKindClass) continue;
+    let inventoryMatch = false;
+    const inventoryKinds = RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses;
+    for (let j = 0; j < inventoryKinds.length; j += 1) {
+      if (kindClass === inventoryKinds[j]) { inventoryMatch = true; break; }
+    }
+    if (!inventoryMatch) return false;
+  }
+  return true;
 }
 
 // Access contour (one owner-only hostname application, 24h session) is not a
@@ -275,14 +197,14 @@ function validateWindow(window, label) {
     return ["window must be an object with kind/start/end"];
   }
   if (window.kind !== "monthly" && window.kind !== "daily" && window.kind !== "point") {
-    failures.push(`${label}.kind must be monthly, daily or point`);
+    failures[failures.length] = `${label}.kind must be monthly, daily or point`;
   }
   try {
     const start = parseTime(window.start, `${label}.start`);
     const end = parseTime(window.end, `${label}.end`);
-    if (!(start < end)) failures.push(`${label} must satisfy start < end`);
+    if (!(start < end)) failures[failures.length] = `${label} must satisfy start < end`;
   } catch (error) {
-    failures.push(error.message);
+    failures[failures.length] = error.message;
   }
   return failures;
 }
@@ -320,13 +242,39 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     return blocked(["snapshot.metrics must be an object keyed by required metric"]);
   }
   const metricKeys = Object.keys(snapshot.metrics);
-  if (CANONICAL_REQUIRED_KEYS.length === 0) return blocked(["authority metric set is empty; refusing vacuous admission"]);
-  const missing = CANONICAL_REQUIRED_KEYS.filter((key) => !metricKeys.includes(key));
-  const unexpected = metricKeys.filter((key) => !CANONICAL_BY_KEY.has(key));
-  if (missing.length > 0) return blocked([`snapshot is missing required metrics: ${missing.join(", ")}`]);
-  if (unexpected.length > 0) return blocked([`snapshot carries unknown metric keys: ${unexpected.join(", ")}`]);
-  if (metricKeys.length !== CANONICAL_REQUIRED_KEYS.length) return blocked(["snapshot metric set is not exactly the required set"]);
-  for (const key of CANONICAL_REQUIRED_KEYS) {
+  // Private canonical copy (never the public export): exact-set check with
+  // explicit === scans only (no Array.prototype filter/includes, no Map/Set,
+  // no caller-object authority). Object.keys is own-enumerable only, so
+  // inherited prototype pollution never creates keys.
+  const canonicalKeys = listCanonicalRequiredKeys();
+  const canonicalMetrics = listCanonicalMetrics();
+  if (canonicalKeys.length === 0) return blocked(["authority metric set is empty; refusing vacuous admission"]);
+  const missing = [];
+  for (let i = 0; i < canonicalKeys.length; i += 1) {
+    const key = canonicalKeys[i];
+    let found = false;
+    for (let j = 0; j < metricKeys.length; j += 1) {
+      if (metricKeys[j] === key) { found = true; break; }
+    }
+    if (!found) missing[missing.length] = key;
+  }
+  const unexpected = [];
+  for (let i = 0; i < metricKeys.length; i += 1) {
+    if (!hasCanonicalMetric(metricKeys[i])) unexpected[unexpected.length] = metricKeys[i];
+  }
+  if (missing.length > 0) {
+    let list = "";
+    for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
+    return blocked([`snapshot is missing required metrics: ${list}`]);
+  }
+  if (unexpected.length > 0) {
+    let list = "";
+    for (let i = 0; i < unexpected.length; i += 1) list += (i > 0 ? ", " : "") + unexpected[i];
+    return blocked([`snapshot carries unknown metric keys: ${list}`]);
+  }
+  if (metricKeys.length !== canonicalKeys.length) return blocked(["snapshot metric set is not exactly the required set"]);
+  for (let i = 0; i < canonicalKeys.length; i += 1) {
+    const key = canonicalKeys[i];
     const value = snapshot.metrics[key];
     if (value === undefined || value === null) return blocked([`metric ${key} is absent; refusing vacuous admission`]);
     if (!isUnknown(value) && !isValidCounter(value)) {
@@ -341,41 +289,49 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     return blocked([error.message]);
   }
   const stale = collectedAt > now + CLOCK_SKEW_MS || now - collectedAt > maxAgeMs;
-  if (stale) reasons.push("snapshot is stale; no headroom claim is admissible");
+  if (stale) reasons[reasons.length] = "snapshot is stale; no headroom claim is admissible";
 
   const windowFailures = validateWindow(snapshot.window, "window");
   if (snapshot.daily_window !== undefined) {
-    windowFailures.push(...validateWindow(snapshot.daily_window, "daily_window"));
+    const dailyFailures = validateWindow(snapshot.daily_window, "daily_window");
+    for (let i = 0; i < dailyFailures.length; i += 1) windowFailures[windowFailures.length] = dailyFailures[i];
   }
   if (windowFailures.length > 0) return blocked(windowFailures);
   const windowOk = windowCovers(snapshot.window, now) &&
     (snapshot.daily_window === undefined || windowCovers(snapshot.daily_window, now));
-  if (!windowOk) reasons.push("snapshot window does not cover now; aggregate belongs to another billing window");
+  if (!windowOk) reasons[reasons.length] = "snapshot window does not cover now; aggregate belongs to another billing window";
 
-  for (const metric of CANONICAL_METRICS) {
+  for (let i = 0; i < canonicalMetrics.length; i += 1) {
+    const metric = canonicalMetrics[i];
     const value = snapshot.metrics[metric.key];
     if (value === undefined || value === null) return blocked([`metric ${metric.key} is absent; refusing vacuous admission`]);
     if (!isUnknown(value) && !isValidCounter(value)) return blocked([`metric ${metric.key} must be a non-negative finite number or "unknown"`]);
     if (isUnknown(value)) {
-      unknown.push(metric.key);
+      unknown[unknown.length] = metric.key;
       continue;
     }
     if (metric.exact) {
       if (value > metric.envelope) {
-        over.push({ metric: metric.key, value, envelope: metric.envelope });
+        over[over.length] = { metric: metric.key, value, envelope: metric.envelope };
       } else if (value < metric.envelope) {
-        advisory.push(`${metric.key} reports ${value}, below the required ${metric.envelope}; usage headroom exists but inventory is incomplete`);
+        advisory[advisory.length] = `${metric.key} reports ${value}, below the required ${metric.envelope}; usage headroom exists but inventory is incomplete`;
       }
       continue;
     }
     if (value > metric.envelope) {
-      over.push({ metric: metric.key, value, envelope: metric.envelope });
+      over[over.length] = { metric: metric.key, value, envelope: metric.envelope };
     } else if (value >= NEAR_LIMIT_RATIO * metric.envelope) {
-      near.push({ metric: metric.key, value, envelope: metric.envelope });
+      near[near.length] = { metric: metric.key, value, envelope: metric.envelope };
     }
   }
 
   if (over.length > 0) {
+    const overReasons = [];
+    for (let i = 0; i < reasons.length; i += 1) overReasons[overReasons.length] = reasons[i];
+    for (let i = 0; i < over.length; i += 1) {
+      const item = over[i];
+      overReasons[overReasons.length] = `${item.metric} at ${item.value} exceeds envelope ${item.envelope}`;
+    }
     return {
       decision: "BLOCKED",
       sealed: false,
@@ -385,15 +341,23 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
       advisory,
       stale,
       windowOk,
-      reasons: [...reasons, ...over.map((item) => `${item.metric} at ${item.value} exceeds envelope ${item.envelope}`)],
+      reasons: overReasons,
     };
   }
   if (stale || !windowOk || unknown.length > 0) {
-    const sealedReasons = [...reasons];
+    const sealedReasons = [];
+    for (let i = 0; i < reasons.length; i += 1) sealedReasons[sealedReasons.length] = reasons[i];
     if (unknown.length > 0) {
-      sealedReasons.push(`no authoritative aggregate for: ${unknown.join(", ")}; heavy operations stay disabled`);
+      let list = "";
+      for (let i = 0; i < unknown.length; i += 1) list += (i > 0 ? ", " : "") + unknown[i];
+      sealedReasons[sealedReasons.length] = `no authoritative aggregate for: ${list}; heavy operations stay disabled`;
     }
     return { decision: "SEALED", sealed: true, over, unknown, near, advisory, stale, windowOk, reasons: sealedReasons };
+  }
+  const admittedReasons = [];
+  for (let i = 0; i < near.length; i += 1) {
+    const item = near[i];
+    admittedReasons[admittedReasons.length] = `${item.metric} at ${item.value} is within 10% of envelope ${item.envelope}`;
   }
   return {
     decision: "ADMITTED",
@@ -404,7 +368,7 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     advisory,
     stale,
     windowOk,
-    reasons: near.map((item) => `${item.metric} at ${item.value} is within 10% of envelope ${item.envelope}`),
+    reasons: admittedReasons,
   };
 
   function blocked(blockReasons) {
@@ -506,26 +470,26 @@ export function validateAdmissionReceipt(receipt, options = {}) {
     return { ok: false, decision: "BLOCKED", reasons: ["admission receipt must be an object"] };
   }
   if (receipt.protocol !== USAGE_ADMISSION_PROTOCOL) {
-    reasons.push(`admission receipt protocol must be ${USAGE_ADMISSION_PROTOCOL}`);
+    reasons[reasons.length] = `admission receipt protocol must be ${USAGE_ADMISSION_PROTOCOL}`;
   }
   if (receipt.account_id_digest !== expectedAccountDigest) {
-    reasons.push("admission receipt binds a different account digest; refusing substituted receipt");
+    reasons[reasons.length] = "admission receipt binds a different account digest; refusing substituted receipt";
   }
-  if (!["ADMITTED", "SEALED", "BLOCKED"].includes(receipt.decision)) {
-    reasons.push("admission receipt decision must be ADMITTED, SEALED or BLOCKED");
+  if (receipt.decision !== "ADMITTED" && receipt.decision !== "SEALED" && receipt.decision !== "BLOCKED") {
+    reasons[reasons.length] = "admission receipt decision must be ADMITTED, SEALED or BLOCKED";
   }
   let createdAt = NaN;
   try {
     createdAt = parseTime(receipt.created_at, "created_at");
   } catch (error) {
-    reasons.push(error.message);
+    reasons[reasons.length] = error.message;
   }
   if (Number.isFinite(createdAt) && (createdAt > now + CLOCK_SKEW_MS || now - createdAt > maxAgeMs)) {
-    reasons.push("admission receipt is stale; re-run the usage preflight before mutating");
+    reasons[reasons.length] = "admission receipt is stale; re-run the usage preflight before mutating";
   }
-  if (receipt.decision === "BLOCKED") reasons.push("admission receipt records BLOCKED");
+  if (receipt.decision === "BLOCKED") reasons[reasons.length] = "admission receipt records BLOCKED";
   if (!Array.isArray(receipt.over_envelope) || !Array.isArray(receipt.unknown_metrics) || !Array.isArray(receipt.reasons)) {
-    reasons.push("admission receipt must carry over_envelope, unknown_metrics and reasons arrays");
+    reasons[reasons.length] = "admission receipt must carry over_envelope, unknown_metrics and reasons arrays";
   }
   // Evidence binding: SEALED/BLOCKED receipts stay representable but must
   // still carry an intact digest; ADMITTED additionally requires complete,
@@ -533,9 +497,11 @@ export function validateAdmissionReceipt(receipt, options = {}) {
   // this, a hand-forged shell with a valid generation and empty
   // unknown_metrics would validate as ADMITTED.
   if (receipt.decision === "ADMITTED") {
-    reasons.push(...validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: true }));
+    const strictReasons = validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: true });
+    for (let i = 0; i < strictReasons.length; i += 1) reasons[reasons.length] = strictReasons[i];
   } else {
-    reasons.push(...validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: false }));
+    const looseReasons = validateMetricEvidence(receipt, RECEIPT_EVIDENCE_CONTRACT, { now, strict: false });
+    for (let i = 0; i < looseReasons.length; i += 1) reasons[reasons.length] = looseReasons[i];
   }
   // ADMITTED is the only decision that authorizes heavy work, so a forged
   // ADMITTED (for example unknown_metrics non-empty, over-envelope entries,
@@ -544,45 +510,45 @@ export function validateAdmissionReceipt(receipt, options = {}) {
   // their current semantics.
   if (receipt.decision === "ADMITTED") {
     if (!Array.isArray(receipt.unknown_metrics) || receipt.unknown_metrics.length !== 0) {
-      reasons.push("admission receipt claims ADMITTED with unknown metrics; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt claims ADMITTED with unknown metrics; refusing forged receipt";
     }
     if (!Array.isArray(receipt.over_envelope) || receipt.over_envelope.length !== 0) {
-      reasons.push("admission receipt claims ADMITTED over the envelope; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt claims ADMITTED over the envelope; refusing forged receipt";
     }
     if (receipt.sealed !== false) {
-      reasons.push("admission receipt claims ADMITTED with an incoherent sealed flag; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt claims ADMITTED with an incoherent sealed flag; refusing forged receipt";
     }
     if (receipt.generation !== USAGE_ENVELOPE_GENERATION) {
-      reasons.push("admission receipt generation binding is missing or stale; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt generation binding is missing or stale; refusing forged receipt";
     }
     if (typeof receipt.account_ref !== "string" || receipt.account_ref === "" || receipt.account_ref === "cloudflare-account:missing") {
-      reasons.push("admission receipt account ref binding is missing; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt account ref binding is missing; refusing forged receipt";
     }
     try {
       const collectedAt = parseTime(receipt.collected_at, "collected_at");
       if (collectedAt > now + CLOCK_SKEW_MS || now - collectedAt > maxAgeMs) {
-        reasons.push("admission receipt snapshot is stale; re-run the usage preflight before mutating");
+        reasons[reasons.length] = "admission receipt snapshot is stale; re-run the usage preflight before mutating";
       }
     } catch (error) {
-      reasons.push(error.message);
+      reasons[reasons.length] = error.message;
     }
     const monthly = receipt.windows?.monthly;
     const monthlyFailures = validateWindow(monthly, "windows.monthly");
     if (monthlyFailures.length > 0) {
-      reasons.push(...monthlyFailures);
+      for (let i = 0; i < monthlyFailures.length; i += 1) reasons[reasons.length] = monthlyFailures[i];
     } else if (monthly.kind !== "monthly") {
-      reasons.push("windows.monthly.kind must be monthly");
+      reasons[reasons.length] = "windows.monthly.kind must be monthly";
     }
     const daily = receipt.windows?.daily;
     if (daily !== null && daily !== undefined) {
       const dailyFailures = validateWindow(daily, "windows.daily");
       if (dailyFailures.length > 0) {
-        reasons.push(...dailyFailures);
+        for (let i = 0; i < dailyFailures.length; i += 1) reasons[reasons.length] = dailyFailures[i];
       } else if (daily.kind !== "daily") {
-        reasons.push("windows.daily.kind must be daily");
+        reasons[reasons.length] = "windows.daily.kind must be daily";
       }
     } else {
-      reasons.push("admission receipt windows.daily binding is missing; refusing forged receipt");
+      reasons[reasons.length] = "admission receipt windows.daily binding is missing; refusing forged receipt";
     }
   }
   return { ok: reasons.length === 0, decision: receipt.decision ?? "BLOCKED", reasons };

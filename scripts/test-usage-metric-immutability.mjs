@@ -186,7 +186,9 @@ check("default-live path seals without live aggregate; live mint NOT_EXECUTED BL
     `let rawGetThrew = false; try { Map.prototype.get.call(METRIC_BY_KEY, "workers_requests"); } catch { rawGetThrew = true; } out.push("rawGetThrew=" + rawGetThrew);`,
     `const forged = admitOperation(createBudgetLedger(), { metricKey: "evil_forged", quantity: 1, now: ${NOW} }); out.push("forged=" + forged.allowed + ":" + forged.reason);`,
     `const clone = admitOperation(createBudgetLedger(), { metricKey: String("evil_forged"), quantity: 1, now: ${NOW} }); out.push("clone=" + clone.allowed + ":" + clone.reason);`,
-    `const proxiedKey = new Proxy({}, { toString() { return "evil_forged"; } }); let proxyAllowed = "n/a"; try { proxyAllowed = String(admitOperation(createBudgetLedger(), { metricKey: "evil_forged", quantity: 1, now: ${NOW} }).allowed); } catch { proxyAllowed = "threw"; } out.push("proxy=" + proxyAllowed);`,
+    `let proxyAllowed = "n/a"; let proxyCoercions = 0; try { const evilProxy = new Proxy({}, { get(t, p) { if (p === Symbol.toPrimitive || p === "toString" || p === "valueOf") { proxyCoercions += 1; throw new Error("coercion"); } return t[p]; } }); proxyAllowed = String(admitOperation(createBudgetLedger(), { metricKey: evilProxy, quantity: 1, now: ${NOW} }).allowed); } catch { proxyAllowed = "threw"; } out.push("proxy=" + proxyAllowed + " coercions=" + proxyCoercions);`,
+    `let objAllowed = "n/a"; let objCoercions = 0; try { const evilObj = { toString() { objCoercions += 1; return "workers_requests"; }, valueOf() { objCoercions += 1; return "workers_requests"; } }; objAllowed = String(admitOperation(createBudgetLedger(), { metricKey: evilObj, quantity: 1, now: ${NOW} }).allowed); } catch { objAllowed = "threw"; } out.push("objkey=" + objAllowed + " coercions=" + objCoercions);`,
+    `let symAllowed = "n/a"; try { symAllowed = String(admitOperation(createBudgetLedger(), { metricKey: Symbol("workers_requests"), quantity: 1, now: ${NOW} }).allowed); } catch { symAllowed = "threw"; } out.push("sym=" + symAllowed);`,
     `const removed = admitOperation(createBudgetLedger(), { metricKey: "no_such_metric", quantity: 1, now: ${NOW} }); out.push("removed=" + removed.allowed + ":" + removed.reason);`,
     `const real = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} }); out.push("real=" + real.allowed + ":" + real.reason);`,
     `out.push("hasReal=" + hasCanonicalMetric("workers_requests") + " hasEvil=" + hasCanonicalMetric("evil_forged"));`,
@@ -205,6 +207,9 @@ check("default-live path seals without live aggregate; live mint NOT_EXECUTED BL
   assert.match(forgeryOut, /rawGetThrew=true/u);
   assert.match(forgeryOut, /forged=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
   assert.match(forgeryOut, /clone=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(forgeryOut, /proxy=false coercions=0/u);
+  assert.match(forgeryOut, /objkey=false coercions=0/u);
+  assert.match(forgeryOut, /sym=false/u);
   assert.match(forgeryOut, /removed=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
   assert.match(forgeryOut, /real=true:WITHIN_ENVELOPE_SHARE/u);
   assert.match(forgeryOut, /hasReal=true hasEvil=false/u);
@@ -228,5 +233,138 @@ check("forgery vectors deny, real metric admits, facade immune");
   assert.match(orderOut, /order=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
 }
 check("import-order variation still denies forged metric");
+
+// FIX14 Luna A1 (post-fix, preserved vectors): before-import Map.prototype.get
+// poisoning can no longer forge authority — there is no Map to consult.
+// Pre-fix exact output was:
+//   evil_proto allowed=true reason=WITHIN_ENVELOPE_SHARE
+// Post-fix the same fresh process denies with no mutable reference.
+{
+  const a1Child = [
+    `const origGet = Map.prototype.get;`,
+    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 8000000, window: "monthly" }; return origGet.call(this, k); };`,
+    `const { admitOperation, createBudgetLedger } = await import("./scripts/lib/cloudflare-budget-admission.mjs");`,
+    `const { getCanonicalMetric, hasCanonicalMetric } = await import("./scripts/lib/cloudflare-usage-envelope.mjs");`,
+    `const r = admitOperation(createBudgetLedger(), { metricKey: "evil_proto", quantity: 1, now: ${NOW} });`,
+    `console.log("a1=" + r.allowed + ":" + r.reason);`,
+    `console.log("a1get=" + String(getCanonicalMetric("evil_proto")));`,
+    `console.log("a1has=" + hasCanonicalMetric("evil_proto"));`,
+    `const real = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} });`,
+    `console.log("a1real=" + real.allowed + ":" + real.reason);`,
+  ].join("\n");
+  const a1Out = runChild("a1-before-import-map-get", a1Child);
+  assert.match(a1Out, /a1=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(a1Out, /a1get=null/u);
+  assert.match(a1Out, /a1has=false/u);
+  assert.match(a1Out, /a1real=true:WITHIN_ENVELOPE_SHARE/u);
+}
+check("before-import Map.get poisoning no longer forges metric");
+
+// FIX14: combined before-import prototype poisoning (Map/Set/Object/Array)
+// leaves authorization exact: forged denied, real admitted, no coercion.
+{
+  const combinedChild = [
+    `const origMapGet = Map.prototype.get;`,
+    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 1, window: "monthly" }; return origMapGet.call(this, k); };`,
+    `const origSetHas = Set.prototype.has;`,
+    `Set.prototype.has = function (k) { if (k === "evil_proto") return true; return origSetHas.call(this, k); };`,
+    `Object.prototype["evil_proto"] = { key: "evil_proto", envelope: 1, window: "monthly" };`,
+    `Object.prototype["FAKE:TRIPLE:U"] = "workers_requests";`,
+    `const { admitOperation, createBudgetLedger } = await import("./scripts/lib/cloudflare-budget-admission.mjs");`,
+    `const { hasCanonicalMetric, getCanonicalMetric, listCanonicalRequiredKeys, evaluateUsageSnapshot, digestAccountId } = await import("./scripts/lib/cloudflare-usage-envelope.mjs");`,
+    `const out = [];`,
+    `out.push("evil=" + admitOperation(createBudgetLedger(), { metricKey: "evil_proto", quantity: 1, now: ${NOW} }).allowed);`,
+    `out.push("evilGet=" + String(getCanonicalMetric("evil_proto")));`,
+    `out.push("evilHas=" + hasCanonicalMetric("evil_proto"));`,
+    `out.push("keys=" + listCanonicalRequiredKeys().length);`,
+    `out.push("real=" + admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} }).allowed);`,
+    `console.log(out.join("\\n"));`,
+  ].join("\n");
+  const combinedOut = runChild("combined-before-import", combinedChild);
+  assert.match(combinedOut, /evil=false/u);
+  assert.match(combinedOut, /evilGet=null/u);
+  assert.match(combinedOut, /evilHas=false/u);
+  assert.match(combinedOut, /keys=19/u);
+  assert.match(combinedOut, /real=true/u);
+}
+check("combined before-import prototype poisoning stays exact");
+
+// FIX14: after-import poisoning (same vectors, post-import mutation).
+{
+  const afterChild = [
+    `import { admitOperation, createBudgetLedger } from "./scripts/lib/cloudflare-budget-admission.mjs";`,
+    `import { hasCanonicalMetric, getCanonicalMetric } from "./scripts/lib/cloudflare-usage-envelope.mjs";`,
+    `const origMapGet = Map.prototype.get;`,
+    `Map.prototype.get = function (k) { if (k === "evil_after") return { key: "evil_after", envelope: 1, window: "monthly" }; return origMapGet.call(this, k); };`,
+    `Object.prototype["evil_after"] = { key: "evil_after", envelope: 1, window: "monthly" };`,
+    `Object.prototype["FAKEAFTER:TRIPLE:U"] = "workers_requests";`,
+    `const r = admitOperation(createBudgetLedger(), { metricKey: "evil_after", quantity: 1, now: ${NOW} });`,
+    `console.log("after=" + r.allowed + ":" + r.reason);`,
+    `console.log("afterGet=" + String(getCanonicalMetric("evil_after")));`,
+    `console.log("afterHas=" + hasCanonicalMetric("evil_after"));`,
+    `console.log("afterReal=" + admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} }).allowed);`,
+  ].join("\n");
+  const afterOut = runChild("after-import", afterChild);
+  assert.match(afterOut, /after=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
+  assert.match(afterOut, /afterGet=null/u);
+  assert.match(afterOut, /afterHas=false/u);
+  assert.match(afterOut, /afterReal=true/u);
+}
+check("after-import prototype poisoning stays exact");
+
+// FIX14 Luna A2 (post-fix, preserved vectors): 18-alias Object.prototype
+// pollution plus deterministic raw HTTP no longer admits. Pre-fix exact
+// output was ADMITTED capability=true unknown=[]. Post-fix the same fresh
+// process seals with 18 billing unknowns and no capability.
+{
+  const a2Child = [
+    `const ACCOUNT = "${ACCOUNT}"; const NOW = ${NOW};`,
+    `const KEYS = ["workers_requests","workers_cpu_ms","d1_storage_bytes","d1_rows_read","d1_rows_written","r2_storage_gb_month","r2_class_a_ops","r2_class_b_ops","queue_ops","do_requests","do_gb_seconds","do_sql_reads","do_sql_writes","do_storage_bytes","workers_ai_neurons_per_day","ai_search_queries_month","vectorize_queried_dims_month","vectorize_stored_dims_month"];`,
+    `for (let i = 0; i < KEYS.length; i += 1) { Object.prototype["FAKEID" + i + ":FAKENAME" + i + ":FAKEUNIT" + i] = KEYS[i]; }`,
+    `const rows = KEYS.map((_, i) => ({ BillingAccountId: ACCOUNT, x_BillableMetricId: "FAKEID" + i, x_BillableMetricName: "FAKENAME" + i, ConsumedUnit: "FAKEUNIT" + i, ConsumedQuantity: 1, ChargePeriodStart: "2026-09-01T00:00:00.000Z", ChargePeriodEnd: "2026-09-06T00:00:00.000Z" }));`,
+    `globalThis.fetch = async (url) => { const u = String(url); if (u.includes("/billable/usage")) return { status: 200, json: async () => ({ success: true, result: rows }) }; if (u.includes("/ai-search/instances")) return { status: 200, json: async () => ({ success: true, result: [{},{},{},{},{}], result_info: { page: 1, per_page: 100, count: 5, total_count: 5, total_pages: 1 } }) }; if (u.includes("/r2/buckets")) return { status: 200, json: async () => ({ success: true, result: { buckets: [] } }) }; return { status: 200, json: async () => ({ success: true, result: [] }) }; };`,
+    `const { buildLiveProviderRegistry, REVIEWED_BILLABLE_TRIPLES } = await import("./scripts/lib/cloudflare-usage-billable.mjs");`,
+    `const { runUsagePreflight } = await import("./scripts/lib/cloudflare-usage-admission.mjs");`,
+    `console.log("ownKeys=" + Object.keys(REVIEWED_BILLABLE_TRIPLES).length);`,
+    `const providers = buildLiveProviderRegistry({ accountId: ACCOUNT, nowMs: NOW });`,
+    `const gate = await runUsagePreflight({ env: { ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth", ELIOTR_WRANGLER_CONFIG_FILE: "test.toml", CLOUDFLARE_ACCOUNT_ID: ACCOUNT }, nowMs: NOW, readFile: async () => 'oauth_token = "fictional"\\nexpiration_time = "2030-01-01T00:00:00.000Z"\\n', getWhoamiOutput: async () => "Account " + ACCOUNT + " via browser OAuth", providers });`,
+    `console.log("a2=" + gate.decision + " cap=" + (gate.capability !== null) + " unknown=" + gate.evaluation.unknown.length);`,
+  ].join("\n");
+  const a2Out = runChild("a2-proto-pollution", a2Child);
+  assert.match(a2Out, /ownKeys=0/u);
+  assert.match(a2Out, /a2=SEALED cap=false unknown=18/u);
+}
+check("18-alias prototype pollution no longer admits billing");
+
+// FIX14: facade/descriptor/boundary immunity — clone, spread, Proxy,
+// serialization, raw prototype calls, prototype swaps, mutated facades.
+{
+  const boundaryChild = [
+    `import { METRIC_BY_KEY, hasCanonicalMetric, getCanonicalMetric } from "./scripts/lib/cloudflare-usage-envelope.mjs";`,
+    `import { REVIEWED_BILLABLE_TRIPLES } from "./scripts/lib/cloudflare-usage-billable.mjs";`,
+    `import { admitOperation, createBudgetLedger } from "./scripts/lib/cloudflare-budget-admission.mjs";`,
+    `const out = [];`,
+    `const spread = { ...METRIC_BY_KEY }; out.push("spreadGet=" + typeof spread.get);`,
+    `const cloned = JSON.parse(JSON.stringify({ key: "workers_requests" })); out.push("cloneKey=" + cloned.key);`,
+    `const proxiedFacade = new Proxy(METRIC_BY_KEY, {}); let proxyFacade = "n/a"; try { proxyFacade = String(proxiedFacade.has("workers_requests")); } catch { proxyFacade = "threw"; } out.push("proxyFacade=" + proxyFacade);`,
+    `let rawCall = "n/a"; try { rawCall = String(Map.prototype.get.call(METRIC_BY_KEY, "workers_requests")); } catch { rawCall = "threw"; } out.push("rawCall=" + rawCall);`,
+    `let desc = "n/a"; try { desc = String(typeof Object.getOwnPropertyDescriptor(METRIC_BY_KEY, "get")); } catch { desc = "threw"; } out.push("desc=" + desc);`,
+    `let swap = "n/a"; try { Object.setPrototypeOf({ ...{} }, Map.prototype); swap = "swapped-plain"; } catch { swap = "threw"; } out.push("swap=" + swap);`,
+    `try { METRIC_BY_KEY.get = () => null; } catch {} out.push("facadeGetStillFn=" + (typeof METRIC_BY_KEY.get));`,
+    `try { REVIEWED_BILLABLE_TRIPLES["X:Y:Z"] = "workers_requests"; } catch {} out.push("triplesOwn=" + Object.keys(REVIEWED_BILLABLE_TRIPLES).length);`,
+    `out.push("real=" + admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} }).allowed);`,
+    `out.push("evil=" + admitOperation(createBudgetLedger(), { metricKey: "X:Y:Z", quantity: 1, now: ${NOW} }).allowed);`,
+    `out.push("hasReal=" + hasCanonicalMetric("workers_requests"));`,
+    `out.push("getReal=" + (getCanonicalMetric("workers_requests") !== null));`,
+    `console.log(out.join("\\n"));`,
+  ].join("\n");
+  const boundaryOut = runChild("boundary", boundaryChild);
+  assert.match(boundaryOut, /real=true/u);
+  assert.match(boundaryOut, /evil=false/u);
+  assert.match(boundaryOut, /hasReal=true/u);
+  assert.match(boundaryOut, /getReal=true/u);
+  assert.match(boundaryOut, /triplesOwn=0/u);
+}
+check("facade clone/spread/Proxy/serialization/descriptor boundaries immune");
 
 console.log(`Usage metric immutability: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

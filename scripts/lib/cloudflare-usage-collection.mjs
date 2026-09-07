@@ -95,15 +95,28 @@ export function dailyWindowFor(nowMs) {
 // objects, never an export). Exports are never read here.
 function canonicalRequiredSnapshot() {
   const snapshotted = listCanonicalRequiredKeys();
-  const fromMetrics = listCanonicalMetrics().map((m) => m.key);
+  const metrics = listCanonicalMetrics();
+  const fromMetrics = [];
+  for (let i = 0; i < metrics.length; i += 1) fromMetrics[fromMetrics.length] = metrics[i].key;
   if (snapshotted.length === 0 || fromMetrics.length === 0) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous collection");
   }
-  if (snapshotted.length !== fromMetrics.length || !fromMetrics.every((k) => snapshotted.includes(k))) {
+  if (snapshotted.length !== fromMetrics.length) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
   }
-  if (new Set(snapshotted).size !== snapshotted.length) {
-    collectionFail("REGISTRY_INCOMPLETE", "authority metric set carries duplicates; refusing vacuous collection");
+  for (let i = 0; i < fromMetrics.length; i += 1) {
+    let found = false;
+    for (let j = 0; j < snapshotted.length; j += 1) {
+      if (snapshotted[j] === fromMetrics[i]) { found = true; break; }
+    }
+    if (!found) collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
+  }
+  for (let i = 0; i < snapshotted.length; i += 1) {
+    for (let j = i + 1; j < snapshotted.length; j += 1) {
+      if (snapshotted[i] === snapshotted[j]) {
+        collectionFail("REGISTRY_INCOMPLETE", "authority metric set carries duplicates; refusing vacuous collection");
+      }
+    }
   }
   return snapshotted;
 }
@@ -116,7 +129,7 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
   }
   const required = canonicalRequiredSnapshot();
   const metrics = {};
-  for (const key of required) metrics[key] = UNKNOWN;
+  for (let i = 0; i < required.length; i += 1) metrics[required[i]] = UNKNOWN;
   return {
     protocol: "eliotr.cloudflare-usage-snapshot.v1",
     account_id_digest: digestAccountId(expectedAccountId),
@@ -154,7 +167,15 @@ export async function collectAccountUsage(options = {}) {
   const gaps = {};
   const trust = {};
   const required = canonicalRequiredSnapshot();
-  for (const key of required) {
+  const requiredHas = (key) => {
+    if (typeof key !== "string") return false;
+    for (let i = 0; i < required.length; i += 1) {
+      if (required[i] === key) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < required.length; i += 1) {
+    const key = required[i];
     totals[key] = null;
     gaps[key] = false;
     trust[key] = { state: "unknown-untrusted", sources: [], coverage: null, gap: null, provenance: METRIC_PROVENANCE.UNAVAILABLE };
@@ -175,6 +196,15 @@ export async function collectAccountUsage(options = {}) {
     const parsed = typeof value === "string" ? Date.parse(value) : NaN;
     return Number.isFinite(parsed) ? parsed : null;
   };
+  // FIX14: own-key numeric scan (no Object.values/Array.prototype.some).
+  const hasNumericValue = (values) => {
+    if (!values || typeof values !== "object") return false;
+    const keys = Object.keys(values);
+    for (let i = 0; i < keys.length; i += 1) {
+      if (typeof values[keys[i]] === "number") return true;
+    }
+    return false;
+  };
   // Provenance authorization: a numeric enters the snapshot only through an
   // authorized channel. Analytics samples stay diagnostic metadata; ledger
   // estimates have no complete account-bound ledger contract in this repo;
@@ -191,16 +221,24 @@ export async function collectAccountUsage(options = {}) {
     isUsageVBillingProvider(provider) || isInventoryProvider(provider);
   // The same provider object twice must not double-count: the first result
   // stands and the duplicate is ignored fail-closed.
-  const seenProviders = new Set();
-  for (const provider of providers) {
+  // FIX14: identity array with explicit === (no Set, whose prototype is
+  // mutable ambient behavior).
+  const seenProviders = [];
+  const providerList = Array.isArray(providers) ? providers : [];
+  for (let pi = 0; pi < providerList.length; pi += 1) {
+    const provider = providerList[pi];
     const group = provider?.group ?? "unnamed-provider";
     const declaredCovers = Array.isArray(provider?.covers) ? provider.covers : null;
-    if (seenProviders.has(provider)) {
-      providerErrors.push(`${group} duplicate provider instance ignored; keeping first result`);
-      providerResults.push({ group, ok: false, keys: [], duplicate: true });
+    let duplicate = false;
+    for (let i = 0; i < seenProviders.length; i += 1) {
+      if (seenProviders[i] === provider) { duplicate = true; break; }
+    }
+    if (duplicate) {
+      providerErrors[providerErrors.length] = `${group} duplicate provider instance ignored; keeping first result`;
+      providerResults[providerResults.length] = { group, ok: false, keys: [], duplicate: true };
       continue;
     }
-    seenProviders.add(provider);
+    seenProviders[seenProviders.length] = provider;
     try {
       // Bearer crosses only this memory call; providers must not persist it.
       const reported = await provider.collect({ accountId: expectedAccountId, bearer, now });
@@ -250,7 +288,7 @@ export async function collectAccountUsage(options = {}) {
           coverageOk = false;
           coverageReason = `partial pagination ${coverage.completedPages}/${coverage.totalPages}`;
         }
-      } else if (authorityClaimed && Object.values(values).some((value) => typeof value === "number")) {
+      } else if (authorityClaimed && hasNumericValue(values)) {
         coverageOk = false;
         coverageReason = "missing coverage binding";
       }
@@ -258,24 +296,30 @@ export async function collectAccountUsage(options = {}) {
       const reporterProvenance = analytics ? METRIC_PROVENANCE.ANALYTICS_NONBILLING
         : (provenance ?? METRIC_PROVENANCE.UNAVAILABLE);
       if (!coverageOk) {
-        for (const key of claimedKeys) {
-          if (!required.includes(key)) continue;
+        for (let i = 0; i < claimedKeys.length; i += 1) {
+          const key = claimedKeys[i];
+          if (!requiredHas(key)) continue;
           markGap(key, `${group}: ${coverageReason}`, reporterProvenance);
-          providerErrors.push(`${group} coverage rejected for ${key}: ${coverageReason}; keeping unknown`);
+          providerErrors[providerErrors.length] = `${group} coverage rejected for ${key}: ${coverageReason}; keeping unknown`;
         }
-        providerResults.push({ group, ok: false, keys: [] });
+        providerResults[providerResults.length] = { group, ok: false, keys: [] };
         continue;
       }
       // Analytics is diagnostic metadata only: observed samples are recorded
       // by key, never admitted, and never gap other channels.
       if (analytics) {
-        const sampleKeys = Object.keys(values).filter((key) =>
-          required.includes(key) && typeof values[key] === "number");
-        if (sampleKeys.length > 0) {
-          providerErrors.push(`${group} analytics samples are diagnostic-only, never billing authority`);
+        const valueKeys = Object.keys(values);
+        const sampleKeys = [];
+        for (let i = 0; i < valueKeys.length; i += 1) {
+          const key = valueKeys[i];
+          if (requiredHas(key) && typeof values[key] === "number") sampleKeys[sampleKeys.length] = key;
         }
-        providerResults.push({ group, ok: true, keys: [], analytics: true, sample_keys: sampleKeys });
-        for (const key of sampleKeys) {
+        if (sampleKeys.length > 0) {
+          providerErrors[providerErrors.length] = `${group} analytics samples are diagnostic-only, never billing authority`;
+        }
+        providerResults[providerResults.length] = { group, ok: true, keys: [], analytics: true, sample_keys: sampleKeys };
+        for (let i = 0; i < sampleKeys.length; i += 1) {
+          const key = sampleKeys[i];
           if (!gaps[key] && totals[key] === null) {
             trust[key] = { state: "unknown-untrusted", sources: [group], coverage, gap: null, provenance: reporterProvenance };
           }
@@ -297,12 +341,13 @@ export async function collectAccountUsage(options = {}) {
       let channelBrand = null;
       let channelTestOnly = false;
       const refuseChannel = (reason, refusedProvenance) => {
-        for (const key of claimedKeys) {
-          if (!required.includes(key)) continue;
+        for (let i = 0; i < claimedKeys.length; i += 1) {
+          const key = claimedKeys[i];
+          if (!requiredHas(key)) continue;
           markGap(key, `${group}: ${reason}`, refusedProvenance);
         }
-        providerErrors.push(`${group} ${reason}; keeping unknown`);
-        providerResults.push({ group, ok: false, keys: [] });
+        providerErrors[providerErrors.length] = `${group} ${reason}; keeping unknown`;
+        providerResults[providerResults.length] = { group, ok: false, keys: [] };
       };
       if (provenance === METRIC_PROVENANCE.AUTHORITATIVE_BILLING) {
         const testOnly = isTestTransportProvider(provider);
@@ -341,14 +386,17 @@ export async function collectAccountUsage(options = {}) {
         refuseChannel("unprovenanced reporter declares no verified aggregate", METRIC_PROVENANCE.UNAVAILABLE);
         continue;
       }
-      for (const [key, value] of Object.entries(values)) {
-        if (!required.includes(key)) {
-          providerErrors.push(`${group} reported unknown metric ${key}`);
+      const valueKeys = Object.keys(values);
+      for (let vi = 0; vi < valueKeys.length; vi += 1) {
+        const key = valueKeys[vi];
+        const value = values[key];
+        if (!requiredHas(key)) {
+          providerErrors[providerErrors.length] = `${group} reported unknown metric ${key}`;
           continue;
         }
         if (!isReportableValue(value)) {
           markGap(key, `${group} malformed sample`);
-          providerErrors.push(`${group} reported malformed ${key}; keeping unknown`);
+          providerErrors[providerErrors.length] = `${group} reported malformed ${key}; keeping unknown`;
           continue;
         }
         // Inventory counts admit only explicitly inventory-derived metrics
@@ -356,27 +404,32 @@ export async function collectAccountUsage(options = {}) {
         // counters never ride inventory provenance.
         if (channelProvenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY) {
           const entry = getRegistryEntry(key);
-          if (!entry || entry.provenance !== METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY ||
-            !entry.sources.includes(provider?.group)) {
+          let sourceAllowed = false;
+          if (entry && entry.provenance === METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY && Array.isArray(entry.sources)) {
+            for (let i = 0; i < entry.sources.length; i += 1) {
+              if (entry.sources[i] === provider?.group) { sourceAllowed = true; break; }
+            }
+          }
+          if (!entry || entry.provenance !== METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY || !sourceAllowed) {
             markGap(key, `${group} inventory not authorized for ${key}`, channelProvenance);
-            providerErrors.push(`${group} reported unauthorized inventory ${key}; keeping unknown`);
+            providerErrors[providerErrors.length] = `${group} reported unauthorized inventory ${key}; keeping unknown`;
             continue;
           }
         }
-        keys.push(key);
+        keys[keys.length] = key;
         if (value === UNKNOWN) {
           if (totals[key] === null) totals[key] = UNKNOWN;
           continue;
         }
         if (gaps[key]) {
           // Numeric data never erases an unknown gap.
-          providerErrors.push(`${group} numeric ${key} ignored: prior gap keeps unknown`);
+          providerErrors[providerErrors.length] = `${group} numeric ${key} ignored: prior gap keeps unknown`;
           continue;
         }
         if (coverage?.fullAccount === true) {
           if (fullAccountReporters[key] && fullAccountReporters[key] !== group) {
             markGap(key, `conflicting full-account sources ${fullAccountReporters[key]} vs ${group}`);
-            providerErrors.push(`${group} conflicting full-account ${key}; keeping unknown`);
+            providerErrors[providerErrors.length] = `${group} conflicting full-account ${key}; keeping unknown`;
             continue;
           }
           fullAccountReporters[key] = group;
@@ -386,9 +439,17 @@ export async function collectAccountUsage(options = {}) {
         } else {
           totals[key] = totals[key] + value;
         }
+        const priorSources = Array.isArray(trust[key].sources) ? trust[key].sources : [];
+        const mergedSources = [];
+        for (let i = 0; i < priorSources.length; i += 1) mergedSources[mergedSources.length] = priorSources[i];
+        let groupSeen = false;
+        for (let i = 0; i < mergedSources.length; i += 1) {
+          if (mergedSources[i] === group) { groupSeen = true; break; }
+        }
+        if (!groupSeen) mergedSources[mergedSources.length] = group;
         trust[key] = {
           state: channelTestOnly ? "test-only" : "trusted-partial",
-          sources: [...new Set([...trust[key].sources, group])],
+          sources: mergedSources,
           coverage: coverage ?? { accountId: expectedAccountId, fullAccount: false },
           gap: null,
           provenance: channelProvenance,
@@ -398,31 +459,39 @@ export async function collectAccountUsage(options = {}) {
       }
       // Inventory-only providers prove pagination readback without counters.
       if (Object.keys(values).length === 0 && reported?.inventory !== undefined) {
-        providerResults.push({
+        providerResults[providerResults.length] = {
           group,
           ok: true,
           keys: [],
           pages: coverage ? `${coverage.completedPages}/${coverage.totalPages}` : "1/1",
           inventory_count: Array.isArray(reported.inventory) ? reported.inventory.length : 0,
-        });
+        };
       } else {
-        providerResults.push({ group, ok: true, keys });
+        providerResults[providerResults.length] = { group, ok: true, keys };
       }
     } catch (error) {
-      providerResults.push({ group, ok: false, keys: [] });
+      providerResults[providerResults.length] = { group, ok: false, keys: [] };
       const message = `${group} failed: ${error?.code ?? error?.message ?? "unknown"}`;
-      providerErrors.push(message);
+      providerErrors[providerErrors.length] = message;
       // A failed provider gaps only metrics it declared; undeclared failures
       // never poison unrelated counters.
       if (declaredCovers) {
-        for (const key of declaredCovers) {
-          if (required.includes(key)) markGap(key, message);
+        for (let i = 0; i < declaredCovers.length; i += 1) {
+          const key = declaredCovers[i];
+          if (requiredHas(key)) markGap(key, message);
         }
       }
     }
   }
   const metrics = {};
-  for (const key of required) metrics[key] = totals[key] === null ? UNKNOWN : totals[key];
+  for (let i = 0; i < required.length; i += 1) {
+    const key = required[i];
+    metrics[key] = totals[key] === null ? UNKNOWN : totals[key];
+  }
+  const registryLimitations = {};
+  for (let i = 0; i < required.length; i += 1) {
+    registryLimitations[required[i]] = getRegistryLimitation(required[i]);
+  }
   return {
     protocol: "eliotr.cloudflare-usage-snapshot.v1",
     account_id_digest: digestAccountId(expectedAccountId),
@@ -436,9 +505,7 @@ export async function collectAccountUsage(options = {}) {
       provider_results: providerResults,
       provider_errors: providerErrors,
       metric_trust: trust,
-      registry_limitations: Object.fromEntries(
-        required.map((key) => [key, getRegistryLimitation(key)]),
-      ),
+      registry_limitations: registryLimitations,
     },
     metrics,
   };

@@ -45,17 +45,29 @@ import {
 
 export { isTestTransportProvider };
 
-// Module-PRIVATE inventory brand registry: provider object -> brand class.
+// Module-PRIVATE inventory brand registry: parallel identity/brand arrays.
 // Never exported; populated only by the branded factories below.
-const INVENTORY_BRANDS = new WeakMap();
+// FIX14: explicit === identity scans (no WeakMap, whose prototype is mutable
+// ambient behavior a before-import poisoning could forge).
+const INVENTORY_BRANDED = [];
+const INVENTORY_BRAND_OF = [];
 
 export const INVENTORY_BRAND_PAGINATED = "inventory-paginated";
 export const INVENTORY_BRAND_CURSOR = "inventory-cursor";
 export const INVENTORY_BRAND_AI_SEARCH = "inventory-ai-search";
 
+function brandOf(provider) {
+  if (provider === null || (typeof provider !== "object" && typeof provider !== "function")) return null;
+  for (let i = 0; i < INVENTORY_BRANDED.length; i += 1) {
+    if (INVENTORY_BRANDED[i] === provider) return INVENTORY_BRAND_OF[i];
+  }
+  return null;
+}
+
 function brandInventoryProvider(product, brand) {
   Object.freeze(product.covers);
-  INVENTORY_BRANDS.set(product, brand);
+  INVENTORY_BRANDED[INVENTORY_BRANDED.length] = product;
+  INVENTORY_BRAND_OF[INVENTORY_BRAND_OF.length] = brand;
   return Object.freeze(product);
 }
 
@@ -114,15 +126,15 @@ export function createAiSearchInventoryProvider(options = {}) {
 
 // Read-only predicates: the only trust queries the collector may use.
 export function isInventoryProvider(provider) {
-  return INVENTORY_BRANDS.has(provider);
+  return brandOf(provider) !== null;
 }
 
 export function isAiSearchInventoryProvider(provider) {
-  return INVENTORY_BRANDS.get(provider) === INVENTORY_BRAND_AI_SEARCH;
+  return brandOf(provider) === INVENTORY_BRAND_AI_SEARCH;
 }
 
 export function inventoryBrandClass(provider) {
-  return INVENTORY_BRANDS.get(provider) ?? null;
+  return brandOf(provider);
 }
 
 // Explicit authoritative source set per required metric. Counters exposed by
@@ -161,29 +173,93 @@ export const METRIC_SOURCE_REGISTRY = (() => {
   vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no stable account-wide counter transport; ledger+inventory required" },
   };
-  for (const entry of Object.values(registry)) { Object.freeze(entry.sources); Object.freeze(entry); }
+  const registryKeys = Object.keys(registry);
+  for (let i = 0; i < registryKeys.length; i += 1) {
+    const entry = registry[registryKeys[i]];
+    Object.freeze(entry.sources); Object.freeze(entry);
+  }
   return Object.freeze(registry);
 })();
 
-// Module-private canonical registry: independent frozen copy, so export
-// mutation cannot change decisions even if a freeze were bypassed.
-const CANONICAL_REGISTRY = Object.freeze(Object.fromEntries(Object.entries(METRIC_SOURCE_REGISTRY).map(([k, v]) => [k, Object.freeze({ ...v, sources: Object.freeze([...v.sources]) })])));
-export function getRegistryEntry(k) { return CANONICAL_REGISTRY[k] ?? null; }
-export function getRegistryLimitation(k) { return CANONICAL_REGISTRY[k]?.limitation ?? "unregistered"; }
-export function assertLiveRegistryCoversAll(registry = CANONICAL_REGISTRY) {
+// Module-private canonical registry: independent frozen copy in a
+// null-prototype table, so export mutation cannot change decisions even if a
+// freeze were bypassed, and inherited Object.prototype keys are impossible.
+// FIX14: getters use explicit === scans and never consult caller objects;
+// non-string keys (Proxy/object/symbol with coercion traps) are rejected
+// without coercion.
+const CANONICAL_REGISTRY_TABLE = (() => {
+  const table = Object.create(null);
+  const keys = Object.keys(METRIC_SOURCE_REGISTRY);
+  for (let i = 0; i < keys.length; i += 1) {
+    const k = keys[i];
+    const v = METRIC_SOURCE_REGISTRY[k];
+    const sources = [];
+    for (let j = 0; j < v.sources.length; j += 1) sources[sources.length] = v.sources[j];
+    table[k] = Object.freeze({ window: v.window, authoritative: v.authoritative, provenance: v.provenance, limitation: v.limitation, sources: Object.freeze(sources) });
+  }
+  return Object.freeze(table);
+})();
+const CANONICAL_REGISTRY_KEYS = Object.freeze(Object.keys(CANONICAL_REGISTRY_TABLE));
+function canonicalRegistryHas(k) {
+  if (typeof k !== "string" || k === "") return false;
+  for (let i = 0; i < CANONICAL_REGISTRY_KEYS.length; i += 1) {
+    if (CANONICAL_REGISTRY_KEYS[i] === k) return true;
+  }
+  return false;
+}
+export function getRegistryEntry(k) {
+  if (!canonicalRegistryHas(k)) return null;
+  return CANONICAL_REGISTRY_TABLE[k];
+}
+export function getRegistryLimitation(k) {
+  if (!canonicalRegistryHas(k)) return "unregistered";
+  const limitation = CANONICAL_REGISTRY_TABLE[k].limitation;
+  return typeof limitation === "string" ? limitation : "unregistered";
+}
+export function assertLiveRegistryCoversAll(registry = null) {
   const required = listCanonicalRequiredKeys();
   if (required.length === 0) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous admission");
   }
-  const missing = required.filter((key) => !registry[key]);
+  if (registry === null || registry === undefined) {
+    for (let i = 0; i < required.length; i += 1) {
+      if (!canonicalRegistryHas(required[i])) {
+        throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${required[i]}`);
+      }
+    }
+    if (CANONICAL_REGISTRY_KEYS.length !== required.length) {
+      throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry metric set is not exactly the required set");
+    }
+    return true;
+  }
+  const registryKeys = Object.keys(registry);
+  const missing = [];
+  for (let i = 0; i < required.length; i += 1) {
+    let found = false;
+    for (let j = 0; j < registryKeys.length; j += 1) {
+      if (registryKeys[j] === required[i]) { found = true; break; }
+    }
+    if (!found || registry[required[i]] === undefined || registry[required[i]] === null) missing[missing.length] = required[i];
+  }
   if (missing.length > 0) {
-    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${missing.join(", ")}`);
+    let list = "";
+    for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${list}`);
   }
-  const extra = Object.keys(registry).filter((key) => !required.includes(key));
+  const extra = [];
+  for (let i = 0; i < registryKeys.length; i += 1) {
+    let known = false;
+    for (let j = 0; j < required.length; j += 1) {
+      if (registryKeys[i] === required[j]) { known = true; break; }
+    }
+    if (!known) extra[extra.length] = registryKeys[i];
+  }
   if (extra.length > 0) {
-    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry carries unknown metrics: ${extra.join(", ")}`);
+    let list = "";
+    for (let i = 0; i < extra.length; i += 1) list += (i > 0 ? ", " : "") + extra[i];
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry carries unknown metrics: ${list}`);
   }
-  if (Object.keys(registry).length !== required.length) {
+  if (registryKeys.length !== required.length) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry metric set is not exactly the required set");
   }
   return true;
