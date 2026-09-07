@@ -4,9 +4,8 @@ import {
 } from "@eliotr/contracts";
 import {
   createR2EvidenceObjectStore,
-  objectResidencyKeyDigest,
-  sha256Utf8,
 } from "./r2.js";
+import { objectResidencyKeyDigest, sha256Utf8 } from "@eliotr/contracts";
 import {
   assertActive,
   loadSession,
@@ -54,18 +53,14 @@ import {
   safeHashEntries,
   validateFileSet,
   validateResidency,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
-export { IngestStorageError, type IngestStorageErrorCode } from "./ingest-validation.js";
 export type {
   BundlePrepareInput,
   BundlePrepareResult,
-  BundlePromotionAuthorization,
-  BundlePromotionReceipt,
   CompletedPart,
   MultipartFileUploadSession,
   MultipartUploadSession,
-  PromotedObjectReceipt,
   R2StagedBundleDependencies,
   StagedBundlePort,
   StagedBundleVerification,

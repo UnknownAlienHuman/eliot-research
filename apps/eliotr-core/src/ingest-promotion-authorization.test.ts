@@ -2,7 +2,7 @@ import type {
   BundlePromotionAuthorization,
   IngestAdmissionAuthority,
   PreparedIngestOperation,
-} from "@eliotr/platform-cloudflare";
+} from "@eliotr/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   authorizeIngestPromotion,

@@ -9,9 +9,11 @@ import { ROUTES } from "@eliotr/interfaces";
 import {
   createD1IngestAdmissionAuthority,
   createR2StagedBundlePort,
+} from "@eliotr/platform-cloudflare";
+import {
   IngestAuthorityError,
   type PreparedIngestOperation,
-} from "@eliotr/platform-cloudflare";
+} from "@eliotr/contracts";
 import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";

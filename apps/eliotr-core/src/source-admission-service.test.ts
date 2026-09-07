@@ -1,4 +1,5 @@
-import type { PreparedIngestOperation, StagedBundleVerification } from "@eliotr/platform-cloudflare";
+import type { PreparedIngestOperation } from "@eliotr/contracts";
+import type { StagedBundleVerification } from "@eliotr/platform-cloudflare";
 import { describe, expect, it } from "vitest";
 import { createSourceAdmissionService } from "./source-admission-service.js";
 

@@ -1,5 +1,5 @@
-import type { IngestAdmissionPolicySnapshot, PreparedIngestOperation } from "./d1-ingest-types.js";
-import { authorityFail, canonicalDigest, decodePolicyRow, type ActiveOwnerRow, type AdmissionPolicyRow } from "./d1-ingest-validation.js";
+import type { IngestAdmissionPolicySnapshot, PreparedIngestOperation } from "@eliotr/contracts";
+import { authorityFail, canonicalDigest, decodePolicyRow, type ActiveOwnerRow, type AdmissionPolicyRow } from "@eliotr/contracts";
 
 export async function activeOwner(
   database: D1Database,

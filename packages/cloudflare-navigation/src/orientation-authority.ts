@@ -1,4 +1,7 @@
-import { SourceRevisionSchema, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
+import { SourceRevisionSchema, BundleAdmissionReceiptSchema,
+  type BundleAdmissionReceipt, type ScopeSnapshot, type SourceRevision } from "@eliotr/contracts";
+import { NavigationError } from "@eliotr/retrieval";
+import { canonicalDigest } from "@eliotr/contracts";
 import {
   canonicalEvidenceJson, evidenceSha256, loadSourceAuthorities,
   type EvidenceAccessContext, type EvidenceSourceAuthority,
@@ -26,6 +29,117 @@ export interface OrientationSource {
   readonly policy_closure_ref: string;
   readonly title: string;
   readonly kind: string;
+  /**
+   * Durable bundle admission re-read from D1 at authority load (never the
+   * mutable revision ref alone). `null` only when D1 authoritatively reports
+   * NO_NORMALIZED_BUNDLE_ADMISSION; materialization then keeps the source on
+   * the explicit metadata-only profile instead of the structural contour.
+   */
+  readonly bundle_admission: DurableBundleAdmission | null;
+}
+
+/**
+ * Durable D1 ingest/bundle admission receipt, re-read by exact source-revision
+ * identity and digest-verified against its stored readback. This is the
+ * authority orientation reconciles the mutable source revision, the manifest
+ * reference, residency digests and promotion readbacks against.
+ */
+function admissionFail(code: "NAVIGATION_SOURCE_MISMATCH" | "NAVIGATION_ARTIFACT_INVALID", message: string): never {
+  throw new NavigationError(code, message);
+}
+
+export interface DurableBundleAdmission {
+  readonly operation_id: string;
+  readonly receipt: BundleAdmissionReceipt;
+  readonly receipt_sha256: string;
+  readonly promotion_receipt_ref: string;
+}
+
+interface BundleReceiptRow {
+  operation_id: string;
+  bundle_receipt_json: string | null;
+  bundle_receipt_sha256: string | null;
+  promotion_receipt_ref: string | null;
+  state: string;
+}
+
+/**
+ * Re-read the durable bundle admission receipt for one source revision.
+ * Returns the latest COMMITTED operation carrying a persisted receipt, with
+ * its JSON strictly decoded and digest-verified. Returns `null` only when no
+ * committed receipt exists at all (D1 proof of NO_NORMALIZED_BUNDLE_ADMISSION
+ * when the revision also carries no manifest reference).
+ */
+export async function loadDurableBundleAdmission(
+  database: D1Database,
+  sourceRevisionRef: string,
+): Promise<DurableBundleAdmission | null> {
+  orientationId(sourceRevisionRef);
+  const row = await database.prepare(
+    "SELECT operation_id, bundle_receipt_json, bundle_receipt_sha256, " +
+    "promotion_receipt_ref, state FROM bundle_ingest_operation " +
+    "WHERE source_revision_ref = ?1 AND state = 'COMMITTED' AND bundle_receipt_json IS NOT NULL " +
+    "ORDER BY created_at DESC, operation_id DESC LIMIT 1",
+  ).bind(sourceRevisionRef).first<BundleReceiptRow>();
+  if (row === null) return null;
+  if (typeof row.bundle_receipt_json !== "string" || typeof row.bundle_receipt_sha256 !== "string"
+    || typeof row.promotion_receipt_ref !== "string") {
+    admissionFail("NAVIGATION_ARTIFACT_INVALID", "durable bundle admission receipt is incomplete");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.bundle_receipt_json);
+  } catch {
+    admissionFail("NAVIGATION_ARTIFACT_INVALID", "durable bundle admission receipt is malformed JSON");
+  }
+  let receipt: BundleAdmissionReceipt;
+  try {
+    receipt = BundleAdmissionReceiptSchema.parse(parsed);
+  } catch {
+    admissionFail("NAVIGATION_ARTIFACT_INVALID", "durable bundle admission receipt failed strict decoding");
+  }
+  if (await canonicalDigest(receipt) !== row.bundle_receipt_sha256) {
+    admissionFail("NAVIGATION_SOURCE_MISMATCH", "durable bundle admission receipt digest mismatch");
+  }
+  return {
+    operation_id: orientationId(row.operation_id),
+    receipt,
+    receipt_sha256: row.bundle_receipt_sha256,
+    promotion_receipt_ref: row.promotion_receipt_ref,
+  };
+}
+
+/**
+ * Reconcile the mutable current revision against its durable admission
+ * receipt: exact equality of source revision, owner generation, manifest
+ * reference (never trust the mutable ref alone) and residency digest.
+ * A missing receipt for a revision that claims an admitted manifest reference
+ * is an integrity failure, never a metadata downgrade.
+ */
+export function reconcileDurableAdmission(
+  revision: SourceRevision,
+  authority: EvidenceSourceAuthority,
+  admission: DurableBundleAdmission | null,
+): DurableBundleAdmission | null {
+  if (admission === null) {
+    if (typeof authority.normalized_artifact_ref === "string" && authority.normalized_artifact_ref.length > 0) {
+      admissionFail("NAVIGATION_SOURCE_MISMATCH", "admitted manifest reference has no durable bundle receipt");
+    }
+    return null;
+  }
+  const receipt = admission.receipt;
+  if (receipt.source_revision_ref !== revision.source_revision_ref
+    || receipt.source_revision_ref !== authority.source_revision_ref
+    || receipt.normalized_artifact_ref !== authority.normalized_artifact_ref
+    || receipt.normalized_artifact_ref !== revision.normalized_artifact_ref
+    || receipt.object_residency_key_digest !== authority.object_residency_key_digest
+    || receipt.object_residency_key_digest !== revision.object_residency_key_digest
+    || authority.source_owner_generation !== revision.source_owner_generation
+    || authority.source_namespace_id !== revision.source_namespace_id
+    || authority.owner_system_id !== revision.source_owner_system_id) {
+    admissionFail("NAVIGATION_SOURCE_MISMATCH", "durable bundle admission disagrees with the current revision");
+  }
+  return admission;
 }
 export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> {
   requireReadPolicy(): Promise<void>;
@@ -98,7 +212,27 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       const revision = SourceRevisionSchema.parse({ ...revisionFields,
         ...(parser === null ? {} : { parser_profile_generation: parser }) });
       const policyClosure = `read-${await evidenceSha256({ policy, authority, revision, title, kind })}`;
-      return { revision, authority, policy, policy_uses: uses(policy), policy_closure_ref: policyClosure, title, kind };
+      // Authority load re-reads the durable D1 ingest/bundle admission receipt
+      // by exact receipt identity and reconciles the mutable revision against
+      // it. Orientation never trusts source_revision.normalized_artifact_ref
+      // alone; a claimed manifest reference without a digest-verified durable
+      // receipt fails closed here, never as a metadata downgrade downstream.
+      // Navigation-layer failures map to orientation admission codes for HTTP.
+      let admission: DurableBundleAdmission;
+      try {
+        const loaded = reconcileDurableAdmission(revision, authority,
+          await loadDurableBundleAdmission(db, row.source_revision_ref));
+        if (loaded === null) orientationFail("ORIENTATION_SOURCE_NOT_ADMITTED", 403);
+        admission = loaded;
+      } catch (error) {
+        if (error instanceof NavigationError && error.code === "NAVIGATION_ARTIFACT_INVALID") {
+          orientationFail("ORIENTATION_ADMISSION_CORRUPT", 503);
+        }
+        if (error instanceof NavigationError) orientationFail("ORIENTATION_ADMISSION_MISMATCH", 409);
+        throw error;
+      }
+      return { revision, authority, policy, policy_uses: uses(policy),
+        policy_closure_ref: policyClosure, title, kind, bundle_admission: admission };
     }));
   }
   async function sources(refs: readonly string[]): Promise<readonly OrientationSource[]> {

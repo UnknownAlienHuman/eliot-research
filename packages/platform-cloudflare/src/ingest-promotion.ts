@@ -1,10 +1,9 @@
 import {
   canonicalNormalizedBundleKey,
-  objectResidencyKeyDigest,
-  sha256Utf8,
   type EvidenceObjectStore,
   type Sha256DigestSinkFactory,
 } from "./r2.js";
+import { objectResidencyKeyDigest, sha256Utf8 } from "@eliotr/contracts";
 import {
   promotionKey,
   readPromotionReceipt,
@@ -15,8 +14,10 @@ import {
 } from "./ingest-storage.js";
 import type {
   BundlePromotionReceipt,
-  InternalStagedBundleSession,
   PromotedObjectReceipt,
+} from "@eliotr/contracts";
+import type {
+  InternalStagedBundleSession,
 } from "./ingest-types.js";
 import { verifyStagedBundle } from "./ingest-verification.js";
 import {
@@ -25,7 +26,7 @@ import {
   contentType,
   fail,
   iso,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
 const MAX_TERMINAL_DOCUMENT_BYTES = 1024 * 1024;
 
@@ -106,9 +107,12 @@ export async function promoteStagedSession(input: {
     promoted.push({
       logical_path: upload.path,
       canonical_key: receipt.key,
+      residency_key_digest: residencyDigest,
       sha256: receipt.readback_sha256,
       size_bytes: receipt.size_bytes,
       etag: receipt.etag,
+      ...(receipt.version === undefined ? {} : { version: receipt.version }),
+      content_type: contentType(upload.path),
       existed_identically: receipt.existed_identically,
     });
   }

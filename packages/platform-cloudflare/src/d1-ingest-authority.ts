@@ -4,14 +4,14 @@ import {
   SourceAdmissionDecisionSchema,
   type BundleAdmissionReceipt,
 } from "@eliotr/contracts";
-import { canonicalJson } from "./ingest-validation.js";
-import { objectResidencyKeyDigest } from "./r2.js";
+import { canonicalJson } from "@eliotr/contracts";
+import { objectResidencyKeyDigest } from "@eliotr/contracts";
 import type {
   IngestAdmissionAuthority,
   PrepareIngestAuthorityInput,
   PreparedIngestOperation,
   RecordQualificationDecisionInput,
-} from "./d1-ingest-types.js";
+} from "@eliotr/contracts";
 import {
   IngestAuthorityError,
   authorityFail,
@@ -23,7 +23,7 @@ import {
   stableIngestId,
   type ExistingSourceRow,
   type IngestOperationRow,
-} from "./d1-ingest-validation.js";
+} from "@eliotr/contracts";
 import { commitAdmittedBundle } from "./d1-ingest-commit.js";
 import { activeOwner, policySnapshot, ensureOwnerAndPolicy, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
 
@@ -508,6 +508,3 @@ async function decisionIsAdmitted(
   ).bind(operationId, decisionReceiptRef).first<{ decision: unknown }>();
   return row?.decision === "ADMITTED";
 }
-
-export { IngestAuthorityError } from "./d1-ingest-validation.js";
-export type { IngestAuthorityErrorCode } from "./d1-ingest-validation.js";

@@ -4,7 +4,7 @@ import {
   type BundlePromotionAuthorization,
   type IngestAdmissionAuthority,
   type PreparedIngestOperation,
-} from "@eliotr/platform-cloudflare";
+} from "@eliotr/contracts";
 
 interface OwnerFenceIdentity {
   readonly source_namespace_id: string;

@@ -1,7 +1,8 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { canonicalDigest, createD1IngestAdmissionAuthority, residencyKeyForManifest, sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { createD1IngestAdmissionAuthority } from "@eliotr/platform-cloudflare";
+import { canonicalDigest, residencyKeyForManifest, sha256Utf8 } from "@eliotr/contracts";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../eliotr-pwa/src/bundle-input.js";
 import { createBrowserBundleImport, discoverBrowserBundleImport, importBrowserBundle, recoverBrowserBundleImport } from "../../eliotr-pwa/src/bundle-import.js";

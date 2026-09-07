@@ -1,7 +1,7 @@
 # ER-37: Governed ingest admission composition
 
 **Slice:** 1
-**Depends on:** ER-13, ER-14, ER-21, ER-24, ER-29
+**Depends on:** ER-01, ER-13, ER-14, ER-21, ER-24, ER-29
 **Live gate:** remote Cloudflare D1/R2/Queue admission round trip
 
 ## Objective
@@ -13,11 +13,10 @@ the packets it depends on.
 
 ## Owned paths
 
-- `packages/platform-cloudflare/src/d1-ingest-types.ts`
-- `packages/platform-cloudflare/src/d1-ingest-validation.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.ts`
 - `packages/platform-cloudflare/src/d1-ingest-policy.ts`
 - `packages/platform-cloudflare/src/d1-ingest-commit.ts`
+- `packages/platform-cloudflare/src/d1-ingest-commit.test.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.test.ts`
 - `apps/eliotr-core/src/ingest-http.ts`
 - `apps/eliotr-core/src/ingest-promotion-authorization.ts`

@@ -3,7 +3,7 @@ import { prepareBrowserBundle } from "../apps/eliotr-pwa/src/bundle-input.js";
 import { discoverBrowserBundleImport, recoverBrowserBundleImport } from "../apps/eliotr-pwa/src/bundle-import.js";
 import { type ImportTransport } from "../apps/eliotr-pwa/src/bundle-import-api.js";
 import { bundleFixture } from "../packages/platform-cloudflare/src/ingest-test-fixture.js";
-import { canonicalDigest } from "../packages/platform-cloudflare/src/d1-ingest-validation.js";
+import { canonicalDigest } from "../packages/contracts/src/validation/d1-ingest-validation.js";
 
 async function fixture() {
   const f = await bundleFixture();

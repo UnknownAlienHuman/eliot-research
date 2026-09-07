@@ -142,7 +142,8 @@
         "ER-29"
       ],
       "owned_paths": [
-        "packages/retrieval/src/projection.ts"
+        "packages/retrieval/src/projection.ts",
+        "packages/retrieval/src/projection.test.ts"
       ],
       "mandatory_negative_case": "Supply mapping-free Markdown and prove the projector does not invent page, bounding-box, or table-cell coordinates.",
       "document": "ER-05-structural-projector.md",
@@ -296,7 +297,6 @@
         "packages/platform-cloudflare/src/r2.test.ts",
         "packages/platform-cloudflare/src/ingest.ts",
         "packages/platform-cloudflare/src/ingest-types.ts",
-        "packages/platform-cloudflare/src/ingest-validation.ts",
         "packages/platform-cloudflare/src/ingest-state.ts",
         "packages/platform-cloudflare/src/ingest-storage.ts",
         "packages/platform-cloudflare/src/ingest-multipart.ts",
@@ -305,6 +305,7 @@
         "packages/platform-cloudflare/src/ingest-test-fixture.ts",
         "packages/platform-cloudflare/src/ingest.test.ts",
         "packages/platform-cloudflare/src/ingest-resilience.test.ts",
+        "packages/platform-cloudflare/src/ingest-n1-readback.test.ts",
         "infra/r2/**"
       ],
       "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",
@@ -499,6 +500,7 @@
     {
       "id": "ER-24",
       "depends_on": [
+        "ER-05",
         "ER-13",
         "ER-15",
         "ER-17",

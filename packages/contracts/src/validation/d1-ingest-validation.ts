@@ -1,12 +1,14 @@
 import {
   BundleAdmissionReceiptSchema,
   NormalizedBundleManifestSchema,
-  ObjectResidencyKeySchema,
   type NormalizedBundleManifest,
+} from "../normalized-bundle.js";
+import {
+  ObjectResidencyKeySchema,
   type ObjectResidencyKey,
-} from "@eliotr/contracts";
+} from "../residency.js";
 import { canonicalJson, safeHashEntries } from "./ingest-validation.js";
-import { objectResidencyKeyDigest, sha256Utf8 } from "./r2.js";
+import { objectResidencyKeyDigest, sha256Utf8 } from "./hash.js";
 import type {
   IngestAdmissionPolicySnapshot,
   IngestOperationState,

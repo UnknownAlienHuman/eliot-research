@@ -1,6 +1,43 @@
-import type { BundleAdmissionReceipt, NormalizedBundleManifest, ObjectResidencyKey, QualificationReport, SourceAdmissionDecision } from "@eliotr/contracts";
-import type { BundlePromotionAuthorization, BundlePromotionReceipt } from "./ingest-types.js";
-export type { BundlePromotionReceipt } from "./ingest-types.js";
+import type { BundleAdmissionReceipt, NormalizedBundleManifest } from "../normalized-bundle.js";
+import type { ObjectResidencyKey } from "../residency.js";
+import type { SourceAdmissionDecision } from "../source.js";
+import type { QualificationReport } from "../library.js";
+import type { PROMOTION_PROTOCOL } from "./ingest-validation.js";
+
+export interface PromotedObjectReceipt {
+  readonly logical_path: string;
+  readonly canonical_key: string;
+  /** Per-file complete residency digest (residency key + this file's content digest). */
+  readonly residency_key_digest?: string | undefined;
+  readonly sha256: string;
+  readonly size_bytes: number;
+  readonly etag: string;
+  /** R2 versioned object identity when the bucket issues one. */
+  readonly version?: string | undefined;
+  /** Canonical media type bound at promotion (contentType(logical_path)). */
+  readonly content_type?: string | undefined;
+  readonly existed_identically: boolean;
+}
+
+export interface BundlePromotionReceipt {
+  readonly protocol: typeof PROMOTION_PROTOCOL;
+  readonly session_id: string;
+  readonly admission_receipt_ref: string;
+  readonly canonical_manifest_ref: string;
+  readonly readback_digest: string;
+  readonly promoted_objects: readonly PromotedObjectReceipt[];
+  readonly promoted_at: string;
+}
+
+export interface BundlePromotionAuthorization {
+  readonly session_id: string;
+  readonly input_fingerprint: string;
+  readonly residency_key_digest: string;
+  readonly owner_system_id: string;
+  readonly source_namespace_id: string;
+  readonly source_owner_generation: string;
+  readonly source_revision_ref: string;
+}
 
 export type IngestOperationState = "PREPARING" | "UPLOAD_REQUIRED" | "VERIFIED" | "AUTHORIZED" | "PROMOTED" | "COMMITTED" | "QUARANTINED" | "REJECTED";
 

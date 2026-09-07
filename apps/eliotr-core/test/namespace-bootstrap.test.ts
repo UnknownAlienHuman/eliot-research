@@ -1,9 +1,10 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createCloudflareAccessVerifier, sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { createCloudflareAccessVerifier } from "@eliotr/platform-cloudflare";
+import { sha256Utf8 } from "@eliotr/contracts";
 import { SourceNamespaceOwnershipSchema } from "@eliotr/contracts";
-import { decodePolicyRow, type AdmissionPolicyRow } from "../../../packages/platform-cloudflare/src/d1-ingest-validation.js";
+import { decodePolicyRow, type AdmissionPolicyRow } from "@eliotr/contracts";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { initializeLocalNamespace, type NamespaceCommand, type NamespaceReceipt } from "../../../scripts/lib/local-namespace.mjs";
 import { importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";

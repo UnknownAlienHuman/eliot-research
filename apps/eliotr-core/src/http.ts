@@ -13,14 +13,16 @@ import { ROUTES } from "@eliotr/interfaces";
 import {
   AccessVerificationError,
   createCloudflareAccessVerifier,
-  IngestAuthorityError,
-  IngestStorageError,
   RUNTIME_LIMITS,
   RuntimeLimitError,
   serializeJsonWithinBytes,
   type AccessIdentity,
   type AccessVerifier,
 } from "@eliotr/platform-cloudflare";
+import {
+  IngestAuthorityError,
+  IngestStorageError,
+} from "@eliotr/contracts";
 import {
   CapabilityUnavailableError,
   CatalogInputError,

@@ -211,7 +211,7 @@ export async function importQ1Bundle(world: Q1Namespace): Promise<void> {
     },
     source: { ...fixture.manifest.source, logical_id: `source-${namespace}` },
   };
-  const { sha256Utf8 } = await import("@eliotr/platform-cloudflare");
+  const { sha256Utf8 } = await import("@eliotr/contracts");
   const bytes = JSON.stringify(manifest);
   const content = fixture.files["content.md"];
   if (content === undefined) throw new Error("Missing fixture content");

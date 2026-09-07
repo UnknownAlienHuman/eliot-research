@@ -1,6 +1,5 @@
 import type { ObjectResidencyKey } from "@eliotr/contracts";
-import { ObjectResidencyKeySchema } from "@eliotr/contracts";
-import { serializeObjectResidencyKey } from "@eliotr/domain";
+import { ObjectResidencyKeySchema, objectResidencyKeyDigest, sha256Utf8 } from "@eliotr/contracts";
 import { RUNTIME_LIMITS, assertWithinBytes } from "./runtime-limits.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -64,6 +63,8 @@ export interface ImmutableObjectReceipt {
   readonly readback_sha256: string;
   readonly size_bytes: number;
   readonly etag: string;
+  /** R2 versioned object identity observed on readback, when the bucket issues one. */
+  readonly version?: string | undefined;
   readonly existed_identically: boolean;
 }
 
@@ -228,10 +229,6 @@ function bytesToHex(input: ArrayBuffer): string {
   return [...new Uint8Array(input)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-export async function sha256Utf8(value: string): Promise<string> {
-  return bytesToHex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
-}
-
 export async function hashReadableStream(
   body: ReadableStream<Uint8Array>,
   maximumBytes: number,
@@ -272,11 +269,6 @@ export async function hashReadableStream(
     reader.releaseLock();
     writer.releaseLock();
   }
-}
-
-export async function objectResidencyKeyDigest(residency: ObjectResidencyKey): Promise<string> {
-  const parsed = ObjectResidencyKeySchema.parse(residency);
-  return sha256Utf8(serializeObjectResidencyKey(parsed));
 }
 
 export function canonicalEvidenceObjectKeyFromDigest(
@@ -363,6 +355,11 @@ async function verifiedReadback(
     fail("R2_READBACK_DIGEST_MISMATCH", `R2 object ${key} digest does not match the admitted digest`);
   }
   return { object, hash };
+}
+
+function readbackVersion(object: R2Object): string | undefined {
+  const version = (object as unknown as { readonly version?: unknown }).version;
+  return typeof version === "string" && version.length > 0 ? version : undefined;
 }
 
 function immutableConflict(key: string, cause: unknown): never {
@@ -464,6 +461,9 @@ export function createR2EvidenceObjectStore(
         readback_sha256: existing.hash.sha256,
         size_bytes: existing.hash.size_bytes,
         etag: existing.object.etag,
+        ...(readbackVersion(existing.object) === undefined
+          ? {}
+          : { version: readbackVersion(existing.object) as string }),
         existed_identically: true,
       };
     }
@@ -487,6 +487,9 @@ export function createR2EvidenceObjectStore(
       readback_sha256: readback.hash.sha256,
       size_bytes: readback.hash.size_bytes,
       etag: readback.object.etag,
+      ...(readbackVersion(readback.object) === undefined
+        ? {}
+        : { version: readbackVersion(readback.object) as string }),
       existed_identically: false,
     };
   }

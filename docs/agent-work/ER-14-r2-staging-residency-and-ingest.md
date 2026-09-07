@@ -15,7 +15,6 @@ projection authority. The adapter owns staging mechanics and immutable byte publ
 - `packages/platform-cloudflare/src/r2.test.ts`
 - `packages/platform-cloudflare/src/ingest.ts`
 - `packages/platform-cloudflare/src/ingest-types.ts`
-- `packages/platform-cloudflare/src/ingest-validation.ts`
 - `packages/platform-cloudflare/src/ingest-state.ts`
 - `packages/platform-cloudflare/src/ingest-storage.ts`
 - `packages/platform-cloudflare/src/ingest-multipart.ts`
@@ -24,6 +23,7 @@ projection authority. The adapter owns staging mechanics and immutable byte publ
 - `packages/platform-cloudflare/src/ingest-test-fixture.ts`
 - `packages/platform-cloudflare/src/ingest.test.ts`
 - `packages/platform-cloudflare/src/ingest-resilience.test.ts`
+- `packages/platform-cloudflare/src/ingest-n1-readback.test.ts`
 - `infra/r2/**`
 
 ## Read only

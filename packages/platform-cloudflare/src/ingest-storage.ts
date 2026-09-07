@@ -1,7 +1,9 @@
-import { sha256Utf8 } from "./r2.js";
+import { sha256Utf8 } from "@eliotr/contracts";
 import { completionKey, readImmutableJson, sessionKey } from "./ingest-state.js";
 import type {
   BundlePromotionAuthorization,
+} from "@eliotr/contracts";
+import type {
   InternalStagedBundleSession,
   MultipartFileUploadSession,
 } from "./ingest-types.js";
@@ -11,7 +13,7 @@ import {
   contentType,
   fail,
   utf8Bytes,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
 export interface ImmutableJsonReadback {
   readonly created: boolean;

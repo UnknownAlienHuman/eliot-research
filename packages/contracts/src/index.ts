@@ -19,3 +19,8 @@ export * from "./publication.js";
 export * from "./model.js";
 export * from "./backup.js";
 export * from "./validation/cross-field.js";
+export * from "./validation/promotion-readback.js";
+export * from "./validation/hash.js";
+export * from "./validation/ingest-validation.js";
+export * from "./validation/d1-ingest-types.js";
+export * from "./validation/d1-ingest-validation.js";

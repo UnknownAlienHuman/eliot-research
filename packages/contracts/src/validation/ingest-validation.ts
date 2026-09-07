@@ -1,4 +1,5 @@
-import type { NormalizedBundleManifest, ObjectResidencyKey } from "@eliotr/contracts";
+import type { NormalizedBundleManifest } from "../normalized-bundle.js";
+import type { ObjectResidencyKey } from "../residency.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u;

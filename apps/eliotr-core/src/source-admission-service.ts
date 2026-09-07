@@ -13,6 +13,8 @@ import {
   canonicalDigest,
   stableIngestId,
   type PreparedIngestOperation,
+} from "@eliotr/contracts";
+import {
   type StagedBundleVerification,
 } from "@eliotr/platform-cloudflare";
 

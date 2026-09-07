@@ -23,7 +23,7 @@ import {
   exactSizeStream,
   fail,
   iso,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
 const MAX_PARTS_PER_FILE = 10_000;
 const MAX_COMPLETION_RECEIPT_BYTES = 64 * 1024;

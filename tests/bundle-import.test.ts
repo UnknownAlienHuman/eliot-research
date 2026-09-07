@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { bundleFixture } from "../packages/platform-cloudflare/src/ingest-test-fixture.js";
-import { canonicalDigest } from "../packages/platform-cloudflare/src/d1-ingest-validation.js";
+import { canonicalDigest } from "../packages/contracts/src/validation/d1-ingest-validation.js";
 import { prepareBrowserBundle, selectedBundleFiles, safeBundlePath } from "../apps/eliotr-pwa/src/bundle-input.js";
 import { createBrowserBundleImport, importBrowserBundle } from "../apps/eliotr-pwa/src/bundle-import.js";
 import { decodePrepared, readImportStatus, type ImportIdentity, type ImportTransport } from "../apps/eliotr-pwa/src/bundle-import-api.js";

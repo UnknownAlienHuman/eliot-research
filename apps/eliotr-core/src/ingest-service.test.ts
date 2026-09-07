@@ -1,4 +1,4 @@
-import { canonicalDigest, IngestAuthorityError } from "@eliotr/platform-cloudflare";
+import { canonicalDigest, IngestAuthorityError } from "@eliotr/contracts";
 import type {
   AuthenticatedRequestContext,
   OwnerApi,
@@ -7,6 +7,8 @@ import type {
 import type {
   IngestAdmissionAuthority,
   PreparedIngestOperation,
+} from "@eliotr/contracts";
+import type {
   StagedBundlePort,
 } from "@eliotr/platform-cloudflare";
 import { describe, expect, it, vi } from "vitest";

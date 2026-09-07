@@ -19,6 +19,8 @@ import {
   residencyKeyForManifest,
   type IngestAdmissionAuthority,
   type PreparedIngestOperation,
+} from "@eliotr/contracts";
+import {
   type StagedBundlePort,
 } from "@eliotr/platform-cloudflare";
 import type { SourceAdmissionService } from "./source-admission-service.js";

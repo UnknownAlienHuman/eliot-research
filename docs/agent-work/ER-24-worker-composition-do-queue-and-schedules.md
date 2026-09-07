@@ -1,7 +1,7 @@
 # ER-24: Worker composition DO Queue schedules and MCP transport
 
 **Slice:** 0
-**Depends on:** ER-13, ER-15, ER-17, ER-21
+**Depends on:** ER-05, ER-13, ER-15, ER-17, ER-21
 **Live gate:** deployed Access/HTTP/MCP/Queue/D1/DO smoke; otherwise NOT EXECUTED
 
 ## Objective

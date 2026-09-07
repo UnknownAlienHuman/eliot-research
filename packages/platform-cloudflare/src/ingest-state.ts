@@ -7,9 +7,8 @@ import {
 import {
   bufferBounded,
   canonicalNormalizedBundleKey,
-  objectResidencyKeyDigest,
-  sha256Utf8,
 } from "./r2.js";
+import { objectResidencyKeyDigest, sha256Utf8 } from "@eliotr/contracts";
 import {
   COMPLETION_PROTOCOL,
   PROMOTION_PROTOCOL,
@@ -22,15 +21,18 @@ import {
   assertSha256,
   assertStorageKey,
   canonicalJson,
+  contentType,
   fail,
   validateFileSet,
   validateResidency,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 import type {
   BundlePromotionReceipt,
+  PromotedObjectReceipt,
+} from "@eliotr/contracts";
+import type {
   InternalStagedBundleSession,
   MultipartUploadSession,
-  PromotedObjectReceipt,
   StagedFileCompletionReceipt,
 } from "./ingest-types.js";
 
@@ -383,18 +385,32 @@ function parsePromotedObject(value: unknown): PromotedObjectReceipt {
     new Set([
       "logical_path",
       "canonical_key",
+      "residency_key_digest",
       "sha256",
       "size_bytes",
       "etag",
+      "version",
+      "content_type",
       "existed_identically",
     ]),
     "promotion object receipt",
   );
   assertPath(record.logical_path, "promotion logical_path");
   assertStorageKey(record.canonical_key, "promotion canonical_key");
+  if (record.residency_key_digest !== undefined) {
+    assertSha256(record.residency_key_digest, "promotion object residency digest");
+  }
   assertSha256(record.sha256, "promotion object sha256");
   assertSafeInteger(record.size_bytes, "promotion object size", 1, HARD_MAX_TOTAL_BYTES);
   assertOpaqueToken(record.etag, "promotion object etag");
+  if (record.version !== undefined) {
+    assertOpaqueToken(record.version, "promotion object version");
+  }
+  if (record.content_type !== undefined) {
+    if (typeof record.content_type !== "string" || record.content_type !== contentType(record.logical_path as string)) {
+      fail("STAGING_SESSION_CORRUPT", "promotion object media type is not canonical for its path");
+    }
+  }
   if (typeof record.existed_identically !== "boolean") {
     fail("STAGING_SESSION_CORRUPT", "promotion object idempotency flag is invalid");
   }

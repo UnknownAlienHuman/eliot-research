@@ -9,6 +9,7 @@ import {
   parseProjectAtlasArtifact,
   requireResolvedEvidenceForPublication,
 } from "./navigation.js";
+import { materializeStructuralNavigation } from "./projection.js";
 
 const NOW = "2026-09-02T12:00:00.000Z";
 const LATER = "2026-09-03T12:00:00.000Z";
@@ -341,5 +342,223 @@ describe("ER-31 deterministic navigation artifacts", () => {
       source_revision_ref: "revision-1",
       scope_snapshot_ref: { id: "scope-snapshot-1", revision: 1 },
     })).rejects.toMatchObject({ code: "NAVIGATION_PUBLICATION_SUPPORT_REQUIRED" });
+  });
+});
+
+describe("N1 structural materialization from admitted bytes (controlled parser input)", () => {
+  async function sha256Hex(value: string | Uint8Array): Promise<string> {
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+    const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function structuralSource(ref: string, markdownSha: string): SourceRevision {
+    return {
+      source_revision_ref: ref,
+      source_id: `source-${ref}`,
+      source_namespace_id: "namespace-1",
+      source_owner_system_id: "owner-system-1",
+      source_owner_generation: `owner-${ref}`,
+      ownership_mode: "immutable_import",
+      content_sha256: markdownSha,
+      object_residency_key_digest: B,
+      normalized_artifact_ref: `normalized/${ref}.json`,
+      captured_at: NOW,
+      parser_profile_generation: "parser-1",
+      quality_state: "standard",
+      purge_state: "LIVE",
+    };
+  }
+
+  function structuralScope(ref: string): ScopeSnapshot {
+    return {
+      snapshot_id: "scope-snapshot-1",
+      revision: 1,
+      resolved_scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] },
+      participant_generations: { "participant-1": "generation-1" },
+      member_source_revision_refs: [ref],
+      source_owner_generations: { [ref]: `owner-${ref}` },
+      policy_authority_ref: "policy-1",
+      disclosure_closure_digest: A,
+      purge_ledger_revision: 1,
+      digest: B,
+      created_at: NOW,
+      expires_at: LATER,
+    };
+  }
+
+  const MIXED_MARKDOWN = [
+    "# Введение",
+    "",
+    "Привет мир.",
+    "",
+    "## Details",
+    "",
+    "English body with `code` and a table:",
+    "",
+    "| a | b |",
+    "|---|---|",
+    "| 1 | 2 |",
+    "",
+    "```ts",
+    "const x = 1;",
+    "# not a heading inside code",
+    "```",
+    "",
+    "## Заключение",
+    "",
+    "Финальный текст βeta.",
+    "",
+  ].join("\n");
+
+  it("derives nested RU+EN+code+table sections with exact UTF-8 byte offsets", async () => {
+    const markdownSha = await sha256Hex(MIXED_MARKDOWN);
+    const ref = "structural-mixed-1";
+    const result = await materializeStructuralNavigation({
+      source_revision: structuralSource(ref, markdownSha),
+      scope_snapshot: structuralScope(ref),
+      normalized_markdown: MIXED_MARKDOWN,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    });
+    expect(result.documentMap.section_hierarchy.length).toBeGreaterThanOrEqual(3);
+    const bytes = new TextEncoder().encode(MIXED_MARKDOWN);
+    for (const section of result.documentMap.section_hierarchy) {
+      const record = section as Record<string, unknown>;
+      const start = record.normalized_start_byte as number;
+      const end = record.normalized_end_byte as number;
+      expect(Number.isSafeInteger(start)).toBe(true);
+      expect(Number.isSafeInteger(end)).toBe(true);
+      expect(end).toBeGreaterThan(start);
+      const slice = new TextDecoder("utf-8", { fatal: true }).decode(bytes.slice(start, end));
+      expect(slice.length).toBeGreaterThan(0);
+      expect(MIXED_MARKDOWN.slice(0).includes(slice.slice(0, Math.min(8, slice.length)))).toBe(true);
+    }
+    // Code fence heading must not become a section; tables stay text, never native coords.
+    const labels = result.documentMap.section_hierarchy.map((section) =>
+      (section as Record<string, unknown>).label ?? (section as Record<string, unknown>).section_ref);
+    expect(labels.some((label) => String(label).includes("not a heading"))).toBe(false);
+    expect(result.documentMap.page_ranges).toEqual([]);
+    expect(result.documentMap.tables).toEqual([]);
+    expect(result.documentMap.figures).toEqual([]);
+    expect(result.documentMap.unresolved_structure.length).toBeGreaterThan(0);
+    expect(JSON.stringify(result)).not.toMatch(/bbox|table_cell|native_page|page_number/u);
+    expect(JSON.stringify(result.sourceCard)).not.toMatch(/evidence_handle|publication_eligible/u);
+    // Exact replay returns the same artifact.
+    const replay = await materializeStructuralNavigation({
+      source_revision: structuralSource(ref, markdownSha),
+      scope_snapshot: structuralScope(ref),
+      normalized_markdown: MIXED_MARKDOWN,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    });
+    expect(replay).toEqual(result);
+  });
+
+  it("preserves non-ASCII byte meaning and tolerates reordered headings without reordering bytes", async () => {
+    const markdown = "# Бета\n\nsecond.\n\n# Альфа\n\nfirst.\n";
+    const markdownSha = await sha256Hex(markdown);
+    const ref = "structural-reorder-1";
+    const result = await materializeStructuralNavigation({
+      source_revision: structuralSource(ref, markdownSha),
+      scope_snapshot: structuralScope(ref),
+      normalized_markdown: markdown,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    });
+    const bytes = new TextEncoder().encode(markdown);
+    const sections = result.documentMap.section_hierarchy.map((section) => section as Record<string, unknown>);
+    expect(sections).toHaveLength(2);
+    // Byte ranges are in document order and decode exactly.
+    const ordered = [...sections].sort((a, b) => (a.normalized_start_byte as number) - (b.normalized_start_byte as number));
+    expect(new TextDecoder().decode(bytes.slice(
+      ordered[0]?.normalized_start_byte as number,
+      ordered[0]?.normalized_end_byte as number,
+    ))).toContain("Бета");
+    expect(new TextDecoder().decode(bytes.slice(
+      ordered[1]?.normalized_start_byte as number,
+      ordered[1]?.normalized_end_byte as number,
+    ))).toContain("Альфа");
+    // Parent/child order is explicit; no inferred native coords.
+    for (const section of sections) {
+      expect(typeof section.section_ref).toBe("string");
+      if (section.parent_section_ref !== undefined) {
+        expect(sections.some((candidate) => candidate.section_ref === section.parent_section_ref)).toBe(true);
+      }
+    }
+  });
+
+  it("fails closed on missing/partial maps, duplicates, invalid hierarchy and cross-source handles", async () => {
+    const markdown = "# Title\n\nBody.\n";
+    const markdownSha = await sha256Hex(markdown);
+    const ref = "structural-invalid-1";
+    const base = {
+      source_revision: structuralSource(ref, markdownSha),
+      scope_snapshot: structuralScope(ref),
+      normalized_markdown: markdown,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    } as const;
+    // Missing bytes.
+    await expect(materializeStructuralNavigation({ ...base, normalized_markdown: "" }))
+      .rejects.toMatchObject({ code: "NAVIGATION_INPUT_INVALID" });
+    // Divergent bytes at same identity fail closed.
+    await expect(materializeStructuralNavigation({ ...base, normalized_markdown: "# Other\n\nBody.\n" }))
+      .rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    // Cross-source coordinate map.
+    await expect(materializeStructuralNavigation({
+      ...base,
+      coordinate_map_json: JSON.stringify([{ source_revision_ref: "foreign", normalized_start_byte: 0, normalized_end_byte: 5 }]),
+    })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
+    // Duplicate coordinate entries.
+    const duplicate = JSON.stringify([
+      { normalized_start_byte: 0, normalized_end_byte: 8, precision: "EXACT" },
+      { normalized_start_byte: 0, normalized_end_byte: 8, precision: "EXACT" },
+    ]);
+    await expect(materializeStructuralNavigation({ ...base, coordinate_map_json: duplicate }))
+      .rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
+    // Invalid range.
+    await expect(materializeStructuralNavigation({
+      ...base,
+      coordinate_map_json: JSON.stringify([{ normalized_start_byte: 10, normalized_end_byte: 5, precision: "EXACT" }]),
+    })).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
+    // Out-of-scope snapshot.
+    const outOfScope = structuralScope("other-ref");
+    await expect(materializeStructuralNavigation({ ...base, scope_snapshot: outOfScope }))
+      .rejects.toMatchObject({ code: "NAVIGATION_SCOPE_MISMATCH" });
+    // Unqualified source.
+    await expect(materializeStructuralNavigation({
+      ...base,
+      source_revision: { ...structuralSource(ref, markdownSha), purge_state: "PURGE_REQUESTED" as const },
+    })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_NOT_QUALIFIED" });
+  });
+
+  it("bounds body, count and range before allocation and keeps unsupported precision as explicit gap", async () => {
+    const markdown = "# T\n\nBody.\n";
+    const markdownSha = await sha256Hex(markdown);
+    const ref = "structural-bounds-1";
+    const base = {
+      source_revision: structuralSource(ref, markdownSha),
+      scope_snapshot: structuralScope(ref),
+      normalized_markdown: markdown,
+      generator_generation: "navigation-g1",
+      created_at: NOW,
+    } as const;
+    // Oversized coordinate map fails before hydration.
+    const huge = `{"padding":"${"x".repeat(2_100_000)}"}`;
+    await expect(materializeStructuralNavigation({ ...base, coordinate_map_json: huge }))
+      .rejects.toMatchObject({ code: "NAVIGATION_LIMIT_EXCEEDED" });
+    // Unsupported precision is a typed gap, not a coordinate.
+    const lowered = await materializeStructuralNavigation({
+      ...base,
+      coordinate_map_json: JSON.stringify([{ normalized_start_byte: 0, normalized_end_byte: 4, precision: "APPROXIMATE" }]),
+    });
+    expect(lowered.documentMap.page_ranges).toEqual([]);
+    expect(lowered.documentMap.unresolved_structure.join(" ")).toMatch(/NATIVE|APPROXIMATE|PARTIAL/u);
+    // Navigation claim without resolved span stays publication-ineligible.
+    await expect(requireResolvedEvidenceForPublication(
+      { navigation_authority: "NAVIGATION_ONLY", source_revision_ref: ref },
+      { source_revision_ref: ref, scope_snapshot_ref: { id: "scope-snapshot-1", revision: 1 } },
+    )).rejects.toMatchObject({ code: "NAVIGATION_PUBLICATION_SUPPORT_REQUIRED" });
   });
 });

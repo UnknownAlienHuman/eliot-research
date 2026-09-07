@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `packages/retrieval/src/projection.ts`
+- `packages/retrieval/src/projection.test.ts`
 
 ## Read only
 

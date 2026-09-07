@@ -1,4 +1,6 @@
 import type {
+  BundlePromotionAuthorization,
+  BundlePromotionReceipt,
   NormalizedBundleManifest,
   ObjectResidencyKey,
   OperationReceipt,
@@ -6,10 +8,9 @@ import type {
 import type { EvidenceObjectStore, Sha256DigestSinkFactory } from "./r2.js";
 import type {
   COMPLETION_PROTOCOL,
-  PROMOTION_PROTOCOL,
   SESSION_PROTOCOL,
   FileHashEntry,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
 export interface MultipartFileUploadSession {
   readonly path: string;
@@ -83,25 +84,6 @@ export interface StagedBundleVerification {
   readonly reason_codes: readonly string[];
 }
 
-export interface PromotedObjectReceipt {
-  readonly logical_path: string;
-  readonly canonical_key: string;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly etag: string;
-  readonly existed_identically: boolean;
-}
-
-export interface BundlePromotionReceipt {
-  readonly protocol: typeof PROMOTION_PROTOCOL;
-  readonly session_id: string;
-  readonly admission_receipt_ref: string;
-  readonly canonical_manifest_ref: string;
-  readonly readback_digest: string;
-  readonly promoted_objects: readonly PromotedObjectReceipt[];
-  readonly promoted_at: string;
-}
-
 export interface StagingCleanupReceipt {
   readonly scanned_sessions: number;
   readonly aborted_sessions: number;
@@ -124,16 +106,6 @@ export interface StagedBundlePort {
   cleanupExpired(limit: number): Promise<StagingCleanupReceipt>;
 }
 
-
-export interface BundlePromotionAuthorization {
-  readonly session_id: string;
-  readonly input_fingerprint: string;
-  readonly residency_key_digest: string;
-  readonly owner_system_id: string;
-  readonly source_namespace_id: string;
-  readonly source_owner_generation: string;
-  readonly source_revision_ref: string;
-}
 
 export interface R2StagedBundleDependencies {
   readonly work_bucket: R2Bucket;

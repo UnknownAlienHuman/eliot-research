@@ -12,7 +12,7 @@ import type {
 import {
   canonicalJson,
   parseHashesDocument,
-} from "./ingest-validation.js";
+} from "@eliotr/contracts";
 
 const MAX_HASHES_DOCUMENT_BYTES = 1024 * 1024;
 const MAX_MANIFEST_DOCUMENT_BYTES = 512 * 1024;
