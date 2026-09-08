@@ -1,4 +1,4 @@
-import { createOrientationApi, ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
+import { createOrientationApi, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import type {
   ApplicationLifecycle,
   FederationApi,
@@ -16,6 +16,7 @@ import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
+import { readRetrievalTrace } from "@eliotr/retrieval";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import {
@@ -83,7 +84,8 @@ function semanticApi(env: Env): SemanticApi {
     run: (context, request) => researchRun.run(context, request),
     artifact: () => unavailable("research.artifact"),
     proposeWiki: () => unavailable("research.wiki.propose"),
-    trace: (context, ref) => orientation.trace(context, ref),
+    trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
+      if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
     changes: () => unavailable("research.changes"),
   };
 }
