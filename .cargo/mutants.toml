@@ -156,6 +156,12 @@ exclude_re = [
   # (`|` -> `&` twin NOT excluded — killed by absolute decoding tests.)
   "stable_id/parser\\.rs:349:32: replace \\| with \\^ in parse_hex",
 
+  # --- ER-40 S9 residue (#106): residency `is_canonical_component` percent-
+  # decode `|` -> `^` (6th nibble fold). Same proof: `(high << 4)` low 4 bits
+  # clear, `low` from `upper_hex_nibble` (0-9/10-15, < 16) high 4 bits clear
+  # (residency_key/parser.rs:426-432), so OR == XOR on every input.
+  "residency_key/parser\\.rs:432:40: replace \\| with \\^ in is_canonical_component",
+
   # --- ER-40 S9 residue (#106): `schema_generation -> u32 with 1` tautologies.
   # Fact (read from code): every `*_SCHEMA_GENERATION` const == 1
   # (model.rs:12, canonical_body/model.rs:18, owner_token/model.rs:23,
