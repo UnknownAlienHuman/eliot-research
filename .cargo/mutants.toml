@@ -149,4 +149,51 @@ exclude_re = [
   "canonical_body/parser\\.rs:374:32: replace \\| with \\^ in parse_hex",
   "owner_token/parser\\.rs:386:32: replace \\| with \\^ in parse_hex",
   "residency_key/parser\\.rs:387:32: replace \\| with \\^ in parse_hex",
+
+  # --- ER-40 S9 residue (#106): stable-id `parse_hex` `|` -> `^` (5th).
+  # Same nibble-proof as the 4 above: `(high << 4)` low 4 bits clear,
+  # `low` (< 16) high 4 bits clear, so OR == XOR on every input.
+  # (`|` -> `&` twin NOT excluded — killed by absolute decoding tests.)
+  "stable_id/parser\\.rs:349:32: replace \\| with \\^ in parse_hex",
+
+  # --- ER-40 S9 residue (#106): `schema_generation -> u32 with 1` tautologies.
+  # Fact (read from code): every `*_SCHEMA_GENERATION` const == 1
+  # (model.rs:12, canonical_body/model.rs:18, owner_token/model.rs:23,
+  # residency_key/model.rs:16, stable_id/model.rs:16) and every parser
+  # constructs its set with that const, so `self.schema_generation` is always
+  # 1 on reachable paths. Replacement `with 1` equals the constant —
+  # tautological: original and mutant coincide on all inputs.
+  # The `with 0` twins are NOT excluded — killed by `s9r_schema_generations_are_one`.
+  "src/model\\.rs:47:9: replace VectorSet::schema_generation -> u32 with 1",
+  "canonical_body/model\\.rs:46:9: replace CanonicalBodyVectorSet::schema_generation -> u32 with 1",
+  "owner_token/model\\.rs:51:9: replace OwnerTokenVectorSet::schema_generation -> u32 with 1",
+  "residency_key/model\\.rs:44:9: replace ResidencyKeyVectorSet::schema_generation -> u32 with 1",
+  "stable_id/model\\.rs:44:9: replace StableIdVectorSet::schema_generation -> u32 with 1",
+
+  # --- ER-40 S9 residue (#106): `parse_max_bytes` `||` -> `&&` (parser.rs:272).
+  # Proof by enumeration (public API: line + kind):
+  # `if value.is_empty() || !all_ascii_digits(value)` vs `&&`.
+  # - empty "": orig true||(!all("")==!true==false)==true => InvalidMaxBytes;
+  #   mutant true&&false==false => falls to `parse::<u32>("")` => InvalidMaxBytes.
+  # - non-digit e.g. "x"/"12a": orig false||true==true => InvalidMaxBytes;
+  #   mutant false&&_==false => `parse` fails => InvalidMaxBytes.
+  # - valid "1"/"01"/huge: both false at first check, identical downstream
+  #   (NonCanonical / InvalidMaxBytes / Ok). Same kind, same line on all inputs.
+  "src/parser\\.rs:272:25: replace \\|\\| with && in parse_max_bytes",
+
+  # --- ER-40 S9 residue (#106): `verify_embedded_* -> Ok(())` wrappers (7+2).
+  # Proof: each wrapper takes no input and reads a fixed valid fixture
+  # (`include_str!`); original returns `Ok(())` on the committed bytes, mutant
+  # returns `Ok(())` on all inputs — observationally identical. No black-box
+  # test can distinguish (rollback probe: `s9r_*` tests still pass on mutant).
+  # The underlying `verify_*_vector_set` logic IS pinned by `s9r_*` + S9 Group A.
+  "src/evaluator\\.rs:138:5: replace verify_embedded_vectors -> Result<\\(\\), VectorVerificationError> with Ok\\(\\(\\)\\)",
+  "src/stable_id\\.rs:36:5: replace verify_embedded_ingest_identity_vectors -> Result<\\(\\), StableIdVerificationError> with Ok\\(\\(\\)\\)",
+  "src/stable_id\\.rs:46:5: replace verify_embedded_projection_identity_vectors -> Result<\\(\\), StableIdVerificationError> with Ok\\(\\(\\)\\)",
+  "src/canonical_body\\.rs:36:5: replace verify_embedded_owner_cutover_canonical_vectors -> Result<\\(\\), CanonicalBodyVerificationError> with Ok\\(\\(\\)\\)",
+  "src/canonical_body/evaluator\\.rs:134:5: replace verify_embedded_canonical_body_vectors -> Result<\\(\\), CanonicalBodyVerificationError> with Ok\\(\\(\\)\\)",
+  "src/owner_token/evaluator\\.rs:133:5: replace verify_embedded_owner_token_vectors -> Result<\\(\\), OwnerTokenVerificationError> with Ok\\(\\(\\)\\)",
+  "src/residency_key/evaluator\\.rs:143:5: replace verify_embedded_residency_key_vectors -> Result<\\(\\), ResidencyKeyVerificationError> with Ok\\(\\(\\)\\)",
+  "src/stable_id/evaluator\\.rs:131:5: replace verify_embedded_stable_id_vectors -> Result<\\(\\), StableIdVerificationError> with Ok\\(\\(\\)\\)",
+  "src/scope_snapshot_identity/evaluator\\.rs:162:5: replace verify_embedded_scope_snapshot_identity_vectors -> Result<\\(\\), ScopeSnapshotIdentityVerificationError> with Ok\\(\\(\\)\\)",
 ]
