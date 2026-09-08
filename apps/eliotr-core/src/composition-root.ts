@@ -15,6 +15,7 @@ import {
 import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
+import { createResearchQueryService, createResearchRunService } from "./research-session.js";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import {
@@ -50,10 +51,9 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA"],
+    enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA", "RESEARCH"],
     disabled_slices: [
       "RETRIEVAL",
-      "RESEARCH",
       "FEDERATION",
       "WIKI",
       "DRIVE_EXCHANGE",
@@ -72,13 +72,15 @@ function capabilities(env: Env): Record<string, unknown> {
 function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
+  const researchQuery = createResearchQueryService(env);
+  const researchRun = createResearchRunService(env);
   return {
     catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
-    query: () => unavailable("research.query"),
+    query: (context, request) => researchQuery.query(context, request),
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
-    run: () => unavailable("research.run"),
+    run: (context, request) => researchRun.run(context, request),
     artifact: () => unavailable("research.artifact"),
     proposeWiki: () => unavailable("research.wiki.propose"),
     trace: (context, ref) => orientation.trace(context, ref),
