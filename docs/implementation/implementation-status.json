@@ -524,6 +524,22 @@
         "tests/golden-corpus/manifest.json generation golden-er23-2026-09-08 with GC-009 RU, GC-010 code, GC-011 table, GC-012 EN dissent/negative; tests/fixtures/registry.json pins contract fixtures and tracks golden generation",
         "Live model/provider retrieval quality, T2/T3 generation promotion, and workload qualification NOT_EXECUTED"
       ]
+    },
+    {
+      "id": "implemented-trace-read",
+      "path": "packages/retrieval/src/trace-read.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 research.trace serves persisted retrieval query-* traces over D1 with owner-bound readback; RETRIEVAL slice enablement remains separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "research.trace routes query-* ids to a read-only D1 retrieval trace reader over migration 0021 tables with no grants, writes or trace-of-trace; ownership is the query writer principal/client/credential via retrieval_query_result, so a foreign principal and a missing trace both fail 404 with the same code; malformed ids fail 400; owned stale scopes fail 409; response is the persisted RetrievalTrace (lanes_used, lanes_skipped with reasons, scope_snapshot) plus coverage_claim projected from the owned result row; orient-* path is byte-identical",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-trace-read.test.ts: 4 cases over actual local D1 Core/Search and R2 through the production Q1 pipeline (LEX-hit SAMPLED readback with lanes/skips/coverage/scope and zero new rows on read, orient-* byte-identical ORIENT/METADATA_ONLY, foreign 404 identical to missing 404 with zero writes, malformed 400 plus unknown-valid 404 with zero writes)",
+        "apps/eliotr-core/test/orientation-http.test.ts, orientation-resilience.test.ts, research-session.test.ts, research-query-retrieval.test.ts retained (33 pass)",
+        "No new D1 migration; 0021 trace/result tables and 0022 profile reused read-only",
+        "RETRIEVAL slice stays disabled; live qualification NOT_EXECUTED"
+      ]
     }
   ]
 }
