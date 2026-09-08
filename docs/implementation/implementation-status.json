@@ -460,7 +460,7 @@
     {
       "id": "implemented-q3-orchestration",
       "path": "packages/retrieval/src/service.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; Worker wiring, D1 result persistence and scope-profile versioning remain separate.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; D1 result/trace persistence executes via query-persistence.ts over migration 0021; Worker wiring and scope-profile versioning remain separate.",
       "owner_packets": [
         "ER-04"
       ],
@@ -470,7 +470,24 @@
         "packages/retrieval/src/retrieval.test.ts: 13 cases (direct-before-semantic invariant across all 7 products, scope-freeze-before-lanes ordering, SEM failure degradation with exact results kept, AI-search no-hit stays NONE with no absence claim, same-retry replay without lane re-execution versus changed-input conflict, budget-stop abort with no persisted result, mid-run scope-stale fail-closed with zero resolutions, substituted-trace refusal with no stored result, UNION then EXCEPT scope binding without cross-contamination, per-candidate omission with resolved evidence kept, source-family diversity cap with visible omission)",
         "packages/retrieval/src/service.ts: createRetrievalQueryService plus RetrievalQueryError typed codes and port-injected scope/lane/fusion/resolve/persist/result-store/budget boundaries",
         "packages/retrieval/src/fusion.ts: optional maxPerFamily/familyOf diversity cap, backward compatible when absent",
-        "Worker research.query still delegates to orientation metadata; D1 query-result/trace persistence tables, ER-24 composition wiring, scope-profile versioning and sharded exhaustive execution NOT_EXECUTED"
+        "packages/retrieval/src/query-persistence.ts: D1 scope/result/trace ports over migration 0021 (frozen-scope freeze/currentness, idempotent COMPLETE result insert with exact trace-linkage readback, exact trace insert, budget guard); no grant minting, no HTTP/model/R2 inside statements",
+        "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream (fresh-apply tables, persist result+pack+trace with digest readback, same-retry replay with no duplicate rows versus changed-input conflict, expired-scope SCOPE_STALE and denied-grant AUTHORITY_STALE with zero rows, substituted-trace refusal plus service TRACE_CORRUPT with no result row, grant-revoke invalidation keeping trace history)",
+        "Worker research.query still delegates to orientation metadata; Q1-lane/R2-byte composition at the app layer, ER-24 composition wiring, scope-profile versioning and sharded exhaustive execution NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-q3-persistence",
+      "path": "packages/retrieval/src/query-persistence.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 D1-backed retrieval query persistence over migration 0021 with frozen-scope binding, idempotent result replay and exact trace linkage; lane/R2 composition and Worker wiring remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "D1-backed RetrievalQueryPorts persistence behind migration 0021 tables with no D1/R2/network/clock authority of its own and no source-grant minting: scope freeze and currentness recheck the frozen ScopeSnapshot row, caller grant, purge frontier and member liveness on every call; result store inserts COMPLETE rows with INSERT-then-exact-readback and verifies the trace linkage; trace port inserts content-addressed immutable rows bound to the live scope digest; budget guard enforces deadline and cancellation",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0021_retrieval_query_persistence.sql: additive retrieval_query_result plus retrieval_query_trace with authority/binding/immutability/invalidation triggers; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
+        "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream inspecting persisted rows, not mock counts",
+        "Q1-lane/R2-byte composition at the app layer, ER-24 research.query wiring, scope-profile versioning, remote D1/R2 receipts and live qualification NOT_EXECUTED"
       ]
     },
     {
