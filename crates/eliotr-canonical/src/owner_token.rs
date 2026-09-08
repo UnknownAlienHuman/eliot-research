@@ -40,6 +40,11 @@ pub const OWNER_TOKEN_ID_MAX_BYTES: usize = 256;
 /// The largest valid preimage is 572 bytes; this ceiling admits it with headroom while
 /// rejecting unbounded input before deeper work.
 pub const OWNER_TOKEN_PREIMAGE_MAX_BYTES: usize = 2048;
+/// Maximum loop iterations in one tuple-parser pass (S5 bounded-iteration guard).
+/// Normal inputs consume at most one iteration per input byte; mutants that remove
+/// cursor progress (`+=`→`*=`, `utf8_width`→`Some(0)`) exhaust this budget instead
+/// of spinning forever.
+pub const OWNER_TOKEN_PARSER_STEPS_MAX: usize = OWNER_TOKEN_PREIMAGE_MAX_BYTES + 1;
 
 /// Stable error code for an oversized preimage.
 pub const OWNER_TOKEN_INPUT_TOO_LARGE_CODE: &str = "ELIOTR_OWNER_TOKEN_INPUT_TOO_LARGE";

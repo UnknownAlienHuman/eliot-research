@@ -61,6 +61,11 @@ pub const SNAPSHOT_ARRAY_ITEMS_MAX: usize = 50_000;
 pub const SNAPSHOT_NODES_MAX: usize = 250_000;
 /// Largest integer represented identically by TypeScript and Rust.
 pub const SNAPSHOT_SAFE_INTEGER_MAX: i64 = 9_007_199_254_740_991;
+/// Maximum loop iterations in one frame-parser pass (S5 bounded-iteration guard).
+/// Normal inputs consume at most one iteration per input byte; mutants that remove
+/// cursor progress (`+=`→`*=`, `utf8_width`→`Some(0)`) exhaust this budget instead
+/// of spinning forever.
+pub const SNAPSHOT_PARSER_STEPS_MAX: usize = SNAPSHOT_INPUT_MAX_BYTES + 1;
 /// Maximum scope-expression nesting depth.
 pub const SNAPSHOT_SCOPE_DEPTH_MAX: usize = 32;
 /// Maximum scope atoms.
