@@ -1,7 +1,9 @@
-# Durable research stage checkpoints — W2a
+# Durable research stage checkpoints — W2a + W2
 
 `@eliotr/cloudflare-research` implements the D1/R2 checkpoint boundary, not the research product.
-The public `ResearchWorkflow` remains fail-closed. No new Worker, model, endpoint or deployment is enabled.
+W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
+executable `ResearchWorkflow` binding over the same boundary. No new Worker route, model, endpoint
+or deployment is enabled. Governed model/evidence handlers (W3/W4) and live qualification remain open.
 
 ## Execution
 
@@ -28,7 +30,24 @@ The handler receives a detached request, bounded input bytes, attempt identity a
 The executor invokes it at most once per stage. W3 must supply a governed handler with at most one
 expensive provider boundary; the executor does not inspect arbitrary handler internals or qualify billing.
 Execution here is sequential. The existing 2/4/0 branch fan-out policy is unchanged; the branch scheduler
-and exhaustive-job composition remain follow-up W2 work.
+and exhaustive-job composition remain follow-up work beyond W2.
+
+## W2 monotone bounded executor
+
+`createMonotoneStageExecutor(CORE_DB, WORK_BUCKET, ports)` reuses `createWorkflowCheckpointExecutor`
+for all 18 canonical stages in strict order, with no parallel stack. It builds each `StageRequest`
+from the previous receipt (`investigation_ref` + `output_manifest`), calls the single-stage boundary,
+and asserts every step receipt is handle-only JSON ≤64 KiB with no `completion_disposition` and no
+source/model text. Restart with the same `operation_id`/`idempotency_key`/`handler_generation`
+replays committed receipts without another handler invocation; concurrent replay elects one durable
+effect; stale CAS, purge/revoke/expiry and cancel fail closed with byte-identical W1 state.
+
+`ResearchWorkflow` (`apps/eliotr-core/src/research-workflow.ts`) is the executable Worker binding:
+one Workflow instance owns one operation, each stage runs in `step.do("w2-stage-NN-NAME")` returning
+only the checkpoint receipt (≤64 KiB), with D1-backed idempotent budget ports and principal-bound
+residency checks. The deterministic stage handler writes only a small JSON handle payload; W3/W4 must
+replace it with governed model/evidence handlers. `ENGINE_COMPLETED` remains engine state, never a
+research disposition. Pure monotone order/bound helpers live in `packages/research/src/workflow.ts`.
 
 ## Failure and recovery
 
@@ -71,4 +90,6 @@ Language owner: TypeScript Cloudflare I/O, SQL storage authority; deterministic 
 `eliotr-research-core` (transitional reference, not promoted Rust authority). Versioned fixtures live in
 `infra/workflows/checkpoint-vectors.v1.json` and execute in the real local workerd D1/R2 suite
 `apps/eliotr-core/test/research-workflow.test.ts`. Controlled handlers test effect counts, not live model
-quality or provider settlement. Live Cloudflare/provider qualification: `NOT_EXECUTED`.
+quality or provider settlement. W2 adds five monotone suites: 18-stage restart resume, duplicate/stale/
+concurrent single-effect, revoke/cancel rollback, lost R2/checkpoint ACK reconciliation and executable
+`step.do` binding readback. Live Cloudflare/provider qualification: `NOT_EXECUTED`.

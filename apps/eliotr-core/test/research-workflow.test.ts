@@ -2,10 +2,12 @@ import vectors from "../../../infra/workflows/checkpoint-vectors.v1.json";
 import { describe, expect, it } from "vitest";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import {
+  createMonotoneStageExecutor,
   createWorkflowCheckpointExecutor, decodeReceipt, digest, MAX_WORKFLOW_OUTPUT_BYTES, readWorkflowObject,
   type StageReceipt, type StageRequest,
 } from "@eliotr/cloudflare-research";
 import { faultBucket, faultDatabase, principal, workflowFixture } from "./research-workflow-fixture.js";
+import type { Env } from "../src/env.js";
 
 const resultBytes = () => new TextEncoder().encode("persisted output — цитата🙂");
 async function counts(db: D1Database) {
@@ -360,4 +362,143 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
     expect((await f.ledger.read(f.request.investigation_ref.id)).revision).toBe(1);
   });
 
+});
+
+describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2", () => {
+  it("resumes the same operation after restart with no duplicate handler effects and <=64KiB handle-only step outputs", async () => {
+    const f = await workflowFixture("w2-resume");
+    const driver = createMonotoneStageExecutor(f.db, f.bucket, f.ports);
+    const params = {
+      operation_id: f.request.operation_id,
+      investigation_id: f.request.investigation_ref.id,
+      initial_revision: f.request.investigation_ref.revision,
+      idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation,
+      initial_input_manifest: f.request.input_manifest,
+    };
+    let calls = 0;
+    const receipts = await driver.executeOperation(params, principal, () => async () => {
+      calls += 1; return resultBytes();
+    });
+    expect(receipts).toHaveLength(18);
+    expect(calls).toBe(18);
+    for (const receipt of receipts) {
+      expect(new TextEncoder().encode(JSON.stringify(receipt)).byteLength).toBeLessThanOrEqual(65536);
+      expect("completion_disposition" in receipt).toBe(false);
+      expect(JSON.stringify(receipt)).not.toContain("persisted output");
+    }
+    expect(receipts[17]?.engine_state).toBe("ENGINE_COMPLETED");
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+    const restarted = createMonotoneStageExecutor(f.db, f.bucket, f.ports);
+    const replayed = await restarted.executeOperation(params, principal, () => async () => {
+      calls += 1; return resultBytes();
+    });
+    expect(replayed).toEqual(receipts);
+    expect(calls).toBe(18);
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+  }, 30_000);
+
+  it("rejects duplicate delivery, stale CAS and concurrent replay with a single persisted effect", async () => {
+    const f = await workflowFixture("w2-duplicate");
+    const driver = createMonotoneStageExecutor(f.db, f.bucket, f.ports);
+    const params = {
+      operation_id: f.request.operation_id,
+      investigation_id: f.request.investigation_ref.id,
+      initial_revision: f.request.investigation_ref.revision,
+      idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation,
+      initial_input_manifest: f.request.input_manifest,
+    };
+    let calls = 0;
+    const outcomes = await Promise.allSettled([0, 1, 2].map(() =>
+      driver.executeOperation(params, principal, () => async () => { calls += 1; return resultBytes(); }),
+    ));
+    expect(outcomes.some((o) => o.status === "fulfilled")).toBe(true);
+    expect(calls).toBe(18);
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+    const stale = { ...params, idempotency_key: "stale-idempotency" };
+    await expect(driver.executeOperation(stale, principal, () => async () => resultBytes()))
+      .rejects.toMatchObject({ code: "WORKFLOW_CONFLICT" });
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+  }, 30_000);
+
+  it("rolls back on purge, revoke, expiry and cancel without advancing W1", async () => {
+    const revoked = await workflowFixture("w2-revoke");
+    await revoked.db.prepare("UPDATE scope_access_grant SET state='REVOKED'").run();
+    await expect(createMonotoneStageExecutor(revoked.db, revoked.bucket, revoked.ports).executeOperation({
+      operation_id: revoked.request.operation_id, investigation_id: revoked.request.investigation_ref.id,
+      initial_revision: revoked.request.investigation_ref.revision, idempotency_key: revoked.request.idempotency_key,
+      handler_generation: revoked.request.handler_generation, initial_input_manifest: revoked.request.input_manifest,
+    }, principal, () => async () => resultBytes())).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(await counts(revoked.db)).toEqual({ attempts: 0, checkpoints: 0, outbox: 0, ledger_events: 0 });
+
+    const cancelled = await workflowFixture("w2-cancel");
+    const cancelling = createMonotoneStageExecutor(cancelled.db, cancelled.bucket, cancelled.ports);
+    let seen = 0;
+    await expect(cancelling.executeOperation({
+      operation_id: cancelled.request.operation_id, investigation_id: cancelled.request.investigation_ref.id,
+      initial_revision: cancelled.request.investigation_ref.revision, idempotency_key: cancelled.request.idempotency_key,
+      handler_generation: cancelled.request.handler_generation, initial_input_manifest: cancelled.request.input_manifest,
+    }, principal, () => async () => {
+      seen += 1;
+      if (seen === 2) await cancelling.cancel(cancelled.request.operation_id, principal);
+      return resultBytes();
+    })).rejects.toThrow();
+    expect((await cancelled.db.prepare("SELECT state FROM research_workflow_run").first<{ state: string }>())?.state).toBe("CANCELLED");
+  }, 30_000);
+
+  it("reconciles lost R2/checkpoint ACKs across stages without duplicate paid effects", async () => {
+    const f = await workflowFixture("w2-lost-ack");
+    let putLost = false;
+    let batchLost = false;
+    const bucket = faultBucket(f.bucket, { afterPut: async () => {
+      if (!putLost) { putLost = true; throw new Error("lost R2 PUT ACK during W2"); }
+    } });
+    const db = faultDatabase(f.db, { afterBatch: async () => {
+      if (putLost && !batchLost) { batchLost = true; throw new Error("lost checkpoint ACK during W2"); }
+    } });
+    let calls = 0;
+    const receipts = await createMonotoneStageExecutor(db, bucket, f.ports).executeOperation({
+      operation_id: f.request.operation_id, investigation_id: f.request.investigation_ref.id,
+      initial_revision: f.request.investigation_ref.revision, idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation, initial_input_manifest: f.request.input_manifest,
+    }, principal, () => async () => { calls += 1; return resultBytes(); });
+    expect(putLost).toBe(true);
+    expect(receipts).toHaveLength(18);
+    expect(calls).toBe(18);
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+  }, 30_000);
+
+  it("executes the ResearchWorkflow binding via step.do with handle-only <=64KiB results and restart resume", async () => {
+    const f = await workflowFixture("w2-binding");
+    const { ResearchWorkflow } = await import("../src/research-workflow.js");
+    const env = { CORE_DB: f.db, WORK_BUCKET: f.bucket } as unknown as Env;
+    const params = {
+      operation_id: f.request.operation_id,
+      investigation_ref: { ...f.request.investigation_ref },
+      idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation,
+      initial_input_manifest: f.request.input_manifest,
+      principal_ref: principal.principal_ref,
+      credential_generation: principal.credential_generation,
+      deployment_generation: principal.deployment_generation,
+    };
+    const fakeStep = {
+      do: async (name: string, callback: () => Promise<unknown>) => {
+        expect(name.startsWith("w2-stage-")).toBe(true);
+        const outcome = await callback();
+        expect(new TextEncoder().encode(JSON.stringify(outcome)).byteLength).toBeLessThanOrEqual(65536);
+        expect("completion_disposition" in (outcome as Record<string, unknown>)).toBe(false);
+        return outcome;
+      },
+    };
+    const first = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
+    expect(first.state).toBe("ENGINE_COMPLETED");
+    expect(first.receipt_refs).toHaveLength(18);
+    expect(new TextEncoder().encode(JSON.stringify(first)).byteLength).toBeLessThanOrEqual(65536);
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+    const second = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
+    expect(second).toEqual(first);
+    expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+  }, 30_000);
 });
