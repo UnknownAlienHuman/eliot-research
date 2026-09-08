@@ -4,6 +4,7 @@ import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
+import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { escapeHtml } from "./html.js";
 
 const root = document.querySelector<HTMLDivElement>("#app");
@@ -40,13 +41,15 @@ function render(health: SystemHealth | null): void {
         <div id="google-oauth"></div>
         <hr>
         <div id="corpus-lens"></div>
+        <hr>
+        <div id="retrieval"></div>
       </section>
       <aside class="panel panel--evidence">
         <h2>Evidence</h2>
         <dl>
           <dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "not applied")}</dd>
           <dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "not applied")}</dd>
-          <dt>Coverage</dt><dd>not calculated</dd>
+          <dt>Coverage</dt><dd id="coverage">sampled · no query run</dd>
           <dt>Connector</dt><dd>not qualified</dd>
         </dl>
       </aside>
@@ -57,9 +60,21 @@ function render(health: SystemHealth | null): void {
   const googleOAuth = app.querySelector<HTMLElement>("#google-oauth");
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
-  const cleanups = [orientation, importer ? mountBundleImportPanel(importer) : undefined,
+  const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
+  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
+  // what the last query actually resolved rather than implying a complete scope.
+  retrievalHost?.addEventListener("retrieval:resolved", (event) => {
+    const detail = (event as CustomEvent<{ resolved: number; bytes: number }>).detail;
+    const node = app.querySelector("#coverage");
+    if (node) node.textContent = `sampled · ${detail.resolved} excerpt(s), ${detail.bytes} bytes`;
+  });
+  const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
     googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
-    library ? mountLibraryPanel(library, (id) => orientation?.selectSource(id)) : undefined];
+    library ? mountLibraryPanel(library, (id) => {
+      orientation?.selectSource(id);
+      retrieval?.selectSource(id);
+    }) : undefined];
   window.addEventListener("pagehide", () => cleanups.forEach((cleanup) => cleanup?.()), { once: true });
 }
 

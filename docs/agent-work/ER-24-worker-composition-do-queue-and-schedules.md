@@ -17,8 +17,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/src/queue.ts`
 - `apps/eliotr-core/src/scheduled.ts`
-- `apps/eliotr-core/src/projection-delivery-handler.ts`
-- `apps/eliotr-core/src/projection-delivery-handler.test.ts`
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/index.test.ts`

@@ -587,7 +587,24 @@
       "completion_evidence": [
         "packages/retrieval/src/exhaustive.test.ts: 14 cases (frozen-scope sharding within bounds, hard-bound split, scope-derived denominator, out-of-scope/uncovered/oversized/duplicate/probe/empty negatives, real-D1 scope freeze over the committed migration stream, pinned-byte execution with miss, timeout-unknown, cancel-unknown, COMPLETE-only-on-full-settlement, unsettled/missing degradation, foreign/duplicate-outcome refusal)",
         "packages/retrieval/src/exhaustive-negatives.test.ts: 8 cases (Unicode line offsets, table-cell map present/missing/corrupt, old-revision refusal, range-mismatch, forged-handle, mid-read revocation, mid-resolution byte-mutation refusal)",
-        "RETRIEVAL slice stays disabled and Worker research.query still caps persisted coverage at SAMPLED through the Q3 D1 result store, so persisting a COMPLETE claim is not wired; Q7 ordered loop, R2/D1 composition wiring and live qualification NOT_EXECUTED"
+        "RETRIEVAL slice stays disabled and Worker research.query still caps persisted coverage at SAMPLED through the Q3 D1 result store, so a denominator-less COMPLETE claim there stays refused; the Q7 ordered loop persists an earned COMPLETE with its denominator over additive migration 0023 (see implemented-exhaustive-loop); R2-byte Worker composition wiring and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-loop",
+      "path": "packages/retrieval/src/exhaustive-reconcile.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 ordered exhaustive reconcile loop over migration 0023 with earned COMPLETE persistence; Worker/HTTP composition and live qualification remain separate.",
+      "owner_packets": [
+        "ER-04",
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Ordered D1-backed exhaustive reconcile with no D1/R2/network/clock authority of its own and no source-grant minting: starts or resumes a PENDING job bound to the frozen scope digest, journals only SETTLED shard outcomes in planned denominator order, runs mergeExhaustiveShards once over the planned denominator, and persists COMPLETE only with the matching denominator when the merge earns it; unsettled or missing outcomes leave the job PENDING with no weaker final claim; a byte-identical replay returns the stored receipt with no shard re-execution; the Q3 result-store COMPLETE refusal stands unchanged",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0023_exhaustive_reconcile.sql: additive retrieval_exhaustive_job plus retrieval_exhaustive_shard with authority/binding/immutability/invalidation triggers; 0021/0022 untouched; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
+        "packages/retrieval/src/exhaustive-reconcile.test.ts: 7 node:sqlite cases over the committed 0001-0023 stream (earned COMPLETE persisted with denominator plus readback, COMPLETE replay without re-execution or duplicate rows, partial resume without double-count, unsettled UNFINISHED with zero result rows, foreign-denominator refusal with zero job rows, denominator-less COMPLETE refused by the Q3 store with its exact message, partial finalize refusal with the job left PENDING)",
+        "packages/retrieval/src/exhaustive-reconcile.ts: createD1ExhaustiveJobStore plus reconcileExhaustiveJob behind injected scope/budget/executor ports; coverage never recomputed outside mergeExhaustiveShards; no grant port, no HTTP/model/R2 inside statements",
+        "RETRIEVAL slice stays disabled; research.query still serves only the ORIENT metadata profile with research.query composition untouched; Worker/HTTP composition of the loop and live qualification NOT_EXECUTED"
       ]
     }
   ]
