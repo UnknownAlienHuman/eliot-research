@@ -13,7 +13,7 @@ use crate::canonical_json_error::{
     CanonicalJsonError, MAX_CANONICAL_JSON_ARRAY_ITEMS, MAX_CANONICAL_JSON_DEPTH,
     MAX_CANONICAL_JSON_INPUT_BYTES, MAX_CANONICAL_JSON_INTEGER, MAX_CANONICAL_JSON_NODES,
     MAX_CANONICAL_JSON_OBJECT_MEMBERS, MAX_CANONICAL_JSON_OUTPUT_BYTES,
-    MAX_CANONICAL_JSON_STRING_BYTES,
+    MAX_CANONICAL_JSON_PARSER_STEPS, MAX_CANONICAL_JSON_STRING_BYTES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,9 +67,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(mut self) -> Result<JsonValue, CanonicalJsonError> {
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let value = self.parse_value(0)?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.cursor != self.input.len() {
             return Err(self.syntax());
         }
@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
     fn parse_array(&mut self, depth: usize) -> Result<JsonValue, CanonicalJsonError> {
         self.enter_container(depth)?;
         self.cursor += 1;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let mut values = Vec::new();
         if self.consume_if(b']') {
             return Ok(JsonValue::Array(values));
@@ -129,14 +129,14 @@ impl<'a> Parser<'a> {
                 });
             }
             values.push(self.parse_value(depth + 1)?);
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             if self.consume_if(b']') {
                 break;
             }
             if !self.consume_if(b',') {
                 return Err(self.syntax());
             }
-            self.skip_whitespace();
+            self.skip_whitespace()?;
         }
         Ok(JsonValue::Array(values))
     }
@@ -144,7 +144,7 @@ impl<'a> Parser<'a> {
     fn parse_object(&mut self, depth: usize) -> Result<JsonValue, CanonicalJsonError> {
         self.enter_container(depth)?;
         self.cursor += 1;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let mut members = Vec::new();
         let mut keys = BTreeSet::new();
         if self.consume_if(b'}') {
@@ -165,21 +165,21 @@ impl<'a> Parser<'a> {
             if !keys.insert(key.clone()) {
                 return Err(CanonicalJsonError::DuplicateKey { offset: key_offset });
             }
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             if !self.consume_if(b':') {
                 return Err(self.syntax());
             }
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             let value = self.parse_value(depth + 1)?;
             members.push((key, value));
-            self.skip_whitespace();
+            self.skip_whitespace()?;
             if self.consume_if(b'}') {
                 break;
             }
             if !self.consume_if(b',') {
                 return Err(self.syntax());
             }
-            self.skip_whitespace();
+            self.skip_whitespace()?;
         }
 
         members.sort_by(|left, right| compare_utf16_code_units(&left.0, &right.0));
@@ -208,7 +208,13 @@ impl<'a> Parser<'a> {
             }
             Some(b'1'..=b'9') => {
                 self.cursor += 1;
+                // S5 bounded-iteration guard: a `+=`→`*=` mutant would stall `cursor`.
+                let mut iterations = 0_usize;
                 while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    if iterations >= MAX_CANONICAL_JSON_PARSER_STEPS {
+                        return Err(self.syntax());
+                    }
+                    iterations += 1;
                     self.cursor += 1;
                 }
             }
@@ -238,8 +244,15 @@ impl<'a> Parser<'a> {
             return Err(self.syntax());
         }
         let mut output = Vec::new();
+        // S5 bounded-iteration guard: every iteration must consume input.
+        // Covers `+=`→`*=` stalls and `utf8_width`→`Some(0)` zero-progress.
+        let mut iterations = 0_usize;
 
         loop {
+            if iterations >= MAX_CANONICAL_JSON_PARSER_STEPS {
+                return Err(self.syntax());
+            }
+            iterations += 1;
             let Some(byte) = self.peek() else {
                 return Err(CanonicalJsonError::Syntax { offset: start });
             };
@@ -342,10 +355,18 @@ impl<'a> Parser<'a> {
         Ok(value)
     }
 
-    fn skip_whitespace(&mut self) {
+    fn skip_whitespace(&mut self) -> Result<(), CanonicalJsonError> {
+        // S5 bounded-iteration guard: each iteration must advance `cursor`.
+        // A `+=`→`*=` mutant would otherwise spin forever on `cursor == 0`.
+        let mut iterations = 0_usize;
         while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            if iterations >= MAX_CANONICAL_JSON_PARSER_STEPS {
+                return Err(self.syntax());
+            }
+            iterations += 1;
             self.cursor += 1;
         }
+        Ok(())
     }
 
     fn consume_if(&mut self, expected: u8) -> bool {

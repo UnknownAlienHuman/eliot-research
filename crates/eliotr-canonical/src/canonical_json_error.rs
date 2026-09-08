@@ -20,6 +20,11 @@ pub const MAX_CANONICAL_JSON_ARRAY_ITEMS: usize = 256;
 pub const MAX_CANONICAL_JSON_NODES: usize = 1024;
 /// Largest integer represented identically by the TypeScript reference and Rust/Wasm.
 pub const MAX_CANONICAL_JSON_INTEGER: i64 = 9_007_199_254_740_991;
+/// Maximum loop iterations in one parser pass (S5 bounded-iteration guard).
+/// Normal inputs consume at most one iteration per input byte; mutants that remove
+/// cursor progress (`+=`→`*=`, `utf8_width`→`Some(0)`) exhaust this budget instead
+/// of spinning forever.
+pub const MAX_CANONICAL_JSON_PARSER_STEPS: usize = MAX_CANONICAL_JSON_INPUT_BYTES + 1;
 
 /// Stable canonical-body error codes.
 pub const JSON_INPUT_TOO_LARGE_CODE: &str = "ELIOTR_JSON_INPUT_TOO_LARGE";

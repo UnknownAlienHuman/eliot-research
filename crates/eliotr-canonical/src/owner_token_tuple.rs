@@ -6,7 +6,7 @@
 
 #![forbid(unsafe_code)]
 
-use crate::owner_token::OwnerTokenError;
+use crate::owner_token::{OWNER_TOKEN_PARSER_STEPS_MAX, OwnerTokenError};
 
 /// Decoded preimage tuple in fixed field order.
 pub(crate) struct ParsedTuple {
@@ -29,43 +29,43 @@ impl<'a> TupleParser<'a> {
     }
 
     pub(crate) fn parse(mut self) -> Result<ParsedTuple, OwnerTokenError> {
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if !self.consume_if(b'[') {
             return Err(self.syntax());
         }
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.peek() == Some(b']') {
             return Err(OwnerTokenError::Shape);
         }
         let schema = self.parse_string()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         self.consume_comma_or_end()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let namespace = self.parse_string_or_shape()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         self.consume_comma_or_end()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let owner = self.parse_string_or_shape()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         self.consume_comma_or_end()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let incarnation = self.parse_string_or_shape()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         self.consume_comma_or_end()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let revision = self.parse_revision()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         self.consume_comma_or_end()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         let status = self.parse_string_or_shape()?;
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.consume_if(b',') {
             return Err(OwnerTokenError::Shape);
         }
         if !self.consume_if(b']') {
             return Err(self.syntax());
         }
-        self.skip_whitespace();
+        self.skip_whitespace()?;
         if self.cursor != self.input.len() {
             return Err(self.syntax());
         }
@@ -103,7 +103,13 @@ impl<'a> TupleParser<'a> {
             }
             Some(b'1'..=b'9') => {
                 self.cursor += 1;
+                // S5 bounded-iteration guard: a `+=`→`*=` mutant would stall `cursor`.
+                let mut iterations = 0_usize;
                 while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    if iterations >= OWNER_TOKEN_PARSER_STEPS_MAX {
+                        return Err(self.syntax_at(start));
+                    }
+                    iterations += 1;
                     self.cursor += 1;
                 }
             }
@@ -132,7 +138,14 @@ impl<'a> TupleParser<'a> {
             return Err(self.syntax_at(start));
         }
         let mut output = Vec::new();
+        // S5 bounded-iteration guard: every iteration must consume input.
+        // Covers `+=`→`*=` stalls and `utf8_width`→`Some(0)` zero-progress.
+        let mut iterations = 0_usize;
         loop {
+            if iterations >= OWNER_TOKEN_PARSER_STEPS_MAX {
+                return Err(self.syntax_at(start));
+            }
+            iterations += 1;
             let Some(byte) = self.peek() else {
                 return Err(self.syntax_at(start));
             };
@@ -251,10 +264,18 @@ impl<'a> TupleParser<'a> {
         }
     }
 
-    fn skip_whitespace(&mut self) {
+    fn skip_whitespace(&mut self) -> Result<(), OwnerTokenError> {
+        // S5 bounded-iteration guard: each iteration must advance `cursor`.
+        // A `+=`→`*=` mutant would otherwise spin forever on `cursor == 0`.
+        let mut iterations = 0_usize;
         while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            if iterations >= OWNER_TOKEN_PARSER_STEPS_MAX {
+                return Err(self.syntax());
+            }
+            iterations += 1;
             self.cursor += 1;
         }
+        Ok(())
     }
 
     fn consume_if(&mut self, expected: u8) -> bool {

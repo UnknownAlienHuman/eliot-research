@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use super::error::SnapshotIdentityError;
 use super::{
     SNAPSHOT_ARRAY_ITEMS_MAX, SNAPSHOT_INPUT_MAX_BYTES, SNAPSHOT_NODES_MAX,
-    SNAPSHOT_OBJECT_MEMBERS_MAX, SNAPSHOT_PARSER_DEPTH_MAX, SNAPSHOT_SAFE_INTEGER_MAX,
-    SNAPSHOT_STRING_MAX_BYTES,
+    SNAPSHOT_OBJECT_MEMBERS_MAX, SNAPSHOT_PARSER_DEPTH_MAX, SNAPSHOT_PARSER_STEPS_MAX,
+    SNAPSHOT_SAFE_INTEGER_MAX, SNAPSHOT_STRING_MAX_BYTES,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,9 +80,9 @@ pub(crate) fn parse_frame(input: &[u8]) -> Result<Value, SnapshotIdentityError> 
         cursor: 0,
         nodes: 0,
     };
-    parser.skip_ws();
+    parser.skip_ws()?;
     let value = parser.parse_value(0)?;
-    parser.skip_ws();
+    parser.skip_ws()?;
     if parser.cursor != input.len() {
         return Err(SnapshotIdentityError::Syntax {
             offset: parser.cursor,
@@ -121,7 +121,7 @@ impl FrameParser<'_> {
     fn parse_array(&mut self, depth: usize) -> Result<Value, SnapshotIdentityError> {
         self.enter(depth)?;
         self.cursor += 1;
-        self.skip_ws();
+        self.skip_ws()?;
         let mut values = Vec::new();
         if self.eat(b']') {
             return Ok(Value::Array(values));
@@ -133,21 +133,21 @@ impl FrameParser<'_> {
                 });
             }
             values.push(self.parse_value(depth + 1)?);
-            self.skip_ws();
+            self.skip_ws()?;
             if self.eat(b']') {
                 break;
             }
             if !self.eat(b',') {
                 return Err(self.syntax());
             }
-            self.skip_ws();
+            self.skip_ws()?;
         }
         Ok(Value::Array(values))
     }
     fn parse_object(&mut self, depth: usize) -> Result<Value, SnapshotIdentityError> {
         self.enter(depth)?;
         self.cursor += 1;
-        self.skip_ws();
+        self.skip_ws()?;
         let mut members = Vec::new();
         let mut keys = BTreeSet::new();
         if self.eat(b'}') {
@@ -167,21 +167,21 @@ impl FrameParser<'_> {
             if !keys.insert(key.clone()) {
                 return Err(SnapshotIdentityError::DuplicateKey { offset: key_offset });
             }
-            self.skip_ws();
+            self.skip_ws()?;
             if !self.eat(b':') {
                 return Err(self.syntax());
             }
-            self.skip_ws();
+            self.skip_ws()?;
             let value = self.parse_value(depth + 1)?;
             members.push((key, value));
-            self.skip_ws();
+            self.skip_ws()?;
             if self.eat(b'}') {
                 break;
             }
             if !self.eat(b',') {
                 return Err(self.syntax());
             }
-            self.skip_ws();
+            self.skip_ws()?;
         }
         members.sort_by(|a, b| super::emit::compare_utf16(a.0.as_str(), b.0.as_str()));
         Ok(Value::Object(members))
@@ -207,7 +207,13 @@ impl FrameParser<'_> {
             }
             Some(b'1'..=b'9') => {
                 self.cursor += 1;
+                // S5 bounded-iteration guard: a `+=`→`*=` mutant would stall `cursor`.
+                let mut iterations = 0_usize;
                 while matches!(self.peek(), Some(b'0'..=b'9')) {
+                    if iterations >= SNAPSHOT_PARSER_STEPS_MAX {
+                        return Err(self.syntax());
+                    }
+                    iterations += 1;
                     self.cursor += 1;
                 }
             }
@@ -239,7 +245,14 @@ impl FrameParser<'_> {
             return Err(self.syntax());
         }
         let mut out = Vec::new();
+        // S5 bounded-iteration guard: every iteration must consume input.
+        // Covers `+=`→`*=` stalls and `utf8_width`→`Some(0)` zero-progress.
+        let mut iterations = 0_usize;
         loop {
+            if iterations >= SNAPSHOT_PARSER_STEPS_MAX {
+                return Err(self.syntax());
+            }
+            iterations += 1;
             let Some(byte) = self.peek() else {
                 return Err(SnapshotIdentityError::Syntax { offset: start });
             };
@@ -337,10 +350,18 @@ impl FrameParser<'_> {
         self.cursor = end;
         Ok(value)
     }
-    fn skip_ws(&mut self) {
+    fn skip_ws(&mut self) -> Result<(), SnapshotIdentityError> {
+        // S5 bounded-iteration guard: each iteration must advance `cursor`.
+        // A `+=`→`*=` mutant would otherwise spin forever on `cursor == 0`.
+        let mut iterations = 0_usize;
         while matches!(self.peek(), Some(b' ' | b'\n' | b'\r' | b'\t')) {
+            if iterations >= SNAPSHOT_PARSER_STEPS_MAX {
+                return Err(self.syntax());
+            }
+            iterations += 1;
             self.cursor += 1;
         }
+        Ok(())
     }
     fn eat(&mut self, expected: u8) -> bool {
         if self.peek() == Some(expected) {
