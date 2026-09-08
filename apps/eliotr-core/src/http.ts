@@ -27,6 +27,7 @@ import {
   createApplication,
   type CompositionRootInput,
 } from "./composition-root.js";
+import { ResearchServiceError, readResearchQueryRequest, readResearchRunRequest } from "./research-session.js";
 import type { Env } from "./env.js";
 import {
   EvidenceHttpInputError,
@@ -391,6 +392,20 @@ async function dispatch(
         parseEvidenceOpenRange(url),
       );
     }
+    case "research.query": {
+      requireNoQuery(url);
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      return apiResult(request, env, await application.services.semantic.query(context,
+        await readResearchQueryRequest(request, match.route.maximum_request_bytes)));
+    }
+    case "research.run": {
+      requireNoQuery(url);
+      const blocked = await requireApplicationReady(request, application);
+      if (blocked !== null) return blocked;
+      return apiResult(request, env, await application.services.semantic.run(context,
+        await readResearchRunRequest(request, match.route.maximum_request_bytes)));
+    }
     default:
       if (match.route.operation.startsWith("ingest.")) {
         const blocked = await requireApplicationReady(request, application);
@@ -510,6 +525,9 @@ function mapError(request: Request, error: unknown): Response {
     return problem(request, 409, error.code, "Exact evidence authority conflicts with current state", false);
   }
   if (error instanceof CatalogInputError) {
+    return problem(request, error.status, error.code, error.message, error.retryable);
+  }
+  if (error instanceof ResearchServiceError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof CapabilityUnavailableError) {
