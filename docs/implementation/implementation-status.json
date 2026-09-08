@@ -38,9 +38,9 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query delegates to orientation metadata and research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
+      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves retrieval over injected RetrievalQueryPorts (frozen scope, D1 lanes, fused ranks, exact resolution, persisted trace/result) and research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
       "completion_evidence": [
-        "apps/eliotr-core/test/research-session.test.ts: 7 suites over actual local D1/R2/DO (query ORIENT replay/stale/foreign, run W1 ledger plus 18-stage resume/duplicate/stale/lost-ACK with 64KiB handle-only receipts, DO start/read/replay/stale/foreign/cancel/status, DO W2 replay without duplicate paid effects)",
+        "apps/eliotr-core/test/research-session.test.ts: 7 suites over actual local D1/R2/DO (query retrieval no-hit replay/stale/foreign, run W1 ledger plus 18-stage resume/duplicate/stale/lost-ACK with 64KiB handle-only receipts, DO start/read/replay/stale/foreign/cancel/status, DO W2 replay without duplicate paid effects)",
         "apps/eliotr-core/src/research-session.ts: DO storage session state with principal-bound read/cancel plus createMonotoneStageExecutor reuse and no new D1 tables",
         "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
@@ -488,6 +488,24 @@
         "infra/d1/core/migrations/0021_retrieval_query_persistence.sql: additive retrieval_query_result plus retrieval_query_trace with authority/binding/immutability/invalidation triggers; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
         "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream inspecting persisted rows, not mock counts",
         "Q1-lane/R2-byte composition at the app layer, ER-24 research.query wiring, scope-profile versioning, remote D1/R2 receipts and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-q3-query-wiring",
+      "path": "apps/eliotr-core/src/research-session.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createRetrievalQueryService instead of delegating to orientation metadata: frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+LEX lane executors over D1 Search with SEM and all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; the ORIENT request DTO is unchanged and orientation plus research.run internal orient calls are untouched",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-query-retrieval.test.ts: 6 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline inspecting persisted rows (no-hit NONE result+trace+profile+grant persistence, replay without duplication versus changed-input conflict, resolution-wall fail-closed with zero rows, denied scope with zero writes and no grant, expired-scope replay with zero rows and no grant, cross-profile replay conflict, substituted-trace refusal via the real D1 binding trigger)",
+        "apps/eliotr-core/test/research-session.test.ts: query section serves retrieval over HTTP (genuine no-hit NONE, replay equality with frozen row counts, changed-input 409, foreign 403, unchanged 400/422 negatives)",
+        "infra/d1/core/migrations/0022_retrieval_scope_profile.sql: additive profile table with FK to scope_snapshot plus immutability triggers; no backfill, no rewrite, no readiness promotion",
+        "Per-candidate R2 byte resolution fails closed with RESEARCH_SETTLEMENT_UNCERTAIN under the local runtime: packages/cloudflare-evidence/src/content-store.ts:136 issues the conditional range read with quoted head.httpEtag, which the runtime rejects (proven in isolation: unquoted head.etag succeeds); owned by ER-07, not worked around here",
+        "No semantic lane executor exists on this generation (packages/retrieval/src/lanes.ts exports ident and lexical only); SEM stays SKIPPED_UNAVAILABLE with coverage capped at SAMPLED",
+        "Worker research.query still answers the ORIENT metadata DTO; RETRIEVAL slice stays disabled, research.trace still serves orientation traces, and live qualification NOT_EXECUTED"
       ]
     },
     {
