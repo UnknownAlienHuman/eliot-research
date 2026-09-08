@@ -14,6 +14,10 @@ transport completion, managed-index acceptance, projection readiness, or Evidenc
 - `packages/retrieval/src/structural-projector.ts`
 - `packages/retrieval/src/structural-projector.test.ts`
 - `packages/cloudflare-projection/**`
+- `packages/cloudflare-projection/src/d1-search-input.ts`
+- `packages/cloudflare-projection/src/d1-search-authority.ts`
+- `packages/cloudflare-projection/src/d1-search-read.test.ts`
+- `packages/cloudflare-projection/src/d1-search-sqlite-fixture.ts`
 - `apps/eliotr-core/src/projection-execution-handler.ts`
 - `scripts/check-projection-execution.mjs`
 
@@ -67,6 +71,14 @@ durable projection acceptance
 - Oversized synchronous work settles `PARTIAL` with `SHARDED_WORKFLOW_REQUIRED`.
 - Queue redelivery returns the same terminal receipt and does not duplicate projection generations.
 - A terminal settlement is atomic across generation, job, operation receipt, readiness and terminal guard.
+
+## D1 search read settlement
+
+IDENT/LEX capture bounded query, membership, owner generations and expiry before awaiting storage.
+Final readback compares every pinned generation and item-set identity, including no-hit members and
+members beyond the result limit; source-fence changes or expiry return `SEARCH_INCOMPLETE`.
+Already-purged members stay excluded. Locators and valid-empty results do not prove evidence or absence.
+The SQLite read-schema regression fixture is not import/Queue/R2 or live D1 qualification.
 
 ## Mandatory negative boundary
 
