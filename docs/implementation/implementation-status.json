@@ -438,6 +438,23 @@
         "infra/workflows/checkpoint-vectors.v1.json; deterministic migration target eliotr-research-core, not promoted Rust authority.",
         "Live Workflow/provider/settlement/erasure/restore qualification NOT_EXECUTED; keep public scaffold and launch holds."
       ]
+    },
+    {
+      "id": "implemented-testkit-golden",
+      "path": "packages/testkit/src/golden.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-23 deterministic Golden Corpus loader/adjudication with collapsing-extractor negative and RU/EN/code/table cases; live model/provider qualification NOT_EXECUTED.",
+      "owner_packets": [
+        "ER-23"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Deterministic offline Golden Corpus loader/adjudication without model prose as oracle, collapsing-extractor must-fail harness, D1/R2/Queue/AI Search/model/Drive failure fakes with lost ACK/stale/tamper/partial/blocked-purge, and adjudicated RU/EN/code/table expansion GC-009..GC-012 with LF SHA-256 pins and promotion thresholds",
+      "completion_evidence": [
+        "packages/testkit/src/golden.test.ts: 7 suites including collapsing-extractor must-fail on GC-001/GC-002, faithful-pass adjudication, malformed/empty/oversized and missing-observation negatives",
+        "packages/testkit/src/fakes.test.ts: 7 suites covering lost-ACK readback without replacement identity, stale CAS with no mutation, tamper digest mismatch, partial-write inspection, blocked purge, and malformed/empty/oversized transport fences",
+        "tests/golden-corpus/golden-harness.test.ts: 4 suites pinning 9 LF SHA-256 sources and 12 adjudicated cases, RU/EN/code/table families, collapsing-extractor block, and no unlisted cases",
+        "tests/golden-corpus/manifest.json generation golden-er23-2026-09-08 with GC-009 RU, GC-010 code, GC-011 table, GC-012 EN dissent/negative; tests/fixtures/registry.json pins contract fixtures and tracks golden generation",
+        "Live model/provider retrieval quality, T2/T3 generation promotion, and workload qualification NOT_EXECUTED"
+      ]
     }
   ]
 }
