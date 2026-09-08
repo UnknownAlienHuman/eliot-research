@@ -101,11 +101,17 @@ try {
   const versionText = (version.stdout ?? "").trim().slice(0, 256);
   const versionStderr = (version.stderr ?? "").trim().slice(0, 1024);
   console.log(`Browser executable: ${binary}; version: ${versionText}`);
-  // An empty --version is its own condition: a live process that reports no version has
-  // never been observed to publish DevToolsActivePort, so fail here instead of letting the
-  // DevTools deadline below burn attempts with an empty diagnostics string.
+  // An empty --version is its own condition rather than a silent precondition, but which
+  // condition depends on why it is empty. A spawn error is proof the executable cannot run,
+  // so it fails here. Empty output with no spawn error is a probe timeout, and
+  // `docs/implementation/failure-model.md:3` makes a timeout an unknown outcome, not proof of
+  // failure — the observed CI signature is exactly that, so it must still reach the bounded
+  // relaunch below and be carried into the final diagnostics instead of failing fast.
+  if (version.error) {
+    throw new Error(`Browser version probe could not run; executable=${binary}; exit=${version.status}; spawn_error=${version.error.message}; stderr=${versionStderr || "<empty>"}`);
+  }
   if (!versionText) {
-    throw new Error(`Browser version probe produced no output; executable=${binary}; exit=${version.status}; spawn_error=${version.error?.message ?? "none"}; stderr=${versionStderr || "<empty>"}`);
+    console.log(`Browser version probe produced no output (unknown outcome, continuing to launch); executable=${binary}; exit=${version.status}; signal=${version.signal ?? "none"}; stderr=${versionStderr || "<empty>"}`);
   }
   let port; let profileDir; const launchFailures = [];
   for (let attempt = 1; attempt <= MAX_BROWSER_STARTUP_ATTEMPTS; attempt += 1) {
@@ -145,7 +151,7 @@ try {
         try { await closing; } catch { /* Kill teardown is best-effort before a retry. */ } finally { clearTimeout(timer); }
       }
       if (attempt === MAX_BROWSER_STARTUP_ATTEMPTS) {
-        throw new Error(`Browser failed to publish DevToolsActivePort after ${MAX_BROWSER_STARTUP_ATTEMPTS} attempts; executable=${binary}; version=${versionText} (exit=${version.status}); version stderr=${versionStderr || "<empty>"}; ${launchFailures.join(" | ")}`, { cause: error });
+        throw new Error(`Browser failed to publish DevToolsActivePort after ${MAX_BROWSER_STARTUP_ATTEMPTS} attempts; executable=${binary}; version=${versionText || "<empty>"} (exit=${version.status}; signal=${version.signal ?? "none"}); version stderr=${versionStderr || "<empty>"}; ${launchFailures.join(" | ")}`, { cause: error });
       }
       console.log(`Browser DevTools startup attempt ${attempt}/${MAX_BROWSER_STARTUP_ATTEMPTS} produced no port; relaunching (last: exit=${browser.exitCode}; signal=${browser.signalCode}; spawn=${startupError ?? "ok"}; DevToolsActivePort=${portFileState})`);
       await delay(250 * attempt);
