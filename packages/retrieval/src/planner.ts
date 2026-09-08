@@ -41,3 +41,26 @@ export function compileQueryPlan(request: RetrievalRequest): QueryPlan {
 export function rerankingMayAffectCoverage(_plan: QueryPlan): false {
   return false;
 }
+
+/**
+ * Q3 lane-order invariant: direct/exact/lexical lanes execute before the
+ * optional managed semantic lane whenever both are planned. The defaults
+ * above satisfy this by construction; the query service fails closed when a
+ * future plan violates it instead of letting semantic results precede exact
+ * evidence.
+ */
+export const DIRECT_LANES: readonly RetrievalLane[] = ["IDENT", "EXACT", "LEX"];
+export const MANAGED_SEMANTIC_LANES: readonly RetrievalLane[] = ["SEM"];
+
+export function directLanesPrecedeSemantic(plan: QueryPlan): boolean {
+  const planned = new Set<RetrievalLane>(plan.lanes);
+  const directPlanned = DIRECT_LANES.some((lane) => planned.has(lane));
+  if (!directPlanned) return true;
+  const position = new Map<RetrievalLane, number>(plan.lanes.map((lane, index) => [lane, index]));
+  const firstDirect = Math.min(
+    ...DIRECT_LANES.filter((lane) => planned.has(lane)).map((lane) => position.get(lane) as number),
+  );
+  return MANAGED_SEMANTIC_LANES.filter((lane) => planned.has(lane)).every(
+    (lane) => (position.get(lane) as number) > firstDirect,
+  );
+}
