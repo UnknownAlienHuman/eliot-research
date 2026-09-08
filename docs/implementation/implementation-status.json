@@ -17,17 +17,17 @@
     {
       "id": "scaffold-001",
       "path": "apps/eliotr-core/src/research-workflow.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-09 Research Workflow returns explicit pending state until governed execution is implemented.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.",
       "owner_packets": [
         "ER-09"
       ],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "Cloudflare Workflow binding executes one durable fail-closed step that returns IMPLEMENTATION_PENDING and INCONCLUSIVE without performing research or creating canonical research evidence",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Monotone 18-stage Workflow executes via step.do over durable D1/R2 checkpoints with handle-only 64KiB receipts, D1-backed idempotent budget and principal-bound residency; restart resumes the same operation with no duplicate handler effects; ENGINE_COMPLETED never upgrades research disposition",
       "completion_evidence": [
-        "governed checkpoint executor for every ER-09 stage",
-        "budget and cancellation checks before every side effect",
-        "evidence freeze, claim audit and terminal research receipt",
-        "live Workflow retry, resume and cancellation receipts"
+        "apps/eliotr-core/test/research-workflow.test.ts: 5 W2 monotone suites over actual local D1/R2 (18-stage restart resume, duplicate/stale/concurrent single-effect, revoke/cancel rollback, lost R2/checkpoint ACK reconciliation, executable step.do binding readback) plus retained W2a single-stage suites",
+        "packages/cloudflare-research/src/executor.ts: createMonotoneStageExecutor reusing the W2a checkpoint boundary with no parallel stack",
+        "packages/research/src/workflow.ts: pure monotone order and 64KiB handle-only step guards",
+        "W3 budget/provider settlement, W4 governed handlers, branch scheduler, notification consumer, retention/erasure/restore and live Workflow/provider receipts remain open; live qualification NOT_EXECUTED"
       ]
     },
     {

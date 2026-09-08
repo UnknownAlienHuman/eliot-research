@@ -1,11 +1,13 @@
 // IMPLEMENTED_NOT_LIVE: ER-09 durable single-stage D1/R2 checkpoints; governed handlers, public Workflow composition and live qualification remain separate.
+import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { WorkflowCheckpointStore } from "./store.js";
 import { readWorkflowObject, writeWorkflowObject } from "./objects.js";
 import {
-  digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, parseRequest, snapshotPrincipal, textDigest, WorkflowCheckpointError, WorkflowObjectSchema,
+  digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, MAX_WORKFLOW_RECEIPT_BYTES, parseRequest, snapshotPrincipal, textDigest, WorkflowCheckpointError, WorkflowObjectSchema,
   type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowExecutionPorts,
   type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler,
 } from "./types.js";
+import type { ResearchWorkflowStage } from "@eliotr/contracts";
 
 /** One reservation admits at most ONE handler invocation. Unknown execution is never auto-retried. */
 export function createWorkflowCheckpointExecutor(
@@ -117,6 +119,75 @@ export function createWorkflowCheckpointExecutor(
     },
     cancel(operationId: string, principal: WorkflowPrincipal): Promise<string> {
       return store.cancel(operationId, snapshotPrincipal(principal));
+    },
+  };
+}
+
+export interface MonotoneOperationParams {
+  readonly operation_id: string;
+  readonly investigation_id: string;
+  readonly initial_revision: number;
+  readonly idempotency_key: string;
+  readonly handler_generation: string;
+  readonly initial_input_manifest: WorkflowObject;
+}
+
+export type MonotoneHandlerFactory = (stage: ResearchWorkflowStage) => WorkflowStageHandler;
+
+function assertStepReceiptWithinBounds(receipt: StageReceipt): void {
+  const text = JSON.stringify(receipt);
+  if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("WORKFLOW_INPUT_INVALID");
+  if ("completion_disposition" in receipt) fail("WORKFLOW_INPUT_INVALID");
+}
+
+/** W2 monotone bounded executor: sequential 18-stage walk reusing the W2a checkpoint boundary. */
+export function createMonotoneStageExecutor(
+  database: D1Database, bucket: R2Bucket, ports: WorkflowExecutionPorts,
+) {
+  const single = createWorkflowCheckpointExecutor(database, bucket, ports);
+  return {
+    async executeOperation(
+      params: MonotoneOperationParams, actor: WorkflowPrincipal, handlers: MonotoneHandlerFactory,
+    ): Promise<StageReceipt[]> {
+      const principal = snapshotPrincipal(actor);
+      if (typeof params.operation_id !== "string" || typeof params.investigation_id !== "string" ||
+          typeof params.idempotency_key !== "string" || typeof params.handler_generation !== "string" ||
+          !Number.isSafeInteger(params.initial_revision) || params.initial_revision < 1) {
+        fail("WORKFLOW_INPUT_INVALID");
+      }
+      WorkflowObjectSchema.parse(params.initial_input_manifest);
+      const receipts: StageReceipt[] = [];
+      let investigation_ref = { id: params.investigation_id, revision: params.initial_revision };
+      let input_manifest = params.initial_input_manifest;
+      for (let index = 0; index < RESEARCH_WORKFLOW_STAGES.length; index += 1) {
+        const stage = RESEARCH_WORKFLOW_STAGES[index] as ResearchWorkflowStage;
+        const request: StageRequest = {
+          protocol: "eliotr.workflow-stage.v1",
+          operation_id: params.operation_id,
+          investigation_ref: { ...investigation_ref },
+          stage,
+          idempotency_key: params.idempotency_key,
+          handler_generation: params.handler_generation,
+          input_manifest,
+        };
+        const handler = handlers(stage);
+        if (typeof handler !== "function") fail("WORKFLOW_INPUT_INVALID");
+        const receipt = await single.execute(request, principal, handler);
+        if (receipt.operation_id !== params.operation_id || receipt.stage !== stage ||
+            receipt.investigation_ref.id !== params.investigation_id) {
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        assertStepReceiptWithinBounds(receipt);
+        const expectedEngine = index === RESEARCH_WORKFLOW_STAGES.length - 1 ? "ENGINE_COMPLETED" : "CHECKPOINTED";
+        if (receipt.engine_state !== expectedEngine) fail("WORKFLOW_OUTPUT_CORRUPT");
+        receipts.push(receipt);
+        investigation_ref = { ...receipt.investigation_ref };
+        input_manifest = receipt.output_manifest;
+      }
+      return receipts;
+    },
+    cancel(operationId: string, principal: WorkflowPrincipal): Promise<string> {
+      return single.cancel(operationId, principal);
     },
   };
 }
