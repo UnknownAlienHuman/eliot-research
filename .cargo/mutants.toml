@@ -136,4 +136,17 @@ exclude_re = [
   "sha256\\.rs:151:30: replace \\^ with \\| in compress",
   "sha256\\.rs:158:32: replace \\^ with \\| in compress",
   "sha256\\.rs:158:42: replace \\^ with \\| in compress",
+
+  # --- ER-40 S9 (#106): test-vectors `parse_hex` `|` -> `^` nibble folds (4).
+  # Same proof as S8: `(high << 4)` has its low 4 bits clear and `low`
+  # (from `hex_nibble`, < 16) has its high 4 bits clear, so no bit position
+  # is set in both operands and OR coincides with XOR for every input.
+  # (The `|` -> `&` twins are NOT excluded — the S9 `payload_exact_max` and
+  # hex-shape tests kill them via absolute decoded-byte expectations.)
+  # Parent-dir pinning disambiguates the five `parser.rs` basenames; line/col
+  # pinning keeps each pattern to its single `|` -> `^` mutant.
+  "src/parser\\.rs:366:32: replace \\| with \\^ in parse_hex",
+  "canonical_body/parser\\.rs:374:32: replace \\| with \\^ in parse_hex",
+  "owner_token/parser\\.rs:386:32: replace \\| with \\^ in parse_hex",
+  "residency_key/parser\\.rs:387:32: replace \\| with \\^ in parse_hex",
 ]
