@@ -266,7 +266,7 @@ function portsFor(d1: RetrievalQueryD1, scope: ScopeSnapshot, overrides: Partial
 function requestFor(scope: ScopeSnapshot, rawQuery = "needle"): RetrievalRequest {
   return {
     raw_query: rawQuery, product: "RESEARCH", scope_snapshot: scope,
-    policy: {} as never, literals: ["needle"], requested_limit: 10, deadline_ms: 1000,
+    literals: ["needle"], requested_limit: 10, deadline_ms: 1000,
   };
 }
 

@@ -112,15 +112,13 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
         results: createD1RetrievalResultStore(env.CORE_DB, access),
         checkBudget: () => createQueryBudgetGuard(deadlineMs, () => context.request.signal.aborted).checkBudget(),
       };
-      // The service carries no grant port: a query never mints source grants. The scope_access_grant
-      // above is read-policy-bound scope authorization (the orientation precedent), not a source grant.
+      // The service carries no grant port and no policy-evaluation input: a query never mints
+      // source grants and authority is enforced at the freeze/grant and per-lane currentness
+      // boundary instead. RetrievalRequest therefore carries only evaluated inputs.
       const retrievalRequest: RetrievalRequest = {
         raw_query: parsed.query,
         product: "ORIENT",
         scope_snapshot: snapshot,
-        // No PolicyEngine exists; lanes validate the frozen scope, never this field. Authority is
-        // enforced at the freeze/grant and per-lane currentness boundary instead.
-        policy: {} as never,
         literals: [],
         requested_limit: parsed.max_results,
         deadline_ms: deadlineMs,

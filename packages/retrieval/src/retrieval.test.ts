@@ -20,7 +20,6 @@ describe("retrieval planning", () => {
       raw_query: "needle", product: "EXHAUSTIVE_JOB", literals: ["needle"], requested_limit: 50,
       deadline_ms: 1000,
       scope_snapshot: {} as never,
-      policy: {} as never,
     });
     expect(plan.rerank).toBe(false);
     expect(plan.complete_scope_required).toBe(true);
@@ -108,7 +107,6 @@ function q3Request(overrides: Partial<RetrievalRequest> = {}): RetrievalRequest 
     raw_query: "needle",
     product: "RESEARCH",
     scope_snapshot: q3Scope({ digest: "0".repeat(64) }),
-    policy: {} as never,
     literals: ["needle"],
     requested_limit: 10,
     deadline_ms: 1000,
@@ -221,7 +219,7 @@ describe("Q3 query orchestration", () => {
     for (const product of ["FAST_SEARCH", "LOCATE", "ORIENT", "RESEARCH", "EXHAUSTIVE_JOB", "VERIFY_EXACT", "MATERIALIZE"] as const) {
       const plan = compileQueryPlan({
         raw_query: "needle", product, literals: ["needle"], requested_limit: 10,
-        deadline_ms: 1000, scope_snapshot: {} as never, policy: {} as never,
+        deadline_ms: 1000, scope_snapshot: {} as never,
       });
       expect(directLanesPrecedeSemantic(plan)).toBe(true);
     }
@@ -415,5 +413,25 @@ describe("Q3 query orchestration", () => {
       candidate_id: "c-a2",
       reason_code: "FUSION_CAP_DROPPED",
     });
+  });
+
+  it("carries only evaluated inputs and no unevaluated policy promise", async () => {
+    // Compile-time: re-adding a `policy` field to RetrievalRequest breaks this assignment.
+    type HasPolicyField = "policy" extends keyof RetrievalRequest ? true : false;
+    const holds: HasPolicyField = false;
+    expect(holds).toBe(false);
+    // Runtime: the request binds exactly the inputs the service evaluates (request digest
+    // covers raw_query/product/literals/requested_limit/scope_digest; authority is enforced
+    // at the freeze/grant and per-lane currentness boundary, never via a policy field).
+    expect(Object.keys(q3Request()).sort()).toEqual(
+      ["deadline_ms", "literals", "product", "raw_query", "requested_limit", "scope_snapshot"],
+    );
+    const harness = q3Harness({
+      candidates: { LEX: [q3Candidate({ candidate_id: "c-nopol", lane: "LEX" })] },
+    });
+    const result = await createRetrievalQueryService(harness.ports)
+      .query({ request: q3Request(), idempotency_key: "q3-key-nopol" });
+    expect(result.coverage_claim).toBe("SAMPLED");
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
   });
 });

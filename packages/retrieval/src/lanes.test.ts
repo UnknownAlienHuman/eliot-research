@@ -8,7 +8,6 @@ function request(): RetrievalRequest {
     raw_query: "needle",
     product: "ORIENT",
     scope_snapshot: {} as never,
-    policy: {} as never,
     literals: [],
     requested_limit: 8,
     deadline_ms: 5_000,

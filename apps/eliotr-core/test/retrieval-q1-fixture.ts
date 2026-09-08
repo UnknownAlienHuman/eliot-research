@@ -260,7 +260,6 @@ export function laneRequest(
     raw_query: rawQuery,
     product: "FAST_SEARCH",
     scope_snapshot: scope,
-    policy: {} as never,
     literals: [],
     requested_limit: requestedLimit,
     deadline_ms: 5_000,
