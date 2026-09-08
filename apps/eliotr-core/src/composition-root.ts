@@ -16,6 +16,7 @@ import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
+import { createRetrievalTraceReader } from "./research-trace.js";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import {
@@ -83,7 +84,12 @@ function semanticApi(env: Env): SemanticApi {
     run: (context, request) => researchRun.run(context, request),
     artifact: () => unavailable("research.artifact"),
     proposeWiki: () => unavailable("research.wiki.propose"),
-    trace: (context, ref) => orientation.trace(context, ref),
+    trace: (context, ref) => {
+      if (typeof ref.id === "string" && ref.id.startsWith("query-")) {
+        return createRetrievalTraceReader(env).readTrace(context, ref);
+      }
+      return orientation.trace(context, ref);
+    },
     changes: () => unavailable("research.changes"),
   };
 }
