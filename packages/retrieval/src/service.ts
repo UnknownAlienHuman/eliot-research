@@ -21,7 +21,7 @@ export interface RetrievalService {
   verify(handleRef: VersionedRef, expectedScopeRef: VersionedRef): Promise<ResolvedEvidence>;
 }
 
-// IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; Worker wiring, D1 result persistence and scope-profile versioning remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; D1 result/trace persistence executes via query-persistence.ts over migration 0021; Worker wiring and scope-profile versioning remain separate.
 import {
   RetrievalLaneSchema,
   RetrievalTraceSchema,
