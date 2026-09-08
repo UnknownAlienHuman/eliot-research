@@ -5,6 +5,7 @@ export * from "./projection.js";
 export * from "./structural-projector.js";
 export * from "./evidence-resolver.js";
 export * from "./exhaustive.js";
+export * from "./exhaustive-reconcile.js";
 export * from "./service.js";
 export * from "./query-persistence.js";
 export * from "./trace-read.js";
