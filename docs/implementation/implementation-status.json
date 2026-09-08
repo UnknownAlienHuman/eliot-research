@@ -470,7 +470,7 @@
       "completion_evidence": [
         "packages/cloudflare-evidence/src/content-store.test.ts: 14 controlled-R2 cases (5 line vectors incl. Cyrillic/emoji/CRLF/BOM, bounds, scan-cap typed limitation, 256 KiB boundary, changedGet/changedHead/truncatedGet fail-closed, invalid-metadata cancel, byte BOM/split-UTF-8, page/table/code typed rejection; #135 fixed: conditional range read sends unquoted head.etag and the fake rejects S3-quoted values the way the runtime does, so a regression turns the suite red)",
         "packages/retrieval/src/evidence-resolver.test.ts: 11 pure cases (probe offsets plus receipt reuse, mid-resolution byte-mutation refusal with no current-byte substitution, old revision while the head advances, Unicode line offsets, table map present/missing/corrupt, range/length/digest mismatch, forged handle, mid-read revocation, bounded regex valid/unbounded/invalid, tokenizer fallback present/missing)",
-        "Exact phrase/literal match verification over bounded pinned R2 ranges, native/table/cell coordinate-map resolution, reviewed tokenizer-fallback projection table and bounded normalized regex scans now execute as the pure retrieval Q2 verifier above the R2 content port with no second content path; sharded exhaustive plan/execute/merge NOT_EXECUTED; owned by ER-07 follow-up (packages/retrieval/src/exhaustive.ts remains interfaces)",
+        "Exact phrase/literal match verification over bounded pinned R2 ranges, native/table/cell coordinate-map resolution, reviewed tokenizer-fallback projection table and bounded normalized regex scans now execute as the pure retrieval Q2 verifier above the R2 content port with no second content path; sharded exhaustive plan/execute/merge now executes over frozen scopes with earned coverage (see implemented-exhaustive-scan); R2/D1 composition, Q7 loop and live qualification remain separate",
         "live Access, remote D1 Core/Search guard and remote R2 conditional-range receipts NOT_EXECUTED"
       ]
     },
@@ -573,6 +573,21 @@
         "apps/eliotr-core/test/research-query-sem.test.ts: 3 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline with a controlled AI Search namespace and a real D1 generation-registry ACTIVE head (SEM recorded in lanes_used with a semantically-found candidate resolved to 28 pinned R2 bytes at SAMPLED, mid-read rotation caught as SEARCH_INCOMPLETE with zero resolutions, unpromoted registry degrades to LANE_UNAVAILABLE without provider contact)",
         "apps/eliotr-core/src/research-session.ts: SEM composed alongside IDENT/LEX via createD1BackedAiSearchManagedSearchPort over SEARCH_DB with expected_namespace eliotr and explicit SEM fusion weight 1; RETRIEVAL slice stays disabled",
         "workerd test env carries no live AI Search binding and the Q1 projector reports the managed index DEGRADED, so the provider transport is controlled in tests; live Cloudflare AI Search readback, managed-generation promotion, remote D1 receipts and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-scan",
+      "path": "packages/retrieval/src/exhaustive.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 sharded exhaustive exact scan over frozen scopes with earned coverage; R2/D1 composition, Q7 loop and live qualification remain separate.",
+      "owner_packets": [
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pure sharded exact scan with no D1/R2/network/clock access and no source-grant minting: the planner partitions frozen-scope member sections into target/hard/section-bounded shards with a scope-derived coverage denominator and fails closed on out-of-scope, uncovered-member, oversized, duplicate, probe and empty inputs; the executor resolves every section through verifyPinnedExactEvidence with probe-absent as an honest miss, typed verification failures as settled fail-closed sections, and timeout/cancel/unknown reads as unsettled unknown outcomes; the merger earns COMPLETE only when every denominator shard settled, otherwise SAMPLED with at least one settled shard or NONE, keeping missing outcomes as unknown with their denominator seat",
+      "completion_evidence": [
+        "packages/retrieval/src/exhaustive.test.ts: 14 cases (frozen-scope sharding within bounds, hard-bound split, scope-derived denominator, out-of-scope/uncovered/oversized/duplicate/probe/empty negatives, real-D1 scope freeze over the committed migration stream, pinned-byte execution with miss, timeout-unknown, cancel-unknown, COMPLETE-only-on-full-settlement, unsettled/missing degradation, foreign/duplicate-outcome refusal)",
+        "packages/retrieval/src/exhaustive-negatives.test.ts: 8 cases (Unicode line offsets, table-cell map present/missing/corrupt, old-revision refusal, range-mismatch, forged-handle, mid-read revocation, mid-resolution byte-mutation refusal)",
+        "RETRIEVAL slice stays disabled and Worker research.query still caps persisted coverage at SAMPLED through the Q3 D1 result store, so persisting a COMPLETE claim is not wired; Q7 ordered loop, R2/D1 composition wiring and live qualification NOT_EXECUTED"
       ]
     }
   ]
