@@ -1,0 +1,139 @@
+# ER-40 S8 (#106): proven-equivalent mutants excluded from the mutation gate.
+#
+# Every entry below is a mutant that survives the full test suite *by
+# construction*: the mutated program is observationally identical to the
+# original on every reachable input. Each pattern carries its proof sketch;
+# the full case analysis lives in the S8 Track 3 report.
+#
+# Pattern discipline (per packet):
+# - every pattern matches the full cargo-mutants name
+#   (`path:line:col: description`, see `cargo mutants --list`), pinned to the
+#   exact file, line, column, operator and function — no `.*`, no bare
+#   function names, so a pattern can never swallow a neighboring mutant;
+# - line/col pinning is deliberately brittle in the fail-safe direction: if
+#   the source moves, the pattern stops matching and the mutant resurfaces in
+#   the gate instead of being silently skipped;
+# - validated without the cargo-mutants binary by matching each pattern
+#   (Rust `regex` semantics) against the `--list` inventory: every pattern
+#   matches >= 1 inventory line, and every matched line is in the S8 residue
+#   set (see the match-table in the S8 report).
+#
+# This file is read ONLY by cargo-mutants (config key `exclude_re`, combined
+# with CLI flags since 27.0). `cargo test`, `cargo clippy`, miri, fuzz and
+# the verify jobs never read it, so it cannot change any other gate.
+
+exclude_re = [
+  # --- tuple:227 surrogate arithmetic (4 of 6; the other 2 are killed by
+  # kill_s8_final.rs A). A = 0x10000, B = (H-0xD800)<<10 in [0, 0xFFC00],
+  # C = L-0xDC00 in [0, 0x3FF]; H in [0xD800, 0xDBFF], L in [0xDC00, 0xDFFF].
+
+  # (A+B)-C in [0xFC01, 0x10FC00]: always a valid non-surrogate scalar
+  # (>= 0xFC01, BMP part avoids D800-DFFF, astral part <= 0x10FFFF), always
+  # non-ASCII, so the public owner-token API reports the same code as the
+  # original for every surrogate input (Namespace in ID fields, Schema in
+  # fixed fields). The S8 ascii-landing test kills only the col-22 twin.
+  "owner_token_tuple\\.rs:227:60: replace \\+ with - in TupleParser<'a>::parse_unicode_escape",
+  # (H-0xD800)>>10 is 0 for every high surrogate (< 0x400), so the scalar is
+  # 0x10000+C in [0x10000, 0x103FF]: valid astral, same observable outcome.
+  "owner_token_tuple\\.rs:227:53: replace << with >> in TupleParser<'a>::parse_unicode_escape",
+  # H/0xD800 is 1 for every H in [0xD800, 0xDBFF] (H < 2*0xD800), so the
+  # scalar is deterministically 0x10400+C in [0x10400, 0x107FF]: valid
+  # astral, same observable outcome.
+  "owner_token_tuple\\.rs:227:43: replace - with / in TupleParser<'a>::parse_unicode_escape",
+  # L/0xDC00 is 1 for every L in [0xDC00, 0xDFFF], so the scalar is A+B+1 in
+  # [0x10001, 0x10FC01] (<= 0x10FFFF): valid non-ASCII, same outcome.
+  "owner_token_tuple\\.rs:227:81: replace - with / in TupleParser<'a>::parse_unicode_escape",
+
+  # --- Accumulator `+=` -> `*=` counters (12). Two proof shapes:
+  # (a) `iterations += 1` -> `iterations *= 1` freezes the counter at 0, so
+  # the steps guard never fires; the guard is unreachable in the original
+  # too, because every loop iteration consumes >= 1 input byte while the
+  # input ceiling is strictly below the steps ceiling:
+  # canonical 131072 < 131073, snapshot frame 2097152 < 2097153, owner
+  # preimage 2048 < 2049. Tighter input-size checks always fire first.
+  # (b) The first-digit `cursor += 1` (canonical:210, frame:209, tuple:105)
+  # is redundant: the digit loop that follows re-consumes from the same
+  # cursor, so the final cursor, slice and magnitude are identical; the
+  # off-by-one iteration-count difference would need a digit run of exactly
+  # STEPS length, which exceeds the input ceiling and is pre-rejected.
+  "canonical_json\\.rs:210:29: replace \\+= with \\*= in Parser<'a>::parse_integer",
+  "canonical_json\\.rs:217:32: replace \\+= with \\*= in Parser<'a>::parse_integer",
+  "canonical_json\\.rs:255:24: replace \\+= with \\*= in Parser<'a>::parse_string",
+  "canonical_json\\.rs:366:24: replace \\+= with \\*= in Parser<'a>::skip_whitespace",
+  "frame\\.rs:209:29: replace \\+= with \\*= in FrameParser<'_>::parse_integer",
+  "frame\\.rs:216:32: replace \\+= with \\*= in FrameParser<'_>::parse_integer",
+  "frame\\.rs:255:24: replace \\+= with \\*= in FrameParser<'_>::parse_string",
+  "frame\\.rs:361:24: replace \\+= with \\*= in FrameParser<'_>::skip_ws",
+  "owner_token_tuple\\.rs:105:29: replace \\+= with \\*= in TupleParser<'a>::parse_revision",
+  "owner_token_tuple\\.rs:112:32: replace \\+= with \\*= in TupleParser<'a>::parse_revision",
+  "owner_token_tuple\\.rs:148:24: replace \\+= with \\*= in TupleParser<'a>::parse_string",
+  "owner_token_tuple\\.rs:275:24: replace \\+= with \\*= in TupleParser<'a>::skip_whitespace",
+
+  # --- expression:43 depth-tracker comparisons (3). `metrics.depth` feeds
+  # only the end-of-walk `metrics.depth > 32` arm, which is unreachable:
+  # any visit deeper than 32 returns Expression at the walk guard (line 46)
+  # first. `>` -> `>=` differs only on equality, where the assignment is a
+  # no-op; `>` -> `==` / `<` leave the metric stuck at 0, and `0 > 32` is
+  # false exactly like the original's `max <= 32` at that point.
+  "expression\\.rs:43:14: replace > with == in walk_expression",
+  "expression\\.rs:43:14: replace > with < in walk_expression",
+  "expression\\.rs:43:14: replace > with >= in walk_expression",
+
+  # --- timestamp:54 `rest.len() < 5` (2 of 3; `<` -> `>` is killed).
+  # Line 37 admits only inputs of >= 17 bytes and `rest` is `bytes[11..]`,
+  # so `rest.len() >= 6` on every reachable path: `< 5`, `== 5` and `<= 5`
+  # are all constantly false.
+  "timestamp\\.rs:54:19: replace < with == in parse_timestamp",
+  "timestamp\\.rs:54:19: replace < with <= in parse_timestamp",
+
+  # --- timestamp:67 `zone.len() < 3` (2 of 3; `<` -> `>` is killed).
+  # Reached only when the zone starts with ':' (length >= 1). Lengths 1-2:
+  # the original returns None and the mutants proceed into
+  # `zone.get(1..3)?`, which is None and returns None too. Length 3 (":XY"):
+  # valid digits lead to an empty zone (not "Z", not an offset) and invalid
+  # digits return None — None either way. Length >= 4: all three agree.
+  "timestamp\\.rs:67:23: replace < with == in parse_timestamp",
+  "timestamp\\.rs:67:23: replace < with <= in parse_timestamp",
+
+  # --- timestamp:111: deleting the 31-day match arm. `month` is pre-checked
+  # to 1..=12, so the deleted months fall through to `_ => 31` with the
+  # identical day count. Verified: the full suite stays green with the arm
+  # removed. (The 30-day arm at line 112 is NOT excluded — April-31 kills it.)
+  "timestamp\\.rs:111:9: delete match arm 1 \\| 3 \\| 5 \\| 7 \\| 8 \\| 10 \\| 12 in days_in_month",
+
+  # --- UTF-8 width/continuation masking (3). Whole-input `from_utf8`
+  # pre-checks run before every parser (canonical_json, parse_frame,
+  # derive_owner_token_from_preimage), so only valid UTF-8 reaches the
+  # per-character loops.
+  # `utf8_width` -> Some(1): byte-wise consumption reassembles the identical
+  # byte string and the final `String::from_utf8` validates it — byte output
+  # and error behavior are unchanged. (The tuple parser is immune to this
+  # masking because it checks `is_valid_continuation` per slice, which is
+  # why tuple:306 was already caught while these two survive.)
+  "canonical_json\\.rs:412:5: replace utf8_width -> Option<usize> with Some\\(1\\)",
+  "frame\\.rs:395:5: replace utf8_width -> Option<usize> with Some\\(1\\)",
+  # `is_valid_continuation` -> true: the cursor always rests on a UTF-8
+  # boundary (escapes/ASCII advance within ASCII, multibyte advances by full
+  # width) and truncated tails are rejected by the slice guard first, so the
+  # checked slice is always one complete character: `from_utf8(...).is_ok()`
+  # is constantly true on reachable inputs.
+  "owner_token_tuple\\.rs:315:5: replace is_valid_continuation -> bool with true",
+
+  # --- hex `|` -> `^` nibble folds (3). `(value << 4)` has its low 4 bits
+  # clear and `nibble` (from `hex_nibble`) is < 16, so no bit position is
+  # set in both operands and OR coincides with XOR for every input.
+  # (The `|` -> `&` twins are NOT excluded — the S7 nibble tests kill them.)
+  "canonical_json\\.rs:352:34: replace \\| with \\^ in Parser<'a>::parse_hex_quad",
+  "owner_token_tuple\\.rs:251:34: replace \\| with \\^ in TupleParser<'a>::parse_hex_quad",
+  "frame\\.rs:348:34: replace \\| with \\^ in FrameParser<'_>::hex_quad",
+
+  # --- sha256 choice/majority `^` -> `|` (3). Choice: `(e&f)` and `((!e)&g)`
+  # are disjoint per bit (e vs !e), so XOR coincides with OR. Majority: the
+  # 8-row truth table over (ab, ac, bc) agrees for XOR vs OR — at most one
+  # term is set except for input 111, where 1^1^1 = 1 = 1|1|1 — so both
+  # `^` -> `|` folds are identities. Every other operator mutant on these
+  # lines changes digests and is killed by the FIPS/NIST vectors.
+  "sha256\\.rs:151:30: replace \\^ with \\| in compress",
+  "sha256\\.rs:158:32: replace \\^ with \\| in compress",
+  "sha256\\.rs:158:42: replace \\^ with \\| in compress",
+]
