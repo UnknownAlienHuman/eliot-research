@@ -498,13 +498,13 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createRetrievalQueryService instead of delegating to orientation metadata: frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+LEX lane executors over D1 Search with SEM and all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; the ORIENT request DTO is unchanged and orientation plus research.run internal orient calls are untouched",
+      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createRetrievalQueryService instead of delegating to orientation metadata: frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+LEX lane executors over D1 Search plus a SEM lane executor over the managed AI Search surface (SEM degrades honestly to SKIPPED_UNAVAILABLE without a namespace binding or a promoted D1 registry generation) with all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; the ORIENT request DTO is unchanged and orientation plus research.run internal orient calls are untouched",
       "completion_evidence": [
         "apps/eliotr-core/test/research-query-retrieval.test.ts: 6 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline inspecting persisted rows (no-hit NONE result+trace+profile+grant persistence, replay without duplication versus changed-input conflict, LEX-hit success with a 28-byte resolved excerpt plus COMPLETE/SAMPLED result+trace+profile+grant rows and duplicate-free replay, denied scope with zero writes and no grant, expired-scope replay with zero rows and no grant, cross-profile RESEARCH_CONFLICT, substituted-trace refusal via the real D1 binding trigger)",
         "apps/eliotr-core/test/research-session.test.ts: query section serves retrieval over HTTP (genuine no-hit NONE, replay equality with frozen row counts, changed-input 409, foreign 403, unchanged 400/422 negatives)",
         "infra/d1/core/migrations/0022_retrieval_scope_profile.sql: additive profile table with FK to scope_snapshot plus immutability triggers; no backfill, no rewrite, no readiness promotion",
         "#135 fixed by the disclosed ER-07 narrow fix (not worked around here): packages/cloudflare-evidence/src/content-store.ts:136 now issues the conditional range read with unquoted head.etag, and content-store.test.ts rejects S3-quoted values the way the runtime does; the first real LEX-hit success path above executes through it",
-        "No semantic lane executor exists on this generation (packages/retrieval/src/lanes.ts exports ident and lexical only); SEM stays SKIPPED_UNAVAILABLE with coverage capped at SAMPLED",
+        "SEM lane executor composed at the app layer (packages/retrieval/src/lanes.ts createSemLaneExecutor over the D1-backed managed port with expected_namespace eliotr, explicit SEM fusion weight, and honest SKIPPED_UNAVAILABLE without a binding or a promoted generation); coverage stays capped at SAMPLED with no exhaustive denominator",
         "Worker research.query still answers the ORIENT metadata DTO; RETRIEVAL slice stays disabled, research.trace still serves orientation traces, and live qualification NOT_EXECUTED"
       ]
     },
@@ -539,6 +539,22 @@
         "apps/eliotr-core/test/orientation-http.test.ts, orientation-resilience.test.ts, research-session.test.ts, research-query-retrieval.test.ts retained (33 pass)",
         "No new D1 migration; 0021 trace/result tables and 0022 profile reused read-only",
         "RETRIEVAL slice stays disabled; live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-sem-lane",
+      "path": "packages/retrieval/src/lanes.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 SEM lane executor over the managed-search surface with pinned-generation translation and honest degradation; live AI Search readback/promotion receipts remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "RetrievalLaneExecutor for SEM over the injected ManagedSearchPort in the same shape as IDENT/LEX: plan-derived context expansion, unpromoted managed generation degrades to SEARCH_UNAVAILABLE (SKIPPED_UNAVAILABLE, never a fabricated lane), mid-read registry rotation fails as SEARCH_INCOMPLETE (visible FAILED, never served stale), other managed errors propagate with their original codes; drops the local-only proof_state envelope marker at the lane boundary so exact evidence-authority strict parsing succeeds; generation pinning itself stays inside the registry-backed managed port (D1 before/after reads plus promoted-generation and frozen-scope decode); coverage never exceeds SAMPLED with no exhaustive denominator",
+      "completion_evidence": [
+        "packages/retrieval/src/lanes.test.ts: 5 pure cases (plan expansion with marker drop, wrong-lane refusal, NOT_PROMOTED mapped to SEARCH_UNAVAILABLE, REGISTRY_CHANGED mapped to SEARCH_INCOMPLETE, passthrough of other managed codes)",
+        "apps/eliotr-core/test/research-query-sem.test.ts: 3 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline with a controlled AI Search namespace and a real D1 generation-registry ACTIVE head (SEM recorded in lanes_used with a semantically-found candidate resolved to 28 pinned R2 bytes at SAMPLED, mid-read rotation caught as SEARCH_INCOMPLETE with zero resolutions, unpromoted registry degrades to LANE_UNAVAILABLE without provider contact)",
+        "apps/eliotr-core/src/research-session.ts: SEM composed alongside IDENT/LEX via createD1BackedAiSearchManagedSearchPort over SEARCH_DB with expected_namespace eliotr and explicit SEM fusion weight 1; RETRIEVAL slice stays disabled",
+        "workerd test env carries no live AI Search binding and the Q1 projector reports the managed index DEGRADED, so the provider transport is controlled in tests; live Cloudflare AI Search readback, managed-generation promotion, remote D1 receipts and live qualification NOT_EXECUTED"
       ]
     }
   ]

@@ -3,7 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createCloudflareEvidenceResolver, createD1EvidenceAuthorityPort, createR2EvidenceContentPort, EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import { createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
-import { createD1RetrievalResultStore, createD1RetrievalTracePort, createD1ScopePorts, createD1ScopeProfilePort, createIdentLaneExecutor, createLexLaneExecutor, createQueryBudgetGuard, createRetrievalQueryService as createRetrievalQueryEngine, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
+import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
+import { createD1RetrievalResultStore, createD1RetrievalTracePort, createD1ScopePorts, createD1ScopeProfilePort, createIdentLaneExecutor, createLexLaneExecutor, createSemLaneExecutor, createQueryBudgetGuard, createRetrievalQueryService as createRetrievalQueryEngine, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import type { RetrievalQueryPorts, RetrievalRequest } from "@eliotr/retrieval";
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES } from "@eliotr/cloudflare-research";
@@ -48,7 +49,7 @@ function mapRetrievalError(error: unknown): never {
 }
 const OMITTED_CANDIDATE_CODES: ReadonlySet<string> = new Set(["EVIDENCE_INPUT_INVALID", "EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_LOCATOR_NOT_RESOLVABLE", "EVIDENCE_PRECISION_UNSUPPORTED", "EVIDENCE_OBJECT_NOT_FOUND", "EVIDENCE_OBJECT_INTEGRITY", "EVIDENCE_RANGE_INVALID", "EVIDENCE_SOURCE_NOT_FOUND", "EVIDENCE_HANDLE_NOT_FOUND", "EVIDENCE_HANDLE_NOT_LIVE", "EVIDENCE_IDENTITY_CONFLICT"]);
 const STALE_AUTHORITY_CODES: ReadonlySet<string> = new Set(["EVIDENCE_SCOPE_NOT_FOUND", "EVIDENCE_SCOPE_INVALIDATED", "EVIDENCE_SCOPE_EXPIRED", "EVIDENCE_AUTHORIZATION_DENIED", "EVIDENCE_SOURCE_NOT_LIVE", "EVIDENCE_OWNER_GENERATION_MISMATCH"]);
-export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET">, options?: ResearchQueryOptions): { query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult> } {
+export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET"> & { readonly AI_SEARCH?: Env["AI_SEARCH"] }, options?: ResearchQueryOptions): { query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult> } {
   const profile = options?.scopeProfile ?? { version: RETRIEVAL_SCOPE_PROFILE_VERSION, max_sources: RETRIEVAL_SCOPE_MAX_SOURCES, max_results: RETRIEVAL_SCOPE_MAX_RESULTS };
   if (profile.max_sources > RETRIEVAL_SCOPE_MAX_SOURCES || profile.max_results > RETRIEVAL_SCOPE_MAX_RESULTS) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.query scope profile exceeds the metadata-Lens bound", 422);
   return {
@@ -98,14 +99,14 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
       }
       const ident = createIdentLaneExecutor(createD1SearchIdentPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
       const lex = createLexLaneExecutor(createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
-      const lanes = { executorFor(lane: RetrievalLane) { if (lane === "IDENT") return ident; if (lane === "LEX") return lex; return null; } };
-      // No semantic lane executor exists on this generation: SEM degrades to SKIPPED_UNAVAILABLE
-      // with an honest coverage cap, never a fabricated lane. EXACT is enforced at resolution.
+      const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(env.SEARCH_DB, env.AI_SEARCH, { expected_namespace: AI_SEARCH_PRIMARY_NAMESPACE, max_preview_bytes: 4096, match_threshold: 0 }));
+      const lanes = { executorFor(lane: RetrievalLane) { if (lane === "IDENT") return ident; if (lane === "LEX") return lex; if (lane === "SEM") return sem; return null; } };
+      // Without a namespace binding or promoted generation, SEM degrades to SKIPPED_UNAVAILABLE.
       const deadlineMs = Date.now() + RETRIEVAL_QUERY_BUDGET_MS;
       const ports: RetrievalQueryPorts = {
         ...scopePorts,
         lanes,
-        fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, LEX: 1 }, maxPerSourceRevision: 8 },
+        fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
         resolveEvidence,
         persistTrace: (trace) => createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace),
         results: createD1RetrievalResultStore(env.CORE_DB, access),
