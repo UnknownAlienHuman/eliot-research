@@ -458,6 +458,22 @@
       ]
     },
     {
+      "id": "implemented-q3-orchestration",
+      "path": "packages/retrieval/src/service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; Worker wiring, D1 result persistence and scope-profile versioning remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pure Q3 retrieval query orchestration behind injected ports with no D1/R2/network access and no source-grant minting: freezes an explicitly authorized scope before any lane read with currentness rechecks before every lane, resolution and persistence; fails closed when semantic precedes direct/exact/lexical lanes; fuses ranks with canonical-section dedup plus source-family diversity and visible fusion/limit/resolution omissions; resolves exact evidence per fused candidate; persists the trace only on exact binding match with idempotent same-retry versus changed-input handling; coverage never exceeds SAMPLED and no-hit never becomes an absence claim",
+      "completion_evidence": [
+        "packages/retrieval/src/retrieval.test.ts: 13 cases (direct-before-semantic invariant across all 7 products, scope-freeze-before-lanes ordering, SEM failure degradation with exact results kept, AI-search no-hit stays NONE with no absence claim, same-retry replay without lane re-execution versus changed-input conflict, budget-stop abort with no persisted result, mid-run scope-stale fail-closed with zero resolutions, substituted-trace refusal with no stored result, UNION then EXCEPT scope binding without cross-contamination, per-candidate omission with resolved evidence kept, source-family diversity cap with visible omission)",
+        "packages/retrieval/src/service.ts: createRetrievalQueryService plus RetrievalQueryError typed codes and port-injected scope/lane/fusion/resolve/persist/result-store/budget boundaries",
+        "packages/retrieval/src/fusion.ts: optional maxPerFamily/familyOf diversity cap, backward compatible when absent",
+        "Worker research.query still delegates to orientation metadata; D1 query-result/trace persistence tables, ER-24 composition wiring, scope-profile versioning and sharded exhaustive execution NOT_EXECUTED"
+      ]
+    },
+    {
       "id": "implemented-testkit-golden",
       "path": "packages/testkit/src/golden.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-23 deterministic Golden Corpus loader/adjudication with collapsing-extractor negative and RU/EN/code/table cases; live model/provider qualification NOT_EXECUTED.",

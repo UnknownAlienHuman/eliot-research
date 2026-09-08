@@ -10,6 +10,25 @@ export interface FusionOptions {
   readonly reciprocal_rank_constant: number;
   readonly lane_weights: Readonly<Partial<Record<LocatorCandidate["lane"], number>>>;
   readonly maxPerSourceRevision: number;
+  /**
+   * Q3 source-family diversity cap. Applied after the per-source cap in
+   * fused-score order; candidates beyond the cap are dropped (the caller
+   * reports them as visible omissions). Absent means no family cap and the
+   * pre-Q3 behavior is unchanged.
+   */
+  readonly maxPerFamily?: number;
+  /**
+   * Family identity for diversity. Defaults to the free-form
+   * `metadata.source_family` string when present, otherwise the source
+   * revision ref (which degrades to the per-source cap, never to a
+   * cross-family merge). No contract change: metadata stays free-form.
+   */
+  readonly familyOf?: (candidate: LocatorCandidate) => string;
+}
+
+function defaultFamilyOf(candidate: LocatorCandidate): string {
+  const raw = candidate.metadata["source_family"];
+  return typeof raw === "string" && raw.length > 0 ? raw : candidate.source_revision_ref;
 }
 
 export function reciprocalRankFuse(
@@ -28,12 +47,23 @@ export function reciprocalRankFuse(
     }
   }
   const perSource = new Map<string, number>();
+  const perFamily = new Map<string, number>();
+  const familyOf = options.familyOf ?? defaultFamilyOf;
   return [...aggregate.values()]
     .sort((left, right) => right.score - left.score || left.candidate.candidate_id.localeCompare(right.candidate.candidate_id))
     .filter((entry) => {
       const count = perSource.get(entry.candidate.source_revision_ref) ?? 0;
       if (count >= options.maxPerSourceRevision) return false;
       perSource.set(entry.candidate.source_revision_ref, count + 1);
+      if (options.maxPerFamily !== undefined) {
+        const family = familyOf(entry.candidate);
+        const familyCount = perFamily.get(family) ?? 0;
+        if (familyCount >= options.maxPerFamily) {
+          perSource.set(entry.candidate.source_revision_ref, count);
+          return false;
+        }
+        perFamily.set(family, familyCount + 1);
+      }
       return true;
     })
     .map((entry) => ({
