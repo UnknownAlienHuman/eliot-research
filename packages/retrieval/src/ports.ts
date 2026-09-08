@@ -9,13 +9,11 @@ import type {
   ScopeSnapshot,
   VersionedRef,
 } from "@eliotr/contracts";
-import type { PolicyEvaluationResult } from "@eliotr/policy";
 
 export interface RetrievalRequest {
   readonly raw_query: string;
   readonly product: QueryProduct;
   readonly scope_snapshot: ScopeSnapshot;
-  readonly policy: PolicyEvaluationResult;
   readonly literals: readonly string[];
   readonly requested_limit: number;
   readonly deadline_ms: number;
