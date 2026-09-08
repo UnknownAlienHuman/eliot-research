@@ -188,7 +188,10 @@ function checkMaterial(members) {
     return value;
   };
   const revision = require("revision");
-  if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1) {
+  if (typeof revision !== "number" || !Number.isSafeInteger(revision)) {
+    raise(CODES.shape);
+  }
+  if (revision < 1) {
     raise(CODES.revision);
   }
   checkExpression(require("resolved_scope_expression"));
@@ -208,7 +211,10 @@ function checkMaterial(members) {
   if (typeof disclosure !== "string") raise(CODES.shape);
   checkDigest(disclosure);
   const purge = require("purge_ledger_revision");
-  if (typeof purge !== "number" || !Number.isSafeInteger(purge) || purge < 0) {
+  if (typeof purge !== "number" || !Number.isSafeInteger(purge)) {
+    raise(CODES.shape);
+  }
+  if (purge < 0) {
     raise(CODES.revision);
   }
   const fence = lookup(members, "client_fence_ref");
