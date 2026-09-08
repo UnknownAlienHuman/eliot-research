@@ -1,6 +1,6 @@
 {
   "protocol": "eliotr.golden-corpus.v1",
-  "generation": "golden-bootstrap-2026-08-28",
+  "generation": "golden-er23-2026-09-08",
   "sources": [
     {
       "source_revision_ref": "golden-project-decisions-r1",
@@ -31,6 +31,30 @@
       "path": "sources/security-and-erasure.md",
       "sha256": "f0cfe441b051d6a4c66585c8a414aae9ec7a6f5f8a497869e10c4517da2e213a",
       "source_kind": "security_fixture"
+    },
+    {
+      "source_revision_ref": "golden-ru-decisions-r1",
+      "path": "sources/ru-decisions.md",
+      "sha256": "2c4a4c58816f3a780f5a959c0d940b779c4d23b8c3963fefc708a5c82323fbbd",
+      "source_kind": "project_document"
+    },
+    {
+      "source_revision_ref": "golden-code-sample-r1",
+      "path": "sources/code-sample.ts",
+      "sha256": "91f4d776fe395b89c38cd1a026735417c34cf06f1aed2d43acd36463b45e5005",
+      "source_kind": "code"
+    },
+    {
+      "source_revision_ref": "golden-table-conditions-r1",
+      "path": "sources/table-conditions.md",
+      "sha256": "948dd5e9e0fb733051a9eadf23654286f34f9f8c733ec0e44bfff136569cb6f6",
+      "source_kind": "structured_table"
+    },
+    {
+      "source_revision_ref": "golden-en-dissent-r1",
+      "path": "sources/en-dissent.md",
+      "sha256": "f4c770e046929cd072fb762f5c0e8a034cb7193fd312d0864e9ba58b4bd5ee13",
+      "source_kind": "operational_evidence"
     }
   ],
   "case_files": [
@@ -41,9 +65,14 @@
     "cases/GC-005-scope-explains-apparent-contradiction.json",
     "cases/GC-006-complete-scope-absence.json",
     "cases/GC-007-source-prompt-injection.json",
-    "cases/GC-008-redacted-handle.json"
+    "cases/GC-008-redacted-handle.json",
+    "cases/GC-009-ru-recommendation-vs-decision.json",
+    "cases/GC-010-code-literal-exact.json",
+    "cases/GC-011-table-number-with-conditions.json",
+    "cases/GC-012-en-dissent-negative.json"
   ],
   "notes": [
-    "Bootstrap corpus exercises hard semantic/security gates. ER-23 expands it with admitted real project revisions before generation promotion."
+    "Bootstrap corpus exercises hard semantic/security gates. ER-23 expands it with adjudicated RU/EN/code/table cases GC-009..GC-012; SHA-256 pins are LF-normalized UTF-8 bytes for cross-platform determinism.",
+    "Promotion thresholds: zero forbidden collapses, full required-atom and handle recall, complete_scope coverage where named; collapsing-extractor negatives must block promotion; live model/provider qualification NOT_EXECUTED."
   ]
 }

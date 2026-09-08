@@ -21,3 +21,9 @@ export class ScriptedFailureInjector implements FailureInjector {
     if (failure !== undefined) throw failure;
   }
 }
+
+export class NoopFailureInjector implements FailureInjector {
+  public async hit(_point: FailurePoint): Promise<void> {
+    return undefined;
+  }
+}

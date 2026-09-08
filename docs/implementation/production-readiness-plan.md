@@ -412,6 +412,8 @@ Failures remain explicit and do not silently reduce the test profile.
 
 **Owners:** ER-23, ER-31, ER-32.
 
+**ER-23 2026-09-08 update:** deterministic expansion landed as `golden-er23-2026-09-08` with adjudicated GC-009 RU recommendation-vs-decision, GC-010 code literal-exact, GC-011 table number-with-conditions, and GC-012 EN dissent-negative; LF SHA-256 pins, promotion thresholds (zero forbidden collapses, full atom/handle recall, complete_scope where named), collapsing-extractor must-fail harness, and malformed/empty/oversized negatives. Long documents, conversation exports, mixed-quality sources, per-product threshold tuning, measured false-positive/negative and locator/citation accuracy, and retained rollback generations remain open for ER-31/ER-32; live model/provider qualification NOT_EXECUTED.
+
 - [ ] Add representative Russian and English documents.
 - [ ] Add repositories/code, tables, long documents, conversation exports and mixed-quality sources.
 - [ ] Adjudicate exact, phrase, literal, semantic, structure, multi-project and exhaustive cases.
