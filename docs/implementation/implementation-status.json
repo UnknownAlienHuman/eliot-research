@@ -442,6 +442,21 @@
       ]
     },
     {
+      "id": "implemented-011",
+      "path": "packages/cloudflare-evidence/src/content-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 pinned normalized byte/line excerpt materialization; exact phrase/literal verification, coordinate-map table/cell resolution, tokenizer-fallback table, bounded regex scans and sharded exhaustive execution remain separate.",
+      "owner_packets": [
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pinned normalized byte-range and line-range anchors materialize from R2 under key/version/ETag/size/admitted-metadata/checksum pinning with a final HEAD recheck; bounded streaming LF seek (4 MiB / 262144 chunks) preserves CRLF/UTF-8/BOM without whole-source buffering under the 256 KiB excerpt limit; rejected and early-stopped streams are cancelled; page/table/code precision without a verified coordinate map fails closed with EVIDENCE_PRECISION_UNSUPPORTED",
+      "completion_evidence": [
+        "packages/cloudflare-evidence/src/content-store.test.ts: 14 controlled-R2 cases (5 line vectors incl. Cyrillic/emoji/CRLF/BOM, bounds, scan-cap typed limitation, 256 KiB boundary, changedGet/changedHead/truncatedGet fail-closed, invalid-metadata cancel, byte BOM/split-UTF-8, page/table/code typed rejection)",
+        "Exact phrase/literal match verification over bounded pinned R2 ranges, native/table/cell coordinate-map resolution, reviewed tokenizer-fallback projection table, bounded normalized regex scans and sharded exhaustive plan/execute/merge NOT_EXECUTED; owned by ER-07 follow-up (packages/retrieval/src/evidence-resolver.ts, packages/retrieval/src/exhaustive.ts remain interfaces)",
+        "live Access, remote D1 Core/Search guard and remote R2 conditional-range receipts NOT_EXECUTED"
+      ]
+    },
+    {
       "id": "implemented-testkit-golden",
       "path": "packages/testkit/src/golden.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-23 deterministic Golden Corpus loader/adjudication with collapsing-extractor negative and RU/EN/code/table cases; live model/provider qualification NOT_EXECUTED.",

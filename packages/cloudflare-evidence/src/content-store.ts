@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: ER-07 pinned normalized byte/line excerpt materialization; exact phrase/literal verification, coordinate-map table/cell resolution, tokenizer-fallback table, bounded regex scans and sharded exhaustive execution remain separate.
 import {
   bufferBounded,
   canonicalNormalizedBundleKey,
