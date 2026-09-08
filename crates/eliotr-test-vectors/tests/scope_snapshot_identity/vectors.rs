@@ -25,7 +25,7 @@ fn corpus_shape_is_committed() {
     let Ok(set) = parsed else {
         return;
     };
-    assert_eq!(set.cases().len(), 80);
+    assert_eq!(set.cases().len(), 91);
 }
 
 #[test]
