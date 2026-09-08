@@ -1,0 +1,266 @@
+import { env } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
+import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
+import {
+  createResearchQueryService,
+  RETRIEVAL_SCOPE_PROFILE_VERSION,
+} from "../src/research-session.js";
+import {
+  importAndProject,
+  prepareQ1Namespace,
+  type Q1Namespace,
+  type Q1Runtime,
+} from "./retrieval-q1-fixture.js";
+
+/**
+ * Q3 item 2: research.query serves retrieval over injected RetrievalQueryPorts.
+ *
+ * Real local D1 Core/Search plus real R2 Evidence/Work through the production
+ * Q1 pipeline (HTTP import -> outbox dispatcher -> Queue consumer -> projector
+ * -> D1 Search activation). Assertions inspect persisted rows, never mock
+ * call counts. The semantic lane has no executor on this generation, so SEM
+ * must degrade to SKIPPED_UNAVAILABLE with coverage capped at SAMPLED.
+ *
+ * Named remainder (ER-07 boundary, not worked around here): per-candidate R2
+ * byte resolution fails closed under the local runtime because
+ * packages/cloudflare-evidence/src/content-store.ts:136 issues the
+ * conditional range read with `etagMatches: head.httpEtag` (S3-quoted), which
+ * the runtime rejects with "Conditional ETag should not be wrapped in
+ * quotes" (proven in isolation: unquoted head.etag succeeds, quoted
+ * head.httpEtag throws). The no-hit tests below therefore prove the full
+ * freeze -> grant -> profile -> lanes -> fusion -> trace/result persistence
+ * path, while the hit test proves resolution fails closed with
+ * RESEARCH_SETTLEMENT_UNCERTAIN and persists nothing instead of serving
+ * unresolved locators as evidence.
+ */
+
+const runtime = env as unknown as Q1Runtime;
+const db = runtime.CORE_DB;
+const searchDb = runtime.SEARCH_DB;
+
+const CREDENTIAL = "credential-1";
+
+async function worldWithPolicy(owner: string): Promise<Q1Namespace> {
+  const world: Q1Namespace = {
+    db,
+    searchDb,
+    runtime,
+    owner,
+    ...(await prepareQ1Namespace(runtime, db, searchDb, owner)),
+  };
+  await importAndProject(world);
+  const decision = await db
+    .prepare(
+      "SELECT allowed_use_json, disclosure_ceiling FROM source_admission_decision WHERE source_revision_ref = ?1 LIMIT 1",
+    )
+    .bind(world.revision)
+    .first<{ readonly allowed_use_json: string; readonly disclosure_ceiling: string }>();
+  if (decision === null) throw new Error("Missing admission decision for projected revision");
+  const expiry = new Date(Date.now() + 86_400_000).toISOString();
+  await db
+    .prepare(
+      "INSERT INTO scope_read_policy (source_namespace_id, principal_ref, client_class, policy_ref, generation, allowed_use_json, disclosure_ceiling, state, expires_at, created_at) VALUES (?1,?2,'owner_pwa',?3,1,?4,?5,'ACTIVE',?6,?7)",
+    )
+    .bind(world.namespace, owner, `read-${world.namespace}`, decision.allowed_use_json, decision.disclosure_ceiling, expiry, new Date().toISOString())
+    .run();
+  return world;
+}
+
+function contextFor(owner: string, key: string): AuthenticatedRequestContext {
+  const request = new Request("https://research.example/api/v1/research/query", {
+    method: "POST",
+    headers: { "content-type": "application/json", "idempotency-key": key },
+  });
+  return { request, principal_ref: owner, client_class: "owner_pwa", credential_generation: CREDENTIAL, trace_id: `trace-${key}` };
+}
+
+function queryFor(world: Q1Namespace, query: string): QueryRequest {
+  return {
+    query,
+    product: "ORIENT",
+    scope_expression: { kind: "SELECTED_SOURCES", source_ids: [`source-${world.namespace}`] },
+    literals: [],
+    evidence_grade: "E0",
+    budget_ref: ORIENTATION_PROFILE,
+    max_results: 8,
+  };
+}
+
+async function tableCount(table: string): Promise<number> {
+  return (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ readonly n: number }>())?.n ?? -1;
+}
+
+describe("research.query retrieval over real D1/R2", () => {
+  it("persists a no-hit NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
+    const owner = "rq-retrieval-owner";
+    const world = await worldWithPolicy(owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const before = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    // "absent" matches no projected section: lanes execute genuinely empty (never an absence claim).
+    const first = await service.query(contextFor(owner, "rq-first"), queryFor(world, "absent"));
+    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    expect(first.evidence_pack.scope_snapshot_ref.revision).toBe(1);
+    expect(first.trace_ref.id.startsWith("query-")).toBe(true);
+    expect(first).not.toHaveProperty("navigation");
+    const traceRow = await db
+      .prepare("SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2")
+      .bind(first.trace_ref.id, first.trace_ref.revision)
+      .first<{ readonly trace_json: string }>();
+    expect(traceRow).not.toBeNull();
+    const trace = JSON.parse(traceRow?.trace_json ?? "{}") as {
+      readonly query_product: string;
+      readonly lanes_used: readonly string[];
+      readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
+    };
+    expect(trace.query_product).toBe("ORIENT");
+    expect(trace.lanes_used).toContain("LEX");
+    // No semantic lane executor exists on this generation: SEM degrades honestly.
+    expect(trace.lanes_skipped.map((entry) => entry.lane)).toContain("SEM");
+    expect(trace.lanes_skipped.find((entry) => entry.lane === "SEM")?.reason).toBe("LANE_UNAVAILABLE");
+    const resultRow = await db
+      .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
+      .bind(owner, "rq-first")
+      .first<{ readonly state: string; readonly coverage_claim: string }>();
+    expect(resultRow).toMatchObject({ state: "COMPLETE", coverage_claim: "NONE" });
+    const profileRow = await db
+      .prepare("SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2")
+      .bind(first.evidence_pack.scope_snapshot_ref.id, first.evidence_pack.scope_snapshot_ref.revision)
+      .first<{ readonly profile_version: string; readonly max_sources: number; readonly max_results: number }>();
+    expect(profileRow).toMatchObject({ profile_version: RETRIEVAL_SCOPE_PROFILE_VERSION, max_sources: 64, max_results: 16 });
+    const after = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    expect(after.result).toBe(before.result + 1);
+    expect(after.trace).toBe(before.trace + 1);
+    expect(after.profile).toBe(before.profile + 1);
+    expect(after.grant).toBe(before.grant + 1);
+    // Same idempotency key replays byte-identical bytes without duplicate rows.
+    const replayed = await service.query(contextFor(owner, "rq-first"), queryFor(world, "absent"));
+    expect(replayed).toEqual(first);
+    expect(await tableCount("retrieval_query_result")).toBe(after.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(after.trace);
+    // Changed input under the same key conflicts instead of mutating.
+    await expect(service.query(contextFor(owner, "rq-first"), queryFor(world, "different"))).rejects.toMatchObject({ code: "RESEARCH_CONFLICT" });
+    expect(await tableCount("retrieval_query_result")).toBe(after.result);
+  });
+
+  it("fails closed without persisting when R2 byte resolution is unavailable", async () => {
+    const owner = "rq-resolution-owner";
+    const world = await worldWithPolicy(owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const before = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+    };
+    // "Pinned" matches a projected section, so a lane candidate reaches exact R2 resolution,
+    // which the local runtime refuses (quoted-httpEtag conditional read, see file header).
+    await expect(service.query(contextFor(owner, "rq-hit"), queryFor(world, "Pinned"))).rejects.toMatchObject({ code: "RESEARCH_SETTLEMENT_UNCERTAIN" });
+    expect(await tableCount("retrieval_query_result")).toBe(before.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(before.trace);
+  });
+
+  it("persists nothing and mints no grant for a denied scope", async () => {
+    const owner = "rq-denied-owner";
+    await prepareQ1Namespace(runtime, db, searchDb, owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const before = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      snapshot: await tableCount("scope_snapshot"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    await expect(
+      service.query(contextFor(owner, "rq-denied"), {
+        query: "Pinned",
+        product: "ORIENT",
+        scope_expression: { kind: "GLOBAL_LIBRARY" },
+        literals: [],
+        evidence_grade: "E0",
+        budget_ref: ORIENTATION_PROFILE,
+        max_results: 8,
+      }),
+    ).rejects.toMatchObject({ code: "ORIENTATION_READ_POLICY_REQUIRED" });
+    expect(await tableCount("retrieval_query_result")).toBe(before.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(before.trace);
+    expect(await tableCount("retrieval_scope_profile")).toBe(before.profile);
+    expect(await tableCount("scope_snapshot")).toBe(before.snapshot);
+    expect(await tableCount("scope_access_grant")).toBe(before.grant);
+  });
+
+  it("persists no retrieval rows and mints no grant once the frozen scope expires", async () => {
+    const owner = "rq-expiry-owner";
+    const world = await worldWithPolicy(owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const first = await service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "absent"));
+    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    const snapshotId = first.evidence_pack.scope_snapshot_ref.id;
+    await db.prepare("UPDATE scope_snapshot SET expires_at = ?1 WHERE snapshot_id = ?2").bind("2020-01-01T00:00:00.000Z", snapshotId).run();
+    const before = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    // Same idempotency key after expiry: the replay rechecks the stored frozen scope live and
+    // fails closed instead of silently re-freezing fresh or serving stale-bounded bytes.
+    await expect(service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "absent"))).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+    expect(await tableCount("retrieval_query_result")).toBe(before.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(before.trace);
+    expect(await tableCount("scope_access_grant")).toBe(before.grant);
+  });
+
+  it("does not replay a scope frozen under one profile version under another", async () => {
+    const owner = "rq-profile-owner";
+    const world = await worldWithPolicy(owner);
+    const v1 = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const first = await v1.query(contextFor(owner, "rq-profile-first"), queryFor(world, "absent"));
+    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    const resultsBefore = await tableCount("retrieval_query_result");
+    const v2 = createResearchQueryService(
+      { CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET },
+      { scopeProfile: { version: "retrieval-scope-v2", max_sources: 64, max_results: 16 } },
+    );
+    // Same idempotency key under a new code profile: the replay observes the recorded v1
+    // binding on the stored frozen scope and conflicts instead of serving v1-bounded bytes as v2.
+    await expect(v2.query(contextFor(owner, "rq-profile-first"), queryFor(world, "absent"))).rejects.toMatchObject({ code: "RESEARCH_CONFLICT" });
+    expect(await tableCount("retrieval_query_result")).toBe(resultsBefore);
+  });
+
+  it("stores nothing on a substituted trace cursor through the real D1 binding trigger", async () => {
+    const owner = "rq-trace-owner";
+    const world = await worldWithPolicy(owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const first = await service.query(contextFor(owner, "rq-trace-first"), queryFor(world, "absent"));
+    expect(first.evidence_pack.resolved_evidence).toEqual([]);
+    const snapshot = await db
+      .prepare("SELECT snapshot_digest FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2")
+      .bind(first.evidence_pack.scope_snapshot_ref.id, first.evidence_pack.scope_snapshot_ref.revision)
+      .first<{ readonly snapshot_digest: string }>();
+    if (snapshot === null) throw new Error("Missing frozen scope snapshot");
+    const before = await tableCount("retrieval_query_trace");
+    const substituted = JSON.stringify({
+      trace_ref: { id: "query-substituted", revision: 1 },
+      scope_snapshot: {
+        snapshot_id: first.evidence_pack.scope_snapshot_ref.id,
+        revision: first.evidence_pack.scope_snapshot_ref.revision,
+        digest: snapshot.snapshot_digest,
+      },
+    });
+    await expect(
+      db
+        .prepare("INSERT INTO retrieval_query_trace (trace_id, revision, scope_snapshot_id, scope_snapshot_revision, trace_json, trace_digest, created_at) VALUES (?1,1,?2,?3,?4,?5,?6)")
+        .bind("query-row-id", first.evidence_pack.scope_snapshot_ref.id, first.evidence_pack.scope_snapshot_ref.revision, substituted, "c".repeat(64), new Date().toISOString())
+        .run(),
+    ).rejects.toThrow(/RETRIEVAL_TRACE_CORRUPT/);
+    expect(await tableCount("retrieval_query_trace")).toBe(before);
+  });
+});

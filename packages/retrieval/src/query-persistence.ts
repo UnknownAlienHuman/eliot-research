@@ -378,3 +378,96 @@ export function createQueryBudgetGuard(
     },
   };
 }
+
+export interface ScopeProfileBinding {
+  readonly version: string;
+  readonly max_sources: number;
+  readonly max_results: number;
+}
+
+interface ScopeProfileRow {
+  readonly profile_version: unknown;
+  readonly max_sources: unknown;
+  readonly max_results: unknown;
+}
+
+async function readScopeProfileBinding(
+  database: RetrievalQueryD1,
+  snapshotId: string,
+  revision: number,
+): Promise<ScopeProfileRow | null> {
+  try {
+    return await database.prepare(
+      "SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile " +
+      "WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
+    ).bind(snapshotId, revision).first<ScopeProfileRow>();
+  } catch {
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is unavailable", true);
+  }
+}
+
+function requireBindingMatch(row: ScopeProfileRow | null, binding: ScopeProfileBinding): void {
+  if (row === null) {
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is unavailable", true);
+  }
+  if (
+    row.profile_version !== binding.version || row.max_sources !== binding.max_sources ||
+    row.max_results !== binding.max_results
+  ) {
+    failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "scope frozen under another profile version does not replay here");
+  }
+}
+
+export function createD1ScopeProfilePort(
+  database: RetrievalQueryD1,
+  now: () => string = () => new Date().toISOString(),
+): {
+  recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
+  requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
+} {
+  return {
+    async recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
+      const parsed = ScopeSnapshotSchema.safeParse(snapshot);
+      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
+      try {
+        await database.prepare(
+          "INSERT INTO retrieval_scope_profile (snapshot_id, revision, profile_version, " +
+          "max_sources, max_results, created_at) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
+        ).bind(
+          parsed.data.snapshot_id, parsed.data.revision,
+          binding.version, binding.max_sources, binding.max_results, now(),
+        ).run();
+      } catch (error) {
+        mapStoreError(error);
+      }
+      requireBindingMatch(
+        await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
+        binding,
+      );
+    },
+    async requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
+      const parsed = ScopeSnapshotSchema.safeParse(snapshot);
+      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
+      requireBindingMatch(
+        await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
+        binding,
+      );
+    },
+  };
+}
+
+export async function retrievalRequestDigest(input: {
+  readonly raw_query: string;
+  readonly product: string;
+  readonly literals: readonly string[];
+  readonly requested_limit: number;
+  readonly scope_digest: string;
+}): Promise<string> {
+  return sha256Hex(canonicalRetrievalJson({
+    raw_query: input.raw_query,
+    product: input.product,
+    literals: [...input.literals],
+    requested_limit: input.requested_limit,
+    scope_digest: input.scope_digest,
+  }));
+}

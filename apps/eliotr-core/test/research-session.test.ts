@@ -36,17 +36,18 @@ function sessionStartBody(tag: string, who = principal) {
 }
 
 describe("research.query over real HTTP/D1", () => {
-  it("executes the ORIENT profile, replays the same key without duplication and rejects stale/foreign", async () => {
+  it("serves retrieval (genuine no-hit NONE on unprojected seed), replays the same key without duplication and rejects stale/foreign", async () => {
     await seedSource("rs-query");
     const first = await run(queryRequest("rs-query"));
     expect(first.status).toBe(200);
     const firstBody = await body(first);
-    expect(firstBody.data).toHaveProperty("navigation");
+    expect(firstBody.data).not.toHaveProperty("navigation");
+    expect(firstBody.data.evidence_pack.resolved_evidence).toEqual([]);
     expect(firstBody.data).toHaveProperty("trace_ref.id");
-    const counts = [await count("scope_snapshot"), await count("navigation_artifact")];
+    const counts = [await count("retrieval_query_result"), await count("retrieval_query_trace"), await count("retrieval_scope_profile"), await count("scope_snapshot"), await count("scope_access_grant")];
     const replayed = await body(await run(queryRequest("rs-query")));
     expect(replayed.data).toEqual(firstBody.data);
-    expect([await count("scope_snapshot"), await count("navigation_artifact")]).toEqual(counts);
+    expect([await count("retrieval_query_result"), await count("retrieval_query_trace"), await count("retrieval_scope_profile"), await count("scope_snapshot"), await count("scope_access_grant")]).toEqual(counts);
     expect((await run(queryRequest("rs-query", { query: "different" }))).status).toBe(409);
     expect((await run(queryRequest("rs-query"), verifier("stranger"))).status).toBe(403);
   });
