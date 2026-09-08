@@ -133,7 +133,7 @@ async function openRange(
 ): Promise<R2ObjectBody> {
   const length = range.end - range.start;
   const opened = await bucket.get(key, {
-    onlyIf: { etagMatches: head.httpEtag },
+    onlyIf: { etagMatches: head.etag },
     range: { offset: range.start, length },
   });
   if (opened === null || !("body" in opened) || opened.body === undefined) {
