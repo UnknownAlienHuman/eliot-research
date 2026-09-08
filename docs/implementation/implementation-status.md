@@ -27,9 +27,12 @@ same change.
 ### `SCAFFOLD_FAIL_CLOSED`
 
 ```text
-ResearchWorkflow: returns IMPLEMENTATION_PENDING / INCONCLUSIVE; no governed research execution
 ResearchSession Durable Object: exposes only pending status; no authoritative session state or WebSocket loop
 ```
+
+`ResearchWorkflow` left this state when the ER-09 W2 executor landed; it is now
+`IMPLEMENTED_NOT_LIVE` and listed below. `implementation-status.json` is authoritative — if this
+prose and the registry disagree, the registry is right and this file is the bug.
 
 ### `IN_PROGRESS`
 
@@ -57,7 +60,13 @@ exact erasure closure and non-revealing purge ledger
 bounded required-Drive Sheet/changes REST subset and strict contribution transport guards (not full OAuth/cursor/publication)
 context-bound AES-GCM refresh-token vault and primary-D1 CAS/refresh leases (not initial OAuth admission)
 optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
+ER-09 W2 monotone bounded stage executor over durable D1/R2 checkpoints, and the ResearchWorkflow binding that runs it
+ER-23 deterministic golden-corpus harness with adjudicated RU/EN/code/table cases
 ```
+
+The public `research.run` and `research.query` routes are still not composed, so an implemented
+executor is not yet a usable product path. `pnpm launch:code` is the authority on what remains
+disabled; run it rather than inferring readiness from this list.
 
 ### Product operations still unavailable at composition time
 

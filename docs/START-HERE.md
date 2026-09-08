@@ -194,19 +194,31 @@ citation stays a *locator* until authorized exact R2 bytes produce a durable `Ev
 - Never rename a public field or enum, and never introduce permanent dual TypeScript/Rust authority
   for the same promoted decision.
 
-## 9. Current state — snapshot, regenerate before trusting
+## 9. What actually blocks the product — ask the repository, not a document
 
-Taken 2026-09-07 at `main` `c9744fa`. **This section ages; run the commands in §1 rather than
-believing it.**
+The first version of this section carried a dated snapshot of the registry counts. It was stale
+within four hours, which is exactly the failure this file warns about in its header. The counts are
+not repeated here. Get them from the source:
 
-- Registry: 24 registered contours — 21 `IMPLEMENTED_NOT_LIVE`, 1 `IN_PROGRESS` (ER-19 Drive
-  reconciler), 2 `SCAFFOLD_FAIL_CLOSED` (the public `ResearchWorkflow` and the `ResearchSession`
-  Durable Object), 0 `LIVE_QUALIFIED`.
-- Gap register: 0 P0, 18 P1, 5 P2.
-- Landed so far: Wave 1 (K1 owner-token parity, Q1 D1 retrieval lane, G1 Google OAuth begin), K2a
-  scope-snapshot identity parity, W1 durable Investigation ledger, O2 portable backup epoch, W2a
-  research stage checkpoint kernel.
-- Not composed as executable product: `research.run`, `research.query`, Wiki promotion, the artifact
-  compiler, the ER-31 public API surface, and the production Drive cursor/OAuth path.
-- Rust migration: M0–M1 complete; M2–M7 open.
-- Nine launch themes are open as drafts. Check which are red before starting anything near them.
+```bash
+pnpm launch:code                    # what stops this being deployable, by name
+pnpm check:implementation-status    # contour census by state
+gh pr list --state open             # which themes are red or conflicted
+```
+
+**`pnpm launch:code` is the one to run first.** It exits non-zero with `LIVE_DEPLOY_BLOCKED` followed
+by the exact list of disabled required slices, uncomposed public routes and named blockers. That list
+is the real backlog: shortening it is what moves the product, and nothing else is progress toward a
+working system.
+
+Two things are worth understanding before you read that list:
+
+- **An implemented contour is not a working route.** A stage executor can be finished, registered and
+  green while the public route that would call it is still not composed, so the slice stays disabled.
+  `implementation-status.json` tells you the first; `launch:code` tells you the second.
+- **`LIVE_QUALIFIED` counts platform round trips, not code quality.** While it is `0`, nothing in this
+  repository has been proven against real Cloudflare or Google — however green the gates are.
+
+Deterministic work — test strength, mutation coverage, parity vectors — is real engineering, but it
+does not shorten the `launch:code` list. Do it when it blocks a product path, or when that list is
+empty.
