@@ -136,7 +136,7 @@
     },
     {
       "id": "implemented-005",
-      "path": "apps/eliotr-core/src/projection-delivery-handler.ts",
+      "path": "packages/cloudflare-projection/src/projection-delivery-handler.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.",
       "owner_packets": [
         "ER-13",

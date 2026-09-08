@@ -8,3 +8,4 @@ export * from "./d1-search-read.js";
 export * from "./managed-index.js";
 export * from "./core-authority.js";
 export * from "./core-settlement.js";
+export * from "./projection-delivery-handler.js";

@@ -5,7 +5,7 @@ import {
   type QueueConsumptionResult,
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
-import { createProjectionDeliveryHandler } from "./projection-delivery-handler.js";
+import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
 import { createProjectionExecutionDeliveryHandler } from "./projection-execution-handler.js";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
