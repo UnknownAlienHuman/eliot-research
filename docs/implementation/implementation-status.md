@@ -36,13 +36,12 @@ prose and the registry disagree, the registry is right and this file is the bug.
 
 ### `IN_PROGRESS`
 
-Required ChatGPT Drive Exchange: ER-19's interface-only reconciliation is now explicitly registered.
-The cursor/OAuth/result-publication loop must be implemented, not just live-tested. Five bounded
-Sheet/changes REST methods and contribution guards now exist; the D1-bound encrypted-credential refresh/rotation provider now exists for previously admitted
-connections. Internal first-connection OAuth admission now uses real signature verification and durable
-one-use state. Owner HTTP/PWA integration, server configuration admission, provisioning/reconnect and
-full runtime composition remain open. See `drive-rest.md`, `drive-credentials.md` and `drive-oauth-admission.md`. Optional
-Gemini MCP planning and self-reported observation validation cannot satisfy that requirement.
+None. The last `IN_PROGRESS` contour (ER-19 Drive cursor reconciliation) left this
+state when its durable leased poll and digest-against-frozen-envelope tamper audit
+landed with deterministic real-D1 negatives; it is now `IMPLEMENTED_NOT_LIVE` and
+listed below. Owner callback, provisioning/reconnect, Doc publication/export and full
+runtime composition for the Day-0 Drive Exchange remain open. Optional Gemini MCP
+planning and self-reported observation validation cannot satisfy that requirement.
 
 ### `IMPLEMENTED_NOT_LIVE`
 
@@ -58,6 +57,7 @@ deterministic projection execution and managed-generation readiness logic
 exact EvidenceHandle, citation and output gating
 exact erasure closure and non-revealing purge ledger
 bounded required-Drive Sheet/changes REST subset and strict contribution transport guards (not full OAuth/cursor/publication)
+durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit (not owner callback/provisioning/Doc publication/composition)
 context-bound AES-GCM refresh-token vault and primary-D1 CAS/refresh leases (not initial OAuth admission)
 optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
 ER-09 W2 monotone bounded stage executor over durable D1/R2 checkpoints, and the ResearchWorkflow binding that runs it

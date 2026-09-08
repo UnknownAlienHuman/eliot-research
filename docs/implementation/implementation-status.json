@@ -50,21 +50,38 @@
     {
       "id": "pending-drive-exchange",
       "path": "packages/google-drive-exchange/src/reconciler.ts",
-      "sentinel": "IN_PROGRESS: ER-19 durable Drive cursor reconciliation and tamper audit are not implemented.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner callback/provisioning/Doc publication/composition and live qualification remain separate.",
       "owner_packets": [
         "ER-18",
         "ER-19",
         "ER-20",
         "ER-24"
       ],
-      "state": "IN_PROGRESS",
-      "behavior": "Required Day-0 ChatGPT Drive Exchange remains unfinished. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback, provisioning/reconnect, leased cursor/ID-hash audit, R2 freeze/D1 ContributionIntent, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback, provisioning/reconnect, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
         "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream (import with cursor advance, duplicate resume without re-freeze/re-admit, admitted-but-unrecorded resume via ContributionIntent DUPLICATE, incomplete missing-parts with no cursor advance and failure counter, held-lease refusal before any Drive read, outrun-TTL commit refusal, edited-replay tamper without re-freeze under a preserved frozen authority, digest-against-frozen tamper audit, missing-not-tampered audit, lost-notification plus edited-row negative with no duplicate work); no new migration",
+        "packages/google-drive-exchange/src/reconciler-store.ts: D1 cursor lease CAS (steal-on-expiry, extend-own, refuse-other, commit only under a live own lease) and frozen-observation ledger (IMPORTED/DUPLICATE_IGNORED/TRANSPORT_TAMPERED) with lost-ACK readback and no multi-statement transaction spanning I/O",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
         "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
         "G1 owner begin: apps/eliotr-core/test/google-oauth-begin-http.test.ts (12 actual local HTTP/D1/crypto cases: forged owner/session/config, service principal, Origin/CSRF, unknown/max+1 fields, invalid Production attestation, replay/concurrency/lost response/currentness revocation, D1 cap/expiry, secret leakage; invalid requests cause zero token/provider calls or credential writes; valid retry returns the same pending intent) and apps/eliotr-pwa strict begin decoder/transport/panel with no private token in URL, log, or browser storage.",
         "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-reconciler-store",
+      "path": "packages/google-drive-exchange/src/reconciler-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 D1-backed Drive cursor lease guard and frozen-observation ledger over migrations 0001; no new migration, no backfill.",
+      "owner_packets": [
+        "ER-19"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "D1-backed Drive cursor lease guard (acquire with steal-on-expiry, extend-own, refuse-other; commit only under a live own lease with expiry recheck; failure counter without cursor motion; owner-checked release) and frozen-observation ledger (same-ID/same-digest dedup, same-ID/new-digest TRANSPORT_TAMPERED against the original frozen envelope, lost-ACK and raced-write readback) over the committed 0001 drive_cursor/drive_observation tables with no new migration, no backfill and no multi-statement transaction spanning I/O",
+      "completion_evidence": [
+        "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream covering lease CAS refusal, expiry-guarded commit, failure counter and ledger dedup/tamper transitions",
+        "strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "live D1/Cloudflare receipts NOT_EXECUTED"
       ]
     },
     {
