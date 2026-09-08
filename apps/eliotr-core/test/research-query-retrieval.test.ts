@@ -22,17 +22,16 @@ import {
  * call counts. The semantic lane has no executor on this generation, so SEM
  * must degrade to SKIPPED_UNAVAILABLE with coverage capped at SAMPLED.
  *
- * Named remainder (ER-07 boundary, not worked around here): per-candidate R2
- * byte resolution fails closed under the local runtime because
- * packages/cloudflare-evidence/src/content-store.ts:136 issues the
- * conditional range read with `etagMatches: head.httpEtag` (S3-quoted), which
- * the runtime rejects with "Conditional ETag should not be wrapped in
- * quotes" (proven in isolation: unquoted head.etag succeeds, quoted
- * head.httpEtag throws). The no-hit tests below therefore prove the full
- * freeze -> grant -> profile -> lanes -> fusion -> trace/result persistence
- * path, while the hit test proves resolution fails closed with
- * RESEARCH_SETTLEMENT_UNCERTAIN and persists nothing instead of serving
- * unresolved locators as evidence.
+ * Named remainder fixed in this checkpoint (ER-07 narrow fix for #135, disclosed):
+ * packages/cloudflare-evidence/src/content-store.ts:136 issued the conditional
+ * range read with `etagMatches: head.httpEtag` (S3-quoted), which the runtime
+ * rejects with "Conditional ETag should not be wrapped in quotes". It now sends
+ * the unquoted `head.etag` (the convention used at
+ * packages/cloudflare-research/src/objects.ts:21), and the hand-written fake in
+ * content-store.test.ts rejects quoted values the way the runtime does. The hit
+ * test below therefore proves the full freeze -> grant -> profile -> lanes ->
+ * fusion -> exact R2 resolution -> trace/result persistence path, including a
+ * duplicate-free replay.
  */
 
 const runtime = env as unknown as Q1Runtime;
@@ -153,19 +152,60 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_result")).toBe(after.result);
   });
 
-  it("fails closed without persisting when R2 byte resolution is unavailable", async () => {
-    const owner = "rq-resolution-owner";
+  it("resolves a real LEX hit to real R2 bytes and persists result+trace; replay returns the identical pack without a second row", async () => {
+    const owner = "rq-hit-owner";
     const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const before = {
       result: await tableCount("retrieval_query_result"),
       trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
     };
-    // "Pinned" matches a projected section, so a lane candidate reaches exact R2 resolution,
-    // which the local runtime refuses (quoted-httpEtag conditional read, see file header).
-    await expect(service.query(contextFor(owner, "rq-hit"), queryFor(world, "Pinned"))).rejects.toMatchObject({ code: "RESEARCH_SETTLEMENT_UNCERTAIN" });
-    expect(await tableCount("retrieval_query_result")).toBe(before.result);
-    expect(await tableCount("retrieval_query_trace")).toBe(before.trace);
+    // "Pinned" matches the projected `# Evidence\n\nPinned content.\n` section: the LEX lane
+    // yields a genuine locator and exact resolution reopens the pinned R2 bytes (#135).
+    const first = await service.query(contextFor(owner, "rq-hit"), queryFor(world, "Pinned"));
+    expect(first.evidence_pack.resolved_evidence).toHaveLength(1);
+    const resolved = first.evidence_pack.resolved_evidence[0];
+    if (resolved === undefined) throw new Error("Missing resolved evidence for the LEX hit");
+    expect(resolved.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    expect(first.evidence_pack.total_utf8_bytes).toBe(28);
+    expect(resolved.handle.anchor).toMatchObject({ kind: "normalized_byte_range", start: 0, end: 28 });
+    expect(resolved.handle.excerpt_byte_length).toBe(28);
+    expect(resolved.verification_receipt_ref.length).toBeGreaterThan(0);
+    expect(first).not.toHaveProperty("navigation");
+    const resultRow = await db
+      .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
+      .bind(owner, "rq-hit")
+      .first<{ readonly state: string; readonly coverage_claim: string }>();
+    // SEM has no executor on this generation, so coverage stays capped at SAMPLED.
+    expect(resultRow).toMatchObject({ state: "COMPLETE", coverage_claim: "SAMPLED" });
+    const traceRow = await db
+      .prepare("SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2")
+      .bind(first.trace_ref.id, first.trace_ref.revision)
+      .first<{ readonly trace_json: string }>();
+    expect(traceRow).not.toBeNull();
+    const trace = JSON.parse(traceRow?.trace_json ?? "{}") as {
+      readonly lanes_used: readonly string[];
+      readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
+    };
+    expect(trace.lanes_used).toContain("LEX");
+    expect(trace.lanes_skipped.find((entry) => entry.lane === "SEM")?.reason).toBe("LANE_UNAVAILABLE");
+    const after = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    expect(after.result).toBe(before.result + 1);
+    expect(after.trace).toBe(before.trace + 1);
+    expect(after.profile).toBe(before.profile + 1);
+    expect(after.grant).toBe(before.grant + 1);
+    // Same idempotency key replays the identical pack without a second result or trace row.
+    const replayed = await service.query(contextFor(owner, "rq-hit"), queryFor(world, "Pinned"));
+    expect(replayed).toEqual(first);
+    expect(await tableCount("retrieval_query_result")).toBe(after.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(after.trace);
   });
 
   it("persists nothing and mints no grant for a denied scope", async () => {

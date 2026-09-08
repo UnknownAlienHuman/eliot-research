@@ -48,7 +48,12 @@ async function fixture(text: string | Uint8Array, chunkSize = 4096) {
       assert.ok(typeof range.offset === "number" && typeof range.length === "number");
       const condition = options?.onlyIf;
       assert.ok(condition && !(condition instanceof Headers));
-      assert.equal(condition.etagMatches, '"etag-1"');
+      // The runtime rejects S3-quoted conditional ETags ("Conditional ETag should not be
+      // wrapped in quotes"); only the unquoted object etag is accepted here.
+      const presented = condition.etagMatches;
+      assert.ok(typeof presented === "string");
+      assert.ok(!presented.startsWith('"'), "quoted httpEtag rejected like the runtime");
+      assert.equal(presented, "etag-1");
       state.gets.push({ offset: range.offset, length: range.length });
       const index = state.gets.length;
       const selected = bytes.slice(range.offset, range.offset + range.length - (index === state.truncatedGet ? 1 : 0));
