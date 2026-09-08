@@ -123,8 +123,8 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(again.status).toBe(200);
   });
   it("executes W2 checkpoints for a run-created investigation and resumes without duplicate paid effects", async () => {
-    const probe = await body(await run(runRequest("rs-shared", {}, "rs-run-first")));
-    const payload = probe.data as { investigation_ref: { id: string; revision: number }; workflow_instance_id: string };
+    const probe = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(await run(runRequest("rs-shared", {}, "rs-run-first")));
+    const payload = probe.data;
     expect(payload.workflow_instance_id.startsWith("run-")).toBe(true);
     const manifestRow = await db.prepare("SELECT initial_manifest_json FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ initial_manifest_json: string }>();
     expect(manifestRow).not.toBeNull();
