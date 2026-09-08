@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
 import { spawn, spawnSync } from "node:child_process";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, extname, resolve, sep } from "node:path";
@@ -93,27 +93,64 @@ try {
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   const binary = await executable();
+  // Kept at the pre-existing single-attempt budget on purpose: resilience comes from a
+  // bounded relaunch, not from waiting longer inside one hung startup.
+  const BROWSER_STARTUP_TIMEOUT_MS = 10000;
+  const MAX_BROWSER_STARTUP_ATTEMPTS = 3;
   const version = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 5000, shell: false });
-  console.log(`Browser executable: ${binary}; version: ${(version.stdout ?? "").trim().slice(0, 256)}`);
-  let startupError; let startupLog = "";
-  browser = spawn(binary, ["--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
-    "--disable-background-networking", "--disable-component-update", "--disable-extensions", "--no-first-run",
-    "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${temporary}`, "about:blank"],
-  { stdio: ["ignore", "ignore", "pipe"], shell: false });
-  // Only the fresh about:blank process startup is retained; never log application responses.
-  const onStartupLog = (chunk) => { startupLog = (startupLog + chunk.toString("utf8")).slice(-8192); };
-  browser.stderr.on("data", onStartupLog);
-  closing = new Promise((resolve) => browser.once("close", resolve));
-  browser.once("error", (error) => { startupError = error.code ?? "SPAWN_FAILED"; });
-  let port;
-  try {
-    await until(async () => {
-      if (startupError || browser.exitCode !== null || browser.signalCode !== null) throw new Error("Chromium exited before DevTools startup");
-      try { port = Number((await readFile(resolve(temporary, "DevToolsActivePort"), "utf8")).split("\n")[0]); return Number.isInteger(port) && port > 0 && port <= 65535; } catch { return false; }
-    }, "DevTools startup");
-  } catch (error) {
-    throw new Error(`${error.message}; exit=${browser.exitCode}; signal=${browser.signalCode}; spawn=${startupError ?? "ok"}; startup diagnostics:\n${startupLog}`, { cause: error });
-  } finally { browser.stderr.removeListener("data", onStartupLog); browser.stderr.resume(); }
+  const versionText = (version.stdout ?? "").trim().slice(0, 256);
+  const versionStderr = (version.stderr ?? "").trim().slice(0, 1024);
+  console.log(`Browser executable: ${binary}; version: ${versionText}`);
+  // An empty --version is its own condition: a live process that reports no version has
+  // never been observed to publish DevToolsActivePort, so fail here instead of letting the
+  // DevTools deadline below burn attempts with an empty diagnostics string.
+  if (!versionText) {
+    throw new Error(`Browser version probe produced no output; executable=${binary}; exit=${version.status}; spawn_error=${version.error?.message ?? "none"}; stderr=${versionStderr || "<empty>"}`);
+  }
+  let port; let profileDir; const launchFailures = [];
+  for (let attempt = 1; attempt <= MAX_BROWSER_STARTUP_ATTEMPTS; attempt += 1) {
+    // Fresh profile per attempt: a stale DevToolsActivePort from a previous hung launch must
+    // never satisfy the next attempt's probe. All attempt dirs live under `temporary`, so the
+    // existing teardown still removes them.
+    profileDir = resolve(temporary, `attempt-${attempt}`);
+    await mkdir(profileDir, { recursive: true });
+    let startupError; let startupLog = "";
+    browser = spawn(binary, ["--headless=new", "--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage",
+      "--disable-background-networking", "--disable-component-update", "--disable-extensions", "--no-first-run",
+      "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profileDir}`, "about:blank"],
+    { stdio: ["ignore", "ignore", "pipe"], shell: false });
+    // Only the fresh about:blank process startup is retained; never log application responses.
+    const onStartupLog = (chunk) => { startupLog = (startupLog + chunk.toString("utf8")).slice(-8192); };
+    browser.stderr.on("data", onStartupLog);
+    closing = new Promise((resolve) => browser.once("close", resolve));
+    browser.once("error", (error) => { startupError = error.code ?? "SPAWN_FAILED"; });
+    try {
+      await until(async () => {
+        if (startupError || browser.exitCode !== null || browser.signalCode !== null) throw new Error("Chromium exited before DevTools startup");
+        try { port = Number((await readFile(resolve(profileDir, "DevToolsActivePort"), "utf8")).split("\n")[0]); return Number.isInteger(port) && port > 0 && port <= 65535; } catch { return false; }
+      }, "DevTools startup", BROWSER_STARTUP_TIMEOUT_MS);
+      browser.stderr.removeListener("data", onStartupLog); browser.stderr.resume();
+      if (attempt > 1) console.log(`Browser DevTools startup succeeded on attempt ${attempt}/${MAX_BROWSER_STARTUP_ATTEMPTS}`);
+      break;
+    } catch (error) {
+      let portFileState;
+      try {
+        const raw = await readFile(resolve(profileDir, "DevToolsActivePort"), "utf8");
+        portFileState = `present (${JSON.stringify(raw.slice(0, 128))})`;
+      } catch (probeError) { portFileState = `missing (${probeError.code ?? probeError.message})`; }
+      launchFailures.push(`attempt ${attempt}: ${error.message}; exit=${browser.exitCode}; signal=${browser.signalCode}; spawn=${startupError ?? "ok"}; DevToolsActivePort=${portFileState}; startup stderr=${startupLog.trim().slice(-1024) || "<empty>"}`);
+      browser.stderr.removeListener("data", onStartupLog); browser.stderr.resume();
+      if (browser.exitCode === null) {
+        browser.kill("SIGTERM"); const timer = setTimeout(() => browser.kill("SIGKILL"), 3000);
+        try { await closing; } catch { /* Kill teardown is best-effort before a retry. */ } finally { clearTimeout(timer); }
+      }
+      if (attempt === MAX_BROWSER_STARTUP_ATTEMPTS) {
+        throw new Error(`Browser failed to publish DevToolsActivePort after ${MAX_BROWSER_STARTUP_ATTEMPTS} attempts; executable=${binary}; version=${versionText} (exit=${version.status}); version stderr=${versionStderr || "<empty>"}; ${launchFailures.join(" | ")}`, { cause: error });
+      }
+      console.log(`Browser DevTools startup attempt ${attempt}/${MAX_BROWSER_STARTUP_ATTEMPTS} produced no port; relaunching (last: exit=${browser.exitCode}; signal=${browser.signalCode}; spawn=${startupError ?? "ok"}; DevToolsActivePort=${portFileState})`);
+      await delay(250 * attempt);
+    }
+  }
   const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`, { signal: globalThis.AbortSignal.timeout(5000) })).json();
   const target = targets.find((item) => item.type === "page"); assert.ok(target);
   socket = new globalThis.WebSocket(target.webSocketDebuggerUrl);
