@@ -17,6 +17,7 @@ import {
 import {
   createD1ProjectionAuthority,
   createD1ProjectionSearchPort,
+  createProjectionDeliveryHandler,
   createProjectionExecutionHandler,
   createR2ProjectionContentPort,
   createR2ProjectionWorkPort,
@@ -29,7 +30,6 @@ import { importBrowserBundle } from "../../eliotr-pwa/src/bundle-import.js";
 import type { ImportTransport } from "../../eliotr-pwa/src/bundle-import-api.js";
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
-import { createProjectionDeliveryHandler } from "../src/projection-delivery-handler.js";
 import { PROJECTION_EXECUTION_PROFILE } from "../src/projection-execution-handler.js";
 import type { Env } from "../src/env.js";
 
