@@ -282,7 +282,14 @@ describe("investigation ledger over actual Cloudflare D1", () => {
     await invariant(input.investigation_id);
     await invariant(replacement.investigation_id);
   });
-  it("fence changes after preflight but before the D1 write deny every mutation with zero committed effect", async () => {
+  // Test-isolation note: this matrix previously ran as a single `it` performing
+  // 7 fence flips x 8 mutations = 56 sequential create/mutate/readback/invariant
+  // cycles against the shared module-level Miniflare D1 instance. Under parallel CI
+  // that single test exceeded the default timeout (unknown outcome per failure-model,
+  // not a product failure) while staying green in isolation. It is split into one
+  // `it` per mutation with identical assertions so each keeps its own timeout budget.
+  // No timeout was raised and no assertion was weakened.
+  describe("fence changes after preflight but before the D1 write deny every mutation with zero committed effect", () => {
     const good = { principal_ref: "principal-1", scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, policy_generation: "policy-gen-1", policy_authority_ref: "policy-auth-1", deployment_generation: "deploy-gen-1", purge_revision: 0, scope_purge_revision: 0 };
     const dims: { code: string; apply: (fence: Record<string, unknown>) => void }[] = [
       { code: "LEDGER_PRINCIPAL_DENIED", apply: (fence) => { fence.principal_ref = "principal-evil"; } },
@@ -294,40 +301,68 @@ describe("investigation ledger over actual Cloudflare D1", () => {
       { code: "LEDGER_PURGE_STALE", apply: (fence) => { fence.purge_revision = 2; } },
     ];
     type Ctx = ReturnType<typeof context>;
-    const mutations: { name: string; needs: "open" | "closed" | "create"; run: (c: Ctx, id: string, rev: number, n: number) => Promise<unknown> }[] = [
-      { name: "checkpoint", needs: "open", run: (c, id, rev, n) => c.service.checkpoint(id, rev, 3, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
-      { name: "accept", needs: "open", run: (c, id, rev, n) => c.service.acceptObligation(id, rev, "obl-1", "verifier-a", "metric-1", "verifier-a", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
-      { name: "deviation", needs: "open", run: (c, id, rev, n) => c.service.recordDeviation(id, rev, "obl-1", "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C, "note") },
-      { name: "observed", needs: "open", run: (c, id, rev, n) => c.service.recordObserved(id, rev, "x", "y", "z", "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
-      { name: "close", needs: "open", run: (c, id, rev, n) => c.service.close(id, rev, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
-      { name: "reopen", needs: "closed", run: (c, id, rev, n) => c.service.reopen(id, rev, "principal-1", `evt-f-${n}`, `ph-f-${n}`, DIGEST_C) },
-      { name: "supersede", needs: "open", run: (c, id, rev, n) => { const r = baseInput(`fr-${n}`, { payload_handle_ref: `ph-fr-${n}`, portfolio_ref: `pf-fr-${n}` }); c.digests.set(r.payload_handle_ref, r.payload_digest); c.digests.set(r.portfolio_ref, r.input_digest); return c.service.supersede(id, rev, r, "fenced", "principal-1"); } },
-      { name: "create", needs: "create", run: (c, id, _rev, n) => { const r = baseInput(`fc-${n}`, { investigation_id: id, idempotency_key: `idem-fc-${n}`, event_id: `evt-fc-${n}`, payload_handle_ref: `ph-f-${n}`, portfolio_ref: `pf-f-${n}` }); c.digests.set(r.payload_handle_ref, r.payload_digest); c.digests.set(r.portfolio_ref, r.input_digest); return c.service.create(r); } },
-    ];
-    let tag = 0;
-    for (const dim of dims) {
-      for (const mutation of mutations) {
-        const c = context();
-        const id = `inv-d1-flip-${tag}`;
-        tag += 1;
-        c.digests.set(`ph-f-${tag}`, DIGEST_C);
-        if (mutation.needs !== "create") {
-          const input = baseInput(`flip-${tag}`, { investigation_id: id, idempotency_key: `idem-d1-flip-${tag}`, event_id: `evt-d1-flip-${tag}`, payload_handle_ref: `ph-seed-${tag}`, portfolio_ref: `pf-seed-${tag}` });
-          c.digests.set(input.payload_handle_ref, input.payload_digest);
-          c.digests.set(input.portfolio_ref, input.input_digest);
-          await c.service.create(input);
-          if (mutation.needs === "closed") await c.service.close(id, 1, "principal-1", `evt-fc-${tag}`, `ph-f-${tag}`, DIGEST_C);
+    // Identity scope: the parent investigation id and every seed/event/idempotency
+    // key below live in the module-shared Miniflare D1 instance across the 8 tests,
+    // so each carries the mutation-name prefix. Only the fence-flip dimension loops
+    // inside one `it`; the mutation under test is fixed per `it`.
+    const mutationNames = ["checkpoint", "accept", "deviation", "observed", "close", "reopen", "supersede", "create"] as const;
+    type MutationName = (typeof mutationNames)[number];
+    const mutationNeeds: Record<MutationName, "open" | "closed" | "create"> = {
+      checkpoint: "open", accept: "open", deviation: "open", observed: "open",
+      close: "open", reopen: "closed", supersede: "open", create: "create",
+    };
+    async function runMutation(name: MutationName, c: Ctx, id: string, rev: number, tag: string): Promise<unknown> {
+      const eventId = `evt-f-${tag}`;
+      const payloadRef = `ph-f-${tag}`;
+      switch (name) {
+        case "checkpoint": return c.service.checkpoint(id, rev, 3, "principal-1", eventId, payloadRef, DIGEST_C);
+        case "accept": return c.service.acceptObligation(id, rev, "obl-1", "verifier-a", "metric-1", "verifier-a", eventId, payloadRef, DIGEST_C);
+        case "deviation": return c.service.recordDeviation(id, rev, "obl-1", "principal-1", eventId, payloadRef, DIGEST_C, "note");
+        case "observed": return c.service.recordObserved(id, rev, "x", "y", "z", "principal-1", eventId, payloadRef, DIGEST_C);
+        case "close": return c.service.close(id, rev, "principal-1", eventId, payloadRef, DIGEST_C);
+        case "reopen": return c.service.reopen(id, rev, "principal-1", eventId, payloadRef, DIGEST_C);
+        case "supersede": {
+          const r = baseInput(`fr-${tag}`, { payload_handle_ref: `ph-fr-${tag}`, portfolio_ref: `pf-fr-${tag}` });
+          c.digests.set(r.payload_handle_ref, r.payload_digest);
+          c.digests.set(r.portfolio_ref, r.input_digest);
+          return c.service.supersede(id, rev, r, "fenced", "principal-1");
         }
-        const before = await rowState(id);
-        const evil = { ...good };
-        dim.apply(evil as unknown as Record<string, unknown>);
-        let calls = 0;
-        c.fences.current = async () => ({ ...(calls++ === 0 ? good : evil) });
-        const rev = mutation.needs === "closed" ? 2 : 1;
-        expect(await codeOf(mutation.run(c, id, rev, tag)), `${mutation.name}/${dim.code}`).toBe(dim.code);
-        expect(await rowState(id), `${mutation.name}/${dim.code} rows`).toBe(before);
-        await invariant(id);
+        case "create": {
+          const r = baseInput(`fc-${tag}`, { investigation_id: id, idempotency_key: `idem-fc-${tag}`, event_id: `evt-fc-${tag}`, payload_handle_ref: payloadRef, portfolio_ref: `pf-f-${tag}` });
+          c.digests.set(r.payload_handle_ref, r.payload_digest);
+          c.digests.set(r.portfolio_ref, r.input_digest);
+          return c.service.create(r);
+        }
       }
+    }
+    for (const name of mutationNames) {
+      it(`${name} denies every fence flip with zero committed effect`, async () => {
+        const needs = mutationNeeds[name];
+        let tag = 0;
+        for (const dim of dims) {
+          tag += 1;
+          const key = `${name}-${tag}`;
+          const c = context();
+          const id = `inv-d1-flip-${key}`;
+          c.digests.set(`ph-f-${key}`, DIGEST_C);
+          if (needs !== "create") {
+            const input = baseInput(`flip-${key}`, { investigation_id: id, idempotency_key: `idem-d1-flip-${key}`, event_id: `evt-d1-flip-${key}`, payload_handle_ref: `ph-seed-${key}`, portfolio_ref: `pf-seed-${key}` });
+            c.digests.set(input.payload_handle_ref, input.payload_digest);
+            c.digests.set(input.portfolio_ref, input.input_digest);
+            await c.service.create(input);
+            if (needs === "closed") await c.service.close(id, 1, "principal-1", `evt-fc-${key}`, `ph-f-${key}`, DIGEST_C);
+          }
+          const before = await rowState(id);
+          const evil = { ...good };
+          dim.apply(evil as unknown as Record<string, unknown>);
+          let calls = 0;
+          c.fences.current = async () => ({ ...(calls++ === 0 ? good : evil) });
+          const rev = needs === "closed" ? 2 : 1;
+          expect(await codeOf(runMutation(name, c, id, rev, key)), `${name}/${dim.code}`).toBe(dim.code);
+          expect(await rowState(id), `${name}/${dim.code} rows`).toBe(before);
+          await invariant(id);
+        }
+      });
     }
   });
   it("d1 authority mutations after preflight abort the batch with zero effect", async () => {
