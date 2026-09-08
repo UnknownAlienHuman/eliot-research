@@ -412,6 +412,8 @@ async function dispatch(
       {
         const blocked = await requireApplicationReady(request, application);
         if (blocked !== null) return blocked;
+        if (match.route.operation === "research.query") { requireNoQuery(url); return apiResult(request, env, await application.services.semantic.query(context, await request.json())); }
+        if (match.route.operation === "research.run") { requireNoQuery(url); return apiResult(request, env, await application.services.semantic.run(context, await request.json())); }
         throw new CapabilityUnavailableError(match.route.operation);
       }
   }

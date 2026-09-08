@@ -33,16 +33,18 @@
     {
       "id": "scaffold-002",
       "path": "apps/eliotr-core/src/research-session.ts",
-      "sentinel": "SCAFFOLD_FAIL_CLOSED: ER-24 ResearchSession exposes only explicit pending status until durable session execution is implemented.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.",
       "owner_packets": [
         "ER-24"
       ],
-      "state": "SCAFFOLD_FAIL_CLOSED",
-      "behavior": "ResearchSession Durable Object exposes only a 503 pending status and 501 fallback; it does not persist session authority, accept WebSockets or coordinate live research",
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query delegates to orientation metadata and research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
       "completion_evidence": [
-        "durable D1/R2-backed session state and replay contract",
-        "hibernation-safe WebSocket transport with reconnect tests",
-        "live Durable Object eviction, resume and deployment-restart receipts"
+        "apps/eliotr-core/test/research-session.test.ts: 7 suites over actual local D1/R2/DO (query ORIENT replay/stale/foreign, run W1 ledger plus 18-stage resume/duplicate/stale/lost-ACK with 64KiB handle-only receipts, DO start/read/replay/stale/foreign/cancel/status, DO W2 replay without duplicate paid effects)",
+        "apps/eliotr-core/src/research-session.ts: DO storage session state with principal-bound read/cancel plus createMonotoneStageExecutor reuse and no new D1 tables",
+        "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
+        "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
+        "hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts NOT_EXECUTED"
       ]
     },
     {
