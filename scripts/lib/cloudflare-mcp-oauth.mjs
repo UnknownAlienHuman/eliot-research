@@ -71,9 +71,11 @@ function accessListDescriptor(path, accountSegment) {
   if (path === `${appPath}?per_page=100`) return { base: appPath, page: 1 };
   const appPage = path.match(new RegExp(`^${appPath}\\?page=([1-9][0-9]{0,2})&per_page=100$`, "u"));
   if (appPage !== null) return { base: appPath, page: Number(appPage[1]) };
-  const policy = path.match(new RegExp(`^${appPath}/([^/]+)/policies(?:\\?page=([1-9][0-9]{0,2})&per_page=100)?$`, "u"));
+  const policy = path.match(new RegExp(`^${appPath}/([^/]+)/policies(?:\\?per_page=100|\\?page=([1-9][0-9]{0,2})&per_page=100)?$`, "u"));
   if (policy === null || policy[1].length === 0 || policy[1].length > 128) return null;
-  return { base: `${appPath}/${policy[1]}/policies`, page: policy[2] === undefined ? 1 : Number(policy[2]) };
+  const base = `${appPath}/${policy[1]}/policies`;
+  if (path === `${base}?per_page=100`) return { base, page: 1 };
+  return { base, page: policy[2] === undefined ? 1 : Number(policy[2]) };
 }
 
 function checkKnownRequest(accountId, method, path, body) {
@@ -332,7 +334,9 @@ export function createCloudflareMcpTransport(options = {}) {
           (info.total_pages > 0 && info.page > info.total_pages) ||
           (info.total_pages > 0 && info.page < info.total_pages && info.count !== info.per_page) ||
           (info.total_pages > 0 && info.page === info.total_pages && info.count > info.per_page) ||
-          info.total_pages > MAX_ACCESS_LIST_PAGES) {
+          info.total_pages > MAX_ACCESS_LIST_PAGES ||
+          listed.some((item) => item === null || typeof item !== "object" || Array.isArray(item) ||
+            typeof item.id !== "string" || item.id.length === 0 || item.id.length > 256)) {
         throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
       }
       return { list, listed, info };
@@ -345,9 +349,23 @@ export function createCloudflareMcpTransport(options = {}) {
     const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
     if (list === null) return requestPage(method, path, body);
     const all = [];
-    let current = path;
+    let firstInfo;
+    const ids = new Set();
+    // Canonicalize the first policy read to the bounded page size too. A bare
+    // policy URL otherwise uses Cloudflare's default page size, while follow-up
+    // pages use per_page=100 and can skip entries or fail metadata reconciliation.
+    let current = list.page === 1 ? `${list.base}?per_page=100` : path;
     for (let page = 1; page <= MAX_ACCESS_LIST_PAGES; page += 1) {
       const result = await requestPage("GET", current);
+      if (firstInfo === undefined) firstInfo = result.info;
+      if (result.info.per_page !== firstInfo.per_page || result.info.total_count !== firstInfo.total_count ||
+          result.info.total_pages !== firstInfo.total_pages) {
+        throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination changed during read");
+      }
+      for (const item of result.listed) {
+        if (ids.has(item.id)) throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list repeats an item");
+        ids.add(item.id);
+      }
       all.push(...result.listed);
       if (result.info.total_pages === 0 || page === result.info.total_pages) {
         if (result.info.total_count !== all.length) {

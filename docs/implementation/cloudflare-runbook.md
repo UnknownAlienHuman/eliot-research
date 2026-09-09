@@ -12,8 +12,9 @@ hand to a deployment agent; no step requires reading the architecture master doc
 
 Operator authentication uses browser OAuth. The automated scripts currently consume the local
 Wrangler profile. The explicitly selected official Cloudflare MCP plugin may also use its own
-managed browser-OAuth connection for account/API inspection; it does not export credentials to
-Wrangler or grant a deployment capability. No API key, API token, or service token is used by
+managed browser-OAuth connection for account/API inspection and the gated Access provisioning
+transport; it does not export credentials to Wrangler or grant a general deployment capability.
+No API key, API token, or service token is used by
 the operator flow, and none may be added to tracked
 files. The tracked file `infra/cloudflare/operator-profile.json` is an account-neutral template
 with fictional placeholders only (protocol `eliotr.cloudflare-operator-profile.v1`). Real operator

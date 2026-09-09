@@ -32,6 +32,16 @@ if (accessTransport !== "wrangler" && accessTransport !== CLOUDFLARE_MCP_TRANSPO
   process.exit(2);
 }
 let mcpTransport = null;
+function exitWithMcpCleanup(code) { mcpTransport?.close(); process.exit(code); }
+function parseOwnerEmails(value) {
+  if (!value) return [];
+  const emails = value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
+  const unique = [...new Set(emails)];
+  for (const email of unique) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`invalid owner email ${email}`);
+  }
+  return unique.sort();
+}
 
 let authMode = "api-token";
 try {
@@ -40,9 +50,10 @@ try {
   console.error(error?.message ?? String(error));
   process.exit(2);
 }
+try {
 if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
   if (authMode !== WRANGLER_OAUTH_MODE) {
-    console.error(`ELIOTR_ACCESS_TRANSPORT=${CLOUDFLARE_MCP_TRANSPORT} requires ${process.env.ELIOTR_CLOUDFLARE_AUTH_MODE}=${WRANGLER_OAUTH_MODE}; static-token mode is prohibited`);
+    console.error(`ELIOTR_ACCESS_TRANSPORT=${CLOUDFLARE_MCP_TRANSPORT} requires ELIOTR_CLOUDFLARE_AUTH_MODE=${WRANGLER_OAUTH_MODE}; static-token mode is prohibited`);
     process.exit(2);
   }
   if (!accountId) {
@@ -115,17 +126,17 @@ if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
     await mcpTransport.verifyAccount();
   } catch (error) {
     console.error(error?.message ?? "Cloudflare MCP account verification failed");
-    process.exit(2);
+    exitWithMcpCleanup(2);
   }
 }
 if (!hostname) {
   console.error("ELIOTR_ACCESS_HOSTNAME is required for a live deployment");
-  process.exit(2);
+  exitWithMcpCleanup(2);
 }
 validateHostname(hostname);
 if (ownerEmails.length === 0) {
   console.error("ELIOTR_OWNER_EMAILS must contain at least one exact owner email");
-  process.exit(2);
+  exitWithMcpCleanup(2);
 }
 
 const desired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/access.json"), "utf8"));
@@ -136,16 +147,6 @@ const appName = `${desired.application.name_prefix}: ${hostname}`;
 const policyName = desired.policy.name;
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
-
-function parseOwnerEmails(value) {
-  if (!value) return [];
-  const emails = value.split(",").map((item) => item.trim().toLowerCase()).filter(Boolean);
-  const unique = [...new Set(emails)];
-  for (const email of unique) {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(`invalid owner email ${email}`);
-  }
-  return unique.sort();
-}
 
 function validateHostname(value) {
   if (value.includes("://") || value.includes("/") || value.startsWith("*") || !/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(value)) {
@@ -375,7 +376,7 @@ if (!application && !checkOnly) {
   assertApplicationContour(application);
 }
 
-const policiesResult = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies`);
+const policiesResult = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies?per_page=100`);
 let policies = Array.isArray(policiesResult) ? policiesResult : [];
 
 function classifyPolicies(items) {
@@ -405,7 +406,7 @@ if (classified.owner || !checkOnly) {
 if (!classified.owner) {
   await request("POST", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies`, expectedPolicy);
   policyDisposition = policyDisposition === "CREATED_INLINE" ? "CREATED_INLINE" : "CREATED";
-  const readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies`);
+  const readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(application.id)}/policies?per_page=100`);
   policies = Array.isArray(readback) ? readback : [];
   classified = classifyPolicies(policies);
 }
@@ -500,5 +501,8 @@ await rename(receiptTemporary, receiptPath);
 console.log(JSON.stringify(receipt, null, 2));
 }
 }
+}
+} finally {
+  mcpTransport?.close();
 }
 }

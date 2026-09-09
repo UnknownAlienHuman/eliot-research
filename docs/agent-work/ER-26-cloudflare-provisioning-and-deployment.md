@@ -15,6 +15,7 @@ retrieval, authentication semantics, or database schemas.
 
 - `scripts/provision-cloudflare-core.mjs`
 - `scripts/provision-cloudflare-access.mjs`
+- `scripts/lib/cloudflare-mcp-oauth.mjs`
 - `scripts/provision-ai-search.mjs`
 - `scripts/lib/cloudflare-d1-http.mjs`
 - `scripts/manage-ai-search-generation.mjs`
@@ -24,6 +25,7 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/test-ai-search-provisioning-reconciliation.mjs`
 - `scripts/provision-ai-gateways.mjs`
 - `scripts/deploy-cloudflare.mjs`
+- `scripts/test-cloudflare-mcp-oauth.mjs`
 - `scripts/test-cloudflare-provisioners.mjs`
 - `infra/cloudflare/resources.json`
 - `infra/cloudflare/access.json`
@@ -36,6 +38,7 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/lib/deployment-verification.mjs`
 - `scripts/test-deployment-verification.mjs`
 - `scripts/test-deployment-orchestration.mjs`
+- `scripts/test-deployment-apply-ordering.mjs`
 - `docs/implementation/deployment-audit-2026-09-04.md`
 - `scripts/check-launch-code.mjs`
 - `scripts/test-launch-code.mjs`
