@@ -41,6 +41,7 @@ import {
 } from "./ingest-http.js";
 import { IngestServiceError } from "./ingest-service.js";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
+import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
 
 export interface HttpDependencies {
@@ -405,6 +406,12 @@ async function dispatch(
       }
       {
         if (match.route.operation === "research.query") {
+          if (match.route.path === "/api/v1/research/query/jobs") {
+            return apiResult(request, env, await application.services.semantic.queryJobs(
+              context,
+              parseExhaustiveWorkflowJobsRequest(url),
+            ));
+          }
           requireNoQuery(url);
           const workflowId = match.params.workflow_id;
           if (workflowId !== undefined && match.route.method === "GET") {

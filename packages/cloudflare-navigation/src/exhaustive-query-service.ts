@@ -461,3 +461,35 @@ export async function validateExhaustiveJobCurrent(
     throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
   }
 }
+
+/** Validate an active or completed job before exposing workflow metadata. */
+export async function validateExhaustiveWorkflowJobCurrent(
+  env: ExhaustiveQueryEnvironment & { readonly SEARCH_DB: D1Database; readonly EVIDENCE_BUCKET: R2Bucket },
+  context: AuthenticatedRequestContext,
+  jobId: string,
+): Promise<void> {
+  const row = await env.CORE_DB.prepare(
+    "SELECT scope_snapshot_id,scope_snapshot_revision,state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+  ).bind(jobId).first<{
+    readonly scope_snapshot_id: string;
+    readonly scope_snapshot_revision: number;
+    readonly state: string;
+  }>().catch(() => { throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive job authority read is unavailable", 503, true); });
+  if (row === null || !["PENDING", "COMPLETE"].includes(row.state) || typeof row.scope_snapshot_id !== "string" ||
+      !Number.isSafeInteger(row.scope_snapshot_revision)) {
+    throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
+  }
+  const runtime = productionRuntime(env, context);
+  try {
+    if (runtime.loadScope === undefined) throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope loader is unavailable", 409, false);
+    const scope = await runtime.loadScope(row.scope_snapshot_id, row.scope_snapshot_revision);
+    await runtime.requireCurrentScope(scope);
+    if (runtime.recheckCurrentScope === undefined) {
+      throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive currentness fence is unavailable", 503, true);
+    }
+    await runtime.recheckCurrentScope(scope);
+  } catch (error) {
+    if (error instanceof ExhaustiveQueryError) throw error;
+    throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
+  }
+}

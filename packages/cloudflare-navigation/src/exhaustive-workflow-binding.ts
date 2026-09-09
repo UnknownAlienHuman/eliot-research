@@ -1,5 +1,13 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.
-import type { ExhaustiveQueryResult, ExhaustiveWorkflowResult, AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type {
+  ExhaustiveQueryResult,
+  ExhaustiveWorkflowJobState,
+  ExhaustiveWorkflowJobsRequest,
+  ExhaustiveWorkflowPage,
+  ExhaustiveWorkflowResult,
+  ExhaustiveWorkflowSummary,
+  AuthenticatedRequestContext,
+} from "@eliotr/interfaces";
 import { canonicalRetrievalJson, exhaustiveJobId } from "@eliotr/retrieval";
 
 export interface ExhaustiveWorkflowBindingInput<T> {
@@ -12,6 +20,7 @@ export interface ExhaustiveWorkflowBindingInput<T> {
   parseRequest(raw: unknown): T;
   idempotencyKey(context: AuthenticatedRequestContext): string;
   validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>;
+  validateCurrentWorkflowJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>;
 }
 
 type WorkflowStatusName = ExhaustiveWorkflowResult["workflow_status"];
@@ -24,6 +33,19 @@ interface WorkflowStatus {
   readonly status: WorkflowStatusName;
   readonly output?: unknown;
   readonly error?: { readonly name: string; readonly message: string };
+}
+
+const MAX_WORKFLOW_JOB_PAGE_SIZE = 20;
+const MAX_WORKFLOW_JOB_SCAN = 100;
+const MAX_WORKFLOW_CURSOR_BYTES = 2 * 1024;
+const WORKFLOW_STATUSES = new Set<WorkflowStatusName>([
+  "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
+]);
+interface WorkflowCursor {
+  readonly v: 1;
+  readonly context_sha256: string;
+  readonly created_at: string;
+  readonly workflow_id: string;
 }
 
 /** Payload accepted by the ER09 Workflow host for one Q8 request. */
@@ -140,6 +162,62 @@ interface WorkflowBindingRow {
   readonly deployment_generation: string;
   readonly request_identity_digest: string;
   readonly state: "BOUND" | "CANCEL_REQUESTED";
+  readonly created_at: string;
+}
+
+interface WorkflowJobListingRow {
+  readonly workflow_id: string;
+  readonly job_id: string;
+  readonly job_state: ExhaustiveWorkflowJobState | null;
+  readonly binding_state: "BOUND" | "CANCEL_REQUESTED";
+  readonly created_at: string;
+  readonly expires_at: string | null;
+}
+
+function encodeCursor(cursor: WorkflowCursor): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+async function workflowCursorContext(context: AuthenticatedRequestContext, deploymentGeneration: string): Promise<string> {
+  const bytes = new TextEncoder().encode(canonicalRetrievalJson({
+    principal_ref: context.principal_ref,
+    client_class: context.client_class,
+    credential_generation: context.credential_generation,
+    deployment_generation: deploymentGeneration,
+  }));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function decodeCursor(raw: string | undefined): WorkflowCursor | undefined {
+  if (raw === undefined) return undefined;
+  if (new TextEncoder().encode(raw).byteLength > MAX_WORKFLOW_CURSOR_BYTES) {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_INPUT_INVALID", "workflow jobs cursor exceeds its byte limit", 400, false);
+  }
+  try {
+    const bytes = Uint8Array.from(atob(raw), (value) => value.charCodeAt(0));
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error();
+    const record = value as Record<string, unknown>;
+    if (Object.keys(record).length !== 4 || record.v !== 1 || typeof record.context_sha256 !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(record.context_sha256) || typeof record.created_at !== "string" ||
+        typeof record.workflow_id !== "string" || !/^exhaustive-workflow-[a-f0-9]{64}$/u.test(record.workflow_id)) throw new Error();
+    if (new Date(record.created_at).toISOString() !== record.created_at) throw new Error();
+    return { v: 1, context_sha256: record.context_sha256, created_at: record.created_at, workflow_id: record.workflow_id };
+  } catch {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_INPUT_INVALID", "workflow jobs cursor is invalid", 400, false);
+  }
+}
+
+function isStaleWorkflowRow(error: unknown): boolean {
+  return (error as { readonly code?: unknown } | null)?.code === "RESEARCH_AUTHORITY_STALE";
+}
+
+function isRecoverable(status: WorkflowStatusName): boolean {
+  return ["queued", "running", "paused", "waiting", "waitingForPause"].includes(status);
 }
 
 async function bindWorkflow(database: D1Database, input: {
@@ -254,6 +332,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
   launch(context: AuthenticatedRequestContext, raw: unknown): Promise<ExhaustiveWorkflowResult>;
   status(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
   cancel(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
+  list(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
 } {
   const workflow = input.workflow;
   return {
@@ -297,6 +376,90 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
         catch { failWorkflow("exhaustive Workflow create/readback is uncertain"); }
       }
       return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob);
+    },
+    async list(context, request) {
+      requireOwner(context);
+      if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > MAX_WORKFLOW_JOB_PAGE_SIZE) {
+        throw new ExhaustiveWorkflowBindingError("RESEARCH_INPUT_INVALID", "workflow jobs limit is invalid", 400, false);
+      }
+      const cursor = decodeCursor(request.cursor);
+      const cursorContext = await workflowCursorContext(context, input.deployment_generation);
+      if (cursor !== undefined && cursor.context_sha256 !== cursorContext) {
+        throw new ExhaustiveWorkflowBindingError("RESEARCH_CURSOR_CONTEXT_MISMATCH", "workflow jobs cursor belongs to another session", 403, false);
+      }
+      await requireActiveOwnerPolicy(input.database, context);
+      const cursorClause = cursor === undefined ? "" :
+        " AND (w.created_at < ?5 OR (w.created_at = ?5 AND w.workflow_id < ?6))";
+      const values: unknown[] = [
+        context.principal_ref,
+        context.credential_generation,
+        input.deployment_generation,
+      ];
+      if (cursor !== undefined) values.push(cursor.created_at, cursor.workflow_id);
+      values.push(MAX_WORKFLOW_JOB_SCAN + 1);
+      const rows = await input.database.prepare(
+        "SELECT w.workflow_id, w.job_id, w.state AS binding_state, w.created_at, j.state AS job_state, j.expires_at " +
+        "FROM retrieval_exhaustive_workflow w LEFT JOIN retrieval_exhaustive_job j ON j.job_id=w.job_id " +
+        "WHERE w.principal_ref=?1 AND w.client_class='owner_pwa' AND w.credential_generation=?2 " +
+        "AND w.deployment_generation=?3" + cursorClause +
+        " ORDER BY w.created_at DESC, w.workflow_id DESC LIMIT ?" + (cursor === undefined ? "4" : "6"),
+      ).bind(...values).all<WorkflowJobListingRow>().catch(() => {
+        failWorkflow("exhaustive Workflow job listing is unavailable");
+      });
+      if (!rows.success || !Array.isArray(rows.results)) failWorkflow("exhaustive Workflow job listing is unavailable");
+      const candidates = rows.results.slice(0, MAX_WORKFLOW_JOB_SCAN);
+      const items: ExhaustiveWorkflowSummary[] = [];
+      let scanned = 0;
+      for (const row of candidates) {
+        if (items.length >= request.limit) break;
+        scanned += 1;
+        if ((row.binding_state !== "BOUND" && row.binding_state !== "CANCEL_REQUESTED") ||
+            (row.job_state !== null && row.job_state !== "PENDING" && row.job_state !== "COMPLETE" && row.job_state !== "INVALIDATED") ||
+            typeof row.workflow_id !== "string" || !/^exhaustive-workflow-[a-f0-9]{64}$/u.test(row.workflow_id) ||
+            typeof row.job_id !== "string" || row.job_id.length === 0 || row.job_id.length > 128 ||
+            typeof row.created_at !== "string" ||
+            (row.expires_at !== null && typeof row.expires_at !== "string") ||
+            new Date(row.created_at).toISOString() !== row.created_at ||
+            (row.expires_at !== null && new Date(row.expires_at).toISOString() !== row.expires_at)) {
+          failWorkflow("exhaustive Workflow job listing contains invalid metadata");
+        }
+        try {
+          // A durable binding can briefly precede the canonical Q7 job row while
+          // the Workflow's first step is queued. There is no scope to validate yet;
+          // expose only the binding/status metadata and omit job fields honestly.
+          if (row.job_state !== null) await input.validateCurrentWorkflowJob?.(row.job_id, context);
+          const instance = await workflow.get(row.workflow_id);
+          const workflowStatus = await instance.status();
+          if (!WORKFLOW_STATUSES.has(workflowStatus.status)) failWorkflow("exhaustive Workflow status is invalid");
+          const finalBinding = await readWorkflowBinding(input.database, row.workflow_id, context, input.deployment_generation);
+          await requireActiveOwnerPolicy(input.database, context);
+          if (row.job_state !== null) await input.validateCurrentWorkflowJob?.(row.job_id, context);
+          items.push({
+            workflow_instance_id: row.workflow_id,
+            workflow_status: workflowStatus.status,
+            binding_state: finalBinding.state,
+            created_at: row.created_at,
+            ...(row.job_state === null ? {} : { job_state: row.job_state }),
+            ...(row.expires_at === null ? {} : { expires_at: row.expires_at }),
+            recoverable: isRecoverable(workflowStatus.status) &&
+              (row.job_state === null || row.job_state === "PENDING") && finalBinding.state === "BOUND",
+            cancelable: isRecoverable(workflowStatus.status) && finalBinding.state === "BOUND",
+          });
+        } catch (error) {
+          if (isStaleWorkflowRow(error)) continue;
+          throw error;
+        }
+      }
+      const hasMore = rows.results.length > scanned;
+      const last = candidates[scanned - 1];
+      const nextCursor = hasMore && last !== undefined ? encodeCursor({
+        v: 1, context_sha256: cursorContext, created_at: last.created_at, workflow_id: last.workflow_id,
+      }) : undefined;
+      return {
+        protocol: "eliotr.exhaustive-workflow-page.v1",
+        items,
+        ...(nextCursor === undefined ? {} : { next_cursor: nextCursor }),
+      };
     },
     async status(context, instanceId) {
       requireOwner(context);
