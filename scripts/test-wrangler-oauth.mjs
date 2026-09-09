@@ -319,6 +319,49 @@ await check("env snapshot never precedes identity verification in oauth mode", a
   assert.equal(wrong.code, "OAUTH_ACCOUNT_MISMATCH");
 });
 
+await check("OAuth omission selects the live registry and preserves metadata-only inventory", async () => {
+  const previousFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url) => {
+    seen.push(url);
+    if (url.includes("/d1/database")) {
+      return { status: 200, json: async () => ({ success: true, result: [{ uuid: "d1-one" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1 } }) };
+    }
+    if (url.includes("/r2/buckets")) {
+      return { status: 200, json: async () => ({ success: true, result: { buckets: [{ name: "r2-one" }] } }) };
+    }
+    if (url.includes("/queues")) {
+      return { status: 200, json: async () => ({ success: true, result: [{ queue_id: "queue-one", queue_name: "eliotr-jobs" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 } }) };
+    }
+    if (url.includes("/ai-search/instances")) {
+      return { status: 200, json: async () => ({ success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) };
+    }
+    if (url.includes("/billable/usage")) {
+      return { status: 403, json: async () => ({}) };
+    }
+    throw new Error("unexpected preflight URL");
+  };
+  try {
+    const gate = await runUsagePreflight({
+      env: { ...baseEnvironment },
+      nowMs: NOW,
+      readFile: async () => validToml(),
+      getWhoamiOutput: async () => `Account ${ACCOUNT} via browser OAuth`,
+    });
+    assert.equal(gate.decision, "SEALED");
+    assert.deepEqual(gate.snapshot.readback.provider_results.map((entry) => entry.group), [
+      "d1-inventory-list", "r2-inventory-list", "queue-inventory-list", "ai-search-inventory-list", "billable-usage",
+    ]);
+    assert.equal(gate.snapshot.metrics.ai_search_instances, 0);
+    assert.ok(gate.snapshot.readback.provider_results.find((entry) => entry.group === "queue-inventory-list")?.inventory_count === 1);
+    assert.ok(!gate.snapshot.readback.provider_errors.some((line) => line.includes("authority brand without provenance")));
+    assert.ok(gate.snapshot.readback.provider_errors.some((line) => line.includes("billable-usage failed: AUTH_SCOPE_DENIED")));
+    assert.ok(seen.some((url) => url.includes("/queues?page=1&per_page=100")));
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
 await check("poisoned env alone never admits (no explicit snapshot)", async () => {
   // Static token plus poisoned ELIOTR_TEST_* with throwing seams must seal,
   // never admit: ambient env cannot select fixture evaluation.

@@ -214,7 +214,10 @@ a short page WITHOUT totals proves nothing (`PARTIAL_PAGINATION`, never
 page fail closed — ambiguity never admits.
 
 The live registry (`buildLiveProviderRegistry`) wires all four inventory
-collectors plus the Usage v2 billing provider: the billing endpoint carries
+collectors plus the Usage v2 billing provider: D1, R2, and Queue collectors
+return `authoritative_inventory` metadata for their complete resource lists
+(`covers: []`, so they cannot fabricate usage counters), while AI Search
+alone covers `ai_search_instances`; the billing endpoint carries
 account-bound `from`/`to` derived from the intended interval (month start
 through start-of-today, never a future month end, never over 31 days) with
 the reviewed triple mapping. Called with defaults (accountId only) every
@@ -225,6 +228,11 @@ products are functional but unbranded test-only. A registry-level billing failur
 entitlement etc.) gaps the declared billing covers, leaving those metrics
 unknown rather than dropping the provider silently; billing never covers
 `ai_search_instances`, so an outage cannot clobber the inventory count.
+
+The OAuth preflight constructs this default registry when `providers` is
+omitted. An explicit provider list is a test seam and cannot mint the
+same-process production admission capability, even if its evaluation is
+otherwise complete.
 
 ## Direct-provisioner denial
 
