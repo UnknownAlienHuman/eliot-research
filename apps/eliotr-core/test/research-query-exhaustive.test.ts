@@ -58,8 +58,9 @@ function access(owner: string) {
 function searchDbWithInventoryWithdrawal(
   database: D1Database,
   withdraw: () => Promise<void>,
+  triggerRead = 1,
 ): D1Database {
-  let withdrawn = false;
+  let projectionReads = 0;
   const wrap = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => new Proxy(statement, {
     get(target, property, receiver) {
       if (property === "bind") {
@@ -68,8 +69,7 @@ function searchDbWithInventoryWithdrawal(
       if (property === "all") {
         return async <T = unknown>() => {
           const result = await target.all<T>();
-          if (!withdrawn && /FROM projection_item/u.test(sql)) {
-            withdrawn = true;
+          if (/FROM projection_item/u.test(sql) && ++projectionReads === triggerRead) {
             await withdraw();
           }
           return result;
@@ -94,6 +94,23 @@ function exhaustiveContext(request: Request, owner: string, trace: string): Auth
   };
 }
 
+async function expectInventoryMutationRejected(
+  owner: string,
+  key: string,
+  mutate: (value: Q1Namespace) => Promise<void>,
+  expectedCode = "RESEARCH_AUTHORITY_STALE",
+): Promise<void> {
+  const value = await world(owner);
+  const request = queryRequest(value, key);
+  const hookedSearch = searchDbWithInventoryWithdrawal(runtime.SEARCH_DB, () => mutate(value));
+  const service = createExhaustiveQueryService({ CORE_DB: runtime.CORE_DB, SEARCH_DB: hookedSearch, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+  await expect(service.query(exhaustiveContext(request, owner, key), await request.clone().json())).rejects.toMatchObject({ code: expectedCode });
+  const persisted = await runtime.CORE_DB.prepare(
+    "SELECT state FROM retrieval_exhaustive_job WHERE idempotency_key=?1 LIMIT 1",
+  ).bind(key).first<{ readonly state: string }>();
+  expect(persisted?.state).not.toBe("COMPLETE");
+}
+
 /** Extend one admitted Q1 source into real, independently addressed source revisions. */
 async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: number): Promise<readonly string[]> {
   const { db, searchDb, runtime, namespace, revision } = worldValue;
@@ -105,7 +122,8 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
   const span = await searchDb.prepare("SELECT * FROM projection_span WHERE item_key=?1 LIMIT 1").bind(item?.item_key).first<Record<string, unknown>>();
   const generation = await searchDb.prepare("SELECT * FROM projection_generation_receipt WHERE source_revision_ref=?1 LIMIT 1").bind(revision).first<Record<string, unknown>>();
   const guard = await searchDb.prepare("SELECT * FROM projection_activation_guard WHERE source_revision_ref=?1 LIMIT 1").bind(revision).first<Record<string, unknown>>();
-  if (!source || !sourceRevision || !operation || !decisionRow || !item || !span || !generation || !guard) throw new Error("missing Q1 clone fixture rows");
+  const watermarks = await searchDb.prepare("SELECT * FROM projection_watermark WHERE source_revision_ref=?1 AND channel IN ('exact','lexical')").bind(revision).all<Record<string, unknown>>();
+  if (!source || !sourceRevision || !operation || !decisionRow || !item || !span || !generation || !guard || watermarks.results.length !== 2) throw new Error("missing Q1 clone fixture rows");
   const sourceManifestKey = String(sourceRevision.normalized_artifact_ref);
   const manifestObject = await runtime.EVIDENCE_BUCKET.get(sourceManifestKey);
   if (manifestObject === null) throw new Error("missing Q1 manifest object");
@@ -242,10 +260,16 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
     const clonedSpan = { ...span, item_key: itemKey, source_revision_ref: revisionRef, projection_generation: generationRef };
     await searchDb.prepare(`INSERT INTO projection_span (${Object.keys(clonedSpan).join(",")}) VALUES (${Object.keys(clonedSpan).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedSpan)).run();
     const digest = await projectionDigest([{ item_key: itemKey, canonical_section_id: item.canonical_section_id, content_sha256: item.content_sha256, start: span.normalized_start_byte, end: span.normalized_end_byte }]);
-    const clonedGeneration = { ...generation, source_revision_ref: revisionRef, projection_generation: generationRef, item_set_digest: digest, readback_digest: digest };
+    const projectionReceiptRef = `projection-receipt-${revisionRef}`;
+    const clonedGeneration = { ...generation, source_revision_ref: revisionRef, projection_generation: generationRef, item_set_digest: digest, readback_digest: digest, receipt_ref: projectionReceiptRef };
     await searchDb.prepare(`INSERT INTO projection_generation_receipt (${Object.keys(clonedGeneration).join(",")}) VALUES (${Object.keys(clonedGeneration).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedGeneration)).run();
-    const clonedGuard = { ...guard, source_revision_ref: revisionRef, projection_generation: generationRef, readback_digest: digest };
+    const clonedGuard = { ...guard, source_revision_ref: revisionRef, projection_generation: generationRef, readback_digest: digest, receipt_ref: projectionReceiptRef };
     await searchDb.prepare(`INSERT INTO projection_activation_guard (${Object.keys(clonedGuard).join(",")}) VALUES (${Object.keys(clonedGuard).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedGuard)).run();
+    for (const watermark of watermarks.results) {
+      const clonedWatermark = { ...watermark, source_revision_ref: revisionRef, projection_generation: generationRef,
+        projected_item_count: 1, state: "READY", readback_receipt_ref: projectionReceiptRef, updated_at: now };
+      await searchDb.prepare(`INSERT INTO projection_watermark (${Object.keys(clonedWatermark).join(",")}) VALUES (${Object.keys(clonedWatermark).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedWatermark)).run();
+    }
     revisionRefs.push(revisionRef);
   }
   return revisionRefs;
@@ -323,6 +347,74 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
       "SELECT state,result_artifact_ref,coverage_receipt_ref FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
     ).bind(job.job_id).first<{ readonly state: string; readonly result_artifact_ref: string | null; readonly coverage_receipt_ref: string | null }>();
     expect(persisted).toEqual({ state: "INVALIDATED", result_artifact_ref: null, coverage_receipt_ref: null });
+  }, 20_000);
+
+  it("rejects a missing or stale canonical generation during inventory", async () => {
+    await expectInventoryMutationRejected("exhaustive-missing-generation-owner", "exhaustive-missing-generation", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "DELETE FROM projection_watermark WHERE channel='exact' AND source_revision_ref=?1",
+      ).bind(value.revision).run();
+    }, "RESEARCH_EXHAUSTIVE_NOT_READY");
+    await expectInventoryMutationRejected("exhaustive-stale-generation-owner", "exhaustive-stale-generation", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "UPDATE projection_watermark SET state='STALE' WHERE channel='exact' AND source_revision_ref=?1",
+      ).bind(value.revision).run();
+    });
+  }, 20_000);
+
+  it("rejects receipt, item-set, count, and tuple mutations after pinning", async () => {
+    await expectInventoryMutationRejected("exhaustive-receipt-owner", "exhaustive-receipt", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "UPDATE projection_activation_guard SET receipt_ref='forged-projection-receipt' WHERE source_revision_ref=?1",
+      ).bind(value.revision).run();
+    });
+    await expectInventoryMutationRejected("exhaustive-item-set-owner", "exhaustive-item-set", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "UPDATE projection_generation_receipt SET item_set_digest=?1 WHERE source_revision_ref=?2",
+      ).bind("0".repeat(64), value.revision).run();
+    });
+    await expectInventoryMutationRejected("exhaustive-count-owner", "exhaustive-count", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "UPDATE projection_generation_receipt SET item_count=2 WHERE source_revision_ref=?1",
+      ).bind(value.revision).run();
+    });
+    await expectInventoryMutationRejected("exhaustive-tuple-owner", "exhaustive-tuple", async (value) => {
+      await runtime.SEARCH_DB.prepare(
+        "UPDATE projection_span SET projection_generation='foreign-generation' WHERE source_revision_ref=?1",
+      ).bind(value.revision).run();
+    });
+  }, 20_000);
+
+  it("rejects partial canonical coverage across the 65-source scope", async () => {
+    const owner = "exhaustive-partial-generation-owner";
+    const value = await world(owner);
+    await addAdmittedProjectedSources(value, 64);
+    const request = queryRequest(value, "exhaustive-partial-generation", "Pinned", { kind: "GLOBAL_LIBRARY" });
+    const hookedSearch = searchDbWithInventoryWithdrawal(runtime.SEARCH_DB, async () => {
+      await runtime.SEARCH_DB.prepare(
+        "DELETE FROM projection_watermark WHERE channel='exact' AND source_revision_ref=?1",
+      ).bind(`revision-${value.namespace}-q8-64`).run();
+    });
+    const service = createExhaustiveQueryService({ CORE_DB: runtime.CORE_DB, SEARCH_DB: hookedSearch, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    await expect(service.query(exhaustiveContext(request, owner, "exhaustive-partial-generation"), await request.clone().json())).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+  }, 20_000);
+
+  it("rechecks owner withdrawal after the final pinned read", async () => {
+    const owner = "exhaustive-final-fence-owner";
+    const value = await world(owner);
+    const request = queryRequest(value, "exhaustive-final-fence");
+    const context = exhaustiveContext(request, owner, "exhaustive-final-fence");
+    const hookedSearch = searchDbWithInventoryWithdrawal(runtime.SEARCH_DB, async () => {
+      const pending = await runtime.CORE_DB.prepare(
+        "SELECT snapshot_id,revision FROM scope_snapshot ORDER BY created_at DESC LIMIT 1",
+      ).first<{ readonly snapshot_id: string; readonly revision: number }>();
+      if (pending === null) throw new Error("missing final-fence scope");
+      await runtime.CORE_DB.prepare(
+        "UPDATE scope_snapshot SET invalidated_at=?1, invalidation_reason='test-final-fence' WHERE snapshot_id=?2 AND revision=?3",
+      ).bind(new Date().toISOString(), pending.snapshot_id, pending.revision).run();
+    }, 3);
+    const service = createExhaustiveQueryService({ CORE_DB: runtime.CORE_DB, SEARCH_DB: hookedSearch, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    await expect(service.query(context, await request.clone().json())).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
   }, 20_000);
 
   it("refuses a new job after the owner policy is revoked", async () => {
@@ -411,7 +503,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     const resumed = await handleHttp(queryRequest(value, "exhaustive-http-pending"), runtime, {} as ExecutionContext, access(owner));
     expect([200, 202]).toContain(resumed.status);
     expect(await resumed.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
-  });
+  }, 20_000);
 
   it("rejects a projected range outside the admitted content object", async () => {
     const owner = "exhaustive-range-owner";
@@ -492,5 +584,5 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     } finally {
       await workflowControl.dispose();
     }
-  });
+  }, 20_000);
 });
