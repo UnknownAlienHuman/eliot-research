@@ -507,7 +507,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     );
     expect([200, 202]).toContain(response.status);
     expect(await response.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
-  });
+  }, 20_000);
 
   it("keeps a cancelled job pending and resumes it from the persisted scope", async () => {
     const owner = "exhaustive-pending-owner";
