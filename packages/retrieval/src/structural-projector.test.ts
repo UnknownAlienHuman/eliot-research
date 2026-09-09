@@ -119,6 +119,28 @@ describe("deterministic structural projector", () => {
     );
   });
 
+  it("counts a preamble at every heading before building sections", () => {
+    const markdown = "Preamble\n# One\n# Two\n";
+    expect(() => extractNormalizedMarkdownStructure(markdown, 2)).toThrowError(
+      expect.objectContaining({ code: "PROJECTION_ITEM_LIMIT_EXCEEDED" }),
+    );
+    expect(extractNormalizedMarkdownStructure(markdown, 3)).toHaveLength(3);
+  });
+
+  it("rejects a public section ceiling above the structural object cap", () => {
+    expect(() => extractNormalizedMarkdownStructure("# One\n", 4_097)).toThrowError(
+      expect.objectContaining({ code: "PROJECTION_INPUT_INVALID" }),
+    );
+  });
+
+  it("enforces the line traversal bound while collecting lines", () => {
+    const exact = "\n".repeat(131_072);
+    expect(extractNormalizedMarkdownStructure(exact)).toHaveLength(1);
+    expect(() => extractNormalizedMarkdownStructure(`${exact}\n`)).toThrowError(
+      expect.objectContaining({ code: "PROJECTION_ITEM_LIMIT_EXCEEDED" }),
+    );
+  });
+
   it("rejects empty documents and impossible size profiles", async () => {
     await expect(projectNormalizedMarkdown({
       source_revision: sourceRevision(),

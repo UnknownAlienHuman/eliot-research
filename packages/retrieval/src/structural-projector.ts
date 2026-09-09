@@ -4,11 +4,13 @@ import {
   type ProjectionItem,
   type SourceRevision,
 } from "@eliotr/contracts";
+import { MAX_MAP_OBJECTS_PER_FIELD } from "./navigation-limits.js";
 
 const DEFAULT_TARGET_BYTES = 32 * 1024;
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const HARD_MAX_BYTES = 256 * 1024;
 const MAX_ITEMS = 1024;
+const MAX_LINES = 131_072;
 const MAX_CONTEXT_BYTES = 4 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
@@ -71,6 +73,27 @@ function utf8Length(value: string): number {
   return new TextEncoder().encode(value).byteLength;
 }
 
+/** Count UTF-8 bytes without allocating an encoded copy, stopping at the bound. */
+function boundedUtf8Length(value: string, limit: number): number {
+  if (value.length > limit) return limit + 1;
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    const next = value.charCodeAt(index + 1);
+    const width = codeUnit >= 0xd800 && codeUnit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff
+      ? 4
+      : codeUnit <= 0x7f
+        ? 1
+        : codeUnit <= 0x7ff
+          ? 2
+          : 3;
+    bytes += width;
+    if (bytes > limit) return limit + 1;
+    if (width === 4) index += 1;
+  }
+  return bytes;
+}
+
 function hex(input: ArrayBuffer): string {
   return [...new Uint8Array(input)]
     .map((value) => value.toString(16).padStart(2, "0"))
@@ -109,7 +132,7 @@ function canonicalJson(value: unknown): string {
   fail("PROJECTION_INPUT_INVALID", "canonical JSON contains a non-JSON value");
 }
 
-function splitLines(markdown: string): readonly { text: string; start: number; end: number }[] {
+function splitLines(markdown: string, maxLines: number): readonly { text: string; start: number; end: number }[] {
   const result: { text: string; start: number; end: number }[] = [];
   let textStart = 0;
   let byteStart = 0;
@@ -117,12 +140,14 @@ function splitLines(markdown: string): readonly { text: string; start: number; e
     if (markdown[index] !== "\n") continue;
     const text = markdown.slice(textStart, index + 1);
     const bytes = utf8Length(text);
+    if (result.length >= maxLines) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "admitted lines exceed traversal bound");
     result.push({ text, start: byteStart, end: byteStart + bytes });
     textStart = index + 1;
     byteStart += bytes;
   }
   if (textStart < markdown.length) {
     const text = markdown.slice(textStart);
+    if (result.length >= maxLines) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "admitted lines exceed traversal bound");
     result.push({ text, start: byteStart, end: byteStart + utf8Length(text) });
   }
   return result;
@@ -235,12 +260,15 @@ function parseNormalizedMarkdownStructure(
   if (!Number.isSafeInteger(maxSections) || maxSections < 1) {
     fail("PROJECTION_INPUT_INVALID", "maxSections is invalid");
   }
-  const lines = splitLines(markdown);
-  if (lines.length > 131_072) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "admitted lines exceed traversal bound");
+  if (maxSections > MAX_MAP_OBJECTS_PER_FIELD) {
+    fail("PROJECTION_INPUT_INVALID", "maxSections exceeds the structural object ceiling");
+  }
+  const lines = splitLines(markdown, MAX_LINES);
   const marks: { readonly level: number; readonly title: string; readonly start: number; readonly lineIndex: number }[] = [];
   const structuralLines: MarkdownStructuralLine[] = [];
   let inFence: FenceOpener | null = null;
   const headingStack: { readonly title: string; readonly level: number }[] = [];
+  let preambleCount = 0;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line === undefined) continue;
@@ -263,8 +291,8 @@ function parseNormalizedMarkdownStructure(
     if (utf8Length(found.title) > MAX_CONTEXT_BYTES) {
       fail("PROJECTION_INPUT_INVALID", "heading exceeds short-text ceiling");
     }
-    const includesPreamble = marks.length === 0 && line.start > 0 ? 1 : 0;
-    if (marks.length + includesPreamble + 1 > maxSections) {
+    if (marks.length === 0) preambleCount = line.start > 0 ? 1 : 0;
+    if (marks.length + preambleCount + 1 > maxSections) {
       fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
     }
     marks.push({ level: found.level, title: found.title, start: line.start, lineIndex: index });
@@ -417,7 +445,9 @@ export async function projectNormalizedMarkdown(
     targetBytes,
     HARD_MAX_BYTES,
   );
-  if (Math.ceil(utf8Length(rawInput.markdown) / maxBytes) > MAX_ITEMS) {
+  const effectiveByteCeiling = maxBytes * MAX_ITEMS;
+  if (rawInput.markdown.length > effectiveByteCeiling ||
+      boundedUtf8Length(rawInput.markdown, effectiveByteCeiling) > effectiveByteCeiling) {
     fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "projection has more bytes than its item ceiling permits");
   }
   const membershipIds = [...new Set(rawInput.project_membership_ids)].sort();
