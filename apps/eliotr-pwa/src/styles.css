@@ -52,6 +52,12 @@ h2 { margin-bottom: 12px; font-size: 17px; letter-spacing: -.03em; } h3 { margin
 .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .mini-stat { display: grid; align-content: center; gap: 7px; padding: 16px; } .mini-stat .eyebrow { margin: 0; }
 .mini-stat strong { font-size: 20px; letter-spacing: -.04em; } .mini-stat span:last-child { color: var(--dim); }
 .tool-stack { display: grid; gap: 12px; } .tool-card { padding: 20px; } .tool-card > div > h2 { font-size: 15px; } .tool-card--research { border-color: rgba(149, 183, 255, .28); background: linear-gradient(135deg, rgba(30, 34, 43, .94), rgba(25, 29, 38, .72)); }
+.tool-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; } .tool-heading h2 { margin-bottom: 0; }
+.tool-badge { padding: 5px 8px; border: 1px solid rgba(169, 232, 109, .28); border-radius: 99px; color: var(--accent); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
+.raw-file-panel > p { max-width: 650px; color: var(--muted); font-size: 12px; line-height: 1.6; } .raw-file-limit { color: var(--dim) !important; font-size: 10px !important; }
+.raw-file-actions { display: flex; flex-wrap: wrap; gap: 6px; } .raw-file-actions .button { margin: 0; }
+.raw-file-receipt { margin-top: 16px; padding: 13px; border: 1px solid rgba(169, 232, 109, .24); border-radius: 9px; background: var(--accent-soft); }
+.raw-file-receipt dd { color: var(--ink); }
 .tool-divider { height: 1px; margin: 24px 0; background: var(--line); }
 .workflow-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; } .workflow-head h2 { margin-bottom: 0; }
 .workflow-badge { padding: 5px 8px; border: 1px solid rgba(149, 183, 255, .3); border-radius: 99px; color: var(--blue); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
