@@ -5,16 +5,19 @@
   "type": "module",
   "sideEffects": true,
   "scripts": {
-    "build": "vite build",
-    "dev": "vite",
+    "build": "astro build",
+    "dev": "astro dev",
+    "check": "astro check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "preview": "vite preview"
+    "preview": "astro preview"
   },
   "dependencies": {
     "@eliotr/contracts": "workspace:*"
   },
   "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "astro": "7.2.6",
     "vite": "8.2.2",
     "typescript": "6.0.3"
   }
