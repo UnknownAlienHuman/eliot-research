@@ -14,13 +14,27 @@ function dataOf(outcome, label) {
   return data;
 }
 
+function recoveryPageOf(outcome, label, workflowId) {
+  assert.ok(outcome && typeof outcome.data === "object" && outcome.data !== null,
+    `${label}: response must be a JSON object`);
+  const data = outcome.data.data;
+  assert.ok(data && typeof data === "object", `${label}: response envelope must contain data`);
+  assert.equal(data.protocol, "eliotr.exhaustive-workflow-page.v1", `${label}: protocol must be workflow page`);
+  assert.ok(Array.isArray(data.items), `${label}: workflow page items must be an array`);
+  const item = data.items.find((candidate) => candidate?.workflow_instance_id === workflowId);
+  assert.ok(item, `${label}: workflow page must contain the selected workflow identity`);
+  assert.equal(item.workflow_instance_id, workflowId, `${label}: discovered workflow identity must match`);
+  return data;
+}
+
 /**
  * Drive one real exhaustive workflow through the built PWA and its same-origin
  * local bridge. The helper deliberately cancels the job after the UI receives
- * its server-issued workflow ID, so it proves launch, status, DELETE and
- * terminal readback without claiming projection completion from a fixture.
+ * its server-issued workflow ID, then reloads and recovers that same identity
+ * through the owner jobs list. It proves launch, status, DELETE and recovery
+ * readback without claiming projection completion from a fixture.
  */
-export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned" }) {
+export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection }) {
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
   await page.waitForFunction(() => {
@@ -66,9 +80,40 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   assert.equal(canceledData.workflow_status, "terminated", "server cancellation must be terminal terminated");
   const firstWorkflowId = workflowId;
 
+  // Reload the actual PWA, discover the terminal operation through the
+  // owner-only recent-jobs endpoint, then select that same server identity.
+  // The page carries no query or source bytes in this recovery DTO; the
+  // explicit status GET below is the only private readback claim.
+  if (beforeReload !== undefined) await beforeReload();
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent?.trim() === "READY",
+    null, { timeout: 15000 });
+  assert.equal(await panel.getAttribute("data-workflow-id"), null,
+    "a PWA reload must not retain the previous workflow identity in page state");
+  await page.waitForFunction((id) => Array.from(document.querySelectorAll("#exhaustive-workflow [data-recovery-workflow-id]"))
+    .some((node) => node.getAttribute("data-recovery-workflow-id") === id), firstWorkflowId, { timeout: 15000 });
+  const discovered = await browserJson(page, ledger, "/api/v1/research/query/jobs?limit=20", {
+    correlation: "e2e-exhaustive/recovery-list",
+  });
+  recoveryPageOf(discovered, "recovery list", firstWorkflowId);
+  if (beforeRecoverySelection !== undefined) await beforeRecoverySelection();
+  await panel.locator(`[data-recovery-workflow-id="${firstWorkflowId}"]`).click();
+  await page.waitForFunction((id) => {
+    const root = document.querySelector("#exhaustive-workflow");
+    return root?.getAttribute("data-workflow-id") === id && root.querySelector("[data-workflow-badge]")?.textContent?.trim() === "CANCELLED";
+  }, firstWorkflowId, { timeout: 15000 });
+  const recoveredStatus = await browserJson(page, ledger, `/api/v1/research/query/${firstWorkflowId}`, {
+    correlation: "e2e-exhaustive/recovered-status",
+  });
+  const recoveredStatusData = dataOf(recoveredStatus, "recovered status");
+  assert.equal(recoveredStatusData.workflow_instance_id, firstWorkflowId);
+  assert.equal(recoveredStatusData.workflow_status, "terminated",
+    "recovery selection must read back the same terminal server workflow");
+
   // A second deliberate launch with the same visible inputs must receive a
   // fresh durable identity after the first operation became terminal. Cancel
   // it too so the browser acceptance leaves no active Workflow behind.
+  await panel.locator('input[name="query"]').fill(query);
   await submit.click();
   await page.waitForFunction((previous) => {
     const value = document.querySelector("#exhaustive-workflow")?.getAttribute("data-workflow-id");
@@ -105,6 +150,9 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
       { method: "POST", path: "/api/v1/research/query", status: 200 },
       { method: "POST", path: "/api/v1/research/query", status: 202 },
       { method: "GET", path: `/api/v1/research/query/${firstWorkflowId}`, status: 200 },
+      { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
+      { method: "GET", path: "/api/v1/system/health", status: 200 },
+      { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       { method: "GET", path: `/api/v1/research/query/${relaunchedWorkflowId}`, status: 200 },
       { method: "DELETE", path: `/api/v1/research/query/${firstWorkflowId}`, status: 200 },
       { method: "DELETE", path: `/api/v1/research/query/${relaunchedWorkflowId}`, status: 200 },

@@ -607,21 +607,24 @@ async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
 // link only through declared successors in the closed TRANSITIONS set, and
 // the abort anchor key is (method,origin,path,role,actionIds,slotId).
 export const OP_KINDS = Object.freeze(["init", "harness-navigation", "harness-action", "observed-navigation"]);
-export const OP_CAUSES = Object.freeze(["harness-start", "init", "goto", "goto-pairing", "pair-action", "reload", "logout-action", "framenavigated"]);
+export const OP_CAUSES = Object.freeze(["harness-start", "init", "goto", "goto-pairing", "pair-action", "reload", "recovery-selection", "logout-action", "framenavigated"]);
 export const EDGE_SCOPES = Object.freeze(["harness", "document"]);
-export const SLOT_ROLES = Object.freeze(["startup-probe", "catalog-read", "health-read", "pair-action", "jwt-matrix", "logout-action", "rotation-read"]);
+export const SLOT_ROLES = Object.freeze(["startup-probe", "catalog-read", "health-read", "pair-action", "jwt-matrix", "logout-action", "rotation-read", "exhaustive-recovery"]);
 export const OP_ACTIONS = Object.freeze(["harness-start", "goto-unauthenticated", "goto-pairing", "click-connect",
   "reload-authed-retrieval", "goto-jwt-matrix", "goto-post-restart", "goto-repairing", "click-reconnect",
+  "reload-exhaustive-recovery", "select-recovered-workflow",
   "goto-logout", "click-logout", "goto-post-logout-clean", "goto-rotation", "goto-rotation-pairing",
   "click-rotation-connect", "probe-issue", "probe-mid", "probe-retry", "probe-rogue", "pair-probe", "pair-retry",
   "framenavigated"]);
 export const OP_TRANSITIONS = Object.freeze(["harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
   "goto-pairing→click-connect", "click-connect→reload-authed-retrieval", "reload-authed-retrieval→goto-jwt-matrix",
   "goto-jwt-matrix→goto-post-restart", "goto-post-restart→goto-repairing", "goto-repairing→click-reconnect",
-  "click-reconnect→goto-logout", "goto-logout→click-logout", "click-logout→goto-post-logout-clean",
+  "click-reconnect→goto-logout", "click-reconnect→reload-exhaustive-recovery", "reload-exhaustive-recovery→select-recovered-workflow",
+  "select-recovered-workflow→goto-logout", "goto-logout→click-logout", "click-logout→goto-post-logout-clean",
   "goto-post-logout-clean→goto-rotation", "goto-rotation→goto-rotation-pairing", "goto-rotation-pairing→click-rotation-connect",
   "goto-unauthenticated→framenavigated", "goto-pairing→framenavigated", "reload-authed-retrieval→framenavigated",
   "goto-jwt-matrix→framenavigated", "goto-post-restart→framenavigated", "goto-repairing→framenavigated",
+  "reload-exhaustive-recovery→framenavigated", "select-recovered-workflow→framenavigated",
   "goto-logout→framenavigated", "goto-post-logout-clean→framenavigated", "goto-rotation→framenavigated",
   "goto-rotation-pairing→framenavigated", "harness-start→probe-issue", "harness-start→pair-probe",
   "probe-issue→probe-retry", "probe-issue→probe-mid", "probe-mid→probe-retry", "pair-probe→pair-retry"]);
@@ -4730,7 +4733,7 @@ export async function runOwnerE2E() {
     playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
       action: "click-reconnect", role: "pair-action",
-      from: playwright.currentOp().id, successors: ["goto-logout"] });
+      from: playwright.currentOp().id, successors: ["reload-exhaustive-recovery", "goto-logout"] });
     playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
@@ -4753,6 +4756,22 @@ export async function runOwnerE2E() {
     // cancellation proof.
     exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
       page: playwright.page, browserJson, ledger, query: "Pinned",
+      beforeReload: async () => {
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery-reload"));
+        playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",
+          sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+          action: "reload-exhaustive-recovery", role: "exhaustive-recovery-reload",
+          from: playwright.currentOp().id, successors: ["select-recovered-workflow", "framenavigated"] });
+        playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
+      },
+      beforeRecoverySelection: async () => {
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery-select"));
+        playwright.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document",
+          sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+          action: "select-recovered-workflow", role: "exhaustive-recovery-select",
+          from: playwright.currentOp().id, successors: ["recovered-status", "framenavigated"] });
+        playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
+      },
     });
     await settleLedger(playwright.page, playwright);
     assertPhaseNetwork(playwright, "exhaustive_workflow", {
@@ -4762,7 +4781,7 @@ export async function runOwnerE2E() {
       workerOrigins: trackOrigin(bridge.origin),
     });
     receipt.network_ledger_phases.exhaustive_workflow = summarizePhaseLedger(playwright);
-    receipt.exhaustive_workflow = `PASS (launch/status/cancel/readback ${exhaustiveWorkflow.workflowId})`;
+    receipt.exhaustive_workflow = `PASS (launch/status/cancel/reload/discovery/recovery ${exhaustiveWorkflow.workflowId})`;
     playwright.resetLedger();
     playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "logout-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
@@ -5002,6 +5021,8 @@ export async function runOwnerE2E() {
         "e2e-import-1/browser-revisions",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
+        "e2e-exhaustive/recovery-list",
+        "e2e-exhaustive/recovered-status",
         "e2e-exhaustive/relaunch-status-before-cancel",
         "e2e-exhaustive/relaunch-status-after-cancel",
         "e2e-jwt-matrix/expired",
