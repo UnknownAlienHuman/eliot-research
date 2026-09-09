@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `packages/cloudflare-ai/**`
+- `packages/cloudflare-markdown/**`
 - `packages/platform-cloudflare/src/ai-search.ts`
 - `packages/platform-cloudflare/src/ai-search.test.ts`
 - `packages/platform-cloudflare/src/model-gateway.ts`
@@ -240,6 +241,24 @@ create uncertainty, provider-name collision, malformed control-plane responses, 
 qualification, candidate readback mismatch, active-generation race, and ambiguous promotion settlement.
 The capability fixture keeps live Cloudflare control-plane write/readback, route execution, fallback, and
 Spend Limit probes explicitly `NOT_EXECUTED`.
+
+## Active implementation slice — Workers AI Markdown Conversion observation boundary
+
+The dedicated `@eliotr/cloudflare-markdown` package exposes a narrow, non-durable `toMarkdown` binding adapter for the later raw-file
+checkpoint. It accepts a caller-prepared non-empty document within a caller-supplied input bound (capped
+by the existing 16 MiB buffered-file application ceiling), owner/attempt context and explicit output/token/time bounds, invokes the current Workers AI binding once, and strictly decodes the current documented result
+shape (`id`, `name`, `format`, `mimetype`, plus `tokens`/`data` or `error`). The detected MIME is retained
+as an observation and is never asserted equal to the input `Blob.type`; the pinned Workers types still use
+the older `mimeType` spelling, so that mismatch is isolated at the untrusted provider boundary.
+
+The adapter returns a digest-bound conversion observation or a typed failure for malformed/unknown
+results, provider errors, empty/oversized output, token overflow, timeout, abort and provider exceptions.
+It performs no retry, persistence, source mapping, qualification, normalization admission, or raw capture.
+Controlled provider fixtures cover the valid current result, stale field spelling, malformed and error
+responses, input/output bounds, mutable-input snapshots, abort and timeout. Failures carry a machine-readable
+dispatch state (`NOT_STARTED`, `OUTCOME_UNKNOWN`, or `RESPONSE_RECEIVED`); a timeout or abort stops local
+waiting but cannot cancel an already-dispatched binding call, so no retry is implied. Durable attempt/receipt/readback and the live Workers AI gate remain
+`NOT EXECUTED`; conversion output remains candidate data and does not close ER-16.
 
 ## Active implementation slice — Cloudflare Dynamic Routing REST control plane
 

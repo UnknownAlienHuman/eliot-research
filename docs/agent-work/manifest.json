@@ -350,6 +350,7 @@
       ],
       "owned_paths": [
         "packages/cloudflare-ai/**",
+        "packages/cloudflare-markdown/**",
         "packages/platform-cloudflare/src/ai-search.ts",
         "packages/platform-cloudflare/src/ai-search.test.ts",
         "packages/platform-cloudflare/src/model-gateway.ts",
