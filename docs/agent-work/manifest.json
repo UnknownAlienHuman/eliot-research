@@ -47,6 +47,8 @@
         "scripts/branch-hygiene-lib.mjs",
         "scripts/branch-hygiene.mjs",
         "scripts/test-branch-hygiene.mjs",
+        "scripts/lib/miniflare-port-guard.mjs",
+        "scripts/test-miniflare-port-guard.mjs",
         "docs/agent-work/manifest.json",
         "docs/agent-work/ER-00-workspace-and-verification-gates.md",
         "docs/implementation/toolchain.md",

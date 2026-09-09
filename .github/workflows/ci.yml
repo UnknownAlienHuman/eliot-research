@@ -182,6 +182,8 @@ jobs:
           node-version: 22
       - name: Verify package boundaries on Windows
         run: node scripts/check-boundaries.mjs
+      - name: Verify Fetch-forbidden local Workers port guard on Windows
+        run: node scripts/test-miniflare-port-guard.mjs
       - name: Verify source budgets on Windows
         run: node scripts/check-budgets.mjs
       - name: Prove portable checkout and negative gates on Windows
