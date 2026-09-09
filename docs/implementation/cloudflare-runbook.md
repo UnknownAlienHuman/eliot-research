@@ -60,8 +60,8 @@ existing project-local server with `codex mcp login cloudflare-api` restored man
 A fresh managed MCP client discovered `search`, `execute`, and `docs`, and actual account,
 Zero Trust organization, Access application and identity-provider reads returned HTTP 200.
 The earlier Wrangler Access 403 therefore does not mean the account is inaccessible. No global
-MCP registration or static-token fallback is necessary. This observation does not yet wire the
-MCP transport into the provisioner; the scripted path above still uses Wrangler.
+MCP registration or static-token fallback is necessary. The provisioner keeps Wrangler as its
+default and supports the explicitly selected MCP transport described below.
 
 Both `/accounts/{account_id}/billable/usage` and `/accounts/{account_id}/billing/usage` still
 returned Cloudflare error `10000` through MCP. The [official Usage v2 specification](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v2/)
@@ -80,6 +80,14 @@ configuration reconciliation item, and no tier thresholds are inferred here.
   profile (`ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth`). The deployer verifies the active profile
   with `wrangler whoami` against the exact account ID from the local ignored profile before any
   mutation.
+- Wrangler remains the default Access transport. For an explicit run through the selected official
+  Cloudflare MCP OAuth connection, set `ELIOTR_ACCESS_TRANSPORT=cloudflare-mcp` and provide
+  `ELIOTR_CLOUDFLARE_MCP_CWD` as an absolute local Cloudflare project directory. The MCP transport
+  requires `ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth` so static-token mode cannot be selected
+  accidentally. It starts a volatile Codex app-server context, verifies the exact account by
+  readback, and permits only the fixed Access organization/application/policy requests issued by
+  `provision-cloudflare-access.mjs`; it never accepts arbitrary MCP code or exports the managed
+  OAuth credential. Wrangler continues to own deployment and binding operations.
 - The Cloudflare account has Zero Trust enabled.
 - No `CLOUDFLARE_API_TOKEN` is required for the operator flow. (A static token remains only for
   non-interactive CI, where browser login is impossible; it is never the documented operator path.)
@@ -98,6 +106,8 @@ configuration reconciliation item, and no tier thresholds are inferred here.
 ```text
 ELIOTR_CLOUDFLARE_AUTH_MODE       required: wrangler-oauth (operator browser flow; unset means CI API-token mode)
 ELIOTR_WRANGLER_PROFILE           optional: local browser-OAuth Wrangler profile name
+ELIOTR_ACCESS_TRANSPORT            optional: wrangler (default) or cloudflare-mcp (managed MCP OAuth)
+ELIOTR_CLOUDFLARE_MCP_CWD          required only for cloudflare-mcp: absolute local project directory
 CLOUDFLARE_ACCOUNT_ID              required: account ID from the local ignored profile (exact readback)
 CLOUDFLARE_API_TOKEN               CI-only; leave unset for browser-OAuth operation (the deployer injects
                                    the short-lived OAuth bearer into child-process memory only)

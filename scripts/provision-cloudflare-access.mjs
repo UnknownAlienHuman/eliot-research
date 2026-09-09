@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
+import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -25,6 +26,12 @@ if (!showHelp) {
 const hostname = process.env.ELIOTR_ACCESS_HOSTNAME?.trim().toLowerCase();
 const ownerEmails = parseOwnerEmails(process.env.ELIOTR_OWNER_EMAILS);
 const allowedAdditionalPolicyIds = new Set((process.env.ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS ?? "").split(",").map((item) => item.trim()).filter(Boolean));
+const accessTransport = (process.env.ELIOTR_ACCESS_TRANSPORT ?? "wrangler").trim() || "wrangler";
+if (accessTransport !== "wrangler" && accessTransport !== CLOUDFLARE_MCP_TRANSPORT) {
+  console.error("ELIOTR_ACCESS_TRANSPORT must be wrangler or cloudflare-mcp");
+  process.exit(2);
+}
+let mcpTransport = null;
 
 let authMode = "api-token";
 try {
@@ -33,7 +40,16 @@ try {
   console.error(error?.message ?? String(error));
   process.exit(2);
 }
-if (authMode === WRANGLER_OAUTH_MODE) {
+if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
+  if (authMode !== WRANGLER_OAUTH_MODE) {
+    console.error(`ELIOTR_ACCESS_TRANSPORT=${CLOUDFLARE_MCP_TRANSPORT} requires ${process.env.ELIOTR_CLOUDFLARE_AUTH_MODE}=${WRANGLER_OAUTH_MODE}; static-token mode is prohibited`);
+    process.exit(2);
+  }
+  if (!accountId) {
+    console.error(`CLOUDFLARE_ACCOUNT_ID is required. ${LOGIN_INSTRUCTION}`);
+    process.exit(2);
+  }
+} else if (authMode === WRANGLER_OAUTH_MODE) {
   // Direct-invocation OAuth path (cf:preflight:remote bypasses the deployer
   // injection). Bearer stays in process memory only: never argv/logs/files.
   if (!accountId) {
@@ -90,6 +106,18 @@ if (authMode === WRANGLER_OAUTH_MODE) {
     process.exit(2);
   }
 }
+if (accessTransport === CLOUDFLARE_MCP_TRANSPORT) {
+  try {
+    mcpTransport = createCloudflareMcpTransport({
+      cwd: process.env.ELIOTR_CLOUDFLARE_MCP_CWD,
+      accountId,
+    });
+    await mcpTransport.verifyAccount();
+  } catch (error) {
+    console.error(error?.message ?? "Cloudflare MCP account verification failed");
+    process.exit(2);
+  }
+}
 if (!hostname) {
   console.error("ELIOTR_ACCESS_HOSTNAME is required for a live deployment");
   process.exit(2);
@@ -126,6 +154,7 @@ function validateHostname(value) {
 }
 
 async function request(method, path, body) {
+  if (mcpTransport !== null) return mcpTransport.request(method, path, body);
   const response = await fetch(`${apiBase}${path}`, {
     method,
     headers,
