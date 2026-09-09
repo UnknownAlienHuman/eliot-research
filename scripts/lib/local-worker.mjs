@@ -3,23 +3,57 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 import { devArguments, localEnvironment, ROOT, signalLocalProcess } from "./local-launch.mjs";
+import { CHROMIUM_SAFE_PORT_RETRIES, assertChromiumSafePort, bindChromiumSafeListener, isPortCollisionMessage } from "./local-owner-bridge.mjs";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 
-async function vacantPort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
-  const port = server.address().port;
-  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  return port;
+function listenHolder(candidate) {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", (error) => {
+      server.close(() => reject(error));
+    });
+    server.listen(candidate, "127.0.0.1", () => {
+      resolve({ server, port: server.address().port });
+    });
+  });
 }
 
-export async function startLocalWorker(paths) {
-  const port = await vacantPort();
+// Hold-the-listener reservation shared with the bridge/JWKS path (no duplicate
+// authority): bind port 0 via bindChromiumSafeListener so a Chromium-blocked
+// ephemeral port (observed: 6000) retries with a fresh bind and a rejected
+// attempt closes its listener before the next attempt. The winning holder is
+// closed after reserving so the port can be handed to `wrangler dev`; the
+// residual probe-to-bind race is closed by the bounded reselect/retry in
+// startLocalWorker below, never by skipping or by an unbounded sleep-loop.
+export async function reserveChromiumSafePort({ attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+  const bound = await bindChromiumSafeListener(listenHolder, { port: 0, attempts });
+  const port = bound.port;
+  const bindAttempts = bound.attempts;
+  await new Promise((resolve, reject) => bound.server.close((error) => error ? reject(error) : resolve()));
+  assertChromiumSafePort(port, "reserved local worker port");
+  return { port, attempts: bindAttempts };
+}
+
+function redactSpawnDiagnostic(text) {
+  return String(text ?? "")
+    .replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
+    .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]")
+    .slice(0, 2000);
+}
+
+async function spawnOnce(paths, port) {
+  assertChromiumSafePort(port, "local worker port");
   const child = spawn(process.execPath, devArguments(paths, port), {
     cwd: ROOT, env: localEnvironment(), stdio: ["ignore", "pipe", "pipe"], shell: false,
   });
-  // Drain, but never retain or reflect possible credentials from Wrangler diagnostics.
-  child.stdout.resume(); child.stderr.resume();
+  // Drain, but retain only a bounded redacted tail for collision classification.
+  // Never retain or reflect possible credentials from Wrangler diagnostics.
+  let stderrTail = "";
+  child.stdout.resume();
+  child.stderr.on("data", (chunk) => {
+    stderrTail = `${stderrTail}${chunk.toString("utf8")}`.slice(-8192);
+  });
+  child.stderr.resume();
   let spawnError;
   child.on("error", (error) => { spawnError = error; });
   const closed = new Promise((resolve) => child.once("close", resolve));
@@ -38,17 +72,52 @@ export async function startLocalWorker(paths) {
       })]);
     } finally { clearTimeout(timer); }
   };
-  try {
+  return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail) };
+}
+
+export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100) {
+    throw new Error("Invalid local worker retry bound");
+  }
+  let lastError;
+  let reserveAttempts = 0;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const reserved = await reserveChromiumSafePort();
+    reserveAttempts += reserved.attempts;
+    const port = reserved.port;
+    const handle = await spawnOnce(paths, port);
     const origin = `http://127.0.0.1:${port}`;
+    let ready = false;
+    let earlyExit = false;
     for (let i = 0; i < 120; i += 1) {
-      if (spawnError || child.exitCode !== null) throw new Error("Local Worker exited before HTTP readiness");
+      if (handle.spawnError() || handle.child.exitCode !== null) { earlyExit = true; break; }
       try {
         const { data } = await readDeploymentJson(`${origin}/healthz`, {}, { timeoutMs: 500 });
         assert.equal(data.ready, true);
         assert.equal(data.deployment_generation, paths.generation);
-        return { origin, stop };
+        ready = true;
+        break;
       } catch { await delay(250); }
     }
+    if (ready) {
+      // Success: the child stays running under the returned stop() handle.
+      // Evidence records which start attempt won and how many port
+      // reservations it took; no listener leaks (holder closed per reserve).
+      return { origin, port, stop: handle.stop, startAttempts: attempt, reserveAttempts };
+    }
+    // Classify the failure: a port collision or bad-port refusal stops this
+    // child and reselects a fresh Chromium-safe port with a bounded retry. Any
+    // other failure (config, migration, schema, authority) fails closed now.
+    const diagnostic = `${handle.spawnError()?.message ?? ""}\n${handle.spawnError()?.code ?? ""}\n${handle.stderrTail()}`;
+    await handle.stop();
+    if ((earlyExit || handle.child.exitCode !== null) && isPortCollisionMessage(diagnostic)) {
+      lastError = new Error(`Local Worker port ${port} collided/refused (attempt ${attempt}/${attempts}); reselecting a fresh Chromium-safe port :: ${handle.stderrTail().slice(0, 300)}`);
+      continue;
+    }
+    if (earlyExit || handle.child.exitCode !== null) {
+      throw new Error(`Local Worker exited before HTTP readiness on Chromium-safe port ${port} :: ${handle.stderrTail().slice(0, 300)}`);
+    }
     throw new Error("Local Worker did not become ready with both migrated databases");
-  } catch (error) { await stop(); throw error; }
+  }
+  throw lastError ?? new Error("Local Worker did not become ready with both migrated databases");
 }
