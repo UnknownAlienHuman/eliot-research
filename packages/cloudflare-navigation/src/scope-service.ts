@@ -449,7 +449,7 @@ function currentness(current: boolean, reasons: readonly string[]): ScopeCurrent
 // IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.
 export function createScopeService(repository: ScopeRepository, rawOptions: ScopeServiceOptions = {}): ScopeService {
   const options = resolveOptions(rawOptions);
-  const atomResolver = options.resolveAtom ?? repository.resolveAtom;
+  const atomResolver = options.resolveAtom ?? ((atom, observedAt) => repository.resolveAtom(atom, observedAt));
   const validateCurrent = async (rawSnapshot: ScopeSnapshot): Promise<ScopeCurrentness> => {
     const preflight = snapshotPreflightReason(rawSnapshot, options.max_snapshot_members);
     if (preflight !== null) return currentness(false, [preflight]);
