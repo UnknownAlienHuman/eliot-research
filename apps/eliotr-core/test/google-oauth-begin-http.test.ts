@@ -26,6 +26,7 @@ function googleEnv(overrides: Record<string, string | undefined> = {}) {
     GOOGLE_OAUTH_GOOGLE_SUBJECT: "123456789",
     GOOGLE_OAUTH_GOOGLE_EMAIL: "exchange@example.com",
     GOOGLE_OAUTH_PRODUCTION_EVIDENCE_REF: "operator-attestation-1",
+    GOOGLE_EXTERNAL_TRANSPORT: "drive-exchange",
     ...overrides,
   };
 }
