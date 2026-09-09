@@ -114,7 +114,7 @@ function render(health: SystemHealth | null): void {
       app.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
-  const clearEvidence = (resetSummary = true): void => {
+  const clearEvidenceRail = (resetSummary = true): void => {
     const empty = app.querySelector<HTMLElement>("#evidence-empty");
     const evidence = app.querySelector<HTMLElement>("#evidence-detail");
     if (empty && evidence) { empty.hidden = false; evidence.hidden = true; evidence.replaceChildren(); }
@@ -125,16 +125,17 @@ function render(health: SystemHealth | null): void {
       if (coverage) coverage.textContent = "Not queried";
       const coverageNote = app.querySelector("#coverage-note");
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
-      retrieval?.clearPrivate();
     }
   };
-  const clearEvidenceOnEvent = (): void => clearEvidence();
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); };
+  const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
+  const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
     const previousGeneration = app.querySelector(".health-generation")?.textContent;
     void getSystemHealth().then((next) => {
-      if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearEvidence();
+      if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearPrivateEvidence();
       updateHealth(next);
-    }).catch(() => { clearEvidence(); updateHealth(unavailableHealth()); });
+    }).catch(() => { clearPrivateEvidence(); updateHealth(unavailableHealth()); });
   });
   // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
   // what the last query actually resolved rather than implying a complete scope.
@@ -146,8 +147,10 @@ function render(health: SystemHealth | null): void {
     if (coverageNote) coverageNote.textContent = "A miss never proves corpus absence.";
     const count = app.querySelector("#evidence-count");
     if (count) count.textContent = `${detail.resolved} resolved`;
-    clearEvidence(false);
+    clearEvidenceRail(false);
   });
+  retrievalHost?.addEventListener("retrieval:started", clearEvidenceOnQueryStart);
+  app.addEventListener("eliotr:health-lost", clearPrivateEvidence);
   app.addEventListener("library:scope-changed", clearEvidenceOnEvent);
   window.addEventListener("offline", clearEvidenceOnEvent);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
@@ -168,10 +171,15 @@ function render(health: SystemHealth | null): void {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
+  const previousGeneration = app.dataset.healthGeneration;
+  if (!health.ready || (previousGeneration !== undefined && previousGeneration !== "" && previousGeneration !== health.deployment_generation)) {
+    app.dispatchEvent(new Event("eliotr:health-lost"));
+  }
+  app.dataset.healthGeneration = health.deployment_generation;
   const badge = app.querySelector("#health-badge");
   if (badge) badge.innerHTML = healthBadge(health);
   const summary = app.querySelector("#health-summary");

@@ -104,6 +104,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     traceResult.hidden = true;
     lastTrace = undefined;
     lastEvidence = [];
+    element.dispatchEvent(new CustomEvent("retrieval:started", { bubbles: true }));
     if (!navigator.onLine) { status.textContent = "Offline. Retrieval results are not cached."; return; }
     let body: string;
     try {
