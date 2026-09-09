@@ -1,7 +1,7 @@
 {
   "name": "eliot-research",
   "version": "0.1.0",
-  "description": "Bounded ELIOT Research MCP planning and catalog tools for Gemini Spark / Gemini CLI.",
+  "description": "Legacy Gemini CLI extension for bounded ELIOT Research MCP planning and catalog tools.",
   "contextFileName": "GEMINI.md",
   "settings": [
     {

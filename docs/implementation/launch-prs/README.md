@@ -55,6 +55,7 @@ No invented domain authority, permanent TS/Rust duplication or code-only LIVE_QU
 Mandatory launch profile is Slices 0–6. Specialist Slice 7, optional graph DB/native replacement and
 optional Gemini service are not added as unconditional blockers. Under the explicit
 `drive-exchange` profile, the required ChatGPT Drive Exchange remains mandatory. Under the selected
-`gemini-mcp` Workspace profile, the separate Workspace candidate-admission/readback gate applies and
-Google Cloud setup is not required. See [agent-start.md](agent-start.md) for starting instructions and
+`gemini-mcp` Workspace profile, Gemini Spark Connected Apps or Google Antigravity is the client path;
+the separate Workspace candidate-admission/readback gate applies and Google Cloud setup is not required.
+The retained Gemini CLI installer is legacy and unselected. See [agent-start.md](agent-start.md) for starting instructions and
 [cloudflare-handoff.md](cloudflare-handoff.md) for account-only observations after complete local code.
