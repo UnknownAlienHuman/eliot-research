@@ -78,6 +78,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     input = validateDeploymentInput(env);
   }
   const exec = (command, args, cwd = root) => execute(command, args, cwd, env);
+  const provisionerEnv = (name) => name === "provision-cloudflare-access" && env.ELIOTR_ACCESS_TRANSPORT === "cloudflare-mcp"
+    ? scrubTokenEnv(env)
+    : env;
   exec("pnpm", ["check"]);
   exec("pnpm", ["build:pwa"]);
   exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
@@ -144,10 +147,10 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   }
 
   // All predictable cross-product drift must fail before the first remote mutation.
-  for (const name of provisioners) exec("node", [`scripts/${name}.mjs`, "--check-only"]);
+  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`, "--check-only"], root, provisionerEnv(name));
   // Preserve prior evidence but never leave an old PASS at the current receipt path after a failure.
   await archive();
-  for (const name of provisioners) exec("node", [`scripts/${name}.mjs`]);
+  for (const name of provisioners) execute("node", [`scripts/${name}.mjs`], root, provisionerEnv(name));
   const configPath = resolve(core, deployConfig);
   const bytes = await read(configPath);
   const config = validateGeneratedDeployment(bytes, env, input);

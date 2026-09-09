@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 process.env.ELIOTR_ACCESS_TEAM_DOMAIN ??= "https://mock-team-example.cloudflareaccess.com";
 process.env.ELIOTR_ACCESS_AUDIENCE ??= "mock-access-audience";
 process.env.ELIOTR_ACCESS_SERVICE_PRINCIPALS ??= "eliotr-federation,eliotr-agent";
+await import("./test-cloudflare-mcp-oauth.mjs");
 await import("./test-launch-code.mjs");
 await import("./test-local-runtime.mjs");
 await import("./test-deployment-verification.mjs");
