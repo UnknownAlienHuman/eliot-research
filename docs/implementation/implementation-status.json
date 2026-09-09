@@ -13,6 +13,11 @@
     "live_without_receipt": "fail",
     "placeholder_success_response": "fail"
   },
+  "release_profile": {
+    "protocol": "eliotr.release-profile.v1",
+    "google_external_transport": "gemini-mcp",
+    "qualification": "Workspace candidate admission and exact Google action/readback remain pending; this profile does not require a Google Cloud project or custom OAuth client."
+  },
   "entries": [
     {
       "id": "scaffold-001",
@@ -61,6 +66,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
+      "required_for_transports": ["drive-exchange"],
       "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback and reconnect/disconnect/status lifecycle now execute; provisioning, Doc publication/export and full runtime composition remain separate. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
         "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
@@ -172,6 +178,20 @@
       ]
     },
     {
+      "id": "workspace-candidate-admission",
+      "path": "apps/eliotr-core/src/gemini-mcp-google-sync.ts",
+      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate admission and exact action/readback reconciliation remain unimplemented; v1 observations stay candidate-only.",
+      "owner_packets": ["ER-36"],
+      "state": "IN_PROGRESS",
+      "required_for_transports": ["gemini-mcp"],
+      "behavior": "The selected Workspace profile has bounded MCP planning and candidate receipt validation, but no authenticated ELIOT admission or canonical D1 readback authority.",
+      "completion_evidence": [
+        "A versioned authenticated admission and reconciliation contract is still required.",
+        "Real controlled HTTP and D1 action/readback fixtures are still required.",
+        "Until those receipts exist, Workspace observations remain candidate-only."
+      ]
+    },
+    {
       "id": "implemented-006",
       "path": "apps/eliotr-core/src/gemini-mcp.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
@@ -181,6 +201,7 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
+      "required_for_transports": ["gemini-mcp"],
       "behavior": "Optional signed Gemini service MCP exposes status, no-effect planning and bounded v1 self-reported observation checks; target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance, write-precondition proof or the required ChatGPT Drive Exchange. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests",

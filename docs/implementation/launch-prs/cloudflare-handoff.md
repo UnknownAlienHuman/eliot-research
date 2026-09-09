@@ -152,6 +152,11 @@ runner. Use ER-27's integration directory and gate receipt family instead of par
 
 ### #95 — Required ChatGPT Drive Exchange and optional Gemini MCP (ER-18/19/20/36; ER-17/26/27)
 
+The legacy Drive Exchange requirements below apply when the validated deployment profile is explicitly
+`drive-exchange`. The selected `gemini-mcp` profile is a separate Workspace client path; it does not
+require a Google Cloud project or custom OAuth client, and its pending authenticated admission/readback
+gate remains applicable. The common product gates and the legacy checklist remain unchanged.
+
 The Sheet/changes REST subset and v1 contribution guards are implemented in `../drive-rest.md`.
 They do not complete OAuth, durable reconciliation, result publication or runtime activation. At the
 real-account gate verify numeric filters/default/omitted fields, exact parent ownership, 401 handling,
@@ -159,10 +164,10 @@ unknown append outcomes and that ERC cannot write ChatGPT REQUESTS/PAYLOAD_PARTS
 requires subsequent exact-row readback; `writtenAt` is only a local observation.
 
 
-- [ ] Implement and locally test the mandatory Drive adapters BEFORE accessing an account. Canonical
-      §§12.3–12.12 and ADR-0003 still select Drive for Day-0 ChatGPT. The Gemini MCP flag/helper is not
-      a qualified replacement; one active ChatGPT write transport only. Do not equate an interface,
-      serializer or self-reported Gemini observation with the complete exchange.
+- [ ] Implement and locally test the mandatory Drive adapters BEFORE accessing an account when
+      `drive-exchange` is selected. Canonical §§12.3–12.12 and ADR-0003 govern that legacy ChatGPT
+      path. The Workspace/Gemini profile has a separate pending admission/readback gate; do not equate
+      an interface, serializer or self-reported Gemini observation with either profile's completion.
 - [ ] Qualify the exact dedicated subject/account, native Sheet/file and numeric tab IDs, exchange
       generation, narrow offline drive.file token lifecycle and approved scopes. Demonstrate one
       atomic REQUESTS/PAYLOAD_PARTS append through the actual ChatGPT action, then exact readback.
@@ -226,9 +231,10 @@ Update the relevant PR checklist with observed evidence and remaining failures. 
 complete merely because this handoff exists. #96 consolidates the release evidence only after all
 required topic code and real gates are independently satisfied.
 
-### #95 credential checkpoint — owner integration and exchange qualification still pending
+### #95 credential checkpoint — legacy `drive-exchange` owner integration still pending
 
-Use `../drive-credentials.md` with canonical §§12.9/13.5–13.6. Migration 0012 adds credential identity,
+When `drive-exchange` is selected, use `../drive-credentials.md` with canonical §§12.9/13.5–13.6.
+Migration 0012 adds credential identity,
 revision and consent-expiry fencing; it never admits legacy rows. Connect the implemented one-use state/PKCE/nonce/verified identity service to authenticated
 owner HTTP/PWA locally before provisioning real secrets.
 Do not set `In production` or a principal/generation manually to turn fixtures into trusted credentials.

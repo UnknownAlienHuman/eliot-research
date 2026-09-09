@@ -1,6 +1,7 @@
 # Launch implementation assignments
 
-Authority: ELIOT_RESEARCH v29.1; LANGUAGE_RUNTIME_CONTRACT v1.0; accepted ADRs.
+Authority: ELIOT_RESEARCH v29.1; LANGUAGE_RUNTIME_CONTRACT v1.0; accepted ADRs, including
+[ADR-0006 Google external transport profiles](../../adr/0006-google-external-transport-profiles.md).
 Read [`docs/START-HERE.md`](../../START-HERE.md) if you are new, then
 [execution-contract.md](execution-contract.md). Each theme plan contains small numbered checkpoints
 with files, implementation steps, tests and observable pass conditions. Unchecked means not done, even
@@ -52,6 +53,8 @@ No invented domain authority, permanent TS/Rust duplication or code-only LIVE_QU
 ## Release scope
 
 Mandatory launch profile is Slices 0–6. Specialist Slice 7, optional graph DB/native replacement and
-optional Gemini service are not added as unconditional blockers. Required ChatGPT Drive Exchange is NOT
-optional. See [agent-start.md](agent-start.md) for starting instructions and
+optional Gemini service are not added as unconditional blockers. Under the explicit
+`drive-exchange` profile, the required ChatGPT Drive Exchange remains mandatory. Under the selected
+`gemini-mcp` Workspace profile, the separate Workspace candidate-admission/readback gate applies and
+Google Cloud setup is not required. See [agent-start.md](agent-start.md) for starting instructions and
 [cloudflare-handoff.md](cloudflare-handoff.md) for account-only observations after complete local code.

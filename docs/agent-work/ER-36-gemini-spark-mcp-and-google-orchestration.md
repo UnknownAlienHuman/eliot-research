@@ -24,6 +24,20 @@ authority channel and do not let a Google transport result promote itself into E
 - `apps/eliotr-core/src/gemini-mcp-service-token.test.ts`
 - `integrations/gemini-spark/**`
 - `docs/implementation/gemini-spark-mcp.md`
+- `apps/eliotr-core/src/http-special-routes.ts`
+- `apps/eliotr-core/src/composition-root.ts`
+- `apps/eliotr-core/src/index.test.ts`
+- `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
+- `apps/eliotr-core/test/google-oauth-callback-http.test.ts`
+- `scripts/check-launch-code.mjs`
+- `scripts/test-launch-code.mjs`
+- `scripts/deploy-cloudflare.mjs`
+- `scripts/lib/deployment-verification.mjs`
+- `scripts/test-deployment-verification.mjs`
+- `scripts/test-deployment-orchestration.mjs`
+- `scripts/test-deployment-apply-ordering.mjs`
+- `docs/adr/0006-google-external-transport-profiles.md`
+- `docs/implementation/implementation-status.json`
 
 ## Shared integration paths
 
@@ -49,6 +63,11 @@ authority channel and do not let a Google transport result promote itself into E
 - the default setup profile is Workspace-only and does not provision or require a Google Cloud
   project, Cloud OAuth client, Vertex route, or Gemini API key; gcloud is explicit opt-in;
 - Drive Exchange and Gemini direct orchestration cannot simultaneously own the transport.
+- the validated `GOOGLE_EXTERNAL_TRANSPORT` profile selects the applicable gate; unknown, mixed and
+  explicitly disabled deployment profiles fail closed, and no launch-check argument can override it;
+- `gemini-mcp` retains a pending authenticated Workspace candidate-admission/readback gate, while
+  `drive-exchange` retains the server-owned legacy OAuth/Exchange gate; common product gates are unchanged;
+- legacy Google OAuth routes reject requests unless `GOOGLE_EXTERNAL_TRANSPORT=drive-exchange`.
 
 ## User scope decision — 2026-09-09
 

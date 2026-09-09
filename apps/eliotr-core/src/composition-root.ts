@@ -27,6 +27,7 @@ import {
 import { createIngestService } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
 import { createSourceAdmissionService } from "./source-admission-service.js";
+import { readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 
 export interface CompositionRootInput {
   readonly env: Env;
@@ -53,6 +54,7 @@ function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
+    google_external_transport: readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT),
     enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA", "RESEARCH"],
     disabled_slices: [
       "RETRIEVAL",
@@ -148,7 +150,10 @@ function ownerApi(env: Env): OwnerApi {
     ...ingest,
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     async systemHealth(): Promise<Record<string, unknown>> {
-      return { ...await readReadiness(env) };
+      return {
+        ...await readReadiness(env),
+        google_external_transport: readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT),
+      };
     },
     async systemCapabilities(): Promise<Record<string, unknown>> {
       return capabilities(env);

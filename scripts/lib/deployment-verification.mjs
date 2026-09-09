@@ -4,6 +4,7 @@ import { validateAccessRuntimeConfiguration } from "./access-runtime-config.mjs"
 const MAX_SMOKE_BYTES = 64 * 1024;
 const MAX_API_BYTES = 1024 * 1024;
 const TIMEOUT_MS = 15_000;
+const GOOGLE_EXTERNAL_TRANSPORTS = new Set(["disabled", "gemini-mcp", "drive-exchange"]);
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const fail = (label) => { throw new Error(label); };
 
@@ -22,6 +23,10 @@ export function validateDeploymentInput(env) {
     if (typeof env[key] !== "string" || !env[key].trim()) fail(`Missing ${key}`);
   }
   if (!boundedString(env.CLOUDFLARE_API_TOKEN, 4096)) fail("Invalid Cloudflare API token");
+  const googleExternalTransport = env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT ?? null;
+  if (googleExternalTransport !== null && !GOOGLE_EXTERNAL_TRANSPORTS.has(googleExternalTransport)) {
+    fail("Invalid Google external transport profile");
+  }
   if (!/^[A-Za-z0-9_-]{1,64}$/u.test(env.CLOUDFLARE_ACCOUNT_ID)) fail("Invalid account identity");
   if (!["staging", "production"].includes(env.ELIOTR_ENVIRONMENT)) fail("Invalid live environment");
   if (!boundedString(env.ELIOTR_DEPLOYMENT_GENERATION)) fail("Invalid deployment generation");
@@ -44,7 +49,7 @@ export function validateDeploymentInput(env) {
   if ((!official && !fixture) || api.username || api.password || api.search || api.hash ||
       !["/client/v4", "/client/v4/"].includes(api.pathname)) fail("Invalid Cloudflare API origin");
   return { origin, cookie: cookie || null, apiBase: api.href.replace(/\/$/u, ""),
-    access: validateAccessRuntimeConfiguration(env) };
+    access: validateAccessRuntimeConfiguration(env), googleExternalTransport };
 }
 
 export function validateGeneratedDeployment(bytes, env, input) {
@@ -55,6 +60,8 @@ export function validateGeneratedDeployment(bytes, env, input) {
       !/^\d{4}-\d{2}-\d{2}$/u.test(config.compatibility_date ?? "") ||
       config.vars?.DEPLOYMENT_GENERATION !== env.ELIOTR_DEPLOYMENT_GENERATION ||
       config.vars?.ENVIRONMENT !== env.ELIOTR_ENVIRONMENT ||
+      (input.googleExternalTransport !== null &&
+       config.vars?.GOOGLE_EXTERNAL_TRANSPORT !== input.googleExternalTransport) ||
       config.vars?.ACCESS_TEAM_DOMAIN !== input.access.teamDomain ||
       config.vars?.ACCESS_AUDIENCE !== input.access.audience ||
       config.vars?.ACCESS_SERVICE_PRINCIPALS !== input.access.servicePrincipals.join(",")) {

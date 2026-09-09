@@ -27,6 +27,12 @@ Cloud project, Cloud OAuth client, Vertex route, or Gemini API key. gcloud and G
 Studio/Gemini API are optional future profiles and are not live-qualified here. The unfinished
 server-owned ChatGPT Drive Exchange remains a separate unselected product path.
 
+The canonical deployment profile is selected by the validated `GOOGLE_EXTERNAL_TRANSPORT` value. In
+`gemini-mcp` mode the legacy `/oauth/google/*` and `/api/v1/google/connection/*` routes are unavailable;
+they are reserved for the explicitly selected `drive-exchange` profile. This selection does not make the
+Workspace candidate helper a backend Drive authority or waive its pending authenticated admission and
+exact action/readback gate.
+
 ## Runtime contour
 
 ```text
