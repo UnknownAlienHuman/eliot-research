@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, readFile, rm, access, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -487,16 +488,47 @@ function diagnosticRoutePath(path) {
   catch { return "/<invalid-route>"; }
 }
 
+function harnessGitHead() {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: root, encoding: "utf8", shell: false, timeout: 5000,
+  });
+  if (result.error || result.status !== 0) return "unavailable";
+  const head = String(result.stdout ?? "").trim();
+  return /^[a-f0-9]{40}$/u.test(head) ? head : "unavailable";
+}
+
+function fetchErrorClass(error) {
+  const candidates = [error, error?.cause, error?.cause?.cause];
+  const name = candidates.find((item) => item && typeof item.name === "string" && item.name.length > 0)?.name ?? "unknown";
+  const code = candidates.find((item) => item && typeof item.code === "string" && item.code.length > 0)?.code ?? "unknown";
+  return `${name.slice(0, 48)}/${code.slice(0, 64)}`;
+}
+
+function workerDiagnosticSnapshot(worker) {
+  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+  if (!runtime) return { pid: null, port: null, exit_code: null, stderr_tail: "unavailable", stdout_events: "unavailable" };
+  return {
+    pid: Number.isSafeInteger(runtime.pid) ? runtime.pid : null,
+    port: Number.isSafeInteger(runtime.port) ? runtime.port : null,
+    exit_code: runtime.exitCode ?? null,
+    stderr_tail: typeof runtime.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable",
+    stdout_events: typeof runtime.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable",
+  };
+}
+
 function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
   const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
   const exitCode = runtime?.exitCode ?? null;
   const stderrTail = typeof runtime?.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable";
+  const stdoutEvents = typeof runtime?.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable";
+  const pid = Number.isSafeInteger(runtime?.pid) ? runtime.pid : null;
+  const port = Number.isSafeInteger(runtime?.port) ? runtime.port : null;
   const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
   const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
   const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
   const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
   const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
-  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail}`;
+  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
 }
 
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
@@ -532,6 +564,19 @@ export async function fetchWorkerJsonWithDiagnostics(fetchImpl, origin, path, op
     try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
   })();
   return { status: response.status, data, headers: response.headers };
+}
+
+async function observeCatalogTransport(label, operation, worker, records) {
+  const startedAt = Date.now();
+  try {
+    const response = await operation();
+    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
+    return { ok: true, response };
+  } catch (error) {
+    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "error",
+      error_class: fetchErrorClass(error), worker: workerDiagnosticSnapshot(worker) });
+    return { ok: false, error };
+  }
 }
 
 async function workerJson(origin, path, options = {}) {
@@ -4061,6 +4106,9 @@ export async function verifyEarlyFailureCleanup() {
 
 export async function runOwnerE2E() {
   const startedAt = new globalThis.Date().toISOString();
+  const catalogTransportDiagnosticEnabled = process.env.ELIOTR_OWNER_E2E_CATALOG_DIAGNOSTIC === "1";
+  const catalogTransportProbeRecords = [];
+  const catalogTransportHead = catalogTransportDiagnosticEnabled ? harnessGitHead() : undefined;
   const stateRoot = resolve(root, ".eliotr-state");
   const beforeDirs = new Set(await readdir(stateRoot).catch(() => []));
   // Run-specific ownership marker: teardown deletes only this marker-proven
@@ -4109,6 +4157,7 @@ export async function runOwnerE2E() {
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
     early_cleanup: "PENDING",
+    catalog_transport_probe: "PENDING",
     teardown_inventory: "PENDING",
   };
   // Authoritative cross-client ledger: browser-origin artifact/JWT lifecycle
@@ -4561,6 +4610,13 @@ export async function runOwnerE2E() {
     const imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
+    if (catalogTransportDiagnosticEnabled) {
+      // Diagnostic-only comparison: this reaches the real admitted fixture
+      // before any synchronous Wrangler/D1 CLI readback can intervene.
+      await observeCatalogTransport("direct-before-cli", () => workerJson(worker.origin,
+        "/api/v1/research/catalog?limit=20", { token, phase: "catalog-probe-before-cli", worker }), worker,
+      catalogTransportProbeRecords);
+    }
     const bearerReplayA = await browserJson(playwright.page, ledger, "/api/v1/system/session",
       { correlation: "e2e-import-1/replay-bearer-a" });
     const bearerReplayB = await browserJson(playwright.page, ledger, "/api/v1/system/session",
@@ -4592,7 +4648,35 @@ export async function runOwnerE2E() {
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
     const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
-    const catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
+    let catalog;
+    if (!catalogTransportDiagnosticEnabled) {
+      catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
+    } else {
+      const directAfterCli = await observeCatalogTransport("direct-after-cli", () => workerJson(worker.origin,
+        "/api/v1/research/catalog?limit=20", { token, phase: "catalog-probe-after-cli", worker }), worker,
+      catalogTransportProbeRecords);
+      if (!directAfterCli.ok) {
+        // One browser observation through the already-paired bridge separates
+        // direct Node transport from the same Worker route without masking the
+        // original direct failure or issuing any retry.
+        await observeCatalogTransport("bridge-after-cli", () => browserJson(playwright.page, ledger,
+          "/api/v1/research/catalog?limit=20", { correlation: "e2e-import-1/catalog-probe-bridge" }), worker,
+        catalogTransportProbeRecords);
+        const diagnostic = {
+          protocol: "eliotr.owner-e2e.catalog-transport-probe.v1",
+          git_head: catalogTransportHead,
+          worker: workerDiagnosticSnapshot(worker),
+          probes: catalogTransportProbeRecords,
+        };
+        throw new Error(`${directAfterCli.error?.message ?? String(directAfterCli.error)}\n` +
+          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`, { cause: directAfterCli.error });
+      }
+      catalog = directAfterCli.response;
+      receipt.catalog_transport_probe = {
+        protocol: "eliotr.owner-e2e.catalog-transport-probe.v1", git_head: catalogTransportHead,
+        worker: workerDiagnosticSnapshot(worker), probes: catalogTransportProbeRecords,
+      };
+    }
     assert.equal(catalog.status, 200, "authorized catalog must succeed through the real Worker");
     const catalogSources = catalog.data.data.sources ?? [];
     assert.ok(catalogSources.some((entry) => entry.id === sourceId), "authorized Library catalog must list the admitted source");
