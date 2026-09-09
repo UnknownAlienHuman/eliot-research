@@ -38,7 +38,7 @@ function request(
       "x-eliotr-original-file-name": encodeURIComponent(filename),
       "x-eliotr-content-sha256": contentSha256,
     },
-    body: bytes,
+    body: bytes.buffer as ArrayBuffer,
   });
 }
 
