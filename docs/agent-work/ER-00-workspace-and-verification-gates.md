@@ -50,6 +50,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `docs/implementation/gap-register.md`
 - `docs/implementation/canonical-alignment.md`
 - `scripts/check-implementation-status.mjs`
+- `scripts/check-gemini-integration.mjs`
 - `packages/cloudflare-navigation/package.json`
 - `packages/cloudflare-navigation/tsconfig.json`
 - `packages/cloudflare-navigation/AGENTS.md`
