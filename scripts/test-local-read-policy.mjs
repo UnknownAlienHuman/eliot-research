@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { ROOT } from "./lib/local-launch.mjs";
-import { applyLocalReadPolicy, sqlLiteral, validatePolicyCommand } from "./lib/local-read-policy.mjs";
+import { applyLocalReadPolicy, localPolicyQuery, sqlLiteral, validatePolicyCommand } from "./lib/local-read-policy.mjs";
 
 const now = Date.now();
 const identity = { protocol: "eliotr.owner-session.v1", principal_ref: "owner'identity", client_class: "owner_pwa",
@@ -34,6 +34,25 @@ test("explicit operator grant persists exact fields and replay does not mutate o
     await assert.rejects(invoke(value, { ...command, disclosure: "public" }), /CONFLICT/u);
     assert.equal(mutations(), 1);
   } finally { value.db.close(); }
+});
+test("local D1 transport retries observations but never replays a mutation", async () => {
+  const paths = { config: "local-config", persist: "local-state" };
+  let reads = 0;
+  const readQuery = localPolicyQuery(paths, { execute: () => {
+    reads += 1;
+    if (reads === 1) throw new Error("SQLITE_BUSY: database is locked");
+    return JSON.stringify([{ success: true, results: [{ ok: 1 }] }]);
+  } });
+  assert.deepEqual(await readQuery("SELECT 1"), [{ ok: 1 }]);
+  assert.equal(reads, 2);
+
+  let writes = 0;
+  const writeQuery = localPolicyQuery(paths, { execute: () => {
+    writes += 1;
+    throw new Error("SQLITE_BUSY: database is locked");
+  } });
+  await assert.rejects(writeQuery("INSERT INTO scope_read_policy DEFAULT VALUES"), /SQLITE_BUSY/u);
+  assert.equal(writes, 1, "ambiguous mutation must not be retried by the D1 adapter");
 });
 test("renewal and revocation use explicit generation CAS; replay cannot revive a revoked policy", async () => {
   const value = fixture();

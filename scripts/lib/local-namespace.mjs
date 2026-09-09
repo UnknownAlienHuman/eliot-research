@@ -86,7 +86,15 @@ export async function initializeLocalNamespace({ command, identity, query, now =
   const { owner, policy } = await targetRows(input, identity.principal_ref);
   const namespace = literal(input.namespace);
   const call = async (sql) => { liveIdentity(); let rows;
-    try { rows = await query(sql); } catch { fail("LOCAL_NAMESPACE_D1_OBSERVATION_FAILED"); }
+    try { rows = await query(sql); } catch (error) {
+      // Preserve the underlying CLI/SQLite diagnostic as `cause` so callers
+      // can classify documented transient locks (SQLITE_BUSY/database is
+      // locked) for bounded retry. The code stays fail-closed and identical;
+      // schema/authority/data errors must never retry with a new generation.
+      const wrapped = new Error("LOCAL_NAMESPACE_D1_OBSERVATION_FAILED");
+      wrapped.cause = error;
+      throw wrapped;
+    }
     liveIdentity();
     if (!Array.isArray(rows) || rows.length > 1) fail("LOCAL_NAMESPACE_READBACK_INVALID"); return rows; };
   const read = async (table, keys) => {
