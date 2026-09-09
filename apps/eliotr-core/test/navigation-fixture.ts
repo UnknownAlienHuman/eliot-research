@@ -1,45 +1,41 @@
 import { env } from "cloudflare:workers";
+import { applyD1Migrations } from "cloudflare:test";
 import type { ScopeSnapshot, SourceAdmissionDecision, SourceRevision } from "@eliotr/contracts";
 import { canonicalEvidenceJson, createD1NavigationStore, evidenceSha256, type D1NavigationStoreInput } from "@eliotr/cloudflare-evidence";
 import { buildDocumentMap, buildProjectAtlas, buildSourceCard } from "@eliotr/retrieval";
 import { createD1ScopeService, type ScopeRepository } from "../src/scope-service.js";
-import initial from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
-import admission from "../../../infra/d1/core/migrations/0005_ingest_admission.sql?raw";
-import evidence from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
-import navigation from "../../../infra/d1/core/migrations/0010_navigation_artifacts.sql?raw";
 
-export const db = (env as unknown as { CORE_DB: D1Database }).CORE_DB;
+interface Migration { name: string; queries: string[]; }
+const runtime = env as unknown as { CORE_DB: D1Database; SEARCH_DB: D1Database; CORE_MIGRATIONS: Migration[]; SEARCH_MIGRATIONS: Migration[] };
+
+export const db = runtime.CORE_DB;
 export const NOW = Date.parse("2026-09-05T00:00:00.000Z");
 export const TIME = new Date(NOW).toISOString();
 export const access = { principal_ref: "owner-1", client_class: "owner_pwa" as const, credential_generation: "credential-1" };
 export const project = { id: "project-1", revision: 1 };
 export const A = "a".repeat(64);
 export const B = "b".repeat(64);
-function ddl(text: string, table: string): string {
-  const start = text.indexOf(`CREATE TABLE ${table} (`);
-  const end = text.indexOf(") STRICT;", start);
-  if (start < 0 || end < 0) throw new Error(`missing table ${table}`);
-  return text.slice(start, end + ") STRICT;".length);
-}
 export async function setupDatabase(): Promise<void> {
-  for (const table of ["source_namespace_ownership", "source", "source_revision", "scope_snapshot", "evidence_handle"]) {
-    await db.prepare(ddl(initial, table)).run();
-  }
-  await db.prepare("CREATE UNIQUE INDEX one_active_owner_per_namespace ON source_namespace_ownership(source_namespace_id) WHERE status='ACTIVE'").run();
-  await db.prepare(ddl(admission, "bundle_ingest_operation")).run();
-  await db.prepare(ddl(admission, "source_admission_decision")).run();
-  await db.prepare(ddl(evidence, "scope_access_grant")).run();
-  // The migration's entire statements (including trigger bodies) execute against actual Miniflare D1.
-  const cleaned = navigation.replace(/^--.*$/gmu, "");
-  const pattern = /CREATE TABLE[\s\S]*?\) STRICT;|CREATE TRIGGER[\s\S]*?\nEND;/gu;
-  if (cleaned.replace(pattern, "").trim()) throw new Error("unexecuted navigation migration statement");
-  for (const statement of cleaned.match(pattern) ?? []) {
-    await db.prepare(statement).run();
-  }
+  // N1 FIX3: the full current core/search migrations (idempotent —
+  // applyD1Migrations tracks applied entries). The E2E drives the real Worker
+  // research.orient route, whose readiness gate requires the schema_state
+  // generation markers, and the real ingest commit guard path, which needs
+  // every authority table plus the production guard/epoch triggers. Smaller
+  // hand-picked DDL cannot satisfy either gate honestly. No migration change.
+  await applyD1Migrations(db, runtime.CORE_MIGRATIONS);
+  await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
 }
 export async function clearDatabase(): Promise<void> {
-  for (const table of ["navigation_artifact", "evidence_handle", "scope_access_grant", "scope_snapshot", "source_admission_decision",
-    "bundle_ingest_operation", "source_revision", "source", "source_namespace_ownership"]) await db.prepare(`DELETE FROM ${table}`).run();
+  // Child-first against the current migration FOREIGN KEYs: receipts and
+  // staging rows before operations, operations before revisions, revisions
+  // before sources, grants/requests/handles before snapshots.
+  for (const table of ["navigation_artifact", "evidence_handle", "bundle_ingest_commit_guard",
+    "source_acquisition_candidate", "qualification_report", "source_admission_decision",
+    "operation_receipt", "operation_attempt", "outbox", "operation_intent",
+    "scope_access_grant", "orientation_request", "source_readiness",
+    "project_source_membership", "source_tag", "bundle_ingest_operation", "project", "purge_ledger",
+    "scope_snapshot", "scope_read_policy",
+    "source_revision", "source", "source_namespace_ownership", "source_admission_policy"]) await db.prepare(`DELETE FROM ${table}`).run();
 }
 async function insert(table: string, fields: Record<string, string | number | null>): Promise<void> {
   await db.prepare(`INSERT INTO ${table} (${Object.keys(fields).join(",")}) VALUES (${Object.keys(fields).map((_, i) => `?${i + 1}`).join(",")})`)

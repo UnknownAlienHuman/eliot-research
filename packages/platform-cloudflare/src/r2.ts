@@ -64,6 +64,8 @@ export interface ImmutableObjectReceipt {
   readonly readback_sha256: string;
   readonly size_bytes: number;
   readonly etag: string;
+  /** R2 versioned object identity observed on readback, when the bucket issues one. */
+  readonly version?: string | undefined;
   readonly existed_identically: boolean;
 }
 
@@ -365,6 +367,11 @@ async function verifiedReadback(
   return { object, hash };
 }
 
+function readbackVersion(object: R2Object): string | undefined {
+  const version = (object as unknown as { readonly version?: unknown }).version;
+  return typeof version === "string" && version.length > 0 ? version : undefined;
+}
+
 function immutableConflict(key: string, cause: unknown): never {
   throw new R2IntegrityError(
     "R2_IMMUTABLE_KEY_CONFLICT",
@@ -464,6 +471,9 @@ export function createR2EvidenceObjectStore(
         readback_sha256: existing.hash.sha256,
         size_bytes: existing.hash.size_bytes,
         etag: existing.object.etag,
+        ...(readbackVersion(existing.object) === undefined
+          ? {}
+          : { version: readbackVersion(existing.object) as string }),
         existed_identically: true,
       };
     }
@@ -487,6 +497,9 @@ export function createR2EvidenceObjectStore(
       readback_sha256: readback.hash.sha256,
       size_bytes: readback.hash.size_bytes,
       etag: readback.object.etag,
+      ...(readbackVersion(readback.object) === undefined
+        ? {}
+        : { version: readbackVersion(readback.object) as string }),
       existed_identically: false,
     };
   }

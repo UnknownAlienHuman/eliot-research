@@ -1,12 +1,17 @@
 import {
-  BundleAdmissionReceiptSchema,
-  QualificationReportSchema,
-  SourceAdmissionDecisionSchema,
   type BundleAdmissionReceipt,
+  type PromotedObjectReadback,
   type QualificationReport,
   type SourceAdmissionDecision,
+  PromotionReadbackError,
+  QualificationReportSchema,
+  SourceAdmissionDecisionSchema,
+  validateBundleReceiptStructure,
+  validatePromotionStructure,
+  type PromotionReadbackResult,
 } from "@eliotr/contracts";
-import { canonicalJson } from "./ingest-validation.js";
+import { canonicalJson, contentType } from "./ingest-validation.js";
+import { objectResidencyKeyDigest } from "./r2.js";
 import { CURRENT_INGEST_POLICY_SQL, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
 import type {
   BundlePromotionReceipt,
@@ -90,73 +95,33 @@ async function loadQualification(
   );
 }
 
+/** Structural rules live in @eliotr/contracts; residency/media authority is injected below. */
+function mapReadbackError(cause: unknown): never {
+  if (cause instanceof PromotionReadbackError) authorityFail(cause.code, cause.message, cause.retryable, cause.cause);
+  throw cause;
+}
+
 function validatePromotion(
   operation: PreparedIngestOperation,
   promotion: BundlePromotionReceipt,
-): { readonly promotionRef: string; readonly contentKey: string } {
-  if (
-    promotion.protocol !== "eliotr.bundle-promotion.v1" ||
-    promotion.session_id !== operation.staging_session_ref ||
-    promotion.admission_receipt_ref !== operation.decision_receipt_ref ||
-    promotion.promoted_objects.length < 3 ||
-    promotion.promoted_objects.length > 1024
-  ) {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion receipt does not match admitted operation");
-  }
-  authoritySha256(promotion.readback_digest, "promotion readback digest");
-  authorityIdentifier(promotion.canonical_manifest_ref, "canonical manifest ref");
-  const seen = new Set<string>();
-  let contentKey: string | undefined;
-  for (const object of promotion.promoted_objects) {
-    if (seen.has(object.logical_path)) {
-      authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion receipt contains duplicate logical paths");
-    }
-    seen.add(object.logical_path);
-    authorityIdentifier(object.logical_path, "promoted logical path");
-    authorityIdentifier(object.canonical_key, "promoted canonical key");
-    authoritySha256(object.sha256, "promoted object digest");
-    if (!Number.isSafeInteger(object.size_bytes) || object.size_bytes < 0) {
-      authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "promoted object size is invalid");
-    }
-    if (object.logical_path === "content.md") {
-      if (object.sha256 !== operation.manifest.content.markdown_sha256) {
-        authorityFail("INGEST_AUTHORITY_CONFLICT", "promoted content digest differs from manifest");
-      }
-      contentKey = object.canonical_key;
-    }
-  }
-  for (const required of ["content.md", "manifest.json", "hashes.sha256"]) {
-    if (!seen.has(required)) authorityFail("INGEST_AUTHORITY_CONFLICT", `promotion is missing ${required}`);
-  }
-  if (contentKey === undefined) authorityFail("INGEST_AUTHORITY_CONFLICT", "promotion content object is missing");
-  return {
-    promotionRef: `promotion:${promotion.session_id}:${promotion.readback_digest.slice(0, 24)}`,
-    contentKey,
-  };
+): Promise<PromotionReadbackResult> {
+  return validatePromotionStructure(operation, promotion, {
+    residencyDigestFor: objectResidencyKeyDigest,
+    mediaTypeFor: (logicalPath) => contentType(logicalPath),
+  }).catch(mapReadbackError);
 }
 
 function validateBundleReceipt(
   operation: PreparedIngestOperation,
   promotion: BundlePromotionReceipt,
   raw: BundleAdmissionReceipt,
+  canonicalReadbacks: readonly PromotedObjectReadback[],
 ): BundleAdmissionReceipt {
-  let receipt: BundleAdmissionReceipt;
-  try { receipt = BundleAdmissionReceiptSchema.parse(raw); }
-  catch (cause) {
-    authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "bundle admission receipt failed strict validation", false, cause);
+  try {
+    return validateBundleReceiptStructure(operation, promotion, raw, canonicalReadbacks);
+  } catch (cause) {
+    mapReadbackError(cause);
   }
-  if (
-    receipt.decision !== "ADMITTED" ||
-    receipt.operation_id !== operation.operation_id ||
-    receipt.manifest_sha256 !== operation.manifest_sha256 ||
-    receipt.source_revision_ref !== operation.source_revision_ref ||
-    receipt.normalized_artifact_ref !== promotion.canonical_manifest_ref ||
-    receipt.object_residency_key_digest !== operation.residency_key_digest ||
-    receipt.readback_sha256 !== promotion.readback_digest
-  ) {
-    authorityFail("INGEST_AUTHORITY_CONFLICT", "bundle admission receipt does not match promotion authority");
-  }
-  return receipt;
 }
 
 function exactTerminal(
@@ -202,7 +167,8 @@ export async function commitAdmittedBundle(
   const operation = await loadOperation(operationId);
   if (operation === null) authorityFail("INGEST_AUTHORITY_MISSING", "ingest operation does not exist");
   await requireCurrentIngestPolicy(database, operation, clock);
-  const receipt = validateBundleReceipt(operation, input.promotion_receipt, input.bundle_receipt);
+  const promotion = await validatePromotion(operation, input.promotion_receipt);
+  const receipt = validateBundleReceipt(operation, input.promotion_receipt, input.bundle_receipt, promotion.readbacks);
   if (operation.bundle_receipt !== null) return exactTerminal(operation.bundle_receipt, receipt);
   if (
     operation.state !== "AUTHORIZED" ||
@@ -222,7 +188,6 @@ export async function commitAdmittedBundle(
   ) {
     authorityFail("INGEST_STATE_CONFLICT", "admission or qualification authority does not permit commit");
   }
-  const promotion = validatePromotion(operation, input.promotion_receipt);
   const receiptJson = canonicalJson(receipt);
   const receiptSha = await canonicalDigest(receipt);
   const epoch = clock();

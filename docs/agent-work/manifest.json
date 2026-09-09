@@ -4,6 +4,7 @@
   "baseline_commit": "ec21df807a6ee10e4b2b35283224ff172a077cf8",
   "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
   "generated_at": "2026-09-05T05:30:00Z",
+  "launch_budget_exceptions": [],
   "rules": {
     "one_agent_one_packet": true,
     "owned_paths_may_not_overlap": true,
