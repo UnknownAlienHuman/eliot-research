@@ -264,7 +264,9 @@ The connected L3 checkpoint adds a separate `eliotr.raw-markdown-conversion.v1` 
 `0029_raw_markdown_conversion.sql`. It reads only a server-owned captured raw receipt, verifies the
 exact R2 bytes and digest, reserves one durable provider attempt, and stores an immutable output and
 receipt before the D1 completion readback. A lost acknowledgement or timeout is returned as
-`UNKNOWN` and is reconciled from the exact receipt without invoking Workers AI again. The result is
+`UNKNOWN` and is reconciled from an immutable receipt only when its operation/capture/content
+identity and output digest/size readback match the reserved row; Workers AI is never invoked again.
+The result is
 candidate conversion metadata only: it does not create a normalized manifest, evidence handle,
 source map, qualification, pricing approval, or live provider qualification. The test profile uses
 an injected binding; production binding configuration and live Workers AI qualification remain

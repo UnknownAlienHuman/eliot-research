@@ -115,13 +115,23 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     return result;
   }
 
+  async function verifyStoredResult(
+    row: Record<string, unknown>,
+    result: RawMarkdownResult,
+    capture: RawMarkdownCaptureReceipt,
+  ): Promise<boolean> {
+    return row.state === result.state && row.operation_id === result.operation_id &&
+      row.capture_id === capture.capture_id && row.content_sha256 === capture.content_sha256 &&
+      typeof row.result_sha256 === "string" && row.result_sha256 === await sha256Utf8(canonical(result));
+  }
+
   async function replay(
     row: Record<string, unknown>,
     context: RawMarkdownConversionContext,
     capture: RawMarkdownCaptureReceipt,
   ): Promise<RawMarkdownResult | null> {
     const result = decode(row);
-    if (result === null) return null;
+    if (result === null || !(await verifyStoredResult(row, result, capture))) return null;
     if (result.state !== "COMPLETE") return result;
     try {
       return await verifyComplete(row, result, context, capture);
