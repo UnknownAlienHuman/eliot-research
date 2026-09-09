@@ -37,6 +37,9 @@ function recoveryPageOf(outcome, label, workflowId) {
 export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection }) {
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
+  await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
+    ?.textContent?.trim() === "READY", null, { timeout: 15000 });
+  await panel.locator('input[name="query"]').fill(query);
   await page.waitForFunction(() => {
     const root = document.querySelector("#exhaustive-workflow");
     const button = root?.querySelector('button[type="submit"]');
@@ -44,7 +47,6 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   }, null, { timeout: 15000 });
   assert.equal((await panel.locator("[data-workflow-badge]").textContent())?.trim(), "READY",
     "the PWA must decode current ready health before offering the exhaustive launch");
-  await panel.locator('input[name="query"]').fill(query);
   await submit.click();
   await page.waitForFunction(() => {
     const value = document.querySelector("#exhaustive-workflow")?.getAttribute("data-workflow-id");
