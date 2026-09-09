@@ -185,7 +185,7 @@
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
-        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
+        "live Access initialize/tools/call and exact readback receipts for the selected profile; default Workspace/Drive qualification is independent of optional gcloud/Google Cloud",
         "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
         "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]

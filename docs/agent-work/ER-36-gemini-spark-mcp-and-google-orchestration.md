@@ -2,13 +2,15 @@
 
 **Slice:** 0–1 bridge
 **Depends on:** ER-17, ER-18, ER-20, ER-21, ER-24, ER-26
-**Live gate:** deployed Access service-token initialize/tools/list/tools/call plus disposable Google
-Workspace and gcloud action/readback; otherwise `NOT_EXECUTED`
+**Live gate:** the selected profile must have deployed Access service-token
+initialize/tools/list/tools/call plus its own exact readback receipt. The default Workspace profile
+qualifies Drive/Docs/Sheets/Slides/Gmail/Calendar; Google Cloud/gcloud is an independent optional
+profile. A missing optional profile is `NOT_EXECUTED`, not a Drive blocker.
 
 ## Objective
 
 Expose a minimal, read-only ELIOT MCP surface to Gemini Spark / Gemini CLI and define the safe
-orchestration boundary for official Google Workspace and gcloud extensions. Do not create a reverse
+orchestration boundary for the official Google Workspace extension, with optional gcloud support. Do not create a reverse
 authority channel and do not let a Google transport result promote itself into ELIOT state.
 
 ## Owned paths
@@ -44,7 +46,18 @@ authority channel and do not let a Google transport result promote itself into E
 - mutating Google plans require confirmation and exact readback;
 - a valid transport receipt remains candidate-only;
 - the setup script is atomic, idempotent, secret-free, and pins reviewed Google extension refs;
+- the default setup profile is Workspace-only and does not provision or require a Google Cloud
+  project, Cloud OAuth client, Vertex route, or Gemini API key; gcloud is explicit opt-in;
 - Drive Exchange and Gemini direct orchestration cannot simultaneously own the transport.
+
+## User scope decision — 2026-09-09
+
+The active user scope is Google Drive/Workspace through Gemini Spark MCP. ELIOT configures and
+validates the bounded MCP plan/receipt surface; the external Workspace extension owns the Google
+action. Google Cloud/gcloud and Google AI Studio/Gemini API are optional future contours and remain
+unimplemented unless separately selected and qualified. The unfinished server-owned ChatGPT Drive
+Exchange is a separate legacy product path, not authorization or a prerequisite to create a Google
+Cloud project/client for this Workspace profile.
 
 ## Mandatory negative boundary
 

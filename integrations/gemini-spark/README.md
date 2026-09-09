@@ -1,14 +1,15 @@
 # Gemini Spark / Gemini CLI integration
 
 This integration gives Gemini Spark, Gemini CLI, or Gemini Code Assist a bounded ELIOT Research MCP
-surface and installs the official Google Workspace and gcloud extensions for Google-side actions.
+surface and, by default, the official Google Workspace extension for Google-side actions. The gcloud
+extension is an explicit optional profile for Google Cloud actions.
 
 The authority split is deliberate:
 
 ```text
 ELIOT MCP                    status, catalog, plan, receipt validation
 Google Workspace extension  Drive, Docs, Sheets, Slides, Gmail, Calendar effects
-Gcloud extension            Google Cloud inspection and effects
+Gcloud extension (optional) Google Cloud inspection and effects
 ELIOT admission path         any later canonical ELIOT mutation
 ```
 
@@ -59,8 +60,8 @@ node integrations/gemini-spark/setup.mjs \
   --dry-run
 ```
 
-Apply user-level Gemini settings and install the ELIOT extension plus pinned official Google
-extensions:
+Apply user-level Gemini settings and install the ELIOT extension plus the pinned official Google
+Workspace extension:
 
 ```bash
 node integrations/gemini-spark/setup.mjs \
@@ -84,19 +85,32 @@ The script preserves unrelated Gemini settings, writes only environment referenc
 an atomic settings-file replacement, and pins the external extension source refs. Re-run with newer
 reviewed refs explicitly when updating them.
 
+The default profile is Workspace-only for Drive, Docs, Sheets, Slides, Gmail, and Calendar. It does
+not ask ELIOT to create or own a Google Cloud project, Cloud OAuth client, Vertex route, or Gemini API
+key. Add the optional gcloud profile only when a Google Cloud action is explicitly selected:
+
+```bash
+node integrations/gemini-spark/setup.mjs \
+  --endpoint https://mcp.example.com/mcp \
+  --install-extensions \
+  --include-gcloud \
+  --consent
+```
+
 ## Verify
 
 ```text
 gemini mcp list
 ```
 
-Expected MCP servers include:
+The default Workspace profile installs/configures:
 
 ```text
 eliot-research
 google-workspace
-gcloud
 ```
+
+The optional Cloud profile adds `gcloud`; it is not required for Drive/Docs/Sheets work.
 
 Then ask Gemini to call `eliotr_system_status`. Google mutations must follow the plan → confirmation →
 official Google tool → exact readback → receipt-validation sequence in the extension context file.
