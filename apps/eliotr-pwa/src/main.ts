@@ -65,7 +65,7 @@ function renderGoogleConnector(health: SystemHealth | null): void {
     return;
   }
   const copy = mode === "gemini-mcp"
-    ? "Google Drive & Workspace is connected through your workspace client. Server readiness will appear here when available."
+    ? "Use Google Drive through the Workspace connector in Gemini Spark. Connection is managed in that client."
     : mode === "disabled"
       ? "Google Drive connection is unavailable for this workspace."
       : "Google Drive connection status is unavailable for this workspace.";
@@ -80,7 +80,7 @@ function render(health: SystemHealth | null): void {
     </header>
     <div class="health-strip" role="status" aria-live="polite">
       <span class="health-dot" aria-hidden="true"></span><strong>Owner API</strong>
-      <span id="health-summary">Checking workspace readiness…</span>
+      <span id="health-summary">Checking current deployment…</span>
       <span class="health-generation">${displayText(health?.deployment_generation, "generation pending")}</span>
     </div>
     <main class="workspace">
@@ -95,11 +95,11 @@ function render(health: SystemHealth | null): void {
           <span class="eyebrow">Coming next</span>
           ${["Investigations", "Research Wiki", "Reports", "Jobs"].map((item) => `<button class="nav-item nav-item--muted" type="button" disabled><span class="nav-icon">·</span><span>${item}</span><span class="soon">Soon</span></button>`).join("")}
         </div>
-        <div class="sidebar-footer"><span class="eyebrow">Private workspace</span><p>Your sources stay in a private session and are never cached in the browser.</p></div>
+        <div class="sidebar-footer"><span class="eyebrow">Access boundary</span><p>All reads resolve through the owner API. Private data is never cached in the browser.</p></div>
         <div id="library"></div>
       </aside>
       <section class="panel panel--investigation" aria-label="Investigation workspace">
-        <div class="content-heading"><div><span class="eyebrow">Research desk</span><h1 data-workspace-title>Library overview</h1><p class="lede" data-workspace-lede>Browse available sources, orient yourself in the corpus, and resolve exact evidence when it is available.</p></div><div class="content-actions"><span class="profile-chip">Private research</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
+        <div class="content-heading"><div><span class="eyebrow">Research desk</span><h1 data-workspace-title>Library overview</h1><p class="lede" data-workspace-lede>Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available.</p></div><div class="content-actions"><span class="profile-chip">E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
         <div class="workspace-cards">
           <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Choose a source from the Library to focus Corpus Lens and Research together.</p></div></article>
           <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run Research to measure sampled resolution.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
@@ -135,8 +135,8 @@ function render(health: SystemHealth | null): void {
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
   const workspaceViews: Record<string, { title: string; lede: string }> = {
-    "#library": { title: "Library overview", lede: "Browse available sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
-    "#corpus-lens-card": { title: "Corpus Lens", lede: "Read your source map and choose a source for focused investigation." },
+    "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
+    "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
     "#research-card": { title: "Research", lede: "Search resolved source bytes with a sampled coverage profile and inspect citation evidence." },
   };
   for (const button of app.querySelectorAll<HTMLButtonElement>("[data-nav-target]")) {

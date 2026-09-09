@@ -47,6 +47,17 @@ revision_29_1:
   - "bound CoverageReceipt to the frozen denominator and made complete/sampled/unknown coverage explicit"
 ---
 
+## Profile applicability — ADR-0006 (2026-09-09)
+
+ADR-0006 supersedes the unconditional Day-0 Google Drive requirements in this document only for the
+user-selected `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` profile. Sections 12.3–12.12 remain
+the authoritative requirements when the explicit `drive-exchange` profile is selected;
+they are not a prerequisite for the Workspace/MCP client profile. The Workspace profile
+does not require a Google Cloud project, custom OAuth client, Vertex route or Gemini API
+key. Its Google actions remain candidate-only until authenticated ELIOT admission and
+exact action/readback qualification are implemented. Common product gates remain
+unchanged. Unknown, mixed or disabled deployment profiles fail closed.
+
 # Eliot Research Cloud
 
 > **In one sentence:** Eliot Research Cloud is a governed cloud evidence library, Corpus Lens, Research Wiki, and controlled investigation system with model choice, exact citations, and stable interfaces for humans, agents, and optional external clients.
@@ -3211,6 +3222,10 @@ A changed artifact creates a new Drive Doc/delivery revision. Drive revision his
 
 ## 12.9. Google OAuth contract
 
+The requirements in this section apply to the explicit legacy `drive-exchange` profile.
+For the selected Workspace/MCP profile, see ADR-0006; do not create a Google Cloud
+project or custom OAuth client as an implicit consequence of user profile selection.
+
 Use a dedicated Google Cloud project, user OAuth (not a service account for personal My Drive), and web-server authorization-code flow with `access_type=offline`.
 
 Scopes:
@@ -3255,6 +3270,11 @@ Connection admission verifies the authorized Google subject/email matches the co
 Operational reports show occasional connected-but-empty Drive/tool states, plan-dependent write availability and action dispatch regressions. Exact IDs, append-only rows, cursor replay and readback prevent UI failure from becoming canonical data loss.
 
 ## 12.11. Google Cloud boundary
+
+This boundary describes the explicit legacy `drive-exchange` profile. The selected
+Workspace/MCP profile keeps Google actions client-side and leaves Cloud/Vertex/API
+configuration optional until separately selected and qualified; its pending ELIOT
+admission/readback gate still applies.
 
 ### Permanent production use
 
