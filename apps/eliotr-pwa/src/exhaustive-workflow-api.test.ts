@@ -63,4 +63,11 @@ describe("exhaustive workflow transport", () => {
     await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toBeInstanceOf(ApiRequestError);
     await expect(readExhaustiveWorkflow("exhaustive-workflow-invalid", generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
   });
+
+  it("requires the complete receipt identity before showing complete coverage", async () => {
+    const missing = completeData();
+    delete (missing.job as Record<string, unknown>).request_digest;
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(missing)));
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
 });

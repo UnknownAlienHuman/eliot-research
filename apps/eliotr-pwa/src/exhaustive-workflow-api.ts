@@ -72,6 +72,11 @@ function nonNegativeInteger(value: unknown, label: string): number {
   return value as number;
 }
 
+function digest(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) invalid(`${label} is invalid`);
+  return value;
+}
+
 function decodeJob(value: unknown): ExhaustiveJobView {
   if (value === null || typeof value !== "object" || Array.isArray(value)) invalid("workflow job is invalid");
   const raw = value as Record<string, unknown>;
@@ -82,13 +87,20 @@ function decodeJob(value: unknown): ExhaustiveJobView {
       "total_scanned_sections", "total_matches", "result_artifact_ref", "coverage_receipt_ref",
     ], "complete job");
     if (row.coverage_claim !== "COMPLETE" || row.settled_shards !== row.denominator_shards) invalid("complete job coverage is invalid");
+    stringValue(row.job_id, "job id");
+    stringValue(row.idempotency_key, "job idempotency key");
+    digest(row.request_digest, "job request digest");
+    boundedIdentifier(row.result_artifact_ref, "job result artifact");
+    boundedIdentifier(row.coverage_receipt_ref, "job coverage receipt");
+    const denominator = nonNegativeInteger(row.denominator_shards, "job denominator shards");
+    const settled = nonNegativeInteger(row.settled_shards, "job settled shards");
     return {
       status: "COMPLETE",
       scope_snapshot_id: boundedIdentifier(row.scope_snapshot_id, "job scope"),
       scope_snapshot_revision: positiveInteger(row.scope_snapshot_revision, "job scope revision"),
       coverage_denominator_ref: boundedIdentifier(row.coverage_denominator_ref, "job denominator"),
-      denominator_shards: positiveInteger(row.denominator_shards, "job denominator shards"),
-      settled_shards: positiveInteger(row.settled_shards, "job settled shards"),
+      denominator_shards: denominator,
+      settled_shards: settled,
       total_scanned_sections: nonNegativeInteger(row.total_scanned_sections, "job scanned sections"),
       total_matches: nonNegativeInteger(row.total_matches, "job matches"),
     };
@@ -99,7 +111,7 @@ function decodeJob(value: unknown): ExhaustiveJobView {
     ], "unfinished job");
     if (!Array.isArray(row.unsettled_shard_ids) || row.unsettled_shard_ids.length > 4096) invalid("unfinished shard list is invalid");
     const unsettled = row.unsettled_shard_ids.map((item, index) => boundedIdentifier(item, `unfinished shard ${index}`));
-    const denominator = positiveInteger(row.denominator_shards, "job denominator shards");
+    const denominator = nonNegativeInteger(row.denominator_shards, "job denominator shards");
     const settled = nonNegativeInteger(row.settled_shards, "job settled shards");
     if (settled > denominator || unsettled.length !== denominator - settled) invalid("unfinished coverage is inconsistent");
     return {
@@ -188,8 +200,8 @@ function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
 }
 
 export async function pollExhaustiveWorkflow(instanceId: string, deploymentGeneration: string | undefined, signal?: AbortSignal): Promise<ExhaustiveWorkflowView> {
-  let current = await readExhaustiveWorkflow(instanceId, deploymentGeneration, signal);
   const deadline = Date.now() + EXHAUSTIVE_POLL_DEADLINE_MS;
+  let current = await readExhaustiveWorkflow(instanceId, deploymentGeneration, signal);
   for (let poll = 0; poll < EXHAUSTIVE_POLL_LIMIT && !["complete", "errored", "terminated", "unknown"].includes(current.workflow_status); poll += 1) {
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
