@@ -4,8 +4,8 @@ import { mergeExhaustiveShards, type ExactScanPlan, type ExactScanShard, type Ex
 import { canonicalRetrievalJson } from "./query-persistence.js";
 import type { ExhaustiveJobReceipt, ExhaustiveJobStore } from "./exhaustive-job-store.js";
 
-export { createD1ExhaustiveJobStore, exhaustiveJobId } from "./exhaustive-job-store.js";
-export type { ExhaustiveJobStore, ExhaustiveJobInput, ExhaustiveJobReceipt, ExhaustiveJobPending, ExhaustiveJobLoad } from "./exhaustive-job-store.js";
+export { createD1ExhaustiveJobStore, exhaustiveJobId, readExhaustiveJobCoverage } from "./exhaustive-job-store.js";
+export type { ExhaustiveJobStore, ExhaustiveJobInput, ExhaustiveJobReceipt, ExhaustiveJobPending, ExhaustiveJobLoad, ExhaustiveJobCoverage } from "./exhaustive-job-store.js";
 
 export type ExhaustiveReconcileStatus =
   | { readonly status: "COMPLETE"; readonly receipt: ExhaustiveJobReceipt }

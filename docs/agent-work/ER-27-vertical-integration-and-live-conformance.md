@@ -29,6 +29,11 @@ outside the paths below.
 - Store redacted receipts, timings, generations and cleanup result.
 - Profile representative 5/20/50 readers and ingestion/research concurrency only after earlier gates.
 
+ER-24 supplies the local actual HTTP/D1/Workflow output-boundary fixture at
+`apps/eliotr-core/test/exhaustive-workflow-output.test.ts`; ER-27 treats it as
+local persisted-state evidence only and requires a separate live receipt for
+deployed qualification.
+
 ## Acceptance
 
 - Live tests are opt-in and cannot silently use mocks.
