@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { createRawMarkdownConversionService } from "./raw-markdown-conversion.js";
 import type { RawMarkdownCaptureReceipt, RawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 
@@ -45,20 +46,27 @@ describe("durable raw markdown conversion", () => {
     const contentSha = await sha256(bytes);
     const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-1", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "note.pdf", object_key: "raw/capture-1", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
     const output = new Map<string, Uint8Array>();
+    const outputAbort = new AbortController();
+    let abortDuringOutputReadback = false;
     const provider = vi.fn(async () => ({ disposition: "CONVERTED" as const, context: { operation_id: "", attempt_id: "", input_sha256: contentSha, profile_generation: "profile-1" }, provider_result_id: "provider-1", name: "note.pdf", detected_mime: "application/pdf", format: "markdown" as const, tokens: 2, data: "# Note", data_sha256: await sha256(new TextEncoder().encode("# Note")), data_bytes: 6 }));
     const service = createRawMarkdownConversionService({
       database,
       profile_generation: "profile-1",
       adapter: { convert: provider },
       source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined },
-      output: { putImmutable: async (input) => { const data = new TextEncoder().encode(input.key.endsWith("receipt.json") ? new TextDecoder().decode(await new Response(input.body).arrayBuffer()) : "# Note"); output.set(input.key, data); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } },
+      output: { putImmutable: async (input) => { const data = new TextEncoder().encode(input.key.endsWith("receipt.json") ? new TextDecoder().decode(await new Response(input.body).arrayBuffer()) : "# Note"); output.set(input.key, data); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); if (value !== undefined && abortDuringOutputReadback && key.endsWith("/output.md")) outputAbort.abort(); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } },
     });
     const request: RawMarkdownConversionRequest = { idempotency_key: "conversion-1", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 };
+    const reorderedRequest: RawMarkdownConversionRequest = { timeout_ms: 1_000, max_tokens: 10, max_output_bytes: 100, idempotency_key: "conversion-1" };
     const context = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" };
     const first = await service.convert(context, "capture-1", request);
-    const second = await service.convert(context, "capture-1", request);
+    const second = await service.convert(context, "capture-1", reorderedRequest);
     expect(first.state).toBe("COMPLETE");
     expect(second).toEqual(first);
+    expect(provider).toHaveBeenCalledTimes(1);
+    abortDuringOutputReadback = true;
+    const abortedReplay = await service.convert({ ...context, signal: outputAbort.signal }, "capture-1", request);
+    expect(abortedReplay).toMatchObject({ state: "UNKNOWN", failure_code: "PROVIDER_UNCERTAIN" });
     expect(provider).toHaveBeenCalledTimes(1);
   });
   it("withholds a COMPLETE replay when the persisted result identity is foreign", async () => {
@@ -75,7 +83,7 @@ describe("durable raw markdown conversion", () => {
     if (row === undefined) throw new Error("durable conversion row was not persisted");
     const foreign = { ...JSON.parse(String(row.result_json)), capture_id: "foreign-capture" };
     row.result_json = JSON.stringify(foreign);
-    row.result_sha256 = await sha256(new TextEncoder().encode(String(row.result_json)));
+    row.result_sha256 = await canonicalDigest(foreign);
     const second = await service.convert(context, "capture-2", request);
     expect(first.state).toBe("COMPLETE");
     expect(second).toMatchObject({ state: "UNKNOWN", failure_code: "PROVIDER_UNCERTAIN" });

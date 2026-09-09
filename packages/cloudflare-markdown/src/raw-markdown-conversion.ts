@@ -1,4 +1,4 @@
-import { bufferBounded, sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { bufferBounded, canonicalDigest, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { createWorkersAiMarkdownConversionAdapter } from "./markdown-conversion.js";
 import { MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES } from "./markdown-conversion-contract.js";
 import type {
@@ -88,6 +88,10 @@ async function digest(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
+function signalAborted(context: RawMarkdownConversionContext): boolean {
+  return context.signal?.aborted === true;
+}
+
 /** Durable conversion attempt. The unique STARTED row fences the provider call. */
 export function createRawMarkdownConversionService(dependencies: RawMarkdownConversionDependencies): RawMarkdownConversionService {
   const now = dependencies.now ?? Date.now;
@@ -106,12 +110,18 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
         row.principal_ref !== context.principal_ref || row.content_sha256 !== capture.content_sha256 ||
         (row.state === "COMPLETE" && (typeof row.result_sha256 !== "string" || row.result_sha256 !== await sha256Utf8(canonical(result)))) ||
         typeof row.output_object_key !== "string" || result.output_sha256 === undefined || result.output_bytes === undefined) return null;
+    if (signalAborted(context)) return null;
     await dependencies.source.assertCurrent(context, capture);
+    if (signalAborted(context)) return null;
     const output = await dependencies.output.open(row.output_object_key);
     if (output === null) return null;
+    if (signalAborted(context)) return null;
     const outputBytes = await bufferBounded(output.body, MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES);
+    if (signalAborted(context)) return null;
     if (outputBytes.byteLength !== result.output_bytes || await digest(outputBytes) !== result.output_sha256) return null;
+    if (signalAborted(context)) return null;
     await dependencies.source.assertCurrent(context, capture);
+    if (signalAborted(context)) return null;
     return result;
   }
 
@@ -121,7 +131,7 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     context: RawMarkdownConversionContext,
     capture: RawMarkdownCaptureReceipt,
   ): Promise<boolean> {
-    return row.state === result.state && row.operation_id === result.operation_id &&
+    return !signalAborted(context) && row.state === result.state && row.operation_id === result.operation_id &&
       row.capture_id === result.capture_id && row.capture_id === capture.capture_id &&
       row.principal_ref === context.principal_ref && row.content_sha256 === result.content_sha256 &&
       row.content_sha256 === capture.content_sha256 &&
@@ -136,7 +146,9 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     const result = decode(row);
     if (result === null || !(await verifyStoredResult(row, result, context, capture))) return null;
     try {
+      if (signalAborted(context)) return null;
       await dependencies.source.assertCurrent(context, capture);
+      if (signalAborted(context)) return null;
     } catch {
       return null;
     }
@@ -154,9 +166,12 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     capture: RawMarkdownCaptureReceipt,
   ): Promise<RawMarkdownResult | null> {
     if (row.state !== "STARTED" || !validId(row.operation_id) || typeof row.receipt_object_key !== "string") return null;
+    if (signalAborted(context)) return null;
     const receipt = await dependencies.output.open(row.receipt_object_key);
     if (receipt === null) return null;
+    if (signalAborted(context)) return null;
     const receiptBytes = await bufferBounded(receipt.body, MAX_RECEIPT_BYTES);
+    if (signalAborted(context)) return null;
     const result = decode({ result_json: new TextDecoder().decode(receiptBytes) });
     if (result === null || result.state !== "COMPLETE" || result.operation_id !== row.operation_id ||
         result.capture_id !== capture.capture_id || result.content_sha256 !== capture.content_sha256 ||
@@ -185,10 +200,13 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     const receiptBytes = encoder.encode(resultJson);
     if (receiptBytes.byteLength > MAX_RECEIPT_BYTES) throw new Error("conversion receipt exceeds bound");
     const resultSha = await sha256Utf8(resultJson);
+    if (signalAborted(context)) return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
     await dependencies.output.putImmutable({ key: receiptKey, body: body(receiptBytes), expected_sha256: resultSha, expected_size_bytes: receiptBytes.byteLength, content_type: "application/json", custom_metadata: { operation_id: operationId, attempt_id: attemptId } });
+    if (signalAborted(context)) return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
     const update = await dependencies.database.prepare("UPDATE raw_markdown_conversion SET state='COMPLETE',result_json=?2,result_sha256=?3,updated_at=?4 WHERE operation_id=?1 AND state='STARTED' AND attempt_id=?5")
       .bind(operationId, resultJson, resultSha, new Date(now()).toISOString(), attemptId).run();
-    if ((update.meta?.changes ?? 0) !== 1) {
+    if ((update.meta?.changes ?? 0) !== 1 || signalAborted(context)) {
+      if (signalAborted(context)) return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       const row = await readRow(operationId);
       const replayResult = row === null ? null : await replay(row, context, capture);
       if (replayResult !== null) return replayResult;
@@ -196,7 +214,10 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     }
     const row = await readRow(operationId);
     const replayResult = row === null ? null : await replay(row, context, capture);
-    if (replayResult === null) throw new Error("conversion completion readback is missing");
+    if (replayResult === null) {
+      if (signalAborted(context)) return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
+      throw new Error("conversion completion readback is missing");
+    }
     return replayResult;
   }
 
@@ -210,7 +231,7 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
       const capture = await dependencies.source.read(contextSnapshot, captureId);
       if (capture === null || capture.principal_ref !== contextSnapshot.principal_ref) return { ...base(operationId, captureId, "0".repeat(64), "FAILED"), failure_code: "SOURCE_UNAVAILABLE" };
       const requestJson = canonical(requestSnapshot);
-      const requestSha = await sha256Utf8(requestJson);
+      const requestSha = await canonicalDigest(requestSnapshot);
       const authoritySha = await sha256Utf8(canonical([contextSnapshot.credential_generation, contextSnapshot.deployment_generation, contextSnapshot.profile_generation, capture.capture_id, capture.content_sha256, capture.source_owner_generation]));
       const existing = await readRow(operationId);
       if (existing !== null) {
@@ -221,7 +242,9 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
         if (recovered !== null) return recovered;
         return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       }
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "FAILED"), failure_code: "CANCELED" };
       await dependencies.source.assertCurrent(contextSnapshot, capture);
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       const attemptId = crypto.randomUUID();
       const receiptKey = `raw-markdown/${operationId}/receipt.json`;
       const outputKey = `raw-markdown/${operationId}/output.md`;
@@ -250,7 +273,9 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
         await dependencies.database.prepare("UPDATE raw_markdown_conversion SET state='FAILED',result_json=?2,result_sha256=?3,updated_at=?4 WHERE operation_id=?1 AND state='STARTED' AND attempt_id=?5").bind(operationId, resultJson, await sha256Utf8(resultJson), new Date(now()).toISOString(), attemptId).run();
         return result;
       }
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       await dependencies.source.assertCurrent(contextSnapshot, capture);
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       const sourceCopy = new Uint8Array(sourceBytes.byteLength);
       sourceCopy.set(sourceBytes);
       const converted = await dependencies.adapter.convert({
@@ -268,13 +293,18 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
         await dependencies.database.prepare("UPDATE raw_markdown_conversion SET state=?2,result_json=?3,result_sha256=?4,updated_at=?5 WHERE operation_id=?1 AND state='STARTED' AND attempt_id=?6").bind(operationId, state, resultJson, await sha256Utf8(resultJson), new Date(now()).toISOString(), attemptId).run();
         return result;
       }
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       await dependencies.source.assertCurrent(contextSnapshot, capture);
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       const outputBytes = encoder.encode(converted.data);
       const output = await dependencies.output.putImmutable({ key: outputKey, body: body(outputBytes), expected_sha256: converted.data_sha256, expected_size_bytes: outputBytes.byteLength, content_type: "text/markdown; charset=utf-8", custom_metadata: { operation_id: operationId, capture_id: capture.capture_id } });
       if (output.readback_sha256 !== converted.data_sha256 || output.size_bytes !== outputBytes.byteLength) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "OUTPUT_UNAVAILABLE" };
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       await dependencies.source.assertCurrent(contextSnapshot, capture);
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       const settled = await settle(operationId, attemptId, { ...base(operationId, captureId, capture.content_sha256, "COMPLETE"), output_sha256: converted.data_sha256, output_bytes: outputBytes.byteLength, detected_mime: converted.detected_mime, format: converted.format, tokens: converted.tokens }, receiptKey, contextSnapshot, capture);
       await dependencies.source.assertCurrent(contextSnapshot, capture);
+      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
       return settled;
     },
   };
