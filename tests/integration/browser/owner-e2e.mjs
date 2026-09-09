@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readdir, readFile, rm, access, writeFile } from "node:f
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 /* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
@@ -21,6 +21,43 @@ const root = resolve(here, "../../..");
 const webcrypto = globalThis.crypto;
 const encoder = new globalThis.TextEncoder();
 const decoder = new globalThis.TextDecoder();
+
+function assertKnownCreatedTempDirectory(directory, prefix) {
+  const resolved = resolve(directory);
+  const root = resolve(tmpdir());
+  const name = basename(resolved);
+  if (resolved === root || !resolved.startsWith(`${root}${sep}`) || !name.startsWith(prefix)) {
+    throw new Error("Refusing cleanup of an unscoped harness directory");
+  }
+  return resolved;
+}
+
+async function removeKnownCreatedTempDirectory(directory, prefix) {
+  const resolved = assertKnownCreatedTempDirectory(directory, prefix);
+  await rm(resolved, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
+
+async function markKnownCreatedTempDirectory(directory, prefix, runId, kind, markerWriter = writeHarnessMarker) {
+  try {
+    return await markerWriter(directory, runId, kind);
+  } catch (error) {
+    try {
+      // The exact path was created by this harness before marker creation;
+      // remove it even though marker-gated cleanup cannot prove ownership.
+      await removeKnownCreatedTempDirectory(directory, prefix);
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError],
+        `Harness marker creation failed and cleanup was incomplete for ${directory}`, { cause: cleanupError });
+    }
+    throw error;
+  }
+}
+
+async function createMarkedTempDirectory(prefix, runId, kind, { markerWriter = writeHarnessMarker } = {}) {
+  const directory = await mkdtemp(resolve(tmpdir(), prefix));
+  await markKnownCreatedTempDirectory(directory, prefix, runId, kind, markerWriter);
+  return directory;
+}
 
 export const OWNER_E2E_ISSUER = ["https://owner-e2e", ".cloudflareaccess.com"].join("");
 export const OWNER_E2E_AUDIENCE = "owner-e2e-audience";
@@ -385,31 +422,6 @@ function d1Query(paths, binding, sql) {
   return batches[0].results;
 }
 
-function isRetryableNamespaceObservation(error) {
-  if (isTransientLocalD1Error(error)) return true;
-  const cause = error?.cause;
-  if (cause && isTransientLocalD1Error(cause)) return true;
-  const text = `${error?.message ?? ""}\n${cause?.message ?? ""}\n${cause?.cause?.diagnostic ?? ""}\n${cause?.cause?.stdout ?? ""}\n${cause?.cause?.stderr ?? ""}`;
-  return /TRANSIENT_D1_LOCK|SQLITE_BUSY|SQLITE_LOCKED|database is locked|database is busy|resource busy or locked|\bEBUSY\b|\bEPERM\b|\bETIMEDOUT\b|\bEAGAIN\b|miniflare.*lock|lock.*miniflare/i.test(text)
-    && !/CONFLICT|SETTLEMENT_UNCERTAIN|INPUT_INVALID|PROFILE_UNSUPPORTED|EXISTING_LINEAGE|OWNER_REQUIRED|READBACK_INVALID|no such table|no such column|syntax error/i.test(text);
-}
-
-async function initializeNamespaceWithBoundedRetry(args, { attempts = 6, deadlineMs = 15000, delayMs = 250 } = {}) {
-  const deadline = Date.now() + deadlineMs;
-  let lastError;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    try {
-      return await initializeLocalNamespace(args);
-    } catch (error) {
-      lastError = error;
-      if (!isRetryableNamespaceObservation(error)) throw error;
-      if (attempt >= attempts || Date.now() + delayMs > deadline) throw error;
-      await new Promise((resolve) => globalThis.setTimeout(resolve, delayMs));
-    }
-  }
-  throw lastError;
-}
-
 async function verifyMigrationLedgers(paths) {
   const counts = {};
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
@@ -422,22 +434,51 @@ async function verifyMigrationLedgers(paths) {
   return counts;
 }
 
+function isTransientReadbackError(error) {
+  const cause = error?.cause;
+  const text = `${error?.message ?? error}\n${cause?.diagnostic ?? ""}\n${cause?.stdout ?? ""}\n${cause?.stderr ?? ""}`;
+  if (/CONFLICT|SETTLEMENT_UNCERTAIN|INPUT_INVALID|PROFILE_UNSUPPORTED|EXISTING_LINEAGE|OWNER_REQUIRED|READBACK_INVALID|no such table|no such column|syntax error/i.test(text)) return false;
+  return isTransientLocalD1Error(error) && /TRANSIENT_D1_LOCK|SQLITE_BUSY|SQLITE_LOCKED|database (?:is )?(?:locked|busy)|resource busy or locked|\bEBUSY\b|miniflare.*lock|lock.*miniflare/i.test(text);
+}
+
 // Bounded retry for read-only restart readbacks against the local runner.
-// Only unclassified runner flakes (e.g. a lingering workerd file handle after
-// worker.stop) are retried; the acceptance predicate stays byte-exact, so real
-// drift fails identically on every attempt and the last error is thrown.
-async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayMs = 1000 } = {}) {
+// Only explicit transient runner-lock observations are retried; deterministic
+// data, authority and schema failures stop on their first attempt.
+export async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayMs = 1000 } = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       return await fn();
     } catch (error) {
       lastError = error;
-      if (!isTransientLocalD1Error(error) || attempt >= attempts) throw error;
+      if (!isTransientReadbackError(error) || attempt >= attempts) throw error;
       await new Promise((resolve) => globalThis.setTimeout(resolve, delayMs));
     }
   }
   throw lastError;
+}
+
+export async function verifyReadbackRetryClassification() {
+  let deterministicAttempts = 0;
+  await assert.rejects(readbackWithBoundedRetry("deterministic-readback", async () => {
+    deterministicAttempts += 1;
+    throw new Error("LOCAL_NAMESPACE_CONFLICT");
+  }, { attempts: 3, delayMs: 1 }), /LOCAL_NAMESPACE_CONFLICT/);
+  assert.equal(deterministicAttempts, 1, "deterministic readback failures must not retry");
+
+  let transientAttempts = 0;
+  const value = await readbackWithBoundedRetry("transient-readback", async () => {
+    transientAttempts += 1;
+    if (transientAttempts === 1) {
+      const error = new Error("local runner lock");
+      error.cause = { diagnostic: "TRANSIENT_D1_LOCK" };
+      throw error;
+    }
+    return "readback";
+  }, { attempts: 2, delayMs: 1 });
+  assert.equal(value, "readback");
+  assert.equal(transientAttempts, 2, "transient runner locks may receive one bounded retry");
+  return { protocol: "eliotr.owner-e2e.readback-retry.v1", state: "PASS" };
 }
 
 async function workerJson(origin, path, { token, method = "GET", body, contentType } = {}) {
@@ -933,8 +974,7 @@ export function createClosedAuthority(label) {
 
 async function launchPlaywright(runId, orphanedProfiles = []) {
   const { chromium } = await import("playwright-core");
-  const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
-  await writeHarnessMarker(profileDir, runId, "browser-profile");
+  const profileDir = await createMarkedTempDirectory("eliotr-owner-e2e-profile-", runId, "browser-profile");
   let context;
   let browser;
   try {
@@ -3312,11 +3352,21 @@ export async function verifyEarlyFailureCleanup() {
   let listener;
   let listenerPort = 0;
   const errors = [];
+  let markerFailureDirectory;
   try {
-    directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
-    await writeHarnessMarker(directory, runId, "owner-state");
-    profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
-    await writeHarnessMarker(profileDir, runId, "browser-profile");
+    await assert.rejects(
+      createMarkedTempDirectory(`eliotr-owner-e2e-${runId}-marker-failure-`, runId, "owner-state", {
+        markerWriter: async (directory) => {
+          markerFailureDirectory = directory;
+          throw new Error("simulated marker failure");
+        },
+      }),
+      /simulated marker failure/,
+      "marker failure must be reported",
+    );
+    await assert.rejects(access(markerFailureDirectory), /ENOENT/, "marker failure directory must be removed");
+    directory = await createMarkedTempDirectory("eliotr-owner-e2e-", runId, "owner-state");
+    profileDir = await createMarkedTempDirectory("eliotr-owner-e2e-profile-", runId, "browser-profile");
     decoy = resolve(tmpdir(), `eliotr-owner-e2e-profile-decoy-${runId}`);
     await mkdir(decoy, { recursive: true });
     listener = createTcpServer();
@@ -3448,14 +3498,13 @@ export async function runOwnerE2E() {
   try {
     receipt.chromium_safe_ports = (await verifyChromiumSafePortProtocol()).state;
     receipt.early_cleanup = (await verifyEarlyFailureCleanup()).state;
-    directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-"));
-    await writeHarnessMarker(directory, runId, "owner-state");
+    directory = await createMarkedTempDirectory("eliotr-owner-e2e-", runId, "owner-state");
     await mkdir(stateRoot, { recursive: true });
     for (const path of [decoyTmpProfile, decoyTmpSmoke, decoyStateOwner, decoyStateSmoke, foreignProfile]) {
       await mkdir(path, { recursive: true });
       await writeFile(resolve(path, "decoy-sentinel.txt"), `decoy owned by run ${runId}\n`, { mode: 0o600 });
     }
-    await writeHarnessMarker(foreignProfile, `${runId}-foreign`, "foreign-profile");
+    await markKnownCreatedTempDirectory(foreignProfile, `eliotr-owner-e2e-profile-foreign-${runId}`, `${runId}-foreign`, "foreign-profile");
     // Marker enforcement proof: a foreign marker never authorizes deletion under
     // this runId, so the foreign directory must survive a removal attempt.
     await assert.rejects(removeHarnessOwned(foreignProfile, runId), /marker mismatch/,
@@ -3495,9 +3544,8 @@ export async function runOwnerE2E() {
       type: "app", iat: nowSeconds(), exp: nowSeconds() + 600, ...overrides,
     }, kid);
     {
-      const stagingDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-staging-"));
       const stagingId = `${runId}-staging`;
-      await writeHarnessMarker(stagingDir, stagingId, "owner-state-staging");
+      const stagingDir = await createMarkedTempDirectory("eliotr-owner-e2e-staging-", stagingId, "owner-state-staging");
       ownedStaging.push({ dir: stagingDir, id: stagingId });
       let stagingWorker;
       try {
@@ -3549,9 +3597,8 @@ export async function runOwnerE2E() {
       // Duplicate-JWKS negative through a second real Worker: a JWKS document
       // with two keys sharing one kid must fail closed with ACCESS_JWKS_INVALID
       // (503), never select either key and never authorize the Library view.
-      const dupDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-staging-"));
       const dupId = `${runId}-staging-dup-jwks`;
-      await writeHarnessMarker(dupDir, dupId, "owner-state-staging-dup");
+      const dupDir = await createMarkedTempDirectory("eliotr-owner-e2e-staging-", dupId, "owner-state-staging-dup");
       ownedStaging.push({ dir: dupDir, id: dupId });
       let dupJwks;
       let dupWorker;
@@ -3761,15 +3808,15 @@ export async function runOwnerE2E() {
         default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "e2e-residency",
         default_retention_policy_id: "e2e-retention", minimum_quality_state: "standard" } };
     // Setup/replay at the active-runtime boundary: the Worker is running for
-    // identity, so CLI D1 shares SQLite files with Miniflare. Bounded retry
-    // covers documented transient locks only; the second (replay) readback
-    // stays exact and fail-closed for schema/authority/data errors.
-    const namespaceReceipt = await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
+    // identity, so CLI D1 shares SQLite files with Miniflare. Namespace
+    // initialization is one mutation attempt; its exact readback is the only
+    // recovery path for an ambiguous acknowledgement.
+    const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
       "login/init alone must not create an implicit read grant");
-    const namespaceReplay = await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
+    const namespaceReplay = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.deepEqual(namespaceReplay, namespaceReceipt, "same namespace intent must replay exactly");
     const grant = await applyLocalReadPolicy({ command: { action: "GRANT", namespace,
@@ -4093,7 +4140,7 @@ export async function runOwnerE2E() {
     // Restart readback happens at the safe lifecycle boundary: the Worker is
     // stopped, so CLI D1 owns the SQLite files alone. The exact receipt must
     // replay byte-for-byte; this second readback is never weakened.
-    assert.deepEqual(await initializeNamespaceWithBoundedRetry({ command: namespaceCommand,
+    assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 1 }],
@@ -4503,31 +4550,46 @@ export async function runOwnerE2E() {
       generation: stoppedGeneration,
     };
   } finally {
-    // Unconditional nested finally: EVERY owned resource is released even when
-    // an earlier release fails. Steps never short-circuit: each runs inside
-    // its own guard, failures accumulate into stepErrors, and the residue
-    // inventory below runs BEFORE any deletion so a failure cannot hide what
-    // was left behind. Exact marker/runId paths only; unrelated same-prefix
-    // entries are inventoried, never touched.
+    // Unconditional nested finally: EVERY owned resource is released while
+    // dependent cleanup is still safe. Each step runs inside its own guard,
+    // failures accumulate into stepErrors, and a timed-out callback stops the
+    // dependent chain because the callback has no cancellation contract. The
+    // residue inventory below runs BEFORE any deletion so a failure cannot
+    // hide what was left behind. Exact marker/runId paths only; unrelated
+    // same-prefix entries are inventoried, never touched.
     const teardownStarted = Date.now();
     const teardownDeadlineMs = 60000;
     const stepErrors = [];
+    let teardownStopped = false;
     const runStep = async (label, fn) => {
+      if (teardownStopped) return false;
       const remaining = teardownDeadlineMs - (Date.now() - teardownStarted);
       if (remaining <= 0) {
         stepErrors.push(`teardown deadline exceeded before ${label}`);
-        return;
+        teardownStopped = true;
+        return false;
       }
+      let timer;
+      const operation = Promise.resolve().then(fn);
       try {
         await Promise.race([
-          (async () => { await fn(); })(),
+          operation,
           new Promise((_, reject) => {
-            const timer = setTimeout(() => reject(new Error(`teardown step timed out: ${label}`)), Math.max(1000, remaining));
+            timer = setTimeout(() => reject(new Error(`teardown step timed out: ${label}`)), Math.max(1, remaining));
             timer.unref?.();
           }),
         ]);
+        return true;
       } catch (error) {
         stepErrors.push(`${label}: ${error?.message ?? error}`);
+        if (String(error?.message ?? error).includes(`teardown step timed out: ${label}`)) {
+          // The callback has no cancellation contract. Stop the dependent
+          // cleanup chain so no later step can race this still-running task.
+          teardownStopped = true;
+        }
+        return false;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     };
     const fail = (message) => { stepErrors.push(message); };

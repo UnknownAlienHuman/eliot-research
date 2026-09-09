@@ -33,19 +33,30 @@ type E2EReceipt = {
   readonly browser: unknown;
 };
 
-async function loadHarness(): Promise<{
+type E2EHarness = {
   runOwnerE2E: () => Promise<E2EReceipt>;
   verifyPhaseLedgerIdentityRegression: () => { state: string };
-}> {
-  const module = (await import("./owner-e2e.mjs")) as unknown as {
-    runOwnerE2E: () => Promise<E2EReceipt>;
-  };
-  return module;
+  verifyReadbackRetryClassification: () => Promise<{ state: string }>;
+  verifyEarlyFailureCleanup: () => Promise<{ state: string }>;
+};
+
+async function loadHarness(): Promise<E2EHarness> {
+  return (await import("./owner-e2e.mjs")) as unknown as E2EHarness;
 }
 
 test("L6 phase ledger: exact request identity across service worker phases", async () => {
   const harness = await loadHarness();
   assert.equal(harness.verifyPhaseLedgerIdentityRegression().state, "PASS");
+});
+
+test("L6 readback retry: deterministic authority failures stop before any retry", async () => {
+  const harness = await loadHarness();
+  assert.equal((await harness.verifyReadbackRetryClassification()).state, "PASS");
+});
+
+test("L6 cleanup: marker creation failure removes its known-created directory", async () => {
+  const harness = await loadHarness();
+  assert.equal((await harness.verifyEarlyFailureCleanup()).state, "PASS");
 });
 
 test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Library, persistence, logout, teardown, errors, storage, bounds", async () => {
