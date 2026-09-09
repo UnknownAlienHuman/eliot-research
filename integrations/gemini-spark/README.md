@@ -1,16 +1,21 @@
-# Gemini Spark / Gemini CLI integration
+# Gemini Spark MCP integration (legacy Gemini CLI material retained)
 
-This integration gives Gemini Spark, Gemini CLI, or Gemini Code Assist a bounded ELIOT Research MCP
-surface and, by default, the official Google Workspace extension for Google-side actions. The gcloud
-extension is an explicit optional profile for Google Cloud actions.
+The active client scope is Gemini Spark Connected Apps and Google Antigravity. Spark connects a custom
+app by its MCP server URL in Gemini web Connected Apps; Antigravity uses the project-local profile in
+[`../antigravity/README.md`](../antigravity/README.md). This directory retains the older Gemini CLI
+extension material for existing operators. It is not the setup path for Spark or Antigravity.
+
+The official Google Workspace extension and optional gcloud extension below are Gemini CLI artifacts.
+They are not installed by the active Spark/Antigravity profiles.
 
 The authority split is deliberate:
 
 ```text
-ELIOT MCP                    status, catalog, plan, receipt validation
-Google Workspace extension  Drive, Docs, Sheets, Slides, Gmail, Calendar effects
-Gcloud extension (optional) Google Cloud inspection and effects
-ELIOT admission path         any later canonical ELIOT mutation
+ELIOT MCP                         status, catalog, plan, receipt validation
+Spark/Antigravity client          client-selected Google Workspace actions
+Legacy CLI Workspace extension    Drive, Docs, Sheets, Slides, Gmail, Calendar effects
+Legacy CLI gcloud extension       optional Google Cloud inspection and effects
+ELIOT admission path              any later canonical ELIOT mutation
 ```
 
 ELIOT MCP never receives Google OAuth tokens, ADC credentials, service-account keys, or Google content
@@ -37,7 +42,7 @@ ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID
 differ from `ELIOTR_ACCESS_HOSTNAME`. Do not add the dedicated Client ID to the ordinary
 `ELIOTR_ACCESS_SERVICE_PRINCIPALS` list.
 
-The Gemini client sends the same dedicated service token through environment references:
+The legacy Gemini CLI extension sends the same dedicated service token through environment references:
 
 ```text
 ELIOTR_CF_ACCESS_CLIENT_ID
@@ -48,7 +53,11 @@ ELIOTR_CF_ACCESS_CLIENT_SECRET
 `ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID`. Do not place either credential value in this repository or
 in Gemini settings JSON.
 
-## Setup
+## Legacy Gemini CLI setup (unselected)
+
+Do not use this section for Gemini Spark or Antigravity. The script writes Gemini CLI settings and, when
+requested, invokes `gemini extensions install`; it does not configure Spark Connected Apps or
+Antigravity's `.agents/mcp_config.json`.
 
 Dry run:
 
@@ -60,8 +69,8 @@ node integrations/gemini-spark/setup.mjs \
   --dry-run
 ```
 
-Apply user-level Gemini settings and install the ELIOT extension plus the pinned official Google
-Workspace extension:
+For an existing Gemini CLI installation only, apply user-level Gemini settings and install the ELIOT
+extension plus the pinned official Google Workspace extension:
 
 ```bash
 node integrations/gemini-spark/setup.mjs \
@@ -97,7 +106,7 @@ node integrations/gemini-spark/setup.mjs \
   --consent
 ```
 
-## Verify
+## Legacy Gemini CLI verification
 
 ```text
 gemini mcp list
@@ -112,7 +121,7 @@ google-workspace
 
 The optional Cloud profile adds `gcloud`; it is not required for Drive/Docs/Sheets work.
 
-Then ask Gemini to call `eliotr_system_status`. Google mutations must follow the plan → confirmation →
+Then ask Gemini CLI to call `eliotr_system_status`. Google mutations must follow the plan → confirmation →
 official Google tool → exact readback → receipt-validation sequence in the extension context file.
 
 ## Transport exclusivity

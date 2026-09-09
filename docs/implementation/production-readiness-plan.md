@@ -70,7 +70,7 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 - deterministic projection execution and generation activation;
 - exact EvidenceHandle and citation-resolution paths;
 - exact erasure closure and purge ledger;
-- Gemini Spark MCP planning and Google orchestration boundary.
+- Gemini Spark/Antigravity MCP planning and Google orchestration boundary.
 
 ### Still unavailable or not composed
 

@@ -72,7 +72,7 @@ appendix.
 
 | Packet | Slice | Title | Depends on |
 |---|---:|---|---|
-| [ER-36](ER-36-gemini-spark-mcp-and-google-orchestration.md) | — | Gemini Spark MCP and Google orchestration | ER-17, ER-18, ER-20, ER-21, ER-24, ER-26 |
+| [ER-36](ER-36-gemini-spark-mcp-and-google-orchestration.md) | — | Gemini Spark / Antigravity MCP and Google orchestration | ER-17, ER-18, ER-20, ER-21, ER-24, ER-26 |
 | [ER-37](ER-37-governed-ingest-admission-composition.md) | — | Governed ingest admission composition | ER-13, ER-14, ER-21, ER-24, ER-29 |
 | [ER-38](ER-38-governed-projection-generation-execution.md) | — | Governed projection-generation execution | ER-05, ER-06, ER-13, ER-15, ER-16, ER-24, ER-29, ER-37 |
 | [ER-39](ER-39-exact-evidence-resolution.md) | — | Exact evidence resolution and citation gate | ER-01, ER-02, ER-03, ER-06, ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-37, ER-38 |

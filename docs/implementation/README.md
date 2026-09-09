@@ -69,4 +69,4 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [drive-rest.md](drive-rest.md) | Bounded Drive Sheet/changes REST subset — not the complete connector. |
 | [drive-credentials.md](drive-credentials.md) | Encrypted credential storage, refresh and rotation. |
 | [drive-oauth-admission.md](drive-oauth-admission.md) | Initial Google OAuth admission. |
-| [gemini-spark-mcp.md](gemini-spark-mcp.md) | Gemini MCP protocol, Google extension orchestration and its live gates. |
+| [gemini-spark-mcp.md](gemini-spark-mcp.md) | Spark/Antigravity MCP protocol, client orchestration and live gates. |

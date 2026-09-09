@@ -52,11 +52,13 @@ revision_29_1:
 ADR-0006 supersedes the unconditional Day-0 Google Drive requirements in this document only for the
 user-selected `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` profile. Sections 12.3–12.12 remain
 the authoritative requirements when the explicit `drive-exchange` profile is selected;
-they are not a prerequisite for the Workspace/MCP client profile. The Workspace profile
+they are not a prerequisite for the Workspace/MCP client profile. The active Workspace
+clients are Gemini Spark Connected Apps and Google Antigravity. The Workspace profile
 does not require a Google Cloud project, custom OAuth client, Vertex route or Gemini API
 key. Its Google actions remain candidate-only until authenticated ELIOT admission and
-exact action/readback qualification are implemented. Common product gates remain
-unchanged. Unknown, mixed or disabled deployment profiles fail closed.
+exact action/readback qualification are implemented. The retained Gemini CLI installer is
+legacy and unselected. Common product gates remain unchanged. Unknown, mixed or disabled
+deployment profiles fail closed.
 
 # Eliot Research Cloud
 

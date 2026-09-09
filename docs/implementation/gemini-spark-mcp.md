@@ -1,4 +1,4 @@
-# Gemini Spark MCP implementation
+# Gemini Spark and Antigravity MCP implementation
 
 ## Status
 
@@ -21,11 +21,25 @@ cursor, freeze/reconciliation and delivery implementations remain open for the s
 server-owned ChatGPT Drive Exchange profile; they are not prerequisites for the selected Workspace
 MCP profile.
 
-The active 2026-09-09 user scope is Workspace/Google Drive through the official Gemini client MCP.
-The default Gemini setup is Workspace-only and does not require ELIOT to provision or own a Google
-Cloud project, Cloud OAuth client, Vertex route, or Gemini API key. gcloud and Google AI
+The active 2026-09-09 user scope is Workspace/Google Drive through Gemini Spark Connected Apps and
+Google Antigravity MCP. Spark uses its web Connected Apps URL flow; Antigravity uses the project-local
+profile described in [`integrations/antigravity/README.md`](../../integrations/antigravity/README.md).
+Neither path installs Gemini CLI extensions. The legacy Gemini CLI setup is retained for existing
+operators but is explicitly unselected. This profile does not require ELIOT to provision or own a
+Google Cloud project, Cloud OAuth client, Vertex route, or Gemini API key. gcloud and Google AI
 Studio/Gemini API are optional future profiles and are not live-qualified here. The unfinished
 server-owned ChatGPT Drive Exchange remains a separate unselected product path.
+
+## Client references checked 2026-09-09
+
+- [Gemini Spark Connected Apps](https://support.google.com/gemini/answer/17209137) documents adding a
+  custom app by MCP server URL in the Gemini web app; it does not document CLI extension installation.
+- [Google Antigravity MCP](https://antigravity.google/docs/mcp/) documents project-local
+  `.agents/mcp_config.json`, remote `serverUrl`, OAuth/DCR and custom headers. This repository's
+  template remains disabled until its Cloudflare Access authentication is qualified.
+- [Google's Gemini CLI transition announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)
+  is dated 2026-05-19 and records the 2026-06-18 consumer transition. Enterprise and API-key exceptions
+  remain outside the selected client scope; the legacy installer is retained only for compatibility.
 
 The canonical deployment profile is selected by the validated `GOOGLE_EXTERNAL_TRANSPORT` value. In
 `gemini-mcp` mode the legacy `/oauth/google/*` and `/api/v1/google/connection/*` routes are unavailable;
@@ -36,7 +50,7 @@ exact action/readback gate.
 ## Runtime contour
 
 ```text
-Gemini CLI Streamable HTTP POST https://<MCP_HOSTNAME>/mcp
+Spark Connected App or Antigravity remote MCP client POST https://<MCP_HOSTNAME>/mcp
 → dedicated hostname Cloudflare Access application
 → dedicated MCP Access audience
 → signed Access JWT verification
@@ -83,18 +97,25 @@ or changed canonical state.
 
 ## Google integration
 
-The setup pins reviewed source commits for:
+The active client setup does not install a Google extension. Antigravity's project-local template uses
+the current `serverUrl` field and stays disabled until authentication and ELIOT live qualification are
+complete. See [`integrations/antigravity/README.md`](../../integrations/antigravity/README.md). The older
+Gemini CLI setup retains a pinned source commit for existing operators only:
 
 ```text
-gemini-cli-extensions/workspace  089927ead01433f38c65c12cdcd2ed9a18165277
+gemini-cli-extensions/workspace  089927ead01433f38c65c12cdcd2ed9a18165277 (legacy/unselected)
 ```
 
 The pinned `gemini-cli-extensions/gcloud` ref remains available only through the explicit optional
 Cloud profile; it is not a default or Drive readiness dependency.
 
 Update these only after reviewing upstream changes and rerunning deterministic setup/security fixtures.
-A Gemini subscription does not imply Google Cloud project billing, IAM, API enablement, OAuth consent,
-or Workspace permissions; those remain independent live preconditions.
+Antigravity documents remote `serverUrl`, OAuth/DCR and custom headers, but this repository does not
+infer a secret-reference mechanism for Cloudflare Access credentials. Spark documents URL-based
+Connected Apps and optional credentials, but does not document Cloudflare Access header injection.
+The exact Access-to-client authentication path remains pending qualification. A Gemini subscription
+does not imply Google Cloud project billing, IAM, API enablement, OAuth consent, or Workspace
+permissions; those remain independent live preconditions.
 
 ## Mandatory negative cases
 
