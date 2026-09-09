@@ -1,17 +1,11 @@
 import {
-  createExhaustiveWorkflowBinding,
+  createExhaustiveWorkflowService as createNavigationWorkflowService,
   ExhaustiveWorkflowBindingError,
-  validateExhaustiveJobCurrent,
   type ExhaustiveWorkflowPayload as BoundExhaustiveWorkflowPayload,
+  type ExhaustiveWorkflowService,
 } from "@eliotr/cloudflare-navigation";
-import type { ExhaustiveWorkflowResult, AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "./env.js";
-import {
-  exhaustiveIdempotencyKey,
-  parseExhaustiveQueryRequest,
-  type ExhaustiveQueryRequest,
-  ExhaustiveQueryError,
-} from "./exhaustive-query-service.js";
+import { ExhaustiveQueryError, type ExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 
 export type ExhaustiveWorkflowPayload = BoundExhaustiveWorkflowPayload<ExhaustiveQueryRequest>;
 
@@ -22,24 +16,8 @@ function translate(error: unknown): never {
   throw error;
 }
 
-export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): {
-  launch(context: AuthenticatedRequestContext, raw: unknown): Promise<ExhaustiveWorkflowResult>;
-  status(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
-  cancel(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
-} {
-  const binding = createExhaustiveWorkflowBinding<ExhaustiveQueryRequest>({
-    database: env.CORE_DB,
-    workflow: env.RESEARCH_WORKFLOW,
-    deployment_generation: env.DEPLOYMENT_GENERATION,
-    parseRequest: parseExhaustiveQueryRequest,
-    idempotencyKey: exhaustiveIdempotencyKey,
-    validateCurrentJob: (jobId, context) => validateExhaustiveJobCurrent(env, context, jobId),
-  });
-  return {
-    launch: (context, raw) => binding.launch(context, raw).catch(translate),
-    status: (context, instanceId) => binding.status(context, instanceId).catch(translate),
-    cancel: (context, instanceId) => binding.cancel(context, instanceId).catch(translate),
-  };
+export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): ExhaustiveWorkflowService {
+  return createNavigationWorkflowService(env, translate);
 }
 
 export { ExhaustiveWorkflowBindingError };

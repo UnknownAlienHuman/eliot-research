@@ -75,6 +75,31 @@ export interface ExhaustiveWorkflowResult {
   readonly job?: ExhaustiveReconcileStatus;
 }
 
+export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
+export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
+
+export interface ExhaustiveWorkflowJobsRequest {
+  readonly cursor?: string;
+  readonly limit: number;
+}
+
+export interface ExhaustiveWorkflowSummary {
+  readonly workflow_instance_id: string;
+  readonly workflow_status: ExhaustiveWorkflowPageStatus;
+  readonly job_state?: ExhaustiveWorkflowJobState;
+  readonly binding_state: "BOUND" | "CANCEL_REQUESTED";
+  readonly created_at: string;
+  readonly expires_at?: string;
+  readonly recoverable: boolean;
+  readonly cancelable: boolean;
+}
+
+export interface ExhaustiveWorkflowPage {
+  readonly protocol: "eliotr.exhaustive-workflow-page.v1";
+  readonly items: readonly ExhaustiveWorkflowSummary[];
+  readonly next_cursor?: string;
+}
+
 export type VerifyEvidenceRequest =
   | { readonly scope_snapshot_ref: VersionedRef; readonly locator_candidate: LocatorCandidate }
   | { readonly scope_snapshot_ref: VersionedRef; readonly handle_ref: VersionedRef };
@@ -90,6 +115,7 @@ export interface SemanticApi {
   query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult | ExhaustiveWorkflowResult>;
   queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
+  queryJobs(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
   verify(context: AuthenticatedRequestContext, request: VerifyEvidenceRequest): Promise<VerifyEvidenceResult>;
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
