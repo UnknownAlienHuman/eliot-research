@@ -56,7 +56,7 @@ import {
   validateResidency,
 } from "./ingest-validation.js";
 
-export { IngestStorageError, type IngestStorageErrorCode } from "./ingest-validation.js";
+export { IngestStorageError, type IngestStorageErrorCode, canonicalJson, exactSizeStream } from "./ingest-validation.js";
 export type {
   BundlePrepareInput,
   BundlePrepareResult,

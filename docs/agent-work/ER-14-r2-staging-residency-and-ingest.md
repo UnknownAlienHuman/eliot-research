@@ -24,6 +24,14 @@ projection authority. The adapter owns staging mechanics and immutable byte publ
 - `packages/platform-cloudflare/src/ingest-test-fixture.ts`
 - `packages/platform-cloudflare/src/ingest.test.ts`
 - `packages/platform-cloudflare/src/ingest-resilience.test.ts`
+- `packages/cloudflare-raw-ingest/package.json`
+- `packages/cloudflare-raw-ingest/tsconfig.json`
+- `packages/cloudflare-raw-ingest/src/index.ts`
+- `packages/cloudflare-raw-ingest/src/raw-ingest-types.ts`
+- `packages/cloudflare-raw-ingest/src/raw-ingest.ts`
+- `packages/cloudflare-raw-ingest/src/raw-capture-owner-service.ts`
+- `packages/cloudflare-raw-ingest/src/raw-ingest.test.ts`
+- `packages/cloudflare-raw-ingest/src/raw-capture-http.ts`
 - `infra/r2/**`
 
 ## Read only
@@ -83,6 +91,20 @@ ER-14 does **not**:
 `promote()` therefore requires a caller-supplied admission-authority verifier that binds the session
 fingerprint, complete residency digest, owner generation, source revision, and exact admission receipt.
 The remaining end-to-end authority path belongs to ER-13/ER-15/ER-24/ER-29.
+
+## L2 raw capture continuation
+
+The raw-file checkpoint adds a durable, owner-bound capture intent without creating a second
+admission authority. `@eliotr/cloudflare-raw-ingest`'s `createRawCapturePort` writes an `INTENT` row before the R2 effect, publishes
+the bounded byte stream to a source/revision/residency-bound immutable key, and only then records and
+reads back a `CAPTURED` receipt. The owner-only Worker route derives source and residency identities
+from the verified active namespace policy; clients provide only a bounded filename, digest, length,
+content type, and idempotency key. The connected owner HTTP profile uses the existing 16 MiB
+application upload envelope; larger objects require the later multipart bridge. Replays use the same capture identity and reject a changed request
+tuple; owner/policy currentness is checked before the intent, after R2, and after the receipt readback.
+The adapter deliberately does not create a `SourceRevision`, normalized manifest, conversion receipt,
+projection row, grant, or evidence handle. ER-21/ER-24/ER-37 own the authenticated route, composition,
+and `raw_file_capture` migration. Managed conversion and normalized admission remain a later L3 step.
 
 ## Acceptance
 

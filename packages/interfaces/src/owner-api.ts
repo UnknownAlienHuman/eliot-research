@@ -113,6 +113,28 @@ export interface BundleIngestRecovery {
   readonly file_hashes: Readonly<Record<string, string>>;
 }
 
+/** Owner-only raw transport. Source and storage authority are server-derived. */
+export interface RawFileCaptureRequest {
+  readonly idempotency_key: string;
+  readonly original_file_name: string;
+  readonly content_sha256: string;
+  readonly size_bytes: number;
+  readonly content_type: string;
+  readonly body: ReadableStream<Uint8Array>;
+}
+
+export interface RawFileCaptureResult {
+  readonly protocol: "eliotr.raw-file-capture.v1";
+  readonly disposition: "CAPTURED";
+  readonly capture_id: string;
+  readonly idempotency_key: string;
+  readonly original_file_name: string;
+  readonly content_sha256: string;
+  readonly size_bytes: number;
+  readonly content_type: string;
+  readonly captured_at: string;
+}
+
 /** Owner UI metadata only; not a query, evidence grant or index validation receipt. */
 export interface SourceRevisionsRequest {
   readonly source_id: string;
@@ -194,6 +216,18 @@ export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContex
     context: AuthenticatedRequestContext,
     operationId: string,
   ): Promise<BundleIngestStatus>;
+  captureRawFile(
+    context: AuthenticatedRequestContext,
+    request: RawFileCaptureRequest,
+  ): Promise<RawFileCaptureResult>;
+  readRawFile(
+    context: AuthenticatedRequestContext,
+    captureId: string,
+  ): Promise<RawFileCaptureResult | null>;
+  readRawFileByIdempotency(
+    context: AuthenticatedRequestContext,
+    idempotencyKey: string,
+  ): Promise<RawFileCaptureResult | null>;
   systemHealth(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
   systemCapabilities(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
 }

@@ -3,6 +3,7 @@ import type {
   ApplicationLifecycle,
   FederationApi,
   OwnerApi,
+  RawFileCaptureRequest,
   SemanticApi,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
@@ -28,6 +29,7 @@ import { createIngestService } from "./ingest-service.js";
 import { readReadiness } from "./readiness.js";
 import { createSourceAdmissionService } from "./source-admission-service.js";
 import { readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
+import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 
 export interface CompositionRootInput {
   readonly env: Env;
@@ -147,8 +149,12 @@ function ownerApi(env: Env): OwnerApi {
       },
     },
   });
+  const rawCapture = createRawCaptureService(env);
   return {
     ...ingest,
+    captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),
+    readRawFile: (context, captureId) => rawCapture.readRawFile(context, captureId),
+    readRawFileByIdempotency: (context, idempotencyKey) => rawCapture.readRawFileByIdempotency(context, idempotencyKey),
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     async systemHealth(): Promise<Record<string, unknown>> {
       return {
