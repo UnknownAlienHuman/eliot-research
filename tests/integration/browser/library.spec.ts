@@ -43,6 +43,7 @@ type E2EHarness = {
   verifyServiceWorkerSettlementRegression: () => Promise<{ state: string }>;
   verifyReadbackRetryClassification: () => Promise<{ state: string }>;
   verifyEarlyFailureCleanup: () => Promise<{ state: string }>;
+  verifyWorkerFetchDiagnosticRegression: () => Promise<{ state: string }>;
 };
 
 async function loadHarness(): Promise<E2EHarness> {
@@ -77,6 +78,11 @@ test("L6 readback retry: deterministic authority failures stop before any retry"
 test("L6 cleanup: marker creation failure removes its known-created directory", async () => {
   const harness = await loadHarness();
   assert.equal((await harness.verifyEarlyFailureCleanup()).state, "PASS");
+});
+
+test("L6 diagnostics: bounded Worker fetch errors preserve phase and redacted route context", async () => {
+  const harness = await loadHarness();
+  assert.equal((await harness.verifyWorkerFetchDiagnosticRegression()).state, "PASS");
 });
 
 test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Library, persistence, logout, teardown, errors, storage, bounds", async () => {

@@ -482,18 +482,95 @@ export async function verifyReadbackRetryClassification() {
   return { protocol: "eliotr.owner-e2e.readback-retry.v1", state: "PASS" };
 }
 
-async function workerJson(origin, path, { token, method = "GET", body, contentType } = {}) {
-  const headers = { Accept: "application/json" };
+function diagnosticRoutePath(path) {
+  try { return new URL(path, "http://127.0.0.1").pathname.slice(0, 256); }
+  catch { return "/<invalid-route>"; }
+}
+
+function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
+  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+  const exitCode = runtime?.exitCode ?? null;
+  const stderrTail = typeof runtime?.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable";
+  const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
+  const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+  const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
+  const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+  const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
+  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail}`;
+}
+
+export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
+  { token, method = "GET", body, contentType, headers: extraHeaders, phase, worker, timeoutMs = 15000 } = {}) {
+  const headers = { Accept: "application/json", ...(extraHeaders ?? {}) };
   if (token) headers["cf-access-jwt-assertion"] = token;
   if (contentType) headers["content-type"] = contentType;
-  const response = await globalThis.fetch(`${origin}${path}`, {
-    method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(15000),
-  });
-  const text = await response.text();
+  try {
+    return await fetchImpl(`${origin}${path}`, {
+      method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker }), { cause: error });
+  }
+}
+
+export async function fetchWorkerJsonWithDiagnostics(fetchImpl, origin, path, options = {}) {
+  const { method = "GET", phase, worker } = options;
+  const response = await fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path, options);
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" }), { cause: error });
+  }
   const data = (() => {
     try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
   })();
   return { status: response.status, data, headers: response.headers };
+}
+
+async function workerJson(origin, path, options = {}) {
+  return fetchWorkerJsonWithDiagnostics(globalThis.fetch, origin, path, options);
+}
+
+export async function verifyWorkerFetchDiagnosticRegression() {
+  const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  await assert.rejects(
+    fetchWorkerJsonWithDiagnostics(
+      async () => { throw transportError; },
+      "http://127.0.0.1:43123",
+      "/api/v1/research/query/jobs?cursor=private-query&token=private-token",
+      { method: "GET", phase: "rotation-read", token: "private-token",
+        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset" }) } },
+    ),
+    (error) => {
+      const text = String(error?.message ?? error);
+      assert.match(text, /phase=rotation-read method=GET path=\/api\/v1\/research\/query\/jobs/u);
+      assert.match(text, /stage=fetch/u);
+      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /worker_exit_code=null/u);
+      assert.match(text, /worker_stderr_tail=wrangler: listener reset/u);
+      assert.ok(!text.includes("private-query") && !text.includes("private-token"),
+        "fetch diagnostics must omit query, token and body values");
+      return true;
+    },
+  );
+  await assert.rejects(
+    fetchWorkerJsonWithDiagnostics(
+      async () => ({ text: async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); } }),
+      "http://127.0.0.1:43123",
+      "/healthz?token=private-token",
+      { phase: "restart-health", worker: { diagnostics: () => ({ exitCode: 17, stderrTail: "body reset" }) } },
+    ),
+    (error) => {
+      const text = String(error?.message ?? error);
+      assert.match(text, /stage=body phase=restart-health method=GET path=\/healthz/u);
+      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /worker_exit_code=17/u);
+      assert.ok(!text.includes("private-token"), "body diagnostics must omit query values");
+      return true;
+    },
+  );
+  return { protocol: "eliotr.owner-e2e.worker-fetch-diagnostic.v1", state: "PASS" };
 }
 
 // Single authoritative cross-client ledger sink. Every lifecycle HTTP call the
@@ -4096,7 +4173,7 @@ export async function runOwnerE2E() {
         await writeFile(stagingPaths.config, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
         stagingWorker = await startLocalWorker(stagingPaths);
         const stagingToken = await sign();
-        const denied = await workerJson(stagingWorker.origin, "/api/v1/system/session", { token: stagingToken });
+        const denied = await workerJson(stagingWorker.origin, "/api/v1/system/session", { token: stagingToken, phase: "staging-denial", worker: stagingWorker });
         assert.equal(denied.status, 503, "staging with identical test vars must fail config, never seam");
         assert.equal(denied.data?.code ?? denied.data?.data?.code, "ACCESS_CONFIG_INVALID",
           "staging seam must fail with ACCESS_CONFIG_INVALID");
@@ -4134,11 +4211,11 @@ export async function runOwnerE2E() {
         await applyOwnerE2EProfile(dupPaths, dupJwks.url);
         dupWorker = await startLocalWorker(dupPaths);
         const dupToken = await sign();
-        const dupDenied = await workerJson(dupWorker.origin, "/api/v1/system/session", { token: dupToken });
+        const dupDenied = await workerJson(dupWorker.origin, "/api/v1/system/session", { token: dupToken, phase: "duplicate-jwks-session", worker: dupWorker });
         assert.equal(dupDenied.status, 503, "duplicate JWKS kids must fail closed with 503");
         assert.equal(dupDenied.data?.code ?? dupDenied.data?.data?.code, "ACCESS_JWKS_INVALID",
           "duplicate JWKS kids must carry ACCESS_JWKS_INVALID");
-        const dupCatalog = await workerJson(dupWorker.origin, "/api/v1/research/catalog?limit=20", { token: dupToken });
+        const dupCatalog = await workerJson(dupWorker.origin, "/api/v1/research/catalog?limit=20", { token: dupToken, phase: "duplicate-jwks-catalog", worker: dupWorker });
         assert.equal(dupCatalog.status, 503, "duplicate JWKS must also deny the Library view");
         assert.ok(!JSON.stringify(dupDenied.data).includes("e2e-owner"), "duplicate-JWKS denial must not leak identity");
         dupJwksEvidence = "dup-jwks-503/ACCESS_JWKS_INVALID";
@@ -4174,10 +4251,10 @@ export async function runOwnerE2E() {
     for (const headers of [{}, { "cf-access-jwt-assertion": "forged.token.signature" },
       { "cf-access-client-id": "forged", "cf-access-client-secret": "forged" }]) {
       for (const path of ["/api/v1/research/catalog", "/api/v1/system/session"]) {
-        const response = await globalThis.fetch(`${worker.origin}${path}`,
-          { headers, redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+        const response = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, path,
+          { headers, phase: "initial-unauthenticated", worker, timeoutMs: 5000 });
         assert.equal(response.status, 401, `real Worker must deny ${path} without a signed assertion`);
-        const problem = await response.json();
+        const problem = response.data;
         assert.equal(problem.status, 401);
         assert.ok(String(problem.code).startsWith("ACCESS_"), "denial must carry an ACCESS_ code");
         assert.equal(response.headers.get("cache-control"), "no-store");
@@ -4186,7 +4263,7 @@ export async function runOwnerE2E() {
     }
     receipt.unauth_denied = "PASS";
     const token = await sign();
-    const session = await workerJson(worker.origin, "/api/v1/system/session", { token });
+    const session = await workerJson(worker.origin, "/api/v1/system/session", { token, phase: "initial-owner-session", worker });
     assert.equal(session.status, 200, "controlled signed token must reach the real Worker verifier");
     const identity = session.data.data;
     assert.equal(identity.protocol, "eliotr.owner-session.v1");
@@ -4249,14 +4326,14 @@ export async function runOwnerE2E() {
     for (const item of negatives) {
       let response;
       if (item.name === "missing") {
-        response = await workerJson(worker.origin, "/api/v1/system/session", {});
+        response = await workerJson(worker.origin, "/api/v1/system/session", { phase: `jwt-negative-${item.name}`, worker });
       } else if (item.name === "wrong-alg") {
         const good = await sign();
         const segs = good.split(".");
         const badHeader = encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID });
-        response = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}` });
+        response = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}`, phase: "jwt-negative-wrong-alg", worker });
       } else {
-        response = await workerJson(worker.origin, "/api/v1/system/session", { token: item.token });
+        response = await workerJson(worker.origin, "/api/v1/system/session", { token: item.token, phase: `jwt-negative-${item.name}`, worker });
       }
       assert.ok(item.expect.includes(response.status), `${item.name} must deny, got ${response.status}`);
       const bodyCode = response.data?.code ?? response.data?.data?.code;
@@ -4264,8 +4341,8 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(response.data).includes("e2e-owner") || response.status !== 200, `${item.name} must not leak identity on denial`);
       // Same negative token against the authorized Library view: exact denial, no rows.
       const catalogDenied = item.name === "missing"
-        ? await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", {})
-        : await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token: item.token });
+        ? await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { phase: `jwt-negative-${item.name}-catalog`, worker })
+        : await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token: item.token, phase: `jwt-negative-${item.name}-catalog`, worker });
       assert.equal(catalogDenied.status, item.catalog ?? 401, `${item.name} must deny the Library view`);
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
@@ -4275,17 +4352,17 @@ export async function runOwnerE2E() {
       const good = await sign();
       const segs = good.split(".");
       const badHeader = encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID });
-      const algDenied = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}` });
+      const algDenied = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}`, phase: "jwt-negative-wrong-alg", worker });
       assert.equal(algDenied.status, 401, "wrong-alg must deny with 401");
       assert.equal(algDenied.data?.code, "ACCESS_JWT_ALGORITHM_DENIED", "wrong-alg must carry exact code");
       negativeEvidence.push(`wrong-alg=401/${algDenied.data?.code}`);
       // Skew window honesty: exp==now is still inside the acceptance skew (200),
       // while iat beyond any reasonable skew is rejected (401). Both on the real path.
       const skewValid = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ iat: nowSeconds() - 10, exp: nowSeconds() }) });
+        { token: await sign({ iat: nowSeconds() - 10, exp: nowSeconds() }), phase: "jwt-clock-skew-valid", worker });
       assert.equal(skewValid.status, 200, "exp==now must still verify inside the skew window");
       const skewFuture = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ iat: nowSeconds() + 120, exp: nowSeconds() + 720 }) });
+        { token: await sign({ iat: nowSeconds() + 120, exp: nowSeconds() + 720 }), phase: "jwt-clock-skew-future", worker });
       assert.equal(skewFuture.status, 401, "iat beyond the skew window must deny");
       assert.equal(skewFuture.data?.code, "ACCESS_JWT_ISSUED_IN_FUTURE");
       negativeEvidence.push("skew-window=200-then-401/ACCESS_JWT_ISSUED_IN_FUTURE");
@@ -4295,7 +4372,7 @@ export async function runOwnerE2E() {
       // attacker email still identifies the signed subject only; the identity
       // carries no email and the denial path above already rejects bad signatures.
       const emailed = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ email: "attacker@example.invalid", email_verified: false }) });
+        { token: await sign({ email: "attacker@example.invalid", email_verified: false }), phase: "jwt-email-claim", worker });
       assert.equal(emailed.status, 200, "extra email claims must not disturb a valid signature");
       assert.equal(emailed.data?.data?.principal_ref, "e2e-owner", "identity must remain the signed subject");
       assert.ok(!JSON.stringify(emailed.data).includes("attacker@example.invalid"), "identity must not adopt email claims");
@@ -4477,11 +4554,11 @@ export async function runOwnerE2E() {
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
     const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
-    const catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token });
+    const catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
     assert.equal(catalog.status, 200, "authorized catalog must succeed through the real Worker");
     const catalogSources = catalog.data.data.sources ?? [];
     assert.ok(catalogSources.some((entry) => entry.id === sourceId), "authorized Library catalog must list the admitted source");
-    const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
+    const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token, phase: "authorized-library-revisions", worker });
     assert.equal(revisions.status, 200, "authorized revision history must succeed");
     assert.ok(JSON.stringify(revisions.data).includes(revisionRef), "revision history must include the admitted revision");
     const canonicalKey = imported.receipt.normalized_artifact_ref;
@@ -4656,7 +4733,8 @@ export async function runOwnerE2E() {
     const stoppedGeneration = paths.generation;
     await worker.stop();
     worker = undefined;
-    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+    await assert.rejects(fetchWorkerResponseWithDiagnostics(globalThis.fetch, stoppedOrigin, "/healthz",
+      { phase: "post-restart-stopped-probe", timeoutMs: 5000 }),
       /fetch failed|ECONNREFUSED|aborted/, "stopped Worker port must be closed (owned process removed)");
     await prepareLocal({ stateDirectory: directory, log: () => {} });
     await applyOwnerE2EProfile(paths, jwks.url);
@@ -4680,16 +4758,17 @@ export async function runOwnerE2E() {
     assert.ok(isChromiumSafePort(worker.port),
       `restart Worker port must be Chromium-safe, got ${worker.port}`);
     workerPortEvidence.push(`restart=${worker.port}/startAttempts=${worker.startAttempts}`);
-    const rebound = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
+    const rebound = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, "/healthz",
+      { phase: "post-restart-health", worker, timeoutMs: 5000 });
     assert.equal(rebound.status, 200);
-    const reboundBody = await rebound.json();
+    const reboundBody = rebound.data;
     assert.equal(reboundBody.ready, true, "restart must report ready");
     assert.equal(reboundBody.deployment_generation, paths.generation, "restart must serve the same generation");
-    const catalogAfter = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token });
+    const catalogAfter = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "post-restart-catalog", worker });
     assert.equal(catalogAfter.status, 200, `restart must still serve the authorized catalog: ${JSON.stringify(catalogAfter.data)?.slice(0, 400)}`);
     assert.ok((catalogAfter.data.data.sources ?? []).some((entry) => entry.id === sourceId),
       "restart must preserve the same Library source identity");
-    const revisionsAfter = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
+    const revisionsAfter = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token, phase: "post-restart-revisions", worker });
     assert.equal(revisionsAfter.status, 200);
     assert.ok(JSON.stringify(revisionsAfter.data).includes(revisionRef), "restart must preserve the same revision");
     const preRestartNames = new Set((await playwright.context.cookies())
@@ -4872,14 +4951,14 @@ export async function runOwnerE2E() {
         `rotation Worker port must be Chromium-safe, got ${worker.port}`);
       workerPortEvidence.push(`rotation=${worker.port}`);
       // Old v1 token: denied on the real path (Node) and through Chromium.
-      const oldDenied = await workerJson(worker.origin, "/api/v1/system/session", { token });
+      const oldDenied = await workerJson(worker.origin, "/api/v1/system/session", { token, phase: "rotation-old-token", worker });
       assert.equal(oldDenied.status, 401, "rotated-out v1 token must deny with 401");
       assert.equal(oldDenied.data?.code ?? oldDenied.data?.data?.code, "ACCESS_JWT_KEY_UNKNOWN",
         "rotated-out v1 token must carry ACCESS_JWT_KEY_UNKNOWN");
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: oldDenied.status, correlation: "e2e-rotation/v1-denied-node", token_present: true });
       const newToken = await signV2();
-      const newAllowed = await workerJson(worker.origin, "/api/v1/system/session", { token: newToken });
+      const newAllowed = await workerJson(worker.origin, "/api/v1/system/session", { token: newToken, phase: "rotation-new-token", worker });
       assert.equal(newAllowed.status, 200, "v2 token must verify after rotation + cache refresh");
       assert.equal(newAllowed.data?.data?.principal_ref, "e2e-owner", "v2 identity must remain the owner subject");
       assert.ok(String(newAllowed.data?.data?.credential_generation).includes(ROTATION_KID),
@@ -5089,9 +5168,11 @@ export async function runOwnerE2E() {
       assert.ok(String(error?.message ?? "").length > 0, "failed start must report without leaking state");
     }
     assert.equal(worker.origin, ownedBefore, "failed startup must not replace the owned running Worker");
-    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+    await assert.rejects(fetchWorkerResponseWithDiagnostics(globalThis.fetch, stoppedOrigin, "/healthz",
+      { phase: "failed-start-stopped-probe", timeoutMs: 5000 }),
       /fetch failed|ECONNREFUSED|aborted/, "failed startup must not resurrect the old Worker port");
-    const probe = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
+    const probe = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, "/healthz",
+      { phase: "failed-start-health", worker, timeoutMs: 5000 });
     assert.equal(probe.status, 200, "owned Worker must still serve after the failed start");
     const profilesBefore = new Set((await readdir(tmpdir()).catch(() => []))
       .filter((name) => name.startsWith("eliotr-owner-e2e-profile-")));

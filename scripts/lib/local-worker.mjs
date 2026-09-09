@@ -72,7 +72,8 @@ async function spawnOnce(paths, port) {
       })]);
     } finally { clearTimeout(timer); }
   };
-  return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail) };
+  return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail),
+    diagnostics: () => Object.freeze({ exitCode: child.exitCode, stderrTail: redactSpawnDiagnostic(stderrTail) }) };
 }
 
 export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
@@ -103,7 +104,7 @@ export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RE
       // Success: the child stays running under the returned stop() handle.
       // Evidence records which start attempt won and how many port
       // reservations it took; no listener leaks (holder closed per reserve).
-      return { origin, port, stop: handle.stop, startAttempts: attempt, reserveAttempts };
+      return { origin, port, stop: handle.stop, startAttempts: attempt, reserveAttempts, diagnostics: handle.diagnostics };
     }
     // Classify the failure: a port collision or bad-port refusal stops this
     // child and reselects a fresh Chromium-safe port with a bounded retry. Any
