@@ -59,6 +59,7 @@ const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.s
       observed_at: "2026-09-02T12:00:00.000Z" }] }], ...(older ? {} : { next_cursor: "olderFixture" }) });
 let revisionMode = "normal"; let pendingRevision;
 let mode = "normal"; let pending; let browser; let socket; let closing;
+const HEALTH_DELAY_MS = 250;
 const requests = []; const posted = []; const errors = [];
 const importing = browserImportFixture();
 const server = createServer((request, response) => {
@@ -67,8 +68,8 @@ const server = createServer((request, response) => {
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
-    if (url.pathname === "/api/v1/system/health") return json(envelope({ ready: true, deployment_generation: "browser-fixture",
-      core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() }));
+    if (url.pathname === "/api/v1/system/health") { await delay(HEALTH_DELAY_MS); return json(envelope({ ready: true, deployment_generation: "browser-fixture",
+      core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() })); }
     if (url.pathname === "/api/v1/library/revisions") {
       assert.equal(request.method, "GET"); assert.equal(url.searchParams.get("limit"), "10");
       const value = revisionPage(url.searchParams.get("source_id"), url.searchParams.has("cursor"));
@@ -232,6 +233,8 @@ try {
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
+  await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
+  assert.equal(await evaluate('document.querySelector("#exhaustive-workflow button[type=submit]").disabled'), false);
   assert.equal(await evaluate('document.querySelectorAll("#library img").length'), 0);
   assert.equal(await evaluate('Boolean(window.attacked)'), false);
   await click("#library [data-versions]");

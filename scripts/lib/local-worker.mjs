@@ -38,7 +38,27 @@ function redactSpawnDiagnostic(text) {
   return String(text ?? "")
     .replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
     .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]")
+    .replaceAll(/((?:MF-Proxy-Shared-Secret|authorization|cookie|set-cookie|cf-access-jwt-assertion|access[_-]?token|client[_-]?secret|password|secret)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|\S+)/giu, "$1[REDACTED]")
+    .replaceAll(/(https?:\/\/[^\s/?#]+(?:\/[^\s?#]*)?)\?[^\s#]*/gu, "$1?[REDACTED_QUERY]")
     .slice(0, 2000);
+}
+
+function summarizeRuntimeOutput(text) {
+  const events = [];
+  for (const line of String(text ?? "").split(/\r?\n/u)) {
+    const value = line.trim();
+    if (!value) continue;
+    const lower = value.toLowerCase();
+    const kind = /error|exception|fatal|uncaught|crash|reset/u.test(lower) ? "error"
+      : /reload|restart|restarting|reloading/u.test(lower) ? "reload"
+        : /exit|closed|terminated|shutdown/u.test(lower) ? "exit"
+          : /ready|listen(?:ing)?|started/u.test(lower) ? "ready" : null;
+    if (kind === null) continue;
+    const code = value.match(/\b(?:ECONNRESET|EADDRINUSE|ERR_UNSAFE_PORT|EADDRNOTAVAIL|ETIMEDOUT|SIGTERM|SIGKILL)\b/iu)?.[0]?.toUpperCase();
+    const status = value.match(/\bstatus[=: ]+(\d{3})\b/iu)?.[1];
+    events.push(`${kind}${code ? `:${code}` : ""}${status ? `:status-${status}` : ""}`);
+  }
+  return [...new Set(events)].slice(-24).join(",").slice(0, 2000);
 }
 
 async function spawnOnce(paths, port) {
@@ -48,8 +68,11 @@ async function spawnOnce(paths, port) {
   });
   // Drain, but retain only a bounded redacted tail for collision classification.
   // Never retain or reflect possible credentials from Wrangler diagnostics.
+  let stdoutTail = "";
   let stderrTail = "";
-  child.stdout.resume();
+  child.stdout.on("data", (chunk) => {
+    stdoutTail = `${stdoutTail}${chunk.toString("utf8")}`.slice(-8192);
+  });
   child.stderr.on("data", (chunk) => {
     stderrTail = `${stderrTail}${chunk.toString("utf8")}`.slice(-8192);
   });
@@ -72,7 +95,9 @@ async function spawnOnce(paths, port) {
       })]);
     } finally { clearTimeout(timer); }
   };
-  return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail) };
+  return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail),
+    diagnostics: () => Object.freeze({ pid: child.pid ?? null, port, exitCode: child.exitCode,
+      stderrTail: redactSpawnDiagnostic(stderrTail), stdoutEvents: summarizeRuntimeOutput(stdoutTail) }) };
 }
 
 export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
@@ -103,7 +128,7 @@ export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RE
       // Success: the child stays running under the returned stop() handle.
       // Evidence records which start attempt won and how many port
       // reservations it took; no listener leaks (holder closed per reserve).
-      return { origin, port, stop: handle.stop, startAttempts: attempt, reserveAttempts };
+      return { origin, port, stop: handle.stop, startAttempts: attempt, reserveAttempts, diagnostics: handle.diagnostics };
     }
     // Classify the failure: a port collision or bad-port refusal stops this
     // child and reselects a fresh Chromium-safe port with a bounded retry. Any
