@@ -29,6 +29,7 @@ type E2EReceipt = {
   readonly cross_client_ledger: string;
   readonly exhaustive_workflow: string;
   readonly exhaustive_workflow_d1: string;
+  readonly raw_file_capture: string;
   readonly early_cleanup: string;
   readonly teardown_inventory: unknown;
   readonly live: string;
@@ -147,6 +148,8 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "real PWA exhaustive launch/status/cancel/reload/discovery/recovery must pass");
   assert.ok(typeof receipt.exhaustive_workflow_d1 === "string" && receipt.exhaustive_workflow_d1.startsWith("PASS"),
     "stopped Worker D1 readback must retain workflow/job binding and cancellation intent");
+  assert.ok(typeof receipt.raw_file_capture === "string" && receipt.raw_file_capture.startsWith("PASS"),
+    "real browser raw upload must settle one capture, recover by idempotency and read back original R2 bytes");
   assert.equal(receipt.early_cleanup, "PASS", "forced early-migration failure must leave zero run-owned residue");
   assert.ok(receipt.teardown_inventory !== null && typeof receipt.teardown_inventory === "object",
     "immutable before/after teardown inventories must be recorded");

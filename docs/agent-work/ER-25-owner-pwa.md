@@ -173,3 +173,16 @@ requires the server-issued workflow identity, reads a non-terminal status, sends
 real cancel action, and verifies terminal readback through the same Worker origin.
 The scenario is accepted only when `test:owner-e2e` passes on both Ubuntu and Windows;
 live qualification and complete-result acceptance remain separate.
+
+## Raw-file capture browser checkpoint
+
+The owner harness also includes a real-browser raw-file leg in
+`tests/integration/browser/raw-file-browser.mjs`. It selects the UTF-8 filename
+`исследование.txt`, sends the actual File body through the paired owner session,
+reuses the existing authenticated reload for re-selection and reads the same
+capture by idempotency key. The harness then stops its Worker before checking the
+single `raw_file_capture` row and original EVIDENCE_BUCKET bytes; this transport
+receipt does not claim Library admission, normalization or search readiness.
+The connected checkpoint remains `NOT_EXECUTED` until the updated owner-e2e
+passes in both Ubuntu and Windows; the existing controlled raw-file fixture is
+separate evidence.

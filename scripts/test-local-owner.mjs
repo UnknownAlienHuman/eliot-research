@@ -106,6 +106,29 @@ test("one-time pairing sets a private cookie; proxy sends only the server-held t
     assert.equal(replay.status, 403);
   } finally { await value.close(); }
 });
+test("raw capture metadata stays route-scoped while forwarding the browser file headers", async () => {
+  const value = await bridge();
+  try {
+    const cookie = await pair(value);
+    const fileHeaders = {
+      cookie,
+      origin: value.origin,
+      "content-type": "text/plain",
+      "content-length": "4",
+      "x-eliotr-content-sha256": "a".repeat(64),
+      "x-eliotr-original-file-name": encodeURIComponent("исследование.txt"),
+    };
+    const uploaded = await fetch(`${value.origin}/api/v1/ingest/raw`, { method: "POST", headers: fileHeaders, body: "data" });
+    assert.equal(uploaded.status, 200);
+    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], fileHeaders["x-eliotr-content-sha256"]);
+    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], fileHeaders["x-eliotr-original-file-name"]);
+    assert.equal(requests.at(-1).headers["content-length"], "4");
+    const ordinary = await fetch(`${value.origin}/api/private`, { method: "POST", headers: { ...fileHeaders, "content-length": "4" }, body: "data" });
+    assert.equal(ordinary.status, 200);
+    assert.equal(requests.at(-1).headers["x-eliotr-content-sha256"], undefined);
+    assert.equal(requests.at(-1).headers["x-eliotr-original-file-name"], undefined);
+  } finally { await value.close(); }
+});
 test("cross-origin, DNS rebinding, cookie duplication and credential substitution never reach Worker", async () => {
   const value = await bridge();
   try {
