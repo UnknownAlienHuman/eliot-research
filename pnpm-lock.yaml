@@ -169,6 +169,9 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-projection':
+        specifier: workspace:*
+        version: link:../cloudflare-projection
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
