@@ -7,6 +7,7 @@ import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
 import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
+import { mountRawFilePanel } from "./raw-file-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence } from "@eliotr/contracts";
 
@@ -105,7 +106,7 @@ function render(health: SystemHealth | null): void {
           <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run Research to measure sampled resolution.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
         </div>
         <div class="tool-stack">
-          <section class="tool-card tool-card--import"><div id="bundle-import"></div></section>
+          <section class="tool-card tool-card--import"><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
           <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
           <section class="tool-card tool-card--research" id="research-card"><div id="exhaustive-workflow"></div><div class="tool-divider"></div><div id="retrieval"></div></section>
@@ -121,6 +122,7 @@ function render(health: SystemHealth | null): void {
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
+  const rawUploadHost = app.querySelector<HTMLElement>("#raw-upload");
   app.dataset.healthReady = health?.ready === true ? "true" : "false";
   renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
@@ -210,6 +212,7 @@ function render(health: SystemHealth | null): void {
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const cleanups = [orientation, retrieval, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
+    rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
     library ? mountLibraryPanel(library, (id) => {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);

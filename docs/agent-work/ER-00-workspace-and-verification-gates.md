@@ -41,6 +41,8 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `scripts/branch-hygiene-lib.mjs`
 - `scripts/branch-hygiene.mjs`
 - `scripts/test-branch-hygiene.mjs`
+- `scripts/lib/miniflare-port-guard.mjs`
+- `scripts/test-miniflare-port-guard.mjs`
 - `docs/agent-work/manifest.json`
 - `docs/agent-work/ER-00-workspace-and-verification-gates.md`
 - `docs/implementation/toolchain.md`
@@ -74,6 +76,11 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 ## Required implementation
 
 - Preserve the frozen pnpm/TypeScript/Cloudflare workspace and existing deterministic gates.
+- Keep the local Workers test runtime safe on Windows hosts whose customized dynamic TCP range can
+  select WHATWG Fetch-forbidden ports: the bounded port guard reserves only its own `127.0.0.1`/`::1`
+  listeners before Vitest workers start, treats `EADDRINUSE` as an existing owner's socket, and
+  releases only its own listeners at global-setup teardown. It is a test-environment mitigation and
+  makes no claim about system-wide port allocation.
 - Pin Rust, Cargo resolver, Wasm target, nextest, deny, llvm-cov, Miri, fuzz and mutation tools.
 - Introduce only the M1 crates: bounded UTF-8 transport validation, strict shared vectors and a portable
   Rust/Wasm shell.
@@ -93,6 +100,8 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 
 - `pnpm install --frozen-lockfile` and both Cargo lockfiles are reproducible.
 - `pnpm work-packets:check` rejects owned-path overlaps, unknown dependencies, duplicate IDs, and DAG cycles.
+- `node scripts/test-miniflare-port-guard.mjs` proves the Windows-only loopback reservation, bounded
+  `EADDRINUSE` handling and cleanup without affecting an existing listener.
 - Branch hygiene preserves open PRs, deletes closed PR heads immediately, rechecks head identity before
   deletion, and deterministically evicts the oldest recent no-PR branches above the ceiling.
 - `pnpm boundaries:negative` injects a forbidden import and proves the existing boundary gate fails.

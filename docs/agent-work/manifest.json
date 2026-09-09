@@ -47,6 +47,8 @@
         "scripts/branch-hygiene-lib.mjs",
         "scripts/branch-hygiene.mjs",
         "scripts/test-branch-hygiene.mjs",
+        "scripts/lib/miniflare-port-guard.mjs",
+        "scripts/test-miniflare-port-guard.mjs",
         "docs/agent-work/manifest.json",
         "docs/agent-work/ER-00-workspace-and-verification-gates.md",
         "docs/implementation/toolchain.md",
@@ -651,7 +653,8 @@
         "ER-26"
       ],
       "owned_paths": [
-        "tests/integration/**"
+        "tests/integration/**",
+        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts"
       ],
       "mandatory_negative_case": "Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.",
       "document": "ER-27-vertical-integration-and-live-conformance.md",

@@ -141,6 +141,20 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
     captured_at: captured.receipt.captured_at,
   });
   return {
+    /** Server-only bridge for capability composition; the public OwnerApi never exposes storage identity. */
+    async readRawCaptureForServer(context: AuthenticatedRequestContext, captureId: string) {
+      if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
+      const port = createRawCapturePort({
+        database: env.CORE_DB,
+        evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
+        max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
+        assertCurrent: async (input) => {
+          const binding = await currentBinding(env.CORE_DB, context.principal_ref);
+          if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
+        },
+      });
+      return port.read({ principal_ref: context.principal_ref, capture_id: captureId });
+    },
     async captureRawFile(context: AuthenticatedRequestContext, request: RawFileCaptureRequest): Promise<RawFileCaptureResult> {
       if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
       const binding = await currentBinding(env.CORE_DB, context.principal_ref);

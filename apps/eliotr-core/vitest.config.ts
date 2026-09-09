@@ -20,5 +20,9 @@ export default defineConfig(async () => ({
   ],
   test: {
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
+    // Windows may allocate a local Workers runtime on a WHATWG Fetch
+    // forbidden port. Reserve those loopback endpoints before pool workers
+    // start; the global setup owns teardown and never touches other listeners.
+    globalSetup: [fileURLToPath(new URL("../../scripts/lib/miniflare-port-guard.mjs", import.meta.url))],
   },
 }));

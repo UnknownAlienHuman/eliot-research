@@ -1,4 +1,5 @@
 import { AccessVerificationError, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import type { WorkersAiMarkdownBinding } from "@eliotr/cloudflare-markdown";
 
 export interface Env {
   readonly CORE_DB: D1Database;
@@ -9,6 +10,7 @@ export interface Env {
   readonly RESEARCH_SESSION: DurableObjectNamespace;
   readonly RESEARCH_WORKFLOW: Workflow;
   readonly AI_SEARCH: AiSearchNamespaceLike;
+  readonly AI?: WorkersAiMarkdownBinding;
   readonly METRICS: AnalyticsEngineDataset;
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";

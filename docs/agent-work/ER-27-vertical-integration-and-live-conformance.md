@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `tests/integration/**`
+- `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 
 ## Read only
 
@@ -47,6 +48,11 @@ observed non-terminal status, server cancellation, and terminal readback. A
 fast natural completion is rejected as unsuitable for cancellation evidence;
 the scenario remains NOT EXECUTED until the real owner-e2e passes on both CI
 operating systems.
+
+The response-lifecycle regression for the raw-file leg is registered as a native
+Node test in the same `test:owner-e2e` command (`tests/integration/browser/raw-file-browser.test.mjs`).
+It verifies that response body snapshots are captured before a browser action can
+change the document lifecycle; it does not replace the real Worker acceptance.
 
 ## Mandatory negative boundary
 

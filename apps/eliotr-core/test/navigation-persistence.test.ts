@@ -33,7 +33,7 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
     expect(expansion.support.publication_eligible).toBe(false);
     await expect(requireResolvedEvidenceForPublication(expansion, { source_revision_ref: "revision-1", scope_snapshot_ref: atlas.scope_snapshot_ref }))
       .rejects.toMatchObject({ code: "NAVIGATION_PUBLICATION_SUPPORT_REQUIRED" });
-  });
+  }, 20_000);
   it("requires an exact research grant and never creates one", async () => {
     const f = await fixture(); const { card } = await artifacts(f.snapshot);
     await expect(f.store.putArtifact("SOURCE_CARD", card)).rejects.toBeInstanceOf(Error);

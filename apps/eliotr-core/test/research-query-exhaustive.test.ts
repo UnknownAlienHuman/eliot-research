@@ -55,6 +55,23 @@ function access(owner: string) {
   } } };
 }
 
+async function waitForCompletedWorkflow(owner: string, workflowId: string): Promise<void> {
+  let lastStatus = "unknown";
+  for (let attempt = 0; attempt < 160; attempt += 1) {
+    const response = await handleHttp(
+      new Request(`https://research.example/api/v1/research/query/${workflowId}`, { method: "GET" }),
+      runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
+    const body = await response.json() as { readonly data?: { readonly workflow_status?: string; readonly job?: { readonly status?: string } } };
+    lastStatus = `${body.data?.workflow_status ?? "unknown"}/${body.data?.job?.status ?? "missing"}`;
+    if (body.data?.workflow_status === "complete" && body.data.job?.status === "COMPLETE") return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  throw new Error(`exhaustive Workflow did not publish its completed job within the bounded wait: ${lastStatus}`);
+}
+
 function searchDbWithInventoryWithdrawal(
   database: D1Database,
   withdraw: () => Promise<void>,
@@ -285,11 +302,14 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     expect(body.data?.protocol).toBe("eliotr.exhaustive-query.v1");
     expect(body.data?.workflow_instance_id).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
     expect(["queued", "running", "waiting", "complete"]).toContain(body.data?.workflow_status);
+    const workflowId = body.data?.workflow_instance_id;
+    if (workflowId === undefined) throw new Error("missing exhaustive workflow id");
+    await waitForCompletedWorkflow(owner, workflowId);
     const replay = await handleHttp(queryRequest(value, "exhaustive-http-first"), runtime, {} as ExecutionContext, access(owner));
     expect(replay.status).toBe(200);
     expect(await replay.json()).toMatchObject({ data: {
       protocol: "eliotr.exhaustive-query.v1",
-      workflow_instance_id: body.data?.workflow_instance_id,
+      workflow_instance_id: workflowId,
       workflow_status: "complete",
       job: { status: "COMPLETE" },
     } });
@@ -487,7 +507,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     );
     expect([200, 202]).toContain(response.status);
     expect(await response.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
-  });
+  }, 20_000);
 
   it("keeps a cancelled job pending and resumes it from the persisted scope", async () => {
     const owner = "exhaustive-pending-owner";

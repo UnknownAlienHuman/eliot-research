@@ -27,7 +27,8 @@
     "@eliotr/research": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
     "@eliotr/cloudflare-research": "workspace:*",
-    "@eliotr/cloudflare-raw-ingest": "workspace:*"
+    "@eliotr/cloudflare-raw-ingest": "workspace:*",
+    "@eliotr/cloudflare-markdown": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

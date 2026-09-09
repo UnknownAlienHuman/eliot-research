@@ -1,14 +1,16 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
-import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
 import {
   createResearchQueryService,
+  FAST_SEARCH_PROFILE,
   RETRIEVAL_SCOPE_PROFILE_VERSION,
 } from "../src/research-session.js";
 import {
   importAndProject,
   prepareQ1Namespace,
+  q1Transport,
   type Q1Namespace,
   type Q1Runtime,
 } from "./retrieval-q1-fixture.js";
@@ -86,11 +88,98 @@ function queryFor(world: Q1Namespace, query: string): QueryRequest {
   };
 }
 
+function fastSearchQueryFor(world: Q1Namespace, query: string): QueryRequest {
+  return {
+    ...queryFor(world, query),
+    product: "FAST_SEARCH",
+    budget_ref: FAST_SEARCH_PROFILE,
+  };
+}
+
 async function tableCount(table: string): Promise<number> {
   return (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ readonly n: number }>())?.n ?? -1;
 }
 
 describe("research.query retrieval over real D1/R2", () => {
+  it("serves FAST_SEARCH through the owner HTTP route over the imported/projected Q1 source", async () => {
+    const owner = "rq-fast-search-owner";
+    const world = await worldWithPolicy(owner);
+    const request = fastSearchQueryFor(world, "Pinned");
+    const result = await q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(request),
+    }) as { readonly data: QueryResult };
+    expect(result.data.evidence_pack.resolved_evidence).toHaveLength(1);
+    expect(result.data.evidence_pack.resolved_evidence[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    const traceRow = await db
+      .prepare("SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2")
+      .bind(result.data.trace_ref.id, result.data.trace_ref.revision)
+      .first<{ readonly trace_json: string }>();
+    expect(traceRow).not.toBeNull();
+    const trace = JSON.parse(traceRow?.trace_json ?? "{}") as {
+      readonly query_product: string;
+      readonly lanes_used: readonly string[];
+      readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
+    };
+    expect(trace.query_product).toBe("FAST_SEARCH");
+    expect(trace.lanes_used).toContain("LEX");
+    expect(trace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "LANE_UNAVAILABLE" });
+    const resultRow = await db
+      .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
+      .bind(owner, "rq-fast-search")
+      .first<{ readonly state: string; readonly coverage_claim: string }>();
+    expect(resultRow).toMatchObject({ state: "COMPLETE", coverage_claim: "SAMPLED" });
+    const persistedBeforeReplay = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    const replayed = await q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(request),
+    }) as { readonly data: QueryResult };
+    expect(replayed.data).toEqual(result.data);
+    expect({
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    }).toEqual(persistedBeforeReplay);
+    const noHit = await q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-none" },
+      body: JSON.stringify(fastSearchQueryFor(world, "absent")),
+    }) as { readonly data: QueryResult };
+    expect(noHit.data.evidence_pack.resolved_evidence).toEqual([]);
+    const noHitRow = await db
+      .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
+      .bind(owner, "rq-fast-search-none")
+      .first<{ readonly state: string; readonly coverage_claim: string }>();
+    expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "NONE" });
+    await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(fastSearchQueryFor(world, "different")),
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE principal_ref=?1 AND client_class='owner_pwa' AND credential_generation=?2")
+      .bind(owner, CREDENTIAL).run();
+    await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(request),
+    })).rejects.toMatchObject({ status: 409, code: "RESEARCH_AUTHORITY_STALE" });
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
+    await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-invalid-profile" },
+      body: JSON.stringify({ ...request, budget_ref: ORIENTATION_PROFILE }),
+    })).rejects.toMatchObject({ status: 422 });
+  });
+
   it("persists a no-hit NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
     const owner = "rq-retrieval-owner";
     const world = await worldWithPolicy(owner);

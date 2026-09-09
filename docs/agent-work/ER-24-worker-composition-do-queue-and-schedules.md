@@ -202,9 +202,9 @@ WebSocket receipts remain `NOT_EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
 
 ## Active local-first integration
 
-See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
-routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
-and live qualification remain separate gates. The integration library replaces moved core service
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation, bounded
+FAST_SEARCH retrieval and trace routes are active and tested through actual Worker/D1 dispatch;
+full research products and live qualification remain separate gates. The integration library replaces moved core service
 implementations, rather than duplicating them. No new service or production language is introduced.
 
 
@@ -258,3 +258,10 @@ primitive rewrite. Owner/session/currentness come only from verified
 Cloudflare Access with same-origin + CSRF enforcement; configuration is
 server-owned. Begin makes no provider/token call and creates no
 credential/exchange/folder/sheet/cursor/grant/source/result.
+
+The connected raw conversion route is an owner-only server operation composed from the existing
+raw-capture currentness bridge and immutable R2 store. Its `eliotr.raw-markdown-conversion.v1`
+ledger records one Workers AI attempt and reconciles lost acknowledgements without retrying an
+uncertain provider effect. It produces candidate conversion metadata only; it does not create a
+normalized manifest, evidence handle, source map, or research admission. Controlled tests inject
+the AI binding, and production binding/live qualification remain separate gates.
