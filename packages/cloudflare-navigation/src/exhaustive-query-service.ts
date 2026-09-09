@@ -25,7 +25,6 @@ import {
   createR2EvidenceContentPort,
   readAdmittedNormalizedManifest,
   EvidenceRuntimeError,
-  type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService } from "./scope-service.js";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
@@ -233,7 +232,10 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
 }, context: AuthenticatedRequestContext): ExhaustiveQueryRuntime {
   const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation } as const;
   const owner = createOwnerScopeAuthority(env.CORE_DB, access);
-  const freezer = createD1ScopeService(env.CORE_DB, owner, { max_snapshot_members: EXHAUSTIVE_QUERY_MAX_SOURCES });
+  const freezer = createD1ScopeService(env.CORE_DB, owner, {
+    max_snapshot_members: EXHAUSTIVE_QUERY_MAX_SOURCES,
+    resolveAtom: owner.exhaustiveResolveAtom,
+  });
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
   const evidence = createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB });
   const content = createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET });
@@ -242,7 +244,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly item_key: string; readonly projection_generation: string; readonly start: number; readonly end: number }>();
   async function authorize(scope: ScopeSnapshot): Promise<void> {
     await freezer.requireCurrent(scope);
-    await owner.grant(scope);
+    await owner.exhaustiveGrant(scope);
     await scopePorts.requireCurrentScope(scope);
   }
   return {
@@ -284,7 +286,9 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
         ).bind(sourceRef).all<ExhaustiveProjectionRow>();
         if (!result.success || !Array.isArray(result.results)) throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "admitted projection inventory is unavailable", 503, true);
         if (result.results.length === 0) fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest has no projected section ranges", 503, true);
-        if (result.results.length > 4096) fail("RESEARCH_INPUT_LIMIT", "exhaustive section inventory exceeds its bound", 413);
+        if (result.results.length > 4096 || descriptors.length + result.results.length > EXHAUSTIVE_QUERY_MAX_SOURCES) {
+          fail("RESEARCH_INPUT_LIMIT", "exhaustive section inventory exceeds its bound", 413);
+        }
         for (const row of result.results) {
           if (typeof row.item_key !== "string" || typeof row.canonical_section_id !== "string" ||
               typeof row.content_sha256 !== "string" || row.content_sha256 !== source.authority.content_sha256 ||
@@ -382,6 +386,7 @@ export function createExhaustiveQueryService(
         scope_digest: scope.digest,
         probes: plan.probes,
         scope_expression: request.scope_expression,
+        inventory: sections,
       });
       if (prior !== null && prior.request_digest !== requestDigest) {
         fail("RESEARCH_CONFLICT", "idempotency identity is bound to different inputs", 409);
@@ -413,4 +418,33 @@ export function createExhaustiveQueryService(
       return result(status);
     },
   };
+}
+
+/** Reuse the Q8 production authority stack before disclosing a cached receipt. */
+export async function validateExhaustiveJobCurrent(
+  env: ExhaustiveQueryEnvironment & { readonly SEARCH_DB: D1Database; readonly EVIDENCE_BUCKET: R2Bucket },
+  context: AuthenticatedRequestContext,
+  jobId: string,
+): Promise<void> {
+  const row = await env.CORE_DB.prepare(
+    "SELECT scope_snapshot_id,scope_snapshot_revision,state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+  ).bind(jobId).first<{
+    readonly scope_snapshot_id: string;
+    readonly scope_snapshot_revision: number;
+    readonly state: string;
+  }>().catch(() => { throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive job authority read is unavailable", 503, true); });
+  if (row === null || row.state !== "COMPLETE" || typeof row.scope_snapshot_id !== "string" ||
+      !Number.isSafeInteger(row.scope_snapshot_revision)) {
+    throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
+  }
+  const runtime = productionRuntime(env, context);
+  try {
+    if (runtime.loadScope === undefined) throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope loader is unavailable", 409, false);
+    const scope = await runtime.loadScope(row.scope_snapshot_id, row.scope_snapshot_revision);
+    await runtime.requireCurrentScope(scope);
+    await runtime.inventorySections(scope);
+  } catch (error) {
+    if (error instanceof ExhaustiveQueryError) throw error;
+    throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
+  }
 }

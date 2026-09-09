@@ -20,6 +20,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
+- `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
@@ -55,6 +56,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-q1-fixture.ts`
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.test.ts`
+- `apps/eliotr-core/test/research-query-exhaustive.test.ts`
+- `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
+- `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -132,11 +136,15 @@ ports, then delegates planning, exact verification, shard reconciliation and
 coverage to ER-07 Q7. The default Worker wiring binds those authorities to the
 owner ScopeSnapshot, admitted normalized manifest, persisted structural
 projection ranges and pinned R2 evidence ports. Missing LIVE user-loop handles remain unsettled and
-cannot earn COMPLETE. The existing ER09 `ResearchWorkflow` host now accepts a
-bounded Q8 job through one `step.do` owner boundary; HTTP currently uses the
-bounded D1 loop directly and Workflow launch/readback remains a deployment
-qualification item. A Q7 `result_artifact_ref` is a receipt reference; it is
-not a published research artifact.
+cannot earn COMPLETE. The existing ER09 `ResearchWorkflow` host accepts a
+bounded Q8 job through one `step.do` owner boundary. `research.query` launches,
+reads and cancels that durable Workflow through the existing operation, with
+the D1 binding rechecking principal, credential, deployment, request identity,
+active policy and cancellation state. Local Q1 import-to-projection HTTP tests
+cover launch, readback, cancellation and no-resume behavior; deployed Workflow
+and live user-loop qualification remain `NOT EXECUTED`. A Q7
+`result_artifact_ref` is a receipt reference; it is not a published research
+artifact.
 
 ## Acceptance
 

@@ -1,3 +1,4 @@
+// IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.
 import type { ExhaustiveQueryResult, ExhaustiveWorkflowResult, AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalRetrievalJson, exhaustiveJobId } from "@eliotr/retrieval";
 
@@ -10,6 +11,7 @@ export interface ExhaustiveWorkflowBindingInput<T> {
   readonly deployment_generation: string;
   parseRequest(raw: unknown): T;
   idempotencyKey(context: AuthenticatedRequestContext): string;
+  validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>;
 }
 
 type WorkflowStatusName = ExhaustiveWorkflowResult["workflow_status"];
@@ -85,7 +87,14 @@ function outputResult(output: unknown): ExhaustiveQueryResult | null {
   return output as ExhaustiveQueryResult;
 }
 
-async function envelope(database: D1Database, binding: WorkflowBindingRow, instanceId: string, status: WorkflowStatus): Promise<ExhaustiveWorkflowResult> {
+async function envelope(
+  database: D1Database,
+  binding: WorkflowBindingRow,
+  instanceId: string,
+  status: WorkflowStatus,
+  context: AuthenticatedRequestContext,
+  validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
+): Promise<ExhaustiveWorkflowResult> {
   const result = outputResult(status.output);
   if (result?.job?.status === "COMPLETE") {
     const receipt = result.job.receipt;
@@ -96,6 +105,7 @@ async function envelope(database: D1Database, binding: WorkflowBindingRow, insta
         current.coverage_receipt_ref !== receipt.coverage_receipt_ref || current.request_digest !== receipt.request_digest) {
       return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: status.status };
     }
+    await validateCurrentJob?.(binding.job_id, context);
   }
   return {
     protocol: "eliotr.exhaustive-query.v1",
@@ -284,9 +294,9 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
         instance = await workflow.create({ id, params });
       } catch {
         try { instance = await workflow.get(id); }
-        catch (cause) { failWorkflow("exhaustive Workflow create/readback is uncertain"); }
+        catch { failWorkflow("exhaustive Workflow create/readback is uncertain"); }
       }
-      return envelope(input.database, binding, id, await instance.status());
+      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob);
     },
     async status(context, instanceId) {
       requireOwner(context);
@@ -295,7 +305,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       let instance: WorkflowInstance;
       try { instance = await workflow.get(id); }
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
-      return envelope(input.database, binding, id, await instance.status());
+      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob);
     },
     async cancel(context, instanceId) {
       requireOwner(context);
@@ -306,7 +316,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
       const before = await instance.status();
       if (before.status === "complete" || before.status === "terminated" || before.status === "errored") {
-        return envelope(input.database, binding, id, before);
+        return envelope(input.database, binding, id, before, context, input.validateCurrentJob);
       }
       await input.database.prepare("UPDATE retrieval_exhaustive_workflow SET state='CANCEL_REQUESTED' WHERE workflow_id=?1 AND state='BOUND'")
         .bind(id).run().catch(() => failWorkflow("exhaustive Workflow cancellation is uncertain"));
@@ -315,7 +325,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       if (marked?.state !== "CANCEL_REQUESTED") failWorkflow("exhaustive Workflow cancellation readback is uncertain");
       try { await instance.terminate({ rollback: false }); }
       catch { failWorkflow("exhaustive Workflow cancellation is uncertain"); }
-      return envelope(input.database, { ...binding, state: "CANCEL_REQUESTED" }, id, await instance.status());
+      return envelope(input.database, { ...binding, state: "CANCEL_REQUESTED" }, id, await instance.status(), context, input.validateCurrentJob);
     },
   };
 }

@@ -524,6 +524,7 @@
         "apps/eliotr-core/src/readiness.ts",
         "apps/eliotr-core/src/research-session.ts",
         "apps/eliotr-core/src/exhaustive-query-service.ts",
+        "apps/eliotr-core/src/exhaustive-workflow-service.ts",
         "apps/eliotr-core/src/index.test.ts",
         "apps/eliotr-core/wrangler.jsonc",
         "packages/cloudflare-navigation/src/index.ts",
@@ -558,7 +559,10 @@
         "apps/eliotr-core/test/retrieval-ident-lex.test.ts",
         "apps/eliotr-core/test/retrieval-q1-fixture.ts",
         "apps/eliotr-core/test/retrieval-generation-fences.test.ts",
-        "apps/eliotr-core/src/exhaustive-query-service.test.ts"
+        "apps/eliotr-core/src/exhaustive-query-service.test.ts",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts",
+        "packages/cloudflare-navigation/src/exhaustive-query-service.ts",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
