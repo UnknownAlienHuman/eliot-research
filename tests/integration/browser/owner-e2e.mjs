@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
-/* global URL: readonly, URLSearchParams: readonly, localStorage: readonly,
+/* global URL: readonly, URLSearchParams: readonly, navigator: readonly, localStorage: readonly,
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
   requestAnimationFrame: readonly */
@@ -2958,6 +2958,53 @@ export function summarizePhaseLedger(harness) {
   };
 }
 
+async function settleServiceWorkerLifecycle(page) {
+  // `networkidle` does not include the asynchronous registration/activation
+  // lifecycle. Fence only the registration already started by the PWA; calling
+  // registration.update() here would create a new /sw.js fetch outside the
+  // user action and local bridge session, which is both synthetic traffic and
+  // unable to carry the bridge cookie. A missing/failed unauthenticated
+  // registration is already settled and therefore needs no wait.
+  let timer;
+  try {
+    await Promise.race([
+      page.evaluate(async () => {
+        if (!("serviceWorker" in navigator)) return "unsupported";
+        const registration = await navigator.serviceWorker.getRegistration("/");
+        if (registration === undefined) return "unregistered";
+        const worker = registration.installing ?? registration.waiting ?? registration.active;
+        if (worker === undefined) return "unregistered";
+        if (registration.active?.state === "activated") return "active";
+        await navigator.serviceWorker.ready;
+        return "activated";
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("service-worker lifecycle did not settle before the phase boundary")), 10000);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+export async function verifyServiceWorkerSettlementRegression() {
+  let release;
+  let evaluated = false;
+  const page = { evaluate: async () => {
+    evaluated = true;
+    await new Promise((resolve) => { release = resolve; });
+    return "activated";
+  } };
+  let finished = false;
+  const settlement = settleServiceWorkerLifecycle(page).then(() => { finished = true; });
+  await Promise.resolve();
+  assert.equal(evaluated, true, "service-worker settlement must inspect the existing registration");
+  assert.equal(finished, false, "phase settlement must wait for the service-worker lifecycle promise");
+  release();
+  await settlement;
+  assert.equal(finished, true, "phase settlement must finish only after the lifecycle promise settles");
+  return { protocol: "eliotr.owner-e2e.service-worker-settlement.v1", state: "PASS" };
+}
+
 async function settleLedger(page, harness) {
   // Settle-then-assert: networkidle is primary (existing 10s bound), then a
   // bounded pending-callback drain lets already-queued Playwright
@@ -2965,6 +3012,7 @@ async function settleLedger(page, harness) {
   // No sleep-only timing: without networkidle this drain alone proves nothing;
   // leftovers still fail closed downstream. Never hides retries: retry state
   // stays in the ledger and must still pair or anchor.
+  await settleServiceWorkerLifecycle(page);
   const deadline = Date.now() + 10000;
   try { await page.waitForLoadState("networkidle", { timeout: 10000 }); } catch { /* unpaired traffic fails closed */ }
   try {
