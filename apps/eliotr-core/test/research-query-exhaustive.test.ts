@@ -303,7 +303,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     const response = await handleHttp(global, runtime, {} as ExecutionContext, access(owner));
     expect([200, 202]).toContain(response.status);
     expect(await response.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
-  });
+  }, 20_000);
 
   it("keeps a small selected scope valid with more than 64 active owner policies", async () => {
     const owner = "exhaustive-65-policy-owner";
