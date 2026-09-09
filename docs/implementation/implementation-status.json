@@ -46,7 +46,7 @@
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
         "apps/eliotr-core/src/exhaustive-query-service.ts, apps/eliotr-core/src/exhaustive-workflow-service.ts and packages/cloudflare-navigation/src/exhaustive-query-service.ts: versioned Q8 EXHAUSTIVE_JOB parser/runtime over admitted normalized manifests, persisted structural ranges, batched owner authority and pinned R2 evidence",
         "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts and infra/d1/core/migrations/0024_exhaustive_workflow.sql: durable Workflow binding with request/principal/credential/deployment identity, current-policy checks, cancel intent readback and terminal output validation",
-        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 5 local Q1 import-to-projection HTTP cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry and actual DELETE cancellation/no-resume control",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 8 local Q1 boundary cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry, actual DELETE cancellation/no-resume control, withdrawal during async inventory, and a small selected scope with 65 active policies; the 65-source case uses one Q1 import plus canonical admitted/projected D1/R2 fixture rows",
         "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; the existing research.query operation launches/status-reads/cancels the durable Workflow locally, while deployed Workflow/live Access, live user-loop handles, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
       ]
     },
@@ -607,7 +607,7 @@
         "infra/d1/core/migrations/0023_exhaustive_reconcile.sql: additive retrieval_exhaustive_job plus retrieval_exhaustive_shard with authority/binding/immutability/invalidation triggers; 0021/0022 untouched; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
         "packages/retrieval/src/exhaustive-reconcile.test.ts: 7 node:sqlite cases over the committed 0001-0023 stream (earned COMPLETE persisted with denominator plus readback, COMPLETE replay without re-execution or duplicate rows, partial resume without double-count, unsettled UNFINISHED with zero result rows, foreign-denominator refusal with zero job rows, denominator-less COMPLETE refused by the Q3 store with its exact message, partial finalize refusal with the job left PENDING)",
         "packages/retrieval/src/exhaustive-reconcile.ts: createD1ExhaustiveJobStore plus reconcileExhaustiveJob behind injected scope/budget/executor ports; coverage never recomputed outside mergeExhaustiveShards; no grant port, no HTTP/model/R2 inside statements",
-        "RETRIEVAL slice stays disabled; research.query still serves only the ORIENT metadata profile with research.query composition untouched; Worker/HTTP composition of the loop and live qualification NOT_EXECUTED"
+        "RETRIEVAL slice stays disabled; research.query now dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter while ORIENT metadata behavior remains unchanged; deployed Workflow, live user-loop handles and live qualification remain NOT_EXECUTED"
       ]
     },
     {
