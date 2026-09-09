@@ -33,7 +33,7 @@ function validRequest(value: unknown): value is RawMarkdownConversionRequest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   return validId(candidate.idempotency_key) && Number.isSafeInteger(candidate.max_output_bytes) &&
-    (candidate.max_output_bytes as number) > 0 && (candidate.max_output_bytes as number) <= MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES &&
+    (candidate.max_output_bytes as number) > 0 && (candidate.max_output_bytes as number) <= MAX_SERVER_R2_BYTES &&
     Number.isSafeInteger(candidate.max_tokens) && (candidate.max_tokens as number) > 0 &&
     Number.isSafeInteger(candidate.timeout_ms) && (candidate.timeout_ms as number) > 0 && (candidate.timeout_ms as number) <= 300_000 &&
     isValidMarkdownConversionOptions(candidate.conversion_options);
@@ -208,12 +208,20 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
   ): Promise<RawMarkdownResult> {
     const resultJson = canonical(result);
     const resultSha = await sha256Utf8(resultJson);
-    const update = await dependencies.database.prepare("UPDATE raw_markdown_conversion SET state=?2,result_json=?3,result_sha256=?4,updated_at=?5 WHERE operation_id=?1 AND state='STARTED' AND attempt_id=?6")
-      .bind(operationId, result.state, resultJson, resultSha, new Date(now()).toISOString(), attemptId).run();
-    const row = await readRow(operationId);
+    try {
+      await dependencies.database.prepare("UPDATE raw_markdown_conversion SET state=?2,result_json=?3,result_sha256=?4,updated_at=?5 WHERE operation_id=?1 AND state='STARTED' AND attempt_id=?6")
+        .bind(operationId, result.state, resultJson, resultSha, new Date(now()).toISOString(), attemptId).run();
+    } catch {
+      // The provider effect is already classified; only a strict durable readback can settle this attempt.
+    }
+    let row: Record<string, unknown> | null;
+    try {
+      row = await readRow(operationId);
+    } catch {
+      return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
+    }
     const replayResult = row === null ? null : await replay(row, withoutSignal(context), capture);
     if (replayResult !== null) return replayResult;
-    if ((update.meta?.changes ?? 0) === 1) return result;
     return { ...base(operationId, capture.capture_id, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
   }
 
@@ -301,7 +309,7 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
       }
       if (signalAborted(contextSnapshot)) return settleFailure(operationId, attemptId, { ...base(operationId, captureId, capture.content_sha256, "FAILED"), failure_code: "CANCELED" }, contextSnapshot, capture);
       await dependencies.source.assertCurrent(contextSnapshot, capture);
-      if (signalAborted(contextSnapshot)) return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };
+      if (signalAborted(contextSnapshot)) return settleFailure(operationId, attemptId, { ...base(operationId, captureId, capture.content_sha256, "FAILED"), failure_code: "CANCELED" }, contextSnapshot, capture);
       const sourceCopy = new Uint8Array(sourceBytes.byteLength);
       sourceCopy.set(sourceBytes);
       const converted = await dependencies.adapter.convert({

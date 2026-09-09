@@ -1,6 +1,6 @@
 import type { MarkdownConversionAdapter, MarkdownConversionOptions } from "./markdown-conversion-contract.js";
 import { isValidMarkdownConversionOptions } from "./markdown-conversion.js";
-import { readRequestBodyWithinBytes } from "@eliotr/platform-cloudflare";
+import { readRequestBodyWithinBytes, RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
 
 export const RAW_MARKDOWN_CONVERSION_PROTOCOL = "eliotr.raw-markdown-conversion.v1" as const;
 export type RawMarkdownConversionState = "STARTED" | "COMPLETE" | "FAILED" | "UNKNOWN";
@@ -19,7 +19,7 @@ export function parseRawMarkdownConversionRequest(value: unknown): RawMarkdownCo
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const item = value as Record<string, unknown>; const keys = new Set(["idempotency_key", "max_output_bytes", "max_tokens", "timeout_ms", "conversion_options"]);
   if (Object.keys(item).some((key) => !keys.has(key)) || typeof item.idempotency_key !== "string" || item.idempotency_key.length === 0 || item.idempotency_key.length > 256 ||
-      !Number.isSafeInteger(item.max_output_bytes) || (item.max_output_bytes as number) < 1 || !Number.isSafeInteger(item.max_tokens) || (item.max_tokens as number) < 1 ||
+      !Number.isSafeInteger(item.max_output_bytes) || (item.max_output_bytes as number) < 1 || (item.max_output_bytes as number) > RUNTIME_LIMITS.buffered_r2_bytes || !Number.isSafeInteger(item.max_tokens) || (item.max_tokens as number) < 1 ||
       !Number.isSafeInteger(item.timeout_ms) || (item.timeout_ms as number) < 1 || (item.timeout_ms as number) > 300000 ||
       (item.conversion_options !== undefined && !isValidMarkdownConversionOptions(item.conversion_options))) return null;
   return item as unknown as RawMarkdownConversionRequest;
