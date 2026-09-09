@@ -162,12 +162,14 @@ job receipt; unfinished, errored and currentness-uncertain results remain visibl
 The panel keeps the workflow identity only in the current page session. Authorization loss, offline,
 health loss, scope changes and page disposal clear the private state and abort pending reads. It does
 not persist workflow IDs, source bytes, credentials or artifact references, and it does not turn a
-workflow artifact reference into an EvidenceHandle. A server-side recent-workflow listing is a
-separate follow-up owned by the backend; reload recovery is therefore not claimed by this slice.
+workflow artifact reference into an EvidenceHandle. When the owner recent-workflow listing is
+available, the panel reloads status-watch entries from the server and performs an explicit GET
+before showing one. This recovers status visibility only; it never resumes execution or claims a
+complete result without the canonical status receipt.
 
 The ER27 owner browser harness has a bounded real-workflow scenario in
 `tests/integration/browser/exhaustive-workflow-browser.mjs`. It clicks the built PWA,
 requires the server-issued workflow identity, reads a non-terminal status, sends the
 real cancel action, and verifies terminal readback through the same Worker origin.
 The scenario is accepted only when `test:owner-e2e` passes on both Ubuntu and Windows;
-live qualification and reload recovery remain separate.
+live qualification and complete-result acceptance remain separate.

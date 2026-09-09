@@ -202,7 +202,7 @@ function render(health: SystemHealth | null): void {
     if (coverageNote) coverageNote.textContent = `${detail.matches} exact match${detail.matches === 1 ? "" : "es"} in the reconciled scope.`;
   });
   app.addEventListener("eliotr:health-lost", clearPrivateEvidence);
-  app.addEventListener("library:scope-changed", clearEvidenceOnEvent);
+  app.addEventListener("library:scope-changed", clearPrivateEvidence);
   window.addEventListener("offline", clearEvidenceOnEvent);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
@@ -215,7 +215,7 @@ function render(health: SystemHealth | null): void {
       retrieval?.selectSource(id);
       exhaustive?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {

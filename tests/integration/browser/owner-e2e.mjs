@@ -3387,6 +3387,7 @@ function authedNetworkSpec(origin) {
       { method: "POST", path: "/__local/pair", status: 403 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
+      { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       // Exact public shell asset: the bridge proxies /manifest.webmanifest
       // (GET, no query) without a session because Chromium fetches it
       // credentialless while the Worker serves it publicly. Must succeed (200);
@@ -3409,6 +3410,7 @@ function bridgeRepairNetworkSpec(origin) {
       { method: "POST", path: "/__local/pair", status: 204 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
+      { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
     mutations: ["/__local/pair"],
@@ -3951,10 +3953,12 @@ export async function runOwnerE2E() {
   // early failure cannot leak an unmarked directory outside the cleanup below.
   const runId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
   let directory;
+  let paths;
   let worker;
   let playwright;
   let bridge;
   let jwks;
+  let exhaustiveWorkflow;
   let teardownError = null;
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
@@ -3985,6 +3989,7 @@ export async function runOwnerE2E() {
     artifact_ledger: "PENDING",
     cross_client_ledger: "PENDING",
     exhaustive_workflow: "PENDING",
+    exhaustive_workflow_d1: "PENDING",
     early_cleanup: "PENDING",
     teardown_inventory: "PENDING",
   };
@@ -4148,7 +4153,7 @@ export async function runOwnerE2E() {
         assert.deepEqual(dupErrors, [], `duplicate-JWKS cleanup must leave no residue: ${dupErrors.join("; ").slice(0, 400)}`);
       }
     }
-    const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
+    paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
     await access(resolve(root, "apps/eliotr-pwa/dist/index.html"));
     assert.equal(paths.directory, directory, "isolated state must use the fresh directory");
     assert.ok(paths.persist.startsWith(directory), "persisted D1/R2 state must live under the isolated directory");
@@ -4746,7 +4751,7 @@ export async function runOwnerE2E() {
     // durable Workflow. It requires an observed active job before DELETE, so
     // a naturally completed fast job fails closed instead of becoming a false
     // cancellation proof.
-    const exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
+    exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
       page: playwright.page, browserJson, ledger, query: "Pinned",
     });
     await settleLedger(playwright.page, playwright);
@@ -4995,6 +5000,10 @@ export async function runOwnerE2E() {
         "e2e-import-1/replay-prepare",
         "e2e-import-1/browser-catalog",
         "e2e-import-1/browser-revisions",
+        "e2e-exhaustive/status-before-cancel",
+        "e2e-exhaustive/status-after-cancel",
+        "e2e-exhaustive/relaunch-status-before-cancel",
+        "e2e-exhaustive/relaunch-status-after-cancel",
         "e2e-jwt-matrix/expired",
         "e2e-jwt-matrix/expired-catalog",
         "e2e-jwt-matrix/wrong-audience",
@@ -5151,7 +5160,40 @@ export async function runOwnerE2E() {
       };
     });
     await runStep("bridge.close", async () => { try { await bridge?.close(); } catch (error) { fail(`bridge.close: ${error?.message ?? error}`); } });
-    await runStep("worker.stop", async () => { try { await worker?.stop(); } catch (error) { fail(`worker.stop: ${error?.message ?? error}`); } });
+    await runStep("worker.stop", async () => {
+      let stopped = false;
+      try { await worker?.stop(); worker = undefined; stopped = true; }
+      catch (error) { fail(`worker.stop: ${error?.message ?? error}`); }
+      if (!stopped || exhaustiveWorkflow === undefined) return;
+      try {
+        // The Worker is stopped before this CLI readback, so SQLite is no
+        // longer shared with an active runtime. Both browser-cancelled IDs
+        // must retain their durable owner binding and CANCEL_REQUESTED state.
+        const ids = exhaustiveWorkflow.workflowIds;
+        const quotedIds = ids.map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
+        const bindings = d1Query(paths, "CORE_DB",
+          "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
+          `FROM retrieval_exhaustive_workflow WHERE workflow_id IN (${quotedIds}) ORDER BY workflow_id`);
+        assert.equal(bindings.length, ids.length, "D1 must retain one binding row per browser workflow identity");
+        const jobs = d1Query(paths, "CORE_DB",
+          `SELECT job_id,principal_ref,state FROM retrieval_exhaustive_job WHERE job_id IN (${bindings.map((row) => `'${String(row.job_id).replaceAll("'", "''")}'`).join(",")})`);
+        for (const binding of bindings) {
+          assert.ok(ids.includes(binding.workflow_id), "D1 workflow binding must match a browser-issued identity");
+          assert.ok(typeof binding.job_id === "string" && binding.job_id.length > 0, "D1 workflow binding must retain its job identity");
+          assert.equal(binding.principal_ref, "e2e-owner", "D1 workflow binding must retain the owner principal");
+          assert.equal(binding.client_class, "owner_pwa", "D1 workflow binding must retain the owner client class");
+          assert.ok(typeof binding.credential_generation === "string" && binding.credential_generation.length > 0,
+            "D1 workflow binding must retain credential generation");
+          assert.equal(binding.deployment_generation, paths.generation, "D1 workflow binding must retain the current deployment");
+          assert.match(binding.request_identity_digest, /^[a-f0-9]{64}$/u,
+            "D1 workflow binding must retain the canonical request identity digest");
+          assert.equal(binding.state, "CANCEL_REQUESTED", "D1 workflow binding must retain cancellation intent");
+          assert.ok(jobs.some((job) => job.job_id === binding.job_id && job.principal_ref === "e2e-owner"),
+            "D1 workflow binding must point to its durable retrieval job");
+        }
+        receipt.exhaustive_workflow_d1 = `PASS (${bindings.length} browser workflow bindings, job identities and CANCEL_REQUESTED read back after Worker stop)`;
+      } catch (error) { fail(`workflow D1 readback: ${error?.message ?? error}`); }
+    });
     await runStep("playwright.close", async () => { try { await playwright?.close(); } catch (error) { fail(`playwright.close: ${error?.message ?? error}`); } });
     await runStep("jwks.close", async () => {
       const started = Date.now();

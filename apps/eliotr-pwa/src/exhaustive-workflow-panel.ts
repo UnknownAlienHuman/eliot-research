@@ -2,7 +2,8 @@ import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import {
   cancelExhaustiveWorkflow, exhaustiveQueryBody, launchExhaustiveWorkflow, pollExhaustiveWorkflow,
-  readExhaustiveWorkflow, type ExhaustiveJobView, type ExhaustiveWorkflowView,
+  listExhaustiveWorkflows, readExhaustiveWorkflow, type ExhaustiveJobView, type ExhaustiveWorkflowPage,
+  type ExhaustiveWorkflowSummary, type ExhaustiveWorkflowView,
 } from "./exhaustive-workflow-api.js";
 
 function message(error: unknown): string {
@@ -51,7 +52,12 @@ export function mountExhaustiveWorkflowPanel(
     <div class="workflow-actions"><button type="submit" class="button">Start full scan</button><button type="button" class="button button--quiet" data-cancel disabled>Cancel on server</button><button type="button" class="button button--quiet" data-refresh disabled>Check status</button></div></form>
     <p class="workflow-status" role="status" aria-live="polite">Ready when the current session is available.</p>
     <div class="workflow-progress" data-progress hidden><div class="workflow-progress-bar" data-progress-bar></div></div>
-    <p class="workflow-detail" data-detail></p>`;
+    <p class="workflow-detail" data-detail></p>
+    <section class="workflow-recovery" aria-label="Recent scans">
+      <div class="workflow-recovery-head"><div><span class="eyebrow">Recent scans</span><h3>Pick up a recent scan</h3></div><button type="button" class="button button--quiet" data-recovery-refresh>Refresh</button></div>
+      <p class="workflow-recovery-status" data-recovery-status>Recent scans appear after the current session is ready.</p>
+      <div class="workflow-recovery-list" data-recovery-list></div><button type="button" class="button button--quiet" data-recovery-more hidden>Load more</button>
+    </section>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const query = element.querySelector<HTMLInputElement>('input[name="query"]');
   const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
@@ -64,7 +70,11 @@ export function mountExhaustiveWorkflowPanel(
   const detail = element.querySelector<HTMLElement>("[data-detail]");
   const progress = element.querySelector<HTMLElement>("[data-progress]");
   const progressBar = element.querySelector<HTMLElement>("[data-progress-bar]");
-  if (!form || !query || !scope || !selectedScopeOption || !submit || !cancel || !refresh || !status || !statusText || !detail || !progress || !progressBar) {
+  const recoveryRefresh = element.querySelector<HTMLButtonElement>("[data-recovery-refresh]");
+  const recoveryStatus = element.querySelector<HTMLElement>("[data-recovery-status]");
+  const recoveryList = element.querySelector<HTMLElement>("[data-recovery-list]");
+  const recoveryMore = element.querySelector<HTMLButtonElement>("[data-recovery-more]");
+  if (!form || !query || !scope || !selectedScopeOption || !submit || !cancel || !refresh || !status || !statusText || !detail || !progress || !progressBar || !recoveryRefresh || !recoveryStatus || !recoveryList || !recoveryMore) {
     throw new Error("Exhaustive workflow panel is incomplete");
   }
 
@@ -77,10 +87,16 @@ export function mountExhaustiveWorkflowPanel(
   let selectedSourceId: string | undefined;
   let previousBody = "";
   let idempotencyKey = "";
+  let recoveredWorkflow = false;
+  let recoveredCancelable = false;
+  let recoveryController: AbortController | undefined;
+  let recoverySerial = 0;
+  let recoveryItems = new Map<string, ExhaustiveWorkflowSummary>();
+  let recoveryCursor: string | undefined;
 
   const buttons = (): void => {
     submit.disabled = !healthReady() || busy || (workflowId !== undefined && !terminalState);
-    cancel.disabled = workflowId === undefined || terminalState || cancelling;
+    cancel.disabled = workflowId === undefined || terminalState || cancelling || (recoveredWorkflow && !recoveredCancelable);
     refresh.disabled = workflowId === undefined || busy;
     query.disabled = busy || (workflowId !== undefined && !terminalState);
     scope.disabled = busy || (workflowId !== undefined && !terminalState);
@@ -130,6 +146,134 @@ export function mountExhaustiveWorkflowPanel(
     buttons();
   };
 
+  const recoveryStateLabel = (item: ExhaustiveWorkflowSummary): string => {
+    if (item.binding_state === "CANCEL_REQUESTED") return "Cancellation requested";
+    if (item.job_state === "COMPLETE" || item.workflow_status === "complete") return "Complete";
+    if (item.job_state === "INVALIDATED") return "Needs a fresh scan";
+    if (item.workflow_status === "terminated") return "Cancelled";
+    if (item.workflow_status === "errored") return "Stopped with an error";
+    return statusLabel(item.workflow_status);
+  };
+
+  const recoveryDate = (value: string): string => {
+    try { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+    catch { return "Recent"; }
+  };
+
+  const recoveryRow = (item: ExhaustiveWorkflowSummary): HTMLElement => {
+    const row = document.createElement("div");
+    row.className = "workflow-recovery-row";
+    const action = document.createElement("button");
+    action.type = "button";
+    action.className = "workflow-recovery-item";
+    action.dataset.recoveryWorkflowId = item.workflow_instance_id;
+    action.disabled = false;
+    action.textContent = `${recoveryStateLabel(item)} · ${recoveryDate(item.created_at)}`;
+    action.setAttribute("aria-label", `${recoveryStateLabel(item)} from ${recoveryDate(item.created_at)}`);
+    const note = document.createElement("span");
+    note.className = "workflow-recovery-note";
+    note.textContent = item.recoverable
+      ? (item.cancelable && item.binding_state === "BOUND" ? "Status and cancellation available" : "Status available")
+      : "Status only; start a new scan to run again";
+    row.append(action, note);
+    return row;
+  };
+
+  const renderRecovery = (page: ExhaustiveWorkflowPage, append = false): void => {
+    if (!append) { recoveryItems = new Map(); recoveryList.replaceChildren(); }
+    for (const item of page.items) {
+      if (recoveryItems.has(item.workflow_instance_id)) continue;
+      recoveryItems.set(item.workflow_instance_id, item);
+      recoveryList.append(recoveryRow(item));
+    }
+    recoveryCursor = page.next_cursor;
+    recoveryMore.hidden = recoveryCursor === undefined;
+    if (recoveryItems.size === 0) {
+      recoveryStatus.textContent = "No recent scans are available for this session.";
+      return;
+    }
+    recoveryStatus.textContent = append ? "More recent scans loaded. Choose one to check its server status." : "Choose a recent scan to check its current server status.";
+  };
+
+  const clearRecovery = (text = "Recent scans appear after the current session is ready."): void => {
+    recoverySerial += 1;
+    recoveryController?.abort();
+    recoveryController = undefined;
+    recoveryItems = new Map();
+    recoveryCursor = undefined;
+    recoveryList.replaceChildren();
+    recoveryMore.hidden = true;
+    recoveryStatus.textContent = text;
+  };
+
+  const refreshRecovery = async (cursor?: string, append = false): Promise<void> => {
+    if (!healthReady() || !navigator.onLine) return;
+    const generation = deploymentGeneration();
+    if (generation === undefined) return;
+    const active = ++recoverySerial;
+    recoveryController?.abort();
+    const local = new AbortController();
+    recoveryController = local;
+    recoveryRefresh.disabled = true;
+    recoveryMore.disabled = true;
+    recoveryStatus.textContent = "Checking recent scans…";
+    try {
+      const page = await listExhaustiveWorkflows(20, cursor, generation, local.signal);
+      if (active === recoverySerial) renderRecovery(page, append);
+    } catch (error: unknown) {
+      if (active === recoverySerial && !(error instanceof Error && error.name === "AbortError")) {
+        recoveryStatus.textContent = error instanceof ApiRequestError && (error.status === 401 || error.status === 403)
+          ? "Recent scans are unavailable for this session."
+          : "Recent scans could not be loaded. Try again when the service is ready.";
+        if (!append) { recoveryList.replaceChildren(); recoveryMore.hidden = true; }
+      }
+    } finally {
+      if (active === recoverySerial) { recoveryController = undefined; recoveryRefresh.disabled = false; recoveryMore.disabled = false; }
+    }
+  };
+
+  const selectRecovered = async (item: ExhaustiveWorkflowSummary): Promise<void> => {
+    const generation = deploymentGeneration();
+    if (generation === undefined || !healthReady() || !navigator.onLine) {
+      recoveryStatus.textContent = "Reconnect before checking this scan.";
+      return;
+    }
+    const active = ++serial;
+    controller?.abort();
+    const local = new AbortController();
+    controller = local;
+    busy = true;
+    cancelling = false;
+    recoveredWorkflow = true;
+    recoveredCancelable = item.cancelable && item.binding_state === "BOUND";
+    workflowId = item.workflow_instance_id;
+    workflowGeneration = generation;
+    terminalState = false;
+    element.dataset.workflowId = item.workflow_instance_id;
+    statusText.textContent = "Checking the selected scan…";
+    buttons();
+    try {
+      const view = await readExhaustiveWorkflow(item.workflow_instance_id, generation, local.signal);
+      if (active === serial) render(view);
+    } catch (error: unknown) {
+      if (active === serial && !(error instanceof Error && error.name === "AbortError")) {
+        if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") clearPrivate();
+        else statusText.textContent = message(error);
+      }
+    } finally {
+      if (active === serial) { busy = false; controller = undefined; buttons(); }
+    }
+  };
+
+  recoveryRefresh.onclick = () => { void refreshRecovery(); };
+  recoveryMore.onclick = () => { if (recoveryCursor !== undefined) void refreshRecovery(recoveryCursor, true); };
+  recoveryList.onclick = (event) => {
+    const target = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("[data-recovery-workflow-id]") : null;
+    const id = target?.dataset.recoveryWorkflowId;
+    const item = id === undefined ? undefined : recoveryItems.get(id);
+    if (item !== undefined) void selectRecovered(item);
+  };
+
   const reconcile = async (view: ExhaustiveWorkflowView, active: number, local: AbortController, generation: string | undefined): Promise<void> => {
     render(view);
     if (terminal(view) || active !== serial) return;
@@ -150,7 +294,7 @@ export function mountExhaustiveWorkflowPanel(
     const active = ++serial;
     const wasTerminal = terminalState;
     const generation = deploymentGeneration();
-    const local = new AbortController(); controller = local; busy = true; workflowId = undefined; workflowGeneration = generation; terminalState = false; delete element.dataset.workflowId; buttons();
+    const local = new AbortController(); controller = local; busy = true; workflowId = undefined; workflowGeneration = generation; terminalState = false; recoveredWorkflow = false; recoveredCancelable = false; delete element.dataset.workflowId; buttons();
     element.dispatchEvent(new CustomEvent("exhaustive:started", { bubbles: true }));
     status.textContent = "STARTING"; statusText.textContent = "Preparing the selected sources…"; detail.textContent = "Progress will be read from the server as it becomes available.";
     // A deliberate relaunch after a terminal result is a new operation even
@@ -167,6 +311,10 @@ export function mountExhaustiveWorkflowPanel(
   cancel.onclick = () => {
     const id = workflowId;
     if (id === undefined) { stopWatching("Launch watch stopped. Recheck the same inputs to reconcile the server state."); return; }
+    if (recoveredWorkflow && !recoveredCancelable) {
+      statusText.textContent = "This scan can be viewed, but cannot be cancelled from this session.";
+      return;
+    }
     const active = ++serial; controller?.abort(); busy = true; cancelling = true; buttons(); statusText.textContent = "Cancelling scan…";
     const local = new AbortController(); controller = local;
     void cancelExhaustiveWorkflow(id, workflowGeneration, local.signal)
@@ -185,17 +333,24 @@ export function mountExhaustiveWorkflowPanel(
   };
 
   const clearPrivate = (): void => {
-    serial += 1; controller?.abort(); controller = undefined; busy = false; cancelling = false; workflowId = undefined; workflowGeneration = undefined; terminalState = false; previousBody = ""; idempotencyKey = ""; selectedSourceId = undefined; delete element.dataset.workflowId;
+    serial += 1; controller?.abort(); controller = undefined; busy = false; cancelling = false; workflowId = undefined; workflowGeneration = undefined; terminalState = false; recoveredWorkflow = false; recoveredCancelable = false; previousBody = ""; idempotencyKey = ""; selectedSourceId = undefined; delete element.dataset.workflowId;
+    clearRecovery();
     status.textContent = healthReady() ? "READY" : "WAITING"; statusText.textContent = "Private scan state cleared. Reconnect before starting again."; detail.textContent = ""; progress.hidden = true; progressBar.style.width = "0%"; query.value = ""; scope.value = "library"; selectedScopeOption.disabled = true; buttons();
   };
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate);
   window.addEventListener("pagehide", clearPrivate);
-  window.addEventListener("eliotr:health-updated", refreshHealthState);
+  const onHealthUpdated = (): void => {
+    refreshHealthState();
+    if (healthReady()) void refreshRecovery();
+    else clearRecovery();
+  };
+  window.addEventListener("eliotr:health-updated", onHealthUpdated);
   scope.onchange = () => { if (scope.value === "selected" && selectedSourceId === undefined) scope.value = "library"; };
   buttons();
+  if (healthReady()) void refreshRecovery();
   return Object.assign(() => {
-    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", refreshHealthState);
+    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", onHealthUpdated);
   }, { clearPrivate, selectSource(id: string): void {
     if (!IdentifierSchema.safeParse(id).success) return;
     selectedSourceId = id; selectedScopeOption.disabled = false; scope.value = "selected";

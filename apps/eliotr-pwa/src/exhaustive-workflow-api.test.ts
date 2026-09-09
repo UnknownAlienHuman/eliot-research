@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "./api.js";
 import {
-  cancelExhaustiveWorkflow, exhaustiveQueryBody, launchExhaustiveWorkflow, readExhaustiveWorkflow,
+  cancelExhaustiveWorkflow, exhaustiveQueryBody, launchExhaustiveWorkflow, listExhaustiveWorkflows, readExhaustiveWorkflow,
 } from "./exhaustive-workflow-api.js";
 
 const generation = "deployment-1";
@@ -83,5 +83,27 @@ describe("exhaustive workflow transport", () => {
     };
     vi.stubGlobal("fetch", vi.fn(async () => envelope(flattened)));
     await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+
+  it("decodes recent workflow summaries without importing private job data", async () => {
+    const fetch = vi.fn(async () => envelope({
+      protocol: "eliotr.exhaustive-workflow-page.v1",
+      items: [{ workflow_instance_id: workflow, workflow_status: "running", job_state: "PENDING",
+        binding_state: "BOUND", created_at: "2026-09-09T12:00:00.000Z", expires_at: "2026-09-09T13:00:00.000Z",
+        recoverable: true, cancelable: true }], next_cursor: "cursor-2",
+    }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(listExhaustiveWorkflows(20, undefined, generation)).resolves.toMatchObject({
+      protocol: "eliotr.exhaustive-workflow-page.v1", items: [{ workflow_instance_id: workflow, recoverable: true, cancelable: true }], next_cursor: "cursor-2",
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/v1/research/query/jobs?limit=20", expect.anything());
+  });
+
+  it("rejects a recent workflow row with a missing binding flag", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => envelope({
+      protocol: "eliotr.exhaustive-workflow-page.v1",
+      items: [{ workflow_instance_id: workflow, workflow_status: "running", created_at: "2026-09-09T12:00:00.000Z", recoverable: true, cancelable: true }],
+    })));
+    await expect(listExhaustiveWorkflows(20, undefined, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
   });
 });

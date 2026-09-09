@@ -39,6 +39,27 @@ export interface ExhaustiveWorkflowView {
   readonly job?: ExhaustiveJobView;
 }
 
+export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
+export type ExhaustiveWorkflowBindingState = "BOUND" | "CANCEL_REQUESTED";
+
+export interface ExhaustiveWorkflowSummary {
+  readonly workflow_instance_id: string;
+  readonly workflow_status: ExhaustiveWorkflowStatus;
+  readonly job_state?: ExhaustiveWorkflowJobState;
+  readonly binding_state: ExhaustiveWorkflowBindingState;
+  readonly created_at: string;
+  readonly expires_at?: string;
+  readonly recoverable: boolean;
+  readonly cancelable: boolean;
+}
+
+export interface ExhaustiveWorkflowPage {
+  readonly protocol: "eliotr.exhaustive-workflow-page.v1";
+  readonly deployment_generation: string;
+  readonly items: readonly ExhaustiveWorkflowSummary[];
+  readonly next_cursor?: string;
+}
+
 function invalid(message = "The exhaustive scan response is invalid; try again"): never {
   throw new ApiRequestError({ status: 502, code: "RESEARCH_WORKFLOW_RESPONSE_INVALID", message });
 }
@@ -75,6 +96,57 @@ function nonNegativeInteger(value: unknown, label: string): number {
 function digest(value: unknown, label: string): string {
   if (typeof value !== "string" || !/^[a-f0-9]{64}$/u.test(value)) invalid(`${label} is invalid`);
   return value;
+}
+
+function timestamp(value: unknown, label: string): string {
+  const text = stringValue(value, label, 64);
+  if (!Number.isFinite(Date.parse(text))) invalid(`${label} is invalid`);
+  return text;
+}
+
+function workflowStatus(value: unknown, label: string): ExhaustiveWorkflowStatus {
+  const allowed: readonly ExhaustiveWorkflowStatus[] = ["queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown"];
+  if (typeof value !== "string" || !allowed.includes(value as ExhaustiveWorkflowStatus)) invalid(`${label} is invalid`);
+  return value as ExhaustiveWorkflowStatus;
+}
+
+function decodeWorkflowSummary(value: unknown, index: number): ExhaustiveWorkflowSummary {
+  const row = record(value, ["workflow_instance_id", "workflow_status", "job_state", "binding_state", "created_at", "expires_at", "recoverable", "cancelable"], `workflow item ${index}`);
+  const item: ExhaustiveWorkflowSummary = {
+    workflow_instance_id: stringValue(row.workflow_instance_id, `workflow item ${index} id`, 128),
+    workflow_status: workflowStatus(row.workflow_status, `workflow item ${index} status`),
+    binding_state: row.binding_state === "BOUND" || row.binding_state === "CANCEL_REQUESTED" ? row.binding_state : invalid(`workflow item ${index} binding state is invalid`),
+    created_at: timestamp(row.created_at, `workflow item ${index} created_at`),
+    recoverable: row.recoverable === true,
+    cancelable: row.cancelable === true,
+  };
+  if (!/^exhaustive-workflow-[a-f0-9]{64}$/u.test(item.workflow_instance_id)) invalid(`workflow item ${index} id is invalid`);
+  if (typeof row.recoverable !== "boolean" || typeof row.cancelable !== "boolean") invalid(`workflow item ${index} flags are invalid`);
+  if (Object.hasOwn(row, "job_state")) {
+    if (row.job_state !== "PENDING" && row.job_state !== "COMPLETE" && row.job_state !== "INVALIDATED") invalid(`workflow item ${index} job state is invalid`);
+    (item as { job_state?: ExhaustiveWorkflowJobState }).job_state = row.job_state;
+  }
+  if (Object.hasOwn(row, "expires_at")) (item as { expires_at?: string }).expires_at = timestamp(row.expires_at, `workflow item ${index} expires_at`);
+  return item;
+}
+
+function decodeWorkflowPageEnvelope(value: unknown, expectedDeploymentGeneration: string): ExhaustiveWorkflowPage {
+  const envelope = record(value, ["data", "trace_id", "deployment_generation"], "workflow page envelope");
+  const deployment = stringValue(envelope.deployment_generation, "envelope deployment generation");
+  if (deployment !== expectedDeploymentGeneration) throw new ApiRequestError({
+    status: 502, code: "API_GENERATION_MISMATCH", message: "Recent workflows belong to a different deployment; private state was discarded",
+  });
+  stringValue(envelope.trace_id, "envelope trace", 128);
+  const data = record(envelope.data, ["protocol", "items", "next_cursor"], "workflow page data");
+  if (data.protocol !== "eliotr.exhaustive-workflow-page.v1") invalid("workflow page protocol is invalid");
+  if (!Array.isArray(data.items) || data.items.length > 20) invalid("workflow page items are invalid");
+  const items = data.items.map((item, index) => decodeWorkflowSummary(item, index));
+  if (new Set(items.map((item) => item.workflow_instance_id)).size !== items.length) invalid("workflow page contains duplicate workflow identities");
+  if (Object.hasOwn(data, "next_cursor") && (typeof data.next_cursor !== "string" || data.next_cursor.length === 0 || data.next_cursor.length > 512 || data.next_cursor !== data.next_cursor.trim())) invalid("workflow page cursor is invalid");
+  return {
+    protocol: "eliotr.exhaustive-workflow-page.v1", deployment_generation: deployment, items,
+    ...(Object.hasOwn(data, "next_cursor") ? { next_cursor: data.next_cursor as string } : {}),
+  };
 }
 
 function decodeJob(value: unknown): ExhaustiveJobView {
@@ -189,6 +261,16 @@ export async function cancelExhaustiveWorkflow(instanceId: string, deploymentGen
   const view = decodeWorkflowEnvelope(raw, expected);
   if (view.workflow_instance_id !== instanceId) invalid("workflow instance does not match the requested job");
   return view;
+}
+
+export async function listExhaustiveWorkflows(limit = 20, cursor: string | undefined, deploymentGeneration: string | undefined, signal?: AbortSignal): Promise<ExhaustiveWorkflowPage> {
+  const expected = expectedGeneration(deploymentGeneration);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) invalid("workflow page limit is invalid");
+  if (cursor !== undefined && (cursor.length === 0 || cursor.length > 512 || cursor !== cursor.trim())) invalid("workflow page cursor is invalid");
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (cursor !== undefined) query.set("cursor", cursor);
+  const raw = await requestApiWithStatuses(`/api/v1/research/query/jobs?${query.toString()}`, signal ? { signal } : {}, [200]);
+  return decodeWorkflowPageEnvelope(raw, expected);
 }
 
 function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
