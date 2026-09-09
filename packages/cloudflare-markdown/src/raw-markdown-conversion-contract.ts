@@ -2,7 +2,7 @@ import type { MarkdownConversionAdapter, MarkdownConversionOptions } from "./mar
 
 export const RAW_MARKDOWN_CONVERSION_PROTOCOL = "eliotr.raw-markdown-conversion.v1" as const;
 export type RawMarkdownConversionState = "STARTED" | "COMPLETE" | "FAILED" | "UNKNOWN";
-export type RawMarkdownConversionFailureCode = "SOURCE_UNAVAILABLE" | "SOURCE_INTEGRITY_MISMATCH" | "AUTHORITY_STALE" | "IDEMPOTENCY_CONFLICT" | "PROVIDER_UNCERTAIN" | "PROVIDER_FAILED" | "OUTPUT_UNAVAILABLE" | "INVALID_REQUEST";
+export type RawMarkdownConversionFailureCode = "SOURCE_UNAVAILABLE" | "SOURCE_INTEGRITY_MISMATCH" | "AUTHORITY_STALE" | "IDEMPOTENCY_CONFLICT" | "PROVIDER_UNCERTAIN" | "PROVIDER_FAILED" | "OUTPUT_UNAVAILABLE" | "INVALID_REQUEST" | "CANCELED";
 export interface RawMarkdownConversionRequest { readonly idempotency_key: string; readonly max_output_bytes: number; readonly max_tokens: number; readonly timeout_ms: number; readonly conversion_options?: MarkdownConversionOptions; }
 export interface RawMarkdownConversionContext { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly profile_generation: string; readonly signal?: AbortSignal; }
 export interface RawMarkdownCaptureReceipt { readonly capture_id: string; readonly principal_ref: string; readonly owner_system_id: string; readonly source_namespace_id: string; readonly source_revision_ref: string; readonly source_logical_id: string; readonly source_owner_generation: string; readonly original_file_name: string; readonly object_key: string; readonly content_sha256: string; readonly size_bytes: number; readonly content_type: string; }

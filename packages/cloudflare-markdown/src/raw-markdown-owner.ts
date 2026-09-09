@@ -24,6 +24,6 @@ export function createRawMarkdownOwnerConverter(input: OwnerInput) {
         },
       },
     });
-    return service.convert({ principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: input.profile_generation, profile_generation: input.profile_generation, ...(context.signal === undefined ? {} : { signal: context.signal }) }, captureId, request);
+    return service.convert({ principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: input.profile_generation, profile_generation: input.profile_generation, signal: context.signal ?? context.request.signal }, captureId, request);
   };
 }
