@@ -3130,7 +3130,7 @@ async function settleServiceWorkerLifecycle(page, harness) {
     if (Array.isArray(harness?.serviceWorkerSettlements)) {
       let pageOrigin = "unavailable";
       try { pageOrigin = new URL(page.url()).origin; } catch { /* diagnostic remains bounded and redacted */ }
-      let workerUrls = [];
+      let workerUrls;
       try {
         workerUrls = typeof harness.context?.serviceWorkers === "function"
           ? harness.context.serviceWorkers().map((worker) => {
@@ -3468,7 +3468,7 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
     assert.equal(failure.slotId ?? null, own.slotId ?? null, `${label}: failure slot crossed request identity`);
     assert.ok(origins.includes(failure.origin), `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
   }
-  let lifecycleDiagnostic = "unavailable";
+  let lifecycleDiagnostic;
   try {
     lifecycleDiagnostic = JSON.stringify({
       serviceWorkerSettlements: Array.isArray(harness.serviceWorkerSettlements)
