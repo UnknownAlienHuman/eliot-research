@@ -197,6 +197,7 @@ jobs:
           if ($changes) { Write-Error "Tests changed the checkout: $changes"; exit 1 }
 
   local-launch:
+    name: local-launch (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
