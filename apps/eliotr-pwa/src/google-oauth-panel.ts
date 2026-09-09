@@ -1,5 +1,5 @@
 import { ApiRequestError } from "./api.js";
-import { beginGoogleOAuth, newGoogleOAuthOperationRef } from "./google-oauth-api.js";
+import { beginGoogleOAuth, newGoogleOAuthOperationRef, readGoogleOAuthCallbackOutcome, type GoogleOAuthCallbackOutcome } from "./google-oauth-api.js";
 import { escapeHtml } from "./html.js";
 
 /**
@@ -30,6 +30,27 @@ export function mountGoogleOAuthPanel(root: HTMLElement): () => void {
       </section>
     `;
   };
+
+  const callbackCopy = (outcome: GoogleOAuthCallbackOutcome): { readonly status: string; readonly tone: "pending" | "ready" | "blocked"; readonly detail: string } => {
+    switch (outcome) {
+      case "authorized": return { status: "authorization recorded", tone: "pending", detail: "Google authorization is recorded. Exchange setup is still authorizing." };
+      case "denied": return { status: "authorization declined", tone: "blocked", detail: "Google authorization was declined. Start again when you are ready." };
+      case "expired": return { status: "authorization expired", tone: "blocked", detail: "That authorization window expired. Start a new request." };
+      case "conflict": return { status: "authorization needs a new request", tone: "blocked", detail: "This authorization request is no longer current. Start again." };
+      case "rejected": return { status: "authorization rejected", tone: "blocked", detail: "Google identity verification did not complete. Start again." };
+      case "retry": return { status: "authorization outcome uncertain", tone: "blocked", detail: "The result could not be confirmed. Start a new authorization request." };
+    }
+  };
+
+  const callbackOutcome = readGoogleOAuthCallbackOutcome(window.location.hash);
+  if (callbackOutcome !== null) {
+    const copy = callbackCopy(callbackOutcome);
+    render(`<p>${escapeHtml(copy.detail)}</p>`);
+    status(copy.status, copy.tone);
+    window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  } else {
+    render("");
+  }
 
   const onClick = async (): Promise<void> => {
     if (busy || controller.signal.aborted) return;
@@ -65,7 +86,6 @@ export function mountGoogleOAuthPanel(root: HTMLElement): () => void {
     }
   };
 
-  render("");
   root.querySelector("[data-oauth-begin]")?.addEventListener("click", () => void onClick(), { signal: controller.signal });
   const clear = (): void => {
     controller.abort();

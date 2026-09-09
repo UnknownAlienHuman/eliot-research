@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError, requestApi } from "./api.js";
-import { beginGoogleOAuth, decodeGoogleOAuthBeginEnvelope, newGoogleOAuthOperationRef } from "./google-oauth-api.js";
+import { beginGoogleOAuth, decodeGoogleOAuthBeginEnvelope, newGoogleOAuthOperationRef, readGoogleOAuthCallbackOutcome } from "./google-oauth-api.js";
 
 const begin = (overrides: Record<string, unknown> = {}) => ({
   data: {
@@ -19,6 +19,13 @@ afterEach(() => {
 });
 
 describe("Google OAuth begin decoder", () => {
+  it("accepts only fixed callback outcomes and rejects provider or secret fragments", () => {
+    expect(readGoogleOAuthCallbackOutcome("#eliotr-google-oauth=authorized")).toBe("authorized");
+    expect(readGoogleOAuthCallbackOutcome("#eliotr-google-oauth=denied")).toBe("denied");
+    for (const value of ["", "#eliotr-google-oauth=access_denied", "#eliotr-google-oauth=authorized&code=secret", "#oauth=authorized"]) {
+      expect(readGoogleOAuthCallbackOutcome(value)).toBeNull();
+    }
+  });
   it("accepts the exact begin envelope", () => {
     expect(decodeGoogleOAuthBeginEnvelope(begin()).intentId).toBe("intent-1");
   });

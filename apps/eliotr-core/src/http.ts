@@ -40,6 +40,7 @@ import {
 } from "./ingest-http.js";
 import { IngestServiceError } from "./ingest-service.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
+import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { readReadiness } from "./readiness.js";
 
 export interface HttpDependencies {
@@ -579,6 +580,9 @@ export async function handleHttp(
     if (resolved.match.route.operation === "google.oauth.begin") {
       requireNoQuery(url);
       return await handleGoogleOAuthBegin(request, env, context, identity, dependencies);
+    }
+    if (resolved.match.route.operation === "google.oauth.callback") {
+      return await handleGoogleOAuthCallback(request, env, context, identity, dependencies);
     }
     if (resolved.match.route.operation === "system.session") {
       requireNoQuery(url);
