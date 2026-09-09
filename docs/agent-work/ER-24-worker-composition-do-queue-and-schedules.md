@@ -19,6 +19,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/scheduled.ts`
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
+- `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
@@ -50,6 +51,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-ident-lex.test.ts`
 - `apps/eliotr-core/test/retrieval-q1-fixture.ts`
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
+- `apps/eliotr-core/src/exhaustive-query-service.test.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
@@ -115,6 +117,18 @@ readiness before projection success can be claimed.
 
 Full research/query execution, federation, Wiki, Drive and erasure remain
 typed unavailable or fail-closed.
+
+## Q8 exhaustive query composition
+
+The existing `research.query` route accepts the already-defined `EXHAUSTIVE_JOB`
+product through a separate strict parser and the versioned
+`eliotr.exhaustive-query.v1` result shape. ORIENT parsing and its metadata
+limits remain unchanged. The Q8 adapter owns scope freeze/currentness,
+authoritative normalized-section inventory and pinned section reads as injected
+ports, then delegates planning, exact verification, shard reconciliation and
+coverage to ER-07 Q7. The default Worker wiring is fail-closed until those
+authority ports are configured. A Q7 `result_artifact_ref` is a receipt
+reference; it is not a published research artifact.
 
 ## Acceptance
 

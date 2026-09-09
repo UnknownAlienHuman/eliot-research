@@ -16,6 +16,7 @@ import { readSourceRevisions } from "./source-revisions.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
+import { createExhaustiveQueryService } from "./exhaustive-query-service.js";
 import { readRetrievalTrace } from "@eliotr/retrieval";
 export { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
@@ -74,11 +75,14 @@ function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
   const researchQuery = createResearchQueryService(env);
+  const exhaustiveQuery = createExhaustiveQueryService(env);
   const researchRun = createResearchRunService(env);
   return {
     catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
-    query: (context, request) => researchQuery.query(context, request),
+    query: (context, request) => request.product === "EXHAUSTIVE_JOB"
+      ? exhaustiveQuery.query(context, request)
+      : researchQuery.query(context, request),
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
