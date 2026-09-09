@@ -164,3 +164,10 @@ health loss, scope changes and page disposal clear the private state and abort p
 not persist workflow IDs, source bytes, credentials or artifact references, and it does not turn a
 workflow artifact reference into an EvidenceHandle. A server-side recent-workflow listing is a
 separate follow-up owned by the backend; reload recovery is therefore not claimed by this slice.
+
+The ER27 owner browser harness has a bounded real-workflow scenario in
+`tests/integration/browser/exhaustive-workflow-browser.mjs`. It clicks the built PWA,
+requires the server-issued workflow identity, reads a non-terminal status, sends the
+real cancel action, and verifies terminal readback through the same Worker origin.
+The scenario is accepted only when `test:owner-e2e` passes on both Ubuntu and Windows;
+live qualification and reload recovery remain separate.

@@ -148,13 +148,17 @@ export function mountExhaustiveWorkflowPanel(
       body = exhaustiveQueryBody(query.value, scope.value === "selected" && selectedSourceId ? [selectedSourceId] : []);
     } catch (error) { statusText.textContent = message(error); return; }
     const active = ++serial;
+    const wasTerminal = terminalState;
     const generation = deploymentGeneration();
-    const local = new AbortController(); controller = local; busy = true; workflowId = undefined; workflowGeneration = generation; terminalState = false; buttons();
+    const local = new AbortController(); controller = local; busy = true; workflowId = undefined; workflowGeneration = generation; terminalState = false; delete element.dataset.workflowId; buttons();
     element.dispatchEvent(new CustomEvent("exhaustive:started", { bubbles: true }));
     status.textContent = "STARTING"; statusText.textContent = "Preparing the selected sources…"; detail.textContent = "Progress will be read from the server as it becomes available.";
-    if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
+    // A deliberate relaunch after a terminal result is a new operation even
+    // when the user keeps the same query and scope. Keep the key across a
+    // still-in-flight retry so a lost acknowledgement can reconcile safely.
+    if (body !== previousBody || wasTerminal) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
     void launchExhaustiveWorkflow(body, idempotencyKey, generation, local.signal)
-      .then((view) => { if (active === serial) { workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; return reconcile(view, active, local, workflowGeneration); } return Promise.resolve(); })
+      .then((view) => { if (active === serial) { workflowId = view.workflow_instance_id; element.dataset.workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; return reconcile(view, active, local, workflowGeneration); } return Promise.resolve(); })
       .catch((error: unknown) => { if (active === serial && !(error instanceof Error && error.name === "AbortError")) { if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") clearPrivate(); else statusText.textContent = message(error); } })
       .finally(() => { if (active === serial) { busy = false; controller = undefined; buttons(); } });
   };
@@ -181,7 +185,7 @@ export function mountExhaustiveWorkflowPanel(
   };
 
   const clearPrivate = (): void => {
-    serial += 1; controller?.abort(); controller = undefined; busy = false; cancelling = false; workflowId = undefined; workflowGeneration = undefined; terminalState = false; previousBody = ""; idempotencyKey = ""; selectedSourceId = undefined;
+    serial += 1; controller?.abort(); controller = undefined; busy = false; cancelling = false; workflowId = undefined; workflowGeneration = undefined; terminalState = false; previousBody = ""; idempotencyKey = ""; selectedSourceId = undefined; delete element.dataset.workflowId;
     status.textContent = healthReady() ? "READY" : "WAITING"; statusText.textContent = "Private scan state cleared. Reconnect before starting again."; detail.textContent = ""; progress.hidden = true; progressBar.style.width = "0%"; query.value = ""; scope.value = "library"; selectedScopeOption.disabled = true; buttons();
   };
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);

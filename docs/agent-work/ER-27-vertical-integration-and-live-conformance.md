@@ -35,6 +35,14 @@ outside the paths below.
 - Disposable assets are cleaned without deleting canonical production data.
 - Failed gate remains NOT EXECUTED/FAILED, never PASS by assumption.
 
+The owner browser harness also carries a bounded Q6 workflow scenario in
+`tests/integration/browser/exhaustive-workflow-browser.mjs`. It exercises the
+built PWA against the local Worker and durable Workflow: launch by click, an
+observed non-terminal status, server cancellation, and terminal readback. A
+fast natural completion is rejected as unsuitable for cancellation evidence;
+the scenario remains NOT EXECUTED until the real owner-e2e passes on both CI
+operating systems.
+
 ## Mandatory negative boundary
 
 Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.

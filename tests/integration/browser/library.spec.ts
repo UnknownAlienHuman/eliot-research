@@ -27,6 +27,7 @@ type E2EReceipt = {
   readonly browser_jwt_matrix: string;
   readonly artifact_ledger: string;
   readonly cross_client_ledger: string;
+  readonly exhaustive_workflow: string;
   readonly early_cleanup: string;
   readonly teardown_inventory: unknown;
   readonly live: string;
@@ -115,6 +116,8 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "browser-originated artifact lifecycle with replay must be fully asserted");
   assert.ok(typeof receipt.cross_client_ledger === "string" && receipt.cross_client_ledger.startsWith("PASS"),
     "cross-client ledger must be gapless, ordered and free of JWT material");
+  assert.ok(typeof receipt.exhaustive_workflow === "string" && receipt.exhaustive_workflow.startsWith("PASS"),
+    "real PWA exhaustive launch/status/cancel/readback must pass");
   assert.equal(receipt.early_cleanup, "PASS", "forced early-migration failure must leave zero run-owned residue");
   assert.ok(receipt.teardown_inventory !== null && typeof receipt.teardown_inventory === "object",
     "immutable before/after teardown inventories must be recorded");

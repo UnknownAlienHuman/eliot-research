@@ -15,6 +15,7 @@ import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
+import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -3983,6 +3984,7 @@ export async function runOwnerE2E() {
     browser_jwt_matrix: "PENDING",
     artifact_ledger: "PENDING",
     cross_client_ledger: "PENDING",
+    exhaustive_workflow: "PENDING",
     early_cleanup: "PENDING",
     teardown_inventory: "PENDING",
   };
@@ -4740,6 +4742,23 @@ export async function runOwnerE2E() {
     });
     receipt.network_ledger_phases.bridge_repair = summarizePhaseLedger(playwright);
     playwright.resetLedger();
+    // Q6 acceptance drives the built PWA against the real local Worker and
+    // durable Workflow. It requires an observed active job before DELETE, so
+    // a naturally completed fast job fails closed instead of becoming a false
+    // cancellation proof.
+    const exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
+      page: playwright.page, browserJson, ledger, query: "Pinned",
+    });
+    await settleLedger(playwright.page, playwright);
+    assertPhaseNetwork(playwright, "exhaustive_workflow", {
+      origins: [bridge.origin],
+      api: exhaustiveWorkflow.api,
+      mutations: exhaustiveWorkflow.mutations,
+      workerOrigins: trackOrigin(bridge.origin),
+    });
+    receipt.network_ledger_phases.exhaustive_workflow = summarizePhaseLedger(playwright);
+    receipt.exhaustive_workflow = `PASS (launch/status/cancel/readback ${exhaustiveWorkflow.workflowId})`;
+    playwright.resetLedger();
     playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "logout-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
@@ -5016,7 +5035,7 @@ export async function runOwnerE2E() {
       receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
     }
     receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;
-    receipt.network_ledger = `PASS (7 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
+    receipt.network_ledger = `PASS (8 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
     receipt.logout = "PASS";
     receipt.storage = "PASS";
     receipt.console_errors = "PASS";
