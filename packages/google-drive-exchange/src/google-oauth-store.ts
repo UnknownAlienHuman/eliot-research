@@ -1,7 +1,8 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
-import { GoogleCredentialError, credentialSnapshot, intentBinding, oauthClock, oauthConfiguration, oauthDigest, oauthFail, oauthIdentifier, oauthOwner,
-  sameGoogleCredentials, validateOAuthIntent, type GoogleCredentialSnapshot, type GoogleOAuthConfiguration,
-  type GoogleOAuthIntent, type GoogleOAuthIntentStore, type GoogleOAuthOwner } from "@eliotr/google-drive-exchange";
+import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot } from "./token-credentials.js";
+import { GoogleCredentialError, tokenBinding, type GoogleTokenBinding } from "./token-vault.js";
+import { intentBinding, oauthClock, oauthConfiguration, oauthDigest, oauthFail, oauthIdentifier, oauthOwner,
+  validateOAuthIntent, type GoogleOAuthConfiguration, type GoogleOAuthIntent, type GoogleOAuthIntentStore, type GoogleOAuthOwner } from "./oauth-types.js";
 import { createD1GoogleCredentialStore } from "./google-token-store.js";
 const SCHEMA = `EXISTS (SELECT 1 FROM schema_state WHERE key='google_oauth_intents_generation' AND value='google-oauth-intents-v1')
   AND EXISTS (SELECT 1 FROM schema_state WHERE key='google_credentials_generation' AND value='google-credentials-v1')`;

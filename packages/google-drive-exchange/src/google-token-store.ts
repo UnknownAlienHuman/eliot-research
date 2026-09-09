@@ -1,8 +1,10 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ExchangeGeneration } from "@eliotr/contracts";
-import { createGoogleAccessLeaseProvider, validateExchangeGeneration, credentialSnapshot, encryptedToken, GoogleCredentialError, sameGoogleCredentials, tokenBinding,
-  type GoogleTokenLeaseOptions, type GoogleConnectionState,
-  type EncryptedRefreshToken, type GoogleCredentialSnapshot, type GoogleCredentialStore, type GoogleTokenBinding } from "@eliotr/google-drive-exchange";
+import { createGoogleAccessLeaseProvider, type GoogleTokenLeaseOptions } from "./token-lease.js";
+import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot, type GoogleCredentialStore } from "./token-credentials.js";
+import { encryptedToken, GoogleCredentialError, tokenBinding, type GoogleConnectionState,
+  type EncryptedRefreshToken, type GoogleTokenBinding } from "./token-vault.js";
+import { validateExchangeGeneration } from "./serializer.js";
 
 const COLUMNS = `connection_id, principal_id, oauth_client_id, google_subject, google_email, credential_generation,
   credential_revision, state, scopes_json, oauth_publishing_status, refresh_expires_at_epoch_ms,
