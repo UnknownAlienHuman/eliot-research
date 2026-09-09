@@ -1365,6 +1365,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
     page.on("worker", (worker) => { pageWorkers.push(worker.url().slice(0, 512)); });
     const evaluate = (fn, arg) => page.evaluate(fn, arg);
     const resetLedger = () => {
+      assertPhaseResetReady(pendingRequests, `phase reset serial ${panelSerial}`);
       panelSerial += 1;
       consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
       requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
@@ -2977,6 +2978,16 @@ export function summarizePhaseLedger(harness) {
   };
 }
 
+// A phase reset may discard only a settled ledger. The pending set is the
+// authoritative fence: response.request() keeps its own WeakMap identity, so
+// erasing request rows while a request is live would leave a response with no
+// request row in the next phase.
+export function assertPhaseResetReady(pendingRequests, label = "phase reset") {
+  assert.ok(pendingRequests instanceof Set, `${label}: pending request ledger must be a Set`);
+  assert.equal(pendingRequests.size, 0,
+    `${label}: cannot reset a phase with ${pendingRequests.size} pending browser request(s)`);
+}
+
 async function awaitServiceWorkerRegistrationLifecycle(container = globalThis.navigator?.serviceWorker) {
   const serviceWorker = container ?? globalThis.navigator?.serviceWorker;
   if (!serviceWorker) return "unsupported";
@@ -3137,6 +3148,33 @@ export async function verifyServiceWorkerSettlementRegression() {
   return { protocol: "eliotr.owner-e2e.service-worker-settlement.v1", state: "PASS" };
 }
 
+export function verifyLedgerResetBoundaryRegression() {
+  const lateRequest = {};
+  const pendingRequests = new Set([lateRequest]);
+  const requests = [{ reqId: 91, path: "/sw.js" }];
+  const responses = [];
+  const reset = () => {
+    assertPhaseResetReady(pendingRequests, "late-response-before-settlement");
+    requests.length = 0;
+    responses.length = 0;
+  };
+  assert.throws(reset,
+    /cannot reset a phase with 1 pending browser request/u,
+    "a late response must block destructive phase reset before settlement");
+  assert.equal(requests.length, 1, "failed reset must retain the request row for later response pairing");
+  pendingRequests.delete(lateRequest);
+  responses.push({ reqId: 91, status: 200 });
+  assert.doesNotThrow(() => assertPhaseResetReady(pendingRequests, "late-response-after-settlement"),
+    "the same phase may reset after the request settles");
+  assert.equal(requests.length, 1, "settled request row remains available until the successful reset");
+  assert.deepEqual(responses, [{ reqId: 91, status: 200 }],
+    "the late response must be recorded before the successful reset");
+  assert.doesNotThrow(reset, "the successful reset must clear only after the late response settles");
+  assert.deepEqual(requests, [], "successful reset clears settled request rows");
+  assert.deepEqual(responses, [], "successful reset clears settled response rows");
+  return { protocol: "eliotr.owner-e2e.ledger-reset-boundary.v1", state: "PASS" };
+}
+
 async function settleLedger(page, harness) {
   // Settle-then-assert: networkidle is primary (existing 10s bound), then a
   // bounded pending-callback drain lets already-queued Playwright
@@ -3198,6 +3236,24 @@ function authedNetworkSpec(origin) {
       // (GET, no query) without a session because Chromium fetches it
       // credentialless while the Worker serves it publicly. Must succeed (200);
       // any other status is drift and fails below.
+      { method: "GET", path: "/manifest.webmanifest", status: 200 },
+    ],
+    mutations: ["/__local/pair"],
+    aborts: [
+      `GET ${origin}/api/v1/research/catalog?limit=20 :: net::ERR_ABORTED`,
+      `POST ${origin}/__local/pair :: net::ERR_ABORTED`,
+    ],
+  };
+}
+
+function bridgeRepairNetworkSpec(origin) {
+  return {
+    origins: [origin],
+    api: [
+      { method: "GET", path: "/__local/", status: 200 },
+      { method: "POST", path: "/__local/pair", status: 204 },
+      { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
+      { method: "GET", path: "/api/v1/system/health", status: 200 },
       { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
     mutations: ["/__local/pair"],
@@ -4351,6 +4407,7 @@ export async function runOwnerE2E() {
       .filter((item) => item.name.startsWith("eliotr_local_")).map((item) => item.name));
     try { await bridge?.close(); } catch { /* Close stale pre-restart bridge before post-restart PWA readback. */ }
     bridge = undefined;
+    await settleLedger(playwright.page, playwright);
     playwright.resetLedger();
     playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "startup-probe"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
@@ -4397,6 +4454,11 @@ export async function runOwnerE2E() {
     assert.equal(reNew[0].httpOnly, true, "re-paired cookie must be HttpOnly");
     assert.ok(!String(reNew[0].value).includes("eyJ"), "re-paired cookie must be opaque");
     const reSessionName = reNew[0].name;
+    await settleLedger(playwright.page, playwright);
+    assertPhaseNetwork(playwright, "bridge_repair", {
+      ...bridgeRepairNetworkSpec(bridge.origin), workerOrigins: trackOrigin(bridge.origin),
+    });
+    receipt.network_ledger_phases.bridge_repair = summarizePhaseLedger(playwright);
     playwright.resetLedger();
     playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "logout-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
@@ -4503,6 +4565,7 @@ export async function runOwnerE2E() {
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
       assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
       playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
@@ -4593,6 +4656,7 @@ export async function runOwnerE2E() {
       }
       receipt.network_ledger_phases.rotation = summarizePhaseLedger(playwright);
       receipt.jwks_rotation = `PASS (v1 denied 401/ACCESS_JWT_KEY_UNKNOWN, v2 allowed 200 via Node+Chromium, re-paired in Chromium, D1/R2 unchanged, jwks=v${jwks.version})`;
+      await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
     }
     // Ledger-negative seam: inject a successful unexpected response from the real
