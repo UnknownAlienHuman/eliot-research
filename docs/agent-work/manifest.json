@@ -317,6 +317,12 @@
         "packages/platform-cloudflare/src/ingest-test-fixture.ts",
         "packages/platform-cloudflare/src/ingest.test.ts",
         "packages/platform-cloudflare/src/ingest-resilience.test.ts",
+        "packages/cloudflare-raw-ingest/package.json",
+        "packages/cloudflare-raw-ingest/tsconfig.json",
+        "packages/cloudflare-raw-ingest/src/index.ts",
+        "packages/cloudflare-raw-ingest/src/raw-ingest-types.ts",
+        "packages/cloudflare-raw-ingest/src/raw-ingest.ts",
+        "packages/cloudflare-raw-ingest/src/raw-ingest.test.ts",
         "infra/r2/**"
       ],
       "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",

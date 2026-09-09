@@ -200,6 +200,15 @@ importers:
         specifier: workspace:*
         version: link:../retrieval
 
+  packages/cloudflare-raw-ingest:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
   packages/cloudflare-research:
     dependencies:
       '@eliotr/contracts':
