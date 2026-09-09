@@ -23,7 +23,7 @@ export interface GoogleOAuthAdmissionOptions {
 }
 function randomProof(): string { return oauthBase64(crypto.getRandomValues(new Uint8Array(32))); }
 
-// IMPLEMENTED_NOT_LIVE: ER-20 initial OAuth admission service; owner HTTP/PWA and provisioned exchange qualification remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-20 OAuth admission plus versioned reconnect lifecycle; PWA controls, provisioning and live qualification remain separate.
 export function createGoogleOAuthAdmission(options: GoogleOAuthAdmissionOptions) {
   const configuration = oauthConfiguration(options.configuration); const owner = oauthOwner(options.owner);
   const keys = new Map(options.keys); const activeKeyVersion = options.activeKeyVersion;

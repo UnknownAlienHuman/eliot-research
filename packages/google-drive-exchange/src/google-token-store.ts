@@ -28,8 +28,7 @@ function matches(row: GoogleCredentialSnapshot) {
     new Uint8Array(row.token.ciphertext).buffer, new Uint8Array(row.token.nonce).buffer, row.token.key_version];
 }
 /** Existing admitted rows only. This is NOT a public connect endpoint or an identity verifier. */
-// IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit
-// revoke; live Google qualification and full Drive activation remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit revoke/reconnect; live Google qualification and full Drive activation remain separate.
 export function createD1GoogleCredentialStore(database: D1Database, expected: GoogleTokenBinding,
   now: () => number = Date.now): GoogleCredentialStore {
   const binding = tokenBinding(expected);

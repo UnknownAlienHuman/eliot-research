@@ -394,7 +394,7 @@
     },
     {
       "id": "implemented-drive-credential-store",
-      "path": "apps/eliotr-core/src/google-token-store.ts",
+      "path": "packages/google-drive-exchange/src/google-token-store.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit revoke/reconnect; live Google qualification and full Drive activation remain separate.",
       "owner_packets": [
         "ER-13",
