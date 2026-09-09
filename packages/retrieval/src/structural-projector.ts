@@ -175,6 +175,123 @@ function heading(line: string): { level: number; title: string } | null {
   return { level: marker.length, title };
 }
 
+interface FenceOpener {
+  readonly char: "`" | "~";
+  readonly length: number;
+}
+
+function fenceOpener(line: string): FenceOpener | null {
+  const match = /^ {0,3}(`+|~+)/u.exec(line);
+  if (match === null) return null;
+  const run = match[1] ?? "";
+  if (run.length < 3) return null;
+  const char = (run[0] === "~" ? "~" : "`") as "`" | "~";
+  if (char === "`" && line.slice(match[0].length).includes("`")) return null;
+  return { char, length: run.length };
+}
+
+function fenceCloser(line: string, opener: FenceOpener): boolean {
+  const match = /^ {0,3}(`+|~+)[ \t]*(?:\r?\n)?$/u.exec(line);
+  if (match === null) return false;
+  const run = match[1] ?? "";
+  return run[0] === opener.char && run.length >= opener.length;
+}
+
+export interface MarkdownStructuralSection {
+  readonly label: string;
+  readonly heading_path: readonly string[];
+  readonly level: number;
+  readonly normalized_start_byte: number;
+  readonly normalized_end_byte: number;
+  readonly parent_index?: number;
+}
+
+/** Canonical bounded heading/fence/UTF-8 extraction shared by projection and navigation. */
+export function extractNormalizedMarkdownStructure(
+  markdown: string,
+  maxSections = MAX_ITEMS,
+): readonly MarkdownStructuralSection[] {
+  if (typeof markdown !== "string" || markdown.length === 0) {
+    fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown is empty");
+  }
+  if (!Number.isSafeInteger(maxSections) || maxSections < 1) {
+    fail("PROJECTION_INPUT_INVALID", "maxSections is invalid");
+  }
+  const lines = splitLines(markdown);
+  if (lines.length > 131_072) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "admitted lines exceed traversal bound");
+  const marks: { readonly level: number; readonly title: string; readonly start: number; readonly lineIndex: number }[] = [];
+  let inFence: FenceOpener | null = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (line === undefined) continue;
+    if (inFence !== null) {
+      if (fenceCloser(line.text, inFence)) inFence = null;
+      continue;
+    }
+    const opener = fenceOpener(line.text);
+    if (opener !== null) {
+      inFence = opener;
+      continue;
+    }
+    const found = heading(line.text);
+    if (found === null) continue;
+    if (utf8Length(found.title) > MAX_CONTEXT_BYTES) {
+      fail("PROJECTION_INPUT_INVALID", "heading exceeds short-text ceiling");
+    }
+    if (marks.length >= maxSections) {
+      fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
+    }
+    marks.push({ level: found.level, title: found.title, start: line.start, lineIndex: index });
+  }
+  const markdownByteLength = lines[lines.length - 1]?.end ?? 0;
+  if (marks.length === 0) {
+    if (markdownByteLength <= 0) fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown has no projectable bytes");
+    return [{ label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: markdownByteLength }];
+  }
+  const sections: MarkdownStructuralSection[] = [];
+  const path: { readonly title: string; readonly level: number; readonly index: number }[] = [];
+  for (let markIndex = 0; markIndex < marks.length; markIndex += 1) {
+    const mark = marks[markIndex];
+    if (mark === undefined) continue;
+    let end = markdownByteLength;
+    for (let later = markIndex + 1; later < marks.length; later += 1) {
+      const candidate = marks[later];
+      if (candidate !== undefined && candidate.level <= mark.level) {
+        end = candidate.start;
+        break;
+      }
+    }
+    if (end <= mark.start) fail("PROJECTION_OFFSET_INVALID", "section byte range is invalid");
+    while (path.length > 0 && (path[path.length - 1]?.level ?? 0) >= mark.level) path.pop();
+    const headingPath = [...path.map((entry) => entry.title), mark.title];
+    if (headingPath.length > 32) fail("PROJECTION_INPUT_INVALID", "heading path exceeds depth ceiling");
+    const parentEntry = path[path.length - 1];
+    sections.push({
+      label: mark.title,
+      heading_path: headingPath,
+      level: mark.level,
+      normalized_start_byte: mark.start,
+      normalized_end_byte: end,
+      ...(parentEntry === undefined
+        ? {}
+        : { parent_index: parentEntry.index }),
+    });
+    path.push({ title: mark.title, level: mark.level, index: sections.length - 1 });
+  }
+  const firstStart = marks[0]?.start ?? 0;
+  if (firstStart > 0) {
+    if (sections.length >= maxSections) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
+    return [
+      { label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: firstStart },
+      ...sections.map((section) => ({
+        ...section,
+        ...(section.parent_index === undefined ? {} : { parent_index: section.parent_index + 1 }),
+      })),
+    ];
+  }
+  return sections;
+}
+
 function pieces(markdown: string, maxBytes: number): readonly TextPiece[] {
   const result: TextPiece[] = [];
   const path: string[] = [];

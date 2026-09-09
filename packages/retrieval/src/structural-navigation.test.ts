@@ -48,20 +48,18 @@ describe("N1 structural navigation derivation", () => {
     expect(result.documentMap.unresolved_structure).toContain("PAGE_COORDINATES_NOT_INFERRED");
   });
 
-  it("rejects bytes that do not match the admitted revision and records approximate maps as gaps", async () => {
+  it("rejects bytes that do not match the admitted revision and keeps native maps an explicit gap", async () => {
     const markdown = "# Heading\n\nBody\n";
     const revision = await source(markdown);
     await expect(materializeStructuralNavigation({
       source_revision: revision, normalized_markdown: `${markdown}changed`,
       generator_generation: "structural-navigation-v1", created_at: NOW,
     })).rejects.toMatchObject({ code: "NAVIGATION_SOURCE_MISMATCH" });
-    const end = new TextEncoder().encode(markdown).byteLength;
     const result = await materializeStructuralNavigation({
       source_revision: revision, normalized_markdown: markdown,
-      coordinate_map_json: JSON.stringify([{ normalized_start_byte: 0, normalized_end_byte: end, precision: "APPROXIMATE" }]),
       generator_generation: "structural-navigation-v1", created_at: NOW,
     });
-    expect(result.documentMap.unresolved_structure).toContain("APPROXIMATE_COORDINATES_RECORDED_AS_GAP");
-    expect(result.documentMap.unresolved_structure).toContain("NATIVE_ANCHORS_PARTIAL_EXACT_ONLY");
+    expect(result.documentMap.unresolved_structure).toContain("COORDINATE_MAP_ABSENT_NATIVE_ANCHORS_UNAVAILABLE");
+    expect(result.documentMap.unresolved_structure).toContain("PAGE_COORDINATES_NOT_INFERRED");
   });
 });
