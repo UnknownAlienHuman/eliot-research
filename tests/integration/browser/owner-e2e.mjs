@@ -768,6 +768,9 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
       if (existing?.kind === "service-worker-script-finished-http-unobserved") {
         throw new Error(`response conflicts with service-worker-finished terminal reqId ${reqId}`);
       }
+      if (existing?.kind === "failure") {
+        throw new Error(`response conflicts with failure terminal reqId ${reqId}`);
+      }
       assert.ok(!seenResponseIds.has(reqId),
         `duplicate response reqId ${reqId} fails closed (one terminal outcome per request)`);
       seenResponseIds.add(reqId);
@@ -793,6 +796,9 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
     },
     noteFailure(reqId) {
       assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
+      const existing = terminalByReqId.get(reqId);
+      assert.equal(existing, undefined,
+        `duplicate/conflicting failure terminal reqId ${reqId}${existing ? ` (${existing.kind})` : ""}`);
       terminalByReqId.set(reqId, Object.freeze({ kind: "failure" }));
     },
     seenResponseIds: () => Object.freeze([...seenResponseIds]),
@@ -1375,6 +1381,11 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       trafficSequence += 1;
       const earlyStamp = requestIds.get(request);
       if (earlyStamp !== undefined && Number.isSafeInteger(earlyStamp.id) && terminals.shouldSuppressFailure(earlyStamp.id)) return;
+      let terminalConflict = null;
+      if (earlyStamp !== undefined && Number.isSafeInteger(earlyStamp.id)) {
+        try { terminals.noteFailure(earlyStamp.id); }
+        catch (error) { terminalConflict = String(error?.message ?? error).slice(0, 256); }
+      }
       // Legacy failure-time clock retained for message-compat diagnostics only;
       // the anchor never consults it. Pairing uses the failure's OWN reqId join.
       failedRequestClock.push({ epoch: navigationEpoch, serial: panelSerial });
@@ -1384,6 +1395,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       const stamp = requestIds.get(request);
       const entry = ledgerEntry(request.method(), request.url());
       failedRequestEntries.push({ text, ...entry, errorText: failure,
+        terminalConflict,
         reqId: typeof stamp?.id === "number" ? stamp.id : null,
         epoch: typeof stamp?.epoch === "number" ? stamp.epoch : null,
         serial: typeof stamp?.serial === "number" ? stamp.serial : null,
@@ -3616,6 +3628,20 @@ export function verifyServiceWorkerFinishedTerminalRegression(origin = "http://1
     "a late real response must conflict with, rather than overwrite, the tooling terminal");
   assert.equal(conflictingResponse.terminalByReqId().get(704)?.kind,
     "service-worker-script-finished-http-unobserved", "late response conflict must retain the raw tooling terminal");
+  const failureTerminal = createRequestTerminalTracker();
+  failureTerminal.noteFailure(705);
+  assert.throws(() => failureTerminal.noteFailure(705), /duplicate\/conflicting failure terminal/,
+    "duplicate failure must remain rejected");
+  assert.throws(() => failureTerminal.noteResponse(705, 200), /response conflicts with failure terminal/,
+    "late response after failure must remain rejected without overwriting failure");
+  const responseFailure = createRequestTerminalTracker();
+  responseFailure.noteResponse(706, 500);
+  assert.throws(() => responseFailure.noteFailure(706), /duplicate\/conflicting failure terminal/,
+    "failure after a non-contract response must remain rejected");
+  const toolingFailure = createRequestTerminalTracker();
+  toolingFailure.noteServiceWorkerFinished(707);
+  assert.throws(() => toolingFailure.noteFailure(707), /duplicate\/conflicting failure terminal/,
+    "failure after tooling service-worker terminal must remain rejected");
   const worker = { url: () => `${origin}/sw.js` };
   const observedWorkers = new WeakSet([worker]);
   const request = {
