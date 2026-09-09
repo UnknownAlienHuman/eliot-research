@@ -469,14 +469,16 @@ export async function validateExhaustiveWorkflowJobCurrent(
   jobId: string,
 ): Promise<void> {
   const row = await env.CORE_DB.prepare(
-    "SELECT scope_snapshot_id,scope_snapshot_revision,state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    "SELECT scope_snapshot_id,scope_snapshot_revision,state,expires_at FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
   ).bind(jobId).first<{
     readonly scope_snapshot_id: string;
     readonly scope_snapshot_revision: number;
     readonly state: string;
+    readonly expires_at: string;
   }>().catch(() => { throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive job authority read is unavailable", 503, true); });
   if (row === null || !["PENDING", "COMPLETE"].includes(row.state) || typeof row.scope_snapshot_id !== "string" ||
-      !Number.isSafeInteger(row.scope_snapshot_revision)) {
+      !Number.isSafeInteger(row.scope_snapshot_revision) || typeof row.expires_at !== "string" ||
+      new Date(row.expires_at).toISOString() !== row.expires_at || Date.parse(row.expires_at) <= Date.now()) {
     throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
   }
   const runtime = productionRuntime(env, context);

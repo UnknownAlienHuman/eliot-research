@@ -629,7 +629,7 @@
         "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts: create/status/cancel/list/readback adapter with request identity, owner policy, current-generation and output validation",
         "packages/interfaces/src/semantic-api.ts and packages/interfaces/src/routes.ts: versioned owner-only Workflow page DTO and static route contract",
         "apps/eliotr-core/src/research-workflow.ts: ER09 host extension validates durable binding and currentness before step.do and revalidates before persisting the bounded result",
-        "apps/eliotr-core/test/research-query-exhaustive.test.ts: actual local Q1 import/projection/HTTP launch, status, DELETE cancellation and no-resume assertions; apps/eliotr-core/test/research-query-jobs.test.ts: actual local Q1 HTTP launch/status plus owner-only paginated discovery and malformed/service cursor negatives; deployed Workflow, live Access and live user-loop qualification NOT_EXECUTED"
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: actual local Q1 import/projection/HTTP launch, status, DELETE cancellation and no-resume assertions; apps/eliotr-core/test/research-query-jobs.test.ts: actual local Q1 HTTP launch/status plus owner-only paginated discovery, distinct-ID keyset continuation, foreign owner/credential/deployment cursor rejection, expired-job refusal and grant-withdrawal-during-status invalidation; deployed Workflow, live Access and live user-loop qualification NOT_EXECUTED"
       ]
     }
   ]

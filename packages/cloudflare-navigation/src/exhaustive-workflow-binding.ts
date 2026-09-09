@@ -389,7 +389,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       }
       await requireActiveOwnerPolicy(input.database, context);
       const cursorClause = cursor === undefined ? "" :
-        " AND (w.created_at < ?5 OR (w.created_at = ?5 AND w.workflow_id < ?6))";
+        " AND (w.created_at < ?4 OR (w.created_at = ?4 AND w.workflow_id < ?5))";
       const values: unknown[] = [
         context.principal_ref,
         context.credential_generation,
