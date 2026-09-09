@@ -2,6 +2,21 @@ import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 
 export type GoogleExternalTransport = "disabled" | "gemini-mcp" | "drive-exchange";
 
+const GOOGLE_EXTERNAL_TRANSPORTS = new Set<GoogleExternalTransport>([
+  "disabled",
+  "gemini-mcp",
+  "drive-exchange",
+]);
+
+/** Parse the single deployment-selected transport; malformed config must not downgrade to disabled. */
+export function readGoogleExternalTransport(raw: unknown): GoogleExternalTransport {
+  if (raw === undefined) return "disabled";
+  if (typeof raw !== "string" || !GOOGLE_EXTERNAL_TRANSPORTS.has(raw as GoogleExternalTransport)) {
+    throw new Error("GOOGLE_EXTERNAL_TRANSPORT must be disabled, gemini-mcp, or drive-exchange");
+  }
+  return raw as GoogleExternalTransport;
+}
+
 export interface GeminiMcpToolDependencies {
   readonly google_transport: GoogleExternalTransport;
   readonly now: () => number;

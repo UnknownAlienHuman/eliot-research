@@ -3,9 +3,13 @@ export interface SystemHealth {
   readonly deployment_generation: string;
   readonly core_schema_generation: string | null;
   readonly search_schema_generation: string | null;
+  /** The selected Google Drive transport, when supplied by the deployment. */
+  readonly google_external_transport?: GoogleExternalTransport;
   readonly blocking_reason_codes: readonly string[];
   readonly checked_at: string;
 }
+
+export type GoogleExternalTransport = "disabled" | "gemini-mcp" | "drive-exchange";
 
 export interface ApiEnvelope<T> {
   readonly data: T;
@@ -49,10 +53,16 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function exactKeys(record: JsonRecord, allowed: readonly string[], label: string): void {
+function exactKeys(
+  record: JsonRecord,
+  allowed: readonly string[],
+  label: string,
+  optional: readonly string[] = [],
+): void {
   const allowedSet = new Set(allowed);
   const unexpected = Object.keys(record).filter((key) => !allowedSet.has(key));
-  const missing = allowed.filter((key) => !Object.hasOwn(record, key));
+  const optionalSet = new Set(optional);
+  const missing = allowed.filter((key) => !optionalSet.has(key) && !Object.hasOwn(record, key));
   if (unexpected.length > 0 || missing.length > 0) {
     throw new ApiRequestError({
       status: 502,
@@ -172,7 +182,8 @@ export function decodeSystemHealthEnvelope(value: unknown): SystemHealth {
     "search_schema_generation",
     "blocking_reason_codes",
     "checked_at",
-  ], "system health data");
+    "google_external_transport",
+  ], "system health data", ["google_external_transport"]);
   const ready = data.ready;
   if (typeof ready !== "boolean") {
     throw new ApiRequestError({
@@ -192,6 +203,18 @@ export function decodeSystemHealthEnvelope(value: unknown): SystemHealth {
       message: "system health envelope and payload generations differ",
     });
   }
+  let googleExternalTransport: GoogleExternalTransport | undefined;
+  if (Object.hasOwn(data, "google_external_transport")) {
+    const candidate = data.google_external_transport;
+    if (candidate !== "disabled" && candidate !== "gemini-mcp" && candidate !== "drive-exchange") {
+      throw new ApiRequestError({
+        status: 502,
+        code: "API_RESPONSE_SCHEMA_MISMATCH",
+        message: "data.google_external_transport is invalid",
+      });
+    }
+    googleExternalTransport = candidate;
+  }
   return {
     ready,
     deployment_generation: healthGeneration,
@@ -203,6 +226,7 @@ export function decodeSystemHealthEnvelope(value: unknown): SystemHealth {
       data.search_schema_generation,
       "data.search_schema_generation",
     ),
+    ...(googleExternalTransport === undefined ? {} : { google_external_transport: googleExternalTransport }),
     blocking_reason_codes: stringArray(
       data.blocking_reason_codes,
       "data.blocking_reason_codes",

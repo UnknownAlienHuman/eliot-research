@@ -17,6 +17,11 @@ Read `AGENTS.md`, the theme's named ER packet, its explicit canonical sections, 
   versioned ABI, test/budget gates and M5 shadow / M6 promotion / M7 removal.
 - Accepted `docs/adr/` decisions qualify those contracts; a task cannot silently supersede them.
 
+ADR-0006 scopes the legacy Google Cloud/custom OAuth requirements in ELIOT_RESEARCH §12 to the
+explicit `drive-exchange` profile. A selected `gemini-mcp` Workspace profile has its own pending
+authenticated candidate-admission and exact readback gate; this qualification is not yet a live
+Google integration claim and does not require Cloud project setup.
+
 Checkpoints below are subdivisions of existing packets, NOT new state owners. `Files` means the named
 owner's edit scope; another owner still controls shared changes. Register a new source/test file in the
 owning packet document and manifest together before use. Proposed paths/commands in a task are explicitly

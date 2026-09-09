@@ -307,6 +307,11 @@ D1, R2, Queue, Workflow, provider or model effect.
 
 ### 8.6 Required ChatGPT Drive Exchange — ER-18/ER-19/ER-20; optional Gemini ER-36
 
+See [ADR-0006](../adr/0006-google-external-transport-profiles.md). The checklist below is
+profile-aware: the legacy server-owned requirements are mandatory for explicit `drive-exchange`,
+while selected `gemini-mcp` uses the separate pending authenticated Workspace admission/readback
+gate. Common product gates remain mandatory for both profiles.
+
 - [ ] Finish exact Drive schema provisioning and generation activation.
 - [ ] Implement append/import/readback/reconnect and cursor reconciliation.
 - [ ] Detect historical-row mutation and tamper.
@@ -599,7 +604,9 @@ The immediate sequence from the current baseline is:
 5. **ER-06/16/31:** strict managed-search decoding and Corpus Lens query/orientation.
 6. **ER-09:** governed Research Workflow and durable checkpoints.
 7. **ER-11/12:** minimum Wiki and Artifact Compiler.
-8. **ER-18/19/20:** mandatory ChatGPT Drive code and real qualification; **ER-36:** optional Gemini service qualification when selected.
+8. **ER-18/19/20:** mandatory ChatGPT Drive code and real qualification when the explicit
+   `drive-exchange` profile is selected; **ER-36:** selected-profile Workspace admission/readback
+   qualification for `gemini-mcp`.
 9. **ER-25:** complete owner PWA loops.
 10. **ER-26/27:** staging deployment and T4 live conformance.
 11. **ER-23/31/32:** T2/T3 real corpus and generation promotion.

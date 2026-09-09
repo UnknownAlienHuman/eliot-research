@@ -55,8 +55,10 @@ Library-to-metadata-Lens and recorded-only revision history are on main. #98 now
 raw-file/project/active-readiness/error/full-browser acceptance.
 
 Google: G1a REST/serializer, encrypted vault/D1 refresh and internal first OAuth admission are on main.
-Use `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md`. Required Drive stays IN_PROGRESS;
-optional Gemini is not a substitute. First admission deliberately returns AUTHORIZING, not ACTIVE.
+Use `drive-rest.md`, `drive-credentials.md`, `drive-oauth-admission.md` for the explicit
+`drive-exchange` profile. Its Required Drive path stays IN_PROGRESS. The selected `gemini-mcp`
+profile follows a separate Workspace admission/readback gate and does not require the legacy
+custom OAuth path. Legacy first admission deliberately returns AUTHORIZING, not ACTIVE.
 
 Rust: M1 plus narrow canonical JSON/SHA/generation/residency shadow primitives exist. They accept their
 current schema domains (including safe-integer canonical-body rules), not every imaginable JSON value.

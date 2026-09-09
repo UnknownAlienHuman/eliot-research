@@ -1,5 +1,5 @@
 import "./styles.css";
-import { getSystemHealth, type SystemHealth } from "./api.js";
+import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
@@ -12,6 +12,9 @@ import type { ResolvedEvidence } from "@eliotr/contracts";
 const root = document.querySelector<HTMLDivElement>("#app");
 if (root === null) throw new Error("missing #app root");
 const app: HTMLDivElement = root;
+
+let googleOAuthCleanup: (() => void) | undefined;
+let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
 
 function healthBadge(health: SystemHealth | null): string {
   if (health === null) return '<span class="status status--pending">checking</span>';
@@ -35,6 +38,27 @@ function unavailableHealth(): SystemHealth {
     blocking_reason_codes: ["HEALTH_ENDPOINT_UNREACHABLE"],
     checked_at: new Date().toISOString(),
   };
+}
+
+function renderGoogleConnector(health: SystemHealth | null): void {
+  const host = app.querySelector<HTMLElement>("#google-oauth");
+  if (!host) return;
+  const mode: GoogleExternalTransport | "unknown" = health?.google_external_transport ?? "unknown";
+  if (mode === mountedGoogleTransport) return;
+  googleOAuthCleanup?.();
+  googleOAuthCleanup = undefined;
+  host.replaceChildren();
+  mountedGoogleTransport = mode;
+  if (mode === "drive-exchange") {
+    googleOAuthCleanup = mountGoogleOAuthPanel(host);
+    return;
+  }
+  const copy = mode === "gemini-mcp"
+    ? "Use Google Drive through the Workspace connector in Gemini Spark. Connection is managed in that client."
+    : mode === "disabled"
+      ? "Google Drive connection is unavailable for this workspace."
+      : "Google Drive connection status is unavailable for this workspace.";
+  host.innerHTML = `<section aria-label="Google Drive connection"><h2>Google Drive &amp; Workspace</h2><p class="connector-copy">${escapeHtml(copy)}</p></section>`;
 }
 
 function render(health: SystemHealth | null): void {
@@ -86,7 +110,7 @@ function render(health: SystemHealth | null): void {
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
-  const googleOAuth = app.querySelector<HTMLElement>("#google-oauth");
+  renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
@@ -164,12 +188,11 @@ function render(health: SystemHealth | null): void {
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
-    googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
     library ? mountLibraryPanel(library, (id) => {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
@@ -178,6 +201,7 @@ function updateHealth(health: SystemHealth): void {
     app.dispatchEvent(new Event("eliotr:health-lost"));
   }
   app.dataset.healthGeneration = health.deployment_generation;
+  renderGoogleConnector(health);
   const badge = app.querySelector("#health-badge");
   if (badge) badge.innerHTML = healthBadge(health);
   const summary = app.querySelector("#health-summary");

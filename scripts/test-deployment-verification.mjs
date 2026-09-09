@@ -9,11 +9,12 @@ const environment = {
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_OWNER_EMAILS: "owner@example.com", ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
   ELIOTR_ACCESS_AUDIENCE: "test-aud", ELIOTR_ACCESS_SERVICE_PRINCIPALS: "agent",
+  ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
   ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie",
 };
 const config = {
   name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
-  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging",
+  vars: { DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "agent" },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111" },
@@ -136,6 +137,7 @@ await check("generated identity, Access and D1 config", () => {
   assert.deepEqual(validateGeneratedDeployment(bytes, environment, input), config);
   for (const mutate of [
     (value) => { value.vars.DEPLOYMENT_GENERATION = "old"; },
+    (value) => { value.vars.GOOGLE_EXTERNAL_TRANSPORT = "drive-exchange"; },
     (value) => { value.vars.ACCESS_AUDIENCE = "other"; },
     (value) => { value.vars.ENVIRONMENT = "development"; },
     (value) => { value.keep_vars = true; },

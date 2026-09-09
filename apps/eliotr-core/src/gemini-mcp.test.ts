@@ -216,6 +216,17 @@ describe("Gemini Spark MCP HTTP boundary", () => {
   } as unknown as Env;
   const executionContext = {} as ExecutionContext;
 
+  it("fails closed on an unknown deployment transport", async () => {
+    const response = await handleGeminiMcp(
+      request({ jsonrpc: "2.0", id: 1, method: "ping" }, "2025-06-18", "https://mcp.example/mcp"),
+      { ...environment, GOOGLE_EXTERNAL_TRANSPORT: "gemini-and-drive" } as unknown as Env,
+      executionContext,
+      { accessVerifier: { async verify() { return { authentication_method: "service_token", principal_ref: "token.access" } as never; } } },
+    );
+    expect(response.status).toBe(503);
+    expect(await body(response)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
+  });
+
   it("is reachable only on the dedicated MCP hostname", async () => {
     let verificationCalled = false;
     const verifier: AccessVerifier = {
