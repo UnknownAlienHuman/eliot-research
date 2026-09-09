@@ -302,7 +302,8 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
         const result = await env.SEARCH_DB.prepare(
           "SELECT p.item_key, p.canonical_section_id, p.content_sha256, p.projection_generation, " +
           "s.normalized_start_byte, s.normalized_end_byte FROM projection_item p JOIN projection_span s " +
-          "ON s.item_key=p.item_key WHERE p.source_revision_ref=?1 AND p.active=1 " +
+          "ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref " +
+          "AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=?1 AND p.active=1 " +
           "ORDER BY p.canonical_section_id LIMIT 4097",
         ).bind(sourceRef).all<ExhaustiveProjectionRow>();
         if (!result.success || !Array.isArray(result.results)) throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "admitted projection inventory is unavailable", 503, true);
@@ -321,7 +322,16 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
           const key = `${sourceRef}:${row.canonical_section_id}`;
           if (sections.has(key)) fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory repeats a section", 409);
           sections.set(key, { source_revision_ref: sourceRef, section_ref: row.canonical_section_id, item_key: row.item_key, projection_generation: row.projection_generation, start: row.normalized_start_byte, end: row.normalized_end_byte });
-          descriptors.push({ section_ref: key, source_revision_ref: sourceRef, uncompressed_bytes: row.normalized_end_byte - row.normalized_start_byte });
+          descriptors.push({
+            section_ref: key,
+            source_revision_ref: sourceRef,
+            item_key: row.item_key,
+            content_sha256: row.content_sha256,
+            projection_generation: row.projection_generation,
+            normalized_start_byte: row.normalized_start_byte,
+            normalized_end_byte: row.normalized_end_byte,
+            uncompressed_bytes: row.normalized_end_byte - row.normalized_start_byte,
+          });
         }
       }
       return descriptors;

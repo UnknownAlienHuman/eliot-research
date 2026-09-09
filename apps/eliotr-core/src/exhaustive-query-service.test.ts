@@ -114,7 +114,11 @@ function runtimeFor(readSection: ExhaustiveQueryRuntime["readSection"]): Exhaust
   return {
     freezeScope: async () => scope,
     requireCurrentScope: async () => undefined,
-    inventorySections: async () => [{ section_ref: "section-1", source_revision_ref: "revision-1", uncompressed_bytes: 6 }],
+    inventorySections: async () => [{
+      section_ref: "section-1", source_revision_ref: "revision-1", item_key: "item-1",
+      content_sha256: DIGEST, projection_generation: "projection-1",
+      normalized_start_byte: 0, normalized_end_byte: 6, uncompressed_bytes: 6,
+    }],
     readSection,
     checkBudget: () => undefined,
   };

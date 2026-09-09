@@ -1,5 +1,5 @@
 import { ExhaustivePlanError } from "./exhaustive.js";
-import type { ExhaustiveSectionReader, ExhaustiveShardOutcome } from "./exhaustive.js";
+import type { ExhaustiveSectionDescriptor, ExhaustiveSectionReader, ExhaustiveShardOutcome } from "./exhaustive.js";
 import type { EvidenceHandle, ScopeSnapshot } from "@eliotr/contracts";
 import type { AdmittedCoordinateMap, PinnedSourceAuthority, VerifyPinnedExactInput } from "./evidence-resolver.js";
 import type { RetrievalQueryAccess, RetrievalQueryD1 } from "./query-persistence.js";
@@ -156,7 +156,7 @@ export function seedAuthority(database: RawDatabase, scope: ScopeSnapshot): void
 }
 
 export interface SectionHarness {
-  readonly descriptor: { readonly section_ref: string; readonly source_revision_ref: string; readonly uncompressed_bytes: number };
+  readonly descriptor: ExhaustiveSectionDescriptor;
   readonly input: VerifyPinnedExactInput;
 }
 
@@ -225,6 +225,11 @@ export async function sectionHarness(options: {
     descriptor: {
       section_ref: options.section_ref,
       source_revision_ref: options.source_revision_ref,
+      item_key: `item-${options.source_revision_ref}-${options.section_ref}`,
+      content_sha256: contentSha,
+      projection_generation: "projection-harness-v1",
+      normalized_start_byte: 0,
+      normalized_end_byte: fullBytes.byteLength,
       uncompressed_bytes: fullBytes.byteLength,
     },
     input: {

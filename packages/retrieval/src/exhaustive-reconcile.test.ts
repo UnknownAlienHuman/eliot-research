@@ -83,8 +83,8 @@ async function twoShardWorld(): Promise<{
     probes: ["needle"],
     plan_id: "reconcile-plan",
     sections: [
-      { ...first.descriptor, uncompressed_bytes: big },
-      { ...second.descriptor, uncompressed_bytes: big },
+      { ...first.descriptor, normalized_end_byte: big, uncompressed_bytes: big },
+      { ...second.descriptor, normalized_end_byte: big, uncompressed_bytes: big },
     ],
   });
   if (plan.shards.length !== 2) throw new Error("expected a two-shard denominator");
