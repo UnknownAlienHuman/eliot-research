@@ -311,12 +311,17 @@ D1, R2, Queue, Workflow, provider or model effect.
 - [ ] Implement append/import/readback/reconnect and cursor reconciliation.
 - [ ] Detect historical-row mutation and tamper.
 - [ ] Store refresh tokens encrypted and expose `REAUTH_REQUIRED` without losing canonical artifacts.
-- [ ] Implement the mandatory Day-0 ChatGPT Drive Exchange from canonical §§12.3–12.12 and ADR-0003;
-      interface-only ports and the optional Gemini planner do not satisfy this item.
-- [ ] Select exactly one active ChatGPT write transport; a future qualified native app replaces Drive,
-      rather than adding a simultaneous writer. No accepted ADR currently replaces Drive with Gemini.
+- [ ] Implement the Day-0 ChatGPT Drive Exchange from canonical §§12.3–12.12 and ADR-0003 when that
+      server-owned ChatGPT transport profile is selected; interface-only ports and the optional Gemini
+      planner do not satisfy this item. The current 2026-09-09 user-selected Workspace/Gemini profile
+      leaves this unfinished path separate and does not authorize Google Cloud project/client setup.
+- [ ] Select exactly one active ChatGPT write transport within the selected ChatGPT profile; a future
+      qualified native app replaces Drive rather than adding a simultaneous writer. Workspace/Gemini
+      client orchestration is a separate profile, not an implicit replacement or Cloud prerequisite.
 - [ ] When the optional Gemini service is explicitly selected, separately qualify Access/MCP and exact
-      Workspace/gcloud action readbacks. Self-reported v1 observations cannot substitute for these gates.
+      readbacks for each selected profile. The default user profile is Workspace/Drive; gcloud,
+      Google Cloud, Vertex and Google AI Studio/Gemini API are independent optional profiles.
+      Self-reported v1 observations cannot substitute for these gates.
       Preserve existing mutual-exclusion guards until the reviewed production profile is composed.
 
 ### 8.7 Owner PWA — ER-25
@@ -356,13 +361,13 @@ Provision by exact name and read back:
 scheduled triggers
 ```
 
-Google staging requires:
+Google staging requirements depend on the selected profile:
 
 ```text
-one project
-one dedicated test account
-one exact exchange spreadsheet and folder
-Workspace/gcloud OAuth or ADC as selected
+Workspace profile: external Workspace OAuth/consent for the selected Drive/Docs/Sheets action
+Cloud profile (optional): Google Cloud project plus gcloud OAuth/ADC
+ChatGPT Drive Exchange (separate legacy profile): dedicated account, exact exchange spreadsheet/folder,
+  and its own server OAuth configuration when that profile is explicitly selected
 ```
 
 - [ ] Create least-privilege Cloudflare and Google credentials.

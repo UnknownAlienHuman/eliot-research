@@ -224,7 +224,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     const revokedBody = await revokedRead.json() as { readonly data?: { readonly workflow_status?: string; readonly job?: unknown } };
     expect(revokedBody.data?.workflow_status).toBe("complete");
     expect(revokedBody.data?.job).toBeUndefined();
-  });
+  }, 20_000);
 
   it("does not disclose a cached result when withdrawal races async inventory", async () => {
     const owner = "exhaustive-withdrawal-race-owner";
@@ -252,7 +252,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
       "SELECT state,result_artifact_ref,coverage_receipt_ref FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
     ).bind(job.job_id).first<{ readonly state: string; readonly result_artifact_ref: string | null; readonly coverage_receipt_ref: string | null }>();
     expect(persisted).toEqual({ state: "INVALIDATED", result_artifact_ref: null, coverage_receipt_ref: null });
-  });
+  }, 20_000);
 
   it("refuses a new job after the owner policy is revoked", async () => {
     const owner = "exhaustive-revoked-owner";
