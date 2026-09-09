@@ -234,13 +234,46 @@ describe("initial Google OAuth with real RSA, vault and D1", () => {
     expect(latest.revision).toBe(first.revision + 1); expect(latest.state).toBe("AUTHORIZING");
     expect(latest.binding.credential_generation).toBe(`oauth-grant:${reconnectIntent.intent_id}`);
   });
+  it("rejects a late callback from an older concurrent reconnect intent", async () => {
+    const test = await setup("late-reconnect"); await test.service.finish(test.callback, signal());
+    const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());
+    const options = { ...test.options, reconnect: { expected_generation: first.binding.credential_generation, expected_revision: first.revision } };
+    const firstReconnect = createD1GoogleOAuthAdmission(options); const secondReconnect = createD1GoogleOAuthAdmission(options);
+    const firstStart = await firstReconnect.begin("operation-late-reconnect-a", signal());
+    const secondStart = await secondReconnect.begin("operation-late-reconnect-b", signal());
+    const firstUrl = new URL(firstStart.authorization_url); const secondUrl = new URL(secondStart.authorization_url);
+    test.setAuthorization(firstUrl);
+    await firstReconnect.finish({ iss: "https://accounts.google.com", state: firstUrl.searchParams.get("state") ?? "", code: "code-fixture" }, signal());
+    test.setAuthorization(secondUrl);
+    await expect(secondReconnect.finish({ iss: "https://accounts.google.com", state: secondUrl.searchParams.get("state") ?? "", code: "code-fixture" }, signal()))
+      .rejects.toThrow();
+    const latest = await db.prepare("SELECT credential_generation,credential_revision,state FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(test.options.configuration.connection_id).first<{ credential_generation: string; credential_revision: number; state: string }>();
+    expect(latest?.credential_revision).toBe(first.revision + 1); expect(latest?.state).toBe("AUTHORIZING");
+  });
   it("cleans expired proof with a bounded digest-only receipt", async () => {
     const test = await setup("cleanup"); test.clock(OAUTH_TEST_TIME + 600000);
     expect(await cleanupExpiredGoogleOAuthIntents(db, test.options.now, 32)).toBeGreaterThan(0);
     expect(await db.prepare("SELECT 1 FROM google_oauth_intent WHERE intent_id=?1").bind(test.start.intent_id).first()).toBeNull();
-    const receipt = await db.prepare("SELECT operation_ref,state_sha256,terminal_state FROM google_oauth_intent_receipt WHERE intent_id=?1")
+    const receipt = await db.prepare("SELECT operation_ref,principal_id,configuration_json,state_sha256,terminal_state FROM google_oauth_intent_receipt WHERE intent_id=?1")
       .bind(test.start.intent_id).first<Record<string, unknown>>();
     expect(receipt?.operation_ref).toBe("operation-cleanup"); expect(receipt?.terminal_state).toBe("EXPIRED");
+    expect(receipt?.principal_id).toBe(test.options.owner.principal_id); expect(receipt?.configuration_json).toContain(test.options.configuration.connection_id);
+    expect(receipt?.state_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    await expect(test.service.begin("operation-cleanup", signal())).rejects.toThrow();
+  });
+  it("does not retain a receipt or delete reconnect metadata when a claim wins the cleanup race", async () => {
+    const test = await setup("cleanup-race"); test.clock(OAUTH_TEST_TIME + 600000); let raced = false;
+    const database = intercepted(async (phase, sql) => {
+      if (phase === "before" && sql === "BATCH" && !raced) {
+        raced = true;
+        await db.prepare("UPDATE google_oauth_intent SET state='EXCHANGING',attempt_id='cleanup-race-attempt',code_sha256=?1 WHERE intent_id=?2")
+          .bind("a".repeat(64), test.start.intent_id).run();
+      }
+    });
+    await cleanupExpiredGoogleOAuthIntents(database, test.options.now, 32);
+    expect(await db.prepare("SELECT state FROM google_oauth_intent WHERE intent_id=?1").bind(test.start.intent_id).first<{ state: string }>()).toEqual({ state: "EXCHANGING" });
+    expect(await db.prepare("SELECT 1 FROM google_oauth_intent_receipt WHERE intent_id=?1").bind(test.start.intent_id).first()).toBeNull();
   });
   it("rejects owner revocation after Google responds, before credential admission", async () => {
     const test = await setup("owner-revoked"); let revoked = false;

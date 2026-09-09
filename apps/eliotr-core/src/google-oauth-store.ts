@@ -79,6 +79,7 @@ export function createD1GoogleOAuthIntentStore(database: D1Database, config: Goo
               WHERE ${SCHEMA} AND EXISTS (SELECT 1 FROM google_exchange_connection c WHERE c.connection_id=?12
                 AND c.principal_id=?3 AND c.oauth_client_id=?15 AND c.google_subject=?16 AND c.google_email=?17
                 AND c.credential_generation=?13 AND c.credential_revision=?14 AND c.oauth_publishing_status='In production')
+              AND NOT EXISTS (SELECT 1 FROM google_oauth_intent_receipt r WHERE r.principal_id=?3 AND r.operation_ref=?2)
               AND (SELECT count(*) FROM google_oauth_intent WHERE principal_id=?3 AND state='PENDING' AND expires_at_epoch_ms>?10)<16
               ON CONFLICT DO NOTHING`).bind(intent.intent_id, intent.operation_ref, owner.principal_id, owner.session_generation, serialized,
               intent.state_sha256, new Uint8Array(intent.secrets.ciphertext).buffer, new Uint8Array(intent.secrets.nonce).buffer,
@@ -92,6 +93,7 @@ export function createD1GoogleOAuthIntentStore(database: D1Database, config: Goo
         } else {
         await db.prepare(`INSERT INTO google_oauth_intent(${COLUMNS}) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'PENDING',NULL,NULL,NULL,NULL
           WHERE ${SCHEMA} AND NOT EXISTS(SELECT 1 FROM google_exchange_connection WHERE connection_id=?12)
+          AND NOT EXISTS (SELECT 1 FROM google_oauth_intent_receipt r WHERE r.principal_id=?3 AND r.operation_ref=?2)
           AND (SELECT count(*) FROM google_oauth_intent WHERE principal_id=?3 AND state='PENDING' AND expires_at_epoch_ms>?10)<16
           ON CONFLICT DO NOTHING`).bind(intent.intent_id, intent.operation_ref, owner.principal_id, owner.session_generation, serialized,
           intent.state_sha256, new Uint8Array(intent.secrets.ciphertext).buffer, new Uint8Array(intent.secrets.nonce).buffer,
@@ -107,9 +109,13 @@ export function createD1GoogleOAuthIntentStore(database: D1Database, config: Goo
       try {
         await db.prepare(`UPDATE google_oauth_intent SET state='EXCHANGING',attempt_id=?1,code_sha256=?2 WHERE intent_id=?3
           AND principal_id=?4 AND session_generation=?5 AND configuration_json=?6 AND state='PENDING' AND expires_at_epoch_ms>?7
-          AND ${SCHEMA} ${lifecycle === undefined ? "AND NOT EXISTS(SELECT 1 FROM google_exchange_connection WHERE connection_id=?8)" : ""}`)
+          AND ${SCHEMA} ${lifecycle === undefined || lifecycle === "auto"
+            ? (lifecycle === "auto"
+              ? "AND (NOT EXISTS(SELECT 1 FROM google_exchange_connection WHERE connection_id=?8) OR EXISTS(SELECT 1 FROM google_oauth_reconnect_intent r WHERE r.intent_id=?3))"
+              : "AND NOT EXISTS(SELECT 1 FROM google_exchange_connection WHERE connection_id=?8)")
+            : "AND EXISTS(SELECT 1 FROM google_oauth_reconnect_intent r WHERE r.intent_id=?3)"}`)
           .bind(attemptId, codeHash, intent.intent_id, owner.principal_id, owner.session_generation, serialized,
-            oauthClock(now), ...(lifecycle === undefined ? [configuration.connection_id] : [])).run();
+            oauthClock(now), ...(lifecycle === undefined || lifecycle === "auto" ? [configuration.connection_id] : [])).run();
       } catch { /* Only the exact attempt owner may continue after readback. */ }
       const actual = await find(intent.state_sha256, signal);
       if (comparable(actual) !== comparable(next)) return oauthFail("GOOGLE_OAUTH_ALREADY_ATTEMPTED");
@@ -141,11 +147,15 @@ export function createD1GoogleOAuthIntentStore(database: D1Database, config: Goo
           credential_generation=?9,credential_revision=?10,oauth_publishing_status='In production',refresh_expires_at_epoch_ms=?11,admission_intent_id=?12
           WHERE connection_id=?13 AND principal_id=?14 AND oauth_client_id=?8 AND google_subject=?15 AND google_email=?16
             AND credential_generation=?17 AND credential_revision=?18 AND state IN ('ACTIVE','DEGRADED','REAUTH_REQUIRED','REVOKED','DISCONNECTED','AUTHORIZING')
+            AND EXISTS (SELECT 1 FROM google_oauth_intent i WHERE i.intent_id=?19 AND i.principal_id=?20 AND i.session_generation=?21
+              AND i.configuration_json=?22 AND i.state='EXCHANGING' AND i.attempt_id=?23 AND i.code_sha256=?24
+              AND i.expires_at_epoch_ms>?25 AND ${SCHEMA})
             AND ${SCHEMA}`)
           .bind(b.google_subject, b.google_email, JSON.stringify(credential.granted_scopes), new Uint8Array(token.ciphertext).buffer,
             new Uint8Array(token.nonce).buffer, token.key_version, time, b.oauth_client_id, b.credential_generation, credential.revision,
             credential.refresh_expires_at_epoch_ms, intent.intent_id, b.connection_id, owner.principal_id, reconnect.current_subject,
-            reconnect.current_email, reconnect.expected_generation, reconnect.expected_revision);
+            reconnect.current_email, reconnect.expected_generation, reconnect.expected_revision,
+            intent.intent_id, owner.principal_id, owner.session_generation, serialized, intent.attempt_id, intent.code_sha256, oauthClock(now));
         const completeReconnect = db.prepare(`UPDATE google_oauth_intent SET state='ADMITTED',id_token_sha256=?8,credential_sha256=?9
           WHERE ${activeClaimSql} AND EXISTS(SELECT 1 FROM google_exchange_connection c WHERE c.connection_id=?10
             AND c.admission_intent_id=?11 AND c.credential_generation=?12 AND c.credential_revision=?13 AND c.state='AUTHORIZING')`)
@@ -214,21 +224,37 @@ export async function cleanupExpiredGoogleOAuthIntents(database: D1Database, now
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32) throw new GoogleCredentialError("GOOGLE_OAUTH_INPUT_INVALID");
   const time = now(); if (!Number.isSafeInteger(time) || time < 0) throw new GoogleCredentialError("GOOGLE_CLOCK_INVALID");
   const db = database.withSession("first-primary");
-  const rows = await db.prepare(`SELECT intent_id,operation_ref,state_sha256,state FROM google_oauth_intent
+  const rows = await db.prepare(`SELECT intent_id,operation_ref,principal_id,configuration_json,state_sha256,state FROM google_oauth_intent
     WHERE expires_at_epoch_ms<=?1 AND state IN ('PENDING','DENIED','FAILED') ORDER BY expires_at_epoch_ms,intent_id LIMIT ?2`)
     .bind(time, limit).all<Record<string, unknown>>().catch(() => oauthFail("GOOGLE_OAUTH_STORE_UNAVAILABLE"));
   const statements: D1PreparedStatement[] = [];
   for (const row of rows.results) {
-    if (typeof row.intent_id !== "string" || typeof row.operation_ref !== "string" || typeof row.state_sha256 !== "string"
+    if (typeof row.intent_id !== "string" || typeof row.operation_ref !== "string" || typeof row.principal_id !== "string"
+        || typeof row.configuration_json !== "string" || typeof row.state_sha256 !== "string"
         || typeof row.state !== "string" || !["PENDING", "DENIED", "FAILED"].includes(row.state)) continue;
     const terminal = row.state === "PENDING" ? "EXPIRED" : row.state;
     const timestamp = new Date(time).toISOString();
-    statements.push(db.prepare(`INSERT OR IGNORE INTO google_oauth_intent_receipt(intent_id,operation_ref,state_sha256,terminal_state,terminal_at,retained_at)
-      VALUES(?1,?2,?3,?4,?5,?5)`).bind(row.intent_id, row.operation_ref, row.state_sha256, terminal, timestamp));
-    statements.push(db.prepare("DELETE FROM google_oauth_reconnect_intent WHERE intent_id=?1").bind(row.intent_id));
-    statements.push(db.prepare(`DELETE FROM google_oauth_intent WHERE intent_id=?1 AND expires_at_epoch_ms<=?2 AND state IN ('PENDING','DENIED','FAILED')`)
+    // D1 batches are atomic, and the intent delete is the commit fence. A
+    // concurrent claim makes it a no-op; changes() then suppresses receipt
+    // creation, so neither a live claim nor its reconnect metadata is lost.
+    statements.push(db.prepare(`DELETE FROM google_oauth_reconnect_intent WHERE intent_id=?1
+      AND EXISTS (SELECT 1 FROM google_oauth_intent i WHERE i.intent_id=?1 AND i.expires_at_epoch_ms<=?2 AND i.state IN ('PENDING','DENIED','FAILED'))`)
       .bind(row.intent_id, time));
+    statements.push(db.prepare(`DELETE FROM google_oauth_intent WHERE intent_id=?1 AND expires_at_epoch_ms<=?2 AND state IN ('PENDING','DENIED','FAILED')
+      AND NOT EXISTS (SELECT 1 FROM google_oauth_reconnect_intent r WHERE r.intent_id=?1)`)
+      .bind(row.intent_id, time));
+    statements.push(db.prepare(`INSERT OR IGNORE INTO google_oauth_intent_receipt(intent_id,operation_ref,principal_id,configuration_json,state_sha256,terminal_state,terminal_at,retained_at)
+      SELECT ?1,?2,?3,?4,?5,?6,?7,?7 WHERE changes()=1`).bind(row.intent_id, row.operation_ref, row.principal_id,
+      row.configuration_json, row.state_sha256, terminal, timestamp));
   }
-  if (statements.length > 0) await db.batch(statements).catch(() => oauthFail("GOOGLE_OAUTH_STORE_UNAVAILABLE"));
-  return Math.floor(statements.length / 3);
+  if (statements.length === 0) return 0;
+  const results = await db.batch(statements).catch(() => oauthFail("GOOGLE_OAUTH_STORE_UNAVAILABLE"));
+  let cleaned = 0;
+  for (let index = 0; index < results.length; index += 3) {
+    // The middle statement is the exact parent delete. Only that transition
+    // authorizes a retained receipt; a concurrent claim therefore counts as
+    // zero even when other expired rows were cleaned in the same batch.
+    if (results[index + 1]?.meta.changes === 1 && results[index + 2]?.meta.changes === 1) cleaned += 1;
+  }
+  return cleaned;
 }

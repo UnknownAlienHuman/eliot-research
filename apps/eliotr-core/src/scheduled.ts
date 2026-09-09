@@ -5,6 +5,8 @@ import {
   type DeliveryMessage,
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
+import { cleanupExpiredGoogleOAuthIntents } from "./google-oauth-store.js";
+import { readReadiness, REQUIRED_CORE_SCHEMA_GENERATION } from "./readiness.js";
 
 const OUTBOX_BATCH_LIMIT = 50;
 
@@ -43,6 +45,12 @@ export async function handleScheduled(
   event: ScheduledController,
   env: Env,
 ): Promise<void> {
+  // OAuth proof cleanup is maintenance only and runs after the core migration
+  // gate is current. It is bounded and leaves admitted intents untouched.
+  const readiness = await readReadiness(env);
+  if (readiness.core_schema_generation === REQUIRED_CORE_SCHEMA_GENERATION) {
+    await cleanupExpiredGoogleOAuthIntents(env.CORE_DB, Date.now, 32);
+  }
   const store = createD1OutboxStore(env.CORE_DB);
   const dispatcher = createOutboxDispatcher(
     store,
