@@ -34,38 +34,48 @@ function assertRawEnvelope(value, expectedGeneration, expected) {
   return receipt;
 }
 
-async function waitForRawResponse(page, method, action) {
+export async function waitForRawResponse(page, method, action) {
+  const expectedOrigin = (() => {
+    try { return new URL(page.url()).origin; } catch { return undefined; }
+  })();
+  const mainFrame = typeof page.mainFrame === "function" ? page.mainFrame() : undefined;
   const responsePromise = page.waitForResponse((response) => {
     try {
-      return response.request().method() === method && new URL(response.url()).pathname === "/api/v1/ingest/raw";
+      const request = response.request();
+      const responseUrl = new URL(response.url());
+      if (expectedOrigin !== undefined && responseUrl.origin !== expectedOrigin) return false;
+      if (mainFrame !== undefined && typeof request.frame === "function" && request.frame() !== mainFrame) return false;
+      return request.method() === method && responseUrl.pathname === "/api/v1/ingest/raw";
     } catch { return false; }
   }, { timeout: 30000 });
-  await action();
-  const response = await responsePromise;
-  const status = response.status();
-  let body;
-  try {
-    // Buffer the body before any caller can navigate or trigger another
-    // lifecycle transition. Chromium may discard a response body after its
-    // document is navigated away, even though the response event already ran.
-    body = await response.body();
-  } catch (error) {
-    throw new Error(`raw ${method} response body was unavailable at settlement`, { cause: error });
-  }
-  const requestHeaders = await response.request().allHeaders();
-  let payload;
-  try {
-    payload = JSON.parse(body.toString("utf8"));
-  } catch (error) {
-    if (status === 200) {
-      throw new Error(`raw ${method} response must be JSON`, { cause: error });
+  const snapshotPromise = responsePromise.then(async (response) => {
+    const status = response.status();
+    let body;
+    try {
+      // Start buffering before the action can navigate or trigger another
+      // lifecycle transition. Chromium may discard a response body after its
+      // document is navigated away, even though the response event already ran.
+      body = await response.body();
+    } catch (error) {
+      throw new Error(`raw ${method} response body was unavailable at settlement`, { cause: error });
     }
+    const requestHeaders = await response.request().allHeaders();
+    let payload;
+    try {
+      payload = JSON.parse(body.toString("utf8"));
+    } catch (error) {
+      if (status === 200) {
+        throw new Error(`raw ${method} response must be JSON`, { cause: error });
+      }
+    }
+    return { status, requestHeaders, payload };
+  });
+  const [, snapshot] = await Promise.all([Promise.resolve().then(action), snapshotPromise]);
+  if (snapshot.status !== 200) {
+    const code = String(snapshot.payload?.code ?? snapshot.payload?.data?.code ?? snapshot.payload?.title ?? "unavailable").slice(0, 128);
+    throw new Error(`raw ${method} must succeed through the real Worker: status=${snapshot.status} code=${code}`);
   }
-  if (status !== 200) {
-    const code = String(payload?.code ?? payload?.data?.code ?? payload?.title ?? "unavailable").slice(0, 128);
-    throw new Error(`raw ${method} must succeed through the real Worker: status=${status} code=${code}`);
-  }
-  return { response, requestHeaders, payload };
+  return snapshot;
 }
 
 /**
@@ -91,7 +101,6 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
   await setFile();
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
   const postSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click());
-  const postResponse = postSnapshot.response;
   const postHeaders = postSnapshot.requestHeaders;
   assert.equal(decodeURIComponent(postHeaders["x-eliotr-original-file-name"] ?? ""), expected.name,
     "browser upload must preserve the UTF-8 original filename header");
@@ -101,7 +110,7 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
     "Chromium must supply Content-Length for the File body");
   const postEnvelope = postSnapshot.payload;
   const receipt = assertRawEnvelope(postEnvelope, expectedGeneration, expected);
-  ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postResponse.status(),
+  ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postSnapshot.status,
     correlation: "e2e-raw-upload/post", token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
   assert.match(await panel.locator("[data-raw-status]").textContent(), /File saved/u);
@@ -119,12 +128,11 @@ export async function recoverRawFileUploadOwnerScenario({ page, expectedGenerati
   await input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-recover]")?.disabled === false, null, { timeout: 15000 });
   const responseSnapshot = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-recover]").click());
-  const response = responseSnapshot.response;
   const requestHeaders = responseSnapshot.requestHeaders;
   assert.equal(requestHeaders["idempotency-key"], idempotencyKey, "recovery GET must use the original idempotency key");
   const receipt = assertRawEnvelope(responseSnapshot.payload, expectedGeneration, expected);
   assert.equal(receipt.capture_id, captureId, "recovery GET must return the original durable capture");
-  ledger?.record({ client: "browser", method: "GET", path: "/api/v1/ingest/raw", status: response.status(),
+  ledger?.record({ client: "browser", method: "GET", path: "/api/v1/ingest/raw", status: responseSnapshot.status,
     correlation: "e2e-raw-upload/recovery", token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
   assert.match(await panel.locator("[data-raw-status]").textContent(), /Existing upload found/u);
