@@ -91,7 +91,17 @@ export function observeDatabase(hook: (sql: string, phase: "before" | "after") =
     } });
     originals.set(proxy, statement); return proxy;
   };
+  const wrapSession = (session: D1DatabaseSession) => new Proxy(session, { get(target, key) {
+    if (key === "prepare") return (sql: string) => wrap(target.prepare(sql), sql);
+    if (key === "batch") return async (statements: D1PreparedStatement[]) => {
+      await hook("BATCH", "before");
+      const result = await target.batch(statements.map((item) => originals.get(item) ?? item));
+      await hook("BATCH", "after"); return result;
+    };
+    const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
+  } });
   return new Proxy(db, { get(target, key) {
+    if (key === "withSession") return (constraint: "first-primary") => wrapSession(target.withSession(constraint));
     if (key === "prepare") return (sql: string) => wrap(target.prepare(sql), sql);
     if (key === "batch") return async (statements: D1PreparedStatement[]) => {
       await hook("BATCH", "before");

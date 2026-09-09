@@ -1,7 +1,7 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ExchangeGeneration } from "@eliotr/contracts";
 import { createGoogleAccessLeaseProvider, type GoogleTokenLeaseOptions } from "./token-lease.js";
-import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot, type GoogleCredentialStore } from "./token-credentials.js";
+import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot, type GoogleCredentialStore, type GoogleDisconnectReceiptFence } from "./token-credentials.js";
 import { encryptedToken, GoogleCredentialError, tokenBinding, type GoogleConnectionState,
   type EncryptedRefreshToken, type GoogleTokenBinding } from "./token-vault.js";
 import { validateExchangeGeneration } from "./serializer.js";
@@ -86,25 +86,58 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
     if (!sameGoogleCredentials(actual, next)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
     return actual;
   };
-  const revoke = async (expectedRow: GoogleCredentialSnapshot, signal: AbortSignal): Promise<GoogleCredentialSnapshot> => {
+  const revocationPlan = (expectedRow: GoogleCredentialSnapshot, signal: AbortSignal) => {
     cancelled(signal); const previous = credentialSnapshot(expectedRow);
     if (JSON.stringify(previous.binding) !== JSON.stringify(binding)) return fail("GOOGLE_CREDENTIAL_CHANGED");
     const next = credentialSnapshot({ ...previous, revision: previous.revision + 1, state: "REVOKED" });
     const time = now(); if (!Number.isSafeInteger(time) || time < 0 || time > 8640000000000000) return fail("GOOGLE_CLOCK_INVALID");
+    return { previous, next, timestamp: new Date(time).toISOString() } as const;
+  };
+  const revoke = async (expectedRow: GoogleCredentialSnapshot, signal: AbortSignal): Promise<GoogleCredentialSnapshot> => {
+    const { previous, next, timestamp } = revocationPlan(expectedRow, signal);
     let changed = false; let uncertain = false;
     try {
       const result = await db.prepare(`UPDATE google_exchange_connection SET state='REVOKED',credential_revision=?15,last_error_code='GOOGLE_REVOKED',updated_at=?16
         WHERE ${WHERE} AND state IN ('ACTIVE','DEGRADED','REAUTH_REQUIRED','AUTHORIZING') AND ${SCHEMA}`)
-        .bind(...matches(previous), next.revision, new Date(time).toISOString()).run();
+        .bind(...matches(previous), next.revision, timestamp).run();
       changed = result.meta.changes === 1;
     } catch { uncertain = true; /* Lost ACK is reconciled by the exact readback. */ }
     const actual = await load(signal);
     if (!sameGoogleCredentials(actual, next) || (!changed && !uncertain)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
     return actual;
   };
+  const revokeWithDisconnectReceipt = async (expectedRow: GoogleCredentialSnapshot, receipt: GoogleDisconnectReceiptFence,
+    signal: AbortSignal): Promise<GoogleCredentialSnapshot> => {
+    const { previous, next, timestamp } = revocationPlan(expectedRow, signal);
+    if (receipt.connection_id !== binding.connection_id || receipt.principal_id !== binding.principal_id
+        || receipt.expected_credential_generation !== previous.binding.credential_generation
+        || receipt.expected_credential_revision !== previous.revision) return fail("GOOGLE_CREDENTIAL_CHANGED");
+    const credentialUpdate = db.prepare(`UPDATE google_exchange_connection SET state='REVOKED',credential_revision=?15,last_error_code='GOOGLE_REVOKED',updated_at=?16
+      WHERE ${WHERE} AND state IN ('ACTIVE','DEGRADED','REAUTH_REQUIRED','AUTHORIZING') AND ${SCHEMA}
+        AND EXISTS (SELECT 1 FROM google_oauth_disconnect_receipt r WHERE r.principal_id=?17 AND r.operation_ref=?18
+          AND r.connection_id=?19 AND r.configuration_json=?20 AND r.expected_credential_generation=?21
+          AND r.expected_credential_revision=?22 AND r.result_state IS NULL)`)
+      .bind(...matches(previous), next.revision, timestamp, receipt.principal_id, receipt.operation_ref, receipt.connection_id,
+        receipt.configuration_json, receipt.expected_credential_generation, receipt.expected_credential_revision);
+    const receiptUpdate = db.prepare(`UPDATE google_oauth_disconnect_receipt SET result_credential_generation=?3,result_credential_revision=?4,result_state='REVOKED'
+      WHERE principal_id=?1 AND operation_ref=?2 AND connection_id=?5 AND configuration_json=?6
+        AND expected_credential_generation=?7 AND expected_credential_revision=?8 AND result_state IS NULL
+        AND EXISTS (SELECT 1 FROM google_exchange_connection c WHERE c.connection_id=?5 AND c.principal_id=?1
+          AND c.oauth_client_id=?9 AND c.google_subject=?10 AND c.google_email=?11
+          AND c.credential_generation=?3 AND c.credential_revision=?4 AND c.state='REVOKED' AND c.updated_at=?12 AND ${SCHEMA})`)
+      .bind(receipt.principal_id, receipt.operation_ref, next.binding.credential_generation, next.revision, receipt.connection_id,
+        receipt.configuration_json, receipt.expected_credential_generation, receipt.expected_credential_revision,
+        binding.oauth_client_id, binding.google_subject, binding.google_email, timestamp);
+    try { await db.batch([credentialUpdate, receiptUpdate]); }
+    catch { /* Reconcile both effects by exact credential and receipt readback. */ }
+    const actual = await load(signal);
+    if (!sameGoogleCredentials(actual, next)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
+    return actual;
+  };
   return { load, assertCurrent,
     replaceToken: (snapshot, token, expiry, signal) => change(snapshot, encryptedToken(token), expiry, signal),
     requireReauthorization: async (snapshot, signal) => { await change(snapshot, null, snapshot.refresh_expires_at_epoch_ms, signal); }, revoke,
+    revokeWithDisconnectReceipt,
   };
 }
 

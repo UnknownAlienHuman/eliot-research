@@ -135,7 +135,7 @@ export async function handleGoogleConnectionDisconnect(request: Request, env: En
       error.code, "Google connection lifecycle state changed", error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE");
     throw error;
   }
-  if (receipt.result_state !== null) return apiResult(request, env, result(receipt));
+  if (receipt.result_state !== null) { await guard(); return apiResult(request, env, result(receipt)); }
   const binding: GoogleTokenBinding = tokenBinding({ connection_id: config.connection_id, principal_id: context.principal_ref,
     oauth_client_id: config.oauth_client_id, google_subject: config.google_subject, google_email: config.google_email,
     credential_generation: input.expected_generation });
@@ -145,15 +145,14 @@ export async function handleGoogleConnectionDisconnect(request: Request, env: En
     if (current.revision !== input.expected_revision || current.binding.credential_generation !== input.expected_generation || store.revoke === undefined) {
       if (current.revision === input.expected_revision + 1 && current.binding.credential_generation === input.expected_generation && current.state === "REVOKED") {
         const settled = await readReceipt();
-        if (settled?.result_state === "REVOKED") return apiResult(request, env, result(settled));
+        if (settled?.result_state === "REVOKED") { await guard(); return apiResult(request, env, result(settled)); }
       }
       throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
     }
-    const revoked = await store.revoke(current, request.signal);
-    await env.CORE_DB.prepare(`UPDATE google_oauth_disconnect_receipt SET result_credential_generation=?3,result_credential_revision=?4,result_state='REVOKED'
-      WHERE principal_id=?1 AND operation_ref=?2 AND expected_credential_generation=?5 AND expected_credential_revision=?6 AND result_state IS NULL`)
-      .bind(receiptKey.principal_id, receiptKey.operation_ref, revoked.binding.credential_generation, revoked.revision,
-        input.expected_generation, input.expected_revision).run();
+    if (store.revokeWithDisconnectReceipt === undefined) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
+    await store.revokeWithDisconnectReceipt(current, { principal_id: receiptKey.principal_id, operation_ref: receiptKey.operation_ref,
+      connection_id: config.connection_id, configuration_json: configurationJson,
+      expected_credential_generation: input.expected_generation, expected_credential_revision: input.expected_revision }, request.signal);
     const settled = await readReceipt();
     if (settled?.result_state !== "REVOKED") throw new GoogleCredentialError("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
     receipt = settled;

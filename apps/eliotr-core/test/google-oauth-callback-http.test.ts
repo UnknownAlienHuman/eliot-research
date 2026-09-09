@@ -251,15 +251,41 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
       .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
     expect(current).not.toBeNull(); let dropped = false;
     const database = observeDatabase(async (sql, phase) => {
-      if (phase === "after" && sql.includes("UPDATE google_oauth_disconnect_receipt") && !dropped) { dropped = true; throw new Error("lost ACK"); }
+      if (phase === "after" && sql === "BATCH" && !dropped) { dropped = true; throw new Error("lost ACK"); }
     });
     const body = { operation_ref: "g3-http-lost-disconnect", expected_credential_generation: current?.credential_generation,
       expected_credential_revision: current?.credential_revision };
     const uncertain = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), { ...env, CORE_DB: database } as never,
       {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
-    expect(uncertain.status).toBe(500); expect(dropped).toBe(true);
+    expect(uncertain.status).toBe(200); expect(dropped).toBe(true);
     const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never,
       {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(replay.status).toBe(200); expect((await json(replay)).data).toMatchObject({ state: "REVOKED", credential_revision: 2 });
+  });
+  it("rolls back the credential revoke when the terminal receipt stage fails", async () => {
+    const env = googleEnv(); const owner = "g3-http-atomic-receipt";
+    const started = await begin(env, owner, "g3-http-atomic-initial"); callbackNonce = started.nonce;
+    expect((await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never })).status).toBe(303);
+    const connectionId = (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID;
+    const current = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    const trigger = `g3_receipt_abort_${crypto.randomUUID().replaceAll("-", "")}`;
+    await db.prepare(`CREATE TRIGGER ${trigger} BEFORE UPDATE OF result_state ON google_oauth_disconnect_receipt
+      WHEN NEW.result_state='REVOKED' BEGIN SELECT RAISE(ABORT, 'receipt stage failure'); END`).run();
+    const body = { operation_ref: "g3-http-atomic-disconnect", expected_credential_generation: current?.credential_generation,
+      expected_credential_revision: current?.credential_revision };
+    try {
+      const failed = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+      expect(failed.status).toBe(409);
+      expect(await db.prepare("SELECT credential_revision,state FROM google_exchange_connection WHERE connection_id=?1")
+        .bind(connectionId).first()).toMatchObject({ credential_revision: current?.credential_revision, state: "AUTHORIZING" });
+      expect(await db.prepare("SELECT result_state FROM google_oauth_disconnect_receipt WHERE principal_id=?1 AND operation_ref=?2")
+        .bind(owner, body.operation_ref).first()).toMatchObject({ result_state: null });
+    } finally {
+      await db.prepare(`DROP TRIGGER ${trigger}`).run();
+    }
+    const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
     expect(replay.status).toBe(200); expect((await json(replay)).data).toMatchObject({ state: "REVOKED", credential_revision: 2 });
   });
 });
