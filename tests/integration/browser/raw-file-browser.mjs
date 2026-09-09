@@ -42,15 +42,30 @@ async function waitForRawResponse(page, method, action) {
   }, { timeout: 30000 });
   await action();
   const response = await responsePromise;
-  if (response.status() !== 200) {
-    let code = "unavailable";
-    try {
-      const body = await response.json();
-      code = String(body?.code ?? body?.data?.code ?? body?.title ?? "unavailable").slice(0, 128);
-    } catch { /* bounded status/code diagnostic only */ }
-    throw new Error(`raw ${method} must succeed through the real Worker: status=${response.status()} code=${code}`);
+  const status = response.status();
+  let body;
+  try {
+    // Buffer the body before any caller can navigate or trigger another
+    // lifecycle transition. Chromium may discard a response body after its
+    // document is navigated away, even though the response event already ran.
+    body = await response.body();
+  } catch (error) {
+    throw new Error(`raw ${method} response body was unavailable at settlement`, { cause: error });
   }
-  return response;
+  const requestHeaders = await response.request().allHeaders();
+  let payload;
+  try {
+    payload = JSON.parse(body.toString("utf8"));
+  } catch (error) {
+    if (status === 200) {
+      throw new Error(`raw ${method} response must be JSON`, { cause: error });
+    }
+  }
+  if (status !== 200) {
+    const code = String(payload?.code ?? payload?.data?.code ?? payload?.title ?? "unavailable").slice(0, 128);
+    throw new Error(`raw ${method} must succeed through the real Worker: status=${status} code=${code}`);
+  }
+  return { response, requestHeaders, payload };
 }
 
 /**
@@ -75,15 +90,16 @@ export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, 
   const setFile = async () => input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
   await setFile();
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
-  const postResponse = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click());
-  const postHeaders = await postResponse.request().allHeaders();
+  const postSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click());
+  const postResponse = postSnapshot.response;
+  const postHeaders = postSnapshot.requestHeaders;
   assert.equal(decodeURIComponent(postHeaders["x-eliotr-original-file-name"] ?? ""), expected.name,
     "browser upload must preserve the UTF-8 original filename header");
   assert.equal(postHeaders["x-eliotr-content-sha256"], expected.digest, "browser upload must bind the selected bytes");
   assert.equal(postHeaders["content-type"], expected.type, "browser upload must bind the selected MIME type");
   assert.ok(Number.parseInt(postHeaders["content-length"] ?? "", 10) === expected.bytes.length,
     "Chromium must supply Content-Length for the File body");
-  const postEnvelope = await postResponse.json();
+  const postEnvelope = postSnapshot.payload;
   const receipt = assertRawEnvelope(postEnvelope, expectedGeneration, expected);
   ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postResponse.status(),
     correlation: "e2e-raw-upload/post", token_present: false });
@@ -102,10 +118,11 @@ export async function recoverRawFileUploadOwnerScenario({ page, expectedGenerati
   await page.waitForSelector("#raw-upload [data-raw-file]", { timeout: 15000 });
   await input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-recover]")?.disabled === false, null, { timeout: 15000 });
-  const response = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-recover]").click());
-  const requestHeaders = await response.request().allHeaders();
+  const responseSnapshot = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-recover]").click());
+  const response = responseSnapshot.response;
+  const requestHeaders = responseSnapshot.requestHeaders;
   assert.equal(requestHeaders["idempotency-key"], idempotencyKey, "recovery GET must use the original idempotency key");
-  const receipt = assertRawEnvelope(await response.json(), expectedGeneration, expected);
+  const receipt = assertRawEnvelope(responseSnapshot.payload, expectedGeneration, expected);
   assert.equal(receipt.capture_id, captureId, "recovery GET must return the original durable capture");
   ledger?.record({ client: "browser", method: "GET", path: "/api/v1/ingest/raw", status: response.status(),
     correlation: "e2e-raw-upload/recovery", token_present: false });
