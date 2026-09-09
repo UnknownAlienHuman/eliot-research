@@ -16,7 +16,7 @@ function translate(error: unknown): never {
   throw error;
 }
 
-export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): ExhaustiveWorkflowService<ExhaustiveQueryRequest> {
+export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): ExhaustiveWorkflowService {
   return createNavigationWorkflowService(env, translate);
 }
 

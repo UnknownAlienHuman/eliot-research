@@ -21,14 +21,14 @@ export interface ExhaustiveWorkflowServiceInput<T> extends ExhaustiveWorkflowBin
   readonly translateError?: (error: unknown) => never;
 }
 
-export interface ExhaustiveWorkflowService<T> {
+export interface ExhaustiveWorkflowService {
   launch(context: AuthenticatedRequestContext, raw: unknown): Promise<ExhaustiveWorkflowResult>;
   status(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
   cancel(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
   list(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
 }
 
-function createExhaustiveWorkflowBindingService<T>(input: ExhaustiveWorkflowServiceInput<T>): ExhaustiveWorkflowService<T> {
+function createExhaustiveWorkflowBindingService<T>(input: ExhaustiveWorkflowServiceInput<T>): ExhaustiveWorkflowService {
   const binding = createExhaustiveWorkflowBinding(input);
   const translateError = input.translateError ?? ((error: unknown): never => { throw error; });
   return {
@@ -47,7 +47,7 @@ export function createExhaustiveWorkflowService(
     readonly DEPLOYMENT_GENERATION: string;
   },
   translateError?: (error: unknown) => never,
-): ExhaustiveWorkflowService<ExhaustiveQueryRequest> {
+): ExhaustiveWorkflowService {
   return createExhaustiveWorkflowBindingService({
     database: env.CORE_DB,
     workflow: env.RESEARCH_WORKFLOW,
