@@ -330,6 +330,12 @@ async function dispatch(
   match: RouteMatch,
   url: URL,
 ): Promise<Response> {
+  const requiresReadiness = match.route.operation !== "system.health" &&
+    match.route.operation !== "system.capabilities";
+  if (requiresReadiness) {
+    const blocked = await requireApplicationReady(request, application);
+    if (blocked !== null) return blocked;
+  }
   switch (match.route.operation) {
     case "system.health":
       requireNoQuery(url);
@@ -338,13 +344,9 @@ async function dispatch(
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "library.source.revisions": {
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
     }
     case "research.catalog": {
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       return apiResult(
         request,
         env,
@@ -353,22 +355,16 @@ async function dispatch(
     }
     case "research.orient": {
       requireNoQuery(url);
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       return apiResult(request, env, await application.services.semantic.orient(context,
         await readOrientationRequest(request, match.route.maximum_request_bytes)));
     }
     case "research.trace": {
       requireNoQuery(url);
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       const ref = match.params.ref;
       if (ref === undefined) throw new OrientationError("ORIENTATION_TRACE_INVALID", 400);
       return apiResult(request, env, await application.services.semantic.trace(context, { id: ref, revision: 1 }));
     }
     case "research.verify": {
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       return apiResult(
         request,
         env,
@@ -379,8 +375,6 @@ async function dispatch(
       );
     }
     case "research.open": {
-      const blocked = await requireApplicationReady(request, application);
-      if (blocked !== null) return blocked;
       const ref = match.params.ref;
       if (ref === undefined) throw new EvidenceHttpInputError(
         "EVIDENCE_HANDLE_REF_INVALID",
@@ -395,8 +389,6 @@ async function dispatch(
     }
     default:
       if (match.route.operation.startsWith("ingest.")) {
-        const blocked = await requireApplicationReady(request, application);
-        if (blocked !== null) return blocked;
         return apiResult(
           request,
           env,
@@ -412,8 +404,6 @@ async function dispatch(
         );
       }
       {
-        const blocked = await requireApplicationReady(request, application);
-        if (blocked !== null) return blocked;
         if (match.route.operation === "research.query") {
           requireNoQuery(url);
           const workflowId = match.params.workflow_id;
