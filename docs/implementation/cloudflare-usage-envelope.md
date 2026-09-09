@@ -213,6 +213,12 @@ a short page WITHOUT totals proves nothing (`PARTIAL_PAGINATION`, never
 `fullAccount:true`), and totals present on page 1 then absent on a later
 page fail closed — ambiguity never admits.
 
+Cloudflare's Queue list response for an empty account is a special coherent
+case: `result: []` with `result_info` exactly carrying `page: 1`, `per_page: 100`,
+`count: 0`, `total_count: 0`, and `total_pages: 0`. The collector records one
+completed logical page for this response; other zero-page combinations,
+contradictory counts, or nonempty results remain typed malformed.
+
 The live registry (`buildLiveProviderRegistry`) wires all four inventory
 collectors plus the Usage v2 billing provider: D1, R2, and Queue collectors
 return `authoritative_inventory` metadata for their complete resource lists

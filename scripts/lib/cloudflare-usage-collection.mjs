@@ -76,6 +76,17 @@ function isReportableValue(value) {
     (typeof value === "number" && Number.isFinite(value) && value >= 0);
 }
 
+function inventoryCoverageSummary(coverage) {
+  if (coverage !== null && typeof coverage === "object" &&
+    Number.isInteger(coverage.completedPages) && Number.isInteger(coverage.totalPages)) {
+    return `${coverage.completedPages}/${coverage.totalPages}`;
+  }
+  if (coverage !== null && typeof coverage === "object" && Number.isInteger(coverage.completedCursors)) {
+    return `cursors:${coverage.completedCursors}`;
+  }
+  return "1/1";
+}
+
 export function monthlyWindowFor(nowMs) {
   const now = new Date(nowMs);
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
@@ -464,7 +475,7 @@ export async function collectAccountUsage(options = {}) {
           group,
           ok: true,
           keys: [],
-          pages: coverage ? `${coverage.completedPages}/${coverage.totalPages}` : "1/1",
+          pages: inventoryCoverageSummary(coverage),
           inventory_count: Array.isArray(reported.inventory) ? reported.inventory.length : 0,
         };
       } else {

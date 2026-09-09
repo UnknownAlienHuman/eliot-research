@@ -223,18 +223,30 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
           const value = valInfo(name);
           if (!Number.isInteger(value) || value < min) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus }); }
         };
-        checkField("page", 1);
-        checkField("per_page", 1);
-        checkField("total_pages", 1);
-        checkField("count", 0);
-        checkField("total_count", 0);
         const pageOwn = valInfo("page");
         const perPageOwn = valInfo("per_page");
         const totalPagesOwn = valInfo("total_pages");
         const countOwn = valInfo("count");
         const totalCountOwn = valInfo("total_count");
         const countedTotalOwn = valInfo("counted_total");
-        if (Number.isInteger(totalPagesOwn) && totalPagesOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
+        // Cloudflare's Queue list endpoint returns total_pages: 0 for an
+        // empty account even though page 1 is the completed response. This
+        // exception is deliberately exact: a zero total is accepted only
+        // with the complete empty-page tuple; all other zero totals remain
+        // malformed and cannot hide truncation or contradictory rows.
+        const coherentEmptyQueue = group === "queue-inventory-list" &&
+          resultOwn.length === 0 &&
+          hasInfo("page") && pageOwn === 1 &&
+          hasInfo("per_page") && Number.isInteger(perPageOwn) && perPageOwn === perPage &&
+          hasInfo("count") && countOwn === 0 &&
+          hasInfo("total_count") && totalCountOwn === 0 &&
+          hasInfo("total_pages") && totalPagesOwn === 0;
+        checkField("page", 1);
+        checkField("per_page", 1);
+        checkField("total_pages", coherentEmptyQueue ? 0 : 1);
+        checkField("count", 0);
+        checkField("total_count", 0);
+        if (Number.isInteger(totalPagesOwn) && totalPagesOwn < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
         if (Number.isInteger(perPageOwn) && perPageOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus }); }
         if (Number.isInteger(countOwn) && countOwn < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus }); }
         const hasPaginationMeta = hasInfo("page") || hasInfo("per_page") || hasInfo("count") || hasInfo("total_count") || hasInfo("total_pages");
@@ -246,6 +258,14 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         requireStable("per_page", perPageOwn);
         requireStable("total_count", totalCountOwn);
         if (Number.isInteger(totalCountOwn) && totalCountOwn < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
+        if (coherentEmptyQueue) {
+          // Normalize the API's zero-page marker to one completed logical
+          // request so coverage remains a truthful full-account proof.
+          totalPages = 1;
+          pagesCompleted[pagesCompleted.length] = page;
+          page += 1;
+          break;
+        }
         if (Number.isInteger(totalCountOwn)) { expectedPagesFromCount = totalCountOwn === 0 ? 1 : Math.ceil(totalCountOwn / Math.max(1, effectivePerPage)); }
         requireStable("total_pages", totalPagesOwn);
         if (Number.isInteger(totalPagesOwn)) {

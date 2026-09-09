@@ -122,6 +122,38 @@ await check("documented D1, R2, and Queue inventories carry metadata provenance"
   assert.equal(queueReported.inventory[0].queue_name, "eliotr-jobs");
 });
 
+await check("Queue accepts only the coherent empty total_pages=0 response", async () => {
+  const endpoint = (id, page, perPage) =>
+    `https://api.cloudflare.com/client/v4/accounts/${id}/queues?page=${page}&per_page=${perPage}`;
+  const emptyResponse = {
+    success: true,
+    result: [],
+    result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 0 },
+  };
+  const emptyQueue = createPaginatedInventoryProvider({
+    group: "queue-inventory-list",
+    endpoint,
+    fetchImpl: async () => okJson(emptyResponse),
+  });
+  const reported = await emptyQueue.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.deepEqual(reported.inventory, []);
+  assert.deepEqual(reported.coverage, { accountId: ACCOUNT, completedPages: 1, totalPages: 1, fullAccount: true });
+  const contradictoryQueue = createPaginatedInventoryProvider({
+    group: "queue-inventory-list",
+    endpoint,
+    fetchImpl: async () => okJson({
+      success: true,
+      result: [{ queue_id: "unexpected" }],
+      result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 0 },
+    }),
+  });
+  await assert.rejects(
+    contradictoryQueue.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "nonempty Queue result with total_pages=0 must remain malformed",
+  );
+});
+
 const REVIEWED_TRIPLE = { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" };
 function registryFetch({ billableStatus = 200, billableRows = null } = {}) {
   return async (url) => {
@@ -256,6 +288,14 @@ await check("R2 uses cursor pagination over result.buckets with progress validat
   const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
   assert.equal(reported.inventory.length, 2);
   assert.equal(reported.coverage.completedCursors, 2);
+  const diagnosticProvider = createR2CursorInventoryProvider({
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets`,
+    fetchImpl: async () => okJson({ success: true, result: { buckets: [{ name: "diagnostic" }] } }),
+  });
+  const diagnosticSnapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [diagnosticProvider],
+  });
+  assert.equal(diagnosticSnapshot.readback.provider_results[0].pages, "cursors:1");
   // Repeated cursor without progress fails closed.
   // Distinct bucket per hop: duplicate identity must hit MALFORMED, not this path.
   let loopingHop = 0;
