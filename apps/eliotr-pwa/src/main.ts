@@ -40,15 +40,6 @@ function unavailableHealth(): SystemHealth {
   };
 }
 
-function googleConnectorLabel(transport: GoogleExternalTransport | undefined): string {
-  switch (transport) {
-    case "drive-exchange": return "Drive exchange";
-    case "gemini-mcp": return "Workspace client";
-    case "disabled": return "Unavailable";
-    default: return "Unknown";
-  }
-}
-
 function renderGoogleConnector(health: SystemHealth | null): void {
   const host = app.querySelector<HTMLElement>("#google-oauth");
   if (!host) return;
@@ -63,7 +54,7 @@ function renderGoogleConnector(health: SystemHealth | null): void {
     return;
   }
   const copy = mode === "gemini-mcp"
-    ? "Google Drive & Workspace is connected through your workspace client. Server readiness will appear here when available."
+    ? "Use Google Drive through the Workspace connector in Gemini Spark. Connection is managed in that client."
     : mode === "disabled"
       ? "Google Drive connection is unavailable for this workspace."
       : "Google Drive connection status is unavailable for this workspace.";
