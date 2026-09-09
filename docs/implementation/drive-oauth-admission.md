@@ -79,6 +79,16 @@ uses the token-request start as its conservative time base. Withdrawal/currentne
 external work; a race prevents returning usable authority even if an already dispatched D1 write commits.
 Canonical artifacts are untouched by failed identity or admission.
 
+## G3 lifecycle boundary
+
+The backend now exposes versioned owner-only reconnect and disconnect operations. Reconnect begins a
+fresh Google consent intent carrying an exact expected credential generation/revision; the callback
+restores that fence from D1 and replaces the encrypted credential only when the complete old row still
+matches. Disconnect similarly revokes one exact snapshot. Initial `google.oauth.begin` keeps its
+no-overwrite predicate. Obsolete pending/denied/failed proof rows may be removed only through bounded
+digest-only receipt retention; admitted intents and canonical artifacts are retained. PWA controls,
+provisioning, and real Google qualification remain separate.
+
 ## Acceptance and remaining work
 
 Real WebCrypto tests verify valid signatures and reject wrong/forged issuer, audience, nonce, account,
@@ -87,8 +97,7 @@ lost intent/claim/admission ACKs, uncertain token response, rollback, owner with
 no-overwrite behavior. Provider responses and authenticated owner context are controlled fixtures;
 Google signature verification, encryption and D1 persistence are not substituted with success stubs.
 
-Next: explicit new authorization after an uncertain attempt, disconnect/reconnect with credential fencing,
-bounded intent retention, then generation/asset/cursor qualification. Keep one active ChatGPT write
+Next: PWA lifecycle controls, operator provisioning and generation/asset/cursor qualification. Keep one active ChatGPT write
 transport and the existing application launch hold.
 The complete real-storage browser lifecycle and genuine Google login are NOT_EXECUTED, not implied by
 the internal service tests. Missing implementation stays local; no partial Cloudflare deployment.

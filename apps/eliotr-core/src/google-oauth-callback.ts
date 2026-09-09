@@ -120,7 +120,9 @@ export async function handleGoogleOAuthCallback(
   let admission;
   try {
     const verifier: AccessVerifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
-    admission = await createGoogleOAuthAdmissionForOwner({ env, request, context, identity, verifier });
+    // Auto mode lets a durable reconnect intent restore its expected CAS fence
+    // after a restart while leaving initial admission no-overwrite semantics intact.
+    admission = await createGoogleOAuthAdmissionForOwner({ env, request, context, identity, verifier, reconnect: "auto" });
   } catch (error) {
     if (error instanceof GoogleCredentialError) {
       if (error.code.startsWith("GOOGLE_OAUTH_NOT_CONFIGURED")) return problem(request, 503, "GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth token configuration is missing or invalid", true);

@@ -235,6 +235,10 @@ importers:
       '@eliotr/policy':
         specifier: workspace:*
         version: link:../policy
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: 5.20260827.1
+        version: 5.20260827.1
 
   packages/interfaces:
     dependencies:

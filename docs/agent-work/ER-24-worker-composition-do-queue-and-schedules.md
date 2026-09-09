@@ -43,8 +43,10 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
 - `apps/eliotr-core/src/google-token-store.ts`
+- `packages/google-drive-exchange/src/google-token-store.ts`
 - `apps/eliotr-core/test/google-token-store.test.ts`
 - `apps/eliotr-core/src/google-oauth-store.ts`
+- `packages/google-drive-exchange/src/google-oauth-store.ts`
 - `apps/eliotr-core/src/google-oauth-service.ts`
 - `apps/eliotr-core/src/google-oauth-begin.ts`
 - `apps/eliotr-core/src/google-oauth-callback.ts`

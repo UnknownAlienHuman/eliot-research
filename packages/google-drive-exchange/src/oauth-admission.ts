@@ -18,10 +18,12 @@ export interface GoogleOAuthAdmissionOptions {
   readonly assertOwnerCurrent: (signal: AbortSignal) => Promise<void>;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
+  /** Versioned G3 reconnect mode. Initial admission remains the default and never overwrites. */
+  readonly reconnect?: { readonly expected_generation: string; readonly expected_revision: number };
 }
 function randomProof(): string { return oauthBase64(crypto.getRandomValues(new Uint8Array(32))); }
 
-// IMPLEMENTED_NOT_LIVE: ER-20 initial OAuth admission service; owner HTTP/PWA and provisioned exchange qualification remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-20 OAuth admission plus versioned reconnect lifecycle; PWA controls, provisioning and live qualification remain separate.
 export function createGoogleOAuthAdmission(options: GoogleOAuthAdmissionOptions) {
   const configuration = oauthConfiguration(options.configuration); const owner = oauthOwner(options.owner);
   const keys = new Map(options.keys); const activeKeyVersion = options.activeKeyVersion;
@@ -107,7 +109,8 @@ export function createGoogleOAuthAdmission(options: GoogleOAuthAdmissionOptions)
       const encryptedRefresh = await vault(intent, "grant").encrypt(tokens.refresh_token); inner.throwIfAborted();
       const expiry = tokens.refresh_token_expires_in === null ? null : exchangedAt + tokens.refresh_token_expires_in * 1000;
       if (expiry !== null && expiry <= oauthClock(now)) return oauthFail("GOOGLE_OAUTH_INTENT_EXPIRED");
-      const credential = credentialSnapshot({ binding: intentBinding(intent, "grant"), revision: 1, state: "AUTHORIZING",
+      const expectedRevision = options.reconnect?.expected_revision ?? await store.expectedCredentialRevision?.(intent, inner) ?? null;
+      const credential = credentialSnapshot({ binding: intentBinding(intent, "grant"), revision: expectedRevision === null ? 1 : expectedRevision + 1, state: "AUTHORIZING",
         granted_scopes: tokens.granted_scopes, oauth_publishing_status: "In production", refresh_expires_at_epoch_ms: expiry, token: encryptedRefresh });
       const tokenHash = await oauthDigest(tokens.id_token);
       await guard(inner); await store.admit(intent, credential, tokenHash, inner);

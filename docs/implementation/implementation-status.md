@@ -39,7 +39,8 @@ prose and the registry disagree, the registry is right and this file is the bug.
 None. The last `IN_PROGRESS` contour (ER-19 Drive cursor reconciliation) left this
 state when its durable leased poll and digest-against-frozen-envelope tamper audit
 landed with deterministic real-D1 negatives; it is now `IMPLEMENTED_NOT_LIVE` and
-listed below. Owner callback, provisioning/reconnect, Doc publication/export and full
+listed below. Owner callback and reconnect/disconnect/status now execute; provisioning,
+Doc publication/export and full
 runtime composition for the Day-0 Drive Exchange remain open. Optional Gemini MCP
 planning and self-reported observation validation cannot satisfy that requirement.
 

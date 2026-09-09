@@ -48,7 +48,7 @@ export interface AuditCounts {
   readonly missing: number;
 }
 
-// IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner callback/provisioning/Doc publication/composition and live qualification remain separate.
+// IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner provisioning/Doc publication/composition and live qualification remain separate.
 export interface DriveReconciler {
   poll(generation: ExchangeGeneration, leaseOwner: string, nowEpochMs: number): Promise<PollCounts>;
   auditHistoricalRows(generation: ExchangeGeneration): Promise<AuditCounts>;
