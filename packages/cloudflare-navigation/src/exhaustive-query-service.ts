@@ -33,6 +33,7 @@ import {
   EvidenceRuntimeError,
 } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService } from "./d1-scope-service.js";
+import { ScopeServiceError } from "./scope-service.js";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import type {
   AuthenticatedRequestContext,
@@ -210,6 +211,9 @@ function mapRuntimeError(error: unknown): never {
   }
   const code = (error as { readonly code?: unknown } | null)?.code;
   const status = (error as { readonly status?: unknown } | null)?.status;
+  if (error instanceof ScopeServiceError && error.code === "SCOPE_SNAPSHOT_STALE") {
+    fail("RESEARCH_AUTHORITY_STALE", "exhaustive scope authority is stale", 409);
+  }
   if (typeof code === "string" && code.startsWith("ORIENTATION_")) {
     if (status === 413) fail("RESEARCH_INPUT_LIMIT", "exhaustive scope exceeds its bound", 413);
     if (status === 503) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive scope authority is unavailable", 503, true);
@@ -306,6 +310,12 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
       throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive source authority changed during readback", 409);
     }
     if (pinnedInventory !== undefined) assertSamePins(pinnedInventory, current);
+    await freezer.requireCurrent(scope);
+    await scopePorts.requireCurrentScope(scope);
+    const finalSources = await owner.exhaustiveSources(scope.member_source_revision_refs);
+    if (finalSources.length !== current.length) {
+      throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive source authority changed after projection readback", 409);
+    }
   }
   return {
     async freezeScope(expression, credentialGeneration) {

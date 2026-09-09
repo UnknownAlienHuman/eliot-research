@@ -65,8 +65,8 @@ export async function searchWorld(revisions: readonly string[] = ["rev-a"]) {
       receipt_ref TEXT, readback_digest TEXT, item_count INTEGER, verified INTEGER);
     CREATE TABLE projection_item (item_key TEXT PRIMARY KEY, source_revision_ref TEXT,
       canonical_section_id TEXT, content_sha256 TEXT, projection_generation TEXT, active INTEGER);
-    CREATE TABLE projection_span (item_key TEXT PRIMARY KEY,
-      normalized_start_byte INTEGER, normalized_end_byte INTEGER);
+    CREATE TABLE projection_span (item_key TEXT PRIMARY KEY, source_revision_ref TEXT,
+      projection_generation TEXT, normalized_start_byte INTEGER, normalized_end_byte INTEGER);
     CREATE VIRTUAL TABLE section_fts USING fts5(item_key UNINDEXED, section_text);
   `);
   for (const revision of revisions) {
@@ -86,7 +86,7 @@ export async function searchWorld(revisions: readonly string[] = ["rev-a"]) {
     core.prepare("INSERT INTO source_namespace_ownership VALUES (?, 'owner-1', 'ACTIVE')").run(revision);
     search.prepare("INSERT INTO projection_item VALUES (?, ?, ?, ?, ?, 1)")
       .run(item, revision, section, digest, generation);
-    search.prepare("INSERT INTO projection_span VALUES (?, 0, ?)").run(item, end);
+    search.prepare("INSERT INTO projection_span VALUES (?, ?, ?, 0, ?)").run(item, revision, generation, end);
     search.prepare("INSERT INTO section_fts VALUES (?, ?)").run(item, content);
     search.prepare("INSERT INTO projection_generation_receipt VALUES (?, ?, 'READY', 1, ?, ?, ?)")
       .run(revision, generation, itemSet, readback, receipt);

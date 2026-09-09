@@ -16,6 +16,9 @@
       "path": "../cloudflare-evidence"
     },
     {
+      "path": "../cloudflare-projection"
+    },
+    {
       "path": "../contracts"
     },
     {

@@ -40,7 +40,7 @@ const PACKAGE_RULES = new Map([
     "@eliotr/platform-cloudflare",
     "@eliotr/retrieval",
   ])],
-  ["packages/cloudflare-navigation", new Set(["@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/interfaces", "@eliotr/platform-cloudflare", "@eliotr/retrieval"])],
+  ["packages/cloudflare-navigation", new Set(["@eliotr/cloudflare-evidence", "@eliotr/cloudflare-projection", "@eliotr/contracts", "@eliotr/domain", "@eliotr/interfaces", "@eliotr/platform-cloudflare", "@eliotr/retrieval"])],
   ["packages/cloudflare-evidence", new Set([
     "@eliotr/contracts",
     "@eliotr/domain",
