@@ -6,6 +6,33 @@ import {
   type ExhaustiveWorkflowSummary, type ExhaustiveWorkflowView,
 } from "./exhaustive-workflow-api.js";
 
+export const MAX_RECOVERY_ITEMS = 100;
+
+export interface RecoveryPageMerge {
+  items: Map<string, ExhaustiveWorkflowSummary>;
+  nextCursor: string | undefined;
+  added: number;
+  capped: boolean;
+}
+
+export function mergeRecoveryPage(
+  existing: ReadonlyMap<string, ExhaustiveWorkflowSummary>,
+  page: ExhaustiveWorkflowPage,
+  append: boolean,
+  maxItems = MAX_RECOVERY_ITEMS,
+): RecoveryPageMerge {
+  const items = append ? new Map(existing) : new Map<string, ExhaustiveWorkflowSummary>();
+  let added = 0;
+  for (const item of page.items) {
+    if (items.has(item.workflow_instance_id)) continue;
+    if (items.size >= maxItems) break;
+    items.set(item.workflow_instance_id, item);
+    added += 1;
+  }
+  const capped = items.size >= maxItems;
+  return { items, added, capped, nextCursor: capped ? undefined : page.next_cursor };
+}
+
 function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
     if (error.status === 401 || error.status === 403) return "This scan is no longer available for the current session.";
@@ -172,27 +199,37 @@ export function mountExhaustiveWorkflowPanel(
     action.setAttribute("aria-label", `${recoveryStateLabel(item)} from ${recoveryDate(item.created_at)}`);
     const note = document.createElement("span");
     note.className = "workflow-recovery-note";
-    note.textContent = item.recoverable
-      ? (item.cancelable && item.binding_state === "BOUND" ? "Status and cancellation available" : "Status available")
+    note.textContent = item.binding_state === "CANCEL_REQUESTED"
+      ? "Watching the server finish cancellation"
+      : item.recoverable
+      ? (item.cancelable && item.binding_state === "BOUND" ? "Active on the server · status and cancellation available" : "Active on the server · status available")
       : "Status only; start a new scan to run again";
     row.append(action, note);
     return row;
   };
 
   const renderRecovery = (page: ExhaustiveWorkflowPage, append = false): void => {
-    if (!append) { recoveryItems = new Map(); recoveryList.replaceChildren(); }
+    const prior = append ? recoveryItems : new Map<string, ExhaustiveWorkflowSummary>();
+    const merged = mergeRecoveryPage(prior, page, append);
+    if (!append) recoveryList.replaceChildren();
     for (const item of page.items) {
-      if (recoveryItems.has(item.workflow_instance_id)) continue;
-      recoveryItems.set(item.workflow_instance_id, item);
+      if (!merged.items.has(item.workflow_instance_id) || prior.has(item.workflow_instance_id)) continue;
       recoveryList.append(recoveryRow(item));
     }
-    recoveryCursor = page.next_cursor;
+    recoveryItems = merged.items;
+    recoveryCursor = merged.nextCursor;
     recoveryMore.hidden = recoveryCursor === undefined;
     if (recoveryItems.size === 0) {
-      recoveryStatus.textContent = "No recent scans are available for this session.";
+      recoveryStatus.textContent = page.next_cursor === undefined
+        ? "No recent scans are available for this session."
+        : "No scans on this page. More recent scans may be available.";
       return;
     }
-    recoveryStatus.textContent = append ? "More recent scans loaded. Choose one to check its server status." : "Choose a recent scan to check its current server status.";
+    if (merged.capped) recoveryStatus.textContent = `Showing the ${MAX_RECOVERY_ITEMS} most recent scans.`;
+    else if (append && merged.added === 0) recoveryStatus.textContent = page.next_cursor === undefined
+      ? "No additional recent scans were found."
+      : "No additional scans on this page. Load more to continue.";
+    else recoveryStatus.textContent = append ? "More recent scans loaded. Choose one to check its server status." : "Choose a recent scan to check its current server status.";
   };
 
   const clearRecovery = (text = "Recent scans appear after the current session is ready."): void => {
@@ -203,6 +240,8 @@ export function mountExhaustiveWorkflowPanel(
     recoveryCursor = undefined;
     recoveryList.replaceChildren();
     recoveryMore.hidden = true;
+    recoveryRefresh.disabled = false;
+    recoveryMore.disabled = false;
     recoveryStatus.textContent = text;
   };
 
@@ -222,10 +261,17 @@ export function mountExhaustiveWorkflowPanel(
       if (active === recoverySerial) renderRecovery(page, append);
     } catch (error: unknown) {
       if (active === recoverySerial && !(error instanceof Error && error.name === "AbortError")) {
-        recoveryStatus.textContent = error instanceof ApiRequestError && (error.status === 401 || error.status === 403)
-          ? "Recent scans are unavailable for this session."
-          : "Recent scans could not be loaded. Try again when the service is ready.";
-        if (!append) { recoveryList.replaceChildren(); recoveryMore.hidden = true; }
+        const accessLost = error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+        const generationChanged = error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH";
+        if (accessLost || generationChanged) {
+          clearPrivate();
+          recoveryStatus.textContent = accessLost
+            ? "Recent scans are unavailable for this session."
+            : "The deployment changed. Reconnect before checking recent scans.";
+        } else {
+          recoveryStatus.textContent = "Recent scans could not be loaded. Try again when the service is ready.";
+          if (!append) { recoveryList.replaceChildren(); recoveryMore.hidden = true; }
+        }
       }
     } finally {
       if (active === recoverySerial) { recoveryController = undefined; recoveryRefresh.disabled = false; recoveryMore.disabled = false; }
@@ -240,6 +286,10 @@ export function mountExhaustiveWorkflowPanel(
     }
     const active = ++serial;
     controller?.abort();
+    element.dispatchEvent(new CustomEvent("exhaustive:started", {
+      bubbles: true,
+      detail: { recovered: true, workflow_instance_id: item.workflow_instance_id },
+    }));
     const local = new AbortController();
     controller = local;
     busy = true;
@@ -250,14 +300,19 @@ export function mountExhaustiveWorkflowPanel(
     workflowGeneration = generation;
     terminalState = false;
     element.dataset.workflowId = item.workflow_instance_id;
-    statusText.textContent = "Checking the selected scan…";
+    query.value = "";
+    selectedSourceId = undefined;
+    scope.value = "library";
+    selectedScopeOption.disabled = true;
+    status.textContent = recoveryStateLabel(item).toUpperCase();
+    statusText.textContent = item.recoverable ? "Checking current server progress…" : "Checking the saved scan…";
     buttons();
     try {
       const view = await readExhaustiveWorkflow(item.workflow_instance_id, generation, local.signal);
       if (active === serial) render(view);
     } catch (error: unknown) {
       if (active === serial && !(error instanceof Error && error.name === "AbortError")) {
-        if (error instanceof ApiRequestError && error.code === "API_GENERATION_MISMATCH") clearPrivate();
+        if (error instanceof ApiRequestError && (error.code === "API_GENERATION_MISMATCH" || error.status === 401 || error.status === 403)) clearPrivate();
         else statusText.textContent = message(error);
       }
     } finally {

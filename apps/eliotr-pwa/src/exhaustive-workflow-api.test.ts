@@ -3,6 +3,7 @@ import { ApiRequestError } from "./api.js";
 import {
   cancelExhaustiveWorkflow, exhaustiveQueryBody, launchExhaustiveWorkflow, listExhaustiveWorkflows, readExhaustiveWorkflow,
 } from "./exhaustive-workflow-api.js";
+import { mergeRecoveryPage } from "./exhaustive-workflow-panel.js";
 
 const generation = "deployment-1";
 const workflow = `exhaustive-workflow-${"a".repeat(64)}`;
@@ -105,5 +106,29 @@ describe("exhaustive workflow transport", () => {
       items: [{ workflow_instance_id: workflow, workflow_status: "running", created_at: "2026-09-09T12:00:00.000Z", recoverable: true, cancelable: true }],
     })));
     await expect(listExhaustiveWorkflows(20, undefined, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+
+  it("bounds recovery pages and stops pagination at the local cap", () => {
+    const first = { workflow_instance_id: workflow, workflow_status: "running" as const, job_state: "PENDING" as const,
+      binding_state: "BOUND" as const, created_at: "2026-09-09T12:00:00.000Z", recoverable: true, cancelable: true };
+    const second = { ...first, workflow_instance_id: `exhaustive-workflow-${"c".repeat(64)}` };
+    const page = { protocol: "eliotr.exhaustive-workflow-page.v1" as const, deployment_generation: generation,
+      items: [first, second], next_cursor: "cursor-next" };
+    const merged = mergeRecoveryPage(new Map(), page, false, 1);
+    expect([...merged.items.keys()]).toEqual([workflow]);
+    expect(merged).toMatchObject({ added: 1, capped: true, nextCursor: undefined });
+  });
+
+  it("keeps an honest cursor when a filtered page adds no new recovery item", () => {
+    const item = { workflow_instance_id: workflow, workflow_status: "running" as const, job_state: "PENDING" as const,
+      binding_state: "BOUND" as const, created_at: "2026-09-09T12:00:00.000Z", recoverable: true, cancelable: true };
+    const existing = new Map([[workflow, item]]);
+    const page = { protocol: "eliotr.exhaustive-workflow-page.v1" as const, deployment_generation: generation,
+      items: [], next_cursor: "cursor-after-empty" };
+    const merged = mergeRecoveryPage(existing, page, true);
+    expect(merged.items.size).toBe(1);
+    expect(merged.added).toBe(0);
+    expect(merged.nextCursor).toBe("cursor-after-empty");
+    expect(merged.capped).toBe(false);
   });
 });
