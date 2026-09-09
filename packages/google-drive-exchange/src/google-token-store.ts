@@ -122,6 +122,7 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
     const receiptUpdate = db.prepare(`UPDATE google_oauth_disconnect_receipt SET result_credential_generation=?3,result_credential_revision=?4,result_state='REVOKED'
       WHERE principal_id=?1 AND operation_ref=?2 AND connection_id=?5 AND configuration_json=?6
         AND expected_credential_generation=?7 AND expected_credential_revision=?8 AND result_state IS NULL
+        AND changes()=1
         AND EXISTS (SELECT 1 FROM google_exchange_connection c WHERE c.connection_id=?5 AND c.principal_id=?1
           AND c.oauth_client_id=?9 AND c.google_subject=?10 AND c.google_email=?11
           AND c.credential_generation=?3 AND c.credential_revision=?4 AND c.state='REVOKED' AND c.updated_at=?12 AND ${SCHEMA})`)
@@ -130,8 +131,19 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
         binding.oauth_client_id, binding.google_subject, binding.google_email, timestamp);
     try { await db.batch([credentialUpdate, receiptUpdate]); }
     catch { /* Reconcile both effects by exact credential and receipt readback. */ }
+    const receiptRow = await db.prepare(`SELECT connection_id,configuration_json,expected_credential_generation,expected_credential_revision,
+        result_credential_generation,result_credential_revision,result_state FROM google_oauth_disconnect_receipt
+      WHERE principal_id=?1 AND operation_ref=?2`).bind(receipt.principal_id, receipt.operation_ref)
+      .first<Record<string, unknown>>().catch(() => fail("GOOGLE_CREDENTIAL_UNAVAILABLE"));
     const actual = await load(signal);
-    if (!sameGoogleCredentials(actual, next)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
+    if (!sameGoogleCredentials(actual, next) || !receiptRow
+        || receiptRow.connection_id !== receipt.connection_id || receiptRow.configuration_json !== receipt.configuration_json
+        || receiptRow.expected_credential_generation !== receipt.expected_credential_generation
+        || receiptRow.expected_credential_revision !== receipt.expected_credential_revision
+        || receiptRow.result_credential_generation !== next.binding.credential_generation
+        || receiptRow.result_credential_revision !== next.revision || receiptRow.result_state !== "REVOKED") {
+      return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
+    }
     return actual;
   };
   return { load, assertCurrent,

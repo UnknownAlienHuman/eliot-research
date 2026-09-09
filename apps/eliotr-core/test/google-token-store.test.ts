@@ -197,6 +197,35 @@ describe("persisted encrypted Google credentials with actual D1/R2", () => {
     await expect(test.store.revoke?.(before, signal())).rejects.toMatchObject({ code: "GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED" });
     expect((await test.store.load(signal())).state).toBe("REVOKED");
   });
+  it("attributes an atomic disconnect receipt to the one winning operation", async () => {
+    const test = await setup("disconnect-attribution");
+    const before = await test.store.load(signal());
+    const fixedNow = 1735689600000;
+    const store = createD1GoogleCredentialStore(db, test.binding, () => fixedNow);
+    const configurationJson = JSON.stringify({ connection_id: test.binding.connection_id });
+    const expected = { expected_credential_generation: before.binding.credential_generation, expected_credential_revision: before.revision };
+    for (const operationRef of ["disconnect-attribution-a", "disconnect-attribution-b"]) {
+      await db.prepare(`INSERT INTO google_oauth_disconnect_receipt
+        (principal_id,operation_ref,connection_id,configuration_json,expected_credential_generation,expected_credential_revision,created_at)
+        VALUES (?1,?2,?3,?4,?5,?6,?7)`).bind(test.binding.principal_id, operationRef, test.binding.connection_id, configurationJson,
+        expected.expected_credential_generation, expected.expected_credential_revision, new Date(fixedNow).toISOString()).run();
+    }
+    const revokeWithReceipt = store.revokeWithDisconnectReceipt;
+    if (revokeWithReceipt === undefined) throw new Error("disconnect receipt CAS is unavailable");
+    const outcomes = await Promise.allSettled(["disconnect-attribution-a", "disconnect-attribution-b"].map((operationRef) =>
+      revokeWithReceipt(before, { principal_id: test.binding.principal_id, operation_ref: operationRef,
+        connection_id: test.binding.connection_id, configuration_json: configurationJson, ...expected }, signal())));
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(1);
+    const receipts = await db.prepare(`SELECT operation_ref,result_credential_generation,result_credential_revision,result_state
+      FROM google_oauth_disconnect_receipt WHERE principal_id=?1 AND operation_ref IN ('disconnect-attribution-a','disconnect-attribution-b')`)
+      .bind(test.binding.principal_id).all<{ operation_ref: string; result_credential_generation: string | null;
+        result_credential_revision: number | null; result_state: string | null }>();
+    expect(receipts.results.filter((receipt) => receipt.result_state === "REVOKED")).toHaveLength(1);
+    expect(receipts.results.filter((receipt) => receipt.result_state === null)).toHaveLength(1);
+    expect(receipts.results.filter((receipt) => receipt.result_credential_revision === 2)).toHaveLength(1);
+    expect((await store.load(signal())).state).toBe("REVOKED");
+    expect((await store.load(signal())).revision).toBe(2);
+  });
   it("the final CAS rejects changed scope/identity/nonce even if a broken writer failed to increment revision", async () => {
     const test = await setup("field-fence"); const row = await test.store.load(signal()); let raced = false;
     const database = intercepted(async (phase) => { if (phase === "before" && !raced) {
