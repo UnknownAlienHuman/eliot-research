@@ -1,5 +1,6 @@
+// IMPLEMENTED_NOT_LIVE: ER-07 ordered exhaustive reconcile loop over migration 0023 with earned COMPLETE persistence; Worker/HTTP composition and live qualification remain separate.
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { mergeExhaustiveShards, type ExactScanPlan, type ExactScanShard, type ExhaustiveShardOutcome } from "./exhaustive.js";
+import { mergeExhaustiveShards, type ExactScanPlan, type ExactScanShard, type ExhaustiveSectionDescriptor, type ExhaustiveShardOutcome } from "./exhaustive.js";
 import { canonicalRetrievalJson } from "./query-persistence.js";
 import type { ExhaustiveJobReceipt, ExhaustiveJobStore } from "./exhaustive-job-store.js";
 
@@ -94,12 +95,26 @@ export async function exhaustiveRequestDigest(input: {
   readonly probes: readonly string[];
   /** Bind the caller's canonical scope expression to the idempotency identity. */
   readonly scope_expression?: unknown;
+  /** Bind every authority tuple, not only the non-cryptographic plan label. */
+  readonly inventory?: readonly ExhaustiveSectionDescriptor[];
 }): Promise<string> {
   const bytes = new TextEncoder().encode(canonicalRetrievalJson({
     plan_id: input.plan_id,
     scope_digest: input.scope_digest,
     probes: [...input.probes],
     ...(input.scope_expression === undefined ? {} : { scope_expression: input.scope_expression }),
+    ...(input.inventory === undefined ? {} : {
+      inventory: input.inventory.map((section) => ({
+        section_ref: section.section_ref,
+        source_revision_ref: section.source_revision_ref,
+        item_key: section.item_key,
+        content_sha256: section.content_sha256,
+        projection_generation: section.projection_generation,
+        normalized_start_byte: section.normalized_start_byte,
+        normalized_end_byte: section.normalized_end_byte,
+        uncompressed_bytes: section.uncompressed_bytes,
+      })),
+    }),
   }));
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");

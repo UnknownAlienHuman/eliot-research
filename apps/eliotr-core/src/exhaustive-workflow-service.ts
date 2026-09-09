@@ -1,6 +1,7 @@
 import {
   createExhaustiveWorkflowBinding,
   ExhaustiveWorkflowBindingError,
+  validateExhaustiveJobCurrent,
   type ExhaustiveWorkflowPayload as BoundExhaustiveWorkflowPayload,
 } from "@eliotr/cloudflare-navigation";
 import type { ExhaustiveWorkflowResult, AuthenticatedRequestContext } from "@eliotr/interfaces";
@@ -21,7 +22,7 @@ function translate(error: unknown): never {
   throw error;
 }
 
-export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): {
+export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "RESEARCH_WORKFLOW" | "DEPLOYMENT_GENERATION">): {
   launch(context: AuthenticatedRequestContext, raw: unknown): Promise<ExhaustiveWorkflowResult>;
   status(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
   cancel(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
@@ -32,6 +33,7 @@ export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "RESE
     deployment_generation: env.DEPLOYMENT_GENERATION,
     parseRequest: parseExhaustiveQueryRequest,
     idempotencyKey: exhaustiveIdempotencyKey,
+    validateCurrentJob: (jobId, context) => validateExhaustiveJobCurrent(env, context, jobId),
   });
   return {
     launch: (context, raw) => binding.launch(context, raw).catch(translate),

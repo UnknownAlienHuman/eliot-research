@@ -1,5 +1,5 @@
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { mergeExhaustiveShards, type ExactScanPlan, type ExactScanShard, type ExhaustiveShardOutcome } from "./exhaustive.js";
+import { mergeExhaustiveShards, type ExactScanPlan, type ExhaustiveShardOutcome } from "./exhaustive.js";
 import { canonicalRetrievalJson, type RetrievalQueryAccess, type RetrievalQueryD1 } from "./query-persistence.js";
 import { RetrievalQueryError, type RetrievalQueryErrorCode } from "./service.js";
 

@@ -44,8 +44,10 @@
         "apps/eliotr-core/src/research-session.ts: DO storage session state with principal-bound read/cancel plus createMonotoneStageExecutor reuse and no new D1 tables",
         "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
-        "apps/eliotr-core/src/exhaustive-query-service.ts and exhaustive-query-service.test.ts: versioned Q8 EXHAUSTIVE_JOB result, separate parser, authority-port boundary, COMPLETE replay and UNFINISHED denominator-preserving negative",
-        "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; HTTP Workflow launch/readback qualification, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
+        "apps/eliotr-core/src/exhaustive-query-service.ts, apps/eliotr-core/src/exhaustive-workflow-service.ts and packages/cloudflare-navigation/src/exhaustive-query-service.ts: versioned Q8 EXHAUSTIVE_JOB parser/runtime over admitted normalized manifests, persisted structural ranges, batched owner authority and pinned R2 evidence",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts and infra/d1/core/migrations/0024_exhaustive_workflow.sql: durable Workflow binding with request/principal/credential/deployment identity, current-policy checks, cancel intent readback and terminal output validation",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 5 local Q1 import-to-projection HTTP cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry and actual DELETE cancellation/no-resume control",
+        "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; the existing research.query operation launches/status-reads/cancels the durable Workflow locally, while deployed Workflow/live Access, live user-loop handles, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
       ]
     },
     {
@@ -606,6 +608,23 @@
         "packages/retrieval/src/exhaustive-reconcile.test.ts: 7 node:sqlite cases over the committed 0001-0023 stream (earned COMPLETE persisted with denominator plus readback, COMPLETE replay without re-execution or duplicate rows, partial resume without double-count, unsettled UNFINISHED with zero result rows, foreign-denominator refusal with zero job rows, denominator-less COMPLETE refused by the Q3 store with its exact message, partial finalize refusal with the job left PENDING)",
         "packages/retrieval/src/exhaustive-reconcile.ts: createD1ExhaustiveJobStore plus reconcileExhaustiveJob behind injected scope/budget/executor ports; coverage never recomputed outside mergeExhaustiveShards; no grant port, no HTTP/model/R2 inside statements",
         "RETRIEVAL slice stays disabled; research.query still serves only the ORIENT metadata profile with research.query composition untouched; Worker/HTTP composition of the loop and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-workflow",
+      "path": "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.",
+      "owner_packets": [
+        "ER-24",
+        "ER-09"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "The existing research.query operation accepts EXHAUSTIVE_JOB through a versioned typed workflow envelope, binds one request identity to one principal/client/credential/deployment/job tuple in D1, launches the canonical RESEARCH_WORKFLOW, and exposes GET status plus DELETE cancellation with durable cancel intent before remote termination. Workflow execution rechecks the same binding, active owner policy and current deployment before and inside its bounded step; COMPLETE job disclosure requires current persisted Q7 receipt references, while missing LIVE user-loop evidence remains UNFINISHED and no RETRIEVAL capability is enabled.",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0024_exhaustive_workflow.sql: strict immutable binding table with tuple uniqueness, deployment fence and cancellation state transition",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts: create/status/cancel/readback adapter with request identity, owner policy, current-generation and output validation",
+        "apps/eliotr-core/src/research-workflow.ts: ER09 host extension validates durable binding and currentness before step.do and revalidates before persisting the bounded result",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: actual local Q1 import/projection/HTTP launch, status, DELETE cancellation and no-resume assertions; deployed Workflow, live Access and live user-loop qualification NOT_EXECUTED"
       ]
     }
   ]

@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { LocatorCandidate } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
 import { resolveCandidateAuthority } from "./authority-load.js";
@@ -26,7 +26,7 @@ function d1(database: DatabaseSync): D1Database {
             all<T>() {
               return Promise.resolve({
                 success: true,
-                results: database.prepare(sql).all(...values as any[]) as T[],
+                results: database.prepare(sql).all(...values as SQLInputValue[]) as T[],
               });
             },
           };
