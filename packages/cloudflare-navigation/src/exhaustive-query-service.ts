@@ -149,6 +149,8 @@ export interface ExhaustiveQueryRuntime {
   /** Load a previously frozen scope for a COMPLETE idempotent replay. */
   loadScope?(snapshotId: string, revision: number): Promise<ScopeSnapshot>;
   requireCurrentScope(scope: ScopeSnapshot): Promise<void>;
+  /** Read-only final fence used before disclosing a cached COMPLETE result. */
+  recheckCurrentScope?(scope: ScopeSnapshot): Promise<void>;
   /** Inventory is authoritative: it must come from the admitted normalized manifest. */
   inventorySections(scope: ScopeSnapshot): Promise<readonly ExhaustiveSectionDescriptor[]>;
   /** Return a pinned exact input; request supplied section identities are never trusted. */
@@ -235,6 +237,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   const freezer = createD1ScopeService(env.CORE_DB, owner, {
     max_snapshot_members: EXHAUSTIVE_QUERY_MAX_SOURCES,
     resolveAtom: owner.exhaustiveResolveAtom,
+    preserve_resolution_errors: true,
   });
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
   const evidence = createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB });
@@ -264,6 +267,11 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
       return authority.snapshot;
     },
     requireCurrentScope: async (scope) => { await authorize(scope); },
+    recheckCurrentScope: async (scope) => {
+      await freezer.requireCurrent(scope);
+      await scopePorts.requireCurrentScope(scope);
+      await owner.exhaustiveSources(scope.member_source_revision_refs);
+    },
     async inventorySections(scope) {
       if (scopeForRequest === undefined || scopeForRequest.snapshot_id !== scope.snapshot_id) {
         throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope runtime is not bound", 409);
@@ -443,6 +451,10 @@ export async function validateExhaustiveJobCurrent(
     const scope = await runtime.loadScope(row.scope_snapshot_id, row.scope_snapshot_revision);
     await runtime.requireCurrentScope(scope);
     await runtime.inventorySections(scope);
+    if (runtime.recheckCurrentScope === undefined) {
+      throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive currentness fence is unavailable", 503, true);
+    }
+    await runtime.recheckCurrentScope(scope);
   } catch (error) {
     if (error instanceof ExhaustiveQueryError) throw error;
     throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);

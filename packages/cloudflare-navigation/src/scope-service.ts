@@ -81,6 +81,8 @@ export interface ScopeServiceOptions {
   readonly max_snapshot_members?: number;
   /** Optional product-specific atom resolver; ORIENT keeps the repository default. */
   readonly resolveAtom?: ScopeRepository["resolveAtom"];
+  /** Preserve typed authority errors for products with distinct stale/uncertain mapping. */
+  readonly preserve_resolution_errors?: boolean;
 }
 
 interface ResolvedScopeState {
@@ -276,6 +278,7 @@ async function resolveState(
   repository: ScopeRepository, rawExpression: unknown, observedAt: string,
   clientFenceRef: string | undefined, maximumMembers: number,
   atomResolver: ScopeRepository["resolveAtom"] = repository.resolveAtom,
+  preserveExternalErrors = false,
 ): Promise<ResolvedScopeState> {
   const expression = parseExpression(rawExpression);
   const cache = new Map<string, Promise<DeterministicScopeAtomResolution>>();
@@ -298,7 +301,7 @@ async function resolveState(
           const code = (error as { readonly code?: unknown } | null)?.code;
           // Preserve the canonical authority error so product adapters can
           // distinguish a stale scope from an unavailable resolution.
-          if (typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) {
+          if (preserveExternalErrors && typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) {
             throw error;
           }
           fail("SCOPE_RESOLUTION_FAILED", "scope atom resolution failed");
@@ -314,7 +317,7 @@ async function resolveState(
   catch (error) {
     if (error instanceof ScopeServiceError) throw error;
     const code = (error as { readonly code?: unknown } | null)?.code;
-    if (typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) throw error;
+    if (preserveExternalErrors && typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) throw error;
     fail("SCOPE_RESOLUTION_FAILED", "deterministic scope evaluation failed");
   }
   if (draft.members.length > maximumMembers) fail("SCOPE_MEMBER_LIMIT", "resolved scope exceeds the member ceiling");
@@ -427,7 +430,7 @@ function parseNow(now: () => number): number {
 }
 
 type ResolvedScopeServiceOptions = Omit<Required<ScopeServiceOptions>, "resolveAtom"> &
-  { readonly resolveAtom?: ScopeRepository["resolveAtom"] };
+  { readonly resolveAtom?: ScopeRepository["resolveAtom"]; readonly preserve_resolution_errors: boolean };
 
 function resolveOptions(options: ScopeServiceOptions): ResolvedScopeServiceOptions {
   const ttl = options.ttl_ms ?? DEFAULT_TTL_MS;
@@ -439,6 +442,7 @@ function resolveOptions(options: ScopeServiceOptions): ResolvedScopeServiceOptio
     fail("SCOPE_MEMBER_LIMIT_INVALID", "scope member ceiling is outside its allowed range");
   }
   return { now: options.now ?? Date.now, ttl_ms: ttl, max_snapshot_members: maximumMembers,
+    preserve_resolution_errors: options.preserve_resolution_errors ?? false,
     ...(options.resolveAtom === undefined ? {} : { resolveAtom: options.resolveAtom }) };
 }
 
@@ -479,7 +483,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
     try {
       resolved = await resolveState(
         repository, snapshot.resolved_scope_expression, new Date(observedMs).toISOString(),
-        snapshot.client_fence_ref, options.max_snapshot_members, atomResolver,
+        snapshot.client_fence_ref, options.max_snapshot_members, atomResolver, options.preserve_resolution_errors,
       );
     } catch (error) {
       return currentness(false, [error instanceof ScopeServiceError ? error.code : "SCOPE_RESOLUTION_FAILED"]);
@@ -522,7 +526,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
         parseCanonicalIdentifier(rawClientFenceRef, "client_fence_ref");
       const resolved = await resolveState(
         repository, rawExpression, observedAt, clientFenceRef, options.max_snapshot_members,
-        atomResolver,
+        atomResolver, options.preserve_resolution_errors,
       );
       if (clientFenceRef !== undefined && !resolved.authority.client_fence_valid) {
         fail("CLIENT_FENCE_STALE", "client fence is stale");
