@@ -5,7 +5,7 @@ import {
   type AccessIdentity,
   type AccessVerifier,
 } from "@eliotr/platform-cloudflare";
-import { GeminiMcpToolError } from "./gemini-mcp-tool-common.js";
+import { GeminiMcpToolError, readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 import type { Env } from "./env.js";
 import {
   handleGeminiMcpProtocol,
@@ -24,11 +24,6 @@ const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const ACCESS_SERVICE_TOKEN_CLIENT_ID =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u;
-const ALLOWED_TRANSPORTS = new Set<GoogleExternalTransport>([
-  "disabled",
-  "gemini-mcp",
-  "drive-exchange",
-]);
 
 interface AccessVerifierCache {
   readonly key: string;
@@ -135,9 +130,7 @@ function configuredVerifier(
 }
 
 function googleTransport(env: Env): GoogleExternalTransport {
-  const value = env.GOOGLE_EXTERNAL_TRANSPORT ?? "disabled";
-  if (!ALLOWED_TRANSPORTS.has(value)) return "disabled";
-  return value;
+  return readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT);
 }
 
 function authenticatedContext(
@@ -271,9 +264,16 @@ export async function handleGeminiMcp(
     env.DEPLOYMENT_GENERATION,
   );
   if (context instanceof Response) return context;
-  return handleGeminiMcpProtocol(
-    request,
-    serverDependencies(env, dependencies.now ?? Date.now),
-    context,
-  );
+  try {
+    return handleGeminiMcpProtocol(
+      request,
+      serverDependencies(env, dependencies.now ?? Date.now),
+      context,
+    );
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("GOOGLE_EXTERNAL_TRANSPORT ")) {
+      return jsonError(503, "MCP_CONFIGURATION_UNAVAILABLE", trace, true);
+    }
+    throw error;
+  }
 }

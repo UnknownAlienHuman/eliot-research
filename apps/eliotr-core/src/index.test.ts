@@ -67,6 +67,7 @@ function environment(
     DEPLOYMENT_GENERATION: "test-generation",
     AI_GATEWAY_REASONING_URL: "https://example.invalid/reasoning",
     AI_GATEWAY_RETRIEVAL_URL: "https://example.invalid/retrieval",
+    GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
   } as unknown as Env;
 }
 
@@ -274,5 +275,9 @@ describe("federation application contract", () => {
     expect(capabilities.disabled_slices).toEqual(
       expect.arrayContaining(["FEDERATION"]),
     );
+    expect(capabilities.google_external_transport).toBe("gemini-mcp");
+    await expect(application.services.owner.systemHealth({} as never)).resolves.toMatchObject({
+      google_external_transport: "gemini-mcp",
+    });
   });
 });

@@ -1,13 +1,28 @@
 import type { AuthenticatedRequestContext, RouteDefinition } from "@eliotr/interfaces";
 import type { AccessIdentity } from "@eliotr/platform-cloudflare";
-import { apiResult, requireNoQuery, type HttpDependencies } from "./http.js";
+import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { handleGoogleConnectionDisconnect, handleGoogleConnectionStatus, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
 import type { Env } from "./env.js";
+import { readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
+}
+
+function requireDriveExchangeTransport(env: Env): void {
+  let transport;
+  try {
+    transport = readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT);
+  } catch {
+    throw new HttpRequestError("GOOGLE_TRANSPORT_CONFIG_INVALID", 503,
+      "Google external transport configuration is invalid", true);
+  }
+  if (transport !== "drive-exchange") {
+    throw new HttpRequestError("GOOGLE_DRIVE_EXCHANGE_NOT_SELECTED", 409,
+      "Google Drive Exchange routes require GOOGLE_EXTERNAL_TRANSPORT=drive-exchange");
+  }
 }
 
 /** Dispatch routes whose protocol is owned by the HTTP adapter itself. */
@@ -20,6 +35,10 @@ export async function dispatchHttpSpecialRoute(input: {
   readonly identity: AccessIdentity;
   readonly dependencies: HttpDependencies;
 }): Promise<Response | null> {
+  if (input.match.route.operation.startsWith("google.oauth.") ||
+      input.match.route.operation.startsWith("google.connection.")) {
+    requireDriveExchangeTransport(input.env);
+  }
   switch (input.match.route.operation) {
     case "google.oauth.begin":
       requireNoQuery(input.url);

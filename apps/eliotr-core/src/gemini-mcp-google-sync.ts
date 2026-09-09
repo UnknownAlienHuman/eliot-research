@@ -1,3 +1,4 @@
+// IN_PROGRESS: ER-36 Workspace candidate admission and exact action/readback reconciliation remain unimplemented; v1 observations stay candidate-only.
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 import {
   GOOGLE_ACTIONS,

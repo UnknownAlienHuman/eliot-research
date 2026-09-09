@@ -26,6 +26,7 @@ function googleEnv(overrides: Record<string, string | undefined> = {}) {
     GOOGLE_OAUTH_GOOGLE_SUBJECT: "123456789",
     GOOGLE_OAUTH_GOOGLE_EMAIL: "exchange@example.com",
     GOOGLE_OAUTH_PRODUCTION_EVIDENCE_REF: "operator-attestation-1",
+    GOOGLE_EXTERNAL_TRANSPORT: "drive-exchange",
     ...overrides,
   };
 }
@@ -89,6 +90,17 @@ afterEach(() => {
 });
 
 describe("G1 owner-only Google OAuth begin over real HTTP/D1/crypto", () => {
+  it("does not auto-activate legacy OAuth when the Workspace transport is selected", async () => {
+    const before = await intentCount("g1-owner");
+    const { response, document } = await post(
+      { operation_ref: "operation-workspace-profile" },
+      { env: googleEnv({ GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" }) },
+    );
+    expect(response.status).toBe(409);
+    expect(document).toMatchObject({ code: "GOOGLE_DRIVE_EXCHANGE_NOT_SELECTED" });
+    expect(await intentCount("g1-owner")).toBe(before);
+  });
+
   it("admits a pending intent and returns a stable start receipt without provider or credential effects", async () => {
     const before = { credentials: await credentialCount(), generations: await generationCount() };
     const { response, document } = await post({ operation_ref: "g1-happy" }, { owner: "g1-happy-owner" });

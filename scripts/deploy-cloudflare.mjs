@@ -9,7 +9,7 @@ import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubT
   stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE, WranglerOAuthError, LOGIN_INSTRUCTION } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
-import { assertLaunchCodeComplete } from "./check-launch-code.mjs";
+import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launch-code.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -75,6 +75,8 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
       env.ELIOTR_DEPLOYMENT_GENERATION = `git-${revision}`;
     }
+    const canonicalConfig = JSON.parse(await readFile(resolve(core, "wrangler.jsonc"), "utf8"));
+    env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env);
   }
   const exec = (command, args, cwd = root) => execute(command, args, cwd, env);

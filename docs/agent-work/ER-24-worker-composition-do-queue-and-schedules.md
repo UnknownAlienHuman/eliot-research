@@ -52,10 +52,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/google-oauth-service.ts`
 - `apps/eliotr-core/src/google-oauth-begin.ts`
 - `apps/eliotr-core/src/google-oauth-callback.ts`
-- `apps/eliotr-core/src/http-special-routes.ts`
 - `apps/eliotr-core/test/google-oauth-admission.test.ts`
-- `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
-- `apps/eliotr-core/test/google-oauth-callback-http.test.ts`
 - `apps/eliotr-core/test/retrieval-ident-lex.test.ts`
 - `apps/eliotr-core/test/retrieval-q1-fixture.ts`
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
@@ -67,8 +64,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
 
-ER-36 owns the `gemini-mcp*.ts` implementation files. ER-24 owns only their routing/composition changes
-in `index.ts`, `env.ts`, and `wrangler.jsonc`.
+ER-36 owns the Google transport profile selection and legacy OAuth route gating. ER-24 retains the
+underlying OAuth service and storage authority.
 
 ## Implemented HTTP contour
 
