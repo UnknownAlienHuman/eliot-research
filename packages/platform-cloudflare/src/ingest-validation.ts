@@ -208,6 +208,19 @@ export function validateFileSet(
   if (actual.get("content.md") !== manifest.content.markdown_sha256) {
     fail("BUNDLE_HASH_MANIFEST_INVALID", "content.md digest disagrees with the normalized manifest");
   }
+  const coordinateMapPath = manifest.content.mappings;
+  const coordinateMapDigest = manifest.content.coordinate_map_digest;
+  if ((coordinateMapPath === undefined) !== (coordinateMapDigest === undefined)) {
+    fail("BUNDLE_HASH_MANIFEST_INVALID", "coordinate map path and digest must be declared together");
+  }
+  if (coordinateMapPath !== undefined && coordinateMapDigest !== undefined) {
+    if (actual.get(coordinateMapPath) !== coordinateMapDigest) {
+      fail("BUNDLE_HASH_MANIFEST_INVALID", "coordinate map digest disagrees with the file hash manifest");
+    }
+    if (!coordinateMapPath.toLowerCase().endsWith(".json")) {
+      fail("BUNDLE_FILE_SET_INVALID", "coordinate map must be a JSON file");
+    }
+  }
 }
 
 export function validateResidency(

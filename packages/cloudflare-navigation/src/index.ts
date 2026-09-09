@@ -13,3 +13,4 @@ export type {
 export { createOwnerScopeAuthority } from "./orientation-authority.js";
 export * from "./exhaustive-workflow-binding.js";
 export * from "./exhaustive-query-service.js";
+export * from "./native-coordinate-map-adapter.js";

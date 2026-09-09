@@ -6,6 +6,7 @@ export * from "./owner-cutover.js";
 export * from "./scope.js";
 export * from "./normalized-bundle.js";
 export * from "./evidence.js";
+export * from "./coordinate-map.js";
 export * from "./retrieval.js";
 export * from "./research.js";
 export * from "./policy.js";

@@ -1586,6 +1586,68 @@
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT",
       "supersedes_schema_id": "urn:eliotr:contracts:scope:scope-snapshot:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "CoordinateMapEntrySchema",
+      "family": "navigation",
+      "json_schema_sha256": "ff52ba1dda7dbe7b62a6afa5c802d3fb5856d354166c8ea2e9fe82fd858924e0",
+      "kind": "OBJECT",
+      "note": "Initial ER-01 publication; no prior generated schema generation exists.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "CoordinateMapSchema",
+      "family": "navigation",
+      "json_schema_sha256": "8a37473823710139645c2360113f606466b539e3bce2b372a18d60779f978d5e",
+      "kind": "OBJECT",
+      "note": "Initial ER-01 publication; no prior generated schema generation exists.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "BREAKING",
+      "export_name": "CoordinateMapEntrySchema",
+      "family": "navigation",
+      "json_schema_sha256": "1e3c19c1ddf6155f77fa4ef8af35acaef39022429e640da9512eda0ba0eb31d0",
+      "kind": "OBJECT",
+      "note": "Narrow coordinate-map anchors to the admitted table-cell precision supported by the native N1 reader; protocol remains eliotr.coordinate-map.v1.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v1:g1"
+    },
+    {
+      "compatibility": "BREAKING",
+      "export_name": "CoordinateMapSchema",
+      "family": "navigation",
+      "json_schema_sha256": "207fcb5e990421fe8f5c1df203d62aa03e84ad5a61203d49366313d982e0a0af",
+      "kind": "OBJECT",
+      "note": "Narrow coordinate-map anchors to the admitted table-cell precision supported by the native N1 reader; protocol remains eliotr.coordinate-map.v1.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT",
+      "supersedes_schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "EvidenceTableCellAnchorSchema",
+      "family": "evidence",
+      "json_schema_sha256": "6d2fc0fffe59c13adcd9a3375e0f0b7701de70b17fb1ca4d476f2b572ffd82e8",
+      "kind": "OBJECT",
+      "note": "Initial ER-01 publication of the shared strict table-cell EvidenceAnchor option used by native coordinate maps.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:evidence-table-cell-anchor:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",

@@ -2,7 +2,7 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
   "registry_generation": 2,
-  "schema_count": 129,
+  "schema_count": 132,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -3378,6 +3378,268 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "CoordinateMapEntrySchema",
+      "family": "navigation",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "column": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "table_cell",
+                "type": "string"
+              },
+              "row": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "table_id": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "kind",
+              "table_id",
+              "row",
+              "column"
+            ],
+            "type": "object"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "__schema3": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema4": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "$id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v2:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "anchor": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "excerpt_sha256": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "normalized_end_byte": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "normalized_start_byte": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "section_ref": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        "required": [
+          "anchor",
+          "normalized_start_byte",
+          "normalized_end_byte",
+          "excerpt_sha256"
+        ],
+        "title": "CoordinateMapEntry",
+        "type": "object",
+        "x-eliotr-family": "navigation",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 2,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "CoordinateMapSchema",
+      "family": "navigation",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.coordinate-map.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema10": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "__schema2": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema3": {
+            "const": "content.md",
+            "type": "string"
+          },
+          "__schema4": {
+            "const": "table_cell",
+            "type": "string"
+          },
+          "__schema5": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema6": {
+            "items": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          },
+          "__schema7": {
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "excerpt_sha256": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "normalized_end_byte": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "normalized_start_byte": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "section_ref": {
+                "$ref": "#/$defs/__schema10"
+              }
+            },
+            "required": [
+              "anchor",
+              "normalized_start_byte",
+              "normalized_end_byte",
+              "excerpt_sha256"
+            ],
+            "type": "object"
+          },
+          "__schema8": {
+            "additionalProperties": false,
+            "properties": {
+              "column": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "const": "table_cell",
+                "type": "string"
+              },
+              "row": {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "table_id": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "kind",
+              "table_id",
+              "row",
+              "column"
+            ],
+            "type": "object"
+          },
+          "__schema9": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "$id": "urn:eliotr:contracts:navigation:coordinate-map:v2:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "entries": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "generator_generation": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "normalized_content_path": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "precision_ceiling": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "source_content_sha256": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "source_logical_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_namespace_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_owner_generation": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_owner_system_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_revision_ref": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "protocol",
+          "source_owner_system_id",
+          "source_namespace_id",
+          "source_owner_generation",
+          "source_logical_id",
+          "source_revision_ref",
+          "source_content_sha256",
+          "normalized_content_path",
+          "precision_ceiling",
+          "generator_generation",
+          "created_at",
+          "entries"
+        ],
+        "title": "CoordinateMap",
+        "type": "object",
+        "x-eliotr-family": "navigation",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 2,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v2:g1",
+      "schema_version": 2,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "CoverageGoalSchema",
       "family": "research",
       "json_schema": {
@@ -5483,6 +5745,53 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:evidence:evidence-resolution-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "EvidenceTableCellAnchorSchema",
+      "family": "evidence",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:evidence:evidence-table-cell-anchor:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "table_cell",
+            "type": "string"
+          },
+          "row": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "table_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "table_id",
+          "row",
+          "column"
+        ],
+        "title": "EvidenceTableCellAnchor",
+        "type": "object",
+        "x-eliotr-family": "evidence",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:evidence-table-cell-anchor:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
