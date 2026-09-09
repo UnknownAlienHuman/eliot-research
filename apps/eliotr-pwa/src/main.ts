@@ -6,6 +6,7 @@ import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
+import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence } from "@eliotr/contracts";
 
@@ -73,7 +74,7 @@ function render(health: SystemHealth | null): void {
           <section class="tool-card tool-card--import"><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
           <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-          <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div></section>
+          <section class="tool-card tool-card--research" id="research-card"><div id="exhaustive-workflow"></div><div class="tool-divider"></div><div id="retrieval"></div></section>
         </div>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
@@ -91,6 +92,8 @@ function render(health: SystemHealth | null): void {
   const library = app.querySelector<HTMLElement>("#library");
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
+  const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration) : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
@@ -132,7 +135,7 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); };
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); };
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
@@ -155,6 +158,14 @@ function render(health: SystemHealth | null): void {
     clearEvidenceRail(false);
   });
   retrievalHost?.addEventListener("retrieval:started", clearEvidenceOnQueryStart);
+  exhaustiveHost?.addEventListener("exhaustive:started", clearEvidenceOnQueryStart);
+  exhaustiveHost?.addEventListener("exhaustive:completed", (event) => {
+    const detail = (event as CustomEvent<{ matches: number; sections: number }>).detail;
+    const coverage = app.querySelector("#coverage");
+    if (coverage) coverage.textContent = `Complete · ${detail.sections} sections`;
+    const coverageNote = app.querySelector("#coverage-note");
+    if (coverageNote) coverageNote.textContent = `${detail.matches} exact match${detail.matches === 1 ? "" : "es"} in the reconciled scope.`;
+  });
   app.addEventListener("eliotr:health-lost", clearPrivateEvidence);
   app.addEventListener("library:scope-changed", clearEvidenceOnEvent);
   window.addEventListener("offline", clearEvidenceOnEvent);
@@ -163,13 +174,14 @@ function render(health: SystemHealth | null): void {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
-  const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
+  const cleanups = [orientation, retrieval, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
     library ? mountLibraryPanel(library, (id) => {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
+      exhaustive?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {

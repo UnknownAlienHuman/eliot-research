@@ -52,6 +52,13 @@ h2 { margin-bottom: 12px; font-size: 17px; letter-spacing: -.03em; } h3 { margin
 .mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } .mini-stat { display: grid; align-content: center; gap: 7px; padding: 16px; } .mini-stat .eyebrow { margin: 0; }
 .mini-stat strong { font-size: 20px; letter-spacing: -.04em; } .mini-stat span:last-child { color: var(--dim); }
 .tool-stack { display: grid; gap: 12px; } .tool-card { padding: 20px; } .tool-card > div > h2 { font-size: 15px; } .tool-card--research { border-color: rgba(149, 183, 255, .28); background: linear-gradient(135deg, rgba(30, 34, 43, .94), rgba(25, 29, 38, .72)); }
+.tool-divider { height: 1px; margin: 24px 0; background: var(--line); }
+.workflow-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; } .workflow-head h2 { margin-bottom: 0; }
+.workflow-badge { padding: 5px 8px; border: 1px solid rgba(149, 183, 255, .3); border-radius: 99px; color: var(--blue); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
+.workflow-copy { max-width: 620px; margin: 13px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.field-hint { color: var(--dim); } .workflow-actions { display: flex; flex-wrap: wrap; gap: 6px; } .workflow-actions .button { margin: 0; }
+.workflow-status, .workflow-detail { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; } .workflow-detail { color: var(--dim); }
+.workflow-progress { height: 5px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: var(--line); } .workflow-progress-bar { width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .tool-card hr, .panel hr { display: none; }
 .evidence-heading { align-items: flex-start; justify-content: space-between; margin-bottom: 26px; } .evidence-heading .eyebrow { margin-bottom: 6px; } .rail-status { padding-top: 3px; color: var(--accent); font-size: 9px; }
 .evidence-empty { display: grid; min-height: 260px; align-content: center; justify-items: start; padding: 20px 4px; } .evidence-glyph { display: grid; width: 40px; height: 40px; margin-bottom: 18px; place-items: center; border: 1px solid var(--line); border-radius: 12px; color: var(--accent); }

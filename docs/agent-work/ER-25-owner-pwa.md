@@ -147,3 +147,20 @@ G1 adds the minimal owner-only begin surface under this packet's existing
 `src/google-oauth-api.test.ts`, and `src/google-oauth-panel.ts` (status plus
 authorization link; no private token in URL, log, or browser storage).
 No new read grant, source policy, migration, or provider credential.
+
+## Q6 durable exhaustive workflow UI
+
+The Research panel now exposes the existing owner-only exhaustive workflow contract through
+`src/exhaustive-workflow-api.ts` and `src/exhaustive-workflow-panel.ts`. It submits the exact
+`EXHAUSTIVE_JOB` profile to `POST /api/v1/research/query`, accepts only the versioned 200/202
+envelopes, and validates workflow ID, deployment generation, terminal status and bounded coverage
+metadata before rendering it. Active jobs are polled with a finite in-memory budget; cancelling a
+job sends the real `DELETE /api/v1/research/query/:workflow_id` request and never treats a stopped
+poll as server cancellation. Complete coverage is shown only when the server returns its complete
+job receipt; unfinished, errored and currentness-uncertain results remain visibly incomplete.
+
+The panel keeps the workflow identity only in the current page session. Authorization loss, offline,
+health loss, scope changes and page disposal clear the private state and abort pending reads. It does
+not persist workflow IDs, source bytes, credentials or artifact references, and it does not turn a
+workflow artifact reference into an EvidenceHandle. A server-side recent-workflow listing is a
+separate follow-up owned by the backend; reload recovery is therefore not claimed by this slice.

@@ -277,7 +277,16 @@ export function decodeApiProblem(value: unknown, fallbackStatus: number): ApiReq
 }
 
 /** Authenticated same-origin transport; the deadline includes streaming body consumption. */
-export async function requestApi(path: string, init: RequestInit = {}): Promise<unknown> {
+export function requestApi(path: string, init?: RequestInit): Promise<unknown> {
+  return requestApiWithStatuses(path, init, [200]);
+}
+
+/** Same transport for endpoints whose successful response has an explicit alternate status. */
+export async function requestApiWithStatuses(
+  path: string,
+  init: RequestInit = {},
+  acceptedStatuses: readonly number[] = [200],
+): Promise<unknown> {
   // Check the pathname, not dots in a valid identifier/query. Reject URL normalization
   // (including encoded parent segments) before attaching same-origin credentials.
   let unchangedPath = false;
@@ -334,7 +343,7 @@ export async function requestApi(path: string, init: RequestInit = {}): Promise<
     if (!response.ok) {
       throw decodeApiProblem(value, response.status);
     }
-    if (response.status !== 200) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
+    if (!acceptedStatuses.includes(response.status)) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
     return value;
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;

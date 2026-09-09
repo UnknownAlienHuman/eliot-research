@@ -1,0 +1,66 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApiRequestError } from "./api.js";
+import {
+  cancelExhaustiveWorkflow, exhaustiveQueryBody, launchExhaustiveWorkflow, readExhaustiveWorkflow,
+} from "./exhaustive-workflow-api.js";
+
+const generation = "deployment-1";
+const workflow = `exhaustive-workflow-${"a".repeat(64)}`;
+
+function envelope(data: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify({ data, trace_id: "trace-1", deployment_generation: generation }), {
+    status, headers: { "content-type": "application/json" },
+  });
+}
+
+function completeData(): Record<string, unknown> {
+  return {
+    protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflow, workflow_status: "complete",
+    job: {
+      status: "COMPLETE", job_id: "job-1", idempotency_key: "key-1", request_digest: "b".repeat(64),
+      scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, coverage_claim: "COMPLETE",
+      coverage_denominator_ref: "denominator-1", denominator_shards: 2, settled_shards: 2,
+      total_scanned_sections: 8, total_matches: 3, result_artifact_ref: "artifact-1", coverage_receipt_ref: "receipt-1",
+    },
+  };
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("exhaustive workflow transport", () => {
+  it("builds the exact exhaustive profile and accepts a launch 202", async () => {
+    const fetch = vi.fn(async () => envelope({
+      protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflow, workflow_status: "queued",
+    }, 202));
+    vi.stubGlobal("fetch", fetch);
+    const body = exhaustiveQueryBody("alpha", []);
+    expect(JSON.parse(body)).toMatchObject({ product: "EXHAUSTIVE_JOB", budget_ref: "exhaustive-job-v1", max_results: 16 });
+    await expect(launchExhaustiveWorkflow(body, "key-1", generation)).resolves.toMatchObject({ workflow_instance_id: workflow, workflow_status: "queued" });
+    expect(fetch).toHaveBeenCalledWith("/api/v1/research/query", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("requires the requested workflow and deployment identity on status", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(completeData())));
+    await expect(readExhaustiveWorkflow(workflow, generation)).resolves.toMatchObject({ workflow_status: "complete", job: { status: "COMPLETE", total_matches: 3 } });
+    await expect(readExhaustiveWorkflow(workflow, "deployment-2")).rejects.toMatchObject({ code: "API_GENERATION_MISMATCH" });
+  });
+
+  it("uses DELETE for server cancellation and refuses inconsistent coverage", async () => {
+    const bad = completeData();
+    bad.workflow_status = "running";
+    bad.job = { status: "UNFINISHED", job_id: "job-1", coverage_denominator_ref: "denominator-1", denominator_shards: 2, settled_shards: 1, unsettled_shard_ids: [] };
+    const fetch = vi.fn(async () => envelope(bad));
+    vi.stubGlobal("fetch", fetch);
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+    const cancelFetch = vi.fn(async () => envelope({ protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflow, workflow_status: "terminated" }));
+    vi.stubGlobal("fetch", cancelFetch);
+    await expect(cancelExhaustiveWorkflow(workflow, generation)).resolves.toMatchObject({ workflow_status: "terminated" });
+    expect(cancelFetch).toHaveBeenCalledWith(`/api/v1/research/query/${workflow}`, expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("does not accept an unknown status or foreign workflow id", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => envelope({ protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflow, workflow_status: "mystery" })));
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toBeInstanceOf(ApiRequestError);
+    await expect(readExhaustiveWorkflow("exhaustive-workflow-invalid", generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+});
