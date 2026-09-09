@@ -10,8 +10,11 @@ hand to a deployment agent; no step requires reading the architecture master doc
 
 ## Operator identity (non-secret, browser OAuth only)
 
-Browser OAuth through the local Wrangler profile is the ONLY operator auth method.
-No API key, API token, or service token is used by this flow, and none may be added to tracked
+Operator authentication uses browser OAuth. The automated scripts currently consume the local
+Wrangler profile. The explicitly selected official Cloudflare MCP plugin may also use its own
+managed browser-OAuth connection for account/API inspection; it does not export credentials to
+Wrangler or grant a deployment capability. No API key, API token, or service token is used by
+the operator flow, and none may be added to tracked
 files. The tracked file `infra/cloudflare/operator-profile.json` is an account-neutral template
 with fictional placeholders only (protocol `eliotr.cloudflare-operator-profile.v1`). Real operator
 values live only in the ignored local profile `.eliotr-state/cloudflare/operator-profile.json`
@@ -50,7 +53,22 @@ scopes do not establish Access-management or billing authority, and the exact ca
 endpoint entitlement or restricted API availability. These responses are typed authority gaps,
 not evidence of zero usage. Preflight must keep the affected values unknown/sealed; it must not
 fabricate counters, treat dashboard state as API evidence, or fall back to a static token. Resolving
-these permissions requires a separately reviewed operator-auth decision and is outside this runbook.
+these permissions must preserve the existing usage and product-completion gates.
+
+The user selected the installed official Cloudflare MCP plugin on 2026-09-09. Reconnecting its
+existing project-local server with `codex mcp login cloudflare-api` restored managed OAuth.
+A fresh managed MCP client discovered `search`, `execute`, and `docs`, and actual account,
+Zero Trust organization, Access application and identity-provider reads returned HTTP 200.
+The earlier Wrangler Access 403 therefore does not mean the account is inaccessible. No global
+MCP registration or static-token fallback is necessary. This observation does not yet wire the
+MCP transport into the provisioner; the scripted path above still uses Wrangler.
+
+Both `/accounts/{account_id}/billable/usage` and `/accounts/{account_id}/billing/usage` still
+returned Cloudflare error `10000` through MCP. The [official Usage v2 specification](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v2/)
+labels that endpoint Alpha/Restricted; the precise authorization or entitlement cause remains
+unconfirmed. Keep those counters unknown. Account-specific readbacks belong only in ignored
+operator state and the local MCP map.
+
 The local operator policy still declares `free-tier` with `paid_overage:false`, while the current
 account plan readback shows Paid; that policy/account-plan distinction is an unresolved
 configuration reconciliation item, and no tier thresholds are inferred here.
