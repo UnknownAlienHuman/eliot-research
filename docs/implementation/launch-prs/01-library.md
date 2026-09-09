@@ -206,8 +206,16 @@ The phase fence consumes the PWA's actual `register()` promise, tracks `updatefo
 bounded event quiescence, and treats `installed` as terminal only for an update with an existing
 active worker; first installation must reach `activated`. The focused deterministic checks pass:
 phase ledger identity, service-worker lifecycle, readback retry classification and marker-failure
-cleanup. The current local `pnpm test:owner-e2e` attempt is `NOT_EXECUTED` for browser acceptance:
-Wrangler's local migration runtime reported `bad port` without retaining a URL or port in its log;
+cleanup. Playwright 1.63 can report a Service Worker main-script `requestfinished` event with no
+HTTP response metadata: its Chromium network manager forwards a nullable response when the CDP
+response event was not observed, while the public BrowserContext event exposes only the Request.
+The harness records this exact owned `/sw.js` terminal as
+`SERVICE_WORKER_SCRIPT_FINISHED_HTTP_UNOBSERVED`, retaining `status: unknown`; it does not infer
+HTTP success or qualify API, page, foreign-worker, query-bearing or otherwise mismatched requests.
+See the [Playwright service-worker guidance](https://playwright.dev/docs/service-workers) and the
+[BrowserContext requestfinished API](https://playwright.dev/docs/api/class-browsercontext#browser-context-on-request-finished).
+The current owner-e2e browser acceptance remains `NOT_EXECUTED` until the corrected harness passes
+in both Ubuntu and Windows CI. The prior local `bad port` diagnostic retained no URL or port, and
 the migration SQL itself has no network operation. L1 acceptance requires the actual owner-e2e to
 pass in both Ubuntu and Windows CI; full Library L6/L7 and live qualification remain separate.
 Live Access/provider qualification remains `NOT_EXECUTED`.

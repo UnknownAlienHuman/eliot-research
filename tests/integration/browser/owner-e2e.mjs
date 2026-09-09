@@ -648,6 +648,32 @@ export function roleCompat(first, second) {
 export const NAV_TOKEN_SCOPE = "harness-navigation";
 export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 204, 304, 401, 403]);
 
+// Chromium can expose a Service Worker main-script requestfinished event with
+// no HTTP response metadata (Playwright 1.63 forwards a nullable response).
+// Only that exact, owned shell-worker request may use the tooling terminal;
+// callers still record status as unknown and must not infer HTTP success.
+export function isOwnedServiceWorkerMainScriptRequest(request, allowedOrigins, observedWorkers) {
+  if (!request || !Array.isArray(allowedOrigins) || typeof request.method !== "function" ||
+    typeof request.resourceType !== "function" || typeof request.url !== "function" ||
+    typeof request.serviceWorker !== "function" || typeof request.failure !== "function" ||
+    !observedWorkers || typeof observedWorkers.has !== "function") return false;
+  let requestUrl;
+  let worker;
+  let workerUrl;
+  try {
+    requestUrl = new URL(request.url());
+    worker = request.serviceWorker();
+    workerUrl = new URL(worker?.url?.());
+  } catch { return false; }
+  if (requestUrl.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(requestUrl.hostname) ||
+    requestUrl.pathname !== "/sw.js" || requestUrl.search !== "" || requestUrl.hash !== "" ||
+    requestUrl.username !== "" || requestUrl.password !== "" ||
+    request.method() !== "GET" || request.resourceType() !== "script" ||
+    workerUrl.href !== requestUrl.href || !allowedOrigins.includes(requestUrl.origin) ||
+    observedWorkers.has(worker) !== true || request.failure() !== null) return false;
+  return true;
+}
+
 // Closed issuance handles: frozen {opId,docId,role} threaded as arguments.
 // Exact capabilities: every legitimate handle is registered in issuanceRegistry
 // (WeakMap) at creation; checkIssuanceHandle requires a registry hit + exact
@@ -738,12 +764,28 @@ export function createRequestTerminalTracker(contractStatuses = new Set(CONTRACT
     noteResponse(reqId, status) {
       assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
       assert.ok(Number.isSafeInteger(status), `terminal tracker requires an exact status, got ${String(status).slice(0, 32)}`);
+      const existing = terminalByReqId.get(reqId);
+      if (existing?.kind === "service-worker-script-finished-http-unobserved") {
+        throw new Error(`response conflicts with service-worker-finished terminal reqId ${reqId}`);
+      }
       assert.ok(!seenResponseIds.has(reqId),
         `duplicate response reqId ${reqId} fails closed (one terminal outcome per request)`);
       seenResponseIds.add(reqId);
       const contract = allowed.has(status);
       terminalByReqId.set(reqId, Object.freeze({ kind: "response", status, contract }));
       return contract;
+    },
+    noteServiceWorkerFinished(reqId) {
+      assert.ok(Number.isSafeInteger(reqId), `terminal tracker requires an exact reqId, got ${String(reqId).slice(0, 32)}`);
+      const existing = terminalByReqId.get(reqId);
+      if (existing === undefined) {
+        terminalByReqId.set(reqId, Object.freeze({ kind: "service-worker-script-finished-http-unobserved" }));
+        return true;
+      }
+      // A real response already accounts for this request; requestfinished is
+      // the second Playwright terminal signal and must not duplicate it.
+      if (existing.kind === "response") return false;
+      throw new Error(`duplicate terminal reqId ${reqId} (${existing.kind} then service-worker-finished)`);
     },
     shouldSuppressFailure(reqId) {
       const terminal = terminalByReqId.get(reqId);
@@ -1235,11 +1277,14 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
     // unexpected responses that console/pageerror/failed-request ledgers miss.
     const requests = [];
     const networkResponses = [];
+    const serviceWorkerFinishedWithoutResponse = [];
     const pendingRequests = new Set();
     const pendingWaiters = new Set();
     const serviceWorkerSettlements = [];
     const ledgerSettlements = [];
     const serviceWorkerEvents = [];
+    const serviceWorkerOrigins = new Set();
+    const observedServiceWorkers = new WeakSet();
     const recordServiceWorkerEvent = (kind, worker) => {
       let origin = "unavailable";
       let path = "unavailable";
@@ -1248,10 +1293,12 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
         origin = parsed.origin;
         path = parsed.pathname.slice(0, 256);
       } catch { /* bounded diagnostic remains redacted */ }
+      if (origin !== "unavailable") serviceWorkerOrigins.add(origin);
       serviceWorkerEvents.push(Object.freeze({ kind, origin, path, at: Date.now() }));
       if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
     };
     context.on("serviceworker", (worker) => {
+      observedServiceWorkers.add(worker);
       recordServiceWorkerEvent("serviceworker", worker);
       worker.on?.("close", () => recordServiceWorkerEvent("worker-close", worker));
     });
@@ -1379,12 +1426,15 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
         frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
-    // Passive observation only: response/requestfailed remain the sole
-    // terminal accounting paths. Playwright documents requestfinished after
-    // response for Service Worker traffic; retain its own reqId to diagnose a
-    // missing response without fabricating one or changing pending state.
+    // Playwright 1.63 can report a Service Worker main-script requestfinished
+    // with a nullable response. Qualify only the exact owned shell worker as a
+    // tooling terminal; status remains unknown and ordinary traffic stays
+    // response/requestfailed-only. A real response wins and is never duplicated.
     context.on("requestfinished", (request) => {
       const stamp = requestIds.get(request);
+      const entry = ledgerEntry(request.method(), request.url());
+      const eligible = stamp !== undefined && Number.isSafeInteger(stamp.id) &&
+        isOwnedServiceWorkerMainScriptRequest(request, [...serviceWorkerOrigins], observedServiceWorkers);
       serviceWorkerEvents.push(Object.freeze({
         kind: "requestfinished",
         reqId: typeof stamp?.id === "number" ? stamp.id : null,
@@ -1393,6 +1443,14 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
         at: Date.now(),
       }));
       if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
+      if (!eligible) return;
+      if (!terminals.noteServiceWorkerFinished(stamp.id)) return;
+      settleRequest(request);
+      serviceWorkerFinishedWithoutResponse.push(Object.freeze({ ...entry,
+        resourceType: request.resourceType(), terminalKind: "SERVICE_WORKER_SCRIPT_FINISHED_HTTP_UNOBSERVED",
+        status: "unknown", reqId: stamp.id, epoch: stamp.epoch, serial: stamp.serial, seq: stamp.seq,
+        opId: stamp.opId, docId: stamp.docId, role: stamp.role, slotId: stamp.slotId,
+        frame: frameIdentity(request) }));
     });
     page.on("websocket", (socket) => { websockets.push(socket.url().slice(0, 512)); });
     page.on("worker", (worker) => { pageWorkers.push(worker.url().slice(0, 512)); });
@@ -1401,7 +1459,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       assertPhaseResetReady(pendingRequests, `phase reset serial ${panelSerial}`);
       panelSerial += 1;
       consoleErrors.length = 0; pageErrors.length = 0; failedRequests.length = 0; failedRequestClock.length = 0; failedRequestEntries.length = 0; responses.length = 0;
-      requests.length = 0; networkResponses.length = 0; websockets.length = 0; pageWorkers.length = 0;
+      requests.length = 0; networkResponses.length = 0; serviceWorkerFinishedWithoutResponse.length = 0; websockets.length = 0; pageWorkers.length = 0;
       pendingNavHandles.length = 0;
       auth.drainPendingNav();
     };
@@ -1427,7 +1485,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       return { promise, cancel: () => { active = false; pendingWaiters.delete(resolveWaiter); } };
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
-      requests, networkResponses, websockets, pageWorkers, serviceWorkerSettlements, ledgerSettlements, serviceWorkerEvents, resetLedger, close, profileDir,
+      requests, networkResponses, serviceWorkerFinishedWithoutResponse, websockets, pageWorkers, serviceWorkerSettlements, ledgerSettlements, serviceWorkerEvents, resetLedger, close, profileDir,
       pendingRequestCount, waitForPendingChange, trafficSequence: () => trafficSequence,
       registerOp, mintSlotsFor, setRole, adoptIssuance, bindSlot,
       currentOp: () => currentOp,
@@ -3000,6 +3058,8 @@ export function summarizePhaseLedger(harness) {
   return {
     requests: harness.requests.length,
     responses: harness.networkResponses.length,
+    service_worker_finished_http_unobserved: Array.isArray(harness.serviceWorkerFinishedWithoutResponse)
+      ? harness.serviceWorkerFinishedWithoutResponse.length : 0,
     failed: harness.failedRequests.length,
     websockets: harness.websockets.length,
     workers: harness.pageWorkers.length,
@@ -3452,6 +3512,30 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
         `${label}: unlisted mutation denied: ${key} -> ${response.status}`);
     }
   }
+  const unobservedServiceWorkerFinishes = Array.isArray(harness.serviceWorkerFinishedWithoutResponse)
+    ? harness.serviceWorkerFinishedWithoutResponse : [];
+  const unobservedIds = new Set();
+  for (const finish of unobservedServiceWorkerFinishes) {
+    assert.equal(finish.terminalKind, "SERVICE_WORKER_SCRIPT_FINISHED_HTTP_UNOBSERVED",
+      `${label}: unknown service-worker terminal kind fails closed`);
+    assert.equal(finish.status, "unknown",
+      `${label}: unobserved service-worker HTTP status must remain unknown`);
+    assert.ok(Number.isSafeInteger(finish.reqId), `${label}: unobserved service-worker finish without reqId fails closed`);
+    assert.ok(!unobservedIds.has(finish.reqId), `${label}: duplicate unobserved service-worker finish reqId: ${finish.reqId}`);
+    unobservedIds.add(finish.reqId);
+    assert.ok(!respondedIds.has(finish.reqId), `${label}: response and unobserved finish share reqId: ${finish.reqId}`);
+    const matched = pending.get(finish.reqId);
+    assert.ok(matched !== undefined, `${label}: unobserved finish reqId has no browser request: ${finish.reqId}`);
+    pending.delete(finish.reqId);
+    for (const field of ["method", "origin", "path", "resourceType", "epoch", "serial", "opId", "docId", "role"]) {
+      assert.equal(finish[field], matched[field], `${label}: unobserved service-worker ${field} crossed request identity`);
+    }
+    assert.equal(finish.slotId ?? null, matched.slotId ?? null, `${label}: unobserved service-worker slot crossed request identity`);
+    assert.equal(finish.method, "GET", `${label}: unobserved service-worker terminal must be GET`);
+    assert.equal(finish.resourceType, "script", `${label}: unobserved service-worker terminal must be script`);
+    assert.equal(finish.path, "/sw.js", `${label}: unobserved service-worker terminal must be /sw.js`);
+    assert.ok(origins.includes(finish.origin), `${label}: cross-origin unobserved service-worker egress denied: ${finish.origin}`);
+  }
   const abortAllowed = new Set(aborts);
   const failures = harness.failedRequestEntries;
   assert.ok(Array.isArray(failures), `${label}: structured failure ledger is required`);
@@ -3483,6 +3567,9 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
           catch { return { origin: "unavailable", path: "unavailable" }; }
         }).slice(0, 16)
         : [],
+      serviceWorkerFinishedWithoutResponse: Array.isArray(harness.serviceWorkerFinishedWithoutResponse)
+        ? harness.serviceWorkerFinishedWithoutResponse.slice(-8)
+        : [],
       recentServiceWorkerEvents: Array.isArray(harness.serviceWorkerEvents)
         ? harness.serviceWorkerEvents.slice(-12)
         : [],
@@ -3511,6 +3598,69 @@ export function verifyPhaseLedgerIdentityRegression(origin = "http://127.0.0.1:4
     "phase-ledger-cross-phase-response", spec), /serial crossed request identity/,
     "a cross-phase response must fail closed even when URL is identical");
   return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 2 };
+}
+
+export function verifyServiceWorkerFinishedTerminalRegression(origin = "http://127.0.0.1:43123") {
+  const toolingTerminal = createRequestTerminalTracker();
+  assert.equal(toolingTerminal.noteServiceWorkerFinished(699), true,
+    "the first metadata-null tooling terminal must be accepted once");
+  assert.throws(() => toolingTerminal.noteServiceWorkerFinished(699), /duplicate terminal reqId/,
+    "a duplicate metadata-null tooling terminal must fail closed");
+  const responseTerminal = createRequestTerminalTracker();
+  responseTerminal.noteResponse(700, 200);
+  assert.equal(responseTerminal.noteServiceWorkerFinished(700), false,
+    "a real response terminal must win over the later requestfinished signal");
+  const conflictingResponse = createRequestTerminalTracker();
+  conflictingResponse.noteServiceWorkerFinished(704);
+  assert.throws(() => conflictingResponse.noteResponse(704, 200), /response conflicts with service-worker-finished/,
+    "a late real response must conflict with, rather than overwrite, the tooling terminal");
+  assert.equal(conflictingResponse.terminalByReqId().get(704)?.kind,
+    "service-worker-script-finished-http-unobserved", "late response conflict must retain the raw tooling terminal");
+  const worker = { url: () => `${origin}/sw.js` };
+  const observedWorkers = new WeakSet([worker]);
+  const request = {
+    method: () => "GET", resourceType: () => "script", url: () => `${origin}/sw.js`,
+    serviceWorker: () => worker, failure: () => null,
+  };
+  const row = { reqId: 701, method: "GET", origin, path: "/sw.js", resourceType: "script",
+    epoch: 2, serial: 3, seq: 4, opId: 5, docId: 6, role: "startup-probe", slotId: null, frame: "unknown" };
+  const finish = { ...row, terminalKind: "SERVICE_WORKER_SCRIPT_FINISHED_HTTP_UNOBSERVED", status: "unknown" };
+  assert.equal(isOwnedServiceWorkerMainScriptRequest(request, [origin], observedWorkers), true,
+    "finished metadata-null shell worker request must qualify only with exact owned identity");
+  for (const [label, candidate] of [
+    ["api", { ...request, url: () => `${origin}/api/v1/system/health` }],
+    ["main-frame", { ...request, serviceWorker: () => null }],
+    ["foreign-worker", { ...request, serviceWorker: () => ({ url: () => `${origin}/sw.js` }) }],
+    ["query", { ...request, url: () => `${origin}/sw.js?rev=2` }],
+    ["userinfo", { ...request, url: () => `http://user:pass@${new URL(origin).host}/sw.js` }],
+    ["wrong-method", { ...request, method: () => "POST" }],
+    ["wrong-resource", { ...request, resourceType: () => "fetch" }],
+    ["mismatched-worker", { ...request, serviceWorker: () => ({ url: () => `${origin}/other.js` }) }],
+    ["non-null-failure", { ...request, failure: () => ({ errorText: "net::ERR_FAILED" }) }],
+  ]) assert.equal(isOwnedServiceWorkerMainScriptRequest(candidate, [origin], observedWorkers), false,
+    `${label} requestfinished must remain response-required`);
+  const base = { websockets: [], pageWorkers: [], requests: [row], networkResponses: [],
+    serviceWorkerFinishedWithoutResponse: [finish], failedRequestEntries: [],
+    context: { serviceWorkers: () => [worker] } };
+  const spec = { origins: [origin], api: [], workerOrigins: [origin] };
+  assert.doesNotThrow(() => assertPhaseNetwork(base, "finished-metadata-null", spec),
+    "exact owned main-script requestfinished may close with HTTP status unknown");
+  assert.throws(() => assertPhaseNetwork({ ...base, serviceWorkerFinishedWithoutResponse: [] },
+    "finished-missing", spec), /every browser request must pair/,
+    "missing requestfinished must remain a dangling failure");
+  assert.throws(() => assertPhaseNetwork({ ...base, serviceWorkerFinishedWithoutResponse: [{ ...finish, reqId: 702 }] },
+    "finished-foreign-id", spec), /no browser request/,
+    "foreign requestfinished reqId must fail closed");
+  assert.throws(() => assertPhaseNetwork({ ...base, serviceWorkerFinishedWithoutResponse: [finish, finish] },
+    "finished-duplicate", spec), /duplicate unobserved service-worker finish/,
+    "duplicate requestfinished must fail closed");
+  assert.throws(() => assertPhaseNetwork({ ...base, serviceWorkerFinishedWithoutResponse: [{ ...finish, path: "/sw.js?rev=2" }] },
+    "finished-query", spec), /crossed request identity|must be \/sw\.js/,
+    "query-bearing main-script finish must fail closed");
+  assert.throws(() => assertPhaseNetwork({ ...base, networkResponses: [{ ...row, status: 200, contentType: "application/javascript" }] },
+    "finished-response-duplicate", spec), /response and unobserved finish share reqId/,
+    "real response plus tooling finish must fail closed as duplicate terminal evidence");
+  return { protocol: "eliotr.owner-e2e.service-worker-finished-http-unobserved.v1", state: "PASS", negatives: 14 };
 }
 
 async function buildBundleFiles(namespace, ownerGeneration, revisionRef) {
