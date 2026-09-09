@@ -28,9 +28,28 @@ export interface OrientationSource {
   readonly kind: string;
 }
 export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> {
+  exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string): Promise<Awaited<ReturnType<ScopeRepository["resolveAtom"]>>>;
+  exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest): Promise<Awaited<ReturnType<ScopeRepository["resolveAuthorityClosure"]>>>;
   requireReadPolicy(): Promise<void>;
   sources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
+  /**
+   * Retrieval-only source loading. Every batch keeps the orientation policy,
+   * admission, owner-generation, and purge checks performed by `sources`.
+   */
+  exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
   grant(snapshot: ScopeSnapshot): Promise<void>;
+  exhaustiveGrant(snapshot: ScopeSnapshot): Promise<void>;
+  exhaustiveRequireReadPolicy(): Promise<void>;
+}
+/** Keep retrieval's larger bound explicit while preserving the orientation batch bound. */
+export function splitExhaustiveSourceRefs(refs: readonly string[]): readonly (readonly string[])[] {
+  if (refs.length > 4096 || new Set(refs).size !== refs.length) orientationFail("ORIENTATION_SCOPE_LIMIT", 413);
+  refs.forEach(orientationId);
+  const batches: (readonly string[])[] = [];
+  for (let offset = 0; offset < refs.length; offset += ORIENTATION_MAX_SOURCES) {
+    batches.push(refs.slice(offset, offset + ORIENTATION_MAX_SOURCES));
+  }
+  return batches;
 }
 const columns = "r.source_revision_ref, s.source_id, s.source_namespace_id, s.source_owner_system_id, " +
   "r.source_owner_generation, s.ownership_mode, r.content_sha256, r.object_residency_key_digest, " +
@@ -49,18 +68,18 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     if (!Number.isSafeInteger(value) || value < 0) orientationFail("ORIENTATION_CLOCK_INVALID", 503);
     return new Date(value).toISOString();
   };
-  async function all<T>(sql: string, values: Bind[]): Promise<T[]> {
+  async function all<T>(sql: string, values: Bind[], maximumRows = ORIENTATION_MAX_SOURCES): Promise<T[]> {
     const result = await db.prepare(sql).bind(...values).all<T>();
     if (!result.success || !Array.isArray(result.results)) orientationFail("ORIENTATION_AUTHORITY_UNAVAILABLE", 503, true);
-    if (result.results.length > ORIENTATION_MAX_SOURCES) orientationFail("ORIENTATION_SCOPE_LIMIT", 413);
+    if (result.results.length > maximumRows) orientationFail("ORIENTATION_SCOPE_LIMIT", 413);
     return result.results;
   }
-  async function policies(): Promise<Map<string, PolicyRow>> {
+  async function policies(maximumRows = ORIENTATION_MAX_SOURCES): Promise<Map<string, PolicyRow>> {
     const rows = await all<PolicyRow>("SELECT source_namespace_id, policy_ref, generation, " +
       "CASE WHEN length(CAST(allowed_use_json AS BLOB))<=4096 THEN allowed_use_json ELSE NULL END AS allowed_use_json, " +
       "disclosure_ceiling, expires_at FROM scope_read_policy WHERE principal_ref=?1 AND client_class=?2 " +
-      "AND state='ACTIVE' AND julianday(expires_at)>julianday(?3) ORDER BY source_namespace_id LIMIT 65",
-    [access.principal_ref, access.client_class, clock()]);
+      "AND state='ACTIVE' AND julianday(expires_at)>julianday(?3) ORDER BY source_namespace_id LIMIT ?4",
+    [access.principal_ref, access.client_class, clock(), maximumRows + 1], maximumRows);
     if (!rows.length) orientationFail("ORIENTATION_READ_POLICY_REQUIRED", 403);
     for (const row of rows) {
       orientationId(row.source_namespace_id); orientationId(row.policy_ref); orientationId(row.disclosure_ceiling);
@@ -81,7 +100,11 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     return parsed.map(orientationId);
   }
   async function decode(rows: SourceRow[], policyRows: Map<string, PolicyRow>): Promise<OrientationSource[]> {
-    const authorities = await loadSourceAuthorities(db, rows.map((row) => row.source_revision_ref), now());
+    const authorities: EvidenceSourceAuthority[] = [];
+    for (let offset = 0; offset < rows.length; offset += ORIENTATION_MAX_SOURCES) {
+      const batch = rows.slice(offset, offset + ORIENTATION_MAX_SOURCES);
+      authorities.push(...await loadSourceAuthorities(db, batch.map((row) => row.source_revision_ref), now()));
+    }
     if (authorities.length !== rows.length) orientationFail("ORIENTATION_SOURCE_NOT_ADMITTED", 403);
     const byRef = new Map(authorities.map((authority) => [authority.source_revision_ref, authority]));
     return Promise.all(rows.map(async (row) => {
@@ -101,17 +124,28 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       return { revision, authority, policy, policy_uses: uses(policy), policy_closure_ref: policyClosure, title, kind };
     }));
   }
-  async function sources(refs: readonly string[]): Promise<readonly OrientationSource[]> {
+  async function sourceBatch(refs: readonly string[], maximumPolicyRows = ORIENTATION_MAX_SOURCES): Promise<readonly OrientationSource[]> {
     if (refs.length > ORIENTATION_MAX_SOURCES || new Set(refs).size !== refs.length) orientationFail("ORIENTATION_SCOPE_LIMIT", 413);
     refs.forEach(orientationId);
-    const currentPolicies = await policies();
+    const currentPolicies = await policies(maximumPolicyRows);
     const rows = await all<SourceRow>(`SELECT ${columns} FROM source s JOIN source_revision r ON r.source_id=s.source_id ` +
       "WHERE r.source_revision_ref IN (SELECT value FROM json_each(?1)) ORDER BY r.source_revision_ref LIMIT 65", [JSON.stringify(refs)]);
     if (rows.length !== refs.length) orientationFail("ORIENTATION_SOURCE_DENIED", 403);
     return decode(rows, currentPolicies);
   }
-  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
-    const currentPolicies = await policies();
+  async function sources(refs: readonly string[]): Promise<readonly OrientationSource[]> {
+    if (refs.length > ORIENTATION_MAX_SOURCES || new Set(refs).size !== refs.length) orientationFail("ORIENTATION_SCOPE_LIMIT", 413);
+    return sourceBatch(refs, ORIENTATION_MAX_SOURCES);
+  }
+  async function exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]> {
+    const loaded: OrientationSource[] = [];
+    for (const batch of splitExhaustiveSourceRefs(refs)) {
+      loaded.push(...await sourceBatch(batch, 4096));
+    }
+    return loaded.sort((a, b) => a.revision.source_revision_ref < b.revision.source_revision_ref ? -1 : 1);
+  }
+  async function resolveAtomWithLimit(atom: DeterministicScopeAtom, observedAt: string, maximumSources: number) {
+    const currentPolicies = await policies(maximumSources);
     const filters: string[] = ["r.source_revision_ref=s.head_rev", "r.purge_state='LIVE'",
       "s.source_namespace_id IN (SELECT value FROM json_each(?1))"];
     const binds: Bind[] = [JSON.stringify([...currentPolicies.keys()]), observedAt];
@@ -136,7 +170,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     // ?2 is intentionally present for every atom: all membership predicates share one observation instant.
     filters.push("julianday(?2) IS NOT NULL");
     const rows = await all<SourceRow>(`SELECT ${columns} FROM source s JOIN source_revision r ON r.source_id=s.source_id ` +
-      `WHERE ${filters.join(" AND ")} ORDER BY r.source_revision_ref LIMIT 65`, binds);
+      `WHERE ${filters.join(" AND ")} ORDER BY r.source_revision_ref LIMIT ?${binds.length + 1}`, [...binds, maximumSources + 1], maximumSources);
     if (atom.kind === "SELECTED_SOURCES" && new Set(rows.map((row) => row.source_id)).size !== new Set(atom.source_ids).size) {
       orientationFail("ORIENTATION_SOURCE_DENIED", 403);
     }
@@ -145,9 +179,19 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       source_owner_generation: source.revision.source_owner_generation, policy_closure_ref: source.policy_closure_ref }));
     return { atom_generation_ref: `atom-${await evidenceSha256({ atom, project, members, policies: [...currentPolicies.values()] })}`, members };
   }
-  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
-    const loaded = await sources(request.member_source_revision_refs);
-    const policyRows = [...(await policies()).values()];
+  async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    return resolveAtomWithLimit(atom, observedAt, ORIENTATION_MAX_SOURCES);
+  }
+  async function exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
+    return resolveAtomWithLimit(atom, observedAt, 4096);
+  }
+  async function resolveAuthorityClosureWithLoader(
+    request: ScopeAuthorityRequest,
+    load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
+    maximumPolicyRows: number,
+  ) {
+    const loaded = await load(request.member_source_revision_refs);
+    const policyRows = [...(await policies(maximumPolicyRows)).values()];
     if (loaded.some((source) => request.member_policy_closure_refs[source.revision.source_revision_ref] !== source.policy_closure_ref)) {
       orientationFail("ORIENTATION_POLICY_CHANGED", 409);
     }
@@ -162,12 +206,22 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     purge_ledger_revision: purge.revision, client_fence_valid: request.client_fence_ref === access.credential_generation,
     denied_source_revision_refs: [] };
   }
-  async function grant(snapshot: ScopeSnapshot): Promise<void> {
-    const loaded = await sources(snapshot.member_source_revision_refs);
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    return resolveAuthorityClosureWithLoader(request, sources, ORIENTATION_MAX_SOURCES);
+  }
+  async function exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    return resolveAuthorityClosureWithLoader(request, exhaustiveSources, 4096);
+  }
+  async function grantWithLoader(
+    snapshot: ScopeSnapshot,
+    load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
+    maximumPolicyRows: number,
+  ): Promise<void> {
+    const loaded = await load(snapshot.member_source_revision_refs);
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
-    const policyExpiry = Math.min(...[...(await policies()).values()].map((policy) => Date.parse(policy.expires_at)));
+    const policyExpiry = Math.min(...[...(await policies(maximumPolicyRows)).values()].map((policy) => Date.parse(policy.expires_at)));
     const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry)).toISOString();
     const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access })}`;
     const values: Bind[] = [snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class,
@@ -188,5 +242,11 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
       disclosure_ceiling: disclosure, authorization_receipt_ref: receipt, state: "ACTIVE", expires_at: expiresAt };
     if (!row || canonicalEvidenceJson(row) !== canonicalEvidenceJson(expected)) orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
   }
-  return { resolveAtom, resolveAuthorityClosure, sources, grant, requireReadPolicy: async () => { await policies(); } };
+  return {
+    resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
+    grant: (snapshot) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES),
+    exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources, 4096),
+    exhaustiveRequireReadPolicy: async () => { await policies(4096); },
+    requireReadPolicy: async () => { await policies(); },
+  };
 }

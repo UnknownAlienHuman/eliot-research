@@ -7,8 +7,13 @@ import {
   type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
+import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
+import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
+import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
+import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
 
-export interface ResearchWorkflowParams {
+export interface ResearchWorkflowRunParams {
+  readonly workflow_kind?: "RESEARCH";
   readonly operation_id: string;
   readonly investigation_ref: VersionedRef;
   readonly idempotency_key: string;
@@ -19,6 +24,7 @@ export interface ResearchWorkflowParams {
   readonly deployment_generation: string;
   readonly requested_by_principal_ref?: string;
 }
+export type ResearchWorkflowParams = ResearchWorkflowRunParams | ExhaustiveWorkflowPayload;
 
 export interface ResearchWorkflowResult {
   readonly operation_id: string;
@@ -37,6 +43,28 @@ function failWorkflow(code: string): never {
 function parseParams(raw: unknown): ResearchWorkflowParams {
   if (typeof raw !== "object" || raw === null) failWorkflow("WORKFLOW_INPUT_INVALID");
   const value = raw as Record<string, unknown>;
+  if (value.workflow_kind === "EXHAUSTIVE_QUERY") {
+    const allowed = new Set(["workflow_kind", "operation_id", "idempotency_key", "principal_ref",
+      "credential_generation", "deployment_generation", "exhaustive_request"]);
+    if (Object.keys(value).some((key) => !allowed.has(key)) || Object.keys(value).length !== allowed.size) {
+      failWorkflow("WORKFLOW_INPUT_INVALID");
+    }
+    const operation_id = value.operation_id;
+    const idempotency_key = value.idempotency_key;
+    const principal_ref = value.principal_ref;
+    const credential_generation = value.credential_generation;
+    const deployment_generation = value.deployment_generation;
+    if (typeof operation_id !== "string" || operation_id.length < 1 || operation_id.length > 128 ||
+        typeof idempotency_key !== "string" || idempotency_key.length < 1 || idempotency_key.length > 256 ||
+        typeof principal_ref !== "string" || principal_ref.length < 1 ||
+        typeof credential_generation !== "string" || credential_generation.length < 1 ||
+        typeof deployment_generation !== "string" || deployment_generation.length < 1) {
+      failWorkflow("WORKFLOW_INPUT_INVALID");
+    }
+    const exhaustive_request = parseExhaustiveQueryRequest(value.exhaustive_request);
+    return { workflow_kind: "EXHAUSTIVE_QUERY", operation_id, idempotency_key, principal_ref,
+      credential_generation, deployment_generation, exhaustive_request };
+  }
   const operation_id = value.operation_id;
   const investigation_ref = value.investigation_ref as VersionedRef | undefined;
   const idempotency_key = value.idempotency_key;
@@ -119,8 +147,44 @@ async function deterministicStageBytes(
 }
 
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
-  public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult> {
+  public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
     const params = parseParams(event.payload);
+    if (params.workflow_kind === "EXHAUSTIVE_QUERY") {
+      if (params.deployment_generation !== this.env.DEPLOYMENT_GENERATION) {
+        failWorkflow("WORKFLOW_AUTHORITY_STALE");
+      }
+      try {
+        await validateExhaustiveWorkflowPayload(this.env.CORE_DB, params, this.env.DEPLOYMENT_GENERATION);
+      } catch (error) {
+        failWorkflow(error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_AUTHORITY_STALE");
+      }
+      const request = new Request("https://workflow.internal/api/v1/research/query", {
+        method: "POST",
+        headers: { "idempotency-key": params.idempotency_key },
+      });
+      const context = {
+        request,
+        principal_ref: params.principal_ref,
+        client_class: "owner_pwa" as const,
+        credential_generation: params.credential_generation,
+        trace_id: `workflow-${params.operation_id}`,
+      };
+      const result = await step.do("q8-exhaustive-job", async () => {
+        try {
+          await validateExhaustiveWorkflowPayload(this.env.CORE_DB, params, this.env.DEPLOYMENT_GENERATION);
+        } catch (error) {
+          failWorkflow(error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_AUTHORITY_STALE");
+        }
+        const output = await createExhaustiveQueryService(this.env).query(context, params.exhaustive_request);
+        // Workflow step results are durable payloads. Keep the Q8 receipt under
+        // the same canonical envelope limit as every ER09 checkpoint result.
+        if (new TextEncoder().encode(JSON.stringify(output)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+          failWorkflow("WORKFLOW_INPUT_INVALID");
+        }
+        return output;
+      });
+      return result;
+    }
     const principal: WorkflowPrincipal = {
       principal_ref: params.principal_ref,
       credential_generation: params.credential_generation,

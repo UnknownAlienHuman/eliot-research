@@ -10,6 +10,7 @@ import {
   type ExhaustiveSectionReader,
   type ExhaustiveShardOutcome,
 } from "./exhaustive.js";
+import type { ExhaustiveSectionDescriptor } from "./exhaustive.js";
 import { createD1ScopePorts } from "./query-persistence.js";
 import {
   ACCESS,
@@ -25,6 +26,19 @@ import {
   settled,
 } from "./exhaustive-harness.js";
 
+function descriptor(section_ref: string, source_revision_ref: string, uncompressed_bytes: number): ExhaustiveSectionDescriptor {
+  return {
+    section_ref,
+    source_revision_ref,
+    item_key: `item-${section_ref}`,
+    content_sha256: "a".repeat(64),
+    projection_generation: "projection-test-v1",
+    normalized_start_byte: 0,
+    normalized_end_byte: uncompressed_bytes,
+    uncompressed_bytes,
+  };
+}
+
 describe("Q5 sharded exhaustive plan", () => {
   it("shards a frozen scope within target/hard/section bounds with a scope-derived denominator", () => {
     const scope = scopeFixture();
@@ -32,9 +46,9 @@ describe("Q5 sharded exhaustive plan", () => {
       scope,
       probes: ["needle"],
       sections: [
-        { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: 512 * 1024 },
-        { section_ref: "sec-2", source_revision_ref: "rev-1", uncompressed_bytes: 512 * 1024 },
-        { section_ref: "sec-3", source_revision_ref: "rev-2", uncompressed_bytes: 256 * 1024 },
+        descriptor("sec-1", "rev-1", 512 * 1024),
+        descriptor("sec-2", "rev-1", 512 * 1024),
+        descriptor("sec-3", "rev-2", 256 * 1024),
       ],
     });
     // 1.25 MiB total fits one target shard; every member is represented.
@@ -57,9 +71,9 @@ describe("Q5 sharded exhaustive plan", () => {
       scope,
       probes: ["needle"],
       sections: [
-        { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: each },
-        { section_ref: "sec-2", source_revision_ref: "rev-1", uncompressed_bytes: each },
-        { section_ref: "sec-3", source_revision_ref: "rev-2", uncompressed_bytes: 1024 },
+        descriptor("sec-1", "rev-1", each),
+        descriptor("sec-2", "rev-1", each),
+        descriptor("sec-3", "rev-2", 1024),
       ],
     });
     expect(plan.shards.length).toBeGreaterThan(1);
@@ -77,8 +91,8 @@ describe("Q5 sharded exhaustive plan", () => {
   it("derives the denominator from the frozen scope, not from reached bytes", () => {
     const scope = scopeFixture();
     const sections = [
-      { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: 64 },
-      { section_ref: "sec-2", source_revision_ref: "rev-2", uncompressed_bytes: 64 },
+      descriptor("sec-1", "rev-1", 64),
+      descriptor("sec-2", "rev-2", 64),
     ];
     const first = planExhaustiveScan({ scope, probes: ["needle"], sections });
     const second = planExhaustiveScan({ scope, probes: ["needle"], sections });
@@ -95,31 +109,31 @@ describe("Q5 sharded exhaustive plan", () => {
   it("fails closed on out-of-scope, uncovered-member, oversized and duplicate sections", () => {
     const scope = scopeFixture();
     const ok = [
-      { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: 64 },
-      { section_ref: "sec-2", source_revision_ref: "rev-2", uncompressed_bytes: 64 },
+      descriptor("sec-1", "rev-1", 64),
+      descriptor("sec-2", "rev-2", 64),
     ];
     expect(planErrorSync(() => planExhaustiveScan({
       scope,
       probes: ["needle"],
-      sections: [...ok, { section_ref: "sec-x", source_revision_ref: "rev-foreign", uncompressed_bytes: 64 }],
+      sections: [...ok, descriptor("sec-x", "rev-foreign", 64)],
     })).code).toBe("EXHAUSTIVE_SECTION_OUT_OF_SCOPE");
     expect(planErrorSync(() => planExhaustiveScan({
       scope,
       probes: ["needle"],
-      sections: [{ section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: 64 }],
+      sections: [descriptor("sec-1", "rev-1", 64)],
     })).code).toBe("EXHAUSTIVE_SCOPE_MEMBER_UNCOVERED");
     expect(planErrorSync(() => planExhaustiveScan({
       scope,
       probes: ["needle"],
       sections: [
-        { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: EXACT_SCAN_LIMITS.hard_uncompressed_bytes + 1 },
-        { section_ref: "sec-2", source_revision_ref: "rev-2", uncompressed_bytes: 64 },
+        descriptor("sec-1", "rev-1", EXACT_SCAN_LIMITS.hard_uncompressed_bytes + 1),
+        descriptor("sec-2", "rev-2", 64),
       ],
     })).code).toBe("EXHAUSTIVE_SECTION_OVERSIZED");
     expect(planErrorSync(() => planExhaustiveScan({
       scope,
       probes: ["needle"],
-      sections: [...ok, { section_ref: "sec-1", source_revision_ref: "rev-2", uncompressed_bytes: 64 }],
+      sections: [...ok, descriptor("sec-1", "rev-2", 64)],
     })).code).toBe("EXHAUSTIVE_SECTION_DUPLICATE");
     expect(planErrorSync(() => planExhaustiveScan({ scope, probes: [], sections: ok })).code)
       .toBe("EXHAUSTIVE_PROBES_INVALID");
@@ -150,8 +164,8 @@ describe("Q5 sharded exhaustive plan", () => {
       scope: frozen,
       probes: ["needle"],
       sections: [
-        { section_ref: "sec-1", source_revision_ref: "rev-1", uncompressed_bytes: 1024 },
-        { section_ref: "sec-2", source_revision_ref: "rev-1", uncompressed_bytes: 2048 },
+        descriptor("sec-1", "rev-1", 1024),
+        descriptor("sec-2", "rev-1", 2048),
       ],
     });
     expect(plan.scope_snapshot.digest).toBe(scope.digest);
@@ -207,7 +221,7 @@ describe("Q5 shard execution over pinned bytes", () => {
       probes: ["needle"],
       sections: [
         first.descriptor,
-        { section_ref: "sec-2", source_revision_ref: "rev-1", uncompressed_bytes: 32 },
+        descriptor("sec-2", "rev-1", 32),
       ],
     });
     const reader: ExhaustiveSectionReader = {
@@ -282,8 +296,8 @@ describe("Q5 merge earns its coverage claim", () => {
       probes: ["needle"],
       plan_id: "merge-plan",
       sections: [
-        { ...first.descriptor, uncompressed_bytes: big },
-        { ...second.descriptor, uncompressed_bytes: big },
+        { ...first.descriptor, normalized_end_byte: big, uncompressed_bytes: big },
+        { ...second.descriptor, normalized_end_byte: big, uncompressed_bytes: big },
       ],
     });
     expect(plan.shards).toHaveLength(2);

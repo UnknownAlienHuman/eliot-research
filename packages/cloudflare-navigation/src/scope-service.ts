@@ -1,4 +1,3 @@
-import { createD1ScopeSnapshotStore } from "@eliotr/cloudflare-evidence";
 import {
   IdentifierSchema, NonNegativeIntegerSchema, ScopeExpressionSchema, ScopeSnapshotSchema, Sha256Schema,
   type ScopeExpression, type ScopeSnapshot,
@@ -32,7 +31,6 @@ export class ScopeServiceError extends Error {
     this.reason_codes = [...(reasonCodes ?? [code])];
   }
 }
-
 function fail(code: string, message: string, reasonCodes?: readonly string[]): never {
   throw new ScopeServiceError(code, message, reasonCodes);
 }
@@ -79,6 +77,12 @@ export interface ScopeServiceOptions {
   readonly now?: () => number;
   readonly ttl_ms?: number;
   readonly max_snapshot_members?: number;
+  /** Optional product-specific atom resolver; ORIENT keeps the repository default. */
+  readonly resolveAtom?: ScopeRepository["resolveAtom"];
+  /** Optional product-specific authority closure; retrieval uses its larger bounded loader. */
+  readonly resolveAuthorityClosure?: ScopeRepository["resolveAuthorityClosure"];
+  /** Preserve typed authority errors for products with distinct stale/uncertain mapping. */
+  readonly preserve_resolution_errors?: boolean;
 }
 
 interface ResolvedScopeState {
@@ -206,7 +210,6 @@ function parseAtomResolution(raw: unknown, maximumMembers: number): Deterministi
     members,
   };
 }
-
 function sortedRecord(entries: readonly (readonly [string, string])[]): Readonly<Record<string, string>> {
   const output = new Map<string, string>();
   for (const [key, value] of entries) {
@@ -273,6 +276,9 @@ function parseAuthority(raw: unknown, members: readonly string[], maximumMembers
 async function resolveState(
   repository: ScopeRepository, rawExpression: unknown, observedAt: string,
   clientFenceRef: string | undefined, maximumMembers: number,
+  atomResolver: ScopeRepository["resolveAtom"] = repository.resolveAtom,
+  authorityResolver: ScopeRepository["resolveAuthorityClosure"] = repository.resolveAuthorityClosure,
+  preserveExternalErrors = false,
 ): Promise<ResolvedScopeState> {
   const expression = parseExpression(rawExpression);
   const cache = new Map<string, Promise<DeterministicScopeAtomResolution>>();
@@ -284,7 +290,7 @@ async function resolveState(
       if (cached !== undefined) return cached;
       const pending = (async () => {
         try {
-          const parsed = parseAtomResolution(await repository.resolveAtom(atom, observedAt), maximumMembers);
+          const parsed = parseAtomResolution(await atomResolver(atom, observedAt), maximumMembers);
           resolutionMemberRows += parsed.members.length;
           if (resolutionMemberRows > MAX_RESOLUTION_MEMBER_ROWS) {
             fail("SCOPE_RESOLUTION_ROW_LIMIT", "scope atom resolutions exceed the total row ceiling");
@@ -292,6 +298,12 @@ async function resolveState(
           return parsed;
         } catch (error) {
           if (error instanceof ScopeServiceError) throw error;
+          const code = (error as { readonly code?: unknown } | null)?.code;
+          // Preserve the canonical authority error so product adapters can
+          // distinguish a stale scope from an unavailable resolution.
+          if (preserveExternalErrors && typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) {
+            throw error;
+          }
           fail("SCOPE_RESOLUTION_FAILED", "scope atom resolution failed");
         }
       })();
@@ -304,6 +316,8 @@ async function resolveState(
   try { draft = await resolveDeterministicScopeSnapshotDraft(expression, resolver); }
   catch (error) {
     if (error instanceof ScopeServiceError) throw error;
+    const code = (error as { readonly code?: unknown } | null)?.code;
+    if (preserveExternalErrors && typeof code === "string" && (code.startsWith("ORIENTATION_") || code.startsWith("EVIDENCE_"))) throw error;
     fail("SCOPE_RESOLUTION_FAILED", "deterministic scope evaluation failed");
   }
   if (draft.members.length > maximumMembers) fail("SCOPE_MEMBER_LIMIT", "resolved scope exceeds the member ceiling");
@@ -323,7 +337,7 @@ async function resolveState(
 
   let rawAuthority: ScopeAuthorityClosure;
   try {
-    rawAuthority = await repository.resolveAuthorityClosure({
+    rawAuthority = await authorityResolver({
       expression, canonical_expression: draft.canonical_expression,
       member_source_revision_refs: memberRefs, member_policy_closure_refs: policyClosures,
       observed_at: observedAt,
@@ -415,7 +429,12 @@ function parseNow(now: () => number): number {
   return value;
 }
 
-function resolveOptions(options: ScopeServiceOptions): Required<ScopeServiceOptions> {
+type ResolvedScopeServiceOptions = Omit<Required<ScopeServiceOptions>, "resolveAtom" | "resolveAuthorityClosure"> &
+  { readonly resolveAtom?: ScopeRepository["resolveAtom"];
+    readonly resolveAuthorityClosure?: ScopeRepository["resolveAuthorityClosure"];
+    readonly preserve_resolution_errors: boolean };
+
+function resolveOptions(options: ScopeServiceOptions): ResolvedScopeServiceOptions {
   const ttl = options.ttl_ms ?? DEFAULT_TTL_MS;
   const maximumMembers = options.max_snapshot_members ?? DEFAULT_MAX_SNAPSHOT_MEMBERS;
   if (!Number.isSafeInteger(ttl) || ttl <= 0 || ttl > MAX_TTL_MS) {
@@ -424,7 +443,10 @@ function resolveOptions(options: ScopeServiceOptions): Required<ScopeServiceOpti
   if (!Number.isSafeInteger(maximumMembers) || maximumMembers <= 0 || maximumMembers > MAX_SNAPSHOT_MEMBERS) {
     fail("SCOPE_MEMBER_LIMIT_INVALID", "scope member ceiling is outside its allowed range");
   }
-  return { now: options.now ?? Date.now, ttl_ms: ttl, max_snapshot_members: maximumMembers };
+  return { now: options.now ?? Date.now, ttl_ms: ttl, max_snapshot_members: maximumMembers,
+    preserve_resolution_errors: options.preserve_resolution_errors ?? false,
+    ...(options.resolveAtom === undefined ? {} : { resolveAtom: options.resolveAtom }),
+    ...(options.resolveAuthorityClosure === undefined ? {} : { resolveAuthorityClosure: options.resolveAuthorityClosure }) };
 }
 
 function currentness(current: boolean, reasons: readonly string[]): ScopeCurrentness {
@@ -434,6 +456,8 @@ function currentness(current: boolean, reasons: readonly string[]): ScopeCurrent
 // IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.
 export function createScopeService(repository: ScopeRepository, rawOptions: ScopeServiceOptions = {}): ScopeService {
   const options = resolveOptions(rawOptions);
+  const atomResolver = options.resolveAtom ?? ((atom, observedAt) => repository.resolveAtom(atom, observedAt));
+  const authorityResolver = options.resolveAuthorityClosure ?? ((request) => repository.resolveAuthorityClosure(request));
   const validateCurrent = async (rawSnapshot: ScopeSnapshot): Promise<ScopeCurrentness> => {
     const preflight = snapshotPreflightReason(rawSnapshot, options.max_snapshot_members);
     if (preflight !== null) return currentness(false, [preflight]);
@@ -463,7 +487,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
     try {
       resolved = await resolveState(
         repository, snapshot.resolved_scope_expression, new Date(observedMs).toISOString(),
-        snapshot.client_fence_ref, options.max_snapshot_members,
+        snapshot.client_fence_ref, options.max_snapshot_members, atomResolver, authorityResolver, options.preserve_resolution_errors,
       );
     } catch (error) {
       return currentness(false, [error instanceof ScopeServiceError ? error.code : "SCOPE_RESOLUTION_FAILED"]);
@@ -506,6 +530,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
         parseCanonicalIdentifier(rawClientFenceRef, "client_fence_ref");
       const resolved = await resolveState(
         repository, rawExpression, observedAt, clientFenceRef, options.max_snapshot_members,
+        atomResolver, authorityResolver, options.preserve_resolution_errors,
       );
       if (clientFenceRef !== undefined && !resolved.authority.client_fence_valid) {
         fail("CLIENT_FENCE_STALE", "client fence is stale");
@@ -556,19 +581,4 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
       return ScopeSnapshotSchema.parse(snapshot);
     },
   };
-}
-
-/** Compose real snapshot storage without inventing a principal or mutable policy authority. */
-export function createD1ScopeService(
-  database: D1Database,
-  authority: Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure">,
-  options: ScopeServiceOptions = {},
-): ScopeService {
-  const storage = createD1ScopeSnapshotStore(database);
-  return createScopeService({
-    resolveAtom: (atom, observedAt) => authority.resolveAtom(atom, observedAt),
-    resolveAuthorityClosure: (request) => authority.resolveAuthorityClosure(request),
-    persistSnapshot: (snapshot) => storage.persistSnapshot(snapshot),
-    readSnapshot: (id, revision) => storage.readSnapshot(id, revision),
-  }, options);
 }

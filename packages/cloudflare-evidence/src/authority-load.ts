@@ -357,6 +357,8 @@ export async function resolveCandidateAuthority(
     "s.normalized_end_byte, s.precision_kind, g.state AS generation_state, " +
     "a.verified AS activation_verified FROM projection_item p " +
     "JOIN projection_span s ON s.item_key = p.item_key " +
+    "AND s.source_revision_ref = p.source_revision_ref " +
+    "AND s.projection_generation = p.projection_generation " +
     "JOIN projection_generation_receipt g ON g.source_revision_ref = p.source_revision_ref " +
     "AND g.projection_generation = p.projection_generation " +
     "JOIN projection_activation_guard a ON a.source_revision_ref = p.source_revision_ref " +

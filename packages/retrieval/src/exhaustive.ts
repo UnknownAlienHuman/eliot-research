@@ -61,6 +61,12 @@ export const EXACT_SCAN_LIMITS = {
 export interface ExhaustiveSectionDescriptor {
   readonly section_ref: string;
   readonly source_revision_ref: string;
+  /** Exact Search/R2 authority tuple used to derive this denominator seat. */
+  readonly item_key: string;
+  readonly content_sha256: string;
+  readonly projection_generation: string;
+  readonly normalized_start_byte: number;
+  readonly normalized_end_byte: number;
   readonly uncompressed_bytes: number;
 }
 
@@ -227,9 +233,17 @@ export function planExhaustiveScan(input: PlanExhaustiveScanInput): ExactScanPla
       section === null || typeof section !== "object" ||
       typeof section.section_ref !== "string" || section.section_ref.length === 0 ||
       typeof section.source_revision_ref !== "string" || section.source_revision_ref.length === 0 ||
+      typeof section.item_key !== "string" || section.item_key.length === 0 ||
+      typeof section.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(section.content_sha256) ||
+      typeof section.projection_generation !== "string" || section.projection_generation.length === 0 ||
+      !Number.isSafeInteger(section.normalized_start_byte) || section.normalized_start_byte < 0 ||
+      !Number.isSafeInteger(section.normalized_end_byte) || section.normalized_end_byte <= section.normalized_start_byte ||
       !Number.isSafeInteger(section.uncompressed_bytes) || section.uncompressed_bytes < 1
     ) {
       failPlan("EXHAUSTIVE_SECTION_INVALID", "section inventory carries an invalid descriptor");
+    }
+    if (section.normalized_end_byte - section.normalized_start_byte !== section.uncompressed_bytes) {
+      failPlan("EXHAUSTIVE_SECTION_INVALID", "section range does not match its inventoried byte count");
     }
     if (!members.has(section.source_revision_ref)) {
       failPlan("EXHAUSTIVE_SECTION_OUT_OF_SCOPE", `section ${section.section_ref} is outside the frozen scope`);
@@ -250,9 +264,21 @@ export function planExhaustiveScan(input: PlanExhaustiveScanInput): ExactScanPla
       failPlan("EXHAUSTIVE_SCOPE_MEMBER_UNCOVERED", `scope member ${member} has no inventoried sections`);
     }
   }
+  // Bind plan identity to the complete admitted inventory. A section-count
+  // identity permits a changed range/source mapping to replay an old job.
+  const inventoryIdentity = sections.map((section) => [
+    section.section_ref,
+    section.source_revision_ref,
+    section.item_key,
+    section.content_sha256,
+    section.projection_generation,
+    section.normalized_start_byte,
+    section.normalized_end_byte,
+    section.uncompressed_bytes,
+  ]);
   const planId = typeof input.plan_id === "string" && input.plan_id.length > 0
     ? input.plan_id
-    : `exhaustive-plan-${scope.snapshot_id}-r${scope.revision}-${identityHex(`${scope.digest}|${probes.join("\u0000")}|${sections.length}`)}`;
+    : `exhaustive-plan-${scope.snapshot_id}-r${scope.revision}-${identityHex(`${scope.digest}|${probes.join("\u0000")}|${JSON.stringify(inventoryIdentity)}`)}`;
   if (planId.length > 256 || /[\u0000-\u0020\u007f]/u.test(planId)) {
     failPlan("EXHAUSTIVE_SCOPE_INVALID", "exhaustive plan identity is invalid");
   }

@@ -8,3 +8,4 @@ export * from "./citation-registry.js";
 export * from "./scope-store.js";
 export * from "./navigation-store.js";
 export { loadSourceAuthorities } from "./authority-load.js";
+export * from "./exhaustive-manifest.js";
