@@ -49,6 +49,11 @@ fast natural completion is rejected as unsuitable for cancellation evidence;
 the scenario remains NOT EXECUTED until the real owner-e2e passes on both CI
 operating systems.
 
+The response-lifecycle regression for the raw-file leg is registered as a native
+Node test in the same `test:owner-e2e` command (`tests/integration/browser/raw-file-browser.test.mjs`).
+It verifies that response body snapshots are captured before a browser action can
+change the document lifecycle; it does not replace the real Worker acceptance.
+
 ## Mandatory negative boundary
 
 Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.
