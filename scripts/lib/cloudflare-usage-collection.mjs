@@ -76,6 +76,17 @@ function isReportableValue(value) {
     (typeof value === "number" && Number.isFinite(value) && value >= 0);
 }
 
+function inventoryCoverageSummary(coverage) {
+  if (coverage !== null && typeof coverage === "object" &&
+    Number.isInteger(coverage.completedPages) && Number.isInteger(coverage.totalPages)) {
+    return `${coverage.completedPages}/${coverage.totalPages}`;
+  }
+  if (coverage !== null && typeof coverage === "object" && Number.isInteger(coverage.completedCursors)) {
+    return `cursors:${coverage.completedCursors}`;
+  }
+  return "1/1";
+}
+
 export function monthlyWindowFor(nowMs) {
   const now = new Date(nowMs);
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
@@ -147,8 +158,9 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
 // (re-exported above); providers in ./cloudflare-usage-providers.mjs,
 // ./cloudflare-usage-billable.mjs, and ./cloudflare-usage-authority.mjs.
 
-// Collect an account-wide aggregate over explicitly injected `providers`
-// (empty by default: counters stay unknown). Partial-shard collisions sum;
+// Collect an account-wide aggregate over the supplied `providers` registry
+// (the admission layer selects the default live registry when omitted).
+// Partial-shard collisions sum;
 // any gap (error, malformed, wrong account/window, partial pagination,
 // conflicting full-account sources) keeps that metric unknown fail-closed.
 export async function collectAccountUsage(options = {}) {
@@ -463,7 +475,7 @@ export async function collectAccountUsage(options = {}) {
           group,
           ok: true,
           keys: [],
-          pages: coverage ? `${coverage.completedPages}/${coverage.totalPages}` : "1/1",
+          pages: inventoryCoverageSummary(coverage),
           inventory_count: Array.isArray(reported.inventory) ? reported.inventory.length : 0,
         };
       } else {

@@ -91,6 +91,69 @@ await check("live registry wires ai-search/instances and never indexes", async (
   assert.ok(seenUrls.every((url) => !url.includes("ai-search/indexes")));
 });
 
+await check("documented D1, R2, and Queue inventories carry metadata provenance", async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes("/d1/database")) {
+      return okJson({ success: true, result: [{ uuid: "d1-one" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1 } });
+    }
+    if (url.includes("/r2/buckets")) {
+      return okJson({ success: true, result: { buckets: [{ name: "r2-one" }] } });
+    }
+    if (url.includes("/queues")) {
+      return okJson({ success: true, result: [{ queue_id: "queue-one", queue_name: "eliotr-jobs" }], result_info: { page: 1, per_page: 100, count: 1, total_count: 1, total_pages: 1 } });
+    }
+    if (url.includes("/ai-search/instances")) {
+      return okJson({ success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } });
+    }
+    throw new Error("unexpected test URL");
+  };
+  const registry = buildLiveProviderRegistry({ accountId: ACCOUNT, fetchImpl });
+  for (const group of ["d1-inventory-list", "r2-inventory-list", "queue-inventory-list"]) {
+    const provider = registry.find((candidate) => candidate.group === group);
+    const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+    assert.equal(reported.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
+    assert.equal(reported.receiptMeta.authoritative, true);
+    assert.equal(reported.coverage.fullAccount, true);
+    assert.equal(reported.inventory.length, 1);
+  }
+  const queue = registry.find((candidate) => candidate.group === "queue-inventory-list");
+  const queueReported = await queue.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.equal(queueReported.inventory[0].queue_id, "queue-one");
+  assert.equal(queueReported.inventory[0].queue_name, "eliotr-jobs");
+});
+
+await check("Queue accepts only the coherent empty total_pages=0 response", async () => {
+  const endpoint = (id, page, perPage) =>
+    `https://api.cloudflare.com/client/v4/accounts/${id}/queues?page=${page}&per_page=${perPage}`;
+  const emptyResponse = {
+    success: true,
+    result: [],
+    result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 0 },
+  };
+  const emptyQueue = createPaginatedInventoryProvider({
+    group: "queue-inventory-list",
+    endpoint,
+    fetchImpl: async () => okJson(emptyResponse),
+  });
+  const reported = await emptyQueue.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
+  assert.deepEqual(reported.inventory, []);
+  assert.deepEqual(reported.coverage, { accountId: ACCOUNT, completedPages: 1, totalPages: 1, fullAccount: true });
+  const contradictoryQueue = createPaginatedInventoryProvider({
+    group: "queue-inventory-list",
+    endpoint,
+    fetchImpl: async () => okJson({
+      success: true,
+      result: [{ queue_id: "unexpected" }],
+      result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 0 },
+    }),
+  });
+  await assert.rejects(
+    contradictoryQueue.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW }),
+    (error) => error instanceof ProviderFailure && error.reason === "MALFORMED",
+    "nonempty Queue result with total_pages=0 must remain malformed",
+  );
+});
+
 const REVIEWED_TRIPLE = { "workers_standard_requests:workers_standard_requests:Requests": "workers_requests" };
 function registryFetch({ billableStatus = 200, billableRows = null } = {}) {
   return async (url) => {
@@ -225,6 +288,14 @@ await check("R2 uses cursor pagination over result.buckets with progress validat
   const reported = await provider.collect({ accountId: ACCOUNT, bearer: BEARER, now: NOW });
   assert.equal(reported.inventory.length, 2);
   assert.equal(reported.coverage.completedCursors, 2);
+  const diagnosticProvider = createR2CursorInventoryProvider({
+    endpoint: (id) => `https://api.cloudflare.com/client/v4/accounts/${id}/r2/buckets`,
+    fetchImpl: async () => okJson({ success: true, result: { buckets: [{ name: "diagnostic" }] } }),
+  });
+  const diagnosticSnapshot = await collectAccountUsage({
+    bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [diagnosticProvider],
+  });
+  assert.equal(diagnosticSnapshot.readback.provider_results[0].pages, "cursors:1");
   // Repeated cursor without progress fails closed.
   // Distinct bucket per hop: duplicate identity must hit MALFORMED, not this path.
   let loopingHop = 0;
