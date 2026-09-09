@@ -3,7 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { canonicalEvidenceJson, evidenceSha256, createD1EvidenceAuthorityPort, createD1ScopeSnapshotStore, readD1ScopeSnapshot } from "@eliotr/cloudflare-evidence";
 import { scopeSnapshotDigestPayload, scopeSnapshotIdentityPayload } from "@eliotr/domain";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { createD1ScopeService, type ScopeRepository } from "./scope-service.js";
+import { type ScopeRepository } from "./scope-service.js";
+import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
 import initialSchema from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
 import evidenceSchema from "../../../infra/d1/core/migrations/0007_evidence_resolution.sql?raw";
 
