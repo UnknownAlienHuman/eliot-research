@@ -105,7 +105,8 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
   const span = await searchDb.prepare("SELECT * FROM projection_span WHERE item_key=?1 LIMIT 1").bind(item?.item_key).first<Record<string, unknown>>();
   const generation = await searchDb.prepare("SELECT * FROM projection_generation_receipt WHERE source_revision_ref=?1 LIMIT 1").bind(revision).first<Record<string, unknown>>();
   const guard = await searchDb.prepare("SELECT * FROM projection_activation_guard WHERE source_revision_ref=?1 LIMIT 1").bind(revision).first<Record<string, unknown>>();
-  if (!source || !sourceRevision || !operation || !decisionRow || !item || !span || !generation || !guard) throw new Error("missing Q1 clone fixture rows");
+  const watermarks = await searchDb.prepare("SELECT * FROM projection_watermark WHERE source_revision_ref=?1 AND channel IN ('exact','lexical')").bind(revision).all<Record<string, unknown>>();
+  if (!source || !sourceRevision || !operation || !decisionRow || !item || !span || !generation || !guard || watermarks.results.length !== 2) throw new Error("missing Q1 clone fixture rows");
   const sourceManifestKey = String(sourceRevision.normalized_artifact_ref);
   const manifestObject = await runtime.EVIDENCE_BUCKET.get(sourceManifestKey);
   if (manifestObject === null) throw new Error("missing Q1 manifest object");
@@ -242,10 +243,16 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
     const clonedSpan = { ...span, item_key: itemKey, source_revision_ref: revisionRef, projection_generation: generationRef };
     await searchDb.prepare(`INSERT INTO projection_span (${Object.keys(clonedSpan).join(",")}) VALUES (${Object.keys(clonedSpan).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedSpan)).run();
     const digest = await projectionDigest([{ item_key: itemKey, canonical_section_id: item.canonical_section_id, content_sha256: item.content_sha256, start: span.normalized_start_byte, end: span.normalized_end_byte }]);
-    const clonedGeneration = { ...generation, source_revision_ref: revisionRef, projection_generation: generationRef, item_set_digest: digest, readback_digest: digest };
+    const projectionReceiptRef = `projection-receipt-${revisionRef}`;
+    const clonedGeneration = { ...generation, source_revision_ref: revisionRef, projection_generation: generationRef, item_set_digest: digest, readback_digest: digest, receipt_ref: projectionReceiptRef };
     await searchDb.prepare(`INSERT INTO projection_generation_receipt (${Object.keys(clonedGeneration).join(",")}) VALUES (${Object.keys(clonedGeneration).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedGeneration)).run();
-    const clonedGuard = { ...guard, source_revision_ref: revisionRef, projection_generation: generationRef, readback_digest: digest };
+    const clonedGuard = { ...guard, source_revision_ref: revisionRef, projection_generation: generationRef, readback_digest: digest, receipt_ref: projectionReceiptRef };
     await searchDb.prepare(`INSERT INTO projection_activation_guard (${Object.keys(clonedGuard).join(",")}) VALUES (${Object.keys(clonedGuard).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedGuard)).run();
+    for (const watermark of watermarks.results) {
+      const clonedWatermark = { ...watermark, source_revision_ref: revisionRef, projection_generation: generationRef,
+        projected_item_count: 1, state: "READY", readback_receipt_ref: projectionReceiptRef, updated_at: now };
+      await searchDb.prepare(`INSERT INTO projection_watermark (${Object.keys(clonedWatermark).join(",")}) VALUES (${Object.keys(clonedWatermark).map((_, i) => `?${i + 1}`).join(",")})`).bind(...Object.values(clonedWatermark)).run();
+    }
     revisionRefs.push(revisionRef);
   }
   return revisionRefs;

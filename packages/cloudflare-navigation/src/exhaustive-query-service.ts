@@ -20,6 +20,12 @@ import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
 import {
+  D1SearchLaneError,
+  pinReadyGenerations,
+  requirePinnedCoverage,
+  type PinnedGeneration,
+} from "@eliotr/cloudflare-projection";
+import {
   createD1EvidenceAuthorityPort,
   createCloudflareEvidenceResolver,
   createR2EvidenceContentPort,
@@ -193,6 +199,15 @@ function mapRetrievalError(error: unknown): never {
 
 function mapRuntimeError(error: unknown): never {
   if (error instanceof ExhaustiveQueryError) throw error;
+  if (error instanceof D1SearchLaneError) {
+    if (error.code === "SEARCH_UNAVAILABLE") {
+      fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted exhaustive projection is not ready", 503, true);
+    }
+    if (error.code === "SEARCH_INCOMPLETE") {
+      fail("RESEARCH_AUTHORITY_STALE", "admitted exhaustive projection is incomplete or stale", 409);
+    }
+    fail("RESEARCH_SETTLEMENT_UNCERTAIN", "admitted exhaustive projection settlement is uncertain", 503, true);
+  }
   const code = (error as { readonly code?: unknown } | null)?.code;
   const status = (error as { readonly status?: unknown } | null)?.status;
   if (typeof code === "string" && code.startsWith("ORIENTATION_")) {
@@ -245,11 +260,52 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   const content = createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET });
   const resolver = createCloudflareEvidenceResolver({ authority: evidence, content });
   let scopeForRequest: ScopeSnapshot | undefined;
+  let pinnedInventory: readonly PinnedGeneration[] | undefined;
   const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly item_key: string; readonly projection_generation: string; readonly start: number; readonly end: number }>();
+  async function readPinned(scope: ScopeSnapshot): Promise<readonly PinnedGeneration[]> {
+    const coverage = await pinReadyGenerations(
+      env.SEARCH_DB,
+      "exact",
+      scope.member_source_revision_refs,
+      scope.source_owner_generations,
+    );
+    requirePinnedCoverage(coverage.pinned, coverage.missing, coverage.stale);
+    if (coverage.pinned.length !== scope.member_source_revision_refs.length) {
+      throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive projection coverage does not match the frozen scope", 409);
+    }
+    if (new Set(coverage.pinned.map((pin) => pin.source_revision_ref)).size !== coverage.pinned.length) {
+      throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive projection coverage contains duplicate sources", 409);
+    }
+    return coverage.pinned;
+  }
+  function assertSamePins(before: readonly PinnedGeneration[], after: readonly PinnedGeneration[]): void {
+    if (before.length !== after.length) {
+      throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive projection coverage changed during readback", 409);
+    }
+    const currentBySource = new Map(after.map((candidate) => [candidate.source_revision_ref, candidate]));
+    for (const prior of before) {
+      const current = currentBySource.get(prior.source_revision_ref);
+      if (current === undefined || current.projection_generation !== prior.projection_generation ||
+          current.receipt_ref !== prior.receipt_ref || current.readback_digest !== prior.readback_digest ||
+          current.item_set_digest !== prior.item_set_digest || current.item_count !== prior.item_count) {
+        throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive projection generation changed during readback", 409);
+      }
+    }
+  }
   async function authorize(scope: ScopeSnapshot): Promise<void> {
     await freezer.requireCurrent(scope);
     await owner.exhaustiveGrant(scope);
     await scopePorts.requireCurrentScope(scope);
+  }
+  async function recheckCurrentScope(scope: ScopeSnapshot): Promise<void> {
+    await freezer.requireCurrent(scope);
+    await scopePorts.requireCurrentScope(scope);
+    const sources = await owner.exhaustiveSources(scope.member_source_revision_refs);
+    const current = await readPinned(scope);
+    if (sources.length !== current.length) {
+      throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive source authority changed during readback", 409);
+    }
+    if (pinnedInventory !== undefined) assertSamePins(pinnedInventory, current);
   }
   return {
     async freezeScope(expression, credentialGeneration) {
@@ -268,16 +324,19 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
       return authority.snapshot;
     },
     requireCurrentScope: async (scope) => { await authorize(scope); },
-    recheckCurrentScope: async (scope) => {
-      await freezer.requireCurrent(scope);
-      await scopePorts.requireCurrentScope(scope);
-      await owner.exhaustiveSources(scope.member_source_revision_refs);
-    },
+    recheckCurrentScope,
     async inventorySections(scope) {
       if (scopeForRequest === undefined || scopeForRequest.snapshot_id !== scope.snapshot_id) {
         throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope runtime is not bound", 409);
       }
       const sources = await owner.exhaustiveSources(scope.member_source_revision_refs);
+      const pins = await readPinned(scope);
+      if (sources.length !== pins.length) {
+        throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive source authority does not match pinned coverage", 409);
+      }
+      pinnedInventory = pins;
+      const pinsBySource = new Map(pins.map((pin) => [pin.source_revision_ref, pin]));
+      sections.clear();
       const descriptors: ExhaustiveSectionDescriptor[] = [];
       const contentSizes = new Map<string, number>();
       for (const source of sources) {
@@ -286,43 +345,52 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
       }
       for (const source of sources) {
         const sourceRef = source.revision.source_revision_ref;
+        const pin = pinsBySource.get(sourceRef);
+        if (pin === undefined) throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive projection omitted a frozen source", 409);
         const result = await env.SEARCH_DB.prepare(
           "SELECT p.item_key, p.canonical_section_id, p.content_sha256, p.projection_generation, " +
-          "s.normalized_start_byte, s.normalized_end_byte FROM projection_item p JOIN projection_span s " +
-          "ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref " +
-          "AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=?1 AND p.active=1 " +
-          "ORDER BY p.canonical_section_id LIMIT 4097",
-        ).bind(sourceRef).all<ExhaustiveProjectionRow>();
+            "s.normalized_start_byte, s.normalized_end_byte FROM projection_item p JOIN projection_span s " +
+            "ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref " +
+            "AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=?1 AND p.projection_generation=?2 AND p.active=1 " +
+            "ORDER BY p.canonical_section_id LIMIT 4097",
+        ).bind(sourceRef, pin.projection_generation).all<ExhaustiveProjectionRow>();
         if (!result.success || !Array.isArray(result.results)) throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "admitted projection inventory is unavailable", 503, true);
-        if (result.results.length === 0) fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest has no projected section ranges", 503, true);
+        if (result.results.length === 0 || result.results.length !== pin.item_count) fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory does not match its pinned item set", 409);
         if (result.results.length > 4096 || descriptors.length + result.results.length > EXHAUSTIVE_QUERY_MAX_SOURCES) {
           fail("RESEARCH_INPUT_LIMIT", "exhaustive section inventory exceeds its bound", 413);
         }
         for (const row of result.results) {
           if (typeof row.item_key !== "string" || typeof row.canonical_section_id !== "string" ||
               typeof row.content_sha256 !== "string" || row.content_sha256 !== source.authority.content_sha256 ||
-              typeof row.projection_generation !== "string" || typeof row.normalized_start_byte !== "number" ||
+              row.projection_generation !== pin.projection_generation || typeof row.normalized_start_byte !== "number" ||
               typeof row.normalized_end_byte !== "number" || !Number.isSafeInteger(row.normalized_start_byte) ||
               !Number.isSafeInteger(row.normalized_end_byte) || row.normalized_start_byte < 0 ||
               row.normalized_end_byte <= row.normalized_start_byte ||
               row.normalized_end_byte > (contentSizes.get(sourceRef) ?? 0)) {
             fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory conflicts with source authority", 409);
           }
-          const key = `${sourceRef}:${row.canonical_section_id}`;
+          const itemKey = row.item_key as string;
+          const sectionRef = row.canonical_section_id as string;
+          const contentSha256 = row.content_sha256 as string;
+          const projectionGeneration = row.projection_generation as string;
+          const start = row.normalized_start_byte as number;
+          const end = row.normalized_end_byte as number;
+          const key = `${sourceRef}:${sectionRef}`;
           if (sections.has(key)) fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory repeats a section", 409);
-          sections.set(key, { source_revision_ref: sourceRef, section_ref: row.canonical_section_id, item_key: row.item_key, projection_generation: row.projection_generation, start: row.normalized_start_byte, end: row.normalized_end_byte });
+          sections.set(key, { source_revision_ref: sourceRef, section_ref: sectionRef, item_key: itemKey, projection_generation: projectionGeneration, start, end });
           descriptors.push({
             section_ref: key,
             source_revision_ref: sourceRef,
-            item_key: row.item_key,
-            content_sha256: row.content_sha256,
-            projection_generation: row.projection_generation,
-            normalized_start_byte: row.normalized_start_byte,
-            normalized_end_byte: row.normalized_end_byte,
-            uncompressed_bytes: row.normalized_end_byte - row.normalized_start_byte,
+            item_key: itemKey,
+            content_sha256: contentSha256,
+            projection_generation: projectionGeneration,
+            normalized_start_byte: start,
+            normalized_end_byte: end,
+            uncompressed_bytes: end - start,
           });
         }
       }
+      await recheckCurrentScope(scope);
       return descriptors;
     },
     async readSection(scope, sectionRef) {
