@@ -40,10 +40,10 @@ import {
   IngestHttpInputError,
 } from "./ingest-http.js";
 import { IngestServiceError } from "./ingest-service.js";
+import { dispatchRawCaptureOperation, RawCaptureError, RawCaptureHttpError, rawCaptureProblem } from "@eliotr/cloudflare-raw-ingest";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
-
 export interface HttpDependencies {
   readonly accessVerifier?: AccessVerifier;
   readonly applicationFactory?: (input: CompositionRootInput) => ApplicationLifecycle;
@@ -60,7 +60,6 @@ export class HttpRequestError extends Error {
   public readonly code: string;
   public readonly status: number;
   public readonly retryable: boolean;
-
   public constructor(code: string, status: number, message: string, retryable = false) {
     super(message);
     this.name = "HttpRequestError";
@@ -307,7 +306,6 @@ function parseSourceRevisionsRequest(url: URL): SourceRevisionsRequest {
   return { source_id: sourceId, limit: rawLimit === undefined ? 10 : Number(rawLimit),
     ...(cursor === undefined ? {} : { cursor }) };
 }
-
 async function requireApplicationReady(
   request: Request,
   application: ApplicationLifecycle,
@@ -389,6 +387,7 @@ async function dispatch(
       );
     }
     default:
+      if (match.route.operation === "ingest.raw.capture" || match.route.operation === "ingest.raw.read") return apiResult(request, env, await dispatchRawCaptureOperation(match.route.operation, request, url, match.params.capture_id, match.route.maximum_request_bytes, context, application.services.owner));
       if (match.route.operation.startsWith("ingest.")) {
         return apiResult(
           request,
@@ -491,8 +490,7 @@ function mapError(request: Request, error: unknown): Response {
       { "www-authenticate": "Bearer realm=\"Cloudflare Access\"" },
     );
   }
-  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError ||
-      error instanceof EvidenceHttpInputError) {
+  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError || error instanceof EvidenceHttpInputError || error instanceof RawCaptureHttpError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof IngestServiceError) {
@@ -500,6 +498,7 @@ function mapError(request: Request, error: unknown): Response {
   }
   if (error instanceof IngestAuthorityError) return mapIngestAuthorityError(request, error);
   if (error instanceof IngestStorageError) return mapIngestStorageError(request, error);
+  if (error instanceof RawCaptureError) { const mapped = rawCaptureProblem(error); return problem(request, mapped.status, error.code, mapped.title, error.retryable); }
   if (error instanceof EvidenceRuntimeError) {
     if (error.retryable) {
       return problem(request, 503, error.code, "Exact evidence resolution is temporarily unavailable", true);

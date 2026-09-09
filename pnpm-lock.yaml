@@ -65,6 +65,9 @@ importers:
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research
+      '@eliotr/cloudflare-raw-ingest':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-raw-ingest
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -201,6 +204,18 @@ importers:
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
+
+  packages/cloudflare-raw-ingest:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/cloudflare-research:
     dependencies:

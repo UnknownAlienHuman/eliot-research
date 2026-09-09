@@ -19,6 +19,9 @@
       "path": "../../packages/cloudflare-ai"
     },
     {
+      "path": "../../packages/cloudflare-raw-ingest"
+    },
+    {
       "path": "../../packages/cloudflare-erasure"
     },
     {
