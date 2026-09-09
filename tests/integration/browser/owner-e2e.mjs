@@ -4958,19 +4958,19 @@ export async function runOwnerE2E() {
     exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
       page: playwright.page, browserJson, ledger, query: "Pinned",
       beforeReload: async () => {
-        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery-reload"));
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
         playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",
           sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
-          action: "reload-exhaustive-recovery", role: "exhaustive-recovery-reload",
+          action: "reload-exhaustive-recovery", role: "exhaustive-recovery",
           from: playwright.currentOp().id, successors: ["select-recovered-workflow", "framenavigated"] });
         playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
       },
       beforeRecoverySelection: async () => {
-        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery-select"));
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
         playwright.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document",
           sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
-          action: "select-recovered-workflow", role: "exhaustive-recovery-select",
-          from: playwright.currentOp().id, successors: ["recovered-status", "framenavigated"] });
+          action: "select-recovered-workflow", role: "exhaustive-recovery",
+          from: playwright.currentOp().id, successors: ["goto-logout", "framenavigated"] });
         playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
       },
     });
