@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import * as backup from "./backup.js";
 import * as common from "./common.js";
+import * as coordinateMap from "./coordinate-map.js";
 import * as driveExchange from "./drive-exchange.js";
 import * as erasure from "./erasure.js";
 import * as evidence from "./evidence.js";
@@ -59,6 +60,7 @@ interface SchemaModule {
 const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "backup", exports: backup },
   { family: "common", exports: common },
+  { family: "navigation", exports: coordinateMap },
   { family: "drive-exchange", exports: driveExchange },
   { family: "erasure", exports: erasure },
   { family: "evidence", exports: evidence },
@@ -276,8 +278,13 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       }
 
       // Generation 2 admits the real empty purge-ledger frontier without changing existing IDs/digests.
+      // Coordinate-map anchors narrowed from the broad EvidenceAnchor union to the supported
+      // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
       const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
-        ? { schema_version: 1, schema_generation: 2 } : familyVersion;
+        ? { schema_version: 1, schema_generation: 2 }
+        : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
+          ? { schema_version: 2, schema_generation: 1 }
+          : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

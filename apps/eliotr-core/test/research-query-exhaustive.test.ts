@@ -6,8 +6,8 @@ import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js"
 import { handleHttp } from "../src/http.js";
 import { createExhaustiveQueryService } from "../src/exhaustive-query-service.js";
 import { validateExhaustiveJobCurrent } from "@eliotr/cloudflare-navigation";
-import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
-import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
+import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { canonicalDigest, canonicalNormalizedBundleKey, objectResidencyKeyDigest } from "@eliotr/platform-cloudflare";
 import { projectionDigest } from "@eliotr/cloudflare-projection";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
@@ -109,7 +109,8 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
   const sourceManifestKey = String(sourceRevision.normalized_artifact_ref);
   const manifestObject = await runtime.EVIDENCE_BUCKET.get(sourceManifestKey);
   if (manifestObject === null) throw new Error("missing Q1 manifest object");
-  const manifest = JSON.parse(new TextDecoder().decode(await manifestObject.arrayBuffer())) as Record<string, unknown>;
+  const originalManifestBytes = new Uint8Array(await manifestObject.arrayBuffer());
+  const manifest = JSON.parse(new TextDecoder().decode(originalManifestBytes)) as Record<string, unknown>;
   const sourceContentKey = await canonicalNormalizedBundleKey(String(sourceRevision.object_residency_key_digest), {
     owner_system_id: String(source.source_owner_system_id), source_namespace_id: namespace,
     source_owner_generation: String(sourceRevision.source_owner_generation), source_logical_id: String(source.source_id),
@@ -132,20 +133,73 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
     const receiptRef = `decision-${namespace}-q8-${index + 1}`;
     const itemKey = `item-${namespace}-q8-${index + 1}`;
     const generationRef = String(generation.projection_generation);
-    const manifestKey = await canonicalNormalizedBundleKey(String(sourceRevision.object_residency_key_digest), {
+    const cloneManifest: Record<string, unknown> = {
+      ...manifest,
+      origin: {
+        ...(manifest.origin as Record<string, unknown>),
+        source_namespace_id: namespace,
+        source_revision_ref: revisionRef,
+      },
+      source: {
+        ...(manifest.source as Record<string, unknown>),
+        logical_id: sourceId,
+      },
+    };
+    const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(cloneManifest));
+    const manifestDigest = await evidenceSha256Bytes(manifestBytes);
+    const residency = cloneManifest.residency_and_disclosure as Record<string, unknown>;
+    const manifestResidencyDigest = await objectResidencyKeyDigest({
+      scope_domain_id: String(residency.scope_domain_id),
+      access_domain_id: String(residency.access_domain_id),
+      confidentiality_domain_id: String(residency.confidentiality_domain_id),
+      encryption_key_domain_id: String(residency.encryption_key_domain_id),
+      retention_domain_id: String(residency.retention_domain_id),
+      erasure_domain_id: String(residency.erasure_domain_id),
+      content_digest: { algorithm: "sha256", digest: manifestDigest },
+    });
+    const contentDigest = await evidenceSha256Bytes(content);
+    if (contentDigest !== String(sourceRevision.content_sha256)) throw new Error("Q8 clone content digest disagrees with admitted source");
+    const contentResidencyDigest = await objectResidencyKeyDigest({
+      scope_domain_id: String(residency.scope_domain_id),
+      access_domain_id: String(residency.access_domain_id),
+      confidentiality_domain_id: String(residency.confidentiality_domain_id),
+      encryption_key_domain_id: String(residency.encryption_key_domain_id),
+      retention_domain_id: String(residency.retention_domain_id),
+      erasure_domain_id: String(residency.erasure_domain_id),
+      content_digest: { algorithm: "sha256", digest: contentDigest },
+    });
+    if (contentResidencyDigest !== String(sourceRevision.object_residency_key_digest)) {
+      throw new Error("Q8 clone content residency disagrees with admitted source");
+    }
+    const manifestKey = await canonicalNormalizedBundleKey(manifestResidencyDigest, {
       owner_system_id: String(source.source_owner_system_id), source_namespace_id: namespace,
       source_owner_generation: String(sourceRevision.source_owner_generation), source_logical_id: sourceId,
       source_revision_ref: revisionRef,
     }, "manifest.json");
-    const contentKey = await canonicalNormalizedBundleKey(String(sourceRevision.object_residency_key_digest), {
+    const contentKey = await canonicalNormalizedBundleKey(contentResidencyDigest, {
       owner_system_id: String(source.source_owner_system_id), source_namespace_id: namespace,
       source_owner_generation: String(sourceRevision.source_owner_generation), source_logical_id: sourceId,
       source_revision_ref: revisionRef,
     }, "content.md");
-    const cloneManifest = { ...manifest, origin: { ...(manifest.origin as Record<string, unknown>), source_revision_ref: revisionRef } };
-    const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(cloneManifest));
-    await runtime.EVIDENCE_BUCKET.put(manifestKey, manifestBytes);
-    await runtime.EVIDENCE_BUCKET.put(contentKey, content);
+    const admissionReceiptRef = receiptRef;
+    const immutableMetadata = {
+      source_namespace_id: namespace,
+      source_owner_generation: String(sourceRevision.source_owner_generation),
+      admission_receipt_ref: admissionReceiptRef,
+      eliotr_sha256: manifestDigest,
+      eliotr_size_bytes: String(manifestBytes.byteLength),
+      eliotr_immutable: "true",
+    };
+    await runtime.EVIDENCE_BUCKET.put(manifestKey, manifestBytes, {
+      sha256: manifestDigest,
+      httpMetadata: { contentType: "application/json; charset=utf-8" },
+      customMetadata: immutableMetadata,
+    });
+    await runtime.EVIDENCE_BUCKET.put(contentKey, content, {
+      sha256: contentDigest,
+      httpMetadata: { contentType: "text/markdown; charset=utf-8" },
+      customMetadata: { ...immutableMetadata, eliotr_sha256: contentDigest, eliotr_size_bytes: String(content.byteLength) },
+    });
     await db.prepare(`INSERT INTO source (${sourceKeys.join(",")}) VALUES (${sourceKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(
       sourceId, namespace, source.source_owner_system_id, source.source_owner_generation, source.ownership_mode, source.kind,
       source.origin_uri, source.title, source.default_storage_policy, source.default_residency_profile_id, source.source_class,
@@ -157,7 +211,24 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
       sourceRevision.quality_state, sourceRevision.purge_state, sourceRevision.currentness_state, sourceRevision.source_view_ref,
       sourceRevision.workspace_view_revision_ref, now,
     ).run();
-    const clonedOperation: Record<string, unknown> = { ...operation, operation_id: operationId, idempotency_key: `q8-${revisionRef}`, source_revision_ref: revisionRef,
+    const sourceFileHashes = JSON.parse(String(operation.file_hashes_json)) as Record<string, unknown>;
+    const clonedFileHashes = { ...sourceFileHashes, "manifest.json": manifestDigest };
+    const totalBytes = Number(operation.total_bytes) - originalManifestBytes.byteLength + manifestBytes.byteLength;
+    const inputFingerprint = await canonicalDigest({
+      principal_ref: operation.principal_ref,
+      origin_authentication_receipt_ref: operation.origin_authentication_receipt_ref,
+      idempotency_key: `q8-${revisionRef}`,
+      manifest: cloneManifest,
+      file_hashes: clonedFileHashes,
+      total_bytes: totalBytes,
+      residency_key: JSON.parse(String(operation.residency_key_json)),
+      residency_key_digest: operation.residency_key_digest,
+      expected_head_revision_ref: operation.expected_head_revision_ref,
+      policy_snapshot_sha256: operation.policy_snapshot_sha256,
+    });
+    const clonedOperation: Record<string, unknown> = { ...operation, operation_id: operationId, idempotency_key: `q8-${revisionRef}`, input_fingerprint: inputFingerprint,
+      manifest_sha256: manifestDigest, manifest_json: canonicalEvidenceJson(cloneManifest), file_hashes_json: canonicalEvidenceJson(clonedFileHashes), total_bytes: totalBytes,
+      source_revision_ref: revisionRef,
       source_id: sourceId, candidate_id: candidateId, staging_session_ref: null, qualification_report_ref: null,
       decision_receipt_ref: receiptRef, promotion_receipt_ref: null, created_at: now, updated_at: now };
     await db.prepare(`INSERT INTO bundle_ingest_operation (${operationKeys.join(",")}) VALUES (${operationKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...operationKeys.map((key) => clonedOperation[key] ?? null)).run();

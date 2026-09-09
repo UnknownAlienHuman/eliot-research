@@ -2,6 +2,7 @@ export * from "./types.js";
 export * from "./canonical.js";
 export * from "./authority.js";
 export * from "./content-store.js";
+export * from "./coordinate-map-reader.js";
 export * from "./resolver.js";
 export * from "./registry.js";
 export * from "./citation-registry.js";

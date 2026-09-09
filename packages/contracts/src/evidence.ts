@@ -18,11 +18,16 @@ export const EvidenceHandleTerminalStateSchema = z.enum([
 ]);
 export type EvidenceHandleTerminalState = z.infer<typeof EvidenceHandleTerminalStateSchema>;
 
+export const EvidenceTableCellAnchorSchema = z.object({
+  kind: z.literal("table_cell"), table_id: IdentifierSchema,
+  row: z.number().int().nonnegative(), column: z.number().int().nonnegative(),
+}).strict();
+
 export const EvidenceAnchorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("normalized_byte_range"), start: ByteLengthSchema, end: ByteLengthSchema }).strict(),
   z.object({ kind: z.literal("normalized_line_range"), start_line: z.number().int().positive(), end_line: z.number().int().positive() }).strict(),
   z.object({ kind: z.literal("page_region"), page: z.number().int().positive(), bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]) }).strict(),
-  z.object({ kind: z.literal("table_cell"), table_id: IdentifierSchema, row: z.number().int().nonnegative(), column: z.number().int().nonnegative() }).strict(),
+  EvidenceTableCellAnchorSchema,
   z.object({ kind: z.literal("code_range"), commit_sha: Sha256Schema, path: z.string().min(1), start_line: z.number().int().positive(), end_line: z.number().int().positive() }).strict(),
 ]);
 export type EvidenceAnchor = z.infer<typeof EvidenceAnchorSchema>;
