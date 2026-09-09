@@ -20,7 +20,8 @@ lockfiles plus all repository gates.
 | @cloudflare/vitest-plugin | `1.1.0` | Workers runtime integration tests. Do not restore the retired pool package. |
 | @cloudflare/workers-types | `5.20260827.1` | Compile-time Worker API declarations. Generated binding types remain authoritative for `Env`. |
 | Vite | `8.2.2` | PWA build. |
-| Vitest | `4.1.10` | Node and browser-independent unit harness. |
+| Vitest | `4.1.11` | Node and browser-independent unit harness. |
+| sharp (workspace override) | `0.35.4` | Transitive security floor for Astro and Wrangler/Miniflare until upstream dependency pins are patched. |
 | Zod | `4.4.3` | Strict wire validation; load-bearing objects use `.strict()`. |
 
 TypeScript 7 is intentionally **not** admitted yet. The pinned `typescript-eslint` release declares a

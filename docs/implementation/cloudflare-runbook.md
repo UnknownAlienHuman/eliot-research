@@ -41,6 +41,20 @@ local profile, and live readback fails closed before any Cloudflare mutation. Br
 any financial/billing consent cannot be automated: a human completes them in the browser; scripts
 only consume the resulting local OAuth profile. A $1 usage alert is advisory monitoring only and does not enforce a billing cap.
 
+### Current browser-OAuth API scope limitation
+
+As observed on 2026-09-09 with Wrangler 4.127.1, the current browser-OAuth profile can still be
+valid for the account while a read-only Access organization request returns HTTP 403 and the
+collector classifies Usage v2 billing HTTP 403 as `AUTH_SCOPE_DENIED`. The available Wrangler
+scopes do not establish Access-management or billing authority, and the exact cause may also be
+endpoint entitlement or restricted API availability. These responses are typed authority gaps,
+not evidence of zero usage. Preflight must keep the affected values unknown/sealed; it must not
+fabricate counters, treat dashboard state as API evidence, or fall back to a static token. Resolving
+these permissions requires a separately reviewed operator-auth decision and is outside this runbook.
+The local operator policy still declares `free-tier` with `paid_overage:false`, while the current
+account plan readback shows Paid; that policy/account-plan distinction is an unresolved
+configuration reconciliation item, and no tier thresholds are inferred here.
+
 ## Preconditions
 
 - Node.js and Corepack satisfy the root `package.json` engines.

@@ -304,10 +304,10 @@ await check("genuine default-live collection control and trust argument", async 
   assert.equal(isInventoryProvider(liveInventory), true);
   assert.equal(isUsageVBillingProvider(liveBilling), true);
   assert.equal(isTestTransportProvider(liveInventory), false);
-  // Leg 2 — OAuth-mode plumbing with default (empty) providers reaches the
-  // gate, verifies identity, collects live with zero counters, and seals
-  // with no capability and no network: the lifecycle runs; only the counter
-  // aggregate (live Cloudflare, NOT_EXECUTED by design) is missing.
+  // Leg 2 — OAuth-mode plumbing with an explicit empty provider override
+  // reaches the gate, verifies identity, collects with zero counters, and
+  // seals with no capability and no network. The production omission path is
+  // covered by the default-registry test in test-wrangler-oauth.mjs.
   const fresh = "2030-01-01T00:00:00.000Z";
   const gate = await runUsagePreflight({
     env: { ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth", ELIOTR_WRANGLER_CONFIG_FILE: "test.toml", CLOUDFLARE_ACCOUNT_ID: ACCOUNT },

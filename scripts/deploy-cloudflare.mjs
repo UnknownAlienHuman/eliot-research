@@ -45,7 +45,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
-  usageProviders = [], usageSnapshot = null } = {}) {
+  usageProviders = null, usageSnapshot = null } = {}) {
   const env = { ...environment };
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
@@ -121,11 +121,9 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   // before any Worker surface exists; any partial failure aborts before the
   // single Worker deploy, leaving no public workers.dev path
   // (preview_urls=false is enforced by validateGeneratedDeployment).
-  // Injected usage evidence only: forwarded verbatim as `providers` (or an
-  // explicit `usageSnapshot` built by test-called builders) to the preflight.
-  // Absent (defaults) the gate keeps today's live-registry, fail-closed
-  // behavior byte-identical; no decision logic changes here. Production CLI
-  // entry below never passes either capability.
+  // An explicit usageProviders value is forwarded verbatim as a test seam.
+  // The omitted/null default lets the OAuth lifecycle build its branded live
+  // registry; usageSnapshot remains an explicit test-called builder path.
   {
     const usageGate = await runUsagePreflight({
       env: { ...process.env, ...env },
