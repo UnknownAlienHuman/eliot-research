@@ -39,6 +39,7 @@ import {
   USAGE_SOURCE_SEALED,
   assertLiveRegistryCoversAll,
   blankAccountSnapshot,
+  buildLiveProviderRegistry,
   collectAccountUsage,
 } from "./cloudflare-usage-collection.mjs";
 import {
@@ -144,8 +145,9 @@ function parseMaxAgeMs(raw) {
 }
 
 // Layer-1 admission runner for the preflight CLI and provisioner/deploy
-// gates. Never exits; network only via official `wrangler whoami` spawn or
-// injected providers. Returns { decision, evaluation, snapshot, receipt,
+// gates. Never exits; network uses official `wrangler whoami` plus the
+// default live registry, or explicitly injected providers. Returns { decision,
+// evaluation, snapshot, receipt,
 // capability }; capability is non-null ONLY on the fresh live success path
 // (verified browser-OAuth identity plus live collection plus ADMITTED plus
 // complete live trust). BLOCKED is a return, not a throw. Seams (readFile,
@@ -162,7 +164,9 @@ export async function runUsagePreflight(options = {}) {
     writeReceipt = false,
     receiptPath = env?.ELIOTR_USAGE_RECEIPT_PATH ?? null,
     maxAgeMs = parseMaxAgeMs(env?.ELIOTR_USAGE_MAX_AGE_MS),
-    providers = [],
+    // Omitted/null selects the default live registry after OAuth identity
+    // verification. An explicit [] remains a test-only empty override.
+    providers = null,
     cwd = process.cwd(),
     // Explicit test-only snapshot (object/JSON). Never ambient env;
     // production entry points must never pass it. Real-envelope
@@ -271,23 +275,31 @@ export async function runUsagePreflight(options = {}) {
     return finish(evaluation, snapshot);
   }
 
-  // Live OAuth collection over verified bearer/whoami. Empty providers seal
-  // with unknown counters, never admit or fabricate zero. Bearer stays
+  // Live OAuth collection over verified bearer/whoami. The omitted provider
+  // option selects the default live registry; an explicit empty override
+  // seals with unknown counters. Never admit or fabricate zero. Bearer stays
   // memory-only; snapshot carries digests. A capability mints ONLY here, and
   // only when the fresh aggregate is ADMITTED with complete live trust: the
   // verified identity plus this live collection plus this evaluation are the
   // lifecycle half the issuer predicate cannot see.
   assertLiveRegistryCoversAll();
+  const usingDefaultLiveRegistry = providers === null;
+  const collectionProviders = usingDefaultLiveRegistry
+    ? buildLiveProviderRegistry({ accountId: expectedAccountId, nowMs })
+    : providers;
   const snapshot = await collectAccountUsage({
     bearer: oauthBearer,
     expectedAccountId,
     now: nowMs,
-    providers,
+    providers: collectionProviders,
     whoamiOutput: oauthWhoamiOutput,
     source: USAGE_SOURCE_LIVE,
   });
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: expectedDigest, now: nowMs, maxAgeMs });
-  evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed; ledger+full-inventory required`);
-  const capability = isLiveAdmissibleForCapability(snapshot, evaluation) ? mintLiveCapability() : null;
+  if (evaluation.decision !== "ADMITTED") {
+    evaluation.reasons.unshift(`live profile verified for ${accountRef(expectedAccountId)}; no authoritative counter aggregate exposed, heavy work sealed; ledger+full-inventory required`);
+  }
+  const capability = usingDefaultLiveRegistry && isLiveAdmissibleForCapability(snapshot, evaluation)
+    ? mintLiveCapability() : null;
   return finish(evaluation, snapshot, capability);
 }

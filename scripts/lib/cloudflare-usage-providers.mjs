@@ -83,10 +83,17 @@ function readStatus(response) {
   const status = readOwn(response, keys, "status");
   return Number.isInteger(status) ? status : null;
 }
-function appendValidatedRow(seen, row, group, context, lastHttpStatus) {
+const DEFAULT_IDENTITY_FIELDS = Object.freeze(["id", "uuid", "name"]);
+const QUEUE_IDENTITY_FIELDS = Object.freeze(["queue_id", "queue_name"]);
+
+function identityFieldsForGroup(group) {
+  return group === "queue-inventory-list" ? QUEUE_IDENTITY_FIELDS : DEFAULT_IDENTITY_FIELDS;
+}
+
+function appendValidatedRow(seen, row, group, context, lastHttpStatus, identityFields = DEFAULT_IDENTITY_FIELDS) {
   if (row === null || row === undefined || typeof row !== "object" || Array.isArray(row)) { throw new ProviderFailure("MALFORMED", `${group} ${context} bad row`, { httpStatus: lastHttpStatus }); }
   const keys = ownKeysOf(row);
-  const names = ["id", "uuid", "name"];
+  const names = identityFields;
   let hasIdentity = false;
   for (let i = 0; i < names.length; i += 1) {
     const field = names[i];
@@ -104,9 +111,9 @@ function appendValidatedRow(seen, row, group, context, lastHttpStatus) {
   if (hasIdentity) { seen[seen.length] = row; return; }
   throw new ProviderFailure("MALFORMED", `${group} ${context} row without string identity`, { httpStatus: lastHttpStatus });
 }
-function appendRows(seen, rows, group, context, lastHttpStatus) {
+function appendRows(seen, rows, group, context, lastHttpStatus, identityFields = DEFAULT_IDENTITY_FIELDS) {
   if (rows === null || rows === undefined || typeof rows !== "object" || typeof rows.length !== "number" || !Array.isArray(rows)) { throw new ProviderFailure("MALFORMED", `${group} ${context} missing rows array`, { httpStatus: lastHttpStatus }); }
-  for (let i = 0; i < rows.length; i += 1) { appendValidatedRow(seen, rows[i], group, context, lastHttpStatus); }
+  for (let i = 0; i < rows.length; i += 1) { appendValidatedRow(seen, rows[i], group, context, lastHttpStatus, identityFields); }
 }
 export function assertAccountUrl(url, accountId, group, context) {
   let parsed;
@@ -198,7 +205,7 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         const successOwn = readOwn(body, bodyKeys, "success");
         const resultOwn = readOwn(body, bodyKeys, "result");
         if (successOwn !== true || resultOwn === null || resultOwn === undefined || typeof resultOwn !== "object" || !Array.isArray(resultOwn)) { throw new ProviderFailure("HTTP_ERROR", `${group} page ${page} malformed (success:false or non-array result)`, { httpStatus: lastHttpStatus }); }
-        appendRows(seen, resultOwn, group, `page ${page}`, lastHttpStatus);
+        appendRows(seen, resultOwn, group, `page ${page}`, lastHttpStatus, identityFieldsForGroup(group));
         const resultInfoRaw = readOwn(body, bodyKeys, "result_info");
         assertPlainResultInfo(resultInfoRaw, group, page, "result_info", lastHttpStatus);
         const info = {};
@@ -216,18 +223,30 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
           const value = valInfo(name);
           if (!Number.isInteger(value) || value < min) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad ${name}`, { httpStatus: lastHttpStatus }); }
         };
-        checkField("page", 1);
-        checkField("per_page", 1);
-        checkField("total_pages", 1);
-        checkField("count", 0);
-        checkField("total_count", 0);
         const pageOwn = valInfo("page");
         const perPageOwn = valInfo("per_page");
         const totalPagesOwn = valInfo("total_pages");
         const countOwn = valInfo("count");
         const totalCountOwn = valInfo("total_count");
         const countedTotalOwn = valInfo("counted_total");
-        if (Number.isInteger(totalPagesOwn) && totalPagesOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
+        // Cloudflare's Queue list endpoint returns total_pages: 0 for an
+        // empty account even though page 1 is the completed response. This
+        // exception is deliberately exact: a zero total is accepted only
+        // with the complete empty-page tuple; all other zero totals remain
+        // malformed and cannot hide truncation or contradictory rows.
+        const coherentEmptyQueue = group === "queue-inventory-list" &&
+          resultOwn.length === 0 &&
+          hasInfo("page") && pageOwn === 1 &&
+          hasInfo("per_page") && Number.isInteger(perPageOwn) && perPageOwn === perPage &&
+          hasInfo("count") && countOwn === 0 &&
+          hasInfo("total_count") && totalCountOwn === 0 &&
+          hasInfo("total_pages") && totalPagesOwn === 0;
+        checkField("page", 1);
+        checkField("per_page", 1);
+        checkField("total_pages", coherentEmptyQueue ? 0 : 1);
+        checkField("count", 0);
+        checkField("total_count", 0);
+        if (Number.isInteger(totalPagesOwn) && totalPagesOwn < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_pages`, { httpStatus: lastHttpStatus }); }
         if (Number.isInteger(perPageOwn) && perPageOwn < 1) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad per_page`, { httpStatus: lastHttpStatus }); }
         if (Number.isInteger(countOwn) && countOwn < 0) { throw new ProviderFailure("MALFORMED", `${group} page ${page} bad count`, { httpStatus: lastHttpStatus }); }
         const hasPaginationMeta = hasInfo("page") || hasInfo("per_page") || hasInfo("count") || hasInfo("total_count") || hasInfo("total_pages");
@@ -239,6 +258,14 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         requireStable("per_page", perPageOwn);
         requireStable("total_count", totalCountOwn);
         if (Number.isInteger(totalCountOwn) && totalCountOwn < 0) throw new ProviderFailure("MALFORMED", `${group} page ${page} bad total_count`, { httpStatus: lastHttpStatus });
+        if (coherentEmptyQueue) {
+          // Normalize the API's zero-page marker to one completed logical
+          // request so coverage remains a truthful full-account proof.
+          totalPages = 1;
+          pagesCompleted[pagesCompleted.length] = page;
+          page += 1;
+          break;
+        }
         if (Number.isInteger(totalCountOwn)) { expectedPagesFromCount = totalCountOwn === 0 ? 1 : Math.ceil(totalCountOwn / Math.max(1, effectivePerPage)); }
         requireStable("total_pages", totalPagesOwn);
         if (Number.isInteger(totalPagesOwn)) {
@@ -262,7 +289,8 @@ export function createPaginatedInventoryProvider({ group, covers = [], endpoint,
         values: {},
         inventory: seen,
         coverage: { accountId, completedPages: pagesCompleted.length, totalPages, fullAccount: true },
-        receiptMeta: safeFetchMeta({ httpStatus: lastHttpStatus, kind: "inventory-paginated", pages: `${pagesCompleted.length}/${totalPages}`, full: true, authoritative: false, reason: null }),
+        provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+        receiptMeta: safeFetchMeta({ httpStatus: lastHttpStatus, kind: "inventory-paginated", pages: `${pagesCompleted.length}/${totalPages}`, full: true, authoritative: true, reason: null }),
       };
     },
   };
@@ -345,7 +373,8 @@ export function createR2CursorInventoryProvider({ group = "r2-inventory-list", c
         values: {},
         inventory: seen,
         coverage: { accountId, completedCursors: cursorsCompleted, fullAccount: true },
-        receiptMeta: safeFetchMeta({ httpStatus: lastHttpStatus, kind: "inventory-cursor", cursors: `${cursorsCompleted}`, full: true, authoritative: false, reason: null }),
+        provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
+        receiptMeta: safeFetchMeta({ httpStatus: lastHttpStatus, kind: "inventory-cursor", cursors: `${cursorsCompleted}`, full: true, authoritative: true, reason: null }),
       };
     },
   };
