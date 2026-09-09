@@ -25,6 +25,17 @@ function displayText(
   return escapeHtml(value ?? fallback);
 }
 
+function unavailableHealth(): SystemHealth {
+  return {
+    ready: false,
+    deployment_generation: "unreachable",
+    core_schema_generation: null,
+    search_schema_generation: null,
+    blocking_reason_codes: ["HEALTH_ENDPOINT_UNREACHABLE"],
+    checked_at: new Date().toISOString(),
+  };
+}
+
 function render(health: SystemHealth | null): void {
   app.innerHTML = `
     <header class="topbar">
@@ -103,11 +114,28 @@ function render(health: SystemHealth | null): void {
       app.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
-  const clearEvidence = (): void => {
+  const clearEvidence = (resetSummary = true): void => {
     const empty = app.querySelector<HTMLElement>("#evidence-empty");
     const evidence = app.querySelector<HTMLElement>("#evidence-detail");
     if (empty && evidence) { empty.hidden = false; evidence.hidden = true; evidence.replaceChildren(); }
+    if (resetSummary) {
+      const count = app.querySelector("#evidence-count");
+      if (count) count.textContent = "0 resolved";
+      const coverage = app.querySelector("#coverage");
+      if (coverage) coverage.textContent = "Not queried";
+      const coverageNote = app.querySelector("#coverage-note");
+      if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
+      retrieval?.clearPrivate();
+    }
   };
+  const clearEvidenceOnEvent = (): void => clearEvidence();
+  app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
+    const previousGeneration = app.querySelector(".health-generation")?.textContent;
+    void getSystemHealth().then((next) => {
+      if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearEvidence();
+      updateHealth(next);
+    }).catch(() => { clearEvidence(); updateHealth(unavailableHealth()); });
+  });
   // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
   // what the last query actually resolved rather than implying a complete scope.
   retrievalHost?.addEventListener("retrieval:resolved", (event) => {
@@ -118,11 +146,11 @@ function render(health: SystemHealth | null): void {
     if (coverageNote) coverageNote.textContent = "A miss never proves corpus absence.";
     const count = app.querySelector("#evidence-count");
     if (count) count.textContent = `${detail.resolved} resolved`;
-    clearEvidence();
+    clearEvidence(false);
   });
-  app.addEventListener("library:scope-changed", clearEvidence);
-  window.addEventListener("offline", clearEvidence);
-  window.addEventListener("eliotr:authorization-cleared", clearEvidence);
+  app.addEventListener("library:scope-changed", clearEvidenceOnEvent);
+  window.addEventListener("offline", clearEvidenceOnEvent);
+  window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     const empty = app.querySelector<HTMLElement>("#evidence-empty");
@@ -140,7 +168,7 @@ function render(health: SystemHealth | null): void {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidence); window.removeEventListener("offline", clearEvidence); window.removeEventListener("eliotr:authorization-cleared", clearEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
@@ -162,18 +190,8 @@ function updateHealth(health: SystemHealth): void {
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
 render(null);
 void getSystemHealth().then(updateHealth).catch(() => updateHealth({
-  ready: false,
-  deployment_generation: "unreachable",
-  core_schema_generation: null,
-  search_schema_generation: null,
-  blocking_reason_codes: ["HEALTH_ENDPOINT_UNREACHABLE"],
-  checked_at: new Date().toISOString(),
+  ...unavailableHealth(),
 }));
-
-app.addEventListener("click", (event) => {
-  const target = event.target;
-  if (target instanceof HTMLButtonElement && target.hasAttribute("data-refresh")) void getSystemHealth().then(updateHealth);
-});
 
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/sw.js");

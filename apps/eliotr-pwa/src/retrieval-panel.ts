@@ -55,7 +55,7 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
   ].join("\n");
 }
 
-export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void } {
+export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void; clearPrivate(): void } {
   element.innerHTML = `<h2>Retrieval</h2>
     <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
     Coverage is sampled: a miss does not prove absence, and no model is called.</p>
@@ -84,6 +84,11 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     : "Unable to run retrieval. Check the inputs and session.";
 
   const stop = () => { active += 1; controller?.abort(); cancel.disabled = true; };
+  const clearPrivate = (): void => {
+    stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
+    lastTrace = undefined; lastEvidence = [];
+    status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
+  };
   cancel.onclick = () => {
     stop();
     status.textContent = "Request cancelled. Retry unchanged inputs to reconcile the same operation.";
@@ -153,6 +158,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
 
   const cleanup = () => { stop(); };
   return Object.assign(cleanup, {
+    clearPrivate,
     selectSource(id: string): void {
       IdentifierSchema.parse(id);
       const current = sources.value.split(",").map((value) => value.trim()).filter(Boolean);
