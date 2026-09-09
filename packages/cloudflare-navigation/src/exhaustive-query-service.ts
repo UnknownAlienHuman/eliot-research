@@ -476,9 +476,10 @@ export async function validateExhaustiveWorkflowJobCurrent(
     readonly state: string;
     readonly expires_at: string;
   }>().catch(() => { throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive job authority read is unavailable", 503, true); });
+  const expiresAt = typeof row?.expires_at === "string" ? Date.parse(row.expires_at) : Number.NaN;
   if (row === null || !["PENDING", "COMPLETE"].includes(row.state) || typeof row.scope_snapshot_id !== "string" ||
       !Number.isSafeInteger(row.scope_snapshot_revision) || typeof row.expires_at !== "string" ||
-      new Date(row.expires_at).toISOString() !== row.expires_at || Date.parse(row.expires_at) <= Date.now()) {
+      !Number.isFinite(expiresAt) || new Date(expiresAt).toISOString() !== row.expires_at || expiresAt <= Date.now()) {
     throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive job authority is no longer current", 409, false);
   }
   const runtime = productionRuntime(env, context);

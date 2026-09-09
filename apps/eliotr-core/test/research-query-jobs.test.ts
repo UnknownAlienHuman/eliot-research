@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
 import { handleHttp } from "../src/http.js";
-import { validateExhaustiveWorkflowJobCurrent } from "@eliotr/cloudflare-navigation";
+import { exhaustiveJobId } from "@eliotr/retrieval";
 
 const runtime = env as unknown as Q1Runtime;
 
@@ -160,18 +160,18 @@ describe("owner exhaustive workflow discovery", () => {
   it("refuses an expired canonical job before exposing workflow metadata", async () => {
     const owner = "jobs-discovery-owner";
     const value = await world(owner);
-    const launched = await handleHttp(launchRequest(value, "jobs-discovery-expired"), runtime, {} as ExecutionContext, access(owner));
-    expect(launched.status).toBe(202);
-    const body = await launched.clone().json() as { readonly data?: { readonly workflow_instance_id?: string } };
-    const workflowId = body.data?.workflow_instance_id;
-    expect(workflowId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
-    const status = await handleHttp(
-      new Request(`https://research.example/api/v1/research/query/${workflowId}`, { method: "GET" }),
+    const seed = await handleHttp(launchRequest(value, "jobs-discovery-expired-scope"), runtime, {} as ExecutionContext, access(owner));
+    expect(seed.status).toBe(202);
+    const seedBody = await seed.clone().json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    const seedId = seedBody.data?.workflow_instance_id;
+    expect(seedId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    const seedStatus = await handleHttp(
+      new Request(`https://research.example/api/v1/research/query/${seedId}`, { method: "GET" }),
       runtime,
       {} as ExecutionContext,
       access(owner),
     );
-    expect(status.status).toBe(200);
+    expect(seedStatus.status).toBe(200);
     const scope = await runtime.CORE_DB.prepare(
       "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' ORDER BY s.created_at DESC LIMIT 1",
     ).bind(owner).first<{
@@ -179,26 +179,57 @@ describe("owner exhaustive workflow discovery", () => {
     }>();
     expect(scope).not.toBeNull();
     if (scope === null) return;
-    const expiredJobId = `expired-job-${crypto.randomUUID()}`;
+    const expiredKey = "jobs-discovery-expired-bound";
+    const expiredJobId = await exhaustiveJobId({ principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, expiredKey);
     const now = new Date().toISOString();
     await runtime.CORE_DB.prepare(
       "INSERT INTO retrieval_exhaustive_job (job_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,scope_snapshot_id,scope_snapshot_revision,scope_digest,plan_id,coverage_denominator_ref,denominator_shard_ids_json,state,denominator_shards,settled_shards,total_scanned_sections,total_matches,result_artifact_ref,coverage_receipt_ref,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'PENDING',?13,NULL,NULL,NULL,NULL,NULL,?14,?15)",
-    ).bind(expiredJobId, owner, "owner_pwa", "credential-1", `expired-key-${crypto.randomUUID()}`, "f".repeat(64),
+    ).bind(expiredJobId, owner, "owner_pwa", "credential-1", expiredKey, "f".repeat(64),
       scope.snapshot_id, scope.revision, scope.snapshot_digest, "expired-plan", "expired-denominator", "[\"expired-shard\"]", 1,
       now, new Date(Date.now() - 1_000).toISOString()).run();
-    await expect(validateExhaustiveWorkflowJobCurrent(runtime, {
-      request: new Request("https://research.example/api/v1/research/query/jobs"), principal_ref: owner,
-      client_class: "owner_pwa", credential_generation: "credential-1", trace_id: "expired-job-test",
-    }, expiredJobId)).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE", status: 409 });
+    const launched = await handleHttp(launchRequest(value, expiredKey), runtime, {} as ExecutionContext, access(owner));
+    expect(launched.status).toBe(202);
+    const body = await launched.clone().json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    const workflowId = body.data?.workflow_instance_id;
+    expect(workflowId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    const page = await handleHttp(
+      new Request("https://research.example/api/v1/research/query/jobs?limit=20"),
+      runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
+    expect(page.status).toBe(200);
+    const document = await page.json() as { readonly data?: { readonly items?: readonly { readonly workflow_instance_id: string }[] } };
+    expect(document.data?.items?.some((item) => item.workflow_instance_id === workflowId)).toBe(false);
   });
 
   it("drops a cached job when its owner grant is withdrawn during Workflow status", async () => {
     const owner = "jobs-discovery-owner";
-    const current = await runtime.CORE_DB.prepare(
-      "SELECT w.workflow_id FROM retrieval_exhaustive_workflow w JOIN retrieval_exhaustive_job j ON j.job_id=w.job_id WHERE w.principal_ref=?1 AND j.state='COMPLETE' ORDER BY w.created_at DESC LIMIT 1",
-    ).bind(owner).first<{ readonly workflow_id: string }>();
-    expect(current).not.toBeNull();
-    if (current === null) return;
+    const value = await world(owner);
+    const launched = await handleHttp(launchRequest(value, "jobs-discovery-withdraw-during-status"), runtime, {} as ExecutionContext, access(owner));
+    expect(launched.status).toBe(202);
+    const launchedBody = await launched.clone().json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    const workflowId = launchedBody.data?.workflow_instance_id;
+    expect(workflowId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    const binding = await runtime.CORE_DB.prepare(
+      "SELECT job_id FROM retrieval_exhaustive_workflow WHERE workflow_id=?1 LIMIT 1",
+    ).bind(workflowId).first<{ readonly job_id: string }>();
+    expect(binding).not.toBeNull();
+    if (binding === null) return;
+    // Force the durable binding into its legitimate queued-before-job state so
+    // the route must observe job creation and grant withdrawal after status.
+    await runtime.CORE_DB.prepare(
+      "DELETE FROM retrieval_exhaustive_job WHERE job_id=?1",
+    ).bind(binding.job_id).run();
+    const queued = await runtime.CORE_DB.prepare(
+      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(binding.job_id).first<{ readonly present: number }>();
+    expect(queued).toBeNull();
+    const scope = await runtime.CORE_DB.prepare(
+      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' AND g.state='ACTIVE' ORDER BY s.created_at DESC LIMIT 1",
+    ).bind(owner).first<{ readonly snapshot_id: string; readonly revision: number; readonly snapshot_digest: string }>();
+    expect(scope).not.toBeNull();
+    if (scope === null) return;
     const original = runtime.RESEARCH_WORKFLOW;
     let withdrawn = false;
     const interleavingWorkflow = {
@@ -210,6 +241,16 @@ describe("owner exhaustive workflow discovery", () => {
           async status() {
             if (!withdrawn) {
               withdrawn = true;
+              const existing = await runtime.CORE_DB.prepare(
+                "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+              ).bind(binding.job_id).first<{ readonly present: number }>();
+              if (existing === null) {
+                const now = new Date().toISOString();
+                await runtime.CORE_DB.prepare(
+                  "INSERT INTO retrieval_exhaustive_job (job_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,scope_snapshot_id,scope_snapshot_revision,scope_digest,plan_id,coverage_denominator_ref,denominator_shard_ids_json,state,denominator_shards,settled_shards,total_scanned_sections,total_matches,result_artifact_ref,coverage_receipt_ref,created_at,expires_at) VALUES (?1,?2,'owner_pwa','credential-1',?3,?4,?5,?6,?7,'withdraw-during-status-plan','withdraw-during-status-denominator','[\"withdraw-shard\"]','PENDING',1,NULL,NULL,NULL,NULL,NULL,?8,?9)",
+                ).bind(binding.job_id, owner, "withdraw-during-status-key", "f".repeat(64), scope.snapshot_id, scope.revision,
+                  scope.snapshot_digest, now, new Date(Date.now() + 86_400_000).toISOString()).run();
+              }
               await runtime.CORE_DB.prepare(
                 "UPDATE scope_access_grant SET state='REVOKED' WHERE principal_ref=?1 AND client_class='owner_pwa' AND state='ACTIVE'",
               ).bind(owner).run();
@@ -229,10 +270,12 @@ describe("owner exhaustive workflow discovery", () => {
     );
     expect(response.status).toBe(200);
     const document = await response.json() as { readonly data?: { readonly items?: readonly { readonly workflow_instance_id: string }[] } };
-    expect(document.data?.items?.some((item) => item.workflow_instance_id === current.workflow_id)).toBe(false);
+    expect(document.data?.items?.some((item) => item.workflow_instance_id === workflowId)).toBe(false);
     const invalidated = await runtime.CORE_DB.prepare(
       "SELECT state FROM retrieval_exhaustive_job WHERE job_id=(SELECT job_id FROM retrieval_exhaustive_workflow WHERE workflow_id=?1)",
-    ).bind(current.workflow_id).first<{ readonly state: string }>();
-    expect(invalidated?.state).toBe("INVALIDATED");
+    ).bind(workflowId).first<{ readonly state: string }>();
+    expect(invalidated).not.toBeNull();
+    if (invalidated === null) return;
+    expect(invalidated.state).toBe("INVALIDATED");
   });
 });

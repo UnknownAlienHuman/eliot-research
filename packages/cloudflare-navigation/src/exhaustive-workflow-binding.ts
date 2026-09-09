@@ -174,6 +174,31 @@ interface WorkflowJobListingRow {
   readonly expires_at: string | null;
 }
 
+interface CurrentWorkflowJobMetadata {
+  readonly state: ExhaustiveWorkflowJobState;
+  readonly expires_at: string;
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) && new Date(parsed).toISOString() === value;
+}
+
+async function readCurrentWorkflowJobMetadata(database: D1Database, jobId: string): Promise<CurrentWorkflowJobMetadata | null> {
+  const row = await database.prepare(
+    "SELECT state,expires_at FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+  ).bind(jobId).first<{ readonly state: string; readonly expires_at: string }>().catch(() => {
+    failWorkflow("exhaustive Workflow job metadata readback is unavailable");
+  });
+  if (row === null) return null;
+  if ((row.state !== "PENDING" && row.state !== "COMPLETE" && row.state !== "INVALIDATED") ||
+      !isIsoTimestamp(row.expires_at)) {
+    failWorkflow("exhaustive Workflow job metadata is invalid");
+  }
+  return { state: row.state, expires_at: row.expires_at };
+}
+
 function encodeCursor(cursor: WorkflowCursor): string {
   const bytes = new TextEncoder().encode(JSON.stringify(cursor));
   let binary = "";
@@ -419,8 +444,8 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
             typeof row.job_id !== "string" || row.job_id.length === 0 || row.job_id.length > 128 ||
             typeof row.created_at !== "string" ||
             (row.expires_at !== null && typeof row.expires_at !== "string") ||
-            new Date(row.created_at).toISOString() !== row.created_at ||
-            (row.expires_at !== null && new Date(row.expires_at).toISOString() !== row.expires_at)) {
+            !isIsoTimestamp(row.created_at) ||
+            (row.expires_at !== null && !isIsoTimestamp(row.expires_at))) {
           failWorkflow("exhaustive Workflow job listing contains invalid metadata");
         }
         try {
@@ -431,18 +456,22 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
           const instance = await workflow.get(row.workflow_id);
           const workflowStatus = await instance.status();
           if (!WORKFLOW_STATUSES.has(workflowStatus.status)) failWorkflow("exhaustive Workflow status is invalid");
+          const finalJob = await readCurrentWorkflowJobMetadata(input.database, row.job_id);
+          if (finalJob === null) {
+            if (row.job_state !== null) continue;
+          } else {
+            await input.validateCurrentWorkflowJob?.(row.job_id, context);
+          }
           const finalBinding = await readWorkflowBinding(input.database, row.workflow_id, context, input.deployment_generation);
           await requireActiveOwnerPolicy(input.database, context);
-          if (row.job_state !== null) await input.validateCurrentWorkflowJob?.(row.job_id, context);
           items.push({
             workflow_instance_id: row.workflow_id,
             workflow_status: workflowStatus.status,
             binding_state: finalBinding.state,
             created_at: row.created_at,
-            ...(row.job_state === null ? {} : { job_state: row.job_state }),
-            ...(row.expires_at === null ? {} : { expires_at: row.expires_at }),
+            ...(finalJob === null ? {} : { job_state: finalJob.state, expires_at: finalJob.expires_at }),
             recoverable: isRecoverable(workflowStatus.status) &&
-              (row.job_state === null || row.job_state === "PENDING") && finalBinding.state === "BOUND",
+              (finalJob === null || finalJob.state === "PENDING") && finalBinding.state === "BOUND",
             cancelable: isRecoverable(workflowStatus.status) && finalBinding.state === "BOUND",
           });
         } catch (error) {
