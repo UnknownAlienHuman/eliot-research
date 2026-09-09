@@ -502,6 +502,12 @@ function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fe
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
   { token, method = "GET", body, contentType, headers: extraHeaders, phase, worker, timeoutMs = 15000 } = {}) {
   const headers = { Accept: "application/json", ...(extraHeaders ?? {}) };
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === "connection") delete headers[name];
+  }
+  // Node-only harness transport: avoid reusing an idle Undici socket after
+  // long D1 CLI/browser phases. PWA/browser requests never use this wrapper.
+  headers.connection = "close";
   if (token) headers["cf-access-jwt-assertion"] = token;
   if (contentType) headers["content-type"] = contentType;
   try {
@@ -534,9 +540,10 @@ async function workerJson(origin, path, options = {}) {
 
 export async function verifyWorkerFetchDiagnosticRegression() {
   const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  let transportCalls = 0;
   await assert.rejects(
     fetchWorkerJsonWithDiagnostics(
-      async () => { throw transportError; },
+      async () => { transportCalls += 1; throw transportError; },
       "http://127.0.0.1:43123",
       "/api/v1/research/query/jobs?cursor=private-query&token=private-token",
       { method: "GET", phase: "rotation-read", token: "private-token",
@@ -554,6 +561,7 @@ export async function verifyWorkerFetchDiagnosticRegression() {
       return true;
     },
   );
+  assert.equal(transportCalls, 1, "diagnostic transport failures must propagate without retry");
   await assert.rejects(
     fetchWorkerJsonWithDiagnostics(
       async () => ({ text: async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); } }),
@@ -570,6 +578,34 @@ export async function verifyWorkerFetchDiagnosticRegression() {
       return true;
     },
   );
+  const requestSockets = [];
+  const requestHeaders = [];
+  const socketServer = createServer((request, response) => {
+    requestSockets.push(request.socket);
+    requestHeaders.push(request.headers);
+    response.setHeader("content-type", "application/json");
+    response.end('{"ok":true}\n');
+  });
+  await new Promise((resolve, reject) => {
+    socketServer.once("error", reject);
+    socketServer.listen(0, "127.0.0.1", resolve);
+  });
+  try {
+    const socketOrigin = `http://127.0.0.1:${socketServer.address().port}`;
+    for (let index = 0; index < 2; index += 1) {
+      const response = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, socketOrigin, "/healthz?secret=redacted",
+        { token: "fixture-token", phase: "socket-probe", timeoutMs: 5000 });
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.data, { ok: true });
+    }
+    assert.equal(requestSockets.length, 2, "socket fixture must observe both requests");
+    assert.notEqual(requestSockets[0], requestSockets[1], "Connection: close must force a fresh socket per request");
+    assert.deepEqual(requestHeaders.map((headers) => headers.connection), ["close", "close"]);
+    assert.deepEqual(requestHeaders.map((headers) => headers["cf-access-jwt-assertion"]), ["fixture-token", "fixture-token"],
+      "Connection: close must preserve the bearer header");
+  } finally {
+    await new Promise((resolve, reject) => socketServer.close((error) => error ? reject(error) : resolve()));
+  }
   return { protocol: "eliotr.owner-e2e.worker-fetch-diagnostic.v1", state: "PASS" };
 }
 
