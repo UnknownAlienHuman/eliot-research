@@ -990,6 +990,25 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
     browser = context.browser();
     assert.ok(browser, "Playwright browser must be owned by this harness");
     const page = context.pages()[0] ?? await context.newPage();
+    // Capture the PWA's real register() promise before its module executes.
+    // The phase fence consumes this promise in-page; it never starts a
+    // synthetic update request at a boundary.
+    await context.addInitScript(() => {
+      const container = navigator.serviceWorker;
+      if (!container || typeof container.register !== "function") return;
+      const register = container.register.bind(container);
+      Object.defineProperty(container, "register", {
+        configurable: true,
+        value(...args) {
+          const promise = register(...args);
+          Object.defineProperty(globalThis, "__eliotServiceWorkerRegistrationPromise", {
+            configurable: true, value: promise,
+          });
+          promise.catch(() => {});
+          return promise;
+        },
+      });
+    });
     const consoleErrors = [];
     const pageErrors = [];
     const failedRequests = [];
@@ -2958,26 +2977,55 @@ export function summarizePhaseLedger(harness) {
   };
 }
 
+async function awaitServiceWorkerRegistrationLifecycle(container = globalThis.navigator?.serviceWorker) {
+  const serviceWorker = container ?? globalThis.navigator?.serviceWorker;
+  if (!serviceWorker) return "unsupported";
+  const registrationPromise = serviceWorker.__eliotServiceWorkerRegistrationPromise ??
+    globalThis.__eliotServiceWorkerRegistrationPromise;
+  if (!registrationPromise || typeof registrationPromise.then !== "function") return "unregistered";
+  let registration;
+  try { registration = await registrationPromise; }
+  catch { return "registration-failed"; }
+  if (!registration) return "registration-failed";
+
+  const terminalStates = new Set(["installed", "activated", "redundant"]);
+  const waits = [];
+  const observed = new Set();
+  const observe = (worker) => {
+    if (!worker || observed.has(worker)) return;
+    observed.add(worker);
+    if (terminalStates.has(worker.state)) return;
+    waits.push(new Promise((resolve) => {
+      const onStateChange = () => {
+        if (!terminalStates.has(worker.state)) return;
+        worker.removeEventListener?.("statechange", onStateChange);
+        resolve();
+      };
+      worker.addEventListener("statechange", onStateChange);
+      onStateChange();
+    }));
+  };
+  // Observe updatefound before sampling the current registration state so an
+  // installing worker cannot be hidden by an already-active worker.
+  const onUpdateFound = () => observe(registration.installing);
+  registration.addEventListener?.("updatefound", onUpdateFound);
+  observe(registration.installing);
+  observe(registration.waiting);
+  observe(registration.active);
+  try { await Promise.all(waits); }
+  finally { registration.removeEventListener?.("updatefound", onUpdateFound); }
+  return "settled";
+}
+
 async function settleServiceWorkerLifecycle(page) {
   // `networkidle` does not include the asynchronous registration/activation
-  // lifecycle. Fence only the registration already started by the PWA; calling
-  // registration.update() here would create a new /sw.js fetch outside the
-  // user action and local bridge session, which is both synthetic traffic and
-  // unable to carry the bridge cookie. A missing/failed unauthenticated
+  // lifecycle. Fence the registration promise initiated by the PWA and any
+  // installing/waiting worker it produced. A missing/failed unauthenticated
   // registration is already settled and therefore needs no wait.
   let timer;
   try {
     await Promise.race([
-      page.evaluate(async () => {
-        if (!("serviceWorker" in navigator)) return "unsupported";
-        const registration = await navigator.serviceWorker.getRegistration("/");
-        if (registration === undefined) return "unregistered";
-        const worker = registration.installing ?? registration.waiting ?? registration.active;
-        if (worker === undefined) return "unregistered";
-        if (registration.active?.state === "activated") return "active";
-        await navigator.serviceWorker.ready;
-        return "activated";
-      }),
+      page.evaluate(awaitServiceWorkerRegistrationLifecycle),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error("service-worker lifecycle did not settle before the phase boundary")), 10000);
       }),
@@ -2987,21 +3035,25 @@ async function settleServiceWorkerLifecycle(page) {
   }
 }
 export async function verifyServiceWorkerSettlementRegression() {
-  let release;
-  let evaluated = false;
-  const page = { evaluate: async () => {
-    evaluated = true;
-    await new Promise((resolve) => { release = resolve; });
-    return "activated";
-  } };
+  let state = "installing";
+  const listeners = new Set();
+  const worker = {
+    get state() { return state; },
+    addEventListener: (_name, listener) => listeners.add(listener),
+    removeEventListener: (_name, listener) => listeners.delete(listener),
+  };
+  const registration = { installing: worker, waiting: null, active: { state: "activated" },
+    addEventListener: () => {}, removeEventListener: () => {} };
+  const page = { evaluate: async (callback) => callback({ __eliotServiceWorkerRegistrationPromise: Promise.resolve(registration) }) };
   let finished = false;
   const settlement = settleServiceWorkerLifecycle(page).then(() => { finished = true; });
   await Promise.resolve();
-  assert.equal(evaluated, true, "service-worker settlement must inspect the existing registration");
-  assert.equal(finished, false, "phase settlement must wait for the service-worker lifecycle promise");
-  release();
+  await Promise.resolve();
+  assert.equal(finished, false, "phase settlement must wait for installing worker statechange despite an active worker");
+  state = "installed";
+  for (const listener of listeners) listener();
   await settlement;
-  assert.equal(finished, true, "phase settlement must finish only after the lifecycle promise settles");
+  assert.equal(finished, true, "phase settlement must finish after the real lifecycle callback settles");
   return { protocol: "eliotr.owner-e2e.service-worker-settlement.v1", state: "PASS" };
 }
 
