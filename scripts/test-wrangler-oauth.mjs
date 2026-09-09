@@ -32,7 +32,7 @@ const FUTURE = "2030-01-01T00:00:00.000Z";
 const PAST = "2000-01-01T00:00:00.000Z";
 
 const validToml = (expiration = FUTURE) =>
-  `# wrangler browser profile\n\noauth_token = "${BEARER}"\nrefresh_token = "oauth-test-refresh-009"\nexpiration_time = "${expiration}"\n`;
+  `# wrangler browser profile\n\noauth_token = "${BEARER}"\nrefresh_token = "oauth-test-refresh-009"\nexpiration_time = "${expiration}"\nscopes = ["account:read", "user:read"]\n`;
 
 const baseEnvironment = {
   ELIOTR_CLOUDFLARE_AUTH_MODE: "wrangler-oauth",
@@ -195,16 +195,18 @@ await check("auth mode resolution fails closed on unknown values", () => {
 });
 
 await check("config location supports verified Windows default and profiles", () => {
-  const windows = resolveWranglerConfigCandidates({ env: {}, platform: "win32", appData: "C:\\Users\\t\\AppData\\Roaming" });
-  assert.equal(windows.length, 1);
-  assert.ok(windows[0].startsWith("C:\\Users\\t\\AppData\\Roaming"));
-  assert.ok(windows[0].includes("wrangler") && windows[0].endsWith("default.toml"));
-  const named = resolveWranglerConfigCandidates({ env: { ELIOTR_WRANGLER_PROFILE: "work" }, platform: "win32", appData: "C:\\Users\\t\\AppData\\Roaming" });
-  assert.ok(named[0].endsWith("work.toml"));
+  const windows = resolveWranglerConfigCandidates({ env: {}, platform: "win32", home: "C:\\Users\\t", appData: "C:\\Users\\t\\AppData\\Roaming" });
+  const windowsPosix = windows.map((path) => path.replace(/\\/gu, "/"));
+  assert.ok(windowsPosix[0].endsWith("xdg.config/.wrangler/config/default.toml"));
+  assert.ok(windowsPosix[1].endsWith(".wrangler/config/default.toml"));
+  const named = resolveWranglerConfigCandidates({ env: { ELIOTR_WRANGLER_PROFILE: "work" }, platform: "win32", home: "C:\\Users\\t", appData: "C:\\Users\\t\\AppData\\Roaming" });
+  assert.ok(named[0].replace(/\\/gu, "/").endsWith("xdg.config/.wrangler/config/work.toml"));
   const unix = resolveWranglerConfigCandidates({ env: {}, platform: "linux", home: "/home/t" });
   const posix = unix.map((path) => path.replace(/\\/gu, "/"));
-  assert.ok(posix[0].includes("/home/t/.config/wrangler/config/default.toml"));
-  assert.ok(posix.some((path) => path.includes("/home/t/.wrangler/config/default.toml")));
+  assert.equal(posix[0], "/home/t/.config/.wrangler/config/default.toml");
+  assert.equal(posix[1], "/home/t/.wrangler/config/default.toml");
+  const windowsXdg = resolveWranglerConfigCandidates({ env: { XDG_CONFIG_HOME: "D:\\xdg" }, platform: "win32", appData: "C:\\ignored" });
+  assert.equal(windowsXdg[0].replace(/\\/gu, "/"), "D:/xdg/.wrangler/config/default.toml");
   const explicit = resolveWranglerConfigCandidates({ env: { ELIOTR_WRANGLER_CONFIG_FILE: "/tmp/custom.toml" }, platform: "linux", home: "/home/t" });
   assert.deepEqual(explicit, ["/tmp/custom.toml"]);
   assert.throws(() => resolveWranglerConfigCandidates({ env: { ELIOTR_WRANGLER_PROFILE: "../evil" }, platform: "linux", home: "/home/t" }));
@@ -213,7 +215,16 @@ await check("config location supports verified Windows default and profiles", ()
 await check("profile parser accepts quoted and integer expirations", () => {
   assert.equal(parseWranglerOAuthConfig(validToml()).oauthToken, BEARER);
   assert.equal(parseWranglerOAuthConfig(`oauth_token = '${BEARER}'\nexpiration_time = 4102444800\n`).oauthToken, BEARER);
+  assert.doesNotThrow(() => parseWranglerOAuthConfig(`oauth_token = "${BEARER}"\nexpiration_time = "${FUTURE}"\nscopes = ["account:read", 'user:read',]\n`));
   for (const bad of ["", "oauth_token = \n", "oauth_token = [x]\n", "[profile]\nnope"]) {
+    assert.throws(() => parseWranglerOAuthConfig(bad), (error) => !String(error.message).includes(BEARER));
+  }
+  for (const bad of [
+    `oauth_token = "${BEARER}"\nexpiration_time = "${FUTURE}"\nscopes = [x]\n`,
+    `oauth_token = "${BEARER}"\nexpiration_time = "${FUTURE}"\nscopes = ["account:read"  "user:read"]\n`,
+    `oauth_token = "${BEARER}"\nexpiration_time = "${FUTURE}"\nscopes = ["account:read", 7]\n`,
+    `oauth_token = "${BEARER}"\nexpiration_time = "${FUTURE}"\nother = ["untrusted"]\n`,
+  ]) {
     assert.throws(() => parseWranglerOAuthConfig(bad), (error) => !String(error.message).includes(BEARER));
   }
 });

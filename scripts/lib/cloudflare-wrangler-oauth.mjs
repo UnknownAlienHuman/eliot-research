@@ -54,8 +54,10 @@ function profileName(env) {
   return profile;
 }
 
-// Ordered candidate credential locations. The verified Windows `default`
-// location is %APPDATA%/wrangler/config/<profile>.toml.
+// Ordered candidate credential locations. Wrangler's global config root uses
+// the XDG layout on every platform (on Windows that is
+// %APPDATA%/xdg.config), with `.wrangler/config/<profile>.toml` below it.
+// Keep the legacy home directory as a read-only fallback for older installs.
 export function resolveWranglerConfigCandidates(options = {}) {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -70,14 +72,21 @@ export function resolveWranglerConfigCandidates(options = {}) {
   if (env?.WRANGLER_HOME !== undefined && String(env.WRANGLER_HOME).trim() !== "") {
     return [join(String(env.WRANGLER_HOME).trim(), "config", fileName)];
   }
-  if (platform === "win32") {
+  const candidates = [];
+  const xdgOverride = options.xdgConfigHome ?? env.XDG_CONFIG_HOME;
+  if (xdgOverride !== undefined && String(xdgOverride).trim() !== "") {
+    candidates.push(join(String(xdgOverride).trim(), ".wrangler", "config", fileName));
+  } else if (platform === "win32") {
     const appData = options.appData ?? env.APPDATA ?? (home ? join(home, "AppData", "Roaming") : "");
     if (!appData) fail("OAUTH_UNAVAILABLE", `Wrangler config location cannot be resolved on Windows. ${LOGIN_INSTRUCTION}`);
-    return [join(appData, "wrangler", "config", fileName)];
+    candidates.push(join(appData, "xdg.config", ".wrangler", "config", fileName));
+  } else if (platform === "darwin") {
+    const macPreferences = home ? join(home, "Library", "Preferences") : "";
+    if (macPreferences) candidates.push(join(macPreferences, ".wrangler", "config", fileName));
+  } else {
+    const xdg = home ? join(home, ".config") : "";
+    if (xdg) candidates.push(join(xdg, ".wrangler", "config", fileName));
   }
-  const xdg = options.xdgConfigHome ?? env.XDG_CONFIG_HOME ?? (home ? join(home, ".config") : "");
-  const candidates = [];
-  if (xdg) candidates.push(join(xdg, "wrangler", "config", fileName));
   if (home) candidates.push(join(home, ".wrangler", "config", fileName));
   if (candidates.length === 0) {
     fail("OAUTH_UNAVAILABLE", `Wrangler config location cannot be resolved. ${LOGIN_INSTRUCTION}`);
@@ -88,7 +97,81 @@ export function resolveWranglerConfigCandidates(options = {}) {
 // Minimal TOML-subset parser: top-level key = value lines only. Sections and
 // comments are ignored. Values support double-quoted, single-quoted literal,
 // and integer forms. Anything else fails closed without echoing the value.
-function parseTomlValue(raw) {
+const SCOPES_MAX_ITEMS = 64;
+const SCOPE_MAX_LENGTH = 256;
+
+function parseTomlStringArray(raw) {
+  if (raw.length > 16 * 1024 || !raw.startsWith("[") || !raw.endsWith("]")) {
+    fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+  }
+  const body = raw.slice(1, -1);
+  const values = [];
+  let index = 0;
+  while (index < body.length) {
+    while (index < body.length && /\s/u.test(body[index])) index += 1;
+    if (index === body.length) break;
+    if (body[index] === ",") {
+      fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+    }
+    const quote = body[index];
+    if (quote !== "\"" && quote !== "'") {
+      fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+    }
+    index += 1;
+    let value = "";
+    let closed = false;
+    while (index < body.length) {
+      const ch = body[index];
+      if (ch === quote) {
+        closed = true;
+        index += 1;
+        break;
+      }
+      if (quote === "\"" && ch === "\\") {
+        if (index + 1 >= body.length) break;
+        const escape = body[index + 1];
+        const table = { n: "\n", t: "\t", r: "\r", '"': '"', "\\": "\\" };
+        if (escape === "u") {
+          const hex = body.slice(index + 2, index + 6);
+          if (!/^[0-9a-fA-F]{4}$/u.test(hex)) break;
+          value += String.fromCharCode(Number.parseInt(hex, 16));
+          index += 6;
+          continue;
+        }
+        if (!Object.hasOwn(table, escape)) break;
+        value += table[escape];
+        index += 2;
+        continue;
+      }
+      value += ch;
+      index += 1;
+    }
+    if (!closed || value.length === 0 || value.length > SCOPE_MAX_LENGTH || /[\r\n]/u.test(value)) {
+      fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+    }
+    values.push(value);
+    if (values.length > SCOPES_MAX_ITEMS) {
+      fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+    }
+    while (index < body.length && /\s/u.test(body[index])) index += 1;
+    if (index < body.length) {
+      if (body[index] !== ",") {
+        fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+      }
+      index += 1;
+      let trailing = index;
+      while (trailing < body.length && /\s/u.test(body[trailing])) trailing += 1;
+      if (trailing === body.length) index = trailing;
+    }
+  }
+  return values;
+}
+
+function parseTomlValue(raw, key) {
+  if (raw.startsWith("[")) {
+    if (key !== "scopes") fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
+    return parseTomlStringArray(raw);
+  }
   if (raw.startsWith('"')) {
     const match = raw.match(/^"((?:[^"\\]|\\.)*)"\s*$/u);
     if (!match) fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
@@ -117,7 +200,7 @@ export function parseWranglerOAuthConfig(text) {
     if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith("[")) continue;
     const match = trimmed.match(/^([A-Za-z0-9_]+)\s*=\s*(.+?)\s*(?:#.*)?$/u);
     if (!match) fail("OAUTH_INVALID", `Wrangler OAuth profile is malformed. ${LOGIN_INSTRUCTION}`);
-    fields.set(match[1], parseTomlValue(match[2]));
+    fields.set(match[1], parseTomlValue(match[2], match[1]));
   }
   const token = fields.get("oauth_token");
   if (typeof token !== "string" || token.length < 1 || token.length > TOKEN_MAX_LENGTH || /[\r\n]/u.test(token)) {
