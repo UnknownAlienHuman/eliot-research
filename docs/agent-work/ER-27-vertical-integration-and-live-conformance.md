@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `tests/integration/**`
+- `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 
 ## Read only
 

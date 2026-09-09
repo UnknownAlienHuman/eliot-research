@@ -22,6 +22,9 @@
       "path": "../../packages/cloudflare-raw-ingest"
     },
     {
+      "path": "../../packages/cloudflare-markdown"
+    },
+    {
       "path": "../../packages/cloudflare-erasure"
     },
     {

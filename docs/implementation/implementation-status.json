@@ -654,6 +654,20 @@
         "apps/eliotr-core/src/research-workflow.ts: ER09 host extension validates durable binding and currentness before step.do and revalidates before persisting the bounded result",
         "apps/eliotr-core/test/research-query-exhaustive.test.ts: actual local Q1 import/projection/HTTP launch, status, DELETE cancellation and no-resume assertions; apps/eliotr-core/test/research-query-jobs.test.ts: actual local Q1 HTTP launch/status plus owner-only paginated discovery, distinct-ID keyset continuation, foreign owner/credential/deployment cursor rejection, expired-job refusal and grant-withdrawal-during-status invalidation; deployed Workflow, live Access and live user-loop qualification NOT_EXECUTED"
       ]
+    },
+    {
+      "id": "implemented-raw-markdown-conversion",
+      "path": "packages/cloudflare-markdown/src/raw-markdown-conversion.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-16 durable raw markdown conversion records one server-owned provider attempt; live Workers AI qualification remains separate.",
+      "owner_packets": ["ER-16", "ER-21", "ER-24", "ER-27"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner-only conversion reads an immutable raw capture receipt and exact R2 bytes, reserves one D1 attempt before invoking the injected Workers AI adapter, stores immutable output and receipt readback, and returns candidate conversion metadata. Unknown provider effects are never retried.",
+      "completion_evidence": [
+        "packages/cloudflare-markdown/src/raw-markdown-conversion.test.ts: durable reservation and same-operation replay with one provider call",
+        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts: actual local owner HTTP raw capture, D1 ledger, R2 output/receipt and HTTP replay using a controlled binding",
+        "infra/d1/core/migrations/0029_raw_markdown_conversion.sql: strict attempt and immutable receipt ledger",
+        "Normalized admission, source mapping, qualification, pricing approval and live Workers AI receipts remain NOT_EXECUTED"
+      ]
     }
   ]
 }

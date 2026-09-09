@@ -186,6 +186,9 @@
       "remote": true
     }
   ],
+  "ai": {
+    "binding": "AI"
+  },
   "analytics_engine_datasets": [
     {
       "binding": "METRICS",
