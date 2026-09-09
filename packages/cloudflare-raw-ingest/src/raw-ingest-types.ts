@@ -35,6 +35,7 @@ export interface RawCaptureInput {
   readonly source_logical_id: string;
   readonly source_owner_generation: string;
   readonly idempotency_key: string;
+  readonly original_file_name: string;
   readonly residency_key: ObjectResidencyKey;
   readonly content_sha256: string;
   readonly size_bytes: number;
@@ -54,6 +55,7 @@ export interface RawCaptureReceipt {
   readonly source_logical_id: string;
   readonly source_owner_generation: string;
   readonly idempotency_key: string;
+  readonly original_file_name: string;
   readonly object_key: string;
   readonly residency_key_digest: string;
   readonly content_sha256: string;
@@ -80,7 +82,8 @@ export interface RawCaptureAuthority {
 
 export interface RawCaptureLookup {
   readonly principal_ref: string;
-  readonly idempotency_key: string;
+  readonly idempotency_key?: string;
+  readonly capture_id?: string;
 }
 
 export interface RawCaptureDependencies extends RawCaptureAuthority {

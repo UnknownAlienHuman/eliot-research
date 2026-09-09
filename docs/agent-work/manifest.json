@@ -322,7 +322,9 @@
         "packages/cloudflare-raw-ingest/src/index.ts",
         "packages/cloudflare-raw-ingest/src/raw-ingest-types.ts",
         "packages/cloudflare-raw-ingest/src/raw-ingest.ts",
+        "packages/cloudflare-raw-ingest/src/raw-capture-owner-service.ts",
         "packages/cloudflare-raw-ingest/src/raw-ingest.test.ts",
+        "packages/cloudflare-raw-ingest/src/raw-capture-http.ts",
         "infra/r2/**"
       ],
       "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",
@@ -565,6 +567,7 @@
         "apps/eliotr-core/test/google-oauth-admission.test.ts",
         "apps/eliotr-core/test/retrieval-ident-lex.test.ts",
         "apps/eliotr-core/test/retrieval-q1-fixture.ts",
+        "apps/eliotr-core/test/raw-capture-http.test.ts",
         "apps/eliotr-core/test/retrieval-generation-fences.test.ts",
         "apps/eliotr-core/src/exhaustive-query-service.test.ts",
         "apps/eliotr-core/test/research-query-exhaustive.test.ts",

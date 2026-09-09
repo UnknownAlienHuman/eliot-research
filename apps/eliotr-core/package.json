@@ -26,7 +26,8 @@
     "@eliotr/policy": "workspace:*",
     "@eliotr/research": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
-    "@eliotr/cloudflare-research": "workspace:*"
+    "@eliotr/cloudflare-research": "workspace:*",
+    "@eliotr/cloudflare-raw-ingest": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

@@ -83,10 +83,10 @@ function d1(rows: Map<string, Row>, options: D1Options = {}): D1Database {
                 const row: Row = {
                   capture_id: values[0], principal_ref: values[1], owner_system_id: values[2],
                   source_namespace_id: values[3], source_revision_ref: values[4], source_logical_id: values[5],
-                  source_owner_generation: values[6], idempotency_key: values[7], request_digest: values[8],
-                  residency_key_json: values[9], residency_key_digest: values[10], content_sha256: values[11],
-                  size_bytes: values[12], content_type: values[13], state: "INTENT", object_key: values[14],
-                  receipt_json: null, receipt_sha256: null, created_at: values[15], updated_at: values[15], expires_at: values[16],
+                  source_owner_generation: values[6], idempotency_key: values[7], original_file_name: values[8], request_digest: values[9],
+                  residency_key_json: values[10], residency_key_digest: values[11], content_sha256: values[12],
+                  size_bytes: values[13], content_type: values[14], state: "INTENT", object_key: values[15],
+                  receipt_json: null, receipt_sha256: null, created_at: values[16], updated_at: values[16], expires_at: values[17],
                 };
                 if (rows.has(String(values[0])) || [...rows.values()].some((existing) => existing.principal_ref === values[1] && existing.idempotency_key === values[7])) {
                   throw new Error("UNIQUE constraint failed: raw_file_capture");
@@ -131,7 +131,7 @@ async function fixture(): Promise<{ readonly input: RawCaptureInput; readonly by
   const input: RawCaptureInput = {
     principal_ref: "principal-a", owner_system_id: "owner-a", source_namespace_id: "namespace-a",
     source_revision_ref: "revision-a", source_logical_id: "document-a", source_owner_generation: "generation-a",
-    idempotency_key: "raw-a", residency_key: residency(contentSha256), content_sha256: contentSha256,
+    idempotency_key: "raw-a", original_file_name: "research note.pdf", residency_key: residency(contentSha256), content_sha256: contentSha256,
     size_bytes: bytes.byteLength, content_type: "application/pdf", body: bytesStream(bytes),
   };
   return { input, bytes, rows, evidence, calls };
@@ -212,6 +212,21 @@ describe("raw-file capture intent and immutable readback", () => {
     expect(result.disposition).toBe("CAPTURED");
     expect(result.receipt.capture_id).toMatch(/^raw-capture-/u);
     expect(f.rows.size).toBe(1);
+    expect(f.evidence.objects.size).toBe(1);
+  });
+
+  it("does not resume an intent after its persisted expiry", async () => {
+    const f = await fixture();
+    let calls = 0;
+    await expect(port(f, async () => {
+      calls += 1;
+      if (calls === 2) throw new RawCaptureError("RAW_CAPTURE_OWNER_NOT_CURRENT", "owner withdrawn");
+    }).capture(f.input)).rejects.toMatchObject({ code: "RAW_CAPTURE_OWNER_NOT_CURRENT" });
+    const row = [...f.rows.values()][0];
+    if (row === undefined) throw new Error("missing durable intent");
+    row.expires_at = "2026-09-08T00:00:00.000Z";
+    await expect(port(f).capture({ ...f.input, body: bytesStream(f.bytes) }))
+      .rejects.toMatchObject({ code: "RAW_CAPTURE_STATE_CONFLICT" });
     expect(f.evidence.objects.size).toBe(1);
   });
 });

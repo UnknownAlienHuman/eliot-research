@@ -53,6 +53,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/google-oauth-admission.test.ts`
 - `apps/eliotr-core/test/retrieval-ident-lex.test.ts`
 - `apps/eliotr-core/test/retrieval-q1-fixture.ts`
+- `apps/eliotr-core/test/raw-capture-http.test.ts`
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.test.ts`
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
