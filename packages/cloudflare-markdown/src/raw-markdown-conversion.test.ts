@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { createRawMarkdownConversionService } from "./raw-markdown-conversion.js";
+import { parseRawMarkdownConversionRequest, readRawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 import type { RawMarkdownCaptureReceipt, RawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 
 type Row = Record<string, unknown>;
@@ -22,9 +23,11 @@ function fakeDatabase() {
             return { meta: { changes: 1 } };
           }
           const row = rows.get(id);
-          if (row === undefined || row.state !== "STARTED" || row.attempt_id !== args[4] && args[4] !== undefined) return { meta: { changes: 0 } };
+          const attemptId = sql.includes("state=?2") ? args[5] : args[4];
+          if (row === undefined || row.state !== "STARTED" || row.attempt_id !== attemptId && attemptId !== undefined) return { meta: { changes: 0 } };
           if (sql.includes("state='COMPLETE'")) { row.state = "COMPLETE"; row.result_json = args[1]; row.result_sha256 = args[2]; }
-          else { row.state = args[1]; row.result_json = args[2]; }
+          else if (sql.includes("state=?2")) { row.state = args[1]; row.result_json = args[2]; row.result_sha256 = args[3]; }
+          else { row.state = sql.includes("state='FAILED'") ? "FAILED" : "UNKNOWN"; row.result_json = args[1]; row.result_sha256 = args[2]; }
           return { meta: { changes: 1 } };
         },
       };
@@ -41,6 +44,39 @@ async function sha256(input: Uint8Array): Promise<string> {
 }
 
 describe("durable raw markdown conversion", () => {
+  it("bounds the JSON stream before parsing and rejects unknown options", async () => {
+    const body = JSON.stringify({ idempotency_key: "bounded", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    const valid = new Request("https://research.example/", { method: "POST", headers: { "content-type": "application/json" }, body });
+    await expect(readRawMarkdownConversionRequest(valid, new TextEncoder().encode(body).byteLength)).resolves.toEqual(JSON.parse(body));
+    const oversized = new Request("https://research.example/", { method: "POST", headers: { "content-type": "application/json" }, body: `${body}x` });
+    await expect(readRawMarkdownConversionRequest(oversized, body.length)).rejects.toThrow();
+    const invalidUtf8 = new Request("https://research.example/", { method: "POST", headers: { "content-type": "application/json" }, body: new Uint8Array([0xff]) });
+    await expect(readRawMarkdownConversionRequest(invalidUtf8, 16)).resolves.toBeNull();
+    expect(parseRawMarkdownConversionRequest({ idempotency_key: "bad", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000, conversion_options: { unsupported: true } })).toBeNull();
+  });
+  it("rejects a capture over the materialized R2 limit before reserving a provider attempt", async () => {
+    const { database, rows } = fakeDatabase();
+    const contentSha = await sha256(bytes);
+    const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-large", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "large.pdf", object_key: "raw/capture-large", content_sha256: contentSha, size_bytes: 8 * 1024 * 1024 + 1, content_type: "application/pdf" };
+    const provider = vi.fn();
+    const service = createRawMarkdownConversionService({ database, profile_generation: "profile-1", adapter: { convert: provider }, source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined }, output: { putImmutable: async () => ({ key: "unused", readback_sha256: contentSha, size_bytes: bytes.byteLength }), open: async () => null } });
+    const result = await service.convert({ principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" }, "capture-large", { idempotency_key: "large", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    expect(result).toMatchObject({ state: "FAILED", failure_code: "INVALID_REQUEST" });
+    expect(provider).not.toHaveBeenCalled();
+    expect(rows.size).toBe(0);
+  });
+  it("settles an abort after reservation as canceled without dispatching the provider", async () => {
+    const { database, rows } = fakeDatabase();
+    const contentSha = await sha256(bytes);
+    const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-abort", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "abort.pdf", object_key: "raw/capture-abort", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
+    const controller = new AbortController();
+    const provider = vi.fn();
+    const service = createRawMarkdownConversionService({ database, profile_generation: "profile-1", adapter: { convert: provider }, source: { read: async () => capture, open: async () => { controller.abort(); return new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }); }, assertCurrent: async () => undefined }, output: { putImmutable: async () => ({ key: "unused", readback_sha256: contentSha, size_bytes: bytes.byteLength }), open: async () => null } });
+    const result = await service.convert({ principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1", signal: controller.signal }, "capture-abort", { idempotency_key: "abort", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    expect(result).toMatchObject({ state: "FAILED", failure_code: "CANCELED" });
+    expect([...rows.values()][0]?.state).toBe("FAILED");
+    expect(provider).not.toHaveBeenCalled();
+  });
   it("reserves one provider attempt and replays its immutable receipt", async () => {
     const { database } = fakeDatabase();
     const contentSha = await sha256(bytes);

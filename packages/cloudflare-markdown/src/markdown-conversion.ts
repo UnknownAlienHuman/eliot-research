@@ -52,7 +52,7 @@ function safeBound(value: unknown, maximum: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= maximum;
 }
 
-function validConversionOptions(value: unknown): value is MarkdownConversionOptions {
+export function isValidMarkdownConversionOptions(value: unknown): value is MarkdownConversionOptions {
   if (value === undefined) return true;
   if (!record(value)) return false;
   const keys = Object.keys(value);
@@ -217,7 +217,7 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
           !(candidate.blob instanceof Blob) || candidate.blob.size < 1 ||
           !validContext(candidate.context) || !validBounds(candidate.bounds) ||
           candidate.blob.size > candidate.bounds.max_input_bytes ||
-          !validConversionOptions(candidate.conversion_options)) {
+          !isValidMarkdownConversionOptions(candidate.conversion_options)) {
         return failure("INPUT_INVALID");
       }
       const name = candidate.name;

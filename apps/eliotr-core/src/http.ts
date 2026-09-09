@@ -376,7 +376,7 @@ async function dispatch(
       if (match.route.operation === "ingest.raw.markdown") {
         const captureId = match.params.capture_id;
         if (captureId === undefined) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "capture id is missing");
-        requireNoQuery(url); const parsed = await readRawMarkdownConversionRequest(request); if (parsed === null) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "conversion request is invalid");
+        requireNoQuery(url); const parsed = await readRawMarkdownConversionRequest(request, match.route.maximum_request_bytes); if (parsed === null) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "conversion request is invalid");
         return apiResult(request, env, await application.services.owner.convertRawFileToMarkdown(context, captureId, parsed as unknown as RawMarkdownConversionRequest));
       }
       if (match.route.operation === "ingest.raw.capture" || match.route.operation === "ingest.raw.read") return apiResult(request, env, await dispatchRawCaptureOperation(match.route.operation, request, url, match.params.capture_id, match.route.maximum_request_bytes, context, application.services.owner));

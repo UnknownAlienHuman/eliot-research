@@ -1,4 +1,6 @@
 import type { MarkdownConversionAdapter, MarkdownConversionOptions } from "./markdown-conversion-contract.js";
+import { isValidMarkdownConversionOptions } from "./markdown-conversion.js";
+import { readRequestBodyWithinBytes } from "@eliotr/platform-cloudflare";
 
 export const RAW_MARKDOWN_CONVERSION_PROTOCOL = "eliotr.raw-markdown-conversion.v1" as const;
 export type RawMarkdownConversionState = "STARTED" | "COMPLETE" | "FAILED" | "UNKNOWN";
@@ -19,9 +21,15 @@ export function parseRawMarkdownConversionRequest(value: unknown): RawMarkdownCo
   if (Object.keys(item).some((key) => !keys.has(key)) || typeof item.idempotency_key !== "string" || item.idempotency_key.length === 0 || item.idempotency_key.length > 256 ||
       !Number.isSafeInteger(item.max_output_bytes) || (item.max_output_bytes as number) < 1 || !Number.isSafeInteger(item.max_tokens) || (item.max_tokens as number) < 1 ||
       !Number.isSafeInteger(item.timeout_ms) || (item.timeout_ms as number) < 1 || (item.timeout_ms as number) > 300000 ||
-      (item.conversion_options !== undefined && (typeof item.conversion_options !== "object" || item.conversion_options === null || Array.isArray(item.conversion_options)))) return null;
+      (item.conversion_options !== undefined && !isValidMarkdownConversionOptions(item.conversion_options))) return null;
   return item as unknown as RawMarkdownConversionRequest;
 }
-export async function readRawMarkdownConversionRequest(request: Request): Promise<RawMarkdownConversionRequest | null> {
-  try { return parseRawMarkdownConversionRequest(await request.json()); } catch { return null; }
+export async function readRawMarkdownConversionRequest(request: Request, maximumBytes: number): Promise<RawMarkdownConversionRequest | null> {
+  const contentType = request.headers.get("content-type");
+  if (contentType === null || !/^application\/json(?:\s*;|$)/iu.test(contentType)) return null;
+  const bytes = await readRequestBodyWithinBytes(request, { label: "http.request.raw-markdown-json", max_bytes: maximumBytes, max_chunks: 4096 });
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+  catch { return null; }
+  try { return parseRawMarkdownConversionRequest(JSON.parse(text)); } catch { return null; }
 }
