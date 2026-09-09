@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { handleHttp } from "../src/http.js";
-import { db, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { db, observeDatabase, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { oauthTestClaims, oauthTestKeys, oauthTestTokenResponse } from "../../../packages/google-drive-exchange/src/oauth-test-fixture.js";
 
 beforeAll(setupOrientationDatabase);
@@ -8,6 +8,8 @@ beforeAll(setupOrientationDatabase);
 const ORIGIN = "https://research.example";
 const BEGIN_PATH = "/api/v1/google/oauth/begin";
 const CALLBACK_PATH = "/oauth/google/callback";
+const RECONNECT_PATH = "/api/v1/google/oauth/reconnect";
+const DISCONNECT_PATH = "/api/v1/google/connection/disconnect";
 
 function keyBytes(): string {
   const raw = crypto.getRandomValues(new Uint8Array(32));
@@ -50,6 +52,18 @@ async function begin(env: ReturnType<typeof googleEnv>, owner: string, operation
 
 function callbackRequest(query: string, signal?: AbortSignal): Request {
   return new Request(`${ORIGIN}${CALLBACK_PATH}?${query}`, { method: "GET", ...(signal ? { signal } : {}) });
+}
+
+function lifecycleRequest(path: string, body: Record<string, unknown>): Request {
+  return new Request(`${ORIGIN}${path}`, { method: "POST", headers: {
+    "content-type": "application/json", origin: ORIGIN, "x-eliotr-csrf": "1",
+  }, body: JSON.stringify(body) });
+}
+
+function statusRequest(): Request {
+  return new Request(`${ORIGIN}/api/v1/google/connection/status`, { method: "GET", headers: {
+    origin: ORIGIN, "x-eliotr-csrf": "1",
+  } });
 }
 
 describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
@@ -165,5 +179,113 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(`${ORIGIN}/#eliotr-google-oauth=retry`);
     expect(response.headers.get("location")).not.toContain("state=");
+  });
+
+  it("serves reconnect and disconnect through owner HTTP with stale-fence rejection and replay", async () => {
+    const env = googleEnv(); const owner = "g3-http-owner";
+    const unconnected = await handleHttp(statusRequest(), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(unconnected.status).toBe(200);
+    expect((await json(unconnected)).data).toMatchObject({ protocol: "eliotr.google-connection-status.v1",
+      connection_id: (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID, state: "DISCONNECTED",
+      credential_generation: null, credential_revision: null });
+    const started = await begin(env, owner, "g3-http-initial"); callbackNonce = started.nonce;
+    const initial = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(initial.status).toBe(303);
+    const connectionId = (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID;
+    const first = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    expect(first).not.toBeNull();
+    const connected = await handleHttp(statusRequest(), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(connected.status).toBe(200);
+    expect((await json(connected)).data).toMatchObject({ protocol: "eliotr.google-connection-status.v1",
+      connection_id: connectionId, state: "AUTHORIZING", credential_generation: first?.credential_generation, credential_revision: first?.credential_revision });
+    await db.prepare("UPDATE google_exchange_connection SET oauth_publishing_status='Testing' WHERE connection_id=?1").bind(connectionId).run();
+    try {
+      const legacy = await handleHttp(statusRequest(), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+      expect(legacy.status).toBe(409);
+    } finally {
+      await db.prepare("UPDATE google_exchange_connection SET oauth_publishing_status='In production' WHERE connection_id=?1").bind(connectionId).run();
+    }
+    const stale = await handleHttp(lifecycleRequest(RECONNECT_PATH, { operation_ref: "g3-http-stale",
+      expected_credential_generation: first?.credential_generation, expected_credential_revision: (first?.credential_revision ?? 0) + 1 }), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(stale.status).toBe(409);
+    const reconnectBody = { operation_ref: "g3-http-reconnect", expected_credential_generation: first?.credential_generation,
+      expected_credential_revision: first?.credential_revision };
+    const reconnect = await handleHttp(lifecycleRequest(RECONNECT_PATH, reconnectBody), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(reconnect.status).toBe(200);
+    const reconnectData = (await json(reconnect)).data as { protocol: string; authorization_url: string };
+    expect(reconnectData.protocol).toBe("eliotr.google-oauth-start.v1");
+    const reconnectUrl = new URL(reconnectData.authorization_url); callbackNonce = reconnectUrl.searchParams.get("nonce") ?? "";
+    const completed = await handleHttp(callbackRequest(`state=${reconnectUrl.searchParams.get("state")}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(completed.status).toBe(303);
+    const latest = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    expect(latest?.credential_revision).toBe((first?.credential_revision ?? 0) + 1);
+    const disconnectBody = { operation_ref: "g3-http-disconnect", expected_credential_generation: latest?.credential_generation,
+      expected_credential_revision: latest?.credential_revision };
+    const disconnect = await handleHttp(lifecycleRequest(DISCONNECT_PATH, disconnectBody), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(disconnect.status).toBe(200);
+    const disconnected = await json(disconnect); expect((disconnected.data as Record<string, unknown>).state).toBe("REVOKED");
+    const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, disconnectBody), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(replay.status).toBe(200); expect((await json(replay)).data).toEqual(disconnected.data);
+    const changed = await handleHttp(lifecycleRequest(DISCONNECT_PATH, { ...disconnectBody,
+      expected_credential_revision: (latest?.credential_revision ?? 0) + 1 }), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(changed.status).toBe(409);
+  });
+
+  it("replays a committed disconnect after the owner HTTP response acknowledgement is lost", async () => {
+    const env = googleEnv(); const owner = "g3-http-lost-ack";
+    const started = await begin(env, owner, "g3-http-lost-initial"); callbackNonce = started.nonce;
+    const initial = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(initial.status).toBe(303);
+    const connectionId = (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID;
+    const current = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    expect(current).not.toBeNull(); let dropped = false;
+    const database = observeDatabase(async (sql, phase) => {
+      if (phase === "after" && sql === "BATCH" && !dropped) { dropped = true; throw new Error("lost ACK"); }
+    });
+    const body = { operation_ref: "g3-http-lost-disconnect", expected_credential_generation: current?.credential_generation,
+      expected_credential_revision: current?.credential_revision };
+    const uncertain = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), { ...env, CORE_DB: database } as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(uncertain.status).toBe(200); expect(dropped).toBe(true);
+    const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(replay.status).toBe(200); expect((await json(replay)).data).toMatchObject({ state: "REVOKED", credential_revision: 2 });
+  });
+  it("rolls back the credential revoke when the terminal receipt stage fails", async () => {
+    const env = googleEnv(); const owner = "g3-http-atomic-receipt";
+    const started = await begin(env, owner, "g3-http-atomic-initial"); callbackNonce = started.nonce;
+    expect((await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never })).status).toBe(303);
+    const connectionId = (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID;
+    const current = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    const trigger = `g3_receipt_abort_${crypto.randomUUID().replaceAll("-", "")}`;
+    await db.prepare(`CREATE TRIGGER ${trigger} BEFORE UPDATE OF result_state ON google_oauth_disconnect_receipt
+      WHEN NEW.result_state='REVOKED' BEGIN SELECT RAISE(ABORT, 'receipt stage failure'); END`).run();
+    const body = { operation_ref: "g3-http-atomic-disconnect", expected_credential_generation: current?.credential_generation,
+      expected_credential_revision: current?.credential_revision };
+    try {
+      const failed = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+      expect(failed.status).toBe(409);
+      expect(await db.prepare("SELECT credential_revision,state FROM google_exchange_connection WHERE connection_id=?1")
+        .bind(connectionId).first()).toMatchObject({ credential_revision: current?.credential_revision, state: "AUTHORIZING" });
+      expect(await db.prepare("SELECT result_state FROM google_oauth_disconnect_receipt WHERE principal_id=?1 AND operation_ref=?2")
+        .bind(owner, body.operation_ref).first()).toMatchObject({ result_state: null });
+    } finally {
+      await db.prepare(`DROP TRIGGER ${trigger}`).run();
+    }
+    const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(replay.status).toBe(200); expect((await json(replay)).data).toMatchObject({ state: "REVOKED", credential_revision: 2 });
   });
 });

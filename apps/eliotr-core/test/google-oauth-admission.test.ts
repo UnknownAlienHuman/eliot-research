@@ -6,7 +6,7 @@ import { createAesGcmTokenVault, importGoogleTokenKey, intentBinding, oauthDiges
 import { OAUTH_TEST_TIME, oauthTestClaims, oauthTestConfiguration, oauthTestKeys, oauthTestOwner,
   oauthTestTokenResponse } from "../../../packages/google-drive-exchange/src/oauth-test-fixture.js";
 import { createD1GoogleOAuthAdmission } from "../src/google-oauth-service.js";
-import { createD1GoogleOAuthIntentStore } from "../src/google-oauth-store.js";
+import { cleanupExpiredGoogleOAuthIntents, createD1GoogleOAuthIntentStore } from "../src/google-oauth-store.js";
 import { createD1GoogleCredentialStore } from "../src/google-token-store.js";
 import type { Env } from "../src/env.js";
 const runtime = env as unknown as Env & { CORE_MIGRATIONS: { name: string; queries: string[] }[] };
@@ -22,6 +22,7 @@ async function setup(name: string) {
   const configuration = oauthTestConfiguration(name);
   let time = OAUTH_TEST_TIME; let claims: Record<string, unknown> = {}; let extraTokens: Record<string, unknown> = {};
 
+  let authorization: URL;
   const fetchImpl = vi.fn<typeof fetch>(async (url, init) => {
     if (String(url) === "https://oauth2.googleapis.com/token") {
       const body = new URLSearchParams(init?.body as string);
@@ -40,9 +41,10 @@ async function setup(name: string) {
     owner: oauthTestOwner, keys: new Map([[1, key]]), activeKeyVersion: 1, clientSecret: "client-secret",
     deadlineEpochMs: OAUTH_TEST_TIME + 1200000, now: () => time, assertOwnerCurrent, fetchImpl };
   const service = createD1GoogleOAuthAdmission(options);
-  const start = await service.begin(`operation-${name}`, signal()); const authorization = new URL(start.authorization_url);
+  const start = await service.begin(`operation-${name}`, signal()); authorization = new URL(start.authorization_url);
   const callback = { iss: "https://accounts.google.com", state: authorization.searchParams.get("state") ?? "", code: "code-fixture" };
   return { options, service, start, authorization, callback, fetchImpl, assertOwnerCurrent,
+    setAuthorization: (value: URL) => { authorization = value; },
     clock: (value: number) => { time = value; }, changeClaims: (value: Record<string, unknown>) => { claims = value; },
     changeTokens: (value: Record<string, unknown>) => { extraTokens = value; } };
 }
@@ -213,6 +215,88 @@ describe("initial Google OAuth with real RSA, vault and D1", () => {
     const before = await db.prepare("SELECT * FROM google_exchange_connection WHERE connection_id=?1").bind(test.options.configuration.connection_id).first();
     await expect(test.service.begin("replacement-operation", signal())).rejects.toThrow();
     expect(await db.prepare("SELECT * FROM google_exchange_connection WHERE connection_id=?1").bind(test.options.configuration.connection_id).first()).toEqual(before);
+  });
+  it("reconnects through fresh consent and exact generation/revision fencing", async () => {
+    const test = await setup("reconnect"); await test.service.finish(test.callback, signal());
+    const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());
+    const reconnect = createD1GoogleOAuthAdmission({ ...test.options, reconnect: {
+      expected_generation: first.binding.credential_generation, expected_revision: first.revision,
+    } });
+    const start = await reconnect.begin(`operation-reconnect-${crypto.randomUUID()}`, signal()); const authorization = new URL(start.authorization_url);
+    test.setAuthorization(authorization);
+    const receipt = await createD1GoogleOAuthAdmission({ ...test.options, reconnect: "auto" }).finish({
+      iss: "https://accounts.google.com", state: authorization.searchParams.get("state") ?? "", code: "code-fixture",
+    }, signal());
+    expect(receipt.exchange_ready).toBe(false);
+    const reconnectIntent = await createD1GoogleOAuthIntentStore(db, test.options.configuration, test.options.owner, test.options.now)
+      .find(await oauthDigest(authorization.searchParams.get("state") ?? ""), signal());
+    const latest = await createD1GoogleCredentialStore(db, intentBinding(reconnectIntent, "grant"), test.options.now).load(signal());
+    expect(latest.revision).toBe(first.revision + 1); expect(latest.state).toBe("AUTHORIZING");
+    expect(latest.binding.credential_generation).toBe(`oauth-grant:${reconnectIntent.intent_id}`);
+  });
+  it("rechecks the current reconnect tuple before spending a Google code", async () => {
+    const test = await setup("claim-currentness"); await test.service.finish(test.callback, signal());
+    test.fetchImpl.mockClear();
+    const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());
+    let raced = false;
+    const database = intercepted(async (phase, sql) => {
+      if (phase === "after" && sql.startsWith("UPDATE google_oauth_intent SET state='EXCHANGING'") && !raced) {
+        raced = true;
+        await db.prepare("UPDATE google_exchange_connection SET credential_revision=credential_revision+1 WHERE connection_id=?1")
+          .bind(test.options.configuration.connection_id).run();
+      }
+    });
+    const reconnect = createD1GoogleOAuthAdmission({ ...test.options, database, reconnect: {
+      expected_generation: first.binding.credential_generation, expected_revision: first.revision,
+    } });
+    const start = await reconnect.begin(`operation-claim-currentness-${crypto.randomUUID()}`, signal()); const authorization = new URL(start.authorization_url);
+    test.setAuthorization(authorization);
+    await expect(reconnect.finish({ iss: "https://accounts.google.com", state: authorization.searchParams.get("state") ?? "", code: "code-fixture" }, signal()))
+      .rejects.toMatchObject({ code: "GOOGLE_OAUTH_CLAIM_CHANGED" });
+    expect(raced).toBe(true);
+    expect(test.fetchImpl.mock.calls.filter(([url]) => String(url).includes("/token"))).toHaveLength(0);
+  });
+  it("rejects a late callback from an older concurrent reconnect intent", async () => {
+    const test = await setup("late-reconnect"); await test.service.finish(test.callback, signal());
+    const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());
+    const options = { ...test.options, reconnect: { expected_generation: first.binding.credential_generation, expected_revision: first.revision } };
+    const firstReconnect = createD1GoogleOAuthAdmission(options); const secondReconnect = createD1GoogleOAuthAdmission(options);
+    const firstStart = await firstReconnect.begin("operation-late-reconnect-a", signal());
+    const secondStart = await secondReconnect.begin("operation-late-reconnect-b", signal());
+    const firstUrl = new URL(firstStart.authorization_url); const secondUrl = new URL(secondStart.authorization_url);
+    test.setAuthorization(firstUrl);
+    await firstReconnect.finish({ iss: "https://accounts.google.com", state: firstUrl.searchParams.get("state") ?? "", code: "code-fixture" }, signal());
+    test.setAuthorization(secondUrl);
+    await expect(secondReconnect.finish({ iss: "https://accounts.google.com", state: secondUrl.searchParams.get("state") ?? "", code: "code-fixture" }, signal()))
+      .rejects.toThrow();
+    const latest = await db.prepare("SELECT credential_generation,credential_revision,state FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(test.options.configuration.connection_id).first<{ credential_generation: string; credential_revision: number; state: string }>();
+    expect(latest?.credential_revision).toBe(first.revision + 1); expect(latest?.state).toBe("AUTHORIZING");
+  });
+  it("cleans expired proof with a bounded digest-only receipt", async () => {
+    const test = await setup("cleanup"); test.clock(OAUTH_TEST_TIME + 600000);
+    await expect(cleanupExpiredGoogleOAuthIntents(db, test.options.now, 33)).rejects.toMatchObject({ code: "GOOGLE_OAUTH_INPUT_INVALID" });
+    expect(await cleanupExpiredGoogleOAuthIntents(db, test.options.now, 32)).toBeGreaterThan(0);
+    expect(await db.prepare("SELECT 1 FROM google_oauth_intent WHERE intent_id=?1").bind(test.start.intent_id).first()).toBeNull();
+    const receipt = await db.prepare("SELECT operation_ref,principal_id,configuration_json,state_sha256,terminal_state FROM google_oauth_intent_receipt WHERE intent_id=?1")
+      .bind(test.start.intent_id).first<Record<string, unknown>>();
+    expect(receipt?.operation_ref).toBe("operation-cleanup"); expect(receipt?.terminal_state).toBe("EXPIRED");
+    expect(receipt?.principal_id).toBe(test.options.owner.principal_id); expect(receipt?.configuration_json).toContain(test.options.configuration.connection_id);
+    expect(receipt?.state_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    await expect(test.service.begin("operation-cleanup", signal())).rejects.toThrow();
+  });
+  it("does not retain a receipt or delete reconnect metadata when a claim wins the cleanup race", async () => {
+    const test = await setup("cleanup-race"); test.clock(OAUTH_TEST_TIME + 600000); let raced = false;
+    const database = intercepted(async (phase, sql) => {
+      if (phase === "before" && sql === "BATCH" && !raced) {
+        raced = true;
+        await db.prepare("UPDATE google_oauth_intent SET state='EXCHANGING',attempt_id='cleanup-race-attempt',code_sha256=?1 WHERE intent_id=?2")
+          .bind("a".repeat(64), test.start.intent_id).run();
+      }
+    });
+    await cleanupExpiredGoogleOAuthIntents(database, test.options.now, 32);
+    expect(await db.prepare("SELECT state FROM google_oauth_intent WHERE intent_id=?1").bind(test.start.intent_id).first<{ state: string }>()).toEqual({ state: "EXCHANGING" });
+    expect(await db.prepare("SELECT 1 FROM google_oauth_intent_receipt WHERE intent_id=?1").bind(test.start.intent_id).first()).toBeNull();
   });
   it("rejects owner revocation after Google responds, before credential admission", async () => {
     const test = await setup("owner-revoked"); let revoked = false;
