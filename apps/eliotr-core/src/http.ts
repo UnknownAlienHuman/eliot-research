@@ -8,6 +8,7 @@ import type {
   CatalogRequest,
   SourceRevisionsRequest,
   RouteDefinition,
+  RawMarkdownConversionRequest,
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
 import {
@@ -42,6 +43,7 @@ import {
 import { IngestServiceError } from "./ingest-service.js";
 import { dispatchRawCaptureOperation, RawCaptureError, RawCaptureHttpError, rawCaptureProblem } from "@eliotr/cloudflare-raw-ingest";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
+import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
 export interface HttpDependencies {
@@ -68,12 +70,10 @@ export class HttpRequestError extends Error {
     this.retryable = retryable;
   }
 }
-
 const traceIds = new WeakMap<Request, string>();
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_QUERY_VALUE_BYTES = 2 * 1024;
 let accessVerifierCache: AccessVerifierCache | undefined;
-
 function traceId(request: Request): string {
   const existing = traceIds.get(request);
   if (existing !== undefined) return existing;
@@ -84,7 +84,6 @@ function traceId(request: Request): string {
   traceIds.set(request, value);
   return value;
 }
-
 function jsonResponse(body: unknown, status = 200, headers?: HeadersInit): Response {
   const serialized = serializeJsonWithinBytes(
     "http.response",
@@ -97,7 +96,6 @@ function jsonResponse(body: unknown, status = 200, headers?: HeadersInit): Respo
   responseHeaders.set("x-content-type-options", "nosniff");
   return new Response(serialized, { status, headers: responseHeaders });
 }
-
 export function problem(
   request: Request,
   status: number,
@@ -116,11 +114,9 @@ export function problem(
   };
   return jsonResponse(body, status, headers);
 }
-
 export function apiResult(request: Request, env: Env, data: unknown, status = 200): Response {
   return jsonResponse({ data, trace_id: traceId(request), deployment_generation: env.DEPLOYMENT_GENERATION }, status);
 }
-
 function matchPattern(pattern: string, pathname: string): Readonly<Record<string, string>> | null {
   if (pathname.length > 1 && (pathname.endsWith("/") || pathname.includes("//"))) return null;
   const expected = pattern.split("/").filter(Boolean);
@@ -148,7 +144,6 @@ function matchPattern(pattern: string, pathname: string): Readonly<Record<string
   }
   return params;
 }
-
 function resolveRoute(request: Request, pathname: string): {
   readonly match?: RouteMatch;
   readonly allowedMethods: readonly string[];
@@ -163,13 +158,11 @@ function resolveRoute(request: Request, pathname: string): {
     allowedMethods: [...new Set(pathMatches.map(({ route }) => route.method))].sort(),
   };
 }
-
 function isApiPath(pathname: string): boolean {
   return pathname.startsWith("/api/") ||
     pathname.startsWith("/federation/") ||
     pathname.startsWith("/oauth/");
 }
-
 export function configuredAccessVerifier(env: Env): AccessVerifier {
   if (env.ACCESS_TEAM_DOMAIN === undefined || env.ACCESS_AUDIENCE === undefined) {
     throw new AccessVerificationError(
@@ -203,7 +196,6 @@ export function configuredAccessVerifier(env: Env): AccessVerifier {
   accessVerifierCache = { key, verifier };
   return verifier;
 }
-
 function authorize(
   request: Request,
   route: RouteDefinition,
@@ -228,7 +220,6 @@ function authorize(
     trace_id: traceId(request),
   };
 }
-
 function validateContentLength(request: Request, route: RouteDefinition): void {
   const raw = request.headers.get("content-length");
   if (raw === null) return;
@@ -243,7 +234,6 @@ function validateContentLength(request: Request, route: RouteDefinition): void {
     throw new HttpRequestError("REQUEST_BODY_TOO_LARGE", 413, "request body exceeds the route limit");
   }
 }
-
 export function requireNoQuery(url: URL): void {
   if ([...url.searchParams.keys()].length > 0) {
     throw new HttpRequestError(
@@ -253,7 +243,6 @@ export function requireNoQuery(url: URL): void {
     );
   }
 }
-
 function singleQueryValue(url: URL, key: string): string | undefined {
   const values = url.searchParams.getAll(key);
   if (values.length > 1) {
@@ -266,7 +255,6 @@ function singleQueryValue(url: URL, key: string): string | undefined {
   }
   return value;
 }
-
 function parseCatalogRequest(url: URL): CatalogRequest {
   const allowed = new Set(["project_id", "cursor", "limit"]);
   for (const key of url.searchParams.keys()) {
@@ -290,7 +278,6 @@ function parseCatalogRequest(url: URL): CatalogRequest {
     ...(cursor === undefined ? {} : { cursor }),
   };
 }
-
 function parseSourceRevisionsRequest(url: URL): SourceRevisionsRequest {
   for (const key of url.searchParams.keys()) {
     if (!["source_id", "cursor", "limit"].includes(key)) {
@@ -320,7 +307,6 @@ async function requireApplicationReady(
     true,
   );
 }
-
 async function dispatch(
   request: Request,
   env: Env,
@@ -387,6 +373,12 @@ async function dispatch(
       );
     }
     default:
+      if (match.route.operation === "ingest.raw.markdown") {
+        const captureId = match.params.capture_id;
+        if (captureId === undefined) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "capture id is missing");
+        requireNoQuery(url); const parsed = await readRawMarkdownConversionRequest(request); if (parsed === null) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "conversion request is invalid");
+        return apiResult(request, env, await application.services.owner.convertRawFileToMarkdown(context, captureId, parsed as unknown as RawMarkdownConversionRequest));
+      }
       if (match.route.operation === "ingest.raw.capture" || match.route.operation === "ingest.raw.read") return apiResult(request, env, await dispatchRawCaptureOperation(match.route.operation, request, url, match.params.capture_id, match.route.maximum_request_bytes, context, application.services.owner));
       if (match.route.operation.startsWith("ingest.")) {
         return apiResult(
@@ -428,7 +420,6 @@ async function dispatch(
       }
   }
 }
-
 function mapIngestAuthorityError(request: Request, error: IngestAuthorityError): Response {
   if (error.code === "INGEST_SETTLEMENT_UNCERTAIN") {
     return problem(request, 503, error.code, "Ingest authority settlement is uncertain", true);
@@ -444,7 +435,6 @@ function mapIngestAuthorityError(request: Request, error: IngestAuthorityError):
   }
   return problem(request, 409, error.code, "Ingest authority conflicts with durable state", false);
 }
-
 function mapIngestStorageError(request: Request, error: IngestStorageError): Response {
   if (error.retryable) {
     return problem(request, 503, error.code, "Ingest storage is temporarily unavailable", true);
@@ -465,7 +455,6 @@ function mapIngestStorageError(request: Request, error: IngestStorageError): Res
   }
   return problem(request, 409, error.code, "Ingest storage state or integrity conflict", false);
 }
-
 function mapError(request: Request, error: unknown): Response {
   if (error instanceof OrientationError) return problem(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
   if (error instanceof ScopeServiceError) return problem(request, 409, error.code, "Current scope authority could not be established", false);
@@ -545,7 +534,6 @@ function mapError(request: Request, error: unknown): Response {
   }
   return problem(request, 500, "INTERNAL_ERROR", "Internal request processing failed", true);
 }
-
 // IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.
 export async function handleHttp(
   request: Request,
@@ -571,7 +559,6 @@ export async function handleHttp(
     }
     return env.ASSETS.fetch(request);
   }
-
   try {
     validateContentLength(request, resolved.match.route);
     if (resolved.match.route.auth === "public") {

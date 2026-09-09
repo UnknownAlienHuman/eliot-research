@@ -30,28 +30,24 @@ import { readReadiness } from "./readiness.js";
 import { createSourceAdmissionService } from "./source-admission-service.js";
 import { readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
-
+import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
 }
-
 export class CapabilityUnavailableError extends Error {
   public readonly code = "IMPLEMENTATION_SLICE_PENDING";
   public readonly operation: string;
   public readonly retryable = false;
-
   public constructor(operation: string) {
     super(`Capability ${operation} is unavailable in the active Worker generation`);
     this.name = "CapabilityUnavailableError";
     this.operation = operation;
   }
 }
-
 function unavailable(operation: string): Promise<never> {
   return Promise.reject(new CapabilityUnavailableError(operation));
 }
-
 function capabilities(env: Env): Record<string, unknown> {
   return {
     protocol: "eliotr.capabilities.v1",
@@ -74,7 +70,6 @@ function capabilities(env: Env): Record<string, unknown> {
     ingest_live_qualified: false,
   };
 }
-
 function semanticApi(env: Env): SemanticApi {
   const evidence = createEvidenceService(env);
   const orientation = createOrientationApi(env);
@@ -105,7 +100,6 @@ function semanticApi(env: Env): SemanticApi {
     changes: () => unavailable("research.changes"),
   };
 }
-
 function federationApi(): FederationApi {
   return {
     submit: () => unavailable("federation.submit"),
@@ -117,7 +111,6 @@ function federationApi(): FederationApi {
     changes: () => unavailable("federation.changes"),
   };
 }
-
 function ownerApi(env: Env): OwnerApi {
   const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
   const stagedBundles = createR2StagedBundlePort({
@@ -150,11 +143,16 @@ function ownerApi(env: Env): OwnerApi {
     },
   });
   const rawCapture = createRawCaptureService(env);
+  const convertRawMarkdown = createRawMarkdownOwnerConverter({
+    database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
+    readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
+  });
   return {
     ...ingest,
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),
     readRawFile: (context, captureId) => rawCapture.readRawFile(context, captureId),
     readRawFileByIdempotency: (context, idempotencyKey) => rawCapture.readRawFileByIdempotency(context, idempotencyKey),
+    convertRawFileToMarkdown: (context, captureId, request) => convertRawMarkdown(context, captureId, request),
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     async systemHealth(): Promise<Record<string, unknown>> {
       return {
@@ -167,7 +165,6 @@ function ownerApi(env: Env): OwnerApi {
     },
   };
 }
-
 async function countPendingOutbox(database: D1Database): Promise<number> {
   const row = await database.prepare(
     "SELECT COUNT(*) AS pending_count FROM outbox " +
@@ -179,7 +176,6 @@ async function countPendingOutbox(database: D1Database): Promise<number> {
   }
   return count;
 }
-
 // IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.
 export function createApplication(input: CompositionRootInput): ApplicationLifecycle {
   const services = {

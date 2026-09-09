@@ -135,6 +135,27 @@ export interface RawFileCaptureResult {
   readonly captured_at: string;
 }
 
+export interface RawMarkdownConversionRequest {
+  readonly idempotency_key: string;
+  readonly max_output_bytes: number;
+  readonly max_tokens: number;
+  readonly timeout_ms: number;
+  readonly conversion_options?: Record<string, unknown>;
+}
+export interface RawMarkdownConversionResult {
+  readonly protocol: "eliotr.raw-markdown-conversion.v1";
+  readonly state: "STARTED" | "COMPLETE" | "FAILED" | "UNKNOWN";
+  readonly operation_id: string;
+  readonly capture_id: string;
+  readonly content_sha256: string;
+  readonly output_sha256?: string;
+  readonly output_bytes?: number;
+  readonly detected_mime?: string;
+  readonly format?: "markdown" | "text";
+  readonly tokens?: number;
+  readonly failure_code?: string;
+}
+
 /** Owner UI metadata only; not a query, evidence grant or index validation receipt. */
 export interface SourceRevisionsRequest {
   readonly source_id: string;
@@ -228,6 +249,11 @@ export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContex
     context: AuthenticatedRequestContext,
     idempotencyKey: string,
   ): Promise<RawFileCaptureResult | null>;
+  convertRawFileToMarkdown(
+    context: AuthenticatedRequestContext,
+    captureId: string,
+    request: RawMarkdownConversionRequest,
+  ): Promise<RawMarkdownConversionResult>;
   systemHealth(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
   systemCapabilities(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
 }

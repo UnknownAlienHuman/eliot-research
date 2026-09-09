@@ -258,3 +258,10 @@ primitive rewrite. Owner/session/currentness come only from verified
 Cloudflare Access with same-origin + CSRF enforcement; configuration is
 server-owned. Begin makes no provider/token call and creates no
 credential/exchange/folder/sheet/cursor/grant/source/result.
+
+The connected raw conversion route is an owner-only server operation composed from the existing
+raw-capture currentness bridge and immutable R2 store. Its `eliotr.raw-markdown-conversion.v1`
+ledger records one Workers AI attempt and reconciles lost acknowledgements without retrying an
+uncertain provider effect. It produces candidate conversion metadata only; it does not create a
+normalized manifest, evidence handle, source map, or research admission. Controlled tests inject
+the AI binding, and production binding/live qualification remain separate gates.

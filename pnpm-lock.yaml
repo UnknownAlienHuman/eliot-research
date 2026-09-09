@@ -56,18 +56,21 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
+      '@eliotr/cloudflare-markdown':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-markdown
       '@eliotr/cloudflare-navigation':
         specifier: workspace:*
         version: link:../../packages/cloudflare-navigation
       '@eliotr/cloudflare-projection':
         specifier: workspace:*
         version: link:../../packages/cloudflare-projection
-      '@eliotr/cloudflare-research':
-        specifier: workspace:*
-        version: link:../../packages/cloudflare-research
       '@eliotr/cloudflare-raw-ingest':
         specifier: workspace:*
         version: link:../../packages/cloudflare-raw-ingest
+      '@eliotr/cloudflare-research':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-research
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -167,7 +170,11 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
-  packages/cloudflare-markdown: {}
+  packages/cloudflare-markdown:
+    dependencies:
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/cloudflare-navigation:
     dependencies:
