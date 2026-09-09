@@ -1237,6 +1237,8 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
     const networkResponses = [];
     const pendingRequests = new Set();
     const pendingWaiters = new Set();
+    const serviceWorkerSettlements = [];
+    const ledgerSettlements = [];
     let trafficSequence = 0;
     const settleRequest = (request) => {
       if (pendingRequests.delete(request)) {
@@ -1394,7 +1396,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       return { promise, cancel: () => { active = false; pendingWaiters.delete(resolveWaiter); } };
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
-      requests, networkResponses, websockets, pageWorkers, resetLedger, close, profileDir,
+      requests, networkResponses, websockets, pageWorkers, serviceWorkerSettlements, ledgerSettlements, resetLedger, close, profileDir,
       pendingRequestCount, waitForPendingChange, trafficSequence: () => trafficSequence,
       registerOp, mintSlotsFor, setRole, adoptIssuance, bindSlot,
       currentOp: () => currentOp,
@@ -3076,21 +3078,55 @@ async function awaitServiceWorkerRegistrationLifecycle(container = globalThis.na
   }
 }
 
-async function settleServiceWorkerLifecycle(page) {
+async function settleServiceWorkerLifecycle(page, harness) {
   // `networkidle` does not include the asynchronous registration/activation
   // lifecycle. Fence the registration promise initiated by the PWA and any
   // installing/waiting worker it produced. A missing/failed unauthenticated
   // registration is already settled and therefore needs no wait.
+  const startedAt = Date.now();
+  let outcome = "unobserved";
   let timer;
   try {
-    await Promise.race([
+    outcome = await Promise.race([
       page.evaluate(awaitServiceWorkerRegistrationLifecycle),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error("service-worker lifecycle did not settle before the phase boundary")), 10000);
       }),
     ]);
+    return outcome;
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (Array.isArray(harness?.serviceWorkerSettlements)) {
+      let pageOrigin = "unavailable";
+      try { pageOrigin = new URL(page.url()).origin; } catch { /* diagnostic remains bounded and redacted */ }
+      let workerUrls = [];
+      try {
+        workerUrls = typeof harness.context?.serviceWorkers === "function"
+          ? harness.context.serviceWorkers().map((worker) => String(worker.url()).slice(0, 256))
+          : [];
+      } catch { workerUrls = ["unreadable"]; }
+      let registrationStates = { installing: null, waiting: null, active: null, scope: null };
+      try {
+        registrationStates = await page.evaluate(async () => {
+          const registration = await navigator.serviceWorker?.getRegistration?.();
+          return {
+            installing: registration?.installing?.state ?? null,
+            waiting: registration?.waiting?.state ?? null,
+            active: registration?.active?.state ?? null,
+            scope: registration?.scope ? new URL(registration.scope).origin : null,
+          };
+        });
+      } catch { /* diagnostic remains bounded and redacted */ }
+      harness.serviceWorkerSettlements.push(Object.freeze({
+        outcome: typeof outcome === "string" ? outcome : "resolved",
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+        pageOrigin,
+        workerUrls: Object.freeze(workerUrls.slice(0, 16)),
+        registrationStates: Object.freeze(registrationStates),
+        pending: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
+      }));
+      if (harness.serviceWorkerSettlements.length > 8) harness.serviceWorkerSettlements.shift();
+    }
   }
 }
 export async function verifyServiceWorkerSettlementRegression() {
@@ -3182,7 +3218,8 @@ async function settleLedger(page, harness) {
   // No sleep-only timing: without networkidle this drain alone proves nothing;
   // leftovers still fail closed downstream. Never hides retries: retry state
   // stays in the ledger and must still pair or anchor.
-  await settleServiceWorkerLifecycle(page);
+  const startedAt = Date.now();
+  await settleServiceWorkerLifecycle(page, harness);
   const deadline = Date.now() + 10000;
   try { await page.waitForLoadState("networkidle", { timeout: 10000 }); } catch { /* unpaired traffic fails closed */ }
   try {
@@ -3204,6 +3241,15 @@ async function settleLedger(page, harness) {
       if (sequence !== (typeof harness?.trafficSequence === "function" ? harness.trafficSequence() : -1)) quietRounds = 0;
     }
   } catch { /* drain failures still fail closed downstream */ }
+  if (Array.isArray(harness?.ledgerSettlements)) {
+    harness.ledgerSettlements.push(Object.freeze({
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+      deadlineMs: 10000,
+      pending: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
+      trafficSequence: typeof harness.trafficSequence === "function" ? harness.trafficSequence() : null,
+    }));
+    if (harness.ledgerSettlements.length > 8) harness.ledgerSettlements.shift();
+  }
 }
 
 // Exact per-phase traffic contracts. Allowlists are upper bounds: every entry is
@@ -3386,7 +3432,22 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
     assert.equal(failure.slotId ?? null, own.slotId ?? null, `${label}: failure slot crossed request identity`);
     assert.ok(origins.includes(failure.origin), `${label}: cross-origin failed egress denied: ${text.slice(0, 200)}`);
   }
-  assert.deepEqual([...pending.values()], [], `${label}: every browser request must pair with a response or an allowed abort, dangling: ${JSON.stringify([...pending.values()].slice(0, 4))}`);
+  let lifecycleDiagnostic = "unavailable";
+  try {
+    lifecycleDiagnostic = JSON.stringify({
+      serviceWorkerSettlements: Array.isArray(harness.serviceWorkerSettlements)
+        ? harness.serviceWorkerSettlements.slice(-2)
+        : [],
+      ledgerSettlements: Array.isArray(harness.ledgerSettlements)
+        ? harness.ledgerSettlements.slice(-2)
+        : [],
+      currentWorkers: typeof harness.context?.serviceWorkers === "function"
+        ? harness.context.serviceWorkers().map((worker) => String(worker.url()).slice(0, 256)).slice(0, 16)
+        : [],
+      pendingCount: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
+    });
+  } catch { lifecycleDiagnostic = "unreadable"; }
+  assert.deepEqual([...pending.values()], [], `${label}: every browser request must pair with a response or an allowed abort, dangling: ${JSON.stringify([...pending.values()].slice(0, 4))}; lifecycle=${lifecycleDiagnostic}`);
   const serialized = JSON.stringify({ requests: harness.requests, responses: harness.networkResponses });
   assert.ok(!/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/.test(serialized) && !serialized.includes("cf-access"),
     `${label}: network ledger must never contain JWT or access credentials`);
