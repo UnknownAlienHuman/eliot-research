@@ -252,7 +252,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   }
   return {
     async freezeScope(expression, credentialGeneration) {
-      await owner.requireReadPolicy();
+      await owner.exhaustiveRequireReadPolicy();
       const snapshot = await freezer.freeze(expression, credentialGeneration);
       await authorize(snapshot);
       scopeForRequest = snapshot;

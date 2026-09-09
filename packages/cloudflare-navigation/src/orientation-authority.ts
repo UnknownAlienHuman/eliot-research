@@ -38,6 +38,7 @@ export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom"
   exhaustiveSources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
   grant(snapshot: ScopeSnapshot): Promise<void>;
   exhaustiveGrant(snapshot: ScopeSnapshot): Promise<void>;
+  exhaustiveRequireReadPolicy(): Promise<void>;
 }
 /** Keep retrieval's larger bound explicit while preserving the orientation batch bound. */
 export function splitExhaustiveSourceRefs(refs: readonly string[]): readonly (readonly string[])[] {
@@ -187,7 +188,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     const loaded = request.member_source_revision_refs.length > ORIENTATION_MAX_SOURCES
       ? await exhaustiveSources(request.member_source_revision_refs)
       : await sources(request.member_source_revision_refs);
-    const policyRows = [...(await policies(request.member_source_revision_refs.length > ORIENTATION_MAX_SOURCES ? 4096 : ORIENTATION_MAX_SOURCES)).values()];
+    const policyRows = [...(await policies(4096)).values()];
     if (loaded.some((source) => request.member_policy_closure_refs[source.revision.source_revision_ref] !== source.policy_closure_ref)) {
       orientationFail("ORIENTATION_POLICY_CHANGED", 409);
     }
@@ -210,7 +211,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
-    const policyExpiry = Math.min(...[...(await policies(snapshot.member_source_revision_refs.length > ORIENTATION_MAX_SOURCES ? 4096 : ORIENTATION_MAX_SOURCES)).values()].map((policy) => Date.parse(policy.expires_at)));
+    const policyExpiry = Math.min(...[...(await policies(4096)).values()].map((policy) => Date.parse(policy.expires_at)));
     const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry)).toISOString();
     const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access })}`;
     const values: Bind[] = [snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class,
@@ -235,6 +236,7 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, sources, exhaustiveSources,
     grant: (snapshot) => grantWithLoader(snapshot, sources),
     exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources),
+    exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },
   };
 }
