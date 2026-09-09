@@ -35,7 +35,7 @@ function renderVerified(detail: HTMLElement, opened: Awaited<ReturnType<typeof v
   const evidence = opened.evidence;
   const heading = document.createElement("h3"); heading.textContent = evidence.source_title ?? evidence.handle.source_revision_ref;
   const state = document.createElement("p"); state.className = "evidence-read-state";
-  state.textContent = "Verified with research.verify · source bytes reopened with research.open";
+  state.textContent = "Source excerpt verified";
   const source = document.createElement("pre"); source.className = "evidence-source"; source.textContent = opened.text;
   const metadata = document.createElement("div"); metadata.className = "evidence-meta";
   metadata.append(
@@ -46,7 +46,7 @@ function renderVerified(detail: HTMLElement, opened: Awaited<ReturnType<typeof v
     field("Integrity", `${evidence.handle.terminal_state} · ${evidence.instruction_taint}`),
   );
   const note = document.createElement("p"); note.className = "evidence-note";
-  note.textContent = "Pinned to the selected scope and admitted revision. Source text is displayed as inert plain text.";
+  note.textContent = "Matches the selected scope and source revision.";
   detail.replaceChildren(heading, state, source, metadata, note);
 }
 
@@ -92,4 +92,3 @@ export function mountEvidenceRail(
 
   return { clear, select, dispose: clear };
 }
-
