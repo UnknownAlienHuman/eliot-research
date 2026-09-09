@@ -38,11 +38,11 @@ function render(health: SystemHealth | null): void {
     </div>
     <main class="workspace">
       <aside class="panel panel--corpus" aria-label="Research navigation">
-        <div class="sidebar-heading"><span class="eyebrow">Workspace</span><button class="icon-button" type="button" aria-label="Collapse navigation">☰</button></div>
+        <div class="sidebar-heading"><span class="eyebrow">Workspace</span></div>
         <nav class="workspace-nav" aria-label="Primary">
-          <button class="nav-item nav-item--active" type="button"><span class="nav-icon">⌂</span><span>Library</span><span class="nav-count">01</span></button>
-          <button class="nav-item" type="button"><span class="nav-icon">◌</span><span>Corpus Lens</span></button>
-          <button class="nav-item" type="button"><span class="nav-icon">⌕</span><span>Research</span></button>
+          <button class="nav-item nav-item--active" type="button" data-nav-target="#library" aria-current="page"><span class="nav-icon">⌂</span><span>Library</span></button>
+          <button class="nav-item" type="button" data-nav-target="#corpus-lens-card"><span class="nav-icon">◌</span><span>Corpus Lens</span></button>
+          <button class="nav-item" type="button" data-nav-target="#research-card"><span class="nav-icon">⌕</span><span>Research</span></button>
         </nav>
         <div class="sidebar-section">
           <span class="eyebrow">Coming next</span>
@@ -52,23 +52,23 @@ function render(health: SystemHealth | null): void {
         <div id="library"></div>
       </aside>
       <section class="panel panel--investigation" aria-label="Investigation workspace">
-        <div class="content-heading"><div><span class="eyebrow">Research desk</span><h1>Library overview</h1><p class="lede">Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available.</p></div><div class="content-actions"><span class="profile-chip">E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
+        <div class="content-heading"><div><span class="eyebrow">Research desk</span><h1 data-workspace-title>Library overview</h1><p class="lede" data-workspace-lede>Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available.</p></div><div class="content-actions"><span class="profile-chip">E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
         <div class="workspace-cards">
           <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Choose a source from the Library to focus Corpus Lens and Research together.</p></div></article>
-          <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Sampled</strong><span>Completeness is never inferred from a miss.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
+          <div class="mini-grid"><div class="mini-stat"><span class="eyebrow">Coverage</span><strong id="coverage">Not queried</strong><span id="coverage-note">Run Research to measure sampled resolution.</span></div><div class="mini-stat"><span class="eyebrow">Evidence</span><strong id="evidence-count">0 resolved</strong><span>Verified excerpts in this session.</span></div></div>
         </div>
         <div class="tool-stack">
           <section class="tool-card tool-card--import"><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
-          <section class="tool-card"><div id="corpus-lens"></div></section>
-          <section class="tool-card tool-card--research"><div id="retrieval"></div></section>
+          <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
+          <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div></section>
         </div>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
-        <div class="evidence-heading"><div><span class="eyebrow">Proof rail</span><h2>Evidence</h2></div><span class="rail-status">LIVE READ</span></div>
+        <div class="evidence-heading"><div><span class="eyebrow">Proof rail</span><h2>Evidence</h2></div><span class="rail-status">QUERY RESULT</span></div>
         <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select a resolved excerpt</strong><p>Its revision, anchor, integrity and provenance will appear here.</p></div>
         <article id="evidence-detail" class="evidence-detail" hidden></article>
-        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "not applied")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "not applied")}</dd><dt>Connector</dt><dd>Not qualified</dd></dl></div>
+        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd>Not qualified</dd></dl></div>
       </aside>
     </main>
   `;
@@ -79,18 +79,50 @@ function render(health: SystemHealth | null): void {
   const library = app.querySelector<HTMLElement>("#library");
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const workspaceViews: Record<string, { title: string; lede: string }> = {
+    "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
+    "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
+    "#research-card": { title: "Research", lede: "Search resolved source bytes with a sampled coverage profile and inspect citation evidence." },
+  };
+  for (const button of app.querySelectorAll<HTMLButtonElement>("[data-nav-target]")) {
+    button.addEventListener("click", () => {
+      const selector = button.dataset.navTarget;
+      if (!selector) return;
+      for (const item of app.querySelectorAll<HTMLButtonElement>("[data-nav-target]")) {
+        const active = item === button;
+        item.classList.toggle("nav-item--active", active);
+        if (active) item.setAttribute("aria-current", "page"); else item.removeAttribute("aria-current");
+      }
+      const view = workspaceViews[selector];
+      if (view) {
+        const title = app.querySelector("[data-workspace-title]");
+        const lede = app.querySelector("[data-workspace-lede]");
+        if (title) title.textContent = view.title;
+        if (lede) lede.textContent = view.lede;
+      }
+      app.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+  const clearEvidence = (): void => {
+    const empty = app.querySelector<HTMLElement>("#evidence-empty");
+    const evidence = app.querySelector<HTMLElement>("#evidence-detail");
+    if (empty && evidence) { empty.hidden = false; evidence.hidden = true; evidence.replaceChildren(); }
+  };
   // Coverage stays "sampled" until an exhaustive denominator is reconciled; the summary reports
   // what the last query actually resolved rather than implying a complete scope.
   retrievalHost?.addEventListener("retrieval:resolved", (event) => {
     const detail = (event as CustomEvent<{ resolved: number; bytes: number }>).detail;
     const node = app.querySelector("#coverage");
     if (node) node.textContent = `Sampled · ${detail.resolved} resolved`;
+    const coverageNote = app.querySelector("#coverage-note");
+    if (coverageNote) coverageNote.textContent = "A miss never proves corpus absence.";
     const count = app.querySelector("#evidence-count");
     if (count) count.textContent = `${detail.resolved} resolved`;
-    const empty = app.querySelector<HTMLElement>("#evidence-empty");
-    const evidence = app.querySelector<HTMLElement>("#evidence-detail");
-    if (empty && evidence) { empty.hidden = false; evidence.hidden = true; evidence.replaceChildren(); }
+    clearEvidence();
   });
+  app.addEventListener("library:scope-changed", clearEvidence);
+  window.addEventListener("offline", clearEvidence);
+  window.addEventListener("eliotr:authorization-cleared", clearEvidence);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     const empty = app.querySelector<HTMLElement>("#evidence-empty");
@@ -100,7 +132,7 @@ function render(health: SystemHealth | null): void {
     detail.hidden = false;
     const anchor = evidence.handle.anchor;
     const anchorText = anchor.kind === "normalized_byte_range" ? `bytes ${anchor.start}–${anchor.end}` : anchor.kind === "normalized_line_range" ? `lines ${anchor.start_line}–${anchor.end_line}` : anchor.kind;
-    detail.innerHTML = `<span class="eyebrow">Resolved excerpt</span><h3>${escapeHtml(evidence.source_title ?? evidence.handle.source_revision_ref)}</h3><blockquote>${escapeHtml(evidence.exact_excerpt)}</blockquote><div class="evidence-meta"><span><b>Revision</b><code>${escapeHtml(evidence.handle.source_revision_ref)}</code></span><span><b>Anchor</b><code>${escapeHtml(anchorText)}</code></span><span><b>Excerpt SHA-256</b><code>${escapeHtml(evidence.handle.excerpt_sha256)}</code></span><span><b>Verification</b><code>${escapeHtml(evidence.verification_receipt_ref)}</code></span><span><b>Integrity</b><code>${escapeHtml(evidence.handle.terminal_state)} · ${escapeHtml(evidence.instruction_taint)}</code></span></div><p class="evidence-note">Pinned to the admitted revision. Neighboring context is shown only when the API supplies a resolvable reference.</p>`;
+    detail.innerHTML = `<span class="eyebrow">Resolved excerpt</span><h3>${escapeHtml(evidence.source_title ?? evidence.handle.source_revision_ref)}</h3><blockquote>${escapeHtml(evidence.exact_excerpt)}</blockquote><div class="evidence-meta"><span><b>Revision</b><code>${escapeHtml(evidence.handle.source_revision_ref)}</code></span><span><b>Anchor</b><code>${escapeHtml(anchorText)}</code></span><span><b>Excerpt SHA-256</b><code>${escapeHtml(evidence.handle.excerpt_sha256)}</code></span><span><b>Verification</b><code>${escapeHtml(evidence.verification_receipt_ref)}</code></span><span><b>Integrity</b><code>${escapeHtml(evidence.handle.terminal_state)} · ${escapeHtml(evidence.instruction_taint)}</code></span></div><p class="evidence-note">Pinned to the admitted revision. This panel mirrors the decoded query result; it does not issue a second verification request. Neighboring context is shown only when the API supplies a resolvable reference.</p>`;
   });
   const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
     googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
@@ -108,7 +140,7 @@ function render(health: SystemHealth | null): void {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => cleanups.forEach((cleanup) => cleanup?.()), { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidence); window.removeEventListener("offline", clearEvidence); window.removeEventListener("eliotr:authorization-cleared", clearEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
@@ -121,8 +153,8 @@ function updateHealth(health: SystemHealth): void {
   const generation = app.querySelector(".health-generation");
   if (generation) generation.textContent = health.deployment_generation;
   for (const [selector, text] of [[".generation", health.deployment_generation],
-    ["#core-generation", health.core_schema_generation ?? "not applied"],
-    ["#search-generation", health.search_schema_generation ?? "not applied"]] as const) {
+    ["#core-generation", health.core_schema_generation ?? "Unknown"],
+    ["#search-generation", health.search_schema_generation ?? "Unknown"]] as const) {
     const node = app.querySelector(selector); if (node) node.textContent = text;
   }
 }
