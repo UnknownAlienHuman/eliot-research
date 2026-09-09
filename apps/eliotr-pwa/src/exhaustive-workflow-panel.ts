@@ -42,9 +42,10 @@ function terminal(view: ExhaustiveWorkflowView): boolean {
 export function mountExhaustiveWorkflowPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
+  healthReady: () => boolean = () => false,
 ): (() => void) & { clearPrivate(): void; selectSource(id: string): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Exhaustive scan</span><h2>Search the full selected scope</h2></div><span class="workflow-badge" data-workflow-badge>READY</span></div>
-    <p class="workflow-copy">Run an exact scan across every admitted section in the selected scope. A complete result earns a coverage claim; an interrupted scan stays visibly incomplete.</p>
+    <p class="workflow-copy">Run an exact scan across every section in the selected scope. A complete result confirms the chosen scope was searched; an interrupted scan stays visibly incomplete.</p>
     <form><label>Query<input name="query" maxlength="8192" autocomplete="off" required placeholder="A phrase to find exactly"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Choose a source from Library</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start full scan</button><button type="button" class="button button--quiet" data-cancel disabled>Cancel on server</button><button type="button" class="button button--quiet" data-refresh disabled>Check status</button></div></form>
@@ -78,7 +79,7 @@ export function mountExhaustiveWorkflowPanel(
   let idempotencyKey = "";
 
   const buttons = (): void => {
-    submit.disabled = busy || (workflowId !== undefined && !terminalState);
+    submit.disabled = !healthReady() || busy || (workflowId !== undefined && !terminalState);
     cancel.disabled = workflowId === undefined || terminalState || cancelling;
     refresh.disabled = workflowId === undefined || busy;
     query.disabled = busy || (workflowId !== undefined && !terminalState);
@@ -182,10 +183,11 @@ export function mountExhaustiveWorkflowPanel(
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate);
   window.addEventListener("pagehide", clearPrivate);
+  window.addEventListener("eliotr:health-updated", buttons);
   scope.onchange = () => { if (scope.value === "selected" && selectedSourceId === undefined) scope.value = "library"; };
   buttons();
   return Object.assign(() => {
-    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate);
+    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", buttons);
   }, { clearPrivate, selectSource(id: string): void {
     if (!IdentifierSchema.safeParse(id).success) return;
     selectedSourceId = id; selectedScopeOption.disabled = false; scope.value = "selected";
