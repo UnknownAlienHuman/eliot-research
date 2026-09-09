@@ -55,6 +55,7 @@ export async function handleGoogleConnectionStatus(request: Request, env: Env, c
     await guard();
     const second = await readD1GoogleCredentialStatus(env.CORE_DB, binding, request.signal);
     if (JSON.stringify(first) !== JSON.stringify(second)) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
+    await guard();
     return apiResult(request, env, statusResult(config.connection_id, second));
   } catch (error) {
     if (error instanceof GoogleCredentialError) return problem(request, error.code === "GOOGLE_OAUTH_OWNER_REVOKED" ? 401 : error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE" ? 503 : 409,
@@ -65,7 +66,6 @@ export async function handleGoogleConnectionStatus(request: Request, env: Env, c
 
 function statusResult(connectionId: string, status: GoogleCredentialStatus | null) {
   return { protocol: "eliotr.google-connection-status.v1", connection_id: connectionId,
-    connected: status !== null && status.state !== "DISCONNECTED" && status.state !== "REVOKED",
     credential_generation: status?.binding.credential_generation ?? null, credential_revision: status?.revision ?? null,
     state: status?.state ?? "DISCONNECTED" } as const;
 }

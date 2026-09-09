@@ -48,7 +48,16 @@ export async function handleScheduled(
   // OAuth proof cleanup is maintenance only and runs after the core migration
   // gate is current. It is bounded and leaves admitted intents untouched.
   const readiness = await readReadiness(env);
-  if (readiness.core_schema_generation === REQUIRED_CORE_SCHEMA_GENERATION) {
+  let lifecycleReady = false;
+  try {
+    const row = await env.CORE_DB.prepare(
+      "SELECT value FROM schema_state WHERE key = 'google_oauth_lifecycle_generation'",
+    ).first<{ value: string }>();
+    lifecycleReady = row?.value === "google-oauth-lifecycle-v1";
+  } catch {
+    lifecycleReady = false;
+  }
+  if (readiness.core_schema_generation === REQUIRED_CORE_SCHEMA_GENERATION && lifecycleReady) {
     await cleanupExpiredGoogleOAuthIntents(env.CORE_DB, Date.now, 32);
   }
   const store = createD1OutboxStore(env.CORE_DB);

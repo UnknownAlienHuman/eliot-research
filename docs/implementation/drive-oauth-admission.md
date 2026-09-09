@@ -97,8 +97,7 @@ lost intent/claim/admission ACKs, uncertain token response, rollback, owner with
 no-overwrite behavior. Provider responses and authenticated owner context are controlled fixtures;
 Google signature verification, encryption and D1 persistence are not substituted with success stubs.
 
-Next: explicit new authorization after an uncertain attempt, disconnect/reconnect with credential fencing,
-bounded intent retention, then generation/asset/cursor qualification. Keep one active ChatGPT write
+Next: PWA lifecycle controls, operator provisioning and generation/asset/cursor qualification. Keep one active ChatGPT write
 transport and the existing application launch hold.
 The complete real-storage browser lifecycle and genuine Google login are NOT_EXECUTED, not implied by
 the internal service tests. Missing implementation stays local; no partial Cloudflare deployment.

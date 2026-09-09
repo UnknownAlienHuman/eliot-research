@@ -53,7 +53,7 @@
     {
       "id": "pending-drive-exchange",
       "path": "packages/google-drive-exchange/src/reconciler.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner callback/provisioning/Doc publication/composition and live qualification remain separate.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner provisioning/Doc publication/composition and live qualification remain separate.",
       "owner_packets": [
         "ER-18",
         "ER-19",
@@ -61,7 +61,7 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback, provisioning/reconnect, Doc publication/export and full runtime composition remain missing. Optional Gemini MCP does not replace this path.",
+      "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback and reconnect/disconnect/status lifecycle now execute; provisioning, Doc publication/export and full runtime composition remain separate. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
         "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream (import with cursor advance, duplicate resume without re-freeze/re-admit, admitted-but-unrecorded resume via ContributionIntent DUPLICATE, incomplete missing-parts with no cursor advance and failure counter, held-lease refusal before any Drive read, outrun-TTL commit refusal, edited-replay tamper without re-freeze under a preserved frozen authority, digest-against-frozen tamper audit, missing-not-tampered audit, lost-notification plus edited-row negative with no duplicate work); no new migration",

@@ -234,6 +234,28 @@ describe("initial Google OAuth with real RSA, vault and D1", () => {
     expect(latest.revision).toBe(first.revision + 1); expect(latest.state).toBe("AUTHORIZING");
     expect(latest.binding.credential_generation).toBe(`oauth-grant:${reconnectIntent.intent_id}`);
   });
+  it("rechecks the current reconnect tuple before spending a Google code", async () => {
+    const test = await setup("claim-currentness"); await test.service.finish(test.callback, signal());
+    test.fetchImpl.mockClear();
+    const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());
+    let raced = false;
+    const database = intercepted(async (phase, sql) => {
+      if (phase === "after" && sql.startsWith("UPDATE google_oauth_intent SET state='EXCHANGING'") && !raced) {
+        raced = true;
+        await db.prepare("UPDATE google_exchange_connection SET credential_revision=credential_revision+1 WHERE connection_id=?1")
+          .bind(test.options.configuration.connection_id).run();
+      }
+    });
+    const reconnect = createD1GoogleOAuthAdmission({ ...test.options, database, reconnect: {
+      expected_generation: first.binding.credential_generation, expected_revision: first.revision,
+    } });
+    const start = await reconnect.begin(`operation-claim-currentness-${crypto.randomUUID()}`, signal()); const authorization = new URL(start.authorization_url);
+    test.setAuthorization(authorization);
+    await expect(reconnect.finish({ iss: "https://accounts.google.com", state: authorization.searchParams.get("state") ?? "", code: "code-fixture" }, signal()))
+      .rejects.toMatchObject({ code: "GOOGLE_OAUTH_CLAIM_CHANGED" });
+    expect(raced).toBe(true);
+    expect(test.fetchImpl.mock.calls.filter(([url]) => String(url).includes("/token"))).toHaveLength(0);
+  });
   it("rejects a late callback from an older concurrent reconnect intent", async () => {
     const test = await setup("late-reconnect"); await test.service.finish(test.callback, signal());
     const firstIntent = await intentFor(test); const first = await createD1GoogleCredentialStore(db, intentBinding(firstIntent, "grant"), test.options.now).load(signal());

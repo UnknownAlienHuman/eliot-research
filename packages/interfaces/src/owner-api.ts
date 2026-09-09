@@ -166,7 +166,6 @@ export interface DisconnectGoogleConnectionRequest {
 export interface GoogleConnectionStatusResult {
   readonly protocol: "eliotr.google-connection-status.v1";
   readonly connection_id: string;
-  readonly connected: boolean;
   readonly credential_generation: string | null;
   readonly credential_revision: number | null;
   readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
