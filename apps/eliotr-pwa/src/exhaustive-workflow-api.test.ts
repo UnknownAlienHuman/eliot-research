@@ -17,10 +17,12 @@ function completeData(): Record<string, unknown> {
   return {
     protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflow, workflow_status: "complete",
     job: {
-      status: "COMPLETE", job_id: "job-1", idempotency_key: "key-1", request_digest: "b".repeat(64),
-      scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, coverage_claim: "COMPLETE",
-      coverage_denominator_ref: "denominator-1", denominator_shards: 2, settled_shards: 2,
-      total_scanned_sections: 8, total_matches: 3, result_artifact_ref: "artifact-1", coverage_receipt_ref: "receipt-1",
+      status: "COMPLETE", receipt: {
+        job_id: "job-1", idempotency_key: "key-1", request_digest: "b".repeat(64),
+        scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, coverage_claim: "COMPLETE",
+        coverage_denominator_ref: "denominator-1", denominator_shards: 2, settled_shards: 2,
+        total_scanned_sections: 8, total_matches: 3, result_artifact_ref: "artifact-1", coverage_receipt_ref: "receipt-1",
+      },
     },
   };
 }
@@ -66,8 +68,20 @@ describe("exhaustive workflow transport", () => {
 
   it("requires the complete receipt identity before showing complete coverage", async () => {
     const missing = completeData();
-    delete (missing.job as Record<string, unknown>).request_digest;
+    delete ((missing.job as Record<string, unknown>).receipt as Record<string, unknown>).request_digest;
     vi.stubGlobal("fetch", vi.fn(async () => envelope(missing)));
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+
+  it("rejects the obsolete flattened complete job shape", async () => {
+    const flattened = completeData();
+    flattened.job = {
+      status: "COMPLETE", job_id: "job-1", idempotency_key: "key-1", request_digest: "b".repeat(64),
+      scope_snapshot_id: "scope-1", scope_snapshot_revision: 1, coverage_claim: "COMPLETE",
+      coverage_denominator_ref: "denominator-1", denominator_shards: 2, settled_shards: 2,
+      total_scanned_sections: 8, total_matches: 3, result_artifact_ref: "artifact-1", coverage_receipt_ref: "receipt-1",
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(flattened)));
     await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
   });
 });

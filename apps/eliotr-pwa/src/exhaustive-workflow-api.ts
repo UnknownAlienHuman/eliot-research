@@ -81,28 +81,29 @@ function decodeJob(value: unknown): ExhaustiveJobView {
   if (value === null || typeof value !== "object" || Array.isArray(value)) invalid("workflow job is invalid");
   const raw = value as Record<string, unknown>;
   if (raw.status === "COMPLETE") {
-    const row = record(raw, [
-      "status", "job_id", "idempotency_key", "request_digest", "scope_snapshot_id", "scope_snapshot_revision",
+    const job = record(raw, ["status", "receipt"], "complete job");
+    const receipt = record(job.receipt, [
+      "job_id", "idempotency_key", "request_digest", "scope_snapshot_id", "scope_snapshot_revision",
       "coverage_claim", "coverage_denominator_ref", "denominator_shards", "settled_shards",
       "total_scanned_sections", "total_matches", "result_artifact_ref", "coverage_receipt_ref",
-    ], "complete job");
-    if (row.coverage_claim !== "COMPLETE" || row.settled_shards !== row.denominator_shards) invalid("complete job coverage is invalid");
-    stringValue(row.job_id, "job id");
-    stringValue(row.idempotency_key, "job idempotency key");
-    digest(row.request_digest, "job request digest");
-    boundedIdentifier(row.result_artifact_ref, "job result artifact");
-    boundedIdentifier(row.coverage_receipt_ref, "job coverage receipt");
-    const denominator = nonNegativeInteger(row.denominator_shards, "job denominator shards");
-    const settled = nonNegativeInteger(row.settled_shards, "job settled shards");
+    ], "complete job receipt");
+    if (receipt.coverage_claim !== "COMPLETE" || receipt.settled_shards !== receipt.denominator_shards) invalid("complete job coverage is invalid");
+    stringValue(receipt.job_id, "job id");
+    stringValue(receipt.idempotency_key, "job idempotency key");
+    digest(receipt.request_digest, "job request digest");
+    boundedIdentifier(receipt.result_artifact_ref, "job result artifact");
+    boundedIdentifier(receipt.coverage_receipt_ref, "job coverage receipt");
+    const denominator = nonNegativeInteger(receipt.denominator_shards, "job denominator shards");
+    const settled = nonNegativeInteger(receipt.settled_shards, "job settled shards");
     return {
       status: "COMPLETE",
-      scope_snapshot_id: boundedIdentifier(row.scope_snapshot_id, "job scope"),
-      scope_snapshot_revision: positiveInteger(row.scope_snapshot_revision, "job scope revision"),
-      coverage_denominator_ref: boundedIdentifier(row.coverage_denominator_ref, "job denominator"),
+      scope_snapshot_id: boundedIdentifier(receipt.scope_snapshot_id, "job scope"),
+      scope_snapshot_revision: positiveInteger(receipt.scope_snapshot_revision, "job scope revision"),
+      coverage_denominator_ref: boundedIdentifier(receipt.coverage_denominator_ref, "job denominator"),
       denominator_shards: denominator,
       settled_shards: settled,
-      total_scanned_sections: nonNegativeInteger(row.total_scanned_sections, "job scanned sections"),
-      total_matches: nonNegativeInteger(row.total_matches, "job matches"),
+      total_scanned_sections: nonNegativeInteger(receipt.total_scanned_sections, "job scanned sections"),
+      total_matches: nonNegativeInteger(receipt.total_matches, "job matches"),
     };
   }
   if (raw.status === "UNFINISHED") {
