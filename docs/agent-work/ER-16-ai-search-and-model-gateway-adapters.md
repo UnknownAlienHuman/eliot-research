@@ -241,6 +241,22 @@ qualification, candidate readback mismatch, active-generation race, and ambiguou
 The capability fixture keeps live Cloudflare control-plane write/readback, route execution, fallback, and
 Spend Limit probes explicitly `NOT_EXECUTED`.
 
+## Active implementation slice — Workers AI Markdown Conversion observation boundary
+
+The package also exposes a narrow, non-durable `toMarkdown` binding adapter for the later raw-file
+checkpoint. It accepts a caller-prepared document, owner/attempt context and explicit output/token/time
+bounds, invokes the current Workers AI binding once, and strictly decodes the current documented result
+shape (`id`, `name`, `format`, `mimetype`, plus `tokens`/`data` or `error`). The detected MIME is retained
+as an observation and is never asserted equal to the input `Blob.type`; the pinned Workers types still use
+the older `mimeType` spelling, so that mismatch is isolated at the untrusted provider boundary.
+
+The adapter returns a digest-bound conversion observation or a typed failure for malformed/unknown
+results, provider errors, empty/oversized output, token overflow, timeout, abort and provider exceptions.
+It performs no retry, persistence, source mapping, qualification, normalization admission, or raw capture.
+Controlled provider fixtures cover the valid current result, stale field spelling, malformed and error
+responses, bounds, abort and timeout. Durable attempt/receipt/readback and the live Workers AI gate remain
+`NOT EXECUTED`; conversion output remains candidate data and does not close ER-16.
+
 ## Active implementation slice — Cloudflare Dynamic Routing REST control plane
 
 This slice binds the existing pure Dynamic Route provisioner to the current Cloudflare
