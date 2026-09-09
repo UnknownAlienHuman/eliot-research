@@ -152,6 +152,25 @@ export interface BeginGoogleOAuthResult {
   readonly intent_id: string;
 }
 
+/** Versioned G3 reconnect command. The generation/revision are a CAS fence, never an identity claim. */
+export interface ReconnectGoogleOAuthRequest {
+  readonly operation_ref: string;
+  readonly expected_credential_generation: string;
+  readonly expected_credential_revision: number;
+}
+export interface DisconnectGoogleConnectionRequest {
+  readonly operation_ref: string;
+  readonly expected_credential_generation: string;
+  readonly expected_credential_revision: number;
+}
+export interface GoogleConnectionStatusResult {
+  readonly protocol: "eliotr.google-connection-status.v1";
+  readonly connection_id: string;
+  readonly credential_generation: string | null;
+  readonly credential_revision: number | null;
+  readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
+}
+
 export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;

@@ -49,6 +49,8 @@ export interface GoogleOAuthIntentStore {
   deny(intent: GoogleOAuthIntent, signal: AbortSignal): Promise<void>;
   admit(intent: GoogleOAuthIntent, credential: GoogleCredentialSnapshot, idTokenHash: string, signal: AbortSignal): Promise<void>;
   readAdmission(intent: GoogleOAuthIntent, signal: AbortSignal): Promise<GoogleOAuthAdmissionReceipt>;
+  /** Reconnect-only metadata is resolved from durable intent state; absent for initial admission. */
+  readonly expectedCredentialRevision?: (intent: GoogleOAuthIntent, signal: AbortSignal) => Promise<number | null>;
 }
 export const oauthFail = (code: string): never => { throw new GoogleCredentialError(code); };
 export function oauthIdentifier(value: unknown): string {

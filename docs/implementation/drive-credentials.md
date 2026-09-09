@@ -12,8 +12,9 @@ No new public route, secondary server, dependency, global access-token cache or 
 
 This refresh component consumes previously admitted credentials. The separate internal initial OAuth
 service now creates durable one-use state/PKCE/nonce, verifies actual Google ID-token signatures and
-performs the first encrypted insert: see `drive-oauth-admission.md`. Its owner HTTP/PWA adapter, server
-configuration/production-client attestation admission, provisioning and reconnect UI are still required.
+performs the first encrypted insert: see `drive-oauth-admission.md`. Owner HTTP/PWA begin/callback and
+the explicit backend reconnect/disconnect CAS adapter now exist; PWA controls, provisioning and full
+browser/storage qualification are still required.
 The new admission remains AUTHORIZING; it cannot use these ACTIVE/DEGRADED refresh leases until the
 remaining exchange qualification is implemented. Tests use controlled credentials, not a real account.
 Do not emulate the missing owner transport with pasted tokens, raw SQL or unsigned identity claims.
@@ -62,7 +63,8 @@ exchange descriptor is created/modified by the credential store.
 The returned lease also rechecks the exact primary-D1 exchange descriptor and non-retired status before
 and after each REST call. Generation retirement/replacement, credential changes and expiry invalidate
 cached leases. This is currentness relative to D1 observations, not revocation detection before Google
-or the local authority has observed it. Explicit connection revoke/reconnect APIs remain pending.
+or the local authority has observed it. Explicit backend revoke/reconnect uses the same full-row CAS;
+browser controls and live qualification remain pending.
 
 ## Refresh and failures
 
@@ -94,9 +96,8 @@ consent expiry, generation retirement and preservation of a stored artifact on i
 provider responses are clearly separate from real Google login/refresh/revocation. The full result-publisher
 negative acceptance remains open until that publisher is implemented; storage preservation alone is not it.
 
-Next: connect the implemented initial OAuth service to authenticated owner HTTP/PWA and reviewed
-server configuration, then provision the first exchange and explicit reconnect/disconnect. Reuse the
-existing intent, verifier, vault, credential store and lease provider; do not write a second OAuth stack. Verify migration and return paths with complete local fixtures; never deploy half a connector
+Next: finish PWA controls and provision the first exchange. Reuse the existing intent, verifier, vault,
+credential store and lease provider; do not write a second OAuth stack. Verify migration and return paths with complete local fixtures; never deploy half a connector
 or relax the current launch hold. Full cursor/freeze/reconciliation, Docs delivery and browser lifecycle
 remain separate #95 checkpoints. Live Google/Cloudflare qualification is NOT_EXECUTED.
 

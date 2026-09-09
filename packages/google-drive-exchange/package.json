@@ -13,6 +13,9 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run"
   },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260827.1"
+  },
   "dependencies": {
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",

@@ -15,3 +15,5 @@ export * from "./token-lease.js";
 
 export * from "./oauth-types.js";
 export * from "./oauth-admission.js";
+export * from "./google-token-store.js";
+export * from "./google-oauth-store.js";
