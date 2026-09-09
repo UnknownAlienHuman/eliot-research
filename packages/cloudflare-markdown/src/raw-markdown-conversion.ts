@@ -293,6 +293,7 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
         if ((inserted.meta?.changes ?? 0) !== 1) throw new Error("conversion reservation was not committed");
       } catch {
         const row = await readRow(operationId);
+        if (row !== null && (row.request_sha256 !== requestSha || row.authority_sha256 !== authoritySha)) return { ...base(operationId, captureId, capture.content_sha256, "FAILED"), failure_code: "IDEMPOTENCY_CONFLICT" };
         const replayResult = row === null ? null : await replay(row, contextSnapshot, capture);
         if (replayResult !== null) return replayResult;
         return { ...base(operationId, captureId, capture.content_sha256, "UNKNOWN"), failure_code: "PROVIDER_UNCERTAIN" };

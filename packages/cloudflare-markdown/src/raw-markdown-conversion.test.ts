@@ -92,6 +92,25 @@ describe("durable raw markdown conversion", () => {
     expect([...rows.values()][0]?.state).toBe("STARTED");
     expect(provider).not.toHaveBeenCalled();
   });
+  it("rejects a changed request when concurrent reservation loses the insert race", async () => {
+    const { database } = fakeDatabase();
+    const contentSha = await sha256(bytes);
+    const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-race", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "race.pdf", object_key: "raw/capture-race", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
+    let reads = 0;
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const provider = vi.fn(async () => ({ disposition: "CONVERTED" as const, context: { operation_id: "", attempt_id: "", input_sha256: contentSha, profile_generation: "profile-1" }, provider_result_id: "provider-race", name: "race.pdf", detected_mime: "application/pdf", format: "markdown" as const, tokens: 1, data: "# Race", data_sha256: await sha256(new TextEncoder().encode("# Race")), data_bytes: 6 }));
+    const output = new Map<string, Uint8Array>();
+    const service = createRawMarkdownConversionService({ database, profile_generation: "profile-1", adapter: { convert: provider }, source: { read: async () => { reads += 1; if (reads < 2) await gate; return capture; }, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined }, output: { putImmutable: async (input) => { const value = input.key.endsWith("/output.md") ? new TextEncoder().encode("# Race") : new Uint8Array(await new Response(input.body).arrayBuffer()); output.set(input.key, value); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } } });
+    const context = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" };
+    const firstPromise = service.convert(context, "capture-race", { idempotency_key: "same-race", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    const secondPromise = service.convert(context, "capture-race", { idempotency_key: "same-race", max_output_bytes: 101, max_tokens: 10, timeout_ms: 1_000 });
+    release();
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first.state).toBe("COMPLETE");
+    expect(second).toMatchObject({ state: "FAILED", failure_code: "IDEMPOTENCY_CONFLICT" });
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
   it("reserves one provider attempt and replays its immutable receipt", async () => {
     const { database } = fakeDatabase();
     const contentSha = await sha256(bytes);
