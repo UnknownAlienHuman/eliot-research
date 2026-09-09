@@ -5,13 +5,14 @@
 // tool context in an explicitly supplied local project directory and permits
 // only the fixed account/Access requests used by the Access provisioner.
 
-import { spawn as nodeSpawn } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { scrubTokenEnv } from "./cloudflare-wrangler-oauth.mjs";
 
 export const CLOUDFLARE_MCP_TRANSPORT = "cloudflare-mcp";
 const SERVER = "cloudflare-api";
 const TOOL = "execute";
+const SERVER_URL = "https://mcp.cloudflare.com/mcp";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 512 * 1024;
 
@@ -35,8 +36,7 @@ function checkCwd(value) {
 }
 
 function checkAccountId(value) {
-  if (typeof value !== "string" || value.length < 1 || value.length > 64 ||
-      !/^[A-Za-z0-9_-]+$/u.test(value)) {
+  if (typeof value !== "string" || !/^[a-f0-9]{32}$/u.test(value)) {
     fail("MCP_ACCOUNT_INVALID", "CLOUDFLARE_ACCOUNT_ID is invalid");
   }
   return value;
@@ -86,7 +86,7 @@ function checkKnownRequest(accountId, method, path, body) {
     return;
   }
   const appId = appIdFromPath(path, accountSegment);
-  if (appId !== null) {
+  if (method === "GET" && appId !== null) {
     if (body !== undefined) fail("MCP_REQUEST_INVALID", "policy read cannot carry a body");
     return;
   }
@@ -94,7 +94,7 @@ function checkKnownRequest(accountId, method, path, body) {
     exactKeys(body, ["type", "name", "domain", "destinations", "session_duration", "app_launcher_visible", "policies"], "Access application request");
     return;
   }
-  if (method === "POST" && appIdFromPath(path, accountSegment) !== null) {
+  if (method === "POST" && appId !== null) {
     exactKeys(body, ["name", "decision", "include"], "Access policy request");
     return;
   }
@@ -106,28 +106,28 @@ function jsonRpcError(error) {
   return message === undefined ? "Cloudflare MCP protocol error" : "Cloudflare MCP protocol request failed";
 }
 
-function serverIsOAuth(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
-  const item = value;
-  const name = item.name ?? item.server ?? item.serverName;
-  if (name !== SERVER) return false;
-  const candidates = [
-    item.authStatus,
-    item.auth_status,
-    item.auth?.status,
-    item.auth?.state,
-  ];
-  return candidates.some((candidate) => {
-    const status = typeof candidate === "string" ? candidate : candidate?.status ?? candidate?.state;
-    return typeof status === "string" && status.toLowerCase() === "oauth";
-  });
+function configuredTransportIsSafe(transport) {
+  return transport !== null && typeof transport === "object" && !Array.isArray(transport) &&
+    transport.type === "streamable_http" && transport.url === SERVER_URL &&
+    transport.bearer_token_env_var == null && transport.http_headers == null &&
+    transport.env_http_headers == null && transport.http_headers_helper == null &&
+    transport.env_vars == null;
 }
 
-function findOAuthServer(value, depth = 0) {
-  if (depth > 5 || value === null || typeof value !== "object") return false;
-  if (serverIsOAuth(value)) return true;
-  if (Array.isArray(value)) return value.some((item) => findOAuthServer(item, depth + 1));
-  return Object.values(value).some((item) => findOAuthServer(item, depth + 1));
+function requireConfiguredOAuth(getValue, listValue) {
+  if (getValue === null || typeof getValue !== "object" || Array.isArray(getValue) ||
+      getValue.name !== SERVER || getValue.enabled !== true || !configuredTransportIsSafe(getValue.transport)) {
+    fail("MCP_AUTH_UNAVAILABLE", "Cloudflare MCP OAuth server configuration is unavailable");
+  }
+  if (!Array.isArray(listValue) || listValue.length > 100) {
+    fail("MCP_PROTOCOL_INVALID", "Cloudflare MCP server list is malformed");
+  }
+  const server = listValue.find((item) => item !== null && typeof item === "object" &&
+    !Array.isArray(item) && item.name === SERVER);
+  if (server === undefined || server.enabled !== true || !configuredTransportIsSafe(server.transport) ||
+      server.auth_status !== "o_auth") {
+    fail("MCP_AUTH_UNAVAILABLE", "Cloudflare MCP OAuth connection is unavailable");
+  }
 }
 
 function threadIdFrom(value) {
@@ -138,6 +138,7 @@ function threadIdFrom(value) {
 }
 
 function cloudflareEnvelopeFrom(value) {
+  if (value?.isError === true) fail("MCP_PROTOCOL_ERROR", "Cloudflare MCP execute returned an error");
   const blocks = value?.content;
   if (!Array.isArray(blocks)) fail("MCP_PROTOCOL_INVALID", "Cloudflare MCP execute returned no content");
   const text = blocks.find((block) => block?.type === "text" && typeof block.text === "string")?.text;
@@ -164,17 +165,53 @@ function defaultSpawn(command, args, options) {
   return nodeSpawn(command, args, options);
 }
 
+function defaultRunCli(args, options) {
+  return spawnSync(options.command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    encoding: "utf8",
+    maxBuffer: MAX_LINE_BYTES,
+    timeout: options.timeoutMs,
+    windowsHide: true,
+    shell: false,
+  });
+}
+
+function readCliJson(runCli, args, options) {
+  let result;
+  try { result = runCli(args, options); } catch { fail("MCP_UNAVAILABLE", "Cloudflare MCP CLI metadata could not be read"); }
+  if (result === null || typeof result !== "object" || result.status !== 0 ||
+      typeof result.stdout !== "string" || result.stdout.length === 0) {
+    fail("MCP_AUTH_UNAVAILABLE", "Cloudflare MCP CLI metadata is unavailable");
+  }
+  try { return JSON.parse(result.stdout); }
+  catch { fail("MCP_PROTOCOL_INVALID", "Cloudflare MCP CLI metadata is not valid JSON"); }
+}
+
 export function createCloudflareMcpTransport(options = {}) {
   const cwd = checkCwd(options.cwd);
   const accountId = checkAccountId(options.accountId);
   const timeoutMs = checkTimeout(options.timeoutMs);
   const spawnProcess = options.spawnProcess ?? defaultSpawn;
-  const child = spawnProcess("codex", ["app-server", "--listen", "stdio://"], {
+  const runCli = options.runCli ?? defaultRunCli;
+  const sourceEnv = options.env ?? process.env;
+  const staticAuthKeys = ["CLOUDFLARE_API_TOKEN", "CF_API_TOKEN", "CLOUDFLARE_API_KEY", "CLOUDFLARE_EMAIL", "CLOUDFLARE_TOKEN"];
+  if (staticAuthKeys.some((key) => typeof sourceEnv[key] === "string" && sourceEnv[key].trim() !== "")) {
+    fail("MCP_AUTH_UNAVAILABLE", "Cloudflare MCP transport cannot use a static token");
+  }
+  const childEnv = scrubTokenEnv(sourceEnv);
+  const command = process.platform === "win32" ? "codex.exe" : "codex";
+  const cliOptions = { command, cwd, env: childEnv, timeoutMs };
+  requireConfiguredOAuth(
+    readCliJson(runCli, ["mcp", "get", SERVER, "--json"], cliOptions),
+    readCliJson(runCli, ["mcp", "list", "--json"], cliOptions),
+  );
+  const child = spawnProcess(command, ["app-server", "--listen", "stdio://"], {
     cwd,
-    env: scrubTokenEnv(options.env ?? process.env),
+    env: childEnv,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-    shell: process.platform === "win32",
+    shell: false,
   });
   const pending = new Map();
   let nextId = 1;
@@ -242,8 +279,6 @@ export function createCloudflareMcpTransport(options = {}) {
     ready = (async () => {
       await rpc("initialize", { clientInfo: { name: "eliot-research-access", version: "1.0.0" }, capabilities: { experimentalApi: true } });
       write({ jsonrpc: "2.0", method: "initialized", params: {} });
-      const status = await rpc("mcpServerStatus/list", { detail: "toolsAndAuthOnly", limit: 100 });
-      if (!findOAuthServer(status)) fail("MCP_AUTH_UNAVAILABLE", "Cloudflare MCP OAuth connection is unavailable");
       const thread = await rpc("thread/start", { cwd, ephemeral: true });
       return threadIdFrom(thread);
     })().catch((error) => {
@@ -266,6 +301,19 @@ export function createCloudflareMcpTransport(options = {}) {
     if (!envelope.success || envelope.status < 200 || envelope.status >= 300) {
       throw new CloudflareMcpOAuthError("MCP_REQUEST_FAILED", `${method} ${path} failed (${envelope.status})`);
     }
+    const listPath = path === `/accounts/${encodeURIComponent(accountId)}/access/apps?per_page=100` ||
+      appIdFromPath(path, encodeURIComponent(accountId)) !== null;
+    if (listPath) {
+      const info = envelope.result_info;
+      const listed = envelope.result;
+      if (!Array.isArray(listed) || info === null || typeof info !== "object" || Array.isArray(info) ||
+          !Number.isSafeInteger(info.page) || !Number.isSafeInteger(info.per_page) ||
+          !Number.isSafeInteger(info.count) || !Number.isSafeInteger(info.total_count) ||
+          !Number.isSafeInteger(info.total_pages) || info.page !== 1 || info.total_pages !== 1 ||
+          info.count !== info.total_count || info.count !== listed.length || info.count < 0 || info.per_page < 1) {
+        throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
+      }
+    }
     return envelope.result ?? envelope;
   }
 
@@ -277,9 +325,9 @@ export function createCloudflareMcpTransport(options = {}) {
   }
 
   function close() {
-    if (closed) return;
-    failAll(new CloudflareMcpOAuthError("MCP_CLOSED", "Cloudflare MCP transport closed"));
+    if (!closed) failAll(new CloudflareMcpOAuthError("MCP_CLOSED", "Cloudflare MCP transport closed"));
     try { child.kill(); } catch { /* best effort during process teardown */ }
+    process.removeListener("exit", close);
   }
 
   process.once("exit", close);

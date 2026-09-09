@@ -3,6 +3,9 @@ import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 
+const ACCOUNT_ID = "00000000000000000000000000000000";
+const MCP_URL = "https://mcp.cloudflare.com/mcp";
+
 class FakeProcess extends EventEmitter {
   constructor() {
     super();
@@ -23,18 +26,29 @@ class FakeProcess extends EventEmitter {
 
   #result(message) {
     if (message.method === "initialize") return { protocolVersion: "2025-06-18" };
-    if (message.method === "mcpServerStatus/list") return { servers: [{ name: "cloudflare-api", authStatus: "oAuth" }] };
     if (message.method === "thread/start") return { thread: { id: "volatile-thread-test" } };
     if (message.method === "mcpServer/tool/call") {
       const code = message.params?.arguments?.code;
       assert.match(code, /^async \(\) => cloudflare\.request\(/u);
       assert.doesNotMatch(code, /CLOUDFLARE_API_TOKEN|bearer|Authorization/iu);
       const request = JSON.parse(code.slice("async () => cloudflare.request(".length, -1));
-      if (request.path === "/accounts/account-test") {
-        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: "account-test" } }) }] };
+      if (request.path === `/accounts/${ACCOUNT_ID}`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: ACCOUNT_ID } }) }] };
       }
-      assert.equal(request.path, "/accounts/account-test/access/organizations");
-      return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [{ auth_domain: "test.cloudflareaccess.com" }], result_info: { page: 1, total_pages: 1 } }) }] };
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps?per_page=100`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) }] };
+      }
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) }] };
+      }
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-error/policies`) {
+        return { isError: true, content: [{ type: "text", text: "this must not be parsed" }] };
+      }
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 2 } }) }] };
+      }
+      assert.equal(request.path, `/accounts/${ACCOUNT_ID}/access/organizations`);
+      return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [{ auth_domain: "test.cloudflareaccess.com" }] }) }] };
     }
     throw new Error(`unexpected method ${message.method}`);
   }
@@ -47,35 +61,80 @@ class FakeProcess extends EventEmitter {
 const fake = new FakeProcess();
 const transport = createCloudflareMcpTransport({
   cwd: resolve("."),
-  accountId: "account-test",
+  accountId: ACCOUNT_ID,
+  runCli: (args, cliOptions) => {
+    assert.deepEqual(cliOptions.env.CLOUDFLARE_API_TOKEN, undefined);
+    assert.deepEqual(cliOptions.env.CF_API_TOKEN, undefined);
+    if (args[1] === "get") {
+      return { status: 0, stdout: JSON.stringify({
+        name: "cloudflare-api",
+        enabled: true,
+        transport: {
+          type: "streamable_http",
+          url: MCP_URL,
+          bearer_token_env_var: null,
+          http_headers: null,
+          env_http_headers: null,
+          http_headers_helper: null,
+        },
+      }) };
+    }
+    assert.deepEqual(args, ["mcp", "list", "--json"]);
+    return { status: 0, stdout: JSON.stringify([{ name: "cloudflare-api", enabled: true, transport: {
+      type: "streamable_http",
+      url: MCP_URL,
+      bearer_token_env_var: null,
+      http_headers: null,
+      env_http_headers: null,
+      http_headers_helper: null,
+    }, auth_status: "o_auth" }]) };
+  },
   spawnProcess: (command, args, spawnOptions) => {
-    assert.equal(command, "codex");
+    assert.equal(command, process.platform === "win32" ? "codex.exe" : "codex");
     assert.deepEqual(args, ["app-server", "--listen", "stdio://"]);
     assert.equal(spawnOptions.env.CLOUDFLARE_API_TOKEN, undefined);
     assert.equal(spawnOptions.windowsHide, true);
+    assert.equal(spawnOptions.shell, false);
     return fake;
   },
   env: { PATH: process.env.PATH ?? "" },
 });
 await transport.verifyAccount();
-assert.deepEqual(await transport.request("GET", "/accounts/account-test/access/organizations"), [{ auth_domain: "test.cloudflareaccess.com" }]);
+assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/organizations`), [{ auth_domain: "test.cloudflareaccess.com" }]);
+assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps?per_page=100`), []);
+assert.deepEqual(await transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`, { name: "owner", decision: "allow", include: [] }), []);
 await assert.rejects(
-  () => transport.request("GET", "/accounts/account-test/access/apps?per_page=10"),
+  () => transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-error/policies`, { name: "owner", decision: "allow", include: [] }),
+  (error) => error?.code === "MCP_PROTOCOL_ERROR",
+);
+await assert.rejects(
+  () => transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies`, { name: "owner", decision: "allow", include: [] }),
+  (error) => error?.code === "MCP_PROTOCOL_INVALID",
+);
+await assert.rejects(
+  () => transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps?per_page=10`),
   (error) => error?.code === "MCP_REQUEST_INVALID",
 );
 await assert.rejects(
-  () => transport.request("POST", "/accounts/account-test/access/apps", { arbitrary: true }),
+  () => transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps`, { arbitrary: true }),
   (error) => error?.code === "MCP_REQUEST_INVALID",
 );
 transport.close();
 assert.deepEqual(fake.calls.map((call) => call.method), [
   "initialize",
   "initialized",
-  "mcpServerStatus/list",
   "thread/start",
   "mcpServer/tool/call",
   "mcpServer/tool/call",
+  "mcpServer/tool/call",
+  "mcpServer/tool/call",
+  "mcpServer/tool/call",
+  "mcpServer/tool/call",
 ]);
-assert.equal(fake.calls[5]?.params?.server, "cloudflare-api");
-assert.equal(fake.calls[5]?.params?.tool, "execute");
+assert.equal(fake.calls[8]?.params?.server, "cloudflare-api");
+assert.equal(fake.calls[8]?.params?.tool, "execute");
+assert.throws(
+  () => createCloudflareMcpTransport({ cwd: resolve("."), accountId: ACCOUNT_ID, env: { CLOUDFLARE_API_TOKEN: "redacted" } }),
+  (error) => error?.code === "MCP_AUTH_UNAVAILABLE",
+);
 console.log("Cloudflare official MCP OAuth protocol fixture: PASS");
