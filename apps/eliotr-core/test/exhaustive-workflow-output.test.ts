@@ -5,7 +5,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
-import { exhaustiveJobId, readExhaustiveJobCoverage } from "@eliotr/retrieval";
+import { canonicalRetrievalJson, exhaustiveJobId, readExhaustiveJobCoverage } from "@eliotr/retrieval";
 import { validateExhaustiveWorkflowOutput } from "@eliotr/cloudflare-navigation";
 
 const runtime = env as unknown as Q1Runtime;
@@ -163,7 +163,7 @@ describe("durable exhaustive Workflow output boundary", () => {
 
     // A foreign journal row is counted by the pending loader but excluded by
     // denominator readback; the disagreement must remain UNKNOWN.
-    const foreignJson = JSON.stringify({ shard_id: "foreign-shard", disposition: "SETTLED" });
+    const foreignJson = canonicalRetrievalJson({ shard_id: "foreign-shard", disposition: "SETTLED" });
     const foreignDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(foreignJson)))]
       .map((byte) => byte.toString(16).padStart(2, "0")).join("");
     await runtime.CORE_DB.prepare(
