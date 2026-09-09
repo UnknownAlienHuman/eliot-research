@@ -10,8 +10,12 @@ hand to a deployment agent; no step requires reading the architecture master doc
 
 ## Operator identity (non-secret, browser OAuth only)
 
-Browser OAuth through the local Wrangler profile is the ONLY operator auth method.
-No API key, API token, or service token is used by this flow, and none may be added to tracked
+Operator authentication uses browser OAuth. The automated scripts currently consume the local
+Wrangler profile. The explicitly selected official Cloudflare MCP plugin may also use its own
+managed browser-OAuth connection for account/API inspection and the gated Access provisioning
+transport; it does not export credentials to Wrangler or grant a general deployment capability.
+No API key, API token, or service token is used by
+the operator flow, and none may be added to tracked
 files. The tracked file `infra/cloudflare/operator-profile.json` is an account-neutral template
 with fictional placeholders only (protocol `eliotr.cloudflare-operator-profile.v1`). Real operator
 values live only in the ignored local profile `.eliotr-state/cloudflare/operator-profile.json`
@@ -50,7 +54,22 @@ scopes do not establish Access-management or billing authority, and the exact ca
 endpoint entitlement or restricted API availability. These responses are typed authority gaps,
 not evidence of zero usage. Preflight must keep the affected values unknown/sealed; it must not
 fabricate counters, treat dashboard state as API evidence, or fall back to a static token. Resolving
-these permissions requires a separately reviewed operator-auth decision and is outside this runbook.
+these permissions must preserve the existing usage and product-completion gates.
+
+The user selected the installed official Cloudflare MCP plugin on 2026-09-09. Reconnecting its
+existing project-local server with `codex mcp login cloudflare-api` restored managed OAuth.
+A fresh managed MCP client discovered `search`, `execute`, and `docs`, and actual account,
+Zero Trust organization, Access application and identity-provider reads returned HTTP 200.
+The earlier Wrangler Access 403 therefore does not mean the account is inaccessible. No global
+MCP registration or static-token fallback is necessary. The provisioner keeps Wrangler as its
+default and supports the explicitly selected MCP transport described below.
+
+Both `/accounts/{account_id}/billable/usage` and `/accounts/{account_id}/billing/usage` still
+returned Cloudflare error `10000` through MCP. The [official Usage v2 specification](https://developers.cloudflare.com/api/resources/billing/subresources/usage/methods/get_account_usage_v2/)
+labels that endpoint Alpha/Restricted; the precise authorization or entitlement cause remains
+unconfirmed. Keep those counters unknown. Account-specific readbacks belong only in ignored
+operator state and the local MCP map.
+
 The local operator policy still declares `free-tier` with `paid_overage:false`, while the current
 account plan readback shows Paid; that policy/account-plan distinction is an unresolved
 configuration reconciliation item, and no tier thresholds are inferred here.
@@ -62,6 +81,14 @@ configuration reconciliation item, and no tier thresholds are inferred here.
   profile (`ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth`). The deployer verifies the active profile
   with `wrangler whoami` against the exact account ID from the local ignored profile before any
   mutation.
+- Wrangler remains the default Access transport. For an explicit run through the selected official
+  Cloudflare MCP OAuth connection, set `ELIOTR_ACCESS_TRANSPORT=cloudflare-mcp` and provide
+  `ELIOTR_CLOUDFLARE_MCP_CWD` as an absolute local Cloudflare project directory. The MCP transport
+  requires `ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth` so static-token mode cannot be selected
+  accidentally. It starts a volatile Codex app-server context, verifies the exact account by
+  readback, and permits only the fixed Access organization/application/policy requests issued by
+  `provision-cloudflare-access.mjs`; it never accepts arbitrary MCP code or exports the managed
+  OAuth credential. Wrangler continues to own deployment and binding operations.
 - The Cloudflare account has Zero Trust enabled.
 - No `CLOUDFLARE_API_TOKEN` is required for the operator flow. (A static token remains only for
   non-interactive CI, where browser login is impossible; it is never the documented operator path.)
@@ -80,6 +107,8 @@ configuration reconciliation item, and no tier thresholds are inferred here.
 ```text
 ELIOTR_CLOUDFLARE_AUTH_MODE       required: wrangler-oauth (operator browser flow; unset means CI API-token mode)
 ELIOTR_WRANGLER_PROFILE           optional: local browser-OAuth Wrangler profile name
+ELIOTR_ACCESS_TRANSPORT            optional: wrangler (default) or cloudflare-mcp (managed MCP OAuth)
+ELIOTR_CLOUDFLARE_MCP_CWD          required only for cloudflare-mcp: absolute local project directory
 CLOUDFLARE_ACCOUNT_ID              required: account ID from the local ignored profile (exact readback)
 CLOUDFLARE_API_TOKEN               CI-only; leave unset for browser-OAuth operation (the deployer injects
                                    the short-lived OAuth bearer into child-process memory only)

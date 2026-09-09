@@ -90,10 +90,12 @@ const bytes = Buffer.from(JSON.stringify(config));
 function harness(overrides = {}) {
   const calls = [];
   const receipts = [];
+  const provisionerEnvs = [];
   let reads = 0;
   const options = { confirmLive: true, verifyCode: async () => {}, environment, usageSnapshot: defaultUsageSnapshot, now: () => now, log: () => {},
     execute(command, args, cwd, env) {
       const name = `${command} ${args.join(" ")}`; calls.push(name);
+      if (args[0]?.startsWith("scripts/provision-")) provisionerEnvs.push({ name: args[0], env: { ...env } });
       assert.equal(env.ELIOTR_DEPLOYMENT_GENERATION, "git-test");
       assert.equal(resolve(cwd), resolve(fileURLToPath(new URL("../", import.meta.url)),
         args.includes("--config") ? "apps/eliotr-core" : "."));
@@ -117,7 +119,7 @@ function harness(overrides = {}) {
         transport_completion_is_research_completion: false, ingest_live_qualified: false,
       } });
     }, ...overrides.options };
-  return { calls, receipts, options };
+  return { calls, receipts, provisionerEnvs, options };
 }
 let cases = 0;
 const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`); };
@@ -144,6 +146,17 @@ await check("successful ordering and no implicit live qualification", async () =
   assert.deepEqual(Object.keys(receipt).sort(), schema.required.slice().sort());
   const itemSchema = schema.properties.remote_http_smoke.oneOf.find((branch) => branch.properties.state.const === "PASS").properties.results.items;
   assert.deepEqual(Object.keys(receipt.remote_http_smoke.results[0]).sort(), itemSchema.required.slice().sort());
+});
+await check("MCP Access child receives no injected Wrangler bearer", async () => {
+  const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_TRANSPORT: "cloudflare-mcp" } } });
+  await deployCloudflare(test.options);
+  assert.equal(test.provisionerEnvs.length, 8);
+  const accessEnvs = test.provisionerEnvs.filter((value) => value.name === "scripts/provision-cloudflare-access.mjs");
+  assert.equal(accessEnvs.length, 2);
+  for (const value of accessEnvs) assert.equal(value.env.CLOUDFLARE_API_TOKEN, undefined);
+  const otherEnvs = test.provisionerEnvs.filter((value) => value.name !== "scripts/provision-cloudflare-access.mjs");
+  assert.equal(otherEnvs.length, 6);
+  for (const value of otherEnvs) assert.equal(value.env.CLOUDFLARE_API_TOKEN, "secret-token");
 });
 await check("missing cookie retains NOT_EXECUTED", async () => {
   const test = harness({ options: { environment: { ...environment, ELIOTR_ACCESS_SMOKE_COOKIE: undefined } } });
