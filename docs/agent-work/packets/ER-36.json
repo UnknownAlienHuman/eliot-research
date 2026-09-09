@@ -19,6 +19,7 @@
       "apps/eliotr-core/src/gemini-mcp.test.ts",
       "apps/eliotr-core/src/gemini-mcp-service-token.test.ts",
       "integrations/gemini-spark/**",
+      "integrations/antigravity/**",
       "docs/implementation/gemini-spark-mcp.md",
       "apps/eliotr-core/src/http-special-routes.ts",
       "apps/eliotr-core/src/composition-root.ts",

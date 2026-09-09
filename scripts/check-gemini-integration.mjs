@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 
 const root = process.cwd();
 const setupPath = resolve(root, "integrations/gemini-spark/setup.mjs");
+const antigravityTestPath = resolve(root, "integrations/antigravity/test-setup.mjs");
 const manifestPath = resolve(root, "integrations/gemini-spark/extension/gemini-extension.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const expectedTools = [
@@ -139,4 +140,12 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 
-console.log("Gemini Spark MCP integration fixtures: PASS");
+const antigravity = spawnSync(process.execPath, [antigravityTestPath], {
+  cwd: root,
+  encoding: "utf8",
+});
+assert.equal(antigravity.status, 0, antigravity.stderr);
+assert.equal(antigravity.signal, null, `Antigravity fixture terminated by ${antigravity.signal}`);
+
+console.log("Legacy Gemini CLI integration fixtures: PASS");
+process.stdout.write(antigravity.stdout);

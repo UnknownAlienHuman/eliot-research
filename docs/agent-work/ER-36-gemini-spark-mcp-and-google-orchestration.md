@@ -1,4 +1,4 @@
-# ER-36: Gemini Spark MCP and Google orchestration
+# ER-36: Gemini Spark / Antigravity MCP and Google orchestration
 
 **Slice:** 0–1 bridge
 **Depends on:** ER-17, ER-18, ER-20, ER-21, ER-24, ER-26
@@ -9,9 +9,10 @@ profile. A missing optional profile is `NOT_EXECUTED`, not a Drive blocker.
 
 ## Objective
 
-Expose a minimal, read-only ELIOT MCP surface to Gemini Spark / Gemini CLI and define the safe
-orchestration boundary for the official Google Workspace extension, with optional gcloud support. Do not create a reverse
-authority channel and do not let a Google transport result promote itself into ELIOT state.
+Expose a minimal, read-only ELIOT MCP surface to Gemini Spark and Google Antigravity and define the
+safe client orchestration boundary. The active client profiles use Spark Connected Apps or Antigravity
+project-local MCP configuration; the retained Gemini CLI installer is legacy and unselected. Do not
+create a reverse authority channel and do not let a Google transport result promote itself into ELIOT state.
 
 ## Owned paths
 
@@ -23,6 +24,7 @@ authority channel and do not let a Google transport result promote itself into E
 - `apps/eliotr-core/src/gemini-mcp.test.ts`
 - `apps/eliotr-core/src/gemini-mcp-service-token.test.ts`
 - `integrations/gemini-spark/**`
+- `integrations/antigravity/**`
 - `docs/implementation/gemini-spark-mcp.md`
 - `apps/eliotr-core/src/http-special-routes.ts`
 - `apps/eliotr-core/src/composition-root.ts`
@@ -59,9 +61,12 @@ authority channel and do not let a Google transport result promote itself into E
 - no ELIOT tool can directly mutate Google;
 - mutating Google plans require confirmation and exact readback;
 - a valid transport receipt remains candidate-only;
-- the setup script is atomic, idempotent, secret-free, and pins reviewed Google extension refs;
-- the default setup profile is Workspace-only and does not provision or require a Google Cloud
-  project, Cloud OAuth client, Vertex route, or Gemini API key; gcloud is explicit opt-in;
+- the retained Gemini CLI setup is atomic, idempotent, secret-free, and pins reviewed extension refs;
+- the active Antigravity setup creates only a disabled, no-secret project-local template, preserves
+  unrelated MCP servers, refuses conflicts, and never installs a client or extension;
+- the Spark profile documents URL-based Connected Apps separately from the Antigravity profile;
+- the default Workspace profile does not provision or require a Google Cloud project, Cloud OAuth
+  client, Vertex route, or Gemini API key; gcloud is explicit opt-in;
 - Drive Exchange and Gemini direct orchestration cannot simultaneously own the transport.
 - the validated `GOOGLE_EXTERNAL_TRANSPORT` profile selects the applicable gate; unknown, mixed and
   explicitly disabled deployment profiles fail closed, and no launch-check argument can override it;
@@ -71,9 +76,9 @@ authority channel and do not let a Google transport result promote itself into E
 
 ## User scope decision — 2026-09-09
 
-The active user scope is Google Drive/Workspace through Gemini Spark MCP. ELIOT configures and
-validates the bounded MCP plan/receipt surface; the external Workspace extension owns the Google
-action. Google Cloud/gcloud and Google AI Studio/Gemini API are optional future contours and remain
+The active user scope is Google Drive/Workspace through Gemini Spark Connected Apps or Google
+Antigravity MCP. ELIOT configures and validates the bounded MCP plan/receipt surface; the selected
+client owns the Google action. Google Cloud/gcloud and Google AI Studio/Gemini API are optional future contours and remain
 unimplemented unless separately selected and qualified. The unfinished server-owned ChatGPT Drive
 Exchange is a separate legacy product path, not authorization or a prerequisite to create a Google
 Cloud project/client for this Workspace profile.

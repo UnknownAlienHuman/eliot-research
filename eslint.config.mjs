@@ -23,6 +23,7 @@ export default tseslint.config(
       "**/dist/**",
       "**/dist-types/**",
       "**/.wrangler/**",
+      "**/.astro/**",
       "**/worker-configuration.d.ts",
       "coverage/**",
     ],
