@@ -20,6 +20,13 @@ Delegated integration paths:
 - `packages/cloudflare-navigation/src/orientation-materialization.ts` (delegated adapter)
 - `apps/eliotr-core/test/structural-navigation-q1.test.ts`
 
+The bounded native N1 follow-up is implemented through these coordinated delegated paths:
+
+- `packages/contracts/src/coordinate-map.ts` and its versioned fixture/test (ER-01 contract owner)
+- `packages/cloudflare-evidence/src/coordinate-map-reader.ts` and focused R2 readback test (ER-07 authority reader)
+- `packages/cloudflare-navigation/src/native-coordinate-map-adapter.ts` and D1 persistence test (ER-31 navigation owner)
+- `packages/platform-cloudflare/src/ingest-validation.ts` and the Q1 import/promotion fixture (ER-14)
+
 ## Read only
 
 - `packages/contracts/src/normalized-bundle.ts`
@@ -37,8 +44,15 @@ Delegated integration paths:
 - Materialize projection source items to R2 Work before managed-index upload.
 - Derive SourceCard and DocumentMap navigation from exact admitted normalized bytes, preserving explicit
   gaps for absent or approximate native coordinates and persisting through the existing immutable D1 store.
-  The current N1 callable boundary is normalized-only; native coordinate-map bytes and their typed admitted
-  identity/precision contract are a follow-up unit and must not be inferred from caller JSON.
+  The normalized-only projector remains the canonical structural parser. The native N1 follow-up admits a
+  strict table-cell coordinate-map protocol from the manifest's per-file R2 object, verifies source/content
+  identity and currentness, then merges only `NAVIGATION_ONLY` metadata into the existing DocumentMap.
+  It does not create EvidenceHandles, raise manifest capability ceilings, or infer native coordinates from
+  caller JSON. Native page/region/code precision and evidence resolution remain later gaps.
+  The current N1 qualification gate requires an admitted `QUALIFIED`/`EXACT` source assurance plus
+  manifest table and mapping artifacts; absent qualification stays an explicit precision gap. Any future
+  canonical native-map domain semantics target `eliotr-projection-core`; versioned TS/Rust/Wasm parity
+  fixtures are required before promotion.
 
 ## Acceptance
 

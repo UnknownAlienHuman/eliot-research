@@ -14,6 +14,12 @@ outside the paths below.
 - `packages/retrieval/src/evidence-resolver.ts`
 - `packages/retrieval/src/exhaustive.ts`
 
+Delegated N1 admitted-map reader paths:
+
+- `packages/cloudflare-evidence/src/exhaustive-manifest.ts` (canonical manifest identity/readback)
+- `packages/cloudflare-evidence/src/coordinate-map-reader.ts`
+- `packages/cloudflare-evidence/src/coordinate-map-reader.test.ts`
+
 ## Read only
 
 - `packages/contracts/src/evidence.ts`
@@ -36,6 +42,8 @@ outside the paths below.
 - Pinned handle reproduction is exact.
 - Missing map narrows precision rather than fabricating coordinates.
 - No Worker loads whole source or corpus.
+- A table-cell map is read only from an admitted per-file R2 object, bound to the normalized content
+  digest and current owner authority; the adapter remains navigation-only until ER-39 resolution.
 
 ## Mandatory negative boundary
 
