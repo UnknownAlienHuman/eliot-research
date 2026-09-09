@@ -1,8 +1,12 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { createExhaustiveWorkflowBinding } from "@eliotr/cloudflare-navigation";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
+import { exhaustiveJobId } from "@eliotr/retrieval";
+import { validateExhaustiveWorkflowOutput } from "@eliotr/cloudflare-navigation";
 
 const runtime = env as unknown as Q1Runtime;
 
@@ -82,6 +86,7 @@ describe("durable exhaustive Workflow output boundary", () => {
         receipt: { ...canonicalReceipt, result_artifact_ref: "forged-artifact" },
       },
     };
+    let workflowStatus: "complete" | "running" = "complete";
     const fencedWorkflow = {
       create: (options: Parameters<typeof original.create>[0]) => original.create(options),
       async get(id: string) {
@@ -89,7 +94,7 @@ describe("durable exhaustive Workflow output boundary", () => {
         return {
           id: instance.id,
           async status() {
-            return { status: "complete" as const, output: forged };
+            return { status: workflowStatus, output: forged };
           },
           terminate: (options?: { readonly rollback?: boolean }) => instance.terminate(options),
         };
@@ -101,19 +106,68 @@ describe("durable exhaustive Workflow output boundary", () => {
     expect(complete.status).toBe(200);
     expect((await complete.json() as { readonly data?: { readonly job?: unknown } }).data?.job).toBeUndefined();
 
-    forged = {
+    workflowStatus = "running";
+    const running = await handleHttp(new Request(statusUrl, { method: "GET" }), fencedRuntime, {} as ExecutionContext, access(owner));
+    expect(running.status).toBe(200);
+    expect((await running.json() as { readonly data?: { readonly job?: unknown } }).data?.job).toBeUndefined();
+
+    // Insert a fresh pending baseline under the already admitted scope. The
+    // denominator is read from the genuine completed job, while the pending
+    // row itself is the canonical source for the positive UNFINISHED case.
+    const denominatorRow = await runtime.CORE_DB.prepare(
+      "SELECT scope_snapshot_id,scope_snapshot_revision,scope_digest,denominator_shard_ids_json,denominator_shards,expires_at FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(binding.job_id).first<{ readonly scope_snapshot_id: string; readonly scope_snapshot_revision: number; readonly scope_digest: string; readonly denominator_shard_ids_json: string; readonly denominator_shards: number; readonly expires_at: string }>();
+    expect(denominatorRow).not.toBeNull();
+    if (denominatorRow === null) return;
+    const denominatorIds = JSON.parse(denominatorRow.denominator_shard_ids_json) as string[];
+    expect(denominatorIds.length).toBe(denominatorRow.denominator_shards);
+    const pendingKey = "exhaustive-output-pending";
+    const pendingJobId = await exhaustiveJobId({ principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, pendingKey);
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO retrieval_exhaustive_job (job_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,scope_snapshot_id,scope_snapshot_revision,scope_digest,plan_id,coverage_denominator_ref,denominator_shard_ids_json,state,denominator_shards,settled_shards,total_scanned_sections,total_matches,result_artifact_ref,coverage_receipt_ref,created_at,expires_at) VALUES (?1,?2,'owner_pwa','credential-1',?3,?4,?5,?6,?7,'pending-output-plan',?8,?9,'PENDING',?10,NULL,NULL,NULL,NULL,NULL,?11,?12)",
+    ).bind(pendingJobId, owner, pendingKey, "e".repeat(64), denominatorRow.scope_snapshot_id, denominatorRow.scope_snapshot_revision,
+      denominatorRow.scope_digest, canonicalReceipt.coverage_denominator_ref, denominatorRow.denominator_shard_ids_json,
+      denominatorRow.denominator_shards, new Date().toISOString(), denominatorRow.expires_at).run();
+    const callbackContext: AuthenticatedRequestContext = {
+      request: new Request(statusUrl), principal_ref: owner, client_class: "owner_pwa",
+      credential_generation: "credential-1", trace_id: "output-boundary-trace",
+    };
+    const unfinishedValidOutput = {
       protocol: "eliotr.exhaustive-query.v1",
       job: {
         status: "UNFINISHED",
-        job_id: binding.job_id,
+        job_id: pendingJobId,
         coverage_denominator_ref: canonicalReceipt.coverage_denominator_ref,
-        denominator_shards: canonicalReceipt.denominator_shards,
-        settled_shards: Math.max(0, Number(canonicalReceipt.denominator_shards) - 1),
-        unsettled_shard_ids: ["forged-shard"],
+        denominator_shards: denominatorRow.denominator_shards,
+        settled_shards: 0,
+        unsettled_shard_ids: denominatorIds,
       },
     };
-    const unfinished = await handleHttp(new Request(statusUrl, { method: "GET" }), fencedRuntime, {} as ExecutionContext, access(owner));
-    expect(unfinished.status).toBe(200);
-    expect((await unfinished.json() as { readonly data?: { readonly job?: unknown } }).data?.job).toBeUndefined();
+    const pendingBinding = { job_id: pendingJobId, principal_ref: owner, credential_generation: "credential-1" };
+    const pendingResult = await validateExhaustiveWorkflowOutput(runtime.CORE_DB, pendingBinding, callbackContext, unfinishedValidOutput);
+    expect(pendingResult?.job).toEqual(unfinishedValidOutput.job);
+    const foreignResult = await validateExhaustiveWorkflowOutput(runtime.CORE_DB, pendingBinding, callbackContext, {
+      ...unfinishedValidOutput,
+      job: { ...unfinishedValidOutput.job, unsettled_shard_ids: ["forged-shard"] },
+    });
+    expect(foreignResult).toBeNull();
+
+    // A persisted mutation after the first output read must invalidate the
+    // second readback; status callbacks cannot turn a stale result into a
+    // disclosed receipt.
+    forged = { protocol: "eliotr.exhaustive-query.v1", job: { status: "COMPLETE", receipt: canonicalReceipt } };
+    const callbackBinding = createExhaustiveWorkflowBinding({
+      database: runtime.CORE_DB,
+      workflow: fencedWorkflow,
+      deployment_generation: runtime.DEPLOYMENT_GENERATION,
+      parseRequest: () => { throw new Error("not used"); },
+      idempotencyKey: () => "exhaustive-output-boundary",
+      validateCurrentWorkflowJob: async () => {
+        await runtime.CORE_DB.prepare("UPDATE retrieval_exhaustive_job SET result_artifact_ref='mutated-after-fence' WHERE job_id=?1")
+          .bind(binding.job_id).run();
+      },
+    });
+    const callbackResult = await callbackBinding.status(callbackContext, workflowId);
+    expect(callbackResult.job).toBeUndefined();
   }, 20_000);
 });

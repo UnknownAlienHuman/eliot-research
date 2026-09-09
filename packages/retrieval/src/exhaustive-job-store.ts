@@ -511,6 +511,9 @@ export async function readExhaustiveJobCoverage(
   if (typeof row.denominator_shard_ids_json !== "string") {
     failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
   }
+  if (new TextEncoder().encode(row.denominator_shard_ids_json).byteLength > 65536) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
   let denominator: unknown;
   try {
     denominator = JSON.parse(row.denominator_shard_ids_json);
@@ -522,6 +525,9 @@ export async function readExhaustiveJobCoverage(
     failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
   }
   const denominatorIds = denominator as string[];
+  if (denominatorIds.length !== job.denominator_shards) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
   if (typeof row.job_id !== "string") {
     failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
   }

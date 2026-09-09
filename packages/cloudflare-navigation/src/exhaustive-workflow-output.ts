@@ -37,6 +37,10 @@ function nonNegativeSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+function positiveSafeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 1;
+}
+
 /** Decode only the published Q8 result shapes; no unknown fields are retained. */
 export function decodeExhaustiveWorkflowOutput(output: unknown): ExhaustiveQueryResult | null {
   if (!isRecord(output) || !exactKeys(output, ["protocol", "job"]) || output.protocol !== "eliotr.exhaustive-query.v1" || !isRecord(output.job)) {
@@ -52,7 +56,7 @@ export function decodeExhaustiveWorkflowOutput(output: unknown): ExhaustiveQuery
     ]) || receipt.coverage_claim !== "COMPLETE" || typeof receipt.job_id !== "string" ||
       !/^exhaustive-job-[a-f0-9]{48}$/u.test(receipt.job_id) || !boundedText(receipt.idempotency_key) ||
       typeof receipt.request_digest !== "string" || !/^[a-f0-9]{64}$/u.test(receipt.request_digest) ||
-      !boundedText(receipt.scope_snapshot_id) || !nonNegativeSafeInteger(receipt.scope_snapshot_revision) ||
+      !boundedText(receipt.scope_snapshot_id) || !positiveSafeInteger(receipt.scope_snapshot_revision) ||
       !boundedText(receipt.coverage_denominator_ref) || !Number.isSafeInteger(receipt.denominator_shards) ||
       (receipt.denominator_shards as number) < 1 || !Number.isSafeInteger(receipt.settled_shards) ||
       receipt.settled_shards !== receipt.denominator_shards || !nonNegativeSafeInteger(receipt.total_scanned_sections) ||
