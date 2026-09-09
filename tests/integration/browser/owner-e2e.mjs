@@ -580,18 +580,20 @@ export async function verifyWorkerFetchDiagnosticRegression() {
   );
   const requestSockets = [];
   const requestHeaders = [];
-  const socketServer = createServer((request, response) => {
-    requestSockets.push(request.socket);
-    requestHeaders.push(request.headers);
-    response.setHeader("content-type", "application/json");
-    response.end('{"ok":true}\n');
-  });
-  await new Promise((resolve, reject) => {
+  const socketBinding = await bindChromiumSafeListener((candidate) => new Promise((resolve, reject) => {
+    const socketServer = createServer((request, response) => {
+      requestSockets.push(request.socket);
+      requestHeaders.push(request.headers);
+      response.setHeader("content-type", "application/json");
+      response.end('{"ok":true}\n');
+    });
     socketServer.once("error", reject);
-    socketServer.listen(0, "127.0.0.1", resolve);
-  });
+    socketServer.listen(candidate, "127.0.0.1", () =>
+      resolve({ server: socketServer, port: socketServer.address().port }));
+  }));
+  const socketServer = socketBinding.server;
   try {
-    const socketOrigin = `http://127.0.0.1:${socketServer.address().port}`;
+    const socketOrigin = `http://127.0.0.1:${socketBinding.port}`;
     for (let index = 0; index < 2; index += 1) {
       const response = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, socketOrigin, "/healthz?secret=redacted",
         { token: "fixture-token", phase: "socket-probe", timeoutMs: 5000 });
