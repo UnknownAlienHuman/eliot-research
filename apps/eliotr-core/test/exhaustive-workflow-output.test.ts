@@ -48,7 +48,7 @@ function request(value: Q1Namespace, key: string): Request {
 }
 
 describe("durable exhaustive Workflow output boundary", () => {
-  it("omits forged COMPLETE and UNFINISHED payloads when persisted Q7 identity disagrees", async () => {
+  it("exposes a genuine COMPLETE receipt and omits forged terminal payloads", async () => {
     const owner = "exhaustive-output-boundary-owner";
     const value = await world(owner);
     const launched = await handleHttp(request(value, "exhaustive-output-boundary"), runtime, {} as ExecutionContext, access(owner));
@@ -62,26 +62,24 @@ describe("durable exhaustive Workflow output boundary", () => {
     ).bind(workflowId).first<{ readonly job_id: string }>();
     expect(binding).not.toBeNull();
     if (binding === null) return;
+    const genuine = await handleHttp(request(value, "exhaustive-output-boundary"), runtime, {} as ExecutionContext, access(owner));
+    expect(genuine.status).toBe(200);
+    const genuineBody = await genuine.json() as { readonly data?: { readonly job?: Record<string, unknown> } };
+    expect(genuineBody.data?.job?.status).toBe("COMPLETE");
+    const receipt = genuineBody.data?.job?.receipt;
+    expect(receipt).toMatchObject({ job_id: binding.job_id, coverage_claim: "COMPLETE" });
+    if (receipt === null || typeof receipt !== "object") return;
+    const canonicalReceipt = receipt as Record<string, unknown>;
+    const durable = await runtime.CORE_DB.prepare(
+      "SELECT state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(binding.job_id).first<{ readonly state: string }>();
+    expect(durable?.state).toBe("COMPLETE");
     const original = runtime.RESEARCH_WORKFLOW;
     let forged: Record<string, unknown> = {
       protocol: "eliotr.exhaustive-query.v1",
       job: {
         status: "COMPLETE",
-        receipt: {
-          job_id: binding.job_id,
-          idempotency_key: "forged-output-key",
-          request_digest: "f".repeat(64),
-          scope_snapshot_id: "forged-snapshot",
-          scope_snapshot_revision: 1,
-          coverage_claim: "COMPLETE",
-          coverage_denominator_ref: "forged-denominator",
-          denominator_shards: 1,
-          settled_shards: 1,
-          total_scanned_sections: 1,
-          total_matches: 1,
-          result_artifact_ref: "forged-artifact",
-          coverage_receipt_ref: "forged-receipt",
-        },
+        receipt: { ...canonicalReceipt, result_artifact_ref: "forged-artifact" },
       },
     };
     const fencedWorkflow = {
@@ -108,9 +106,9 @@ describe("durable exhaustive Workflow output boundary", () => {
       job: {
         status: "UNFINISHED",
         job_id: binding.job_id,
-        coverage_denominator_ref: "forged-denominator",
-        denominator_shards: 1,
-        settled_shards: 0,
+        coverage_denominator_ref: canonicalReceipt.coverage_denominator_ref,
+        denominator_shards: canonicalReceipt.denominator_shards,
+        settled_shards: Math.max(0, Number(canonicalReceipt.denominator_shards) - 1),
         unsettled_shard_ids: ["forged-shard"],
       },
     };

@@ -1,6 +1,5 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.
 import type {
-  ExhaustiveQueryResult,
   ExhaustiveWorkflowJobState,
   ExhaustiveWorkflowJobsRequest,
   ExhaustiveWorkflowPage,
@@ -10,10 +9,9 @@ import type {
 } from "@eliotr/interfaces";
 import {
   canonicalRetrievalJson,
-  createD1ExhaustiveJobStore,
   exhaustiveJobId,
-  type ExhaustiveJobLoad,
 } from "@eliotr/retrieval";
+import { validateExhaustiveWorkflowOutput } from "./exhaustive-workflow-output.js";
 
 export interface ExhaustiveWorkflowBindingInput<T> {
   readonly database: D1Database;
@@ -95,112 +93,6 @@ async function requestWorkflowIdentity<T>(context: AuthenticatedRequestContext, 
   return { id: `exhaustive-workflow-${hex}`, digest: hex };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function exactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(record).length === keys.length && keys.every((key) => Object.hasOwn(record, key));
-}
-
-function boundedText(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 256 && !/[\u0000-\u0020\u007f]/u.test(value);
-}
-
-function nonNegativeSafeInteger(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
-
-function outputResult(output: unknown): ExhaustiveQueryResult | null {
-  if (!isRecord(output) || !exactKeys(output, ["protocol", "job"])) return null;
-  const value = output as Record<string, unknown>;
-  if (value.protocol !== "eliotr.exhaustive-query.v1") return null;
-  const job = value.job;
-  if (!isRecord(job)) return null;
-  const status = job.status;
-  if (status === "COMPLETE") {
-    if (!exactKeys(job, ["status", "receipt"]) || !isRecord(job.receipt)) return null;
-    const receipt = job.receipt;
-    if (!exactKeys(receipt, [
-      "job_id", "idempotency_key", "request_digest", "scope_snapshot_id", "scope_snapshot_revision",
-      "coverage_claim", "coverage_denominator_ref", "denominator_shards", "settled_shards",
-      "total_scanned_sections", "total_matches", "result_artifact_ref", "coverage_receipt_ref",
-    ]) || receipt.coverage_claim !== "COMPLETE" ||
-      typeof receipt.job_id !== "string" || !/^exhaustive-job-[a-f0-9]{48}$/u.test(receipt.job_id) ||
-      !boundedText(receipt.idempotency_key) || typeof receipt.request_digest !== "string" ||
-      !/^[a-f0-9]{64}$/u.test(receipt.request_digest) ||
-      !boundedText(receipt.scope_snapshot_id) || !nonNegativeSafeInteger(receipt.scope_snapshot_revision) ||
-      !boundedText(receipt.coverage_denominator_ref) || !nonNegativeSafeInteger(receipt.denominator_shards) ||
-      !nonNegativeSafeInteger(receipt.settled_shards) || receipt.settled_shards !== receipt.denominator_shards ||
-      !nonNegativeSafeInteger(receipt.total_scanned_sections) || !nonNegativeSafeInteger(receipt.total_matches) ||
-      !boundedText(receipt.result_artifact_ref) || !boundedText(receipt.coverage_receipt_ref)) return null;
-  } else if (status === "UNFINISHED") {
-    const pending = job;
-    if (!exactKeys(pending, ["status", "job_id", "coverage_denominator_ref", "denominator_shards", "settled_shards", "unsettled_shard_ids"]) ||
-      typeof pending.job_id !== "string" || !/^exhaustive-job-[a-f0-9]{48}$/u.test(pending.job_id) ||
-      !boundedText(pending.coverage_denominator_ref) || !Number.isSafeInteger(pending.denominator_shards) ||
-      (pending.denominator_shards as number) < 1 || !Number.isSafeInteger(pending.settled_shards) ||
-      (pending.settled_shards as number) < 0 || (pending.settled_shards as number) > (pending.denominator_shards as number) ||
-      !Array.isArray(pending.unsettled_shard_ids) ||
-      new Set(pending.unsettled_shard_ids).size !== pending.unsettled_shard_ids.length ||
-      pending.unsettled_shard_ids.some((id) => !boundedText(id)) ||
-      pending.unsettled_shard_ids.length !== (pending.denominator_shards as number) - (pending.settled_shards as number)) return null;
-  } else return null;
-  return output as unknown as ExhaustiveQueryResult;
-}
-
-/**
- * Load the canonical Q7 row through the retrieval store before exposing a
- * Workflow result. The Workflow output is only a transport claim; the store
- * remains the sole decoder for persisted receipt/pending identity.
- */
-async function readCanonicalJob(
-  database: D1Database,
-  binding: WorkflowBindingRow,
-  context: AuthenticatedRequestContext,
-): Promise<ExhaustiveJobLoad | null> {
-  const row = await database.prepare(
-    "SELECT idempotency_key,principal_ref,client_class,credential_generation,state " +
-    "FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
-  ).bind(binding.job_id).first<{
-    readonly idempotency_key: unknown;
-    readonly principal_ref: unknown;
-    readonly client_class: unknown;
-    readonly credential_generation: unknown;
-    readonly state: unknown;
-  }>().catch(() => failWorkflow("exhaustive Workflow canonical job readback is unavailable"));
-  if (row === null || row.state === "INVALIDATED") return null;
-  if (row.principal_ref !== binding.principal_ref || row.client_class !== "owner_pwa" ||
-      row.credential_generation !== binding.credential_generation ||
-      row.principal_ref !== context.principal_ref || row.credential_generation !== context.credential_generation ||
-      typeof row.idempotency_key !== "string") return null;
-  try {
-    const loaded = await createD1ExhaustiveJobStore(database, {
-      principal_ref: context.principal_ref,
-      client_class: "owner_pwa",
-      credential_generation: context.credential_generation,
-    }).load(row.idempotency_key);
-    return loaded === null || loaded.job_id !== binding.job_id ? null : loaded;
-  } catch (error) {
-    const code = (error as { readonly code?: unknown } | null)?.code;
-    if (code === "RETRIEVAL_SCOPE_STALE" || code === "RETRIEVAL_AUTHORITY_STALE") return null;
-    failWorkflow("exhaustive Workflow canonical job readback is unavailable");
-  }
-}
-
-function matchesCanonicalJob(result: ExhaustiveQueryResult, canonical: ExhaustiveJobLoad): boolean {
-  if (canonical === null || result.job.status === "COMPLETE" !== ("coverage_claim" in canonical)) return false;
-  if (result.job.status === "COMPLETE") {
-    if (!("coverage_claim" in canonical) || canonical.coverage_claim !== "COMPLETE") return false;
-    return canonicalRetrievalJson(result.job.receipt) === canonicalRetrievalJson(canonical);
-  }
-  if ("coverage_claim" in canonical) return false;
-  return result.job.job_id === canonical.job_id &&
-    result.job.coverage_denominator_ref === canonical.coverage_denominator_ref &&
-    result.job.denominator_shards === canonical.denominator_shards &&
-    result.job.settled_shards === canonical.settled_shards;
-}
-
 async function envelope(
   database: D1Database,
   binding: WorkflowBindingRow,
@@ -210,14 +102,16 @@ async function envelope(
   validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
   validateCurrentWorkflowJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
 ): Promise<ExhaustiveWorkflowResult> {
-  const result = outputResult(status.output);
-  if (result !== null && status.status === "complete") {
-    const canonical = await readCanonicalJob(database, binding, context);
-    if (!matchesCanonicalJob(result, canonical)) {
-      return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: status.status };
-    }
+  let result = status.status === "complete"
+    ? await validateExhaustiveWorkflowOutput(database, binding, context, status.output)
+    : null;
+  if (result !== null) {
     await validateCurrentWorkflowJob?.(binding.job_id, context);
     if (result.job.status === "COMPLETE") await validateCurrentJob?.(binding.job_id, context);
+    result = await validateExhaustiveWorkflowOutput(database, binding, context, status.output);
+    if (result === null) {
+      return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: status.status };
+    }
   }
   return {
     protocol: "eliotr.exhaustive-query.v1",

@@ -84,6 +84,12 @@ export interface ExhaustiveJobPending {
 
 export type ExhaustiveJobLoad = ExhaustiveJobReceipt | ExhaustiveJobPending | null;
 
+export interface ExhaustiveJobCoverage {
+  readonly job: ExhaustiveJobLoad;
+  readonly denominator_shard_ids: readonly string[];
+  readonly settled_shard_ids: readonly string[];
+}
+
 /**
  * The plan scope must be the frozen scope, byte for byte on the binding
  * fields: a denominator earned over another scope never attaches here. Plan
@@ -483,5 +489,50 @@ export function createD1ExhaustiveJobStore(
       const receipt = decodeJobReceipt(settled, jobRowKey(settled));
       return receipt;
     },
+  };
+}
+
+/**
+ * Read the persisted denominator and journal through the same store authority
+ * used by reconcile. Transport adapters use this to compare a Workflow's
+ * pending coverage claim without maintaining a second denominator decoder.
+ */
+export async function readExhaustiveJobCoverage(
+  database: RetrievalQueryD1,
+  access: RetrievalQueryAccess,
+  idempotencyKey: string,
+): Promise<ExhaustiveJobCoverage | null> {
+  const key = checkIdempotencyKey(idempotencyKey);
+  const row = await readJobRow(database, await exhaustiveJobId(access, key));
+  if (row === null) return null;
+  const store = createD1ExhaustiveJobStore(database, access);
+  const job = await store.load(key);
+  if (job === null) return null;
+  if (typeof row.denominator_shard_ids_json !== "string") {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
+  let denominator: unknown;
+  try {
+    denominator = JSON.parse(row.denominator_shard_ids_json);
+  } catch {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
+  if (!Array.isArray(denominator) || denominator.length === 0 || denominator.some((id) => typeof id !== "string") ||
+      new Set(denominator).size !== denominator.length || canonicalRetrievalJson(denominator) !== row.denominator_shard_ids_json) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
+  const denominatorIds = denominator as string[];
+  if (typeof row.job_id !== "string") {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
+  const settled = await store.settledOutcomes(row.job_id);
+  const settledIds = settled.map((outcome) => outcome.shard_id);
+  if (new Set(settledIds).size !== settledIds.length || settledIds.some((id) => !denominatorIds.includes(id))) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
+  return {
+    job,
+    denominator_shard_ids: denominatorIds,
+    settled_shard_ids: settledIds,
   };
 }
