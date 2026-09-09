@@ -196,14 +196,18 @@ provider configuration, evidence authority or release gate changes.
 
 ## PR98 owner browser harness addendum (new L1, legacy L6 label)
 
-The actual owner browser harness now runs the built PWA with an isolated local Worker/D1/R2 profile,
-restarts and reads back the same namespace, and exercises the existing denial, logout, storage and
-cleanup boundaries. Namespace setup makes one mutation attempt and performs exact readback; only an
-explicit transient local-runner lock may retry a read-only readback. Marker creation failures clean
-their known-created temporary directory, and a timed teardown stops the dependent cleanup chain.
+The owner browser harness runs the built PWA with an isolated local Worker/D1/R2 profile, restarts
+and reads back the same namespace, and exercises the existing denial, logout, storage and cleanup
+boundaries. Namespace setup makes one mutation attempt and performs exact readback; only an explicit
+transient local-runner lock may retry a read-only readback. Marker creation failures clean their
+known-created temporary directory, and a timed teardown stops the dependent cleanup chain.
 
-The exact local verification command was `pnpm test:owner-e2e` with the configured local Chrome
-executable; it completed successfully in this worktree. The three deterministic checks also passed:
-phase ledger identity, readback retry classification and marker-failure cleanup. This closes the
-current PR98 new L1 harness boundary (the legacy L6 label), not the full Library L6/L7 product
-acceptance. Live Access/provider qualification remains `NOT_EXECUTED`.
+The phase fence consumes the PWA's actual `register()` promise, tracks `updatefound` workers through
+bounded event quiescence, and treats `installed` as terminal only for an update with an existing
+active worker; first installation must reach `activated`. The focused deterministic checks pass:
+phase ledger identity, service-worker lifecycle, readback retry classification and marker-failure
+cleanup. The current local `pnpm test:owner-e2e` attempt is `NOT_EXECUTED` for browser acceptance:
+Wrangler's local migration runtime reported `bad port` without retaining a URL or port in its log;
+the migration SQL itself has no network operation. This closes the PR98 new L1 harness boundary
+(the legacy L6 label), not the full Library L6/L7 product acceptance. Live Access/provider
+qualification remains `NOT_EXECUTED`.

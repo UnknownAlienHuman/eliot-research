@@ -2988,33 +2988,81 @@ async function awaitServiceWorkerRegistrationLifecycle(container = globalThis.na
   catch { return "registration-failed"; }
   if (!registration) return "registration-failed";
 
-  const terminalStates = new Set(["installed", "activated", "redundant"]);
-  const waits = [];
-  const observed = new Set();
+  // A waiting `installed` worker is terminal only when this registration had
+  // an active worker already. On first install, `installed` is the pre-
+  // activation state and the fence must continue through `activated`.
+  const hadActiveAtStart = Boolean(registration.active);
+  const isTerminal = (state) => state === "activated" || state === "redundant" ||
+    (state === "installed" && hadActiveAtStart);
+  const observed = new Map();
+  let changeVersion = 0;
+  let signalResolve;
+  let signal = new Promise((resolve) => { signalResolve = resolve; });
+  const signalChange = () => {
+    changeVersion += 1;
+    signalResolve();
+    signal = new Promise((resolve) => { signalResolve = resolve; });
+  };
   const observe = (worker) => {
     if (!worker || observed.has(worker)) return;
-    observed.add(worker);
-    if (terminalStates.has(worker.state)) return;
-    waits.push(new Promise((resolve) => {
-      const onStateChange = () => {
-        if (!terminalStates.has(worker.state)) return;
-        worker.removeEventListener?.("statechange", onStateChange);
-        resolve();
-      };
-      worker.addEventListener("statechange", onStateChange);
-      onStateChange();
-    }));
+    let resolveWait;
+    const entry = { settled: false, promise: new Promise((resolve) => { resolveWait = resolve; }) };
+    const onStateChange = () => {
+      signalChange();
+      if (!isTerminal(worker.state) || entry.settled) return;
+      entry.settled = true;
+      worker.removeEventListener?.("statechange", onStateChange);
+      resolveWait();
+    };
+    entry.onStateChange = onStateChange;
+    observed.set(worker, entry);
+    worker.addEventListener?.("statechange", onStateChange);
+    onStateChange();
   };
   // Observe updatefound before sampling the current registration state so an
   // installing worker cannot be hidden by an already-active worker.
-  const onUpdateFound = () => observe(registration.installing);
+  const onUpdateFound = () => { signalChange(); observe(registration.installing); };
   registration.addEventListener?.("updatefound", onUpdateFound);
   observe(registration.installing);
   observe(registration.waiting);
   observe(registration.active);
-  try { await Promise.all(waits); }
-  finally { registration.removeEventListener?.("updatefound", onUpdateFound); }
-  return "settled";
+  try {
+    const deadline = Date.now() + 10000;
+    let quietTurns = 0;
+    while (Date.now() < deadline) {
+      observe(registration.installing);
+      observe(registration.waiting);
+      observe(registration.active);
+      const pending = [...observed.values()].filter((entry) => !entry.settled).map((entry) => entry.promise);
+      if (pending.length > 0) {
+        quietTurns = 0;
+        await Promise.race([...pending, signal]);
+        continue;
+      }
+      // A registration can dispatch updatefound after the current workers
+      // look terminal. Give the event loop a bounded task boundary, then
+      // resample the registration. This is event quiescence, not a sleep-only
+      // delay, and late workers join the next pending set.
+      const version = changeVersion;
+      await Promise.race([signal, new Promise((resolve) => setTimeout(resolve, 0))]);
+      observe(registration.installing);
+      observe(registration.waiting);
+      observe(registration.active);
+      const latePending = [...observed.values()].some((entry) => !entry.settled);
+      if (latePending || changeVersion !== version) {
+        quietTurns = 0;
+        continue;
+      }
+      quietTurns += 1;
+      if (quietTurns >= 2) return "settled";
+    }
+    throw new Error("service-worker lifecycle did not reach bounded quiescence");
+  } finally {
+    registration.removeEventListener?.("updatefound", onUpdateFound);
+    for (const [worker, entry] of observed) {
+      if (!entry.settled) worker.removeEventListener?.("statechange", entry.onStateChange);
+    }
+  }
 }
 
 async function settleServiceWorkerLifecycle(page) {
@@ -3035,25 +3083,57 @@ async function settleServiceWorkerLifecycle(page) {
   }
 }
 export async function verifyServiceWorkerSettlementRegression() {
-  let state = "installing";
-  const listeners = new Set();
-  const worker = {
-    get state() { return state; },
-    addEventListener: (_name, listener) => listeners.add(listener),
-    removeEventListener: (_name, listener) => listeners.delete(listener),
+  const makeWorker = (initialState) => {
+    let state = initialState;
+    const listeners = new Set();
+    return {
+      get state() { return state; },
+      addEventListener: (_name, listener) => listeners.add(listener),
+      removeEventListener: (_name, listener) => listeners.delete(listener),
+      transition(nextState) { state = nextState; for (const listener of [...listeners]) listener(); },
+    };
   };
-  const registration = { installing: worker, waiting: null, active: { state: "activated" },
-    addEventListener: () => {}, removeEventListener: () => {} };
-  const page = { evaluate: async (callback) => callback({ __eliotServiceWorkerRegistrationPromise: Promise.resolve(registration) }) };
+  const pageFor = (registration) => ({
+    evaluate: async (callback) => callback({ __eliotServiceWorkerRegistrationPromise: Promise.resolve(registration) }),
+  });
+
+  // Existing active worker: an update reaching installed/waiting is terminal,
+  // but a late updatefound must still be observed by the same fence.
+  const update = makeWorker("installing");
+  const registration = {
+    installing: null, waiting: null, active: { state: "activated" },
+    listeners: new Set(),
+    addEventListener(_name, listener) { this.listeners.add(listener); },
+    removeEventListener(_name, listener) { this.listeners.delete(listener); },
+    dispatchUpdateFound() { for (const listener of [...this.listeners]) listener(); },
+  };
   let finished = false;
-  const settlement = settleServiceWorkerLifecycle(page).then(() => { finished = true; });
+  const settlement = settleServiceWorkerLifecycle(pageFor(registration)).then(() => { finished = true; });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  registration.installing = update;
+  registration.dispatchUpdateFound();
   await Promise.resolve();
-  await Promise.resolve();
-  assert.equal(finished, false, "phase settlement must wait for installing worker statechange despite an active worker");
-  state = "installed";
-  for (const listener of listeners) listener();
+  assert.equal(finished, false, "late updatefound must join the active phase fence");
+  update.transition("installed");
   await settlement;
-  assert.equal(finished, true, "phase settlement must finish after the real lifecycle callback settles");
+  assert.equal(finished, true, "waiting update may settle after installed when an active worker exists");
+
+  // First install: installed is not activation, so the fence remains pending
+  // until the worker actually reaches activated.
+  const firstInstall = makeWorker("installing");
+  const firstRegistration = {
+    installing: firstInstall, waiting: null, active: null,
+    addEventListener: () => {}, removeEventListener: () => {},
+  };
+  finished = false;
+  const firstSettlement = settleServiceWorkerLifecycle(pageFor(firstRegistration)).then(() => { finished = true; });
+  await Promise.resolve();
+  firstInstall.transition("installed");
+  await Promise.resolve();
+  assert.equal(finished, false, "first install must not settle at installed before activation");
+  firstInstall.transition("activated");
+  await firstSettlement;
+  assert.equal(finished, true, "first install must settle after activation");
   return { protocol: "eliotr.owner-e2e.service-worker-settlement.v1", state: "PASS" };
 }
 
