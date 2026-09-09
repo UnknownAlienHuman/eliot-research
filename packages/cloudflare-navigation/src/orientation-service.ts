@@ -9,7 +9,7 @@ import { ORIENTATION_MAX_SOURCES, ORIENTATION_PROFILE, orientationFail, parseOri
 import { materializeMetadataNavigation } from "./orientation-materialization.js";
 import { createNavigationService } from "./navigation-service.js";
 import { orientationStorage } from "./orientation-storage.js";
-import { createD1ScopeService } from "./scope-service.js";
+import { createD1ScopeService } from "./d1-scope-service.js";
 
 interface OrientationEnvironment { readonly CORE_DB: D1Database; readonly SEARCH_DB: D1Database; }
 // IMPLEMENTED_NOT_LIVE: ER-24 owner metadata orientation requires retained deployed D1/Access receipts.
