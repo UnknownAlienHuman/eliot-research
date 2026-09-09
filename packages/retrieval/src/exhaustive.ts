@@ -250,9 +250,16 @@ export function planExhaustiveScan(input: PlanExhaustiveScanInput): ExactScanPla
       failPlan("EXHAUSTIVE_SCOPE_MEMBER_UNCOVERED", `scope member ${member} has no inventoried sections`);
     }
   }
+  // Bind plan identity to the complete admitted inventory. A section-count
+  // identity permits a changed range/source mapping to replay an old job.
+  const inventoryIdentity = sections.map((section) => [
+    section.section_ref,
+    section.source_revision_ref,
+    section.uncompressed_bytes,
+  ]);
   const planId = typeof input.plan_id === "string" && input.plan_id.length > 0
     ? input.plan_id
-    : `exhaustive-plan-${scope.snapshot_id}-r${scope.revision}-${identityHex(`${scope.digest}|${probes.join("\u0000")}|${sections.length}`)}`;
+    : `exhaustive-plan-${scope.snapshot_id}-r${scope.revision}-${identityHex(`${scope.digest}|${probes.join("\u0000")}|${JSON.stringify(inventoryIdentity)}`)}`;
   if (planId.length > 256 || /[\u0000-\u0020\u007f]/u.test(planId)) {
     failPlan("EXHAUSTIVE_SCOPE_INVALID", "exhaustive plan identity is invalid");
   }

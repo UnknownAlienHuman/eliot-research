@@ -80,9 +80,14 @@ function semanticApi(env: Env): SemanticApi {
   return {
     catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
-    query: (context, request) => request.product === "EXHAUSTIVE_JOB"
+    query: (context, request) => {
+      const product = request !== null && typeof request === "object" && "product" in request
+        ? (request as { readonly product?: unknown }).product
+        : undefined;
+      return product === "EXHAUSTIVE_JOB"
       ? exhaustiveQuery.query(context, request)
-      : researchQuery.query(context, request),
+      : researchQuery.query(context, request);
+    },
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),

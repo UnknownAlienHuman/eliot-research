@@ -126,9 +126,12 @@ product through a separate strict parser and the versioned
 limits remain unchanged. The Q8 adapter owns scope freeze/currentness,
 authoritative normalized-section inventory and pinned section reads as injected
 ports, then delegates planning, exact verification, shard reconciliation and
-coverage to ER-07 Q7. The default Worker wiring is fail-closed until those
-authority ports are configured. A Q7 `result_artifact_ref` is a receipt
-reference; it is not a published research artifact.
+coverage to ER-07 Q7. The default Worker wiring binds those authorities to the
+owner ScopeSnapshot, admitted normalized manifest, persisted DocumentMap and
+pinned R2 evidence ports. Missing LIVE user-loop handles remain unsettled and
+cannot earn COMPLETE. The canonical Workflow host for asynchronous exhaustive
+execution remains open. A Q7 `result_artifact_ref` is a receipt reference; it
+is not a published research artifact.
 
 ## Acceptance
 

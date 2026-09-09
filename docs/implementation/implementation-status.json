@@ -38,14 +38,14 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves ORIENT retrieval over injected RetrievalQueryPorts and dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter, which delegates scope/section authority to injected ports and Q7 planning/execution/reconciliation; research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
+      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves ORIENT retrieval over injected RetrievalQueryPorts and dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter, whose production path uses owner ScopeSnapshot authority, admitted normalized manifests, persisted DocumentMaps, LIVE EvidenceHandles and pinned R2 reads before Q7 planning/execution/reconciliation; research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
       "completion_evidence": [
         "apps/eliotr-core/test/research-session.test.ts: 7 suites over actual local D1/R2/DO (query retrieval no-hit replay/stale/foreign, run W1 ledger plus 18-stage resume/duplicate/stale/lost-ACK with 64KiB handle-only receipts, DO start/read/replay/stale/foreign/cancel/status, DO W2 replay without duplicate paid effects)",
         "apps/eliotr-core/src/research-session.ts: DO storage session state with principal-bound read/cancel plus createMonotoneStageExecutor reuse and no new D1 tables",
         "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
         "apps/eliotr-core/src/exhaustive-query-service.ts and exhaustive-query-service.test.ts: versioned Q8 EXHAUSTIVE_JOB result, separate parser, authority-port boundary, COMPLETE replay and UNFINISHED denominator-preserving negative",
-        "admitted normalized-section inventory/pinned reader wiring, one Workflow owner for durable exhaustive execution, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED"
+        "one canonical Workflow host for asynchronous exhaustive execution, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
       ]
     },
     {
