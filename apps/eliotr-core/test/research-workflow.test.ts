@@ -493,6 +493,7 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
       },
     };
     const first = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
+    if (!("state" in first) || !("receipt_refs" in first)) throw new Error("expected the research workflow result");
     expect(first.state).toBe("ENGINE_COMPLETED");
     expect(first.receipt_refs).toHaveLength(18);
     expect(new TextEncoder().encode(JSON.stringify(first)).byteLength).toBeLessThanOrEqual(65536);

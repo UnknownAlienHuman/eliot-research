@@ -66,8 +66,8 @@ function searchDbWithInventoryWithdrawal(
         return (...values: unknown[]) => wrap(target.bind(...values), sql);
       }
       if (property === "all") {
-        return async <T = unknown>(...args: unknown[]) => {
-          const result = await target.all<T>(...args);
+        return async <T = unknown>() => {
+          const result = await target.all<T>();
           if (!withdrawn && /FROM projection_item/u.test(sql)) {
             withdrawn = true;
             await withdraw();
@@ -157,13 +157,13 @@ async function addAdmittedProjectedSources(worldValue: Q1Namespace, count: numbe
       sourceRevision.quality_state, sourceRevision.purge_state, sourceRevision.currentness_state, sourceRevision.source_view_ref,
       sourceRevision.workspace_view_revision_ref, now,
     ).run();
-    const clonedOperation = { ...operation, operation_id: operationId, idempotency_key: `q8-${revisionRef}`, source_revision_ref: revisionRef,
+    const clonedOperation: Record<string, unknown> = { ...operation, operation_id: operationId, idempotency_key: `q8-${revisionRef}`, source_revision_ref: revisionRef,
       source_id: sourceId, candidate_id: candidateId, staging_session_ref: null, qualification_report_ref: null,
       decision_receipt_ref: receiptRef, promotion_receipt_ref: null, created_at: now, updated_at: now };
     await db.prepare(`INSERT INTO bundle_ingest_operation (${operationKeys.join(",")}) VALUES (${operationKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...operationKeys.map((key) => clonedOperation[key] ?? null)).run();
     const decision = { ...JSON.parse(String(decisionRow.decision_json)), source_revision_ref: revisionRef, decision_receipt_ref: receiptRef };
     const decisionJson = canonicalEvidenceJson(decision);
-    const clonedDecision = { ...decisionRow, decision_receipt_ref: receiptRef, operation_id: operationId, source_revision_ref: revisionRef,
+    const clonedDecision: Record<string, unknown> = { ...decisionRow, decision_receipt_ref: receiptRef, operation_id: operationId, source_revision_ref: revisionRef,
       decision_json: decisionJson, decision_sha256: await evidenceSha256(decision), created_at: now };
     await db.prepare(`INSERT INTO source_admission_decision (${decisionKeys.join(",")}) VALUES (${decisionKeys.map((_, i) => `?${i + 1}`).join(",")})`).bind(...decisionKeys.map((key) => clonedDecision[key] ?? null)).run();
     const clonedItem = { ...item, item_key: itemKey, source_revision_ref: revisionRef, projection_generation: generationRef };
