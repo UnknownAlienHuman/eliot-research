@@ -42,14 +42,14 @@ describe("system health API decoder", () => {
     expect(decodeSystemHealthEnvelope(envelope())).toEqual(health);
   });
 
-  it("accepts a declared Google transport while keeping older health responses compatible", () => {
+  it("accepts a declared Google Drive transport while keeping older health responses compatible", () => {
     expect(decodeSystemHealthEnvelope(envelope({
       data: { ...health, google_external_transport: "gemini-mcp" },
     })).google_external_transport).toBe("gemini-mcp");
     expect(decodeSystemHealthEnvelope(envelope()).google_external_transport).toBeUndefined();
   });
 
-  it("rejects an invalid declared Google transport", () => {
+  it("rejects an invalid declared Google Drive transport", () => {
     expect(captureDecoderError(envelope({
       data: { ...health, google_external_transport: "google-cloud" },
     })).code).toBe("API_RESPONSE_SCHEMA_MISMATCH");

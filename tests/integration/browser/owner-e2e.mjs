@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readdir, readFile, rm, access, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createServer as createTcpServer } from "node:net";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { basename, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,7 @@ import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
+import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -481,18 +483,177 @@ export async function verifyReadbackRetryClassification() {
   return { protocol: "eliotr.owner-e2e.readback-retry.v1", state: "PASS" };
 }
 
-async function workerJson(origin, path, { token, method = "GET", body, contentType } = {}) {
-  const headers = { Accept: "application/json" };
+function diagnosticRoutePath(path) {
+  try { return new URL(path, "http://127.0.0.1").pathname.slice(0, 256); }
+  catch { return "/<invalid-route>"; }
+}
+
+function harnessGitHead() {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: root, encoding: "utf8", shell: false, timeout: 5000,
+  });
+  if (result.error || result.status !== 0) return "unavailable";
+  const head = String(result.stdout ?? "").trim();
+  return /^[a-f0-9]{40}$/u.test(head) ? head : "unavailable";
+}
+
+function fetchErrorClass(error) {
+  const candidates = [error, error?.cause, error?.cause?.cause];
+  const name = candidates.find((item) => item && typeof item.name === "string" && item.name.length > 0)?.name ?? "unknown";
+  const code = candidates.find((item) => item && typeof item.code === "string" && item.code.length > 0)?.code ?? "unknown";
+  return `${name.slice(0, 48)}/${code.slice(0, 64)}`;
+}
+
+function workerDiagnosticSnapshot(worker) {
+  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+  if (!runtime) return { pid: null, port: null, exit_code: null, stderr_tail: "unavailable", stdout_events: "unavailable" };
+  return {
+    pid: Number.isSafeInteger(runtime.pid) ? runtime.pid : null,
+    port: Number.isSafeInteger(runtime.port) ? runtime.port : null,
+    exit_code: runtime.exitCode ?? null,
+    stderr_tail: typeof runtime.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable",
+    stdout_events: typeof runtime.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable",
+  };
+}
+
+function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
+  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+  const exitCode = runtime?.exitCode ?? null;
+  const stderrTail = typeof runtime?.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable";
+  const stdoutEvents = typeof runtime?.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable";
+  const pid = Number.isSafeInteger(runtime?.pid) ? runtime.pid : null;
+  const port = Number.isSafeInteger(runtime?.port) ? runtime.port : null;
+  const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
+  const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
+  const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
+  const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
+  const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
+  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
+}
+
+export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
+  { token, method = "GET", body, contentType, headers: extraHeaders, phase, worker, timeoutMs = 15000 } = {}) {
+  const headers = { Accept: "application/json", ...(extraHeaders ?? {}) };
+  for (const name of Object.keys(headers)) {
+    if (name.toLowerCase() === "connection") delete headers[name];
+  }
+  // Node-only harness transport: avoid reusing an idle Undici socket after
+  // long D1 CLI/browser phases. PWA/browser requests never use this wrapper.
+  headers.connection = "close";
   if (token) headers["cf-access-jwt-assertion"] = token;
   if (contentType) headers["content-type"] = contentType;
-  const response = await globalThis.fetch(`${origin}${path}`, {
-    method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(15000),
-  });
-  const text = await response.text();
+  try {
+    return await fetchImpl(`${origin}${path}`, {
+      method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(timeoutMs),
+    });
+  } catch (error) {
+    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker }), { cause: error });
+  }
+}
+
+export async function fetchWorkerJsonWithDiagnostics(fetchImpl, origin, path, options = {}) {
+  const { method = "GET", phase, worker } = options;
+  const response = await fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path, options);
+  let text;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" }), { cause: error });
+  }
   const data = (() => {
     try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
   })();
   return { status: response.status, data, headers: response.headers };
+}
+
+async function observeCatalogTransport(label, operation, worker, records) {
+  const startedAt = Date.now();
+  try {
+    const response = await operation();
+    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
+    return { ok: true, response };
+  } catch (error) {
+    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "error",
+      error_class: fetchErrorClass(error), worker: workerDiagnosticSnapshot(worker) });
+    return { ok: false, error };
+  }
+}
+
+async function workerJson(origin, path, options = {}) {
+  return fetchWorkerJsonWithDiagnostics(globalThis.fetch, origin, path, options);
+}
+
+export async function verifyWorkerFetchDiagnosticRegression() {
+  const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  let transportCalls = 0;
+  await assert.rejects(
+    fetchWorkerJsonWithDiagnostics(
+      async () => { transportCalls += 1; throw transportError; },
+      "http://127.0.0.1:43123",
+      "/api/v1/research/query/jobs?cursor=private-query&token=private-token",
+      { method: "GET", phase: "rotation-read", token: "private-token",
+        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset" }) } },
+    ),
+    (error) => {
+      const text = String(error?.message ?? error);
+      assert.match(text, /phase=rotation-read method=GET path=\/api\/v1\/research\/query\/jobs/u);
+      assert.match(text, /stage=fetch/u);
+      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /worker_exit_code=null/u);
+      assert.match(text, /worker_stderr_tail=wrangler: listener reset/u);
+      assert.ok(!text.includes("private-query") && !text.includes("private-token"),
+        "fetch diagnostics must omit query, token and body values");
+      return true;
+    },
+  );
+  assert.equal(transportCalls, 1, "diagnostic transport failures must propagate without retry");
+  await assert.rejects(
+    fetchWorkerJsonWithDiagnostics(
+      async () => ({ text: async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); } }),
+      "http://127.0.0.1:43123",
+      "/healthz?token=private-token",
+      { phase: "restart-health", worker: { diagnostics: () => ({ exitCode: 17, stderrTail: "body reset" }) } },
+    ),
+    (error) => {
+      const text = String(error?.message ?? error);
+      assert.match(text, /stage=body phase=restart-health method=GET path=\/healthz/u);
+      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /worker_exit_code=17/u);
+      assert.ok(!text.includes("private-token"), "body diagnostics must omit query values");
+      return true;
+    },
+  );
+  const requestSockets = [];
+  const requestHeaders = [];
+  const socketBinding = await bindChromiumSafeListener((candidate) => new Promise((resolve, reject) => {
+    const socketServer = createServer((request, response) => {
+      requestSockets.push(request.socket);
+      requestHeaders.push(request.headers);
+      response.setHeader("content-type", "application/json");
+      response.end('{"ok":true}\n');
+    });
+    socketServer.once("error", reject);
+    socketServer.listen(candidate, "127.0.0.1", () =>
+      resolve({ server: socketServer, port: socketServer.address().port }));
+  }));
+  const socketServer = socketBinding.server;
+  try {
+    const socketOrigin = `http://127.0.0.1:${socketBinding.port}`;
+    for (let index = 0; index < 2; index += 1) {
+      const response = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, socketOrigin, "/healthz?secret=redacted",
+        { token: "fixture-token", phase: "socket-probe", timeoutMs: 5000 });
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.data, { ok: true });
+    }
+    assert.equal(requestSockets.length, 2, "socket fixture must observe both requests");
+    assert.notEqual(requestSockets[0], requestSockets[1], "Connection: close must force a fresh socket per request");
+    assert.deepEqual(requestHeaders.map((headers) => headers.connection), ["close", "close"]);
+    assert.deepEqual(requestHeaders.map((headers) => headers["cf-access-jwt-assertion"]), ["fixture-token", "fixture-token"],
+      "Connection: close must preserve the bearer header");
+  } finally {
+    await new Promise((resolve, reject) => socketServer.close((error) => error ? reject(error) : resolve()));
+  }
+  return { protocol: "eliotr.owner-e2e.worker-fetch-diagnostic.v1", state: "PASS" };
 }
 
 // Single authoritative cross-client ledger sink. Every lifecycle HTTP call the
@@ -539,6 +700,52 @@ export function assertCrossClientLedger(ledger, label) {
     !serialized.includes("cf-access-jwt-assertion"),
     `${label}: cross-client ledger must never contain JWT material`);
   return { protocol: "eliotr.owner-e2e.cross-client-ledger.v1", state: "PASS", entries: ledger.entries.length };
+}
+
+// A Workflow binding is durable before the Q7 job row is guaranteed to exist:
+// an early cancellation can leave the binding with its deterministic job id
+// while the queued job was never materialized. When a row does exist, it must
+// still be the exact owner/job identity represented by that binding. This
+// helper keeps that distinction explicit for the post-Worker D1 readback.
+export function assertWorkflowJobReadback(bindings, jobs) {
+  assert.ok(Array.isArray(bindings) && Array.isArray(jobs), "workflow D1 readback must provide binding and job rows");
+  const bindingByJobId = new Map();
+  const workflowIds = new Set();
+  for (const binding of bindings) {
+    assert.ok(binding !== null && typeof binding === "object", "workflow binding row must be an object");
+    assert.match(binding.workflow_id, /^exhaustive-workflow-[a-f0-9]{64}$/u, "workflow binding must retain its canonical workflow identity");
+    assert.equal(workflowIds.has(binding.workflow_id), false, "workflow binding identities must be unique");
+    workflowIds.add(binding.workflow_id);
+    assert.match(binding.job_id, /^exhaustive-job-[a-f0-9]{48}$/u, "workflow binding must retain its canonical job identity");
+    assert.equal(bindingByJobId.has(binding.job_id), false, "workflow bindings must not duplicate a job identity");
+    bindingByJobId.set(binding.job_id, binding);
+    assert.equal(binding.principal_ref, "e2e-owner", "workflow binding must retain the owner principal");
+    assert.equal(binding.client_class, "owner_pwa", "workflow binding must retain the owner client class");
+    assert.ok(typeof binding.credential_generation === "string" && binding.credential_generation.length > 0,
+      "workflow binding must retain credential generation");
+    assert.ok(typeof binding.deployment_generation === "string" && binding.deployment_generation.length > 0,
+      "workflow binding must retain deployment generation");
+    assert.match(binding.request_identity_digest, /^[a-f0-9]{64}$/u,
+      "workflow binding must retain the canonical request identity digest");
+    assert.equal(binding.state, "CANCEL_REQUESTED", "workflow binding must retain cancellation intent");
+  }
+
+  const seenJobIds = new Set();
+  for (const job of jobs) {
+    assert.ok(job !== null && typeof job === "object", "workflow job row must be an object");
+    assert.match(job.job_id, /^exhaustive-job-[a-f0-9]{48}$/u, "workflow job row must retain its canonical job identity");
+    assert.equal(seenJobIds.has(job.job_id), false, "workflow job rows must not duplicate a job identity");
+    seenJobIds.add(job.job_id);
+    const binding = bindingByJobId.get(job.job_id);
+    assert.ok(binding !== undefined, "workflow job readback must not contain a foreign job identity");
+    assert.equal(job.principal_ref, binding.principal_ref, "workflow job row must retain the bound owner principal");
+    assert.equal(job.client_class, binding.client_class, "workflow job row must retain the bound owner client class");
+    assert.equal(job.credential_generation, binding.credential_generation,
+      "workflow job row must retain the bound credential generation");
+    assert.ok(job.state === "PENDING" || job.state === "COMPLETE" || job.state === "INVALIDATED",
+      "workflow job row must retain a canonical state");
+  }
+  return { bindingCount: bindings.length, jobRowCount: jobs.length };
 }
 
 // Browser-originated JSON call: runs fetch() inside Chromium via page.evaluate
@@ -606,21 +813,24 @@ async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
 // link only through declared successors in the closed TRANSITIONS set, and
 // the abort anchor key is (method,origin,path,role,actionIds,slotId).
 export const OP_KINDS = Object.freeze(["init", "harness-navigation", "harness-action", "observed-navigation"]);
-export const OP_CAUSES = Object.freeze(["harness-start", "init", "goto", "goto-pairing", "pair-action", "reload", "logout-action", "framenavigated"]);
+export const OP_CAUSES = Object.freeze(["harness-start", "init", "goto", "goto-pairing", "pair-action", "reload", "recovery-selection", "logout-action", "framenavigated"]);
 export const EDGE_SCOPES = Object.freeze(["harness", "document"]);
-export const SLOT_ROLES = Object.freeze(["startup-probe", "catalog-read", "health-read", "pair-action", "jwt-matrix", "logout-action", "rotation-read"]);
+export const SLOT_ROLES = Object.freeze(["startup-probe", "catalog-read", "health-read", "pair-action", "jwt-matrix", "logout-action", "rotation-read", "exhaustive-recovery"]);
 export const OP_ACTIONS = Object.freeze(["harness-start", "goto-unauthenticated", "goto-pairing", "click-connect",
   "reload-authed-retrieval", "goto-jwt-matrix", "goto-post-restart", "goto-repairing", "click-reconnect",
+  "reload-exhaustive-recovery", "select-recovered-workflow",
   "goto-logout", "click-logout", "goto-post-logout-clean", "goto-rotation", "goto-rotation-pairing",
   "click-rotation-connect", "probe-issue", "probe-mid", "probe-retry", "probe-rogue", "pair-probe", "pair-retry",
   "framenavigated"]);
 export const OP_TRANSITIONS = Object.freeze(["harness-start→goto-unauthenticated", "goto-unauthenticated→goto-pairing",
   "goto-pairing→click-connect", "click-connect→reload-authed-retrieval", "reload-authed-retrieval→goto-jwt-matrix",
   "goto-jwt-matrix→goto-post-restart", "goto-post-restart→goto-repairing", "goto-repairing→click-reconnect",
-  "click-reconnect→goto-logout", "goto-logout→click-logout", "click-logout→goto-post-logout-clean",
+  "click-reconnect→goto-logout", "click-reconnect→reload-exhaustive-recovery", "reload-exhaustive-recovery→select-recovered-workflow",
+  "select-recovered-workflow→goto-logout", "goto-logout→click-logout", "click-logout→goto-post-logout-clean",
   "goto-post-logout-clean→goto-rotation", "goto-rotation→goto-rotation-pairing", "goto-rotation-pairing→click-rotation-connect",
   "goto-unauthenticated→framenavigated", "goto-pairing→framenavigated", "reload-authed-retrieval→framenavigated",
   "goto-jwt-matrix→framenavigated", "goto-post-restart→framenavigated", "goto-repairing→framenavigated",
+  "reload-exhaustive-recovery→framenavigated", "select-recovered-workflow→framenavigated",
   "goto-logout→framenavigated", "goto-post-logout-clean→framenavigated", "goto-rotation→framenavigated",
   "goto-rotation-pairing→framenavigated", "harness-start→probe-issue", "harness-start→pair-probe",
   "probe-issue→probe-retry", "probe-issue→probe-mid", "probe-mid→probe-retry", "pair-probe→pair-retry"]);
@@ -3386,6 +3596,7 @@ function authedNetworkSpec(origin) {
       { method: "POST", path: "/__local/pair", status: 403 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
+      { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       // Exact public shell asset: the bridge proxies /manifest.webmanifest
       // (GET, no query) without a session because Chromium fetches it
       // credentialless while the Worker serves it publicly. Must succeed (200);
@@ -3408,6 +3619,7 @@ function bridgeRepairNetworkSpec(origin) {
       { method: "POST", path: "/__local/pair", status: 204 },
       { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
       { method: "GET", path: "/api/v1/system/health", status: 200 },
+      { method: "GET", path: "/api/v1/research/query/jobs?limit=20", status: 200 },
       { method: "GET", path: "/manifest.webmanifest", status: 200 },
     ],
     mutations: ["/__local/pair"],
@@ -3940,6 +4152,9 @@ export async function verifyEarlyFailureCleanup() {
 
 export async function runOwnerE2E() {
   const startedAt = new globalThis.Date().toISOString();
+  const catalogTransportDiagnosticEnabled = process.env.ELIOTR_OWNER_E2E_CATALOG_DIAGNOSTIC === "1";
+  const catalogTransportProbeRecords = [];
+  const catalogTransportHead = catalogTransportDiagnosticEnabled ? harnessGitHead() : undefined;
   const stateRoot = resolve(root, ".eliotr-state");
   const beforeDirs = new Set(await readdir(stateRoot).catch(() => []));
   // Run-specific ownership marker: teardown deletes only this marker-proven
@@ -3950,10 +4165,12 @@ export async function runOwnerE2E() {
   // early failure cannot leak an unmarked directory outside the cleanup below.
   const runId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
   let directory;
+  let paths;
   let worker;
   let playwright;
   let bridge;
   let jwks;
+  let exhaustiveWorkflow;
   let teardownError = null;
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
@@ -3983,7 +4200,10 @@ export async function runOwnerE2E() {
     browser_jwt_matrix: "PENDING",
     artifact_ledger: "PENDING",
     cross_client_ledger: "PENDING",
+    exhaustive_workflow: "PENDING",
+    exhaustive_workflow_d1: "PENDING",
     early_cleanup: "PENDING",
+    catalog_transport_probe: "PENDING",
     teardown_inventory: "PENDING",
   };
   // Authoritative cross-client ledger: browser-origin artifact/JWT lifecycle
@@ -4086,7 +4306,7 @@ export async function runOwnerE2E() {
         await writeFile(stagingPaths.config, `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
         stagingWorker = await startLocalWorker(stagingPaths);
         const stagingToken = await sign();
-        const denied = await workerJson(stagingWorker.origin, "/api/v1/system/session", { token: stagingToken });
+        const denied = await workerJson(stagingWorker.origin, "/api/v1/system/session", { token: stagingToken, phase: "staging-denial", worker: stagingWorker });
         assert.equal(denied.status, 503, "staging with identical test vars must fail config, never seam");
         assert.equal(denied.data?.code ?? denied.data?.data?.code, "ACCESS_CONFIG_INVALID",
           "staging seam must fail with ACCESS_CONFIG_INVALID");
@@ -4124,11 +4344,11 @@ export async function runOwnerE2E() {
         await applyOwnerE2EProfile(dupPaths, dupJwks.url);
         dupWorker = await startLocalWorker(dupPaths);
         const dupToken = await sign();
-        const dupDenied = await workerJson(dupWorker.origin, "/api/v1/system/session", { token: dupToken });
+        const dupDenied = await workerJson(dupWorker.origin, "/api/v1/system/session", { token: dupToken, phase: "duplicate-jwks-session", worker: dupWorker });
         assert.equal(dupDenied.status, 503, "duplicate JWKS kids must fail closed with 503");
         assert.equal(dupDenied.data?.code ?? dupDenied.data?.data?.code, "ACCESS_JWKS_INVALID",
           "duplicate JWKS kids must carry ACCESS_JWKS_INVALID");
-        const dupCatalog = await workerJson(dupWorker.origin, "/api/v1/research/catalog?limit=20", { token: dupToken });
+        const dupCatalog = await workerJson(dupWorker.origin, "/api/v1/research/catalog?limit=20", { token: dupToken, phase: "duplicate-jwks-catalog", worker: dupWorker });
         assert.equal(dupCatalog.status, 503, "duplicate JWKS must also deny the Library view");
         assert.ok(!JSON.stringify(dupDenied.data).includes("e2e-owner"), "duplicate-JWKS denial must not leak identity");
         dupJwksEvidence = "dup-jwks-503/ACCESS_JWKS_INVALID";
@@ -4146,7 +4366,7 @@ export async function runOwnerE2E() {
         assert.deepEqual(dupErrors, [], `duplicate-JWKS cleanup must leave no residue: ${dupErrors.join("; ").slice(0, 400)}`);
       }
     }
-    const paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
+    paths = await prepareLocal({ stateDirectory: directory, log: () => {} });
     await access(resolve(root, "apps/eliotr-pwa/dist/index.html"));
     assert.equal(paths.directory, directory, "isolated state must use the fresh directory");
     assert.ok(paths.persist.startsWith(directory), "persisted D1/R2 state must live under the isolated directory");
@@ -4164,10 +4384,10 @@ export async function runOwnerE2E() {
     for (const headers of [{}, { "cf-access-jwt-assertion": "forged.token.signature" },
       { "cf-access-client-id": "forged", "cf-access-client-secret": "forged" }]) {
       for (const path of ["/api/v1/research/catalog", "/api/v1/system/session"]) {
-        const response = await globalThis.fetch(`${worker.origin}${path}`,
-          { headers, redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
+        const response = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, path,
+          { headers, phase: "initial-unauthenticated", worker, timeoutMs: 5000 });
         assert.equal(response.status, 401, `real Worker must deny ${path} without a signed assertion`);
-        const problem = await response.json();
+        const problem = response.data;
         assert.equal(problem.status, 401);
         assert.ok(String(problem.code).startsWith("ACCESS_"), "denial must carry an ACCESS_ code");
         assert.equal(response.headers.get("cache-control"), "no-store");
@@ -4176,7 +4396,7 @@ export async function runOwnerE2E() {
     }
     receipt.unauth_denied = "PASS";
     const token = await sign();
-    const session = await workerJson(worker.origin, "/api/v1/system/session", { token });
+    const session = await workerJson(worker.origin, "/api/v1/system/session", { token, phase: "initial-owner-session", worker });
     assert.equal(session.status, 200, "controlled signed token must reach the real Worker verifier");
     const identity = session.data.data;
     assert.equal(identity.protocol, "eliotr.owner-session.v1");
@@ -4239,14 +4459,14 @@ export async function runOwnerE2E() {
     for (const item of negatives) {
       let response;
       if (item.name === "missing") {
-        response = await workerJson(worker.origin, "/api/v1/system/session", {});
+        response = await workerJson(worker.origin, "/api/v1/system/session", { phase: `jwt-negative-${item.name}`, worker });
       } else if (item.name === "wrong-alg") {
         const good = await sign();
         const segs = good.split(".");
         const badHeader = encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID });
-        response = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}` });
+        response = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}`, phase: "jwt-negative-wrong-alg", worker });
       } else {
-        response = await workerJson(worker.origin, "/api/v1/system/session", { token: item.token });
+        response = await workerJson(worker.origin, "/api/v1/system/session", { token: item.token, phase: `jwt-negative-${item.name}`, worker });
       }
       assert.ok(item.expect.includes(response.status), `${item.name} must deny, got ${response.status}`);
       const bodyCode = response.data?.code ?? response.data?.data?.code;
@@ -4254,8 +4474,8 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(response.data).includes("e2e-owner") || response.status !== 200, `${item.name} must not leak identity on denial`);
       // Same negative token against the authorized Library view: exact denial, no rows.
       const catalogDenied = item.name === "missing"
-        ? await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", {})
-        : await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token: item.token });
+        ? await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { phase: `jwt-negative-${item.name}-catalog`, worker })
+        : await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token: item.token, phase: `jwt-negative-${item.name}-catalog`, worker });
       assert.equal(catalogDenied.status, item.catalog ?? 401, `${item.name} must deny the Library view`);
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
@@ -4265,17 +4485,17 @@ export async function runOwnerE2E() {
       const good = await sign();
       const segs = good.split(".");
       const badHeader = encodeJwtPart({ alg: "HS256", typ: "JWT", kid: OWNER_E2E_KID });
-      const algDenied = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}` });
+      const algDenied = await workerJson(worker.origin, "/api/v1/system/session", { token: `${badHeader}.${segs[1]}.${segs[2]}`, phase: "jwt-negative-wrong-alg", worker });
       assert.equal(algDenied.status, 401, "wrong-alg must deny with 401");
       assert.equal(algDenied.data?.code, "ACCESS_JWT_ALGORITHM_DENIED", "wrong-alg must carry exact code");
       negativeEvidence.push(`wrong-alg=401/${algDenied.data?.code}`);
       // Skew window honesty: exp==now is still inside the acceptance skew (200),
       // while iat beyond any reasonable skew is rejected (401). Both on the real path.
       const skewValid = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ iat: nowSeconds() - 10, exp: nowSeconds() }) });
+        { token: await sign({ iat: nowSeconds() - 10, exp: nowSeconds() }), phase: "jwt-clock-skew-valid", worker });
       assert.equal(skewValid.status, 200, "exp==now must still verify inside the skew window");
       const skewFuture = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ iat: nowSeconds() + 120, exp: nowSeconds() + 720 }) });
+        { token: await sign({ iat: nowSeconds() + 120, exp: nowSeconds() + 720 }), phase: "jwt-clock-skew-future", worker });
       assert.equal(skewFuture.status, 401, "iat beyond the skew window must deny");
       assert.equal(skewFuture.data?.code, "ACCESS_JWT_ISSUED_IN_FUTURE");
       negativeEvidence.push("skew-window=200-then-401/ACCESS_JWT_ISSUED_IN_FUTURE");
@@ -4285,7 +4505,7 @@ export async function runOwnerE2E() {
       // attacker email still identifies the signed subject only; the identity
       // carries no email and the denial path above already rejects bad signatures.
       const emailed = await workerJson(worker.origin, "/api/v1/system/session",
-        { token: await sign({ email: "attacker@example.invalid", email_verified: false }) });
+        { token: await sign({ email: "attacker@example.invalid", email_verified: false }), phase: "jwt-email-claim", worker });
       assert.equal(emailed.status, 200, "extra email claims must not disturb a valid signature");
       assert.equal(emailed.data?.data?.principal_ref, "e2e-owner", "identity must remain the signed subject");
       assert.ok(!JSON.stringify(emailed.data).includes("attacker@example.invalid"), "identity must not adopt email claims");
@@ -4436,6 +4656,13 @@ export async function runOwnerE2E() {
     const imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
+    if (catalogTransportDiagnosticEnabled) {
+      // Diagnostic-only comparison: this reaches the real admitted fixture
+      // before any synchronous Wrangler/D1 CLI readback can intervene.
+      await observeCatalogTransport("direct-before-cli", () => workerJson(worker.origin,
+        "/api/v1/research/catalog?limit=20", { token, phase: "catalog-probe-before-cli", worker }), worker,
+      catalogTransportProbeRecords);
+    }
     const bearerReplayA = await browserJson(playwright.page, ledger, "/api/v1/system/session",
       { correlation: "e2e-import-1/replay-bearer-a" });
     const bearerReplayB = await browserJson(playwright.page, ledger, "/api/v1/system/session",
@@ -4467,11 +4694,39 @@ export async function runOwnerE2E() {
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
     const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
-    const catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token });
+    let catalog;
+    if (!catalogTransportDiagnosticEnabled) {
+      catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
+    } else {
+      const directAfterCli = await observeCatalogTransport("direct-after-cli", () => workerJson(worker.origin,
+        "/api/v1/research/catalog?limit=20", { token, phase: "catalog-probe-after-cli", worker }), worker,
+      catalogTransportProbeRecords);
+      if (!directAfterCli.ok) {
+        // One browser observation through the already-paired bridge separates
+        // direct Node transport from the same Worker route without masking the
+        // original direct failure or issuing any retry.
+        await observeCatalogTransport("bridge-after-cli", () => browserJson(playwright.page, ledger,
+          "/api/v1/research/catalog?limit=20", { correlation: "e2e-import-1/catalog-probe-bridge" }), worker,
+        catalogTransportProbeRecords);
+        const diagnostic = {
+          protocol: "eliotr.owner-e2e.catalog-transport-probe.v1",
+          git_head: catalogTransportHead,
+          worker: workerDiagnosticSnapshot(worker),
+          probes: catalogTransportProbeRecords,
+        };
+        throw new Error(`${directAfterCli.error?.message ?? String(directAfterCli.error)}\n` +
+          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`, { cause: directAfterCli.error });
+      }
+      catalog = directAfterCli.response;
+      receipt.catalog_transport_probe = {
+        protocol: "eliotr.owner-e2e.catalog-transport-probe.v1", git_head: catalogTransportHead,
+        worker: workerDiagnosticSnapshot(worker), probes: catalogTransportProbeRecords,
+      };
+    }
     assert.equal(catalog.status, 200, "authorized catalog must succeed through the real Worker");
     const catalogSources = catalog.data.data.sources ?? [];
     assert.ok(catalogSources.some((entry) => entry.id === sourceId), "authorized Library catalog must list the admitted source");
-    const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
+    const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token, phase: "authorized-library-revisions", worker });
     assert.equal(revisions.status, 200, "authorized revision history must succeed");
     assert.ok(JSON.stringify(revisions.data).includes(revisionRef), "revision history must include the admitted revision");
     const canonicalKey = imported.receipt.normalized_artifact_ref;
@@ -4646,7 +4901,8 @@ export async function runOwnerE2E() {
     const stoppedGeneration = paths.generation;
     await worker.stop();
     worker = undefined;
-    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+    await assert.rejects(fetchWorkerResponseWithDiagnostics(globalThis.fetch, stoppedOrigin, "/healthz",
+      { phase: "post-restart-stopped-probe", timeoutMs: 5000 }),
       /fetch failed|ECONNREFUSED|aborted/, "stopped Worker port must be closed (owned process removed)");
     await prepareLocal({ stateDirectory: directory, log: () => {} });
     await applyOwnerE2EProfile(paths, jwks.url);
@@ -4670,16 +4926,17 @@ export async function runOwnerE2E() {
     assert.ok(isChromiumSafePort(worker.port),
       `restart Worker port must be Chromium-safe, got ${worker.port}`);
     workerPortEvidence.push(`restart=${worker.port}/startAttempts=${worker.startAttempts}`);
-    const rebound = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
+    const rebound = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, "/healthz",
+      { phase: "post-restart-health", worker, timeoutMs: 5000 });
     assert.equal(rebound.status, 200);
-    const reboundBody = await rebound.json();
+    const reboundBody = rebound.data;
     assert.equal(reboundBody.ready, true, "restart must report ready");
     assert.equal(reboundBody.deployment_generation, paths.generation, "restart must serve the same generation");
-    const catalogAfter = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token });
+    const catalogAfter = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "post-restart-catalog", worker });
     assert.equal(catalogAfter.status, 200, `restart must still serve the authorized catalog: ${JSON.stringify(catalogAfter.data)?.slice(0, 400)}`);
     assert.ok((catalogAfter.data.data.sources ?? []).some((entry) => entry.id === sourceId),
       "restart must preserve the same Library source identity");
-    const revisionsAfter = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token });
+    const revisionsAfter = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token, phase: "post-restart-revisions", worker });
     assert.equal(revisionsAfter.status, 200);
     assert.ok(JSON.stringify(revisionsAfter.data).includes(revisionRef), "restart must preserve the same revision");
     const preRestartNames = new Set((await playwright.context.cookies())
@@ -4723,7 +4980,7 @@ export async function runOwnerE2E() {
     playwright.registerOp({ kind: "harness-action", cause: "pair-action", scope: "document",
       sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
       action: "click-reconnect", role: "pair-action",
-      from: playwright.currentOp().id, successors: ["goto-logout"] });
+      from: playwright.currentOp().id, successors: ["reload-exhaustive-recovery", "goto-logout"] });
     playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
     await playwright.page.click("#connect", { timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
@@ -4739,6 +4996,39 @@ export async function runOwnerE2E() {
       ...bridgeRepairNetworkSpec(bridge.origin), workerOrigins: trackOrigin(bridge.origin),
     });
     receipt.network_ledger_phases.bridge_repair = summarizePhaseLedger(playwright);
+    playwright.resetLedger();
+    // Q6 acceptance drives the built PWA against the real local Worker and
+    // durable Workflow. It requires an observed active job before DELETE, so
+    // a naturally completed fast job fails closed instead of becoming a false
+    // cancellation proof.
+    exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
+      page: playwright.page, browserJson, ledger, query: "Pinned",
+      beforeReload: async () => {
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
+        playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",
+          sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
+          action: "reload-exhaustive-recovery", role: "exhaustive-recovery",
+          from: playwright.currentOp().id, successors: ["select-recovered-workflow", "framenavigated"] });
+        playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
+      },
+      beforeRecoverySelection: async () => {
+        playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
+        playwright.registerOp({ kind: "harness-action", cause: "recovery-selection", scope: "document",
+          sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId(),
+          action: "select-recovered-workflow", role: "exhaustive-recovery",
+          from: playwright.currentOp().id, successors: ["goto-logout", "framenavigated"] });
+        playwright.mintSlotsFor(playwright.currentIssuance(), { origin: bridge.origin });
+      },
+    });
+    await settleLedger(playwright.page, playwright);
+    assertPhaseNetwork(playwright, "exhaustive_workflow", {
+      origins: [bridge.origin],
+      api: exhaustiveWorkflow.api,
+      mutations: exhaustiveWorkflow.mutations,
+      workerOrigins: trackOrigin(bridge.origin),
+    });
+    receipt.network_ledger_phases.exhaustive_workflow = summarizePhaseLedger(playwright);
+    receipt.exhaustive_workflow = `PASS (launch/status/cancel/reload/discovery/recovery ${exhaustiveWorkflow.workflowId})`;
     playwright.resetLedger();
     playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "logout-action"));
     playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
@@ -4829,14 +5119,14 @@ export async function runOwnerE2E() {
         `rotation Worker port must be Chromium-safe, got ${worker.port}`);
       workerPortEvidence.push(`rotation=${worker.port}`);
       // Old v1 token: denied on the real path (Node) and through Chromium.
-      const oldDenied = await workerJson(worker.origin, "/api/v1/system/session", { token });
+      const oldDenied = await workerJson(worker.origin, "/api/v1/system/session", { token, phase: "rotation-old-token", worker });
       assert.equal(oldDenied.status, 401, "rotated-out v1 token must deny with 401");
       assert.equal(oldDenied.data?.code ?? oldDenied.data?.data?.code, "ACCESS_JWT_KEY_UNKNOWN",
         "rotated-out v1 token must carry ACCESS_JWT_KEY_UNKNOWN");
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: oldDenied.status, correlation: "e2e-rotation/v1-denied-node", token_present: true });
       const newToken = await signV2();
-      const newAllowed = await workerJson(worker.origin, "/api/v1/system/session", { token: newToken });
+      const newAllowed = await workerJson(worker.origin, "/api/v1/system/session", { token: newToken, phase: "rotation-new-token", worker });
       assert.equal(newAllowed.status, 200, "v2 token must verify after rotation + cache refresh");
       assert.equal(newAllowed.data?.data?.principal_ref, "e2e-owner", "v2 identity must remain the owner subject");
       assert.ok(String(newAllowed.data?.data?.credential_generation).includes(ROTATION_KID),
@@ -4976,6 +5266,12 @@ export async function runOwnerE2E() {
         "e2e-import-1/replay-prepare",
         "e2e-import-1/browser-catalog",
         "e2e-import-1/browser-revisions",
+        "e2e-exhaustive/status-before-cancel",
+        "e2e-exhaustive/status-after-cancel",
+        "e2e-exhaustive/recovery-list",
+        "e2e-exhaustive/recovered-status",
+        "e2e-exhaustive/relaunch-status-before-cancel",
+        "e2e-exhaustive/relaunch-status-after-cancel",
         "e2e-jwt-matrix/expired",
         "e2e-jwt-matrix/expired-catalog",
         "e2e-jwt-matrix/wrong-audience",
@@ -5016,7 +5312,7 @@ export async function runOwnerE2E() {
       receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
     }
     receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;
-    receipt.network_ledger = `PASS (7 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
+    receipt.network_ledger = `PASS (8 phases paired, websockets/workers/redirects/streams/cross-origin denied, summaries: ${JSON.stringify(receipt.network_ledger_phases)})`;
     receipt.logout = "PASS";
     receipt.storage = "PASS";
     receipt.console_errors = "PASS";
@@ -5040,9 +5336,11 @@ export async function runOwnerE2E() {
       assert.ok(String(error?.message ?? "").length > 0, "failed start must report without leaking state");
     }
     assert.equal(worker.origin, ownedBefore, "failed startup must not replace the owned running Worker");
-    await assert.rejects(globalThis.fetch(`${stoppedOrigin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) }),
+    await assert.rejects(fetchWorkerResponseWithDiagnostics(globalThis.fetch, stoppedOrigin, "/healthz",
+      { phase: "failed-start-stopped-probe", timeoutMs: 5000 }),
       /fetch failed|ECONNREFUSED|aborted/, "failed startup must not resurrect the old Worker port");
-    const probe = await globalThis.fetch(`${worker.origin}/healthz`, { signal: globalThis.AbortSignal.timeout(5000) });
+    const probe = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, "/healthz",
+      { phase: "failed-start-health", worker, timeoutMs: 5000 });
     assert.equal(probe.status, 200, "owned Worker must still serve after the failed start");
     const profilesBefore = new Set((await readdir(tmpdir()).catch(() => []))
       .filter((name) => name.startsWith("eliotr-owner-e2e-profile-")));
@@ -5132,7 +5430,32 @@ export async function runOwnerE2E() {
       };
     });
     await runStep("bridge.close", async () => { try { await bridge?.close(); } catch (error) { fail(`bridge.close: ${error?.message ?? error}`); } });
-    await runStep("worker.stop", async () => { try { await worker?.stop(); } catch (error) { fail(`worker.stop: ${error?.message ?? error}`); } });
+    await runStep("worker.stop", async () => {
+      let stopped = false;
+      try { await worker?.stop(); worker = undefined; stopped = true; }
+      catch (error) { fail(`worker.stop: ${error?.message ?? error}`); }
+      if (!stopped || exhaustiveWorkflow === undefined) return;
+      try {
+        // The Worker is stopped before this CLI readback, so SQLite is no
+        // longer shared with an active runtime. Both browser-cancelled IDs
+        // must retain their durable owner binding and CANCEL_REQUESTED state.
+        const ids = exhaustiveWorkflow.workflowIds;
+        const quotedIds = ids.map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
+        const bindings = d1Query(paths, "CORE_DB",
+          "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
+          `FROM retrieval_exhaustive_workflow WHERE workflow_id IN (${quotedIds}) ORDER BY workflow_id`);
+        assert.equal(bindings.length, ids.length, "D1 must retain one binding row per browser workflow identity");
+        for (const binding of bindings) {
+          assert.ok(ids.includes(binding.workflow_id), "D1 workflow binding must match a browser-issued identity");
+          assert.equal(binding.deployment_generation, paths.generation, "D1 workflow binding must retain the current deployment");
+        }
+        const jobIds = [...new Set(bindings.map((row) => row.job_id))];
+        const jobs = jobIds.length === 0 ? [] : d1Query(paths, "CORE_DB",
+          `SELECT job_id,principal_ref,client_class,credential_generation,state FROM retrieval_exhaustive_job WHERE job_id IN (${jobIds.map((id) => `'${String(id).replaceAll("'", "''")}'`).join(",")})`);
+        const readback = assertWorkflowJobReadback(bindings, jobs);
+        receipt.exhaustive_workflow_d1 = `PASS (${readback.bindingCount} browser workflow bindings, ${readback.jobRowCount} canonical retrieval job rows, owner identity and CANCEL_REQUESTED read back after Worker stop)`;
+      } catch (error) { fail(`workflow D1 readback: ${error?.message ?? error}`); }
+    });
     await runStep("playwright.close", async () => { try { await playwright?.close(); } catch (error) { fail(`playwright.close: ${error?.message ?? error}`); } });
     await runStep("jwks.close", async () => {
       const started = Date.now();

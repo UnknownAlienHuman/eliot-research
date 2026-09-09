@@ -6,6 +6,7 @@ import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
 import { mountEvidenceRail } from "./evidence-rail.js";
+import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence } from "@eliotr/contracts";
 
@@ -40,10 +41,20 @@ function unavailableHealth(): SystemHealth {
   };
 }
 
+function googleConnectorLabel(transport: GoogleExternalTransport | undefined): string {
+  switch (transport) {
+    case "drive-exchange": return "Drive exchange";
+    case "gemini-mcp": return "Workspace client";
+    case "disabled": return "Unavailable";
+    default: return "Unknown";
+  }
+}
+
 function renderGoogleConnector(health: SystemHealth | null): void {
   const host = app.querySelector<HTMLElement>("#google-oauth");
   if (!host) return;
-  const mode: GoogleExternalTransport | "unknown" = health?.google_external_transport ?? "unknown";
+  const transport = health?.google_external_transport;
+  const mode: GoogleExternalTransport | "unknown" = transport ?? "unknown";
   if (mode === mountedGoogleTransport) return;
   googleOAuthCleanup?.();
   googleOAuthCleanup = undefined;
@@ -97,24 +108,27 @@ function render(health: SystemHealth | null): void {
           <section class="tool-card tool-card--import"><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
           <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-          <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div></section>
+          <section class="tool-card tool-card--research" id="research-card"><div id="exhaustive-workflow"></div><div class="tool-divider"></div><div id="retrieval"></div></section>
         </div>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
         <div class="evidence-heading"><div><span class="eyebrow">Proof rail</span><h2>Evidence</h2></div><span class="rail-status">QUERY RESULT</span></div>
         <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select a resolved excerpt</strong><p>Its revision, anchor, integrity and provenance will appear here.</p></div>
         <article id="evidence-detail" class="evidence-detail" hidden></article>
-        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd>Not qualified</dd></dl></div>
+        <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd id="connector-mode">${googleConnectorLabel(health?.google_external_transport)}</dd></dl></div>
       </aside>
     </main>
   `;
   const lens = app.querySelector<HTMLElement>("#corpus-lens");
   const importer = app.querySelector<HTMLElement>("#bundle-import");
+  app.dataset.healthReady = health?.ready === true ? "true" : "false";
   renderGoogleConnector(health);
   const orientation = lens ? mountOrientationPanel(lens) : undefined;
   const library = app.querySelector<HTMLElement>("#library");
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
+  const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
@@ -156,7 +170,7 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); };
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); };
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
@@ -179,20 +193,29 @@ function render(health: SystemHealth | null): void {
     clearEvidenceRail(false);
   });
   retrievalHost?.addEventListener("retrieval:started", clearEvidenceOnQueryStart);
+  exhaustiveHost?.addEventListener("exhaustive:started", clearEvidenceOnQueryStart);
+  exhaustiveHost?.addEventListener("exhaustive:completed", (event) => {
+    const detail = (event as CustomEvent<{ matches: number; sections: number }>).detail;
+    const coverage = app.querySelector("#coverage");
+    if (coverage) coverage.textContent = `Complete · ${detail.sections} sections`;
+    const coverageNote = app.querySelector("#coverage-note");
+    if (coverageNote) coverageNote.textContent = `${detail.matches} exact match${detail.matches === 1 ? "" : "es"} in the reconciled scope.`;
+  });
   app.addEventListener("eliotr:health-lost", clearPrivateEvidence);
-  app.addEventListener("library:scope-changed", clearEvidenceOnEvent);
+  app.addEventListener("library:scope-changed", clearPrivateEvidence);
   window.addEventListener("offline", clearEvidenceOnEvent);
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
-  const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
+  const cleanups = [orientation, retrieval, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     library ? mountLibraryPanel(library, (id) => {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
+      exhaustive?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
@@ -201,6 +224,7 @@ function updateHealth(health: SystemHealth): void {
     app.dispatchEvent(new Event("eliotr:health-lost"));
   }
   app.dataset.healthGeneration = health.deployment_generation;
+  app.dataset.healthReady = health.ready ? "true" : "false";
   renderGoogleConnector(health);
   const badge = app.querySelector("#health-badge");
   if (badge) badge.innerHTML = healthBadge(health);
@@ -215,6 +239,9 @@ function updateHealth(health: SystemHealth): void {
     ["#search-generation", health.search_schema_generation ?? "Unknown"]] as const) {
     const node = app.querySelector(selector); if (node) node.textContent = text;
   }
+  const connector = app.querySelector("#connector-mode");
+  if (connector) connector.textContent = googleConnectorLabel(health.google_external_transport);
+  app.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true }));
 }
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
