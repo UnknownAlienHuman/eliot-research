@@ -347,7 +347,11 @@ export function mountExhaustiveWorkflowPanel(
       body = exhaustiveQueryBody(query.value, scope.value === "selected" && selectedSourceId ? [selectedSourceId] : []);
     } catch (error) { statusText.textContent = message(error); return; }
     const active = ++serial;
-    const wasTerminal = terminalState;
+    // A recovered terminal row briefly has its terminal badge rendered before
+    // the status readback completes. Once the button is enabled, a recovered
+    // workflow can only be launched from that terminal state; retain the
+    // fresh-operation rule across that narrow render boundary.
+    const wasTerminal = terminalState || (recoveredWorkflow && workflowId !== undefined);
     const generation = deploymentGeneration();
     const local = new AbortController(); controller = local; busy = true; workflowId = undefined; workflowGeneration = generation; terminalState = false; recoveredWorkflow = false; recoveredCancelable = false; delete element.dataset.workflowId; buttons();
     element.dispatchEvent(new CustomEvent("exhaustive:started", { bubbles: true }));

@@ -27,6 +27,33 @@ function recoveryPageOf(outcome, label, workflowId) {
   return data;
 }
 
+async function waitForFreshWorkflowId(page, previousWorkflowId, label) {
+  try {
+    await page.waitForFunction((previous) => {
+      const value = document.querySelector("#exhaustive-workflow")?.getAttribute("data-workflow-id");
+      return typeof value === "string" && value !== previous && /^exhaustive-workflow-[a-f0-9]{64}$/u.test(value);
+    }, previousWorkflowId, { timeout: 15000 });
+  } catch (error) {
+    const panelState = await page.locator("#exhaustive-workflow").evaluate((root) => {
+      const text = (selector) => root.querySelector(selector)?.textContent?.trim().slice(0, 160) ?? null;
+      const buttonState = (selector) => {
+        const button = root.querySelector(selector);
+        return button instanceof HTMLButtonElement ? button.disabled : null;
+      };
+      return {
+        workflowId: root.getAttribute("data-workflow-id"),
+        badge: text("[data-workflow-badge]"),
+        status: text(".workflow-status"),
+        submitDisabled: buttonState('button[type="submit"]'),
+        cancelDisabled: buttonState("[data-cancel]"),
+        refreshDisabled: buttonState("[data-refresh]"),
+      };
+    }).catch(() => ({ panel: "unavailable" }));
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label}: fresh workflow ID was not published (${reason}); panel=${JSON.stringify(panelState)}`, { cause: error });
+  }
+}
+
 /**
  * Drive one real exhaustive workflow through the built PWA and its same-origin
  * local bridge. The helper deliberately cancels the job after the UI receives
@@ -104,6 +131,11 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const root = document.querySelector("#exhaustive-workflow");
     return root?.getAttribute("data-workflow-id") === id && root.querySelector("[data-workflow-badge]")?.textContent?.trim() === "CANCELLED";
   }, firstWorkflowId, { timeout: 15000 });
+  await page.waitForFunction((id) => {
+    const root = document.querySelector("#exhaustive-workflow");
+    const submit = root?.querySelector('button[type="submit"]');
+    return root?.getAttribute("data-workflow-id") === id && submit instanceof HTMLButtonElement && !submit.disabled;
+  }, firstWorkflowId, { timeout: 15000 });
   const recoveredStatus = await browserJson(page, ledger, `/api/v1/research/query/${firstWorkflowId}`, {
     correlation: "e2e-exhaustive/recovered-status",
   });
@@ -117,10 +149,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   // it too so the browser acceptance leaves no active Workflow behind.
   await panel.locator('input[name="query"]').fill(query);
   await submit.click();
-  await page.waitForFunction((previous) => {
-    const value = document.querySelector("#exhaustive-workflow")?.getAttribute("data-workflow-id");
-    return typeof value === "string" && value !== previous && /^exhaustive-workflow-[a-f0-9]{64}$/u.test(value);
-  }, firstWorkflowId, { timeout: 15000 });
+  await waitForFreshWorkflowId(page, firstWorkflowId, "terminal relaunch");
   const relaunchedWorkflowId = await panel.getAttribute("data-workflow-id");
   assert.match(relaunchedWorkflowId, WORKFLOW_ID, "relaunch must retain a canonical server workflow ID");
   assert.notEqual(relaunchedWorkflowId, firstWorkflowId, "terminal relaunch must not reuse the cancelled workflow identity");
