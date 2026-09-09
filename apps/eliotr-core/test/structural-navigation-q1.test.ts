@@ -109,7 +109,7 @@ describe("N1 structural navigation over the real Q1 import path", () => {
   });
 
   it("rejects owner withdrawal during the admitted map read before any D1 artifact is written", async () => {
-    const { world, scopes, snapshot, source, store } = await preparedNavigation(true);
+    const { world, scopes, snapshot, source } = await preparedNavigation(true);
     const mapKey = (await readAdmittedCoordinateMap(runtime.EVIDENCE_BUCKET, source.authority)).map_object_ref;
     let withdrawn = false;
     const bucket = {
