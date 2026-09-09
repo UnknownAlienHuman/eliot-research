@@ -14,12 +14,16 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/env.ts`
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
+- `apps/eliotr-core/src/research-query-http.ts`
+- `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/src/queue.ts`
 - `apps/eliotr-core/src/scheduled.ts`
 - `apps/eliotr-core/src/readiness.ts`
 - `apps/eliotr-core/src/research-session.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
+- `apps/eliotr-core/test/research-query-jobs.test.ts`
+- `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
 - `packages/cloudflare-navigation/src/orientation-authority.ts`
@@ -142,6 +146,15 @@ cover launch, readback, cancellation and no-resume behavior; deployed Workflow
 and live user-loop qualification remain `NOT EXECUTED`. A Q7
 `result_artifact_ref` is a receipt reference; it is not a published research
 artifact.
+
+The owner-only `GET /api/v1/research/query/jobs` route provides a bounded recent metadata page for
+reload recovery. It accepts `limit` in `[1,20]` (default `20`) and an opaque keyset `cursor`; the
+cursor is bound to the authenticated owner/client/credential/deployment context and carries no
+authority. Each item exposes only Workflow instance/status, binding state, creation/expiry metadata
+and recoverable/cancelable flags, with Q7 job state fields present only after canonical job readback.
+Rows are filtered by current D1 binding and owner policy, and currentness is checked before and after
+the asynchronous Workflow status read. Remote deployed Workflow and live Access qualification remain
+`NOT EXECUTED`.
 
 ## Acceptance
 

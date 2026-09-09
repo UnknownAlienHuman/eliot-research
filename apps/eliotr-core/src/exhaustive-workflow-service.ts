@@ -1,10 +1,16 @@
 import {
   createExhaustiveWorkflowBinding,
   ExhaustiveWorkflowBindingError,
+  validateExhaustiveWorkflowJobCurrent,
   validateExhaustiveJobCurrent,
   type ExhaustiveWorkflowPayload as BoundExhaustiveWorkflowPayload,
 } from "@eliotr/cloudflare-navigation";
-import type { ExhaustiveWorkflowResult, AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type {
+  ExhaustiveWorkflowJobsRequest,
+  ExhaustiveWorkflowPage,
+  ExhaustiveWorkflowResult,
+  AuthenticatedRequestContext,
+} from "@eliotr/interfaces";
 import type { Env } from "./env.js";
 import {
   exhaustiveIdempotencyKey,
@@ -26,6 +32,7 @@ export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEAR
   launch(context: AuthenticatedRequestContext, raw: unknown): Promise<ExhaustiveWorkflowResult>;
   status(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
   cancel(context: AuthenticatedRequestContext, instanceId: string): Promise<ExhaustiveWorkflowResult>;
+  list(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
 } {
   const binding = createExhaustiveWorkflowBinding<ExhaustiveQueryRequest>({
     database: env.CORE_DB,
@@ -34,11 +41,13 @@ export function createExhaustiveWorkflowService(env: Pick<Env, "CORE_DB" | "SEAR
     parseRequest: parseExhaustiveQueryRequest,
     idempotencyKey: exhaustiveIdempotencyKey,
     validateCurrentJob: (jobId, context) => validateExhaustiveJobCurrent(env, context, jobId),
+    validateCurrentWorkflowJob: (jobId, context) => validateExhaustiveWorkflowJobCurrent(env, context, jobId),
   });
   return {
     launch: (context, raw) => binding.launch(context, raw).catch(translate),
     status: (context, instanceId) => binding.status(context, instanceId).catch(translate),
     cancel: (context, instanceId) => binding.cancel(context, instanceId).catch(translate),
+    list: (context, request) => binding.list(context, request).catch(translate),
   };
 }
 
