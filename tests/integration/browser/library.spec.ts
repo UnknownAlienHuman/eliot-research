@@ -27,6 +27,8 @@ type E2EReceipt = {
   readonly browser_jwt_matrix: string;
   readonly artifact_ledger: string;
   readonly cross_client_ledger: string;
+  readonly exhaustive_workflow: string;
+  readonly exhaustive_workflow_d1: string;
   readonly early_cleanup: string;
   readonly teardown_inventory: unknown;
   readonly live: string;
@@ -41,6 +43,8 @@ type E2EHarness = {
   verifyServiceWorkerSettlementRegression: () => Promise<{ state: string }>;
   verifyReadbackRetryClassification: () => Promise<{ state: string }>;
   verifyEarlyFailureCleanup: () => Promise<{ state: string }>;
+  verifyWorkerFetchDiagnosticRegression: () => Promise<{ state: string }>;
+  assertWorkflowJobReadback: (bindings: readonly unknown[], jobs: readonly unknown[]) => { bindingCount: number; jobRowCount: number };
 };
 
 async function loadHarness(): Promise<E2EHarness> {
@@ -67,6 +71,25 @@ test("L6 phase reset: retain request identity until late response settles", asyn
   assert.equal(harness.verifyLedgerResetBoundaryRegression().state, "PASS");
 });
 
+test("L6 workflow D1 readback: allow early missing job but reject foreign owner rows", async () => {
+  const harness = await loadHarness();
+  const binding = {
+    workflow_id: `exhaustive-workflow-${"a".repeat(64)}`,
+    job_id: `exhaustive-job-${"b".repeat(48)}`,
+    principal_ref: "e2e-owner",
+    client_class: "owner_pwa",
+    credential_generation: "credential-1",
+    deployment_generation: "deployment-1",
+    request_identity_digest: "c".repeat(64),
+    state: "CANCEL_REQUESTED",
+  };
+  const job = { job_id: binding.job_id, principal_ref: binding.principal_ref, client_class: binding.client_class,
+    credential_generation: binding.credential_generation, state: "PENDING" };
+  assert.deepEqual(harness.assertWorkflowJobReadback([binding], []), { bindingCount: 1, jobRowCount: 0 });
+  assert.deepEqual(harness.assertWorkflowJobReadback([binding], [job]), { bindingCount: 1, jobRowCount: 1 });
+  assert.throws(() => harness.assertWorkflowJobReadback([binding], [{ ...job, principal_ref: "foreign-owner" }]), /bound owner principal/u);
+});
+
 test("L6 readback retry: deterministic authority failures stop before any retry", async () => {
   const harness = await loadHarness();
   assert.equal((await harness.verifyReadbackRetryClassification()).state, "PASS");
@@ -75,6 +98,11 @@ test("L6 readback retry: deterministic authority failures stop before any retry"
 test("L6 cleanup: marker creation failure removes its known-created directory", async () => {
   const harness = await loadHarness();
   assert.equal((await harness.verifyEarlyFailureCleanup()).state, "PASS");
+});
+
+test("L6 diagnostics: bounded Worker fetch errors preserve phase and redacted route context", async () => {
+  const harness = await loadHarness();
+  assert.equal((await harness.verifyWorkerFetchDiagnosticRegression()).state, "PASS");
 });
 
 test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Library, persistence, logout, teardown, errors, storage, bounds", async () => {
@@ -115,6 +143,10 @@ test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Lib
     "browser-originated artifact lifecycle with replay must be fully asserted");
   assert.ok(typeof receipt.cross_client_ledger === "string" && receipt.cross_client_ledger.startsWith("PASS"),
     "cross-client ledger must be gapless, ordered and free of JWT material");
+  assert.ok(typeof receipt.exhaustive_workflow === "string" && receipt.exhaustive_workflow.startsWith("PASS"),
+    "real PWA exhaustive launch/status/cancel/reload/discovery/recovery must pass");
+  assert.ok(typeof receipt.exhaustive_workflow_d1 === "string" && receipt.exhaustive_workflow_d1.startsWith("PASS"),
+    "stopped Worker D1 readback must retain workflow/job binding and cancellation intent");
   assert.equal(receipt.early_cleanup, "PASS", "forced early-migration failure must leave zero run-owned residue");
   assert.ok(receipt.teardown_inventory !== null && typeof receipt.teardown_inventory === "object",
     "immutable before/after teardown inventories must be recorded");
