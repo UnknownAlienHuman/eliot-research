@@ -39,12 +39,14 @@ describe("evidence verify/open transport", () => {
       return new Response(text, { status: 200, headers: {
         "content-type": "text/plain; charset=utf-8", "content-length": "28",
         "x-eliotr-evidence-handle": "handle-1:1", "x-eliotr-excerpt-sha256": excerptSha,
-        "x-eliotr-verification-receipt": "verify-1",
+        // Core may mint a fresh resolution receipt while reopening the same live handle.
+        "x-eliotr-verification-receipt": "verify-2",
       } });
     }));
 
     const result = await verifyAndOpenEvidence(scope, handle);
     expect(result.text).toBe(text);
+    expect(result.verificationReceiptRef).toBe("verify-2");
     expect(calls.map((call) => call.url)).toEqual(["/api/v1/research/verify", "/api/v1/research/open/handle-1%3A1"]);
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ scope_snapshot_ref: scope, handle_ref: handle });
     expect(calls[1]?.init?.credentials).toBe("same-origin");

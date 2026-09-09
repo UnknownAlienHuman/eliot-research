@@ -1,5 +1,6 @@
 import {
   EvidenceHandleSchema,
+  IdentifierSchema,
   ResolvedEvidenceSchema,
   Sha256Schema,
   VersionedRefSchema,
@@ -97,6 +98,7 @@ export async function openEvidence(handleRef: VersionedRef, signal?: AbortSignal
   const excerptSha256 = requiredHeader(response.headers, "x-eliotr-excerpt-sha256");
   if (!Sha256Schema.safeParse(excerptSha256).success) mismatch("Opened evidence digest is invalid");
   const verificationReceiptRef = requiredHeader(response.headers, "x-eliotr-verification-receipt");
+  if (!IdentifierSchema.safeParse(verificationReceiptRef).success) mismatch("Opened evidence receipt is invalid");
   const length = response.headers.get("content-length");
   const byteLength = new TextEncoder().encode(response.text).byteLength;
   if (length !== null && (!/^\d+$/u.test(length) || Number(length) !== byteLength)) mismatch("Opened evidence length is invalid");
@@ -111,9 +113,11 @@ export async function verifyAndOpenEvidence(
   const evidence = await verifyEvidence(scopeSnapshotRef, handleRef, signal);
   const opened = await openEvidence(evidence.handle.handle_ref, signal);
   const contentSha256 = await sha256(opened.text);
+  // Core may mint a new resolution receipt for each authorized reopen. The
+  // pinned handle, excerpt digest, and exact byte length are the stable identity.
   if (!sameRef(opened.handleRef, evidence.handle.handle_ref) || opened.excerptSha256 !== evidence.handle.excerpt_sha256 ||
       opened.excerptSha256 !== contentSha256 || new TextEncoder().encode(opened.text).byteLength !== evidence.handle.excerpt_byte_length ||
-      opened.verificationReceiptRef !== evidence.verification_receipt_ref) {
+      !IdentifierSchema.safeParse(opened.verificationReceiptRef).success) {
     mismatch("Opened evidence does not match the verified excerpt");
   }
   return { evidence, ...opened };
