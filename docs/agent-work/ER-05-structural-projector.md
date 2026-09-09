@@ -51,8 +51,8 @@ The bounded native N1 follow-up is implemented through these coordinated delegat
   caller JSON. Native page/region/code precision and evidence resolution remain later gaps.
   The current N1 qualification gate requires an admitted `QUALIFIED`/`EXACT` source assurance plus
   manifest table and mapping artifacts; absent qualification stays an explicit precision gap. Any future
-  canonical native-map domain semantics target `eliotr-projection-core` and must add versioned TS/Rust/Wasm
-  parity fixtures before promotion.
+  canonical native-map domain semantics target `eliotr-projection-core`; versioned TS/Rust/Wasm parity
+  fixtures are required before promotion.
 
 ## Acceptance
 
