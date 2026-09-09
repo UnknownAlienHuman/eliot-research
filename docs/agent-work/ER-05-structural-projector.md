@@ -37,6 +37,8 @@ Delegated integration paths:
 - Materialize projection source items to R2 Work before managed-index upload.
 - Derive SourceCard and DocumentMap navigation from exact admitted normalized bytes, preserving explicit
   gaps for absent or approximate native coordinates and persisting through the existing immutable D1 store.
+  The current N1 callable boundary is normalized-only; native coordinate-map bytes and their typed admitted
+  identity/precision contract are a follow-up unit and must not be inferred from caller JSON.
 
 ## Acceptance
 

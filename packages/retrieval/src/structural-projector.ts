@@ -60,6 +60,7 @@ interface TextPiece {
   readonly start: number;
   readonly end: number;
   readonly heading_path: readonly string[];
+  readonly starts_heading: boolean;
 }
 
 function fail(code: StructuralProjectionErrorCode, message: string): never {
@@ -131,9 +132,11 @@ function splitOversizedLine(
   line: { readonly text: string; readonly start: number; readonly end: number },
   maxBytes: number,
   headingPath: readonly string[],
+  startsHeading: boolean,
 ): readonly TextPiece[] {
   if (utf8Length(line.text) <= maxBytes) {
-    return [{ text: line.text, start: line.start, end: line.end, heading_path: headingPath }];
+    return [{ text: line.text, start: line.start, end: line.end, heading_path: headingPath,
+      starts_heading: startsHeading }];
   }
   const pieces: TextPiece[] = [];
   let textStart = 0;
@@ -144,7 +147,8 @@ function splitOversizedLine(
     const width = utf8Length(character);
     if (bytes > 0 && bytes + width > maxBytes) {
       const text = line.text.slice(textStart, index);
-      pieces.push({ text, start: byteStart, end: byteStart + bytes, heading_path: headingPath });
+      pieces.push({ text, start: byteStart, end: byteStart + bytes, heading_path: headingPath,
+        starts_heading: startsHeading });
       textStart = index;
       byteStart += bytes;
       bytes = 0;
@@ -158,6 +162,7 @@ function splitOversizedLine(
       start: byteStart,
       end: byteStart + bytes,
       heading_path: headingPath,
+      starts_heading: startsHeading,
     });
   }
   if (pieces.some((piece) => utf8Length(piece.text) > maxBytes)) {
@@ -206,11 +211,24 @@ export interface MarkdownStructuralSection {
   readonly parent_index?: number;
 }
 
+interface MarkdownStructuralLine {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
+  readonly heading_path: readonly string[];
+  readonly starts_heading: boolean;
+}
+
+interface ParsedMarkdownStructure {
+  readonly sections: readonly MarkdownStructuralSection[];
+  readonly lines: readonly MarkdownStructuralLine[];
+}
+
 /** Canonical bounded heading/fence/UTF-8 extraction shared by projection and navigation. */
-export function extractNormalizedMarkdownStructure(
+function parseNormalizedMarkdownStructure(
   markdown: string,
   maxSections = MAX_ITEMS,
-): readonly MarkdownStructuralSection[] {
+): ParsedMarkdownStructure {
   if (typeof markdown !== "string" || markdown.length === 0) {
     fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown is empty");
   }
@@ -220,33 +238,49 @@ export function extractNormalizedMarkdownStructure(
   const lines = splitLines(markdown);
   if (lines.length > 131_072) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "admitted lines exceed traversal bound");
   const marks: { readonly level: number; readonly title: string; readonly start: number; readonly lineIndex: number }[] = [];
+  const structuralLines: MarkdownStructuralLine[] = [];
   let inFence: FenceOpener | null = null;
+  const headingStack: { readonly title: string; readonly level: number }[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     if (line === undefined) continue;
     if (inFence !== null) {
       if (fenceCloser(line.text, inFence)) inFence = null;
+      structuralLines.push({ ...line, heading_path: headingStack.map((entry) => entry.title), starts_heading: false });
       continue;
     }
     const opener = fenceOpener(line.text);
     if (opener !== null) {
       inFence = opener;
+      structuralLines.push({ ...line, heading_path: headingStack.map((entry) => entry.title), starts_heading: false });
       continue;
     }
     const found = heading(line.text);
-    if (found === null) continue;
+    if (found === null) {
+      structuralLines.push({ ...line, heading_path: headingStack.map((entry) => entry.title), starts_heading: false });
+      continue;
+    }
     if (utf8Length(found.title) > MAX_CONTEXT_BYTES) {
       fail("PROJECTION_INPUT_INVALID", "heading exceeds short-text ceiling");
     }
-    if (marks.length >= maxSections) {
+    const includesPreamble = marks.length === 0 && line.start > 0 ? 1 : 0;
+    if (marks.length + includesPreamble + 1 > maxSections) {
       fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
     }
     marks.push({ level: found.level, title: found.title, start: line.start, lineIndex: index });
+    while (headingStack.length > 0 && (headingStack[headingStack.length - 1]?.level ?? 0) >= found.level) {
+      headingStack.pop();
+    }
+    headingStack.push({ title: found.title, level: found.level });
+    structuralLines.push({ ...line, heading_path: headingStack.map((entry) => entry.title), starts_heading: true });
   }
   const markdownByteLength = lines[lines.length - 1]?.end ?? 0;
   if (marks.length === 0) {
     if (markdownByteLength <= 0) fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown has no projectable bytes");
-    return [{ label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: markdownByteLength }];
+    return {
+      lines: structuralLines,
+      sections: [{ label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: markdownByteLength }],
+    };
   }
   const sections: MarkdownStructuralSection[] = [];
   const path: { readonly title: string; readonly level: number; readonly index: number }[] = [];
@@ -280,28 +314,32 @@ export function extractNormalizedMarkdownStructure(
   }
   const firstStart = marks[0]?.start ?? 0;
   if (firstStart > 0) {
-    if (sections.length >= maxSections) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
-    return [
-      { label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: firstStart },
-      ...sections.map((section) => ({
-        ...section,
-        ...(section.parent_index === undefined ? {} : { parent_index: section.parent_index + 1 }),
-      })),
-    ];
+    if (sections.length + 1 > maxSections) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "derived sections exceed object ceiling");
+    return {
+      lines: structuralLines,
+      sections: [
+        { label: "Preamble", heading_path: [], level: 1, normalized_start_byte: 0, normalized_end_byte: firstStart },
+        ...sections.map((section) => ({
+          ...section,
+          ...(section.parent_index === undefined ? {} : { parent_index: section.parent_index + 1 }),
+        })),
+      ],
+    };
   }
-  return sections;
+  return { lines: structuralLines, sections };
 }
 
-function pieces(markdown: string, maxBytes: number): readonly TextPiece[] {
+export function extractNormalizedMarkdownStructure(
+  markdown: string,
+  maxSections = MAX_ITEMS,
+): readonly MarkdownStructuralSection[] {
+  return parseNormalizedMarkdownStructure(markdown, maxSections).sections;
+}
+
+function pieces(structure: ParsedMarkdownStructure, maxBytes: number): readonly TextPiece[] {
   const result: TextPiece[] = [];
-  const path: string[] = [];
-  for (const line of splitLines(markdown)) {
-    const found = heading(line.text);
-    if (found !== null) {
-      path.length = found.level - 1;
-      path[found.level - 1] = found.title;
-    }
-    result.push(...splitOversizedLine(line, maxBytes, [...path]));
+  for (const line of structure.lines) {
+    result.push(...splitOversizedLine(line, maxBytes, line.heading_path, line.starts_heading));
   }
   return result;
 }
@@ -317,7 +355,7 @@ function chunkPieces(
     if (piece.text.length === 0) continue;
     const pieceBytes = utf8Length(piece.text);
     if (pieceBytes > maxBytes) fail("PROJECTION_ITEM_TOO_LARGE", "projection piece exceeds hard item size");
-    const startsHeading = heading(piece.text) !== null;
+    const startsHeading = piece.starts_heading;
     const currentBytes = current === null ? 0 : utf8Length(current.text);
     const headingChanged = current !== null &&
       JSON.stringify(current.heading_path) !== JSON.stringify(piece.heading_path);
@@ -338,6 +376,7 @@ function chunkPieces(
         start: current.start,
         end: piece.end,
         heading_path: current.heading_path,
+        starts_heading: current.starts_heading,
       };
   }
   if (current !== null) chunks.push(current);
@@ -378,9 +417,13 @@ export async function projectNormalizedMarkdown(
     targetBytes,
     HARD_MAX_BYTES,
   );
+  if (Math.ceil(utf8Length(rawInput.markdown) / maxBytes) > MAX_ITEMS) {
+    fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "projection has more bytes than its item ceiling permits");
+  }
   const membershipIds = [...new Set(rawInput.project_membership_ids)].sort();
   membershipIds.forEach((value) => assertIdentifier(value, "project membership ID"));
-  const chunks = chunkPieces(pieces(rawInput.markdown, maxBytes), targetBytes, maxBytes)
+  const structure = parseNormalizedMarkdownStructure(rawInput.markdown, MAX_ITEMS);
+  const chunks = chunkPieces(pieces(structure, maxBytes), targetBytes, maxBytes)
     .filter((chunk) => chunk.text.length > 0);
   if (chunks.length === 0) fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown has no projectable text");
   if (chunks.length > MAX_ITEMS) fail("PROJECTION_ITEM_LIMIT_EXCEEDED", "projection exceeds its item-count ceiling");

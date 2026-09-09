@@ -67,6 +67,9 @@ export async function materializeStructuralNavigation(
     if (!scope.member_source_revision_refs.includes(source.source_revision_ref)) {
       navigationFail("NAVIGATION_SCOPE_MISMATCH", "source revision is outside the frozen scope");
     }
+    if (scope.source_owner_generations[source.source_revision_ref] !== source.source_owner_generation) {
+      navigationFail("NAVIGATION_SCOPE_MISMATCH", "source owner generation differs from the frozen scope");
+    }
   }
   if (typeof input.normalized_markdown !== "string" || input.normalized_markdown.length === 0) {
     navigationFail("NAVIGATION_INPUT_INVALID", "normalized Markdown is empty");

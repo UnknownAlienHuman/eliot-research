@@ -1,6 +1,6 @@
 import type { SourceRevision } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
-import { projectNormalizedMarkdown } from "./structural-projector.js";
+import { extractNormalizedMarkdownStructure, projectNormalizedMarkdown } from "./structural-projector.js";
 
 const A = "a".repeat(64);
 
@@ -96,6 +96,27 @@ describe("deterministic structural projector", () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]?.normalized_offset_map_ref).toMatch(/^normalized-bytes:/u);
     expect(JSON.stringify(result)).not.toMatch(/page|bbox|table_cell/u);
+  });
+
+  it("shares fence and skipped-heading semantics with structural navigation", async () => {
+    const markdown = "# Root\n\n```markdown\n# Not a heading\n```\n\n### Deep\n\nBody\n";
+    const result = await projectNormalizedMarkdown({
+      source_revision: sourceRevision(), title: "Fenced", source_class: "document", markdown,
+      instruction_taint: "DATA_ONLY", project_membership_ids: [], projection_generation: "projection-g1",
+      target_item_utf8_bytes: 1024, max_item_utf8_bytes: 4096,
+    });
+    expect(result.items.map((item) => item.heading_path)).toEqual([["Root"], ["Root", "Deep"]]);
+    expect(result.items.map((item) => item.section_text).join("")).toBe(markdown);
+    expect(extractNormalizedMarkdownStructure(markdown).map((section) => section.label))
+      .toEqual(["Root", "Deep"]);
+  });
+
+  it("rejects the mapper maximum plus one before collecting an oversized result", () => {
+    const exact = "# One\n# Two\n";
+    expect(extractNormalizedMarkdownStructure(exact, 2)).toHaveLength(2);
+    expect(() => extractNormalizedMarkdownStructure(exact, 1)).toThrowError(
+      expect.objectContaining({ code: "PROJECTION_ITEM_LIMIT_EXCEEDED" }),
+    );
   });
 
   it("rejects empty documents and impossible size profiles", async () => {

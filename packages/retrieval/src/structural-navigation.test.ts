@@ -62,4 +62,19 @@ describe("N1 structural navigation derivation", () => {
     expect(result.documentMap.unresolved_structure).toContain("COORDINATE_MAP_ABSENT_NATIVE_ANCHORS_UNAVAILABLE");
     expect(result.documentMap.unresolved_structure).toContain("PAGE_COORDINATES_NOT_INFERRED");
   });
+
+  it("rejects a source whose owner generation is absent or stale in the frozen scope", async () => {
+    const markdown = "# Heading\n\nBody\n";
+    const revision = await source(markdown);
+    await expect(materializeStructuralNavigation({
+      source_revision: revision,
+      scope_snapshot: { ...scope(), source_owner_generations: {} },
+      normalized_markdown: markdown, generator_generation: "structural-navigation-v1", created_at: NOW,
+    })).rejects.toMatchObject({ code: "NAVIGATION_SCOPE_MISMATCH" });
+    await expect(materializeStructuralNavigation({
+      source_revision: revision,
+      scope_snapshot: { ...scope(), source_owner_generations: { "revision-1": "owner-generation-2" } },
+      normalized_markdown: markdown, generator_generation: "structural-navigation-v1", created_at: NOW,
+    })).rejects.toMatchObject({ code: "NAVIGATION_SCOPE_MISMATCH" });
+  });
 });

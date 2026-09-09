@@ -288,10 +288,10 @@
         "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
         "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
         "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
-        "packages/retrieval/src/structural-navigation.test.ts: Unicode/nested exact-range, digest-mismatch and approximate-coordinate-gap cases",
+        "packages/retrieval/src/structural-navigation.test.ts: Unicode/nested exact-range, digest-mismatch, owner-generation, fenced-heading and skipped-level cases",
         "apps/eliotr-core/test/structural-navigation-q1.test.ts: actual Q1 HTTP import/projection, manifest/content R2 readback, D1 map persistence/replay and purge currentness rejection",
         "packages/cloudflare-evidence/src/content-store.ts and packages/cloudflare-navigation/src/orientation-materialization.ts: bounded admitted-content reader and delegated structural adapter",
-        "N1 local structural path is implemented; native page/table/code maps, LIVE EvidenceHandles, Atlas/N2-N4, broad corpus, remote and live receipts remain NOT_EXECUTED"
+        "N1 local path is implemented for normalized Markdown only; native page/table/code coordinate-map adapter, LIVE EvidenceHandles, Atlas/N2-N4, broad corpus, remote and live receipts remain NOT_EXECUTED"
       ]
     },
     {
