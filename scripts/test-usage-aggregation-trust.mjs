@@ -141,7 +141,7 @@ await check("paginated inventory proves pages without fabricating counters", asy
     assert.ok(url.includes(ACCOUNT), "inventory left the bound account");
     const page = Number(new URL(url).searchParams.get("page"));
     const total_pages = 2;
-    const result = page === 1 ? [{ name: "one" }] : [{ name: "two" }];
+    const result = page === 1 ? [{ queue_id: "queue-one", queue_name: "one" }] : [{ queue_id: "queue-two", queue_name: "two" }];
     return { json: async () => ({ success: true, result, result_info: { page, total_pages } }) };
   };
   const provider = createPaginatedInventoryProvider({
