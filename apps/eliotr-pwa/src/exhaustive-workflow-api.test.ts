@@ -74,6 +74,15 @@ describe("exhaustive workflow transport", () => {
     await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
   });
 
+  it("rejects complete coverage with a zero denominator", async () => {
+    const zero = completeData();
+    const receipt = (zero.job as Record<string, unknown>).receipt as Record<string, unknown>;
+    receipt.denominator_shards = 0;
+    receipt.settled_shards = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(zero)));
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+
   it("rejects the obsolete flattened complete job shape", async () => {
     const flattened = completeData();
     flattened.job = {
@@ -106,6 +115,23 @@ describe("exhaustive workflow transport", () => {
       items: [{ workflow_instance_id: workflow, workflow_status: "running", created_at: "2026-09-09T12:00:00.000Z", recoverable: true, cancelable: true }],
     })));
     await expect(listExhaustiveWorkflows(20, undefined, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+  });
+
+  it("rejects noncanonical recovery timestamps and duplicate unsettled shards", async () => {
+    const badTimestamp = {
+      protocol: "eliotr.exhaustive-workflow-page.v1",
+      items: [{ workflow_instance_id: workflow, workflow_status: "running", binding_state: "BOUND",
+        created_at: "2026-09-09T12:00:00Z", recoverable: true, cancelable: true }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(badTimestamp)));
+    await expect(listExhaustiveWorkflows(20, undefined, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
+
+    const duplicate = completeData();
+    duplicate.workflow_status = "running";
+    duplicate.job = { status: "UNFINISHED", job_id: "job-1", coverage_denominator_ref: "denominator-1",
+      denominator_shards: 2, settled_shards: 0, unsettled_shard_ids: ["shard-1", "shard-1"] };
+    vi.stubGlobal("fetch", vi.fn(async () => envelope(duplicate)));
+    await expect(readExhaustiveWorkflow(workflow, generation)).rejects.toMatchObject({ code: "RESEARCH_WORKFLOW_RESPONSE_INVALID" });
   });
 
   it("bounds recovery pages and stops pagination at the local cap", () => {

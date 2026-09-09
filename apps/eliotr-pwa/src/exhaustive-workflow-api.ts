@@ -100,7 +100,8 @@ function digest(value: unknown, label: string): string {
 
 function timestamp(value: unknown, label: string): string {
   const text = stringValue(value, label, 64);
-  if (!Number.isFinite(Date.parse(text))) invalid(`${label} is invalid`);
+  const epoch = Date.parse(text);
+  if (!Number.isSafeInteger(epoch) || new Date(epoch).toISOString() !== text) invalid(`${label} is invalid`);
   return text;
 }
 
@@ -165,7 +166,7 @@ function decodeJob(value: unknown): ExhaustiveJobView {
     digest(receipt.request_digest, "job request digest");
     boundedIdentifier(receipt.result_artifact_ref, "job result artifact");
     boundedIdentifier(receipt.coverage_receipt_ref, "job coverage receipt");
-    const denominator = nonNegativeInteger(receipt.denominator_shards, "job denominator shards");
+    const denominator = positiveInteger(receipt.denominator_shards, "job denominator shards");
     const settled = nonNegativeInteger(receipt.settled_shards, "job settled shards");
     return {
       status: "COMPLETE",
@@ -184,8 +185,9 @@ function decodeJob(value: unknown): ExhaustiveJobView {
     ], "unfinished job");
     if (!Array.isArray(row.unsettled_shard_ids) || row.unsettled_shard_ids.length > 4096) invalid("unfinished shard list is invalid");
     const unsettled = row.unsettled_shard_ids.map((item, index) => boundedIdentifier(item, `unfinished shard ${index}`));
-    const denominator = nonNegativeInteger(row.denominator_shards, "job denominator shards");
+    const denominator = positiveInteger(row.denominator_shards, "job denominator shards");
     const settled = nonNegativeInteger(row.settled_shards, "job settled shards");
+    if (new Set(unsettled).size !== unsettled.length) invalid("unfinished shard list contains duplicates");
     if (settled > denominator || unsettled.length !== denominator - settled) invalid("unfinished coverage is inconsistent");
     return {
       status: "UNFINISHED",
