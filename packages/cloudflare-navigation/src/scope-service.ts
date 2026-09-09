@@ -1,4 +1,3 @@
-import { createD1ScopeSnapshotStore } from "@eliotr/cloudflare-evidence";
 import {
   IdentifierSchema, NonNegativeIntegerSchema, ScopeExpressionSchema, ScopeSnapshotSchema, Sha256Schema,
   type ScopeExpression, type ScopeSnapshot,
@@ -32,7 +31,6 @@ export class ScopeServiceError extends Error {
     this.reason_codes = [...(reasonCodes ?? [code])];
   }
 }
-
 function fail(code: string, message: string, reasonCodes?: readonly string[]): never {
   throw new ScopeServiceError(code, message, reasonCodes);
 }
@@ -212,7 +210,6 @@ function parseAtomResolution(raw: unknown, maximumMembers: number): Deterministi
     members,
   };
 }
-
 function sortedRecord(entries: readonly (readonly [string, string])[]): Readonly<Record<string, string>> {
   const output = new Map<string, string>();
   for (const [key, value] of entries) {
@@ -584,19 +581,4 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
       return ScopeSnapshotSchema.parse(snapshot);
     },
   };
-}
-
-/** Compose real snapshot storage without inventing a principal or mutable policy authority. */
-export function createD1ScopeService(
-  database: D1Database,
-  authority: Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure">,
-  options: ScopeServiceOptions = {},
-): ScopeService {
-  const storage = createD1ScopeSnapshotStore(database);
-  return createScopeService({
-    resolveAtom: (atom, observedAt) => authority.resolveAtom(atom, observedAt),
-    resolveAuthorityClosure: (request) => authority.resolveAuthorityClosure(request),
-    persistSnapshot: (snapshot) => storage.persistSnapshot(snapshot),
-    readSnapshot: (id, revision) => storage.readSnapshot(id, revision),
-  }, options);
 }

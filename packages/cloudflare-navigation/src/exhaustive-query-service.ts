@@ -26,7 +26,7 @@ import {
   readAdmittedNormalizedManifest,
   EvidenceRuntimeError,
 } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService } from "./scope-service.js";
+import { createD1ScopeService } from "./d1-scope-service.js";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import type {
   AuthenticatedRequestContext,
