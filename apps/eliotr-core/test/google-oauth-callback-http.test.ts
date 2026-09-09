@@ -60,6 +60,12 @@ function lifecycleRequest(path: string, body: Record<string, unknown>): Request 
   }, body: JSON.stringify(body) });
 }
 
+function statusRequest(): Request {
+  return new Request(`${ORIGIN}/api/v1/google/connection/status`, { method: "GET", headers: {
+    origin: ORIGIN, "x-eliotr-csrf": "1",
+  } });
+}
+
 describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
   let callbackNonce = "N".repeat(43);
   beforeEach(() => {
@@ -177,6 +183,11 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
 
   it("serves reconnect and disconnect through owner HTTP with stale-fence rejection and replay", async () => {
     const env = googleEnv(); const owner = "g3-http-owner";
+    const unconnected = await handleHttp(statusRequest(), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(unconnected.status).toBe(200);
+    expect((await json(unconnected)).data).toMatchObject({ protocol: "eliotr.google-connection-status.v1", connected: false,
+      connection_id: (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID, state: "DISCONNECTED",
+      credential_generation: null, credential_revision: null });
     const started = await begin(env, owner, "g3-http-initial"); callbackNonce = started.nonce;
     const initial = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
       {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
@@ -185,6 +196,10 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     const first = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
       .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
     expect(first).not.toBeNull();
+    const connected = await handleHttp(statusRequest(), env as never, {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(connected.status).toBe(200);
+    expect((await json(connected)).data).toMatchObject({ protocol: "eliotr.google-connection-status.v1", connected: true,
+      connection_id: connectionId, state: "AUTHORIZING", credential_generation: first?.credential_generation, credential_revision: first?.credential_revision });
     const stale = await handleHttp(lifecycleRequest(RECONNECT_PATH, { operation_ref: "g3-http-stale",
       expected_credential_generation: first?.credential_generation, expected_credential_revision: (first?.credential_revision ?? 0) + 1 }), env as never,
       {} as ExecutionContext, { accessVerifier: verifier(owner) as never });

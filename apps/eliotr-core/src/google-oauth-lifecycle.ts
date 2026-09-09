@@ -4,7 +4,7 @@ import type { Env } from "./env.js";
 import { apiResult, configuredAccessVerifier, HttpRequestError, problem, type HttpDependencies } from "./http.js";
 import { readStreamWithinBytes } from "@eliotr/platform-cloudflare";
 import { createGoogleOAuthAdmissionForOwner, readGoogleOAuthServerConfiguration } from "./google-oauth-service.js";
-import { createD1GoogleCredentialStore } from "./google-token-store.js";
+import { createD1GoogleCredentialStore, readD1GoogleCredentialStatus, type GoogleCredentialStatus } from "./google-token-store.js";
 import { readReadiness } from "./readiness.js";
 
 type OwnerContext = { readonly principal_ref: string; readonly credential_generation: string };
@@ -38,6 +38,36 @@ function originAndCsrf(request: Request): void {
   const origin = request.headers.get("origin");
   if (origin === null || origin !== new URL(request.url).origin) throw new HttpRequestError("GOOGLE_OAUTH_ORIGIN_FORBIDDEN", 403, "Cross-origin OAuth lifecycle request is forbidden");
   if (request.headers.get("x-eliotr-csrf") !== "1") throw new HttpRequestError("GOOGLE_OAUTH_CSRF_REQUIRED", 400, "OAuth lifecycle request requires the CSRF header");
+}
+
+export async function handleGoogleConnectionStatus(request: Request, env: Env, context: OwnerContext,
+  identity: AccessIdentity, dependencies: HttpDependencies): Promise<Response> {
+  const readiness = await readReadiness(env); if (!readiness.ready) return problem(request, 503, "SCHEMA_NOT_READY", "Required D1 migrations are not applied", true);
+  originAndCsrf(request);
+  const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
+  const guard = ownerGuard({ request, identity, verifier, context });
+  try {
+    await guard();
+    const config = readGoogleOAuthServerConfiguration(env);
+    const binding = { connection_id: config.connection_id, principal_id: context.principal_ref,
+      oauth_client_id: config.oauth_client_id, google_subject: config.google_subject, google_email: config.google_email };
+    const first = await readD1GoogleCredentialStatus(env.CORE_DB, binding, request.signal);
+    await guard();
+    const second = await readD1GoogleCredentialStatus(env.CORE_DB, binding, request.signal);
+    if (JSON.stringify(first) !== JSON.stringify(second)) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
+    return apiResult(request, env, statusResult(config.connection_id, second));
+  } catch (error) {
+    if (error instanceof GoogleCredentialError) return problem(request, error.code === "GOOGLE_OAUTH_OWNER_REVOKED" ? 401 : error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE" ? 503 : 409,
+      error.code, "Google connection status is unavailable", error.code === "GOOGLE_CREDENTIAL_UNAVAILABLE");
+    throw error;
+  }
+}
+
+function statusResult(connectionId: string, status: GoogleCredentialStatus | null) {
+  return { protocol: "eliotr.google-connection-status.v1", connection_id: connectionId,
+    connected: status !== null && status.state !== "DISCONNECTED" && status.state !== "REVOKED",
+    credential_generation: status?.binding.credential_generation ?? null, credential_revision: status?.revision ?? null,
+    state: status?.state ?? "DISCONNECTED" } as const;
 }
 
 export async function handleGoogleOAuthReconnectBegin(request: Request, env: Env, context: OwnerContext,

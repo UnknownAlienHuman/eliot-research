@@ -163,6 +163,14 @@ export interface DisconnectGoogleConnectionRequest {
   readonly expected_credential_generation: string;
   readonly expected_credential_revision: number;
 }
+export interface GoogleConnectionStatusResult {
+  readonly protocol: "eliotr.google-connection-status.v1";
+  readonly connection_id: string;
+  readonly connected: boolean;
+  readonly credential_generation: string | null;
+  readonly credential_revision: number | null;
+  readonly state: "DISCONNECTED" | "AUTHORIZING" | "ACTIVE" | "DEGRADED" | "REAUTH_REQUIRED" | "REVOKED";
+}
 
 export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;

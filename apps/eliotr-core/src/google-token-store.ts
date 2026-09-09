@@ -1,6 +1,6 @@
 import type { ExchangeGeneration } from "@eliotr/contracts";
 import { createGoogleAccessLeaseProvider, validateExchangeGeneration, credentialSnapshot, encryptedToken, GoogleCredentialError, sameGoogleCredentials, tokenBinding,
-  type GoogleTokenLeaseOptions,
+  type GoogleTokenLeaseOptions, type GoogleConnectionState,
   type EncryptedRefreshToken, type GoogleCredentialSnapshot, type GoogleCredentialStore, type GoogleTokenBinding } from "@eliotr/google-drive-exchange";
 
 const COLUMNS = `connection_id, principal_id, oauth_client_id, google_subject, google_email, credential_generation,
@@ -103,6 +103,43 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
     replaceToken: (snapshot, token, expiry, signal) => change(snapshot, encryptedToken(token), expiry, signal),
     requireReauthorization: async (snapshot, signal) => { await change(snapshot, null, snapshot.refresh_expires_at_epoch_ms, signal); }, revoke,
   };
+}
+
+export interface GoogleCredentialStatus {
+  readonly binding: GoogleTokenBinding;
+  readonly revision: number;
+  readonly state: GoogleConnectionState;
+}
+
+/** Read only the nonsecret connection fence for an authenticated owner. */
+export async function readD1GoogleCredentialStatus(database: D1Database, expected: Omit<GoogleTokenBinding, "credential_generation">,
+  signal: AbortSignal): Promise<GoogleCredentialStatus | null> {
+  if (signal.aborted) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CANCELLED");
+  const db = database.withSession("first-primary");
+  const row = await db.prepare(`SELECT connection_id,principal_id,oauth_client_id,google_subject,google_email,credential_generation,credential_revision,state
+    FROM google_exchange_connection WHERE connection_id=?1 AND principal_id=?2 AND oauth_client_id=?3 AND google_subject=?4 AND google_email=?5
+      AND length(connection_id)<=256 AND length(principal_id)<=256 AND length(oauth_client_id)<=256 AND length(google_subject)<=256
+      AND length(google_email)<=256 AND length(credential_generation)<=256 AND ${SCHEMA}`)
+    .bind(expected.connection_id, expected.principal_id, expected.oauth_client_id, expected.google_subject, expected.google_email)
+    .first<Record<string, unknown>>().catch(() => { throw new GoogleCredentialError("GOOGLE_CREDENTIAL_UNAVAILABLE"); });
+  if (signal.aborted) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CANCELLED");
+  if (!row) return null;
+  try {
+    if (!["connection_id", "principal_id", "oauth_client_id", "google_subject", "google_email", "credential_generation"]
+      .every((key) => typeof row[key] === "string")) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_RECORD_INVALID");
+    const loaded = tokenBinding({ connection_id: row.connection_id as string, principal_id: row.principal_id as string,
+      oauth_client_id: row.oauth_client_id as string, google_subject: row.google_subject as string,
+      google_email: row.google_email as string, credential_generation: row.credential_generation as string });
+    const states: GoogleConnectionState[] = ["DISCONNECTED", "AUTHORIZING", "ACTIVE", "DEGRADED", "REAUTH_REQUIRED", "REVOKED"];
+    if (loaded.connection_id !== expected.connection_id || loaded.principal_id !== expected.principal_id
+        || loaded.oauth_client_id !== expected.oauth_client_id || loaded.google_subject !== expected.google_subject || loaded.google_email !== expected.google_email
+        || !Number.isSafeInteger(row.credential_revision) || (row.credential_revision as number) < 1
+        || !states.includes(row.state as GoogleConnectionState)) throw new GoogleCredentialError("GOOGLE_CREDENTIAL_CHANGED");
+    return { binding: loaded, revision: row.credential_revision as number, state: row.state as GoogleConnectionState };
+  } catch (error) {
+    if (error instanceof GoogleCredentialError) throw error;
+    throw new GoogleCredentialError("GOOGLE_CREDENTIAL_RECORD_INVALID");
+  }
 }
 
 /** Request-scoped composition of the real D1 credential/generation authority and REST lease. */
