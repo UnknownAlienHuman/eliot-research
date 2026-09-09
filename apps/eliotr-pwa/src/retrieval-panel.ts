@@ -26,7 +26,7 @@ export function renderRetrieval(view: RetrievalResultView): string {
   }
   return `<p><strong>${view.evidence.length} resolved excerpt(s)</strong> · ${view.total_utf8_bytes} UTF-8 bytes.
     Each excerpt is pinned to its source revision and verified against stored bytes.</p>
-    ${view.evidence.map((item) => `<article class="source-card">
+    ${view.evidence.map((item, index) => `<article class="source-card evidence-result" data-evidence-index="${index}">
       <h3>${escapeHtml(item.source_title ?? item.handle.source_revision_ref)}</h3>
       <blockquote data-excerpt>${escapeHtml(item.exact_excerpt)}</blockquote>
       <p><code>${escapeHtml(item.handle.source_revision_ref)}</code></p>
@@ -34,6 +34,7 @@ export function renderRetrieval(view: RetrievalResultView): string {
         ${item.handle.excerpt_byte_length} bytes · ${escapeHtml(item.handle.terminal_state)}</p>
       <p>Verified <code>${escapeHtml(item.verification_receipt_ref)}</code> ·
         taint ${escapeHtml(item.instruction_taint)}</p>
+      <button type="button" class="evidence-select" data-select-evidence="${index}">Open in Evidence rail</button>
     </article>`).join("")}
     ${view.omitted.length ? `<p>${view.omitted.length} candidate(s) omitted: ${
       escapeHtml(view.omitted.map((entry) => entry.reason_code).join(", "))}</p>` : ""}
@@ -54,7 +55,7 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
   ].join("\n");
 }
 
-export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void } {
+export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void; clearPrivate(): void } {
   element.innerHTML = `<h2>Retrieval</h2>
     <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
     Coverage is sampled: a miss does not prove absence, and no model is called.</p>
@@ -75,6 +76,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   let key = "";
   let previous = "";
   let lastTrace: RetrievalResultView["trace"] | undefined;
+  let lastEvidence: RetrievalResultView["evidence"] = [];
 
   const errorText = (error: unknown) => error instanceof ApiRequestError
     ? `${error.code}: ${error.message}${error.traceId ? ` · trace ${error.traceId}` : ""}${
@@ -82,6 +84,11 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     : "Unable to run retrieval. Check the inputs and session.";
 
   const stop = () => { active += 1; controller?.abort(); cancel.disabled = true; };
+  const clearPrivate = (): void => {
+    stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
+    lastTrace = undefined; lastEvidence = [];
+    status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
+  };
   cancel.onclick = () => {
     stop();
     status.textContent = "Request cancelled. Retry unchanged inputs to reconcile the same operation.";
@@ -96,6 +103,8 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     traceResult.textContent = "";
     traceResult.hidden = true;
     lastTrace = undefined;
+    lastEvidence = [];
+    element.dispatchEvent(new CustomEvent("retrieval:started", { bubbles: true }));
     if (!navigator.onLine) { status.textContent = "Offline. Retrieval results are not cached."; return; }
     let body: string;
     try {
@@ -115,6 +124,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
       .then((view) => {
         if (serial !== active) return;
         lastTrace = view.trace;
+        lastEvidence = view.evidence;
         result.innerHTML = renderRetrieval(view);
         status.textContent = `Resolved ${view.evidence.length} excerpt(s).`;
         element.dispatchEvent(new CustomEvent("retrieval:resolved",
@@ -129,7 +139,15 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
 
   result.addEventListener("click", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement) || !target.hasAttribute("data-trace") || lastTrace === undefined) return;
+    if (!(target instanceof HTMLElement)) return;
+    const selected = target.closest<HTMLElement>("[data-select-evidence]");
+    if (selected) {
+      const index = Number(selected.dataset.selectEvidence);
+      const item = Number.isSafeInteger(index) ? lastEvidence[index] : undefined;
+      if (item) element.dispatchEvent(new CustomEvent("retrieval:evidence-selected", { bubbles: true, detail: { evidence: item } }));
+      return;
+    }
+    if (!target.hasAttribute("data-trace") || lastTrace === undefined) return;
     const ref = lastTrace;
     const serial = active;
     traceResult.hidden = false;
@@ -141,6 +159,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
 
   const cleanup = () => { stop(); };
   return Object.assign(cleanup, {
+    clearPrivate,
     selectSource(id: string): void {
       IdentifierSchema.parse(id);
       const current = sources.value.split(",").map((value) => value.trim()).filter(Boolean);

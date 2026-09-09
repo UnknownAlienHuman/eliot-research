@@ -26,7 +26,7 @@ export function mountGoogleOAuthPanel(root: HTMLElement): () => void {
         <h2>Google Drive exchange</h2>
         <p data-oauth-status><span class="status status--pending">not connected</span></p>
         <div data-oauth-result>${inner}</div>
-        <button type="button" data-oauth-begin>Connect Google Drive</button>
+        <button class="button button--google" type="button" data-oauth-begin>Connect Google Drive</button>
       </section>
     `;
   };

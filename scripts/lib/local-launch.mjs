@@ -9,7 +9,8 @@ export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const CORE = resolve(ROOT, "apps/eliotr-core");
 const require = createRequire(import.meta.url);
 export const WRANGLER = resolve(dirname(require.resolve("wrangler/package.json")), "bin/wrangler.js");
-const VITE = resolve(dirname(require.resolve("vite/package.json")), "bin/vite.js");
+const pwaRequire = createRequire(resolve(ROOT, "apps/eliotr-pwa/package.json"));
+const ASTRO = resolve(dirname(pwaRequire.resolve("astro/package.json")), "bin/astro.mjs");
 
 export function localEnvironment(environment = process.env) {
   const env = Object.fromEntries(Object.entries(environment).filter(([key]) =>
@@ -120,7 +121,7 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   const temporary = `${paths.config}.${process.pid}.tmp`;
   await writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, paths.config);
-  execute([VITE, "build"], { cwd: resolve(ROOT, "apps/eliotr-pwa") });
+  execute([ASTRO, "build"], { cwd: resolve(ROOT, "apps/eliotr-pwa") });
   for (const binding of ["CORE_DB", "SEARCH_DB"]) {
     execute(wranglerArgs(paths, ["d1", "migrations", "apply", binding]));
   }

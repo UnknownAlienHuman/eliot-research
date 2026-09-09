@@ -43,7 +43,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       status.textContent = `${received.generation} · ${received.sources.length} sources on this page. Not a completeness or index-readiness claim.`;
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-project]")) button.onclick = () => {
         const selected = received.projects[Number(button.dataset.project)];
-        if (selected && mine === serial && !disposed) { project = selected.id; void load(); }
+        if (selected && mine === serial && !disposed) { project = selected.id; element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true })); void load(); }
       };
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-versions]")) button.onclick = () => {
         const selected = received.sources[Number(button.dataset.versions)];
@@ -61,7 +61,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         "Library request failed. Reload the first page.");
     }
   };
-  first.onclick = () => { project = undefined; void load(); };
+  first.onclick = () => { project = undefined; element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true })); void load(); };
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => clear("Offline. Private Library data cleared.");
   const denied = () => clear("Authorization changed. Sign in or renew the read policy, then refresh.");

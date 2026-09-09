@@ -33,7 +33,9 @@ async function verifyHttp(origin) {
   assert.ok(page.headers.get("content-type")?.includes("text/html"));
   const html = await page.text();
   assert.ok(html.includes('id="app"'));
-  const asset = /src="(\/assets\/[^"<>]+\.js)"/u.exec(html)?.[1];
+  // Vite emits /assets while the static Astro build emits /_astro. Keep the
+  // assertion bound to a bundled JavaScript entry in either supported build.
+  const asset = /src="(\/(?:assets|_astro)\/[^"<>]+\.js)"/u.exec(html)?.[1];
   assert.ok(asset, "PWA did not include a bundled application entry");
   const script = await fetch(`${origin}${asset}`, { redirect: "manual", signal: globalThis.AbortSignal.timeout(5000) });
   assert.equal(script.status, 200);
