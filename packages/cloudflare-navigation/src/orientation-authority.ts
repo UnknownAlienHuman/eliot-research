@@ -29,6 +29,7 @@ export interface OrientationSource {
 }
 export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> {
   exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string): Promise<Awaited<ReturnType<ScopeRepository["resolveAtom"]>>>;
+  exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest): Promise<Awaited<ReturnType<ScopeRepository["resolveAuthorityClosure"]>>>;
   requireReadPolicy(): Promise<void>;
   sources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
   /**
@@ -184,11 +185,13 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
   async function exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
     return resolveAtomWithLimit(atom, observedAt, 4096);
   }
-  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
-    const loaded = request.member_source_revision_refs.length > ORIENTATION_MAX_SOURCES
-      ? await exhaustiveSources(request.member_source_revision_refs)
-      : await sources(request.member_source_revision_refs);
-    const policyRows = [...(await policies(4096)).values()];
+  async function resolveAuthorityClosureWithLoader(
+    request: ScopeAuthorityRequest,
+    load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
+    maximumPolicyRows: number,
+  ) {
+    const loaded = await load(request.member_source_revision_refs);
+    const policyRows = [...(await policies(maximumPolicyRows)).values()];
     if (loaded.some((source) => request.member_policy_closure_refs[source.revision.source_revision_ref] !== source.policy_closure_ref)) {
       orientationFail("ORIENTATION_POLICY_CHANGED", 409);
     }
@@ -203,15 +206,22 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     purge_ledger_revision: purge.revision, client_fence_valid: request.client_fence_ref === access.credential_generation,
     denied_source_revision_refs: [] };
   }
+  async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    return resolveAuthorityClosureWithLoader(request, sources, ORIENTATION_MAX_SOURCES);
+  }
+  async function exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest) {
+    return resolveAuthorityClosureWithLoader(request, exhaustiveSources, 4096);
+  }
   async function grantWithLoader(
     snapshot: ScopeSnapshot,
     load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
+    maximumPolicyRows: number,
   ): Promise<void> {
     const loaded = await load(snapshot.member_source_revision_refs);
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
-    const policyExpiry = Math.min(...[...(await policies(4096)).values()].map((policy) => Date.parse(policy.expires_at)));
+    const policyExpiry = Math.min(...[...(await policies(maximumPolicyRows)).values()].map((policy) => Date.parse(policy.expires_at)));
     const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry)).toISOString();
     const receipt = `grant-${await evidenceSha256({ scope: snapshot.digest, access })}`;
     const values: Bind[] = [snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class,
@@ -233,9 +243,9 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
     if (!row || canonicalEvidenceJson(row) !== canonicalEvidenceJson(expected)) orientationFail("ORIENTATION_GRANT_UNAVAILABLE", 403);
   }
   return {
-    resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, sources, exhaustiveSources,
-    grant: (snapshot) => grantWithLoader(snapshot, sources),
-    exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources),
+    resolveAtom, exhaustiveResolveAtom, resolveAuthorityClosure, exhaustiveResolveAuthorityClosure, sources, exhaustiveSources,
+    grant: (snapshot) => grantWithLoader(snapshot, sources, ORIENTATION_MAX_SOURCES),
+    exhaustiveGrant: (snapshot) => grantWithLoader(snapshot, exhaustiveSources, 4096),
     exhaustiveRequireReadPolicy: async () => { await policies(4096); },
     requireReadPolicy: async () => { await policies(); },
   };

@@ -237,6 +237,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   const freezer = createD1ScopeService(env.CORE_DB, owner, {
     max_snapshot_members: EXHAUSTIVE_QUERY_MAX_SOURCES,
     resolveAtom: owner.exhaustiveResolveAtom,
+    resolveAuthorityClosure: owner.exhaustiveResolveAuthorityClosure,
     preserve_resolution_errors: true,
   });
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);

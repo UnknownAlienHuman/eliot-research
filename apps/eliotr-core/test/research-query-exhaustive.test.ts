@@ -5,9 +5,11 @@ import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
 import { handleHttp } from "../src/http.js";
 import { createExhaustiveQueryService } from "../src/exhaustive-query-service.js";
+import { validateExhaustiveJobCurrent } from "@eliotr/cloudflare-navigation";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import { projectionDigest } from "@eliotr/cloudflare-projection";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
 const runtime = env as unknown as Q1Runtime;
 
@@ -51,6 +53,45 @@ function access(owner: string) {
   return { accessVerifier: { async verify() {
     return { principal_ref: owner, credential_generation: "credential-1", authentication_method: "cloudflare_access" as const, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
   } } };
+}
+
+function searchDbWithInventoryWithdrawal(
+  database: D1Database,
+  withdraw: () => Promise<void>,
+): D1Database {
+  let withdrawn = false;
+  const wrap = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => new Proxy(statement, {
+    get(target, property, receiver) {
+      if (property === "bind") {
+        return (...values: unknown[]) => wrap(target.bind(...values), sql);
+      }
+      if (property === "all") {
+        return async <T = unknown>(...args: unknown[]) => {
+          const result = await target.all<T>(...args);
+          if (!withdrawn && /FROM projection_item/u.test(sql)) {
+            withdrawn = true;
+            await withdraw();
+          }
+          return result;
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return {
+    prepare(sql: string) { return wrap(database.prepare(sql), sql); },
+  } as unknown as D1Database;
+}
+
+function exhaustiveContext(request: Request, owner: string, trace: string): AuthenticatedRequestContext {
+  return {
+    request,
+    principal_ref: owner,
+    client_class: "owner_pwa",
+    credential_generation: "credential-1",
+    trace_id: trace,
+  };
 }
 
 /** Extend one admitted Q1 source into real, independently addressed source revisions. */
@@ -185,6 +226,34 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     expect(revokedBody.data?.job).toBeUndefined();
   });
 
+  it("does not disclose a cached result when withdrawal races async inventory", async () => {
+    const owner = "exhaustive-withdrawal-race-owner";
+    const value = await world(owner);
+    const request = queryRequest(value, "exhaustive-withdrawal-race");
+    const context = exhaustiveContext(request, owner, "exhaustive-withdrawal-race");
+    const service = createExhaustiveQueryService(runtime);
+    const completed = await service.query(context, await request.clone().json());
+    expect(completed.job.status).toBe("COMPLETE");
+    const job = await runtime.CORE_DB.prepare(
+      "SELECT job_id,scope_snapshot_id,scope_snapshot_revision FROM retrieval_exhaustive_job WHERE idempotency_key=?1 LIMIT 1",
+    ).bind("exhaustive-withdrawal-race").first<{ readonly job_id: string; readonly scope_snapshot_id: string; readonly scope_snapshot_revision: number }>();
+    if (job === null) throw new Error("missing completed withdrawal race job");
+    const hookedSearch = searchDbWithInventoryWithdrawal(runtime.SEARCH_DB, async () => {
+      await runtime.CORE_DB.prepare(
+        "UPDATE scope_snapshot SET invalidated_at=?1, invalidation_reason=?2 WHERE snapshot_id=?3 AND revision=?4",
+      ).bind(new Date().toISOString(), "test-withdrawal-during-inventory", job.scope_snapshot_id, job.scope_snapshot_revision).run();
+    });
+    await expect(validateExhaustiveJobCurrent({
+      CORE_DB: runtime.CORE_DB,
+      SEARCH_DB: hookedSearch,
+      EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET,
+    }, context, job.job_id)).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+    const persisted = await runtime.CORE_DB.prepare(
+      "SELECT state,result_artifact_ref,coverage_receipt_ref FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(job.job_id).first<{ readonly state: string; readonly result_artifact_ref: string | null; readonly coverage_receipt_ref: string | null }>();
+    expect(persisted).toEqual({ state: "INVALIDATED", result_artifact_ref: null, coverage_receipt_ref: null });
+  });
+
   it("refuses a new job after the owner policy is revoked", async () => {
     const owner = "exhaustive-revoked-owner";
     const value = await world(owner);
@@ -232,6 +301,27 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     ).bind(staleRef).run();
     const global = queryRequest(value, "exhaustive-http-65", "Pinned", { kind: "GLOBAL_LIBRARY" });
     const response = await handleHttp(global, runtime, {} as ExecutionContext, access(owner));
+    expect([200, 202]).toContain(response.status);
+    expect(await response.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
+  });
+
+  it("keeps a small selected scope valid with more than 64 active owner policies", async () => {
+    const owner = "exhaustive-65-policy-owner";
+    const value = await world(owner);
+    const expiry = new Date(Date.now() + 86_400_000).toISOString();
+    const statements = Array.from({ length: 64 }, (_, index) => runtime.CORE_DB.prepare(
+      "INSERT INTO scope_read_policy (source_namespace_id, principal_ref, client_class, policy_ref, generation, allowed_use_json, disclosure_ceiling, state, expires_at, created_at) VALUES (?1,?2,'owner_pwa',?3,'1',?4,?5,'ACTIVE',?6,?7)",
+    ).bind(
+      `q8-policy-namespace-${owner}-${index + 1}`, owner, `q8-policy-ref-${owner}-${index + 1}`,
+      '["research"]', "private", expiry, new Date().toISOString(),
+    ));
+    await runtime.CORE_DB.batch(statements);
+    const response = await handleHttp(
+      queryRequest(value, "exhaustive-65-policy-selected"),
+      runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
     expect([200, 202]).toContain(response.status);
     expect(await response.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
   });

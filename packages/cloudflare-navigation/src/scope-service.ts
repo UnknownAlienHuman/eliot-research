@@ -81,6 +81,8 @@ export interface ScopeServiceOptions {
   readonly max_snapshot_members?: number;
   /** Optional product-specific atom resolver; ORIENT keeps the repository default. */
   readonly resolveAtom?: ScopeRepository["resolveAtom"];
+  /** Optional product-specific authority closure; retrieval uses its larger bounded loader. */
+  readonly resolveAuthorityClosure?: ScopeRepository["resolveAuthorityClosure"];
   /** Preserve typed authority errors for products with distinct stale/uncertain mapping. */
   readonly preserve_resolution_errors?: boolean;
 }
@@ -278,6 +280,7 @@ async function resolveState(
   repository: ScopeRepository, rawExpression: unknown, observedAt: string,
   clientFenceRef: string | undefined, maximumMembers: number,
   atomResolver: ScopeRepository["resolveAtom"] = repository.resolveAtom,
+  authorityResolver: ScopeRepository["resolveAuthorityClosure"] = repository.resolveAuthorityClosure,
   preserveExternalErrors = false,
 ): Promise<ResolvedScopeState> {
   const expression = parseExpression(rawExpression);
@@ -337,7 +340,7 @@ async function resolveState(
 
   let rawAuthority: ScopeAuthorityClosure;
   try {
-    rawAuthority = await repository.resolveAuthorityClosure({
+    rawAuthority = await authorityResolver({
       expression, canonical_expression: draft.canonical_expression,
       member_source_revision_refs: memberRefs, member_policy_closure_refs: policyClosures,
       observed_at: observedAt,
@@ -429,8 +432,10 @@ function parseNow(now: () => number): number {
   return value;
 }
 
-type ResolvedScopeServiceOptions = Omit<Required<ScopeServiceOptions>, "resolveAtom"> &
-  { readonly resolveAtom?: ScopeRepository["resolveAtom"]; readonly preserve_resolution_errors: boolean };
+type ResolvedScopeServiceOptions = Omit<Required<ScopeServiceOptions>, "resolveAtom" | "resolveAuthorityClosure"> &
+  { readonly resolveAtom?: ScopeRepository["resolveAtom"];
+    readonly resolveAuthorityClosure?: ScopeRepository["resolveAuthorityClosure"];
+    readonly preserve_resolution_errors: boolean };
 
 function resolveOptions(options: ScopeServiceOptions): ResolvedScopeServiceOptions {
   const ttl = options.ttl_ms ?? DEFAULT_TTL_MS;
@@ -443,7 +448,8 @@ function resolveOptions(options: ScopeServiceOptions): ResolvedScopeServiceOptio
   }
   return { now: options.now ?? Date.now, ttl_ms: ttl, max_snapshot_members: maximumMembers,
     preserve_resolution_errors: options.preserve_resolution_errors ?? false,
-    ...(options.resolveAtom === undefined ? {} : { resolveAtom: options.resolveAtom }) };
+    ...(options.resolveAtom === undefined ? {} : { resolveAtom: options.resolveAtom }),
+    ...(options.resolveAuthorityClosure === undefined ? {} : { resolveAuthorityClosure: options.resolveAuthorityClosure }) };
 }
 
 function currentness(current: boolean, reasons: readonly string[]): ScopeCurrentness {
@@ -454,6 +460,7 @@ function currentness(current: boolean, reasons: readonly string[]): ScopeCurrent
 export function createScopeService(repository: ScopeRepository, rawOptions: ScopeServiceOptions = {}): ScopeService {
   const options = resolveOptions(rawOptions);
   const atomResolver = options.resolveAtom ?? ((atom, observedAt) => repository.resolveAtom(atom, observedAt));
+  const authorityResolver = options.resolveAuthorityClosure ?? ((request) => repository.resolveAuthorityClosure(request));
   const validateCurrent = async (rawSnapshot: ScopeSnapshot): Promise<ScopeCurrentness> => {
     const preflight = snapshotPreflightReason(rawSnapshot, options.max_snapshot_members);
     if (preflight !== null) return currentness(false, [preflight]);
@@ -483,7 +490,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
     try {
       resolved = await resolveState(
         repository, snapshot.resolved_scope_expression, new Date(observedMs).toISOString(),
-        snapshot.client_fence_ref, options.max_snapshot_members, atomResolver, options.preserve_resolution_errors,
+        snapshot.client_fence_ref, options.max_snapshot_members, atomResolver, authorityResolver, options.preserve_resolution_errors,
       );
     } catch (error) {
       return currentness(false, [error instanceof ScopeServiceError ? error.code : "SCOPE_RESOLUTION_FAILED"]);
@@ -526,7 +533,7 @@ export function createScopeService(repository: ScopeRepository, rawOptions: Scop
         parseCanonicalIdentifier(rawClientFenceRef, "client_fence_ref");
       const resolved = await resolveState(
         repository, rawExpression, observedAt, clientFenceRef, options.max_snapshot_members,
-        atomResolver, options.preserve_resolution_errors,
+        atomResolver, authorityResolver, options.preserve_resolution_errors,
       );
       if (clientFenceRef !== undefined && !resolved.authority.client_fence_valid) {
         fail("CLIENT_FENCE_STALE", "client fence is stale");
