@@ -702,6 +702,52 @@ export function assertCrossClientLedger(ledger, label) {
   return { protocol: "eliotr.owner-e2e.cross-client-ledger.v1", state: "PASS", entries: ledger.entries.length };
 }
 
+// A Workflow binding is durable before the Q7 job row is guaranteed to exist:
+// an early cancellation can leave the binding with its deterministic job id
+// while the queued job was never materialized. When a row does exist, it must
+// still be the exact owner/job identity represented by that binding. This
+// helper keeps that distinction explicit for the post-Worker D1 readback.
+export function assertWorkflowJobReadback(bindings, jobs) {
+  assert.ok(Array.isArray(bindings) && Array.isArray(jobs), "workflow D1 readback must provide binding and job rows");
+  const bindingByJobId = new Map();
+  const workflowIds = new Set();
+  for (const binding of bindings) {
+    assert.ok(binding !== null && typeof binding === "object", "workflow binding row must be an object");
+    assert.match(binding.workflow_id, /^exhaustive-workflow-[a-f0-9]{64}$/u, "workflow binding must retain its canonical workflow identity");
+    assert.equal(workflowIds.has(binding.workflow_id), false, "workflow binding identities must be unique");
+    workflowIds.add(binding.workflow_id);
+    assert.match(binding.job_id, /^exhaustive-job-[a-f0-9]{64}$/u, "workflow binding must retain its canonical job identity");
+    assert.equal(bindingByJobId.has(binding.job_id), false, "workflow bindings must not duplicate a job identity");
+    bindingByJobId.set(binding.job_id, binding);
+    assert.equal(binding.principal_ref, "e2e-owner", "workflow binding must retain the owner principal");
+    assert.equal(binding.client_class, "owner_pwa", "workflow binding must retain the owner client class");
+    assert.ok(typeof binding.credential_generation === "string" && binding.credential_generation.length > 0,
+      "workflow binding must retain credential generation");
+    assert.ok(typeof binding.deployment_generation === "string" && binding.deployment_generation.length > 0,
+      "workflow binding must retain deployment generation");
+    assert.match(binding.request_identity_digest, /^[a-f0-9]{64}$/u,
+      "workflow binding must retain the canonical request identity digest");
+    assert.equal(binding.state, "CANCEL_REQUESTED", "workflow binding must retain cancellation intent");
+  }
+
+  const seenJobIds = new Set();
+  for (const job of jobs) {
+    assert.ok(job !== null && typeof job === "object", "workflow job row must be an object");
+    assert.match(job.job_id, /^exhaustive-job-[a-f0-9]{64}$/u, "workflow job row must retain its canonical job identity");
+    assert.equal(seenJobIds.has(job.job_id), false, "workflow job rows must not duplicate a job identity");
+    seenJobIds.add(job.job_id);
+    const binding = bindingByJobId.get(job.job_id);
+    assert.ok(binding !== undefined, "workflow job readback must not contain a foreign job identity");
+    assert.equal(job.principal_ref, binding.principal_ref, "workflow job row must retain the bound owner principal");
+    assert.equal(job.client_class, binding.client_class, "workflow job row must retain the bound owner client class");
+    assert.equal(job.credential_generation, binding.credential_generation,
+      "workflow job row must retain the bound credential generation");
+    assert.ok(job.state === "PENDING" || job.state === "COMPLETE" || job.state === "INVALIDATED",
+      "workflow job row must retain a canonical state");
+  }
+  return { bindingCount: bindings.length, jobRowCount: jobs.length };
+}
+
 // Browser-originated JSON call: runs fetch() inside Chromium via page.evaluate
 // against the page's own origin (same-origin, no CORS egress), so the
 // Playwright request/response ledger independently records the identical
@@ -5399,23 +5445,15 @@ export async function runOwnerE2E() {
           "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
           `FROM retrieval_exhaustive_workflow WHERE workflow_id IN (${quotedIds}) ORDER BY workflow_id`);
         assert.equal(bindings.length, ids.length, "D1 must retain one binding row per browser workflow identity");
-        const jobs = d1Query(paths, "CORE_DB",
-          `SELECT job_id,principal_ref,state FROM retrieval_exhaustive_job WHERE job_id IN (${bindings.map((row) => `'${String(row.job_id).replaceAll("'", "''")}'`).join(",")})`);
         for (const binding of bindings) {
           assert.ok(ids.includes(binding.workflow_id), "D1 workflow binding must match a browser-issued identity");
-          assert.ok(typeof binding.job_id === "string" && binding.job_id.length > 0, "D1 workflow binding must retain its job identity");
-          assert.equal(binding.principal_ref, "e2e-owner", "D1 workflow binding must retain the owner principal");
-          assert.equal(binding.client_class, "owner_pwa", "D1 workflow binding must retain the owner client class");
-          assert.ok(typeof binding.credential_generation === "string" && binding.credential_generation.length > 0,
-            "D1 workflow binding must retain credential generation");
           assert.equal(binding.deployment_generation, paths.generation, "D1 workflow binding must retain the current deployment");
-          assert.match(binding.request_identity_digest, /^[a-f0-9]{64}$/u,
-            "D1 workflow binding must retain the canonical request identity digest");
-          assert.equal(binding.state, "CANCEL_REQUESTED", "D1 workflow binding must retain cancellation intent");
-          assert.ok(jobs.some((job) => job.job_id === binding.job_id && job.principal_ref === "e2e-owner"),
-            "D1 workflow binding must point to its durable retrieval job");
         }
-        receipt.exhaustive_workflow_d1 = `PASS (${bindings.length} browser workflow bindings, job identities and CANCEL_REQUESTED read back after Worker stop)`;
+        const jobIds = [...new Set(bindings.map((row) => row.job_id))];
+        const jobs = jobIds.length === 0 ? [] : d1Query(paths, "CORE_DB",
+          `SELECT job_id,principal_ref,client_class,credential_generation,state FROM retrieval_exhaustive_job WHERE job_id IN (${jobIds.map((id) => `'${String(id).replaceAll("'", "''")}'`).join(",")})`);
+        const readback = assertWorkflowJobReadback(bindings, jobs);
+        receipt.exhaustive_workflow_d1 = `PASS (${readback.bindingCount} browser workflow bindings, ${readback.jobRowCount} canonical retrieval job rows, owner identity and CANCEL_REQUESTED read back after Worker stop)`;
       } catch (error) { fail(`workflow D1 readback: ${error?.message ?? error}`); }
     });
     await runStep("playwright.close", async () => { try { await playwright?.close(); } catch (error) { fail(`playwright.close: ${error?.message ?? error}`); } });

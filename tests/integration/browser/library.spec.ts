@@ -44,6 +44,7 @@ type E2EHarness = {
   verifyReadbackRetryClassification: () => Promise<{ state: string }>;
   verifyEarlyFailureCleanup: () => Promise<{ state: string }>;
   verifyWorkerFetchDiagnosticRegression: () => Promise<{ state: string }>;
+  assertWorkflowJobReadback: (bindings: readonly unknown[], jobs: readonly unknown[]) => { bindingCount: number; jobRowCount: number };
 };
 
 async function loadHarness(): Promise<E2EHarness> {
@@ -68,6 +69,25 @@ test("L6 phase settlement: preserve exact metadata-null service-worker terminal"
 test("L6 phase reset: retain request identity until late response settles", async () => {
   const harness = await loadHarness();
   assert.equal(harness.verifyLedgerResetBoundaryRegression().state, "PASS");
+});
+
+test("L6 workflow D1 readback: allow early missing job but reject foreign owner rows", async () => {
+  const harness = await loadHarness();
+  const binding = {
+    workflow_id: `exhaustive-workflow-${"a".repeat(64)}`,
+    job_id: `exhaustive-job-${"b".repeat(64)}`,
+    principal_ref: "e2e-owner",
+    client_class: "owner_pwa",
+    credential_generation: "credential-1",
+    deployment_generation: "deployment-1",
+    request_identity_digest: "c".repeat(64),
+    state: "CANCEL_REQUESTED",
+  };
+  const job = { job_id: binding.job_id, principal_ref: binding.principal_ref, client_class: binding.client_class,
+    credential_generation: binding.credential_generation, state: "PENDING" };
+  assert.deepEqual(harness.assertWorkflowJobReadback([binding], []), { bindingCount: 1, jobRowCount: 0 });
+  assert.deepEqual(harness.assertWorkflowJobReadback([binding], [job]), { bindingCount: 1, jobRowCount: 1 });
+  assert.throws(() => harness.assertWorkflowJobReadback([binding], [{ ...job, principal_ref: "foreign-owner" }]), /bound owner principal/u);
 });
 
 test("L6 readback retry: deterministic authority failures stop before any retry", async () => {
