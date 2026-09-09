@@ -36,6 +36,9 @@ outside the paths below.
 - Keep transport state separate from the exact nine-value research disposition.
 - Publish only wire/domain shapes; no platform bindings or policy decisions.
 - Keep `erc.privacy.erasure.v1` self-contained: exact subject/location identity, dependency-closure targets, fenced backend operations, non-revealing ledger entries, and terminal COMPLETE/BLOCKED invariants live in the versioned contract rather than an application-private type layer.
+- The N1 native coordinate-map addition is registered in the navigation schema family as
+  `eliotr.coordinate-map.v1`; its table-cell-only fixture is intentionally navigation metadata and
+  cannot upgrade manifest qualification or create evidence authority.
 
 ## Acceptance
 

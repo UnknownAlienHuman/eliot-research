@@ -210,18 +210,44 @@ export async function importQ1Bundle(world: Q1Namespace): Promise<void> {
       source_revision_ref: revision,
     },
     source: { ...fixture.manifest.source, logical_id: `source-${namespace}` },
+    capabilities: { ...fixture.manifest.capabilities, tables: true },
   };
   const { sha256Utf8 } = await import("@eliotr/platform-cloudflare");
-  const bytes = JSON.stringify(manifest);
   const content = fixture.files["content.md"];
   if (content === undefined) throw new Error("Missing fixture content");
+  const map = {
+    protocol: "eliotr.coordinate-map.v1",
+    source_owner_system_id: manifest.origin.owner_system_id,
+    source_namespace_id: manifest.origin.source_namespace_id,
+    source_owner_generation: manifest.origin.source_owner_generation,
+    source_logical_id: manifest.source.logical_id,
+    source_revision_ref: manifest.origin.source_revision_ref,
+    source_content_sha256: manifest.content.markdown_sha256,
+    normalized_content_path: "content.md",
+    precision_ceiling: "table_cell",
+    generator_generation: "coordinate-map-q1-v1",
+    created_at: manifest.normalization.created_at,
+    entries: [{ anchor: { kind: "table_cell", table_id: "q1-table", row: 0, column: 0 },
+      normalized_start_byte: 0, normalized_end_byte: content.byteLength,
+      excerpt_sha256: manifest.content.markdown_sha256 }],
+  };
+  const mapBytes = new TextEncoder().encode(JSON.stringify(map));
+  const mapDigest = await sha256Hex(mapBytes);
+  const tablesBytes = new TextEncoder().encode("[]");
+  const tablesDigest = await sha256Hex(tablesBytes);
+  const manifestWithMap = { ...manifest, content: { ...manifest.content,
+    mappings: "coordinate-map.json", tables: "tables.json", coordinate_map_digest: mapDigest } };
+  const bytes = JSON.stringify(manifestWithMap);
+  const manifestDigest = await sha256Utf8(bytes);
   const bundle = await prepareBrowserBundle([
     { path: "content.md", blob: new Blob([new Uint8Array(content)]) },
     { path: "manifest.json", blob: new Blob([new TextEncoder().encode(bytes)]) },
+    { path: "coordinate-map.json", blob: new Blob([new Uint8Array(mapBytes)]) },
+    { path: "tables.json", blob: new Blob([new Uint8Array(tablesBytes)]) },
     {
       path: "hashes.sha256",
       blob: new Blob([
-        `${manifest.content.markdown_sha256}  content.md\n${await sha256Utf8(bytes)}  manifest.json\n`,
+        `${manifestWithMap.content.markdown_sha256}  content.md\n${mapDigest}  coordinate-map.json\n${tablesDigest}  tables.json\n${manifestDigest}  manifest.json\n`,
       ]),
     },
   ]);

@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import * as backup from "./backup.js";
 import * as common from "./common.js";
+import * as coordinateMap from "./coordinate-map.js";
 import * as driveExchange from "./drive-exchange.js";
 import * as erasure from "./erasure.js";
 import * as evidence from "./evidence.js";
@@ -59,6 +60,7 @@ interface SchemaModule {
 const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "backup", exports: backup },
   { family: "common", exports: common },
+  { family: "navigation", exports: coordinateMap },
   { family: "drive-exchange", exports: driveExchange },
   { family: "erasure", exports: erasure },
   { family: "evidence", exports: evidence },

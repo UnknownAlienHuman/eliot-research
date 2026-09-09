@@ -1,4 +1,7 @@
 import {
+  COORDINATE_MAP_PROTOCOL,
+} from "./coordinate-map.js";
+import {
   NORMALIZED_BUNDLE_CANONICAL_BODY_SHA256,
   NORMALIZED_BUNDLE_PROTOCOL,
 } from "./normalized-bundle.js";
@@ -17,6 +20,16 @@ export const CANONICAL_FIXTURE_REGISTRY =
     protocol: CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
     registry_generation: CONTRACT_SCHEMA_REGISTRY_GENERATION,
     fixtures: [
+      {
+        fixture_id: "coordinate-map-v1",
+        protocol: COORDINATE_MAP_PROTOCOL,
+        schema_export: "CoordinateMapSchema",
+        fixture_path:
+          "tests/fixtures/contracts/eliotr.coordinate-map.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "2f061e1653833e7d111b901174f0fe86a8863ee39b67524a5911b3bba7f13e54",
+      },
       {
         fixture_id: "normalized-bundle-v1",
         protocol: NORMALIZED_BUNDLE_PROTOCOL,

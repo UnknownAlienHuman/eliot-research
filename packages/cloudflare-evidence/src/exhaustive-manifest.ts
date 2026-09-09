@@ -1,4 +1,4 @@
-import { NormalizedBundleManifestSchema } from "@eliotr/contracts";
+import { NormalizedBundleManifestSchema, type NormalizedBundleManifest } from "@eliotr/contracts";
 import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import { EvidenceRuntimeError, type EvidenceSourceAuthority } from "./types.js";
 
@@ -6,7 +6,7 @@ import { EvidenceRuntimeError, type EvidenceSourceAuthority } from "./types.js";
 export async function readAdmittedNormalizedManifest(
   bucket: R2Bucket,
   authority: EvidenceSourceAuthority,
-): Promise<{ readonly content_size: number }> {
+): Promise<{ readonly manifest: NormalizedBundleManifest; readonly content_size: number }> {
   const object = await bucket.get(authority.normalized_artifact_ref).catch(() => null);
   if (object === null || object.size > 512 * 1024) {
     throw new EvidenceRuntimeError("EVIDENCE_OBJECT_NOT_FOUND", "admitted normalized manifest is unavailable", { retryable: true });
@@ -17,7 +17,8 @@ export async function readAdmittedNormalizedManifest(
     throw new EvidenceRuntimeError("EVIDENCE_INPUT_INVALID", "admitted normalized manifest is malformed", { retryable: true, cause });
   }
   const parsed = NormalizedBundleManifestSchema.safeParse(value);
-  if (!parsed.success || parsed.data.origin.source_revision_ref !== authority.source_revision_ref ||
+  if (!parsed.success || parsed.data.origin.owner_system_id !== authority.owner_system_id ||
+      parsed.data.origin.source_revision_ref !== authority.source_revision_ref ||
       parsed.data.origin.source_namespace_id !== authority.source_namespace_id ||
       parsed.data.origin.source_owner_generation !== authority.source_owner_generation ||
       parsed.data.content.markdown_sha256 !== authority.content_sha256 || !parsed.data.capabilities.text_ranges) {
@@ -41,5 +42,5 @@ export async function readAdmittedNormalizedManifest(
   if (metadata.eliotr_size_bytes !== undefined && metadata.eliotr_size_bytes !== String(content.size)) {
     throw new EvidenceRuntimeError("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "normalized content size metadata conflicts with R2 authority");
   }
-  return { content_size: content.size };
+  return { manifest: parsed.data, content_size: content.size };
 }

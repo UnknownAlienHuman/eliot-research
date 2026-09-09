@@ -351,6 +351,26 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "CoordinateMapEntrySchema",
+      "family": "navigation",
+      "json_schema_sha256": "ff52ba1dda7dbe7b62a6afa5c802d3fb5856d354166c8ea2e9fe82fd858924e0",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "CoordinateMapSchema",
+      "family": "navigation",
+      "json_schema_sha256": "8a37473823710139645c2360113f606466b539e3bce2b372a18d60779f978d5e",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "CoverageGoalSchema",
       "family": "research",
       "json_schema_sha256": "42b21e644804fde8ef4dadc198097cfe2a040879a54071eeb701437f58b2b987",
@@ -1294,5 +1314,5 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
   "registry_generation": 2,
-  "schema_count": 129
+  "schema_count": 131
 }

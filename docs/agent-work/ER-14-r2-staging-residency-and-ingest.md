@@ -49,6 +49,7 @@ prepare exact bundle envelope
 → complete each file and reopen it
 → SHA-256 + size + ETag + metadata + media-type verification
 → verify manifest.json and hashes.sha256 semantics
+→ accept an optional coordinate-map JSON only when its manifest path and digest are paired and hashed
 → require admission-authority promotion authorization
 → write immutable residency/source/revision-scoped Evidence objects
 → exact readback of every promoted object
@@ -93,6 +94,8 @@ The remaining end-to-end authority path belongs to ER-13/ER-15/ER-24/ER-29.
 - Modified completion/session/promotion JSON is rejected by digest and strict-field validation.
 - A semantically false `hashes.sha256` file blocks promotion even when every uploaded byte hash matches
   its prepared envelope.
+- A declared coordinate-map path without its matching digest, or with a mismatched file hash, fails
+  before promotion; map presence does not change the manifest's capability or qualification ceiling.
 - Staging objects cannot resolve as evidence.
 
 ## Mandatory negative boundary

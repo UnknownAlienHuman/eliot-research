@@ -1,13 +1,13 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createD1NavigationStore, readAdmittedNormalizedMarkdown } from "@eliotr/cloudflare-evidence";
+import { createD1NavigationStore, readAdmittedCoordinateMap, readAdmittedNormalizedMarkdown } from "@eliotr/cloudflare-evidence";
 import {
   createD1ScopeService,
   createOwnerScopeAuthority,
   materializeStructuralNavigation,
 } from "@eliotr/cloudflare-navigation";
 import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
-import { extractNavigationSections, MAX_CANONICAL_BYTES } from "@eliotr/retrieval";
+import { extractNavigationSections, materializeStructuralNavigation as deriveStructuralNavigation, MAX_CANONICAL_BYTES } from "@eliotr/retrieval";
 import {
   importAndProject,
   prepareQ1Namespace,
@@ -15,6 +15,7 @@ import {
 } from "./retrieval-q1-fixture.js";
 import { env } from "cloudflare:workers";
 import type { Env } from "../src/env.js";
+import { persistCoordinateMap } from "@eliotr/cloudflare-navigation";
 
 interface Migration { readonly name: string; readonly queries: string[]; }
 
@@ -80,6 +81,24 @@ async function preparedNavigation() {
 }
 
 describe("N1 structural navigation over the real Q1 import path", () => {
+  it("reads the imported map from its canonical R2 key and persists the adapted map in D1", async () => {
+    const { snapshot, sources, source, store } = await preparedNavigation();
+    if (source === undefined) throw new Error("missing Q1 source authority");
+    const content = await readAdmittedNormalizedMarkdown(runtime.EVIDENCE_BUCKET, source.authority);
+    const derived = await deriveStructuralNavigation({
+      source_revision: source.revision, scope_snapshot: snapshot, normalized_markdown: content.markdown,
+      source_kind: "document", generator_generation: "structural-v1", created_at: snapshot.created_at,
+    });
+    const admitted = await readAdmittedCoordinateMap(runtime.EVIDENCE_BUCKET, source.authority);
+    await store.putArtifact("SOURCE_CARD", derived.sourceCard);
+    const merged = await persistCoordinateMap({ store, source_revision: source.revision,
+      structural_map: derived.documentMap, admitted_map: admitted, generator_generation: "coordinate-v1", created_at: snapshot.created_at });
+    expect(merged.tables).toEqual([expect.objectContaining({ coordinate_kind: "table_cell", table_id: "q1-table",
+      normalized_start_byte: 0, normalized_end_byte: content.size_bytes, navigation_authority: "NAVIGATION_ONLY" })]);
+    const reopened = await store.getDocumentMaps([sources[0]?.revision.source_revision_ref ?? ""]);
+    expect(reopened[0]).toMatchObject({ mappings_to_original_ref: admitted.map_object_ref });
+  });
+
   it("reads admitted R2 bytes, persists exact maps, replays immutably, and rejects purge", async () => {
     const world = {
       runtime: runtime as Q1Runtime,
