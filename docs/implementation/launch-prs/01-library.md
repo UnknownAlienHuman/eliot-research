@@ -208,6 +208,6 @@ active worker; first installation must reach `activated`. The focused determinis
 phase ledger identity, service-worker lifecycle, readback retry classification and marker-failure
 cleanup. The current local `pnpm test:owner-e2e` attempt is `NOT_EXECUTED` for browser acceptance:
 Wrangler's local migration runtime reported `bad port` without retaining a URL or port in its log;
-the migration SQL itself has no network operation. This closes the PR98 new L1 harness boundary
-(the legacy L6 label), not the full Library L6/L7 product acceptance. Live Access/provider
-qualification remains `NOT_EXECUTED`.
+the migration SQL itself has no network operation. L1 acceptance requires the actual owner-e2e to
+pass in both Ubuntu and Windows CI; full Library L6/L7 and live qualification remain separate.
+Live Access/provider qualification remains `NOT_EXECUTED`.
