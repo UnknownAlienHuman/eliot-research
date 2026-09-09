@@ -193,3 +193,29 @@ responses. That browser fixture has controlled HTTP responses; full real-storage
 ER-21 owns additive owner DTO/route, ER-24 the shared read fence/reader/HTTP tests, ER-25 the PWA/test
 integration. Ownership manifest and packet lists are synchronized. No schema, identities, grants,
 provider configuration, evidence authority or release gate changes.
+
+## PR98 owner browser harness addendum (new L1, legacy L6 label)
+
+The owner browser harness runs the built PWA with an isolated local Worker/D1/R2 profile, restarts
+and reads back the same namespace, and exercises the existing denial, logout, storage and cleanup
+boundaries. Namespace setup makes one mutation attempt and performs exact readback; only an explicit
+transient local-runner lock may retry a read-only readback. Marker creation failures clean their
+known-created temporary directory, and a timed teardown stops the dependent cleanup chain.
+
+The phase fence consumes the PWA's actual `register()` promise, tracks `updatefound` workers through
+bounded event quiescence, and treats `installed` as terminal only for an update with an existing
+active worker; first installation must reach `activated`. The focused deterministic checks pass:
+phase ledger identity, service-worker lifecycle, readback retry classification and marker-failure
+cleanup. Playwright 1.63 can report a Service Worker main-script `requestfinished` event with no
+HTTP response metadata: its Chromium network manager forwards a nullable response when the CDP
+response event was not observed, while the public BrowserContext event exposes only the Request.
+The harness records this exact owned `/sw.js` terminal as
+`SERVICE_WORKER_SCRIPT_FINISHED_HTTP_UNOBSERVED`, retaining `status: unknown`; it does not infer
+HTTP success or qualify API, page, foreign-worker, query-bearing or otherwise mismatched requests.
+See the [Playwright service-worker guidance](https://playwright.dev/docs/service-workers) and the
+[BrowserContext requestfinished API](https://playwright.dev/docs/api/class-browsercontext#browser-context-on-request-finished).
+The current owner-e2e browser acceptance remains `NOT_EXECUTED` until the corrected harness passes
+in both Ubuntu and Windows CI. The prior local `bad port` diagnostic retained no URL or port, and
+the migration SQL itself has no network operation. L1 acceptance requires the actual owner-e2e to
+pass in both Ubuntu and Windows CI; full Library L6/L7 and live qualification remain separate.
+Live Access/provider qualification remains `NOT_EXECUTED`.

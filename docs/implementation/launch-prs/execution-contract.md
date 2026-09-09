@@ -84,11 +84,11 @@ Rust tasks run `pnpm rust:check`, plus applicable pinned fuzz/property/Miri/muta
 Do not substitute a system compiler or upgrade a dependency to hide a failure.
 
 `pnpm test:library-browser` EXISTS and uses the built PWA with controlled HTTP. It is useful but does not
-satisfy the complete real-storage Playwright loop. L1 in #98 must ADD a pinned dev-only Playwright
-harness and `pnpm test:owner-e2e` through ER-00/25/27; that command does NOT exist at this baseline.
-Other UI checkpoints add their tests to that one harness, not another browser framework. Local signed
-identity fixtures may replace only the external issuer; production auth remains enabled. D1/R2/runtime,
-crypto, transactions and application routing in end-to-end acceptance are real local components.
+satisfy the complete real-storage Playwright loop. PR98's new L1 (legacy L6 label) provides the pinned
+dev-only Playwright harness as `pnpm test:owner-e2e` through ER-00/25/27. Other UI checkpoints add
+their tests to that one harness, not another browser framework. Local signed identity fixtures may
+replace only the external issuer; production auth remains enabled. D1/R2/runtime, crypto, transactions
+and application routing in end-to-end acceptance are real local components.
 
 Exact-head CI must pass verify, rust, windows-tooling, local-launch Ubuntu and Windows, and the added
 browser jobs where applicable. After shared merges, test combined main again. An inherited failure must
