@@ -17,15 +17,13 @@ import {
   createD1ScopePorts,
 } from "@eliotr/retrieval";
 import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
-import { NormalizedBundleManifestSchema, ScopeExpressionSchema } from "@eliotr/contracts";
+import { ScopeExpressionSchema } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
-import {
-  canonicalNormalizedBundleKey,
-} from "@eliotr/platform-cloudflare";
 import {
   createD1EvidenceAuthorityPort,
   createCloudflareEvidenceResolver,
   createR2EvidenceContentPort,
+  readAdmittedNormalizedManifest,
   EvidenceRuntimeError,
   type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
@@ -93,7 +91,7 @@ function parseMaxResults(value: unknown): number {
   return value as number;
 }
 
-export function parseExhaustiveQueryRequest(raw: unknown): QueryRequest {
+export function parseExhaustiveQueryRequest(raw: unknown): ExhaustiveQueryRequest {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     fail("RESEARCH_INPUT_INVALID", "query request must be an object");
   }
@@ -114,7 +112,13 @@ export function parseExhaustiveQueryRequest(raw: unknown): QueryRequest {
   };
 }
 
-function idempotencyKey(context: AuthenticatedRequestContext): string {
+export type ExhaustiveQueryRequest = QueryRequest & {
+  readonly product: "EXHAUSTIVE_JOB";
+  readonly evidence_grade: "E0";
+  readonly budget_ref: typeof EXHAUSTIVE_QUERY_BUDGET;
+};
+
+export function exhaustiveIdempotencyKey(context: AuthenticatedRequestContext): string {
   const value = context.request.headers.get("idempotency-key");
   if (typeof value !== "string" || value.length < 1 || value.length > 256 || /[\u0000-\u0020\u007f]/u.test(value)) {
     fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required");
@@ -189,60 +193,15 @@ function mapRuntimeError(error: unknown): never {
     fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted exhaustive navigation is unavailable", 503, true);
   }
   if (error instanceof EvidenceRuntimeError) {
-    if (error.code === "EVIDENCE_AUTHORIZATION_DENIED" || error.code === "EVIDENCE_OWNER_GENERATION_MISMATCH" || error.code === "EVIDENCE_SCOPE_MISMATCH" || error.code === "EVIDENCE_SOURCE_NOT_LIVE") {
+    if (error.code === "EVIDENCE_AUTHORIZATION_DENIED" || error.code === "EVIDENCE_OWNER_GENERATION_MISMATCH" || error.code === "EVIDENCE_SCOPE_MISMATCH" || error.code === "EVIDENCE_SOURCE_NOT_LIVE" || error.code === "EVIDENCE_LOCATOR_NOT_RESOLVABLE") {
       fail("RESEARCH_AUTHORITY_STALE", "exhaustive evidence authority is stale", 409);
+    }
+    if (error.code === "EVIDENCE_OBJECT_NOT_FOUND" || error.code === "EVIDENCE_INPUT_INVALID") {
+      fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted exhaustive evidence is unavailable", 503, true);
     }
     fail("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive evidence settlement is uncertain", 503, true);
   }
   throw error;
-}
-
-function manifestText(raw: string): unknown {
-  try { return JSON.parse(raw); } catch { fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest is malformed", 503, true); }
-}
-
-async function readManifest(bucket: R2Bucket, authority: EvidenceSourceAuthority): Promise<{ readonly content_size: number }> {
-  // The admission receipt binds this exact manifest key. Its residency digest
-  // includes the manifest bytes, while the source revision digest binds the
-  // normalized content.md object, so deriving one key from the other is wrong.
-  const object = await bucket.get(authority.normalized_artifact_ref).catch(() => null);
-  if (object === null || object.size > 512 * 1024) {
-    fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest is unavailable", 503, true);
-  }
-  let value: unknown;
-  try { value = manifestText(await new TextDecoder("utf-8", { fatal: true }).decode(await object.arrayBuffer())); }
-  catch { fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest is unreadable", 503, true); }
-  const parsed = NormalizedBundleManifestSchema.safeParse(value);
-  if (!parsed.success || parsed.data.origin.source_revision_ref !== authority.source_revision_ref ||
-      parsed.data.origin.source_namespace_id !== authority.source_namespace_id ||
-      parsed.data.origin.source_owner_generation !== authority.source_owner_generation ||
-      parsed.data.content.markdown_sha256 !== authority.content_sha256 || !parsed.data.capabilities.text_ranges) {
-    fail("RESEARCH_AUTHORITY_STALE", "normalized manifest does not match admitted source authority", 409);
-  }
-  // The manifest binds the normalized content digest, but its own residency
-  // object is not the content object. Pin the canonical content object as
-  // well, so inventory ranges can be checked against the authoritative byte
-  // length before any shard runs. The resolver performs the stronger
-  // checksum/metadata readback when a section is actually read.
-  const contentKey = await canonicalNormalizedBundleKey(authority.object_residency_key_digest, {
-    owner_system_id: authority.owner_system_id,
-    source_namespace_id: authority.source_namespace_id,
-    source_owner_generation: authority.source_owner_generation,
-    source_logical_id: authority.source_id,
-    source_revision_ref: authority.source_revision_ref,
-  }, "content.md");
-  const content = await bucket.head(contentKey).catch(() => null);
-  if (content === null || !Number.isSafeInteger(content.size) || content.size < 1) {
-    fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized content is unavailable", 503, true);
-  }
-  const metadata = content.customMetadata ?? {};
-  if (metadata.eliotr_sha256 !== undefined && metadata.eliotr_sha256 !== authority.content_sha256) {
-    fail("RESEARCH_AUTHORITY_STALE", "normalized content digest metadata conflicts with source authority", 409);
-  }
-  if (metadata.eliotr_size_bytes !== undefined && metadata.eliotr_size_bytes !== String(content.size)) {
-    fail("RESEARCH_AUTHORITY_STALE", "normalized content size metadata conflicts with R2 authority", 409);
-  }
-  return { content_size: content.size };
 }
 
 interface ExhaustiveProjectionRow {
@@ -294,7 +253,7 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
       const descriptors: ExhaustiveSectionDescriptor[] = [];
       const contentSizes = new Map<string, number>();
       for (const source of sources) {
-        const manifest = await readManifest(env.EVIDENCE_BUCKET, source.authority);
+        const manifest = await readAdmittedNormalizedManifest(env.EVIDENCE_BUCKET, source.authority);
         contentSizes.set(source.revision.source_revision_ref, manifest.content_size);
       }
       for (const source of sources) {
@@ -380,7 +339,7 @@ export function createExhaustiveQueryService(
     async query(context, raw) {
       requireOwner(context);
       const request = parseExhaustiveQueryRequest(raw);
-      const key = idempotencyKey(context);
+      const key = exhaustiveIdempotencyKey(context);
       const access = {
         principal_ref: context.principal_ref,
         client_class: context.client_class,

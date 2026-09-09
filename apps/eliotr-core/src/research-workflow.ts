@@ -8,9 +8,11 @@ import {
 } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
-import { createExhaustiveQueryService } from "./exhaustive-query-service.js";
+import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
+import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
 
-export interface ResearchWorkflowParams {
+export interface ResearchWorkflowRunParams {
+  readonly workflow_kind?: "RESEARCH";
   readonly operation_id: string;
   readonly investigation_ref: VersionedRef;
   readonly idempotency_key: string;
@@ -20,9 +22,8 @@ export interface ResearchWorkflowParams {
   readonly credential_generation: string;
   readonly deployment_generation: string;
   readonly requested_by_principal_ref?: string;
-  /** Q8 uses this same canonical Workflow host for a durable exhaustive job. */
-  readonly exhaustive_request?: unknown;
 }
+export type ResearchWorkflowParams = ResearchWorkflowRunParams | ExhaustiveWorkflowPayload;
 
 export interface ResearchWorkflowResult {
   readonly operation_id: string;
@@ -41,6 +42,28 @@ function failWorkflow(code: string): never {
 function parseParams(raw: unknown): ResearchWorkflowParams {
   if (typeof raw !== "object" || raw === null) failWorkflow("WORKFLOW_INPUT_INVALID");
   const value = raw as Record<string, unknown>;
+  if (value.workflow_kind === "EXHAUSTIVE_QUERY") {
+    const allowed = new Set(["workflow_kind", "operation_id", "idempotency_key", "principal_ref",
+      "credential_generation", "deployment_generation", "exhaustive_request"]);
+    if (Object.keys(value).some((key) => !allowed.has(key)) || Object.keys(value).length !== allowed.size) {
+      failWorkflow("WORKFLOW_INPUT_INVALID");
+    }
+    const operation_id = value.operation_id;
+    const idempotency_key = value.idempotency_key;
+    const principal_ref = value.principal_ref;
+    const credential_generation = value.credential_generation;
+    const deployment_generation = value.deployment_generation;
+    if (typeof operation_id !== "string" || operation_id.length < 1 || operation_id.length > 128 ||
+        typeof idempotency_key !== "string" || idempotency_key.length < 1 || idempotency_key.length > 256 ||
+        typeof principal_ref !== "string" || principal_ref.length < 1 ||
+        typeof credential_generation !== "string" || credential_generation.length < 1 ||
+        typeof deployment_generation !== "string" || deployment_generation.length < 1) {
+      failWorkflow("WORKFLOW_INPUT_INVALID");
+    }
+    const exhaustive_request = parseExhaustiveQueryRequest(value.exhaustive_request);
+    return { workflow_kind: "EXHAUSTIVE_QUERY", operation_id, idempotency_key, principal_ref,
+      credential_generation, deployment_generation, exhaustive_request };
+  }
   const operation_id = value.operation_id;
   const investigation_ref = value.investigation_ref as VersionedRef | undefined;
   const idempotency_key = value.idempotency_key;
@@ -63,7 +86,7 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
   const requested = value.requested_by_principal_ref;
   if (requested !== undefined && requested !== principal_ref) failWorkflow("WORKFLOW_CONFLICT");
   const allowed = new Set(["operation_id", "investigation_ref", "idempotency_key", "handler_generation",
-    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref", "exhaustive_request"]);
+    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) failWorkflow("WORKFLOW_INPUT_INVALID");
   }
@@ -74,7 +97,6 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
     principal_ref: principal_ref as string, credential_generation: credential_generation as string,
     deployment_generation: deployment_generation as string,
     ...(value.requested_by_principal_ref === undefined ? {} : { requested_by_principal_ref: value.requested_by_principal_ref as string }),
-    ...(value.exhaustive_request === undefined ? {} : { exhaustive_request: value.exhaustive_request }),
   };
 }
 
@@ -126,12 +148,7 @@ async function deterministicStageBytes(
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
   public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
     const params = parseParams(event.payload);
-    const principal: WorkflowPrincipal = {
-      principal_ref: params.principal_ref,
-      credential_generation: params.credential_generation,
-      deployment_generation: params.deployment_generation,
-    };
-    if (params.exhaustive_request !== undefined) {
+    if (params.workflow_kind === "EXHAUSTIVE_QUERY") {
       const request = new Request("https://workflow.internal/api/v1/research/query", {
         method: "POST",
         headers: { "idempotency-key": params.idempotency_key },
@@ -152,6 +169,11 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       }
       return result;
     }
+    const principal: WorkflowPrincipal = {
+      principal_ref: params.principal_ref,
+      credential_generation: params.credential_generation,
+      deployment_generation: params.deployment_generation,
+    };
     const ports = createServerPorts(this.env.CORE_DB, params.operation_id);
     const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
     let investigation_ref: VersionedRef = { ...params.investigation_ref };

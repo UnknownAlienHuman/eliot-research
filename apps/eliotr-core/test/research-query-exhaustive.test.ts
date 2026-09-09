@@ -3,8 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
 import { handleHttp } from "../src/http.js";
-import { ResearchWorkflow } from "../src/research-workflow.js";
-import { digest } from "@eliotr/cloudflare-research";
+import { createExhaustiveQueryService } from "../src/exhaustive-query-service.js";
 
 const runtime = env as unknown as Q1Runtime;
 
@@ -51,20 +50,23 @@ function access(owner: string) {
 }
 
 describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
-  it("runs import -> projection -> default runtime -> HTTP and persists an exact COMPLETE receipt", async () => {
+  it("runs import -> projection -> default runtime -> HTTP and creates a durable Workflow", async () => {
     const owner = "exhaustive-http-owner";
     const value = await world(owner);
-    const beforeHandles = await runtime.CORE_DB.prepare("SELECT COUNT(*) AS n FROM evidence_handle").first<{ readonly n: number }>();
     const response = await handleHttp(queryRequest(value, "exhaustive-http-first"), runtime, {} as ExecutionContext, access(owner));
-    expect(response.status).toBe(200);
-    const body = await response.json() as { readonly data?: { readonly protocol?: string; readonly job?: { readonly status?: string; readonly receipt?: { readonly coverage_claim?: string; readonly total_matches?: number } } } };
+    expect(response.status).toBe(202);
+    const body = await response.json() as { readonly data?: { readonly protocol?: string; readonly workflow_instance_id?: string; readonly workflow_status?: string } };
     expect(body.data?.protocol).toBe("eliotr.exhaustive-query.v1");
-    expect(body.data?.job).toMatchObject({ status: "COMPLETE", receipt: { coverage_claim: "COMPLETE", total_matches: 1 } });
-    const afterHandles = await runtime.CORE_DB.prepare("SELECT COUNT(*) AS n FROM evidence_handle").first<{ readonly n: number }>();
-    expect((afterHandles?.n ?? 0)).toBe((beforeHandles?.n ?? 0) + 1);
+    expect(body.data?.workflow_instance_id).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    expect(["queued", "running", "waiting", "complete"]).toContain(body.data?.workflow_status);
     const replay = await handleHttp(queryRequest(value, "exhaustive-http-first"), runtime, {} as ExecutionContext, access(owner));
     expect(replay.status).toBe(200);
-    expect((await replay.json() as { readonly data?: unknown }).data).toEqual(body.data);
+    expect(await replay.json()).toMatchObject({ data: {
+      protocol: "eliotr.exhaustive-query.v1",
+      workflow_instance_id: body.data?.workflow_instance_id,
+      workflow_status: "complete",
+      job: { status: "COMPLETE" },
+    } });
     const changedScopeExpression = await handleHttp(
       queryRequest(value, "exhaustive-http-first", "Pinned", { kind: "GLOBAL_LIBRARY" }),
       runtime,
@@ -94,15 +96,12 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     const cancelled = queryRequest(value, "exhaustive-http-pending");
     const abortedRequest = new Request(cancelled, { signal: controller.signal });
     const first = await handleHttp(abortedRequest, runtime, {} as ExecutionContext, access(owner));
-    expect(first.status).toBe(409);
-    expect(await first.json()).toMatchObject({ code: "RESEARCH_CANCELLED" });
-    const pending = await runtime.CORE_DB.prepare(
-      "SELECT state, scope_snapshot_id FROM retrieval_exhaustive_job WHERE idempotency_key=?1 LIMIT 1",
-    ).bind("exhaustive-http-pending").first<{ readonly state: string; readonly scope_snapshot_id: string }>();
-    expect(pending).toMatchObject({ state: "PENDING" });
+    expect(first.status).toBe(202);
+    const firstBody = await first.json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    expect(firstBody.data?.workflow_instance_id).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
     const resumed = await handleHttp(queryRequest(value, "exhaustive-http-pending"), runtime, {} as ExecutionContext, access(owner));
-    expect(resumed.status).toBe(200);
-    expect(await resumed.json()).toMatchObject({ data: { job: { status: "COMPLETE" } } });
+    expect(resumed.status).toBe(202);
+    expect(await resumed.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
   });
 
   it("rejects a projected range outside the admitted content object", async () => {
@@ -115,57 +114,34 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     await runtime.SEARCH_DB.prepare(
       "UPDATE projection_span SET normalized_end_byte=normalized_end_byte+1000000 WHERE item_key=?1",
     ).bind(item.item_key).run();
-    const response = await handleHttp(queryRequest(value, "exhaustive-http-range"), runtime, {} as ExecutionContext, access(owner));
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+    const request = queryRequest(value, "exhaustive-http-range");
+    await expect(createExhaustiveQueryService(runtime).query({
+      request,
+      principal_ref: owner,
+      client_class: "owner_pwa",
+      credential_generation: "credential-1",
+      trace_id: "range-test",
+    }, await request.clone().json())).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
   });
 
-  it("runs the same job through the canonical ER09 Workflow host", async () => {
+  it("launches and reads the job through the actual ER09 Workflow binding", async () => {
     const owner = "exhaustive-workflow-owner";
     const value = await world(owner);
-    const inputBytes = new TextEncoder().encode("workflow exhaustive input");
-    const inputHash = await digest(inputBytes);
-    const inputRef = `exhaustive-workflow-input-${value.namespace}`;
-    await runtime.WORK_BUCKET.put(inputRef, inputBytes);
-    const params = {
-      operation_id: `exhaustive-workflow-${value.namespace}`,
-      investigation_ref: { id: `exhaustive-investigation-${value.namespace}`, revision: 1 },
-      idempotency_key: "exhaustive-workflow-job",
-      handler_generation: "exhaustive-q8.v1",
-      initial_input_manifest: {
-        object_ref: inputRef,
-        sha256: inputHash,
-        byte_length: inputBytes.byteLength,
-        residency: {
-          scope_domain_id: "workflow-scope",
-          access_domain_id: owner,
-          confidentiality_domain_id: "private",
-          encryption_key_domain_id: "key-1",
-          retention_domain_id: "retention-1",
-          erasure_domain_id: "erasure-1",
-          content_digest: { algorithm: "sha256" as const, digest: inputHash },
-        },
-      },
-      principal_ref: owner,
-      credential_generation: "credential-1",
-      deployment_generation: "test-generation",
-      exhaustive_request: {
-        query: "Pinned",
-        product: "EXHAUSTIVE_JOB",
-        scope_expression: { kind: "SELECTED_SOURCES", source_ids: [`source-${value.namespace}`] },
-        literals: [],
-        evidence_grade: "E0",
-        budget_ref: "exhaustive-job-v1",
-        max_results: 8,
-      },
-    };
-    const fakeStep = {
-      do: async (name: string, callback: () => Promise<unknown>) => {
-        expect(name).toBe("q8-exhaustive-job");
-        return callback();
-      },
-    };
-    const result = await ResearchWorkflow.prototype.run.call({ env: runtime }, { payload: params } as never, fakeStep as never);
-    expect(result).toMatchObject({ protocol: "eliotr.exhaustive-query.v1", job: { status: "COMPLETE" } });
+    const launched = await handleHttp(queryRequest(value, "exhaustive-workflow-job"), runtime, {} as ExecutionContext, access(owner));
+    expect(launched.status).toBe(202);
+    const launchedBody = await launched.json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    const workflowId = launchedBody.data?.workflow_instance_id;
+    expect(workflowId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    const status = await handleHttp(
+      new Request(`https://research.example/api/v1/research/query/${workflowId}`, { method: "GET" }),
+      runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
+    expect(status.status).toBe(200);
+    expect(await status.json()).toMatchObject({ data: {
+      protocol: "eliotr.exhaustive-query.v1",
+      workflow_instance_id: workflowId,
+    } });
   });
 });

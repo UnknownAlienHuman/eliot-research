@@ -412,7 +412,19 @@ async function dispatch(
       {
         const blocked = await requireApplicationReady(request, application);
         if (blocked !== null) return blocked;
-        if (match.route.operation === "research.query") { requireNoQuery(url); return apiResult(request, env, await application.services.semantic.query(context, await request.json())); }
+        if (match.route.operation === "research.query") {
+          requireNoQuery(url);
+          const workflowId = match.params.workflow_id;
+          if (workflowId !== undefined && match.route.method === "GET") {
+            return apiResult(request, env, await application.services.semantic.queryStatus(context, workflowId));
+          }
+          if (workflowId !== undefined && match.route.method === "DELETE") {
+            return apiResult(request, env, await application.services.semantic.queryCancel(context, workflowId));
+          }
+          const data = await application.services.semantic.query(context, await request.json());
+          return apiResult(request, env, data, data && typeof data === "object" &&
+            "workflow_instance_id" in data && !Object.hasOwn(data, "job") ? 202 : 200);
+        }
         if (match.route.operation === "research.run") { requireNoQuery(url); return apiResult(request, env, await application.services.semantic.run(context, await request.json())); }
         throw new CapabilityUnavailableError(match.route.operation);
       }

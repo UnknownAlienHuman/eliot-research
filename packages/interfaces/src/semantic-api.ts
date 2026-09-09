@@ -67,6 +67,14 @@ export interface ExhaustiveQueryResult {
   readonly job: ExhaustiveReconcileStatus;
 }
 
+export interface ExhaustiveWorkflowResult {
+  readonly protocol: "eliotr.exhaustive-query.v1";
+  /** Present while the canonical Workflow instance is queued or running. */
+  readonly workflow_instance_id: string;
+  readonly workflow_status: "queued" | "running" | "paused" | "errored" | "terminated" | "complete" | "waiting" | "waitingForPause" | "unknown";
+  readonly job?: ExhaustiveReconcileStatus;
+}
+
 export type VerifyEvidenceRequest =
   | { readonly scope_snapshot_ref: VersionedRef; readonly locator_candidate: LocatorCandidate }
   | { readonly scope_snapshot_ref: VersionedRef; readonly handle_ref: VersionedRef };
@@ -79,7 +87,9 @@ export interface VerifyEvidenceResult {
 export interface SemanticApi {
   catalog(context: AuthenticatedRequestContext, request: CatalogRequest): Promise<CatalogResult>;
   orient(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult>;
-  query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult>;
+  query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult | ExhaustiveWorkflowResult>;
+  queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
+  queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
   verify(context: AuthenticatedRequestContext, request: VerifyEvidenceRequest): Promise<VerifyEvidenceResult>;
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
