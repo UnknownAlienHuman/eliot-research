@@ -5,6 +5,8 @@ export * from "./cursor.js";
 export * from "./token-vault.js";
 export * from "./result-publisher.js";
 export * from "./provisioner.js";
+export * from "./provisioning-port.js";
+export * from "./provisioning-store.js";
 export * from "./reconciler.js";
 
 export * from "./sheet-port.js";

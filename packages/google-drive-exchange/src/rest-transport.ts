@@ -83,15 +83,21 @@ export function createGoogleJsonTransport(options: GoogleRestOptions) {
   return async function request<T>(url: URL, body: unknown | undefined, writes: boolean, decode: (value: unknown) => T): Promise<T> {
     // No caller-selected endpoint, redirect, ambient cookies or credential-bearing query parameters.
     if (url.protocol !== "https:" || url.port || url.username || url.password || url.hash ||
-        !((url.hostname === "www.googleapis.com" && /^\/drive\/v3\/(?:changes(?:\/startPageToken)?|files\/[A-Za-z0-9_-]+)$/u.test(url.pathname)) ||
-          (url.hostname === "sheets.googleapis.com" && /^\/v4\/spreadsheets\/[A-Za-z0-9_-]+(?::batchUpdate|\/values:batchGetByDataFilter)$/u.test(url.pathname)))) {
+        !((url.hostname === "www.googleapis.com" && /^\/drive\/v3\/(?:changes(?:\/startPageToken)?|files(?:\/[A-Za-z0-9_-]+)?)$/u.test(url.pathname)) ||
+          (url.hostname === "sheets.googleapis.com" && /^\/v4\/spreadsheets(?:\/[A-Za-z0-9_-]+(?::batchUpdate|\/values:batchGetByDataFilter)?)?$/u.test(url.pathname)))) {
       throw new GoogleRestError("GOOGLE_ENDPOINT_REJECTED");
     }
-    const queryKeys = new Set(["fields", "pageToken", "pageSize", "spaces", "includeRemoved", "includeItemsFromAllDrives", "restrictToMyDrive"]);
+    const queryKeys = new Set(["fields", "pageToken", "pageSize", "spaces", "includeRemoved", "includeItemsFromAllDrives", "restrictToMyDrive", "q", "orderBy", "addParents", "removeParents"]);
     if ([...url.searchParams.keys()].some((key) => !queryKeys.has(key) || url.searchParams.getAll(key).length !== 1)) {
       throw new GoogleRestError("GOOGLE_ENDPOINT_REJECTED");
     }
-    if (writes !== url.pathname.endsWith(":batchUpdate") || (writes && body === undefined)) throw new GoogleRestError("GOOGLE_METHOD_REJECTED");
+    const isBatchUpdate = url.pathname.endsWith(":batchUpdate");
+    const isBatchRead = url.pathname.endsWith("/values:batchGetByDataFilter");
+    const isCreate = url.pathname === "/drive/v3/files" || url.pathname === "/v4/spreadsheets";
+    const isFilePatch = url.hostname === "www.googleapis.com" && /^\/drive\/v3\/files\/[A-Za-z0-9_-]+$/u.test(url.pathname);
+    const writeEndpoint = isBatchUpdate || isCreate || (isFilePatch && writes);
+    if (writes !== writeEndpoint || (writes && body === undefined) || (!writes && body !== undefined && !isBatchRead)) throw new GoogleRestError("GOOGLE_METHOD_REJECTED");
+    if (writes && !isBatchUpdate && !isCreate && !isFilePatch) throw new GoogleRestError("GOOGLE_METHOD_REJECTED");
     const requestUrl = url.href; // Capture the validated target before authorization yields.
     let encoded: string | undefined;
     try {
@@ -134,7 +140,8 @@ export function createGoogleJsonTransport(options: GoogleRestOptions) {
       validLease();
       await bounded(lease.assertCurrent(controller.signal)); validLease();
       dispatched = true;
-      const pending = fetchImpl(requestUrl, { method: encoded === undefined ? "GET" : "POST",
+      const method = isFilePatch && writes ? "PATCH" : encoded === undefined ? "GET" : "POST";
+      const pending = fetchImpl(requestUrl, { method,
         headers: { Authorization: `Bearer ${lease.access_token}`, Accept: "application/json",
           ...(encoded === undefined ? {} : { "Content-Type": "application/json" }) },
         ...(encoded === undefined ? {} : { body: encoded }), signal: controller.signal,

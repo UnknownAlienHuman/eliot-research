@@ -1,10 +1,12 @@
 import type { D1Database } from "@cloudflare/workers-types";
 import type { ExchangeGeneration } from "@eliotr/contracts";
-import { createGoogleAccessLeaseProvider, type GoogleTokenLeaseOptions } from "./token-lease.js";
+import { createGoogleAccessLeaseProvider, createGoogleAuthorizingBootstrapLeaseProvider, type GoogleTokenLeaseOptions } from "./token-lease.js";
+import type { GoogleAccessLease } from "./rest-transport.js";
 import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot, type GoogleCredentialStore, type GoogleDisconnectReceiptFence } from "./token-credentials.js";
-import { encryptedToken, GoogleCredentialError, tokenBinding, type GoogleConnectionState,
+import { createAesGcmTokenVault, encryptedToken, GoogleCredentialError, refreshTokenBytes, tokenBinding, type GoogleConnectionState,
   type EncryptedRefreshToken, type GoogleTokenBinding } from "./token-vault.js";
 import { validateExchangeGeneration } from "./serializer.js";
+import { refreshGoogleAccessToken } from "./token-refresh.js";
 
 const COLUMNS = `connection_id, principal_id, oauth_client_id, google_subject, google_email, credential_generation,
   credential_revision, state, scopes_json, oauth_publishing_status, refresh_expires_at_epoch_ms,
@@ -150,6 +152,63 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
     requireReauthorization: async (snapshot, signal) => { await change(snapshot, null, snapshot.refresh_expires_at_epoch_ms, signal); }, revoke,
     revokeWithDisconnectReceipt,
   };
+}
+
+export interface GoogleAuthorizingBootstrapD1Options {
+  readonly database: D1Database;
+  readonly binding: GoogleTokenBinding;
+  readonly exchangeGenerationId: string;
+  readonly expectedCredentialRevision: number;
+  readonly clientSecret: string;
+  readonly activeKeyVersion: number;
+  readonly keys: ReadonlyMap<number, CryptoKey>;
+  readonly deadlineEpochMs: number;
+  readonly assertOwnerCurrent: (signal: AbortSignal) => Promise<void>;
+  readonly fetchImpl?: typeof fetch;
+  readonly now?: () => number;
+}
+
+/** Server-owned bootstrap lease: refreshes the admitted AUTHORIZING credential in memory, then
+ * rechecks the exact owner/generation/revision before exposing a short-lived Drive lease. */
+export function createD1GoogleAuthorizingBootstrapLeaseProvider(options: GoogleAuthorizingBootstrapD1Options) {
+  const binding = tokenBinding(options.binding); const now = options.now ?? Date.now;
+  if (!Number.isSafeInteger(options.expectedCredentialRevision) || options.expectedCredentialRevision < 1 ||
+      !Number.isSafeInteger(options.deadlineEpochMs) || options.deadlineEpochMs <= now()) fail("GOOGLE_BOOTSTRAP_CONTEXT_INVALID");
+  const store = createD1GoogleCredentialStore(options.database, binding, now);
+  const vault = createAesGcmTokenVault({ binding, activeKeyVersion: options.activeKeyVersion, keys: options.keys });
+  const assertOwner = async (signal: AbortSignal) => {
+    try { await options.assertOwnerCurrent(signal); }
+    catch (error) { if (error instanceof GoogleCredentialError) throw error; fail("GOOGLE_BOOTSTRAP_REJECTED"); }
+  };
+  const current = async (expected: GoogleCredentialSnapshot, signal: AbortSignal) => {
+    if (signal.aborted) fail("GOOGLE_CREDENTIAL_CANCELLED"); await assertOwner(signal);
+    const actual = await store.load(signal);
+    if (actual.revision !== options.expectedCredentialRevision || actual.state !== "AUTHORIZING" ||
+        JSON.stringify(actual.binding) !== JSON.stringify(binding) || !sameGoogleCredentials(actual, expected)) fail("GOOGLE_BOOTSTRAP_REJECTED");
+  };
+  let issued: Promise<GoogleAccessLease> | undefined;
+  return (signal: AbortSignal) => issued ??= (async () => {
+    if (signal.aborted || now() >= options.deadlineEpochMs) fail("GOOGLE_BOOTSTRAP_EXPIRED");
+    await assertOwner(signal); const snapshot = await store.load(signal);
+    if (snapshot.revision !== options.expectedCredentialRevision || snapshot.state !== "AUTHORIZING" ||
+        JSON.stringify(snapshot.binding) !== JSON.stringify(binding)) fail("GOOGLE_BOOTSTRAP_REJECTED");
+    if (snapshot.refresh_expires_at_epoch_ms !== null && snapshot.refresh_expires_at_epoch_ms <= now()) fail("GOOGLE_BOOTSTRAP_EXPIRED");
+    await store.assertCurrent(snapshot, signal); const refresh = await vault.decrypt(snapshot.token);
+    let refreshed;
+    try { refreshed = await refreshGoogleAccessToken({ clientId: binding.oauth_client_id, clientSecret: options.clientSecret, refreshToken: refresh,
+      signal, fetchImpl: options.fetchImpl ?? fetch }); }
+    catch (error) { if (error instanceof GoogleCredentialError) throw error; throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_REJECTED"); }
+    finally { refreshTokenBytes(refresh).fill(0); }
+    await current(snapshot, signal);
+    if (refreshed.refresh_token !== undefined) { refreshTokenBytes(refreshed.refresh_token).fill(0); fail("GOOGLE_BOOTSTRAP_ROTATION_REQUIRED"); }
+    const expiresAt = Math.min(now() + Math.min(refreshed.expires_in, 3600) * 1000 - 30000, options.deadlineEpochMs);
+    if (expiresAt <= now()) fail("GOOGLE_BOOTSTRAP_EXPIRED");
+    const assertCurrent = async (nextSignal: AbortSignal) => current(snapshot, nextSignal);
+    const helperOptions = { connectionId: binding.connection_id, principalId: binding.principal_id, credentialGeneration: binding.credential_generation,
+      credentialRevision: options.expectedCredentialRevision, exchangeGenerationId: options.exchangeGenerationId, accessToken: refreshed.access_token, expiresAtEpochMs: expiresAt,
+      assertCurrent, now };
+    return createGoogleAuthorizingBootstrapLeaseProvider(helperOptions)(signal);
+  })();
 }
 
 export interface GoogleCredentialStatus {

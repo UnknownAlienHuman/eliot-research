@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createAesGcmTokenVault, importGoogleTokenKey, REQUIRED_GOOGLE_SCOPES, type GoogleTokenBinding } from "./token-vault.js";
-import { createGoogleAccessLeaseProvider } from "./token-lease.js";
+import { createGoogleAccessLeaseProvider, createGoogleAuthorizingBootstrapLeaseProvider } from "./token-lease.js";
 import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot, type GoogleCredentialStore } from "./token-credentials.js";
 
 const binding: GoogleTokenBinding = { connection_id: "connection-1", principal_id: "owner-1", oauth_client_id: "client.apps.googleusercontent.com",
@@ -134,5 +134,23 @@ describe("one-operation OAuth refresh lease", () => {
       await expect(authorize(signal())).rejects.toMatchObject({ code: "GOOGLE_OAUTH_OUTCOME_UNKNOWN" });
       await expect(authorize(signal())).rejects.toThrow(); expect(test.fetchImpl).toHaveBeenCalledOnce(); expect(test.saved).toHaveLength(0);
     }
+  });
+});
+
+describe("G4 AUTHORIZING bootstrap lease", () => {
+  it("requires current admitted authority and preserves the exact generation tuple", async () => {
+    const assertCurrent = vi.fn(async () => {});
+    const authorize = createGoogleAuthorizingBootstrapLeaseProvider({ connectionId: "connection-bootstrap", principalId: "owner-bootstrap",
+      credentialGeneration: "grant-bootstrap", credentialRevision: 3, exchangeGenerationId: "generation-bootstrap", accessToken: "bootstrap-access",
+      expiresAtEpochMs: Date.now() + 60000, assertCurrent });
+    const lease = await authorize(signal()); expect(lease.connection_id).toBe("connection-bootstrap"); expect(lease.exchange_generation_id).toBe("generation-bootstrap");
+    await lease.assertCurrent(signal()); expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+  it("does not issue after the bootstrap authority is revoked", async () => {
+    const assertCurrent = vi.fn(async () => { throw new Error("revoked"); });
+    const authorize = createGoogleAuthorizingBootstrapLeaseProvider({ connectionId: "connection-bootstrap-revoked", principalId: "owner-bootstrap",
+      credentialGeneration: "grant-bootstrap", credentialRevision: 1, exchangeGenerationId: "generation-bootstrap", accessToken: "bootstrap-access",
+      expiresAtEpochMs: Date.now() + 60000, assertCurrent });
+    await expect(authorize(signal())).rejects.toMatchObject({ code: "GOOGLE_BOOTSTRAP_REJECTED" });
   });
 });

@@ -17,6 +17,42 @@ export interface GoogleTokenLeaseOptions {
   assertGenerationCurrent(signal: AbortSignal): Promise<void>;
 }
 
+export interface GoogleAuthorizingBootstrapLeaseOptions {
+  readonly connectionId: string;
+  readonly principalId: string;
+  readonly credentialGeneration: string;
+  readonly credentialRevision: number;
+  readonly exchangeGenerationId: string;
+  /** A short-lived access token obtained by the already-admitted OAuth flow; never persisted or logged here. */
+  readonly accessToken: string;
+  /** Must check the exact owner, connection tuple and AUTHORIZING admission before each external call. */
+  readonly assertCurrent: (signal: AbortSignal) => Promise<void>;
+  readonly expiresAtEpochMs: number;
+  readonly now?: () => number;
+}
+
+/** Narrow bootstrap-only lease for fixed asset provisioning. It does not alter ordinary ACTIVE/DEGRADED lease rules. */
+export function createGoogleAuthorizingBootstrapLeaseProvider(options: GoogleAuthorizingBootstrapLeaseOptions): (signal: AbortSignal) => Promise<GoogleAccessLease> {
+  const now = options.now ?? Date.now;
+  const clock = () => { const value = now(); if (!Number.isSafeInteger(value) || value < 0) throw new GoogleCredentialError("GOOGLE_CLOCK_INVALID"); return value; };
+  if (![options.connectionId, options.principalId, options.credentialGeneration, options.exchangeGenerationId].every((value) =>
+    typeof value === "string" && /^[\x21-\x7e]{1,256}$/u.test(value)) || !Number.isSafeInteger(options.credentialRevision) || options.credentialRevision < 1 ||
+      !Number.isSafeInteger(options.expiresAtEpochMs) || options.expiresAtEpochMs <= clock() || typeof options.accessToken !== "string" ||
+      !/^[A-Za-z0-9._~+/-]{1,4096}={0,2}$/u.test(options.accessToken)) throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_CONTEXT_INVALID");
+  let issued: Promise<GoogleAccessLease> | undefined;
+  return (signal) => issued ??= (async () => {
+    if (signal.aborted || clock() >= options.expiresAtEpochMs) throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_EXPIRED");
+    try { await options.assertCurrent(signal); } catch { throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_REJECTED"); }
+    if (signal.aborted || clock() >= options.expiresAtEpochMs) throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_EXPIRED");
+    return Object.freeze({ connection_id: options.connectionId, exchange_generation_id: options.exchangeGenerationId,
+      access_token: options.accessToken, expires_at_epoch_ms: options.expiresAtEpochMs,
+      assertCurrent: async (nextSignal: AbortSignal) => {
+        if (nextSignal.aborted || clock() >= options.expiresAtEpochMs) throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_EXPIRED");
+        try { await options.assertCurrent(nextSignal); } catch { throw new GoogleCredentialError("GOOGLE_BOOTSTRAP_REJECTED"); }
+      } });
+  })();
+}
+
 /** One request/operation only: one refresh attempt, no shared/global token cache. */
 // IMPLEMENTED_NOT_LIVE: ER-20 persisted-credential refresh leases; no initial OAuth callback/admission or production connector composition.
 export function createGoogleAccessLeaseProvider(options: GoogleTokenLeaseOptions): (signal: AbortSignal) => Promise<GoogleAccessLease> {
