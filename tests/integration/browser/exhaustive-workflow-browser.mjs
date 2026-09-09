@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-/* global document: readonly, HTMLButtonElement: readonly */
+/* global document: readonly, HTMLButtonElement: readonly, URL: readonly */
 
 const WORKFLOW_ID = /^exhaustive-workflow-[a-f0-9]{64}$/u;
 const PROTOCOL = "eliotr.exhaustive-query.v1";
@@ -27,7 +27,7 @@ function recoveryPageOf(outcome, label, workflowId) {
   return data;
 }
 
-async function waitForFreshWorkflowId(page, previousWorkflowId, label) {
+async function waitForFreshWorkflowId(page, previousWorkflowId, label, launchAttempt) {
   try {
     await page.waitForFunction((previous) => {
       const value = document.querySelector("#exhaustive-workflow")?.getAttribute("data-workflow-id");
@@ -50,7 +50,11 @@ async function waitForFreshWorkflowId(page, previousWorkflowId, label) {
       };
     }).catch(() => ({ panel: "unavailable" }));
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`${label}: fresh workflow ID was not published (${reason}); panel=${JSON.stringify(panelState)}`, { cause: error });
+    const transport = launchAttempt === undefined ? null : {
+      postRequests: launchAttempt.postRequests,
+      postResponses: launchAttempt.postResponses,
+    };
+    throw new Error(`${label}: fresh workflow ID was not published (${reason}); panel=${JSON.stringify(panelState)}; transport=${JSON.stringify(transport)}`, { cause: error });
   }
 }
 
@@ -148,8 +152,28 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   // fresh durable identity after the first operation became terminal. Cancel
   // it too so the browser acceptance leaves no active Workflow behind.
   await panel.locator('input[name="query"]').fill(query);
-  await submit.click();
-  await waitForFreshWorkflowId(page, firstWorkflowId, "terminal relaunch");
+  const launchAttempt = { postRequests: 0, postResponses: [] };
+  const onRequest = (request) => {
+    if (request.method() !== "POST") return;
+    if (new URL(request.url()).pathname === "/api/v1/research/query") launchAttempt.postRequests += 1;
+  };
+  const onResponse = (response) => {
+    if (response.request().method() !== "POST") return;
+    if (new URL(response.url()).pathname === "/api/v1/research/query") launchAttempt.postResponses.push(response.status());
+  };
+  page.on("request", onRequest);
+  page.on("response", onResponse);
+  try {
+    await submit.click();
+    await waitForFreshWorkflowId(page, firstWorkflowId, "terminal relaunch", launchAttempt);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("terminal relaunch:")) throw error;
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`terminal relaunch submit failed (${reason}); transport=${JSON.stringify(launchAttempt)}`, { cause: error });
+  } finally {
+    page.off("request", onRequest);
+    page.off("response", onResponse);
+  }
   const relaunchedWorkflowId = await panel.getAttribute("data-workflow-id");
   assert.match(relaunchedWorkflowId, WORKFLOW_ID, "relaunch must retain a canonical server workflow ID");
   assert.notEqual(relaunchedWorkflowId, firstWorkflowId, "terminal relaunch must not reuse the cancelled workflow identity");
