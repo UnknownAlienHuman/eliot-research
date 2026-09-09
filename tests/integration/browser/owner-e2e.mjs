@@ -1239,6 +1239,23 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
     const pendingWaiters = new Set();
     const serviceWorkerSettlements = [];
     const ledgerSettlements = [];
+    const serviceWorkerEvents = [];
+    const recordServiceWorkerEvent = (kind, worker) => {
+      let origin = "unavailable";
+      let path = "unavailable";
+      try {
+        const parsed = new URL(worker.url());
+        origin = parsed.origin;
+        path = parsed.pathname.slice(0, 256);
+      } catch { /* bounded diagnostic remains redacted */ }
+      serviceWorkerEvents.push(Object.freeze({ kind, origin, path, at: Date.now() }));
+      if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
+    };
+    context.on("serviceworker", (worker) => recordServiceWorkerEvent("serviceworker", worker));
+    context.on("close", () => {
+      serviceWorkerEvents.push(Object.freeze({ kind: "context-close", origin: "unavailable", path: "unavailable", at: Date.now() }));
+      if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
+    });
     let trafficSequence = 0;
     const settleRequest = (request) => {
       if (pendingRequests.delete(request)) {
@@ -1363,6 +1380,21 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
         frame: frameIdentity(request) });
       responses.push(`${request.method()} ${request.url()} -> ${response.status()}`.slice(0, 512));
     });
+    // Passive observation only: response/requestfailed remain the sole
+    // terminal accounting paths. Playwright documents requestfinished after
+    // response for Service Worker traffic; retain its own reqId to diagnose a
+    // missing response without fabricating one or changing pending state.
+    context.on("requestfinished", (request) => {
+      const stamp = requestIds.get(request);
+      serviceWorkerEvents.push(Object.freeze({
+        kind: "requestfinished",
+        reqId: typeof stamp?.id === "number" ? stamp.id : null,
+        origin: (() => { try { return new URL(request.url()).origin; } catch { return "unavailable"; } })(),
+        path: (() => { try { return new URL(request.url()).pathname.slice(0, 256); } catch { return "unavailable"; } })(),
+        at: Date.now(),
+      }));
+      if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
+    });
     page.on("websocket", (socket) => { websockets.push(socket.url().slice(0, 512)); });
     page.on("worker", (worker) => { pageWorkers.push(worker.url().slice(0, 512)); });
     const evaluate = (fn, arg) => page.evaluate(fn, arg);
@@ -1396,7 +1428,7 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       return { promise, cancel: () => { active = false; pendingWaiters.delete(resolveWaiter); } };
     };
     return { browser, context, page, evaluate, consoleErrors, pageErrors, failedRequests, failedRequestClock, failedRequestEntries, responses,
-      requests, networkResponses, websockets, pageWorkers, serviceWorkerSettlements, ledgerSettlements, resetLedger, close, profileDir,
+      requests, networkResponses, websockets, pageWorkers, serviceWorkerSettlements, ledgerSettlements, serviceWorkerEvents, resetLedger, close, profileDir,
       pendingRequestCount, waitForPendingChange, trafficSequence: () => trafficSequence,
       registerOp, mintSlotsFor, setRole, adoptIssuance, bindSlot,
       currentOp: () => currentOp,
@@ -3102,27 +3134,18 @@ async function settleServiceWorkerLifecycle(page, harness) {
       let workerUrls = [];
       try {
         workerUrls = typeof harness.context?.serviceWorkers === "function"
-          ? harness.context.serviceWorkers().map((worker) => String(worker.url()).slice(0, 256))
+          ? harness.context.serviceWorkers().map((worker) => {
+            try { const parsed = new URL(worker.url()); return { origin: parsed.origin, path: parsed.pathname.slice(0, 256) }; }
+            catch { return { origin: "unavailable", path: "unavailable" }; }
+          })
           : [];
       } catch { workerUrls = ["unreadable"]; }
-      let registrationStates = { installing: null, waiting: null, active: null, scope: null };
-      try {
-        registrationStates = await page.evaluate(async () => {
-          const registration = await navigator.serviceWorker?.getRegistration?.();
-          return {
-            installing: registration?.installing?.state ?? null,
-            waiting: registration?.waiting?.state ?? null,
-            active: registration?.active?.state ?? null,
-            scope: registration?.scope ? new URL(registration.scope).origin : null,
-          };
-        });
-      } catch { /* diagnostic remains bounded and redacted */ }
       harness.serviceWorkerSettlements.push(Object.freeze({
         outcome: typeof outcome === "string" ? outcome : "resolved",
         elapsedMs: Math.max(0, Date.now() - startedAt),
         pageOrigin,
         workerUrls: Object.freeze(workerUrls.slice(0, 16)),
-        registrationStates: Object.freeze(registrationStates),
+        events: Object.freeze((harness.serviceWorkerEvents ?? []).slice(-8)),
         pending: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
       }));
       if (harness.serviceWorkerSettlements.length > 8) harness.serviceWorkerSettlements.shift();
@@ -3220,10 +3243,17 @@ async function settleLedger(page, harness) {
   // stays in the ledger and must still pair or anchor.
   const startedAt = Date.now();
   await settleServiceWorkerLifecycle(page, harness);
-  const deadline = Date.now() + 10000;
-  try { await page.waitForLoadState("networkidle", { timeout: 10000 }); } catch { /* unpaired traffic fails closed */ }
+  const networkIdleStartedAt = Date.now();
+  let networkIdle = "timeout";
   try {
-    let quietRounds = 0;
+    await page.waitForLoadState("networkidle", { timeout: 10000 });
+    networkIdle = "settled";
+  } catch { /* unpaired traffic fails closed */ }
+  const networkIdleElapsedMs = Math.max(0, Date.now() - networkIdleStartedAt);
+  const drainStartedAt = Date.now();
+  const deadline = drainStartedAt + 10000;
+  let quietRounds = 0;
+  try {
     while (Date.now() < deadline && quietRounds < 3) {
       try {
         await page.evaluate(() => new Promise((resolve) => {
@@ -3244,7 +3274,11 @@ async function settleLedger(page, harness) {
   if (Array.isArray(harness?.ledgerSettlements)) {
     harness.ledgerSettlements.push(Object.freeze({
       elapsedMs: Math.max(0, Date.now() - startedAt),
-      deadlineMs: 10000,
+      networkIdle,
+      networkIdleElapsedMs,
+      drainElapsedMs: Math.max(0, Date.now() - drainStartedAt),
+      drainDeadlineMs: 10000,
+      quietRounds,
       pending: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
       trafficSequence: typeof harness.trafficSequence === "function" ? harness.trafficSequence() : null,
     }));
@@ -3442,7 +3476,13 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
         ? harness.ledgerSettlements.slice(-2)
         : [],
       currentWorkers: typeof harness.context?.serviceWorkers === "function"
-        ? harness.context.serviceWorkers().map((worker) => String(worker.url()).slice(0, 256)).slice(0, 16)
+        ? harness.context.serviceWorkers().map((worker) => {
+          try { const parsed = new URL(worker.url()); return { origin: parsed.origin, path: parsed.pathname.slice(0, 256) }; }
+          catch { return { origin: "unavailable", path: "unavailable" }; }
+        }).slice(0, 16)
+        : [],
+      recentServiceWorkerEvents: Array.isArray(harness.serviceWorkerEvents)
+        ? harness.serviceWorkerEvents.slice(-12)
         : [],
       pendingCount: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
     });
