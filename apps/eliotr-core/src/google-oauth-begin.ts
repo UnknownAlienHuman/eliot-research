@@ -6,13 +6,9 @@ import {
 import {
   readStreamWithinBytes,
   type AccessIdentity,
-  type AccessVerifier,
 } from "@eliotr/platform-cloudflare";
 import {
-  createD1GoogleOAuthAdmission,
-  importGoogleOAuthServerKey,
-  readGoogleOAuthClientSecret,
-  readGoogleOAuthServerConfiguration,
+  createGoogleOAuthAdmissionForOwner,
 } from "./google-oauth-service.js";
 import type { Env } from "./env.js";
 import {
@@ -81,80 +77,31 @@ export async function handleGoogleOAuthBegin(
     }
     throw error;
   }
-  let configuration;
+  let admission;
   try {
-    configuration = readGoogleOAuthServerConfiguration(env);
+    const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
+    admission = await createGoogleOAuthAdmissionForOwner({
+      env, request, context, identity, verifier,
+      // Begin performs no provider/token call; fail closed if one is ever attempted.
+      fetchImpl: () => Promise.reject(new GoogleCredentialError("GOOGLE_OAUTH_PROVIDER_CALL_FORBIDDEN")),
+    });
   } catch (error) {
     if (error instanceof GoogleCredentialError) {
-      throw new HttpRequestError("GOOGLE_OAUTH_NOT_CONFIGURED", 503, "Google OAuth operator configuration is missing or invalid", true);
+      if (error.code.startsWith("GOOGLE_OAUTH_NOT_CONFIGURED")) {
+        throw new HttpRequestError("GOOGLE_OAUTH_NOT_CONFIGURED", 503, "Google OAuth operator configuration is missing or invalid", true);
+      }
+      if (error.code === "GOOGLE_OAUTH_OWNER_INVALID") {
+        throw new HttpRequestError("GOOGLE_OAUTH_OWNER_INVALID", 403, "Authenticated owner identity cannot hold an OAuth intent");
+      }
     }
     throw error;
   }
-  if (new URL(configuration.redirect_uri).origin !== expectedOrigin) {
+  if (new URL(admission.configuration.redirect_uri).origin !== expectedOrigin) {
     throw new HttpRequestError("GOOGLE_OAUTH_NOT_CONFIGURED", 503, "Google OAuth redirect is not configured for this origin", true);
   }
-  let owner: { readonly principal_id: string; readonly session_generation: string };
-  try {
-    owner = {
-      principal_id: oauthIdentifier(context.principal_ref),
-      session_generation: oauthIdentifier(context.credential_generation),
-    };
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) {
-      throw new HttpRequestError("GOOGLE_OAUTH_OWNER_INVALID", 403, "Authenticated owner identity cannot hold an OAuth intent");
-    }
-    throw error;
-  }
-  let key: CryptoKey;
-  let keyVersion: number;
-  try {
-    ({ key, version: keyVersion } = await importGoogleOAuthServerKey(env));
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) {
-      throw new HttpRequestError("GOOGLE_OAUTH_NOT_CONFIGURED", 503, "Google OAuth token key is missing or invalid", true);
-    }
-    throw error;
-  }
-  let clientSecret: string;
-  try {
-    clientSecret = readGoogleOAuthClientSecret(env);
-  } catch (error) {
-    if (error instanceof GoogleCredentialError) {
-      throw new HttpRequestError("GOOGLE_OAUTH_NOT_CONFIGURED", 503, "Google OAuth client secret is missing or invalid", true);
-    }
-    throw error;
-  }
-  const verifier: AccessVerifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
-  const assertOwnerCurrent = async (signal: AbortSignal): Promise<void> => {
-    signal.throwIfAborted();
-    let current: AccessIdentity;
-    try {
-      current = await verifier.verify(request);
-    } catch {
-      throw new GoogleCredentialError("GOOGLE_OAUTH_OWNER_REVOKED");
-    }
-    if (current.principal_ref !== identity.principal_ref ||
-        current.credential_generation !== identity.credential_generation ||
-        current.authentication_method !== identity.authentication_method) {
-      throw new GoogleCredentialError("GOOGLE_OAUTH_OWNER_REVOKED");
-    }
-    signal.throwIfAborted();
-  };
-  const service = createD1GoogleOAuthAdmission({
-    database: env.CORE_DB,
-    configuration,
-    owner,
-    keys: new Map([[keyVersion, key]]),
-    activeKeyVersion: keyVersion,
-    clientSecret,
-    deadlineEpochMs: Date.now() + 60000,
-    assertOwnerCurrent,
-    // Begin performs no provider/token call; fail closed if one is ever attempted.
-    fetchImpl: () => Promise.reject(new GoogleCredentialError("GOOGLE_OAUTH_PROVIDER_CALL_FORBIDDEN")),
-  });
   let result: BeginGoogleOAuthResult;
   try {
-    result = await service.begin(operationRef, request.signal);
+    result = await admission.service.begin(operationRef, request.signal);
   } catch (error) {
     if (error instanceof GoogleCredentialError) return mapGoogleOAuthError(request, error);
     throw error;

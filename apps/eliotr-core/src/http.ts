@@ -39,7 +39,7 @@ import {
   IngestHttpInputError,
 } from "./ingest-http.js";
 import { IngestServiceError } from "./ingest-service.js";
-import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
+import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
 import { readReadiness } from "./readiness.js";
 
 export interface HttpDependencies {
@@ -242,7 +242,7 @@ function validateContentLength(request: Request, route: RouteDefinition): void {
   }
 }
 
-function requireNoQuery(url: URL): void {
+export function requireNoQuery(url: URL): void {
   if ([...url.searchParams.keys()].length > 0) {
     throw new HttpRequestError(
       "UNKNOWN_QUERY_PARAMETER",
@@ -576,20 +576,8 @@ export async function handleHttp(
     const verifier = dependencies.accessVerifier ?? configuredAccessVerifier(env);
     const identity = await verifier.verify(request);
     const context = authorize(request, resolved.match.route, identity);
-    if (resolved.match.route.operation === "google.oauth.begin") {
-      requireNoQuery(url);
-      return await handleGoogleOAuthBegin(request, env, context, identity, dependencies);
-    }
-    if (resolved.match.route.operation === "system.session") {
-      requireNoQuery(url);
-      return apiResult(request, env, {
-        protocol: "eliotr.owner-session.v1",
-        principal_ref: context.principal_ref,
-        client_class: context.client_class,
-        credential_generation: context.credential_generation,
-        expires_at: identity.expires_at,
-      });
-    }
+    const special = await dispatchHttpSpecialRoute({ request, env, url, match: resolved.match, context, identity, dependencies });
+    if (special !== null) return special;
     const factory = dependencies.applicationFactory ?? createApplication;
     const application = factory({ env, executionContext });
     return await dispatch(request, env, application, context, resolved.match, url);

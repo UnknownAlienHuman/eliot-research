@@ -14,6 +14,15 @@ const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const GOOGLE_AUTHORIZATION_ORIGIN = "https://accounts.google.com";
 const GOOGLE_AUTHORIZATION_PATH = "/o/oauth2/v2/auth";
 const SECRET_QUERY_PATTERN = /secret|token|credential/iu;
+const GOOGLE_CALLBACK_FRAGMENT = /^#eliotr-google-oauth=(authorized|denied|expired|conflict|retry|rejected)$/u;
+
+export type GoogleOAuthCallbackOutcome = "authorized" | "denied" | "expired" | "conflict" | "retry" | "rejected";
+
+/** Read the fixed server callback outcome without accepting provider data. */
+export function readGoogleOAuthCallbackOutcome(hash: string): GoogleOAuthCallbackOutcome | null {
+  const match = GOOGLE_CALLBACK_FRAGMENT.exec(hash);
+  return match?.[1] as GoogleOAuthCallbackOutcome | undefined ?? null;
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);

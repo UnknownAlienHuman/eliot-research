@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -26,6 +27,28 @@ const orientation = () => {
     coverage_method: "frozen_scope_order", degraded_source_revision_refs: [], missing_source_classes: [], contradiction_refs: [],
     centrality: [], recommended_reading_routes: [], navigation_authority: "NAVIGATION_ONLY" } });
 };
+const evidenceText = "# Evidence\n\nPinned content.\n";
+const evidenceSha = createHash("sha256").update(evidenceText).digest("hex");
+const evidenceHandle = () => ({
+  handle_ref: { id: "handle-1", revision: 1 }, source_namespace_id: "namespace-1",
+  source_owner_generation: "owner-1", source_revision_ref: "source-1",
+  scope_snapshot_ref: { id: "scope-1", revision: 1 }, anchor: { kind: "normalized_byte_range", start: 0, end: 28 },
+  excerpt_sha256: evidenceSha, excerpt_byte_length: 28, object_residency_key_digest: "b".repeat(64),
+  source_assurance_ceiling: "EXACT", materializer_assurance_ceiling: "EXACT", terminal_state: "LIVE",
+  created_at: "2026-09-08T00:00:00.000Z",
+});
+const resolvedEvidence = () => ({
+  handle: evidenceHandle(), exact_excerpt: evidenceText, source_title: "Fixture source",
+  verification_receipt_ref: "verify-1", authorization_receipt_ref: "authorize-1",
+  credential_generation: "credential-1", source_revision_content_sha256: "a".repeat(64),
+  scope_snapshot_digest: "b".repeat(64), instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY",
+  resolved_at: "2026-09-08T00:00:00.000Z",
+});
+const queryEvidence = () => envelope({ evidence_pack: {
+  pack_ref: { id: "pack-1", revision: 1 }, scope_snapshot_ref: { id: "scope-1", revision: 1 },
+  resolved_evidence: [resolvedEvidence()], omitted_candidates: [],
+  trace_ref: { id: `query-${"b".repeat(48)}`, revision: 1 }, total_utf8_bytes: 28,
+}, trace_ref: { id: `query-${"b".repeat(48)}`, revision: 1 } });
 const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.source-revisions.v1",
   source_id: sourceId, head_revision_ref: "revision-1", readiness_basis: "RECORDED_ONLY", observed_at: "2026-09-05T12:00:00.000Z",
   revisions: [{ source_revision_ref: older ? "revision-older" : "revision-1", content_sha256: "a".repeat(64),
@@ -69,6 +92,21 @@ const server = createServer((request, response) => {
       const chunks = []; let bytes = 0;
       for await (const chunk of request) { bytes += chunk.length; assert.ok(bytes < 16 * 1024); chunks.push(chunk); }
       posted.push(JSON.parse(Buffer.concat(chunks).toString("utf8"))); return json(orientation());
+    }
+    if (url.pathname === "/api/v1/research/query") return json(queryEvidence());
+    if (url.pathname === "/api/v1/research/verify") {
+      assert.equal(request.method, "POST");
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.deepEqual(body, { scope_snapshot_ref: { id: "scope-1", revision: 1 }, handle_ref: { id: "handle-1", revision: 1 } });
+      return json(envelope({ resolved_evidence: resolvedEvidence(), handle: evidenceHandle() }));
+    }
+    if (url.pathname.startsWith("/api/v1/research/open/")) {
+      assert.equal(request.method, "GET");
+      assert.equal(decodeURIComponent(url.pathname.slice("/api/v1/research/open/".length)), "handle-1:1");
+      response.setHeader("content-type", "text/plain; charset=utf-8"); response.setHeader("content-length", "28");
+      response.setHeader("x-eliotr-evidence-handle", "handle-1:1"); response.setHeader("x-eliotr-excerpt-sha256", evidenceSha);
+      response.setHeader("x-eliotr-verification-receipt", "verify-1"); response.end(evidenceText); return;
     }
     const file = resolve(dist, `.${url.pathname === "/" ? "/index.html" : url.pathname}`);
     if (!file.startsWith(`${dist}${sep}`)) { response.statusCode = 404; response.end(); return; }
@@ -229,6 +267,19 @@ try {
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Source selection to real Lens transport");
   assert.deepEqual(posted[0].scope_expression, { kind: "SELECTED_SOURCES", source_ids: ["source-1"] });
   assert.equal(posted[0].product, "ORIENT");
+  await click('[data-nav-target="#research-card"]');
+  await evaluate(`(() => {
+    const input = document.querySelector('#retrieval input[name="query"]');
+    input.value = "pinned"; input.closest("form").requestSubmit();
+  })()`);
+  await wait('document.querySelector("#retrieval [role=status]")?.textContent && document.querySelector("#retrieval [role=status]").textContent !== "Running retrieval…"', "Research query result");
+  assert.equal(await evaluate('document.querySelector("#retrieval [role=status]").textContent'), "Resolved 1 excerpt(s).");
+  await click('#retrieval [data-select-evidence="0"]');
+  await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Evidence verify and open");
+  assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
+  assert.equal(await evaluate('document.querySelector(".evidence-source").tagName'), "PRE");
+  await evaluate('window.dispatchEvent(new Event("offline"))');
+  await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
   await evaluate(`(() => {
     const transfer = new DataTransfer();
     for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
@@ -312,7 +363,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, XSS, denial, generation drift, stale responses, offline clearing). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, XSS, denial, generation drift, stale responses, offline clearing, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {
