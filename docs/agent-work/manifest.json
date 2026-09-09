@@ -564,7 +564,8 @@
         "apps/eliotr-core/src/exhaustive-query-service.test.ts",
         "apps/eliotr-core/test/research-query-exhaustive.test.ts",
         "packages/cloudflare-navigation/src/exhaustive-query-service.ts",
-        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts"
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-service.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",

@@ -60,6 +60,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
+- `packages/cloudflare-navigation/src/exhaustive-workflow-service.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
