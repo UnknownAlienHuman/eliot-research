@@ -188,6 +188,15 @@ describe("persisted encrypted Google credentials with actual D1/R2", () => {
     await expect(createD1GoogleAccessLeaseProvider(test.options)(signal())).rejects.toThrow();
     expect(await state(test.binding.connection_id)).toBe("ACTIVE");
   });
+  it("revokes one exact credential snapshot and rejects a stale second revoke", async () => {
+    const test = await setup("explicit-revoke");
+    const before = await test.store.load(signal());
+    const revoked = await test.store.revoke?.(before, signal());
+    expect(revoked?.state).toBe("REVOKED");
+    expect(revoked?.revision).toBe(before.revision + 1);
+    await expect(test.store.revoke?.(before, signal())).rejects.toMatchObject({ code: "GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED" });
+    expect((await test.store.load(signal())).state).toBe("REVOKED");
+  });
   it("the final CAS rejects changed scope/identity/nonce even if a broken writer failed to increment revision", async () => {
     const test = await setup("field-fence"); const row = await test.store.load(signal()); let raced = false;
     const database = intercepted(async (phase) => { if (phase === "before" && !raced) {

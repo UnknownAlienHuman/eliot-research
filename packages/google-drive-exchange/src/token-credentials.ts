@@ -17,6 +17,8 @@ export interface GoogleCredentialStore {
   replaceToken(expected: GoogleCredentialSnapshot, token: EncryptedRefreshToken, expiresAt: number | null,
     signal: AbortSignal): Promise<GoogleCredentialSnapshot>;
   requireReauthorization(expected: GoogleCredentialSnapshot, signal: AbortSignal): Promise<void>;
+  /** Revoke exactly the supplied credential snapshot; stale callers cannot revoke a replacement. */
+  readonly revoke?: (expected: GoogleCredentialSnapshot, signal: AbortSignal) => Promise<GoogleCredentialSnapshot>;
 }
 export function credentialSnapshot(raw: GoogleCredentialSnapshot): GoogleCredentialSnapshot {
   const states = ["DISCONNECTED", "AUTHORIZING", "ACTIVE", "DEGRADED", "REAUTH_REQUIRED", "REVOKED"];

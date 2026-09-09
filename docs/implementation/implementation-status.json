@@ -370,7 +370,7 @@
       "behavior": "Context-bound AES-256-GCM refresh-token vault with versioned nonextractable keys, cryptographic random nonces, forward key rotation and exact narrow-scope validation. No initial Google identity admission.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
       ]
     },
@@ -385,42 +385,42 @@
       "behavior": "One-attempt, request-scoped OAuth refresh lease from previously admitted encrypted records; deadlines, sticky cancellation, expiry, CAS token rotation and durable REAUTH_REQUIRED. It is not a browser OAuth callback or public connect route.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
       ]
     },
     {
       "id": "implemented-drive-credential-store",
       "path": "apps/eliotr-core/src/google-token-store.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback; OAuth callback and first verified connection admission remain unfinished.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit revoke/reconnect; live Google qualification and full Drive activation remain separate.",
       "owner_packets": [
         "ER-13",
         "ER-20",
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Actual primary D1 encrypted-credential load/CAS/readback and pinned exchange descriptor checks compose the existing REST lease. Legacy/Testing records fail closed; lost ACKs reconcile exactly and late invalid_grant cannot revoke a replaced grant.",
+      "behavior": "Actual primary D1 encrypted-credential load/CAS/readback, exact revoke and pinned exchange descriptor checks compose the existing REST lease. Legacy/Testing records fail closed; lost ACKs reconcile exactly and late invalid_grant cannot revoke a replaced grant.",
       "completion_evidence": [
         "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
-        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP/PWA integration and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
         "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
       ]
     },
     {
       "id": "implemented-drive-initial-oauth",
       "path": "packages/google-drive-exchange/src/oauth-admission.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 initial OAuth admission service; owner HTTP/PWA and provisioned exchange qualification remain separate.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 OAuth admission plus versioned reconnect lifecycle; PWA controls, provisioning and live qualification remain separate.",
       "owner_packets": [
         "ER-20",
         "ER-13",
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Internal initial OAuth service and real primary-D1 store: encrypted owner/session/client/redirect-bound one-use intent, PKCE/state/nonce, fixed code/JWKS endpoints, actual RS256/dedicated identity/narrow scope/hash/time verification, atomic encrypted credential insertion and exact readback. Only AUTHORIZING admission; no public connect/callback route, UI, provisioning, new source grant or completed Drive Exchange. Trusted operator configuration/production evidence and authenticated owner currentness remain caller dependencies.",
+      "behavior": "Internal initial OAuth service and real primary-D1 store: encrypted owner/session/client/redirect-bound one-use intent, PKCE/state/nonce, fixed code/JWKS endpoints, actual RS256/dedicated identity/narrow scope/hash/time verification, atomic encrypted credential insertion and exact readback. Versioned owner reconnect/disconnect routes use fresh consent and expected-generation CAS; admission remains AUTHORIZING, with no provisioning, new source grant or completed Drive Exchange. Trusted operator configuration/production evidence and authenticated owner currentness remain caller dependencies.",
       "completion_evidence": [
         "oauth-identity.test.ts: 29 real-RSA/transport/configuration regressions, mandatory access hash, optional code hash, issuer/audience/nonce/subject/email, strict scopes and body/deadline/cancellation failures.",
-        "apps/eliotr-core/test/google-oauth-admission.test.ts: 23 actual local D1/crypto cases including restart, one-use replay, concurrent claim, lost initial/claim/admission ACKs, rollback, owner revocation and preservation of existing artifacts.",
-        "Owner HTTP/PWA integration and complete browser/storage OAuth lifecycle still required; fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts: 25 actual local D1/crypto cases including restart, one-use replay, concurrent claim, lost initial/claim/admission ACKs, rollback, owner revocation, reconnect CAS and bounded expiry cleanup.",
+        "Owner HTTP adapters and route dispatch are covered locally; PWA controls and complete browser/storage OAuth lifecycle remain required. Fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
         "No real Google code exchange, key retrieval, account change or Cloudflare deployment; live qualification NOT_EXECUTED."
       ]
     },

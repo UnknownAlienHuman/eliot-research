@@ -3,6 +3,7 @@ import type { AccessIdentity } from "@eliotr/platform-cloudflare";
 import { apiResult, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
+import { handleGoogleConnectionDisconnect, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
 import type { Env } from "./env.js";
 
 interface SpecialRouteMatch {
@@ -25,6 +26,10 @@ export async function dispatchHttpSpecialRoute(input: {
       return handleGoogleOAuthBegin(input.request, input.env, input.context, input.identity, input.dependencies);
     case "google.oauth.callback":
       return handleGoogleOAuthCallback(input.request, input.env, input.context, input.identity, input.dependencies);
+    case "google.oauth.reconnect":
+      return handleGoogleOAuthReconnectBegin(input.request, input.env, input.context, input.identity, input.dependencies);
+    case "google.connection.disconnect":
+      return handleGoogleConnectionDisconnect(input.request, input.env, input.context, input.identity, input.dependencies);
     case "system.session":
       requireNoQuery(input.url);
       return apiResult(input.request, input.env, {

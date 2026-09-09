@@ -5,9 +5,14 @@ import { createD1GoogleOAuthIntentStore } from "./google-oauth-store.js";
 import type { Env } from "./env.js";
 
 /** Initial credential admission only. Caller supplies current authenticated owner and trusted operator configuration. */
-export function createD1GoogleOAuthAdmission(options: Omit<GoogleOAuthAdmissionOptions, "store"> & { readonly database: D1Database }) {
-  return createGoogleOAuthAdmission({ ...options,
-    store: createD1GoogleOAuthIntentStore(options.database, options.configuration, options.owner, options.now) });
+type D1GoogleOAuthAdmissionOptions = Omit<GoogleOAuthAdmissionOptions, "store" | "reconnect"> & { readonly database: D1Database;
+  readonly reconnect?: GoogleOAuthAdmissionOptions["reconnect"] | "auto"; readonly lifecycle_mode?: "auto" };
+export function createD1GoogleOAuthAdmission(options: D1GoogleOAuthAdmissionOptions) {
+  const { database: _database, lifecycle_mode: _lifecycle, reconnect: reconnectMode, ...admissionOptions } = options;
+  return createGoogleOAuthAdmission({ ...admissionOptions,
+    ...(reconnectMode === undefined || reconnectMode === "auto" ? {} : { reconnect: reconnectMode }),
+    store: createD1GoogleOAuthIntentStore(options.database, options.configuration, options.owner, options.now,
+      options.lifecycle_mode === "auto" ? "auto" : options.reconnect) });
 }
 
 export interface GoogleOAuthOwnerContext {
@@ -28,6 +33,7 @@ export async function createGoogleOAuthAdmissionForOwner(input: {
   readonly identity: AccessIdentity;
   readonly verifier: AccessVerifier;
   readonly fetchImpl?: typeof fetch;
+  readonly reconnect?: { readonly expected_generation: string; readonly expected_revision: number } | "auto";
 }): Promise<{
   readonly configuration: GoogleOAuthConfiguration;
   readonly service: ReturnType<typeof createD1GoogleOAuthAdmission>;
@@ -69,6 +75,8 @@ export async function createGoogleOAuthAdmissionForOwner(input: {
       deadlineEpochMs: Date.now() + 60000,
       assertOwnerCurrent,
       ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+      ...(input.reconnect === undefined || input.reconnect === "auto" ? {} : { reconnect: input.reconnect }),
+      ...(input.reconnect === "auto" ? { lifecycle_mode: "auto" as const } : {}),
     }),
   };
 }

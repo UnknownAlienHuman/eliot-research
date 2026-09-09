@@ -25,7 +25,8 @@ function matches(row: GoogleCredentialSnapshot) {
     new Uint8Array(row.token.ciphertext).buffer, new Uint8Array(row.token.nonce).buffer, row.token.key_version];
 }
 /** Existing admitted rows only. This is NOT a public connect endpoint or an identity verifier. */
-// IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback; OAuth callback and first verified connection admission remain unfinished.
+// IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit
+// revoke; live Google qualification and full Drive activation remain separate.
 export function createD1GoogleCredentialStore(database: D1Database, expected: GoogleTokenBinding,
   now: () => number = Date.now): GoogleCredentialStore {
   const binding = tokenBinding(expected);
@@ -82,9 +83,25 @@ export function createD1GoogleCredentialStore(database: D1Database, expected: Go
     if (!sameGoogleCredentials(actual, next)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
     return actual;
   };
+  const revoke = async (expectedRow: GoogleCredentialSnapshot, signal: AbortSignal): Promise<GoogleCredentialSnapshot> => {
+    cancelled(signal); const previous = credentialSnapshot(expectedRow);
+    if (JSON.stringify(previous.binding) !== JSON.stringify(binding)) return fail("GOOGLE_CREDENTIAL_CHANGED");
+    const next = credentialSnapshot({ ...previous, revision: previous.revision + 1, state: "REVOKED" });
+    const time = now(); if (!Number.isSafeInteger(time) || time < 0 || time > 8640000000000000) return fail("GOOGLE_CLOCK_INVALID");
+    let changed = false; let uncertain = false;
+    try {
+      const result = await db.prepare(`UPDATE google_exchange_connection SET state='REVOKED',credential_revision=?15,last_error_code='GOOGLE_REVOKED',updated_at=?16
+        WHERE ${WHERE} AND state IN ('ACTIVE','DEGRADED','REAUTH_REQUIRED','AUTHORIZING') AND ${SCHEMA}`)
+        .bind(...matches(previous), next.revision, new Date(time).toISOString()).run();
+      changed = result.meta.changes === 1;
+    } catch { uncertain = true; /* Lost ACK is reconciled by the exact readback. */ }
+    const actual = await load(signal);
+    if (!sameGoogleCredentials(actual, next) || (!changed && !uncertain)) return fail("GOOGLE_CREDENTIAL_WRITE_UNCONFIRMED");
+    return actual;
+  };
   return { load, assertCurrent,
     replaceToken: (snapshot, token, expiry, signal) => change(snapshot, encryptedToken(token), expiry, signal),
-    requireReauthorization: async (snapshot, signal) => { await change(snapshot, null, snapshot.refresh_expires_at_epoch_ms, signal); },
+    requireReauthorization: async (snapshot, signal) => { await change(snapshot, null, snapshot.refresh_expires_at_epoch_ms, signal); }, revoke,
   };
 }
 
