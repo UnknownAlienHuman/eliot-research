@@ -49,7 +49,7 @@ revision_29_1:
 
 ## Profile applicability — ADR-0006 (2026-09-09)
 
-ADR-0006 supersedes the unconditional Day-0 Google Drive wording above only for the
+ADR-0006 supersedes the unconditional Day-0 Google Drive requirements in this document only for the
 user-selected `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` profile. Sections 12.3–12.12 remain
 the authoritative requirements when the explicit `drive-exchange` profile is selected;
 they are not a prerequisite for the Workspace/MCP client profile. The Workspace profile
