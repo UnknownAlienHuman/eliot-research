@@ -75,7 +75,7 @@ test("L6 workflow D1 readback: allow early missing job but reject foreign owner 
   const harness = await loadHarness();
   const binding = {
     workflow_id: `exhaustive-workflow-${"a".repeat(64)}`,
-    job_id: `exhaustive-job-${"b".repeat(64)}`,
+    job_id: `exhaustive-job-${"b".repeat(48)}`,
     principal_ref: "e2e-owner",
     client_class: "owner_pwa",
     credential_generation: "credential-1",

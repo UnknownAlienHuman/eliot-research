@@ -716,7 +716,7 @@ export function assertWorkflowJobReadback(bindings, jobs) {
     assert.match(binding.workflow_id, /^exhaustive-workflow-[a-f0-9]{64}$/u, "workflow binding must retain its canonical workflow identity");
     assert.equal(workflowIds.has(binding.workflow_id), false, "workflow binding identities must be unique");
     workflowIds.add(binding.workflow_id);
-    assert.match(binding.job_id, /^exhaustive-job-[a-f0-9]{64}$/u, "workflow binding must retain its canonical job identity");
+    assert.match(binding.job_id, /^exhaustive-job-[a-f0-9]{48}$/u, "workflow binding must retain its canonical job identity");
     assert.equal(bindingByJobId.has(binding.job_id), false, "workflow bindings must not duplicate a job identity");
     bindingByJobId.set(binding.job_id, binding);
     assert.equal(binding.principal_ref, "e2e-owner", "workflow binding must retain the owner principal");
@@ -733,7 +733,7 @@ export function assertWorkflowJobReadback(bindings, jobs) {
   const seenJobIds = new Set();
   for (const job of jobs) {
     assert.ok(job !== null && typeof job === "object", "workflow job row must be an object");
-    assert.match(job.job_id, /^exhaustive-job-[a-f0-9]{64}$/u, "workflow job row must retain its canonical job identity");
+    assert.match(job.job_id, /^exhaustive-job-[a-f0-9]{48}$/u, "workflow job row must retain its canonical job identity");
     assert.equal(seenJobIds.has(job.job_id), false, "workflow job rows must not duplicate a job identity");
     seenJobIds.add(job.job_id);
     const binding = bindingByJobId.get(job.job_id);
