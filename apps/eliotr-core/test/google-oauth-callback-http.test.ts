@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { handleHttp } from "../src/http.js";
-import { db, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { db, observeDatabase, runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { oauthTestClaims, oauthTestKeys, oauthTestTokenResponse } from "../../../packages/google-drive-exchange/src/oauth-test-fixture.js";
 
 beforeAll(setupOrientationDatabase);
@@ -216,5 +216,28 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
       expected_credential_revision: (latest?.credential_revision ?? 0) + 1 }), env as never,
       {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
     expect(changed.status).toBe(409);
+  });
+
+  it("replays a committed disconnect after the owner HTTP response acknowledgement is lost", async () => {
+    const env = googleEnv(); const owner = "g3-http-lost-ack";
+    const started = await begin(env, owner, "g3-http-lost-initial"); callbackNonce = started.nonce;
+    const initial = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture`), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(initial.status).toBe(303);
+    const connectionId = (env as never as { GOOGLE_OAUTH_CONNECTION_ID: string }).GOOGLE_OAUTH_CONNECTION_ID;
+    const current = await db.prepare("SELECT credential_generation,credential_revision FROM google_exchange_connection WHERE connection_id=?1")
+      .bind(connectionId).first<{ credential_generation: string; credential_revision: number }>();
+    expect(current).not.toBeNull(); let dropped = false;
+    const database = observeDatabase(async (sql, phase) => {
+      if (phase === "after" && sql.includes("UPDATE google_oauth_disconnect_receipt") && !dropped) { dropped = true; throw new Error("lost ACK"); }
+    });
+    const body = { operation_ref: "g3-http-lost-disconnect", expected_credential_generation: current?.credential_generation,
+      expected_credential_revision: current?.credential_revision };
+    const uncertain = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), { ...env, CORE_DB: database } as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(uncertain.status).toBe(500); expect(dropped).toBe(true);
+    const replay = await handleHttp(lifecycleRequest(DISCONNECT_PATH, body), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier(owner) as never });
+    expect(replay.status).toBe(200); expect((await json(replay)).data).toMatchObject({ state: "REVOKED", credential_revision: 2 });
   });
 });

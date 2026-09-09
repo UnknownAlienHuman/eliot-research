@@ -253,6 +253,7 @@ describe("initial Google OAuth with real RSA, vault and D1", () => {
   });
   it("cleans expired proof with a bounded digest-only receipt", async () => {
     const test = await setup("cleanup"); test.clock(OAUTH_TEST_TIME + 600000);
+    await expect(cleanupExpiredGoogleOAuthIntents(db, test.options.now, 33)).rejects.toMatchObject({ code: "GOOGLE_OAUTH_INPUT_INVALID" });
     expect(await cleanupExpiredGoogleOAuthIntents(db, test.options.now, 32)).toBeGreaterThan(0);
     expect(await db.prepare("SELECT 1 FROM google_oauth_intent WHERE intent_id=?1").bind(test.start.intent_id).first()).toBeNull();
     const receipt = await db.prepare("SELECT operation_ref,principal_id,configuration_json,state_sha256,terminal_state FROM google_oauth_intent_receipt WHERE intent_id=?1")
