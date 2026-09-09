@@ -433,7 +433,7 @@ async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayMs = 100
       return await fn();
     } catch (error) {
       lastError = error;
-      if (attempt >= attempts) throw error;
+      if (!isTransientLocalD1Error(error) || attempt >= attempts) throw error;
       await new Promise((resolve) => globalThis.setTimeout(resolve, delayMs));
     }
   }
@@ -931,7 +931,7 @@ export function createClosedAuthority(label) {
     operations: () => [...operations.values()].map(snapshotOp), edges: () => [...edges], slots: () => [...slots.values()].map((entry) => Object.freeze({ ...entry })) };
 }
 
-async function launchPlaywright(runId) {
+async function launchPlaywright(runId, orphanedProfiles = []) {
   const { chromium } = await import("playwright-core");
   const profileDir = await mkdtemp(resolve(tmpdir(), "eliotr-owner-e2e-profile-"));
   await writeHarnessMarker(profileDir, runId, "browser-profile");
@@ -1344,9 +1344,18 @@ async function launchPlaywright(runId) {
       operationTable: () => auth.operations(), edgeTable: () => auth.edges(), slotTable: () => auth.slots(),
       ledgerClock: () => ({ epoch: navigationEpoch, serial: panelSerial, seq: requestSeq, opId: currentOp.id, docId: currentDocId, role: currentIssuance.role }) };
   } catch (error) {
-    try { await context?.close(); } catch { /* Close partial context before profile removal. */ }
-    try { await browser?.close(); } catch { /* Close partial browser before profile removal. */ }
-    try { await removeHarnessOwned(profileDir, runId); } catch { /* Marker mismatch: retain for inspection. */ }
+    const cleanupErrors = [];
+    try { await context?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    try { await browser?.close(); } catch (cleanupError) { cleanupErrors.push(cleanupError); }
+    try { await removeHarnessOwned(profileDir, runId); }
+    catch (cleanupError) {
+      orphanedProfiles.push({ path: profileDir, runId });
+      cleanupErrors.push(cleanupError);
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([error, ...cleanupErrors],
+        `Playwright startup failed and cleanup was incomplete for ${profileDir}`, { cause: error });
+    }
     throw error;
   }
 }
@@ -3430,6 +3439,7 @@ export async function runOwnerE2E() {
   const foreignProfile = resolve(tmpdir(), `eliotr-owner-e2e-profile-foreign-${runId}`);
   const decoyPaths = [decoyTmpProfile, decoyTmpSmoke, decoyStateOwner, decoyStateSmoke, foreignProfile];
   const ownedStaging = [];
+  const orphanedProfiles = [];
   const decoyNames = {
     tmp: new Set([`eliotr-owner-e2e-profile-decoy-${runId}`, `smoke-decoy-${runId}`,
       `eliotr-owner-e2e-profile-foreign-${runId}`]),
@@ -3780,7 +3790,7 @@ export async function runOwnerE2E() {
     // call below originates inside Chromium (page.evaluate, same-origin via
     // the paired bridge) and lands in both the Playwright phase ledger and the
     // cross-client ledger with browser origin. No Node fetch touches ingest.
-    playwright = await launchPlaywright(runId);
+    playwright = await launchPlaywright(runId, orphanedProfiles);
     receipt.browser = `playwright-core chromium; ${await playwright.browser.version()}`;
     // Every loopback origin the real browser visits. Service workers persist per
     // origin across restarts (each restart rebinds a fresh port), so the worker
@@ -4468,7 +4478,7 @@ export async function runOwnerE2E() {
     const savedExecutable = process.env.ELIOTR_BROWSER_EXECUTABLE;
     process.env.ELIOTR_BROWSER_EXECUTABLE = resolve(directory, "missing-browser-executable");
     try {
-      await launchPlaywright(runId);
+      await launchPlaywright(runId, orphanedProfiles);
       assert.fail("injected browser start must reject");
     } catch (error) {
       assert.ok(String(error?.message ?? "").length > 0, "injected browser failure must report");
@@ -4595,6 +4605,14 @@ export async function runOwnerE2E() {
           try {
             await access(playwright.profileDir);
             fail("own browser profile survived playwright.close");
+          } catch { /* removed: expected */ }
+        }
+        for (const { path, runId: orphanRunId } of orphanedProfiles) {
+          try { await removeHarnessOwned(path, orphanRunId); }
+          catch (error) { fail(`orphan browser profile cleanup failed: ${error?.message ?? error}`); }
+          try {
+            await access(path);
+            fail(`orphan browser profile survived cleanup: ${path}`);
           } catch { /* removed: expected */ }
         }
         for (const name of decoyNames.tmp) {

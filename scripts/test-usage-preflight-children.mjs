@@ -31,6 +31,7 @@ import {
 import {
   runUsagePreflight,
 } from "./lib/cloudflare-usage-admission.mjs";
+import { isChromiumSafePort } from "./lib/local-owner-bridge.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ACCOUNT = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -187,8 +188,22 @@ const server = createServer(async (req, res) => {
     json(res, { status: 500, payload: { success: false, errors: [{ message: String(error) }] } });
   }
 });
-await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
-const address = server.address();
+async function listenMockServerSafely() {
+  for (let attempt = 1; attempt <= 25; attempt += 1) {
+    await new Promise((resolveListen, rejectListen) => {
+      const onError = (error) => { server.off("listening", onListening); rejectListen(error); };
+      const onListening = () => { server.off("error", onError); resolveListen(); };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(0, "127.0.0.1");
+    });
+    const bound = server.address();
+    if (bound && typeof bound === "object" && isChromiumSafePort(bound.port)) return bound;
+    await new Promise((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()));
+  }
+  throw new Error("mock Cloudflare API could not obtain a Chromium-safe loopback port");
+}
+const address = await listenMockServerSafely();
 assert(address && typeof address === "object");
 const apiBase = `http://127.0.0.1:${address.port}/client/v4`;
 
