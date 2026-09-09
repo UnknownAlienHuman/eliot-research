@@ -44,7 +44,7 @@ export function mountExhaustiveWorkflowPanel(
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
 ): (() => void) & { clearPrivate(): void; selectSource(id: string): void } {
-  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Exhaustive scan</span><h2>Search the full selected scope</h2></div><span class="workflow-badge" data-workflow-badge>READY</span></div>
+  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Exhaustive scan</span><h2>Search the full selected scope</h2></div><span class="workflow-badge" data-workflow-badge>${healthReady() ? "READY" : "WAITING"}</span></div>
     <p class="workflow-copy">Run an exact scan across every section in the selected scope. A complete result confirms the chosen scope was searched; an interrupted scan stays visibly incomplete.</p>
     <form><label>Query<input name="query" maxlength="8192" autocomplete="off" required placeholder="A phrase to find exactly"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Choose a source from Library</option></select></label>
@@ -86,6 +86,10 @@ export function mountExhaustiveWorkflowPanel(
     scope.disabled = busy || (workflowId !== undefined && !terminalState);
   };
   let terminalState = false;
+  const refreshHealthState = (): void => {
+    if (!busy && workflowId === undefined) status.textContent = healthReady() ? "READY" : "WAITING";
+    buttons();
+  };
 
   const stopWatching = (text: string): void => {
     serial += 1;
@@ -178,16 +182,16 @@ export function mountExhaustiveWorkflowPanel(
 
   const clearPrivate = (): void => {
     serial += 1; controller?.abort(); controller = undefined; busy = false; cancelling = false; workflowId = undefined; workflowGeneration = undefined; terminalState = false; previousBody = ""; idempotencyKey = ""; selectedSourceId = undefined;
-    status.textContent = "READY"; statusText.textContent = "Private scan state cleared. Reconnect before starting again."; detail.textContent = ""; progress.hidden = true; progressBar.style.width = "0%"; query.value = ""; scope.value = "library"; selectedScopeOption.disabled = true; buttons();
+    status.textContent = healthReady() ? "READY" : "WAITING"; statusText.textContent = "Private scan state cleared. Reconnect before starting again."; detail.textContent = ""; progress.hidden = true; progressBar.style.width = "0%"; query.value = ""; scope.value = "library"; selectedScopeOption.disabled = true; buttons();
   };
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate);
   window.addEventListener("pagehide", clearPrivate);
-  window.addEventListener("eliotr:health-updated", buttons);
+  window.addEventListener("eliotr:health-updated", refreshHealthState);
   scope.onchange = () => { if (scope.value === "selected" && selectedSourceId === undefined) scope.value = "library"; };
   buttons();
   return Object.assign(() => {
-    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", buttons);
+    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", refreshHealthState);
   }, { clearPrivate, selectSource(id: string): void {
     if (!IdentifierSchema.safeParse(id).success) return;
     selectedSourceId = id; selectedScopeOption.disabled = false; scope.value = "selected";
