@@ -130,6 +130,24 @@ describe("research.query retrieval over real D1/R2", () => {
       .bind(owner, "rq-fast-search")
       .first<{ readonly state: string; readonly coverage_claim: string }>();
     expect(resultRow).toMatchObject({ state: "COMPLETE", coverage_claim: "SAMPLED" });
+    const persistedBeforeReplay = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    };
+    const replayed = await q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(request),
+    }) as { readonly data: QueryResult };
+    expect(replayed.data).toEqual(result.data);
+    expect({
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+      profile: await tableCount("retrieval_scope_profile"),
+      grant: await tableCount("scope_access_grant"),
+    }).toEqual(persistedBeforeReplay);
     const noHit = await q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-none" },
@@ -141,8 +159,20 @@ describe("research.query retrieval over real D1/R2", () => {
       .bind(owner, "rq-fast-search-none")
       .first<{ readonly state: string; readonly coverage_claim: string }>();
     expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "NONE" });
-    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
-    await expect(service.query(contextFor(owner, "rq-fast-search"), fastSearchQueryFor(world, "different"))).rejects.toMatchObject({ code: "RESEARCH_CONFLICT" });
+    await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(fastSearchQueryFor(world, "different")),
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE principal_ref=?1 AND client_class='owner_pwa' AND credential_generation=?2")
+      .bind(owner, CREDENTIAL).run();
+    await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
+      body: JSON.stringify(request),
+    })).rejects.toMatchObject({ status: 409, code: "RESEARCH_AUTHORITY_STALE" });
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
     await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-invalid-profile" },

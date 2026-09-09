@@ -550,7 +550,7 @@
         "infra/d1/core/migrations/0022_retrieval_scope_profile.sql: additive profile table with FK to scope_snapshot plus immutability triggers; no backfill, no rewrite, no readiness promotion",
         "#135 fixed by the disclosed ER-07 narrow fix (not worked around here): packages/cloudflare-evidence/src/content-store.ts:136 now issues the conditional range read with unquoted head.etag, and content-store.test.ts rejects S3-quoted values the way the runtime does; the first real LEX-hit success path above executes through it",
         "SEM lane executor composed at the app layer (packages/retrieval/src/lanes.ts createSemLaneExecutor over the D1-backed managed port with expected_namespace eliotr, explicit SEM fusion weight, and honest SKIPPED_UNAVAILABLE without a binding or a promoted generation); coverage stays capped at SAMPLED with no exhaustive denominator",
-        "Worker research.query accepts the strict versioned FAST_SEARCH retrieval profile (`retrieval-fast-v1`) through the existing route while preserving the ORIENT DTO and 64-source/16-result bounds; EXACT remains visibly SKIPPED_UNAVAILABLE and NONE/SAMPLED do not earn exhaustive coverage; RETRIEVAL slice stays disabled, research.trace still serves orientation traces, and live qualification NOT_EXECUTED"
+        "Worker research.query accepts the strict versioned FAST_SEARCH retrieval profile (`retrieval-fast-v1`) through the existing route while preserving the ORIENT DTO and 64-source/16-result bounds; EXACT remains visibly SKIPPED_UNAVAILABLE and NONE/SAMPLED do not earn exhaustive coverage; RETRIEVAL slice stays disabled, research.trace serves persisted retrieval and orientation traces, and live qualification NOT_EXECUTED"
       ]
     },
     {
