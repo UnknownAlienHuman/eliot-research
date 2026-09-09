@@ -290,7 +290,7 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
       if (scopeForRequest === undefined || scopeForRequest.snapshot_id !== scope.snapshot_id) {
         throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope runtime is not bound", 409);
       }
-      const sources = await owner.sources(scope.member_source_revision_refs);
+      const sources = await owner.exhaustiveSources(scope.member_source_revision_refs);
       const descriptors: ExhaustiveSectionDescriptor[] = [];
       const contentSizes = new Map<string, number>();
       for (const source of sources) {

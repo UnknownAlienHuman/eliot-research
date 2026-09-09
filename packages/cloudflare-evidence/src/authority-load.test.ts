@@ -1,4 +1,3 @@
-// @ts-expect-error - node:sqlite runtime types ship with Node 22.13+, not @types/node
 import { DatabaseSync } from "node:sqlite";
 import type { LocatorCandidate } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
@@ -27,7 +26,7 @@ function d1(database: DatabaseSync): D1Database {
             all<T>() {
               return Promise.resolve({
                 success: true,
-                results: database.prepare(sql).all(...values) as T[],
+                results: database.prepare(sql).all(...values as any[]) as T[],
               });
             },
           };
