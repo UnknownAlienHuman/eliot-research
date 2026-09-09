@@ -536,6 +536,13 @@ export async function readExhaustiveJobCoverage(
   if (new Set(settledIds).size !== settledIds.length || settledIds.some((id) => !denominatorIds.includes(id))) {
     failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
   }
+  // `load()` derives the pending count from every journal row, while
+  // `settledOutcomes()` deliberately filters rows outside the immutable
+  // denominator.  Reconcile both views before exposing either COMPLETE or
+  // UNFINISHED output; a missing journal row or a foreign row is ambiguous.
+  if (settledIds.length !== job.settled_shards) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive receipt is unavailable", true);
+  }
   return {
     job,
     denominator_shard_ids: denominatorIds,

@@ -5,7 +5,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
-import { exhaustiveJobId } from "@eliotr/retrieval";
+import { exhaustiveJobId, readExhaustiveJobCoverage } from "@eliotr/retrieval";
 import { validateExhaustiveWorkflowOutput } from "@eliotr/cloudflare-navigation";
 
 const runtime = env as unknown as Q1Runtime;
@@ -121,6 +121,20 @@ describe("durable exhaustive Workflow output boundary", () => {
     if (denominatorRow === null) return;
     const denominatorIds = JSON.parse(denominatorRow.denominator_shard_ids_json) as string[];
     expect(denominatorIds.length).toBe(denominatorRow.denominator_shards);
+
+    // A terminal row without its immutable shard journal is not a receipt.
+    // The row shape alone must not let a missing journal masquerade as COMPLETE.
+    const orphanKey = "exhaustive-output-orphan";
+    const orphanJobId = await exhaustiveJobId({ principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, orphanKey);
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO retrieval_exhaustive_job (job_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,scope_snapshot_id,scope_snapshot_revision,scope_digest,plan_id,coverage_denominator_ref,denominator_shard_ids_json,state,denominator_shards,settled_shards,total_scanned_sections,total_matches,result_artifact_ref,coverage_receipt_ref,created_at,expires_at) VALUES (?1,?2,'owner_pwa','credential-1',?3,?4,?5,?6,?7,'orphan-output-plan',?8,?9,'COMPLETE',?10,?10,0,0,'orphan-artifact','orphan-receipt',?11,?12)",
+    ).bind(orphanJobId, owner, orphanKey, canonicalReceipt.request_digest, denominatorRow.scope_snapshot_id,
+      denominatorRow.scope_snapshot_revision, denominatorRow.scope_digest, canonicalReceipt.coverage_denominator_ref,
+      denominatorRow.denominator_shard_ids_json, denominatorRow.denominator_shards, new Date().toISOString(), denominatorRow.expires_at).run();
+    await expect(readExhaustiveJobCoverage(runtime.CORE_DB,
+      { principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, orphanKey,
+    )).rejects.toMatchObject({ code: "RETRIEVAL_RESOLUTION_UNCERTAIN" });
+
     const pendingKey = "exhaustive-output-pending";
     const pendingJobId = await exhaustiveJobId({ principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, pendingKey);
     await runtime.CORE_DB.prepare(
@@ -146,16 +160,28 @@ describe("durable exhaustive Workflow output boundary", () => {
     const pendingBinding = { job_id: pendingJobId, principal_ref: owner, credential_generation: "credential-1" };
     const pendingResult = await validateExhaustiveWorkflowOutput(runtime.CORE_DB, pendingBinding, callbackContext, unfinishedValidOutput);
     expect(pendingResult?.job).toEqual(unfinishedValidOutput.job);
-    const foreignResult = await validateExhaustiveWorkflowOutput(runtime.CORE_DB, pendingBinding, callbackContext, {
+
+    // A foreign journal row is counted by the pending loader but excluded by
+    // denominator readback; the disagreement must remain UNKNOWN.
+    const foreignJson = JSON.stringify({ shard_id: "foreign-shard", disposition: "SETTLED" });
+    const foreignDigest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(foreignJson)))]
+      .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO retrieval_exhaustive_shard (job_id,shard_id,outcome_json,outcome_digest,created_at) VALUES (?1,?2,?3,?4,?5)",
+    ).bind(pendingJobId, "foreign-shard", foreignJson, foreignDigest, new Date().toISOString()).run();
+    await expect(readExhaustiveJobCoverage(runtime.CORE_DB,
+      { principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, pendingKey,
+    )).rejects.toMatchObject({ code: "RETRIEVAL_RESOLUTION_UNCERTAIN" });
+
+    await expect(validateExhaustiveWorkflowOutput(runtime.CORE_DB, pendingBinding, callbackContext, {
       ...unfinishedValidOutput,
       job: { ...unfinishedValidOutput.job, unsettled_shard_ids: ["forged-shard"] },
-    });
-    expect(foreignResult).toBeNull();
+    })).rejects.toMatchObject({ code: "RETRIEVAL_RESOLUTION_UNCERTAIN" });
 
     // A persisted mutation after the first output read must invalidate the
     // second readback; status callbacks cannot turn a stale result into a
     // disclosed receipt.
-    forged = { protocol: "eliotr.exhaustive-query.v1", job: { status: "COMPLETE", receipt: canonicalReceipt } };
+    let callbackCalls = 0;
     const callbackBinding = createExhaustiveWorkflowBinding({
       database: runtime.CORE_DB,
       workflow: fencedWorkflow,
@@ -163,11 +189,24 @@ describe("durable exhaustive Workflow output boundary", () => {
       parseRequest: () => { throw new Error("not used"); },
       idempotencyKey: () => "exhaustive-output-boundary",
       validateCurrentWorkflowJob: async () => {
-        await runtime.CORE_DB.prepare("UPDATE retrieval_exhaustive_job SET result_artifact_ref='mutated-after-fence' WHERE job_id=?1")
+        callbackCalls += 1;
+        await runtime.CORE_DB.prepare(
+          "UPDATE retrieval_exhaustive_job SET state='INVALIDATED', settled_shards=NULL, total_scanned_sections=NULL, total_matches=NULL, result_artifact_ref=NULL, coverage_receipt_ref=NULL WHERE job_id=?1",
+        )
           .bind(binding.job_id).run();
       },
     });
+    // A well-shaped terminal payload from a still-running Workflow is not
+    // eligible for disclosure, and must not trigger the terminal callback.
+    forged = { protocol: "eliotr.exhaustive-query.v1", job: { status: "COMPLETE", receipt: canonicalReceipt } };
+    workflowStatus = "running";
+    const runningThroughBinding = await callbackBinding.status(callbackContext, workflowId);
+    expect(runningThroughBinding.job).toBeUndefined();
+    expect(callbackCalls).toBe(0);
+
+    workflowStatus = "complete";
     const callbackResult = await callbackBinding.status(callbackContext, workflowId);
     expect(callbackResult.job).toBeUndefined();
+    expect(callbackCalls).toBe(1);
   }, 20_000);
 });
