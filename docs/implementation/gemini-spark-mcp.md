@@ -3,13 +3,17 @@
 ## Status
 
 `IMPLEMENTED_NOT_LIVE` after deterministic protocol, authorization, setup, and negative fixtures pass.
-Live qualification requires a deployed dedicated Cloudflare Access service-token round trip plus real
-Google Workspace and gcloud action/readback receipts.
+Live qualification is profile-specific: the selected Workspace profile requires a deployed dedicated
+Cloudflare Access service-token round trip plus real Google Workspace action/readback receipts. The
+optional Cloud profile additionally requires its gcloud action/readback receipts when explicitly
+selected; gcloud is not a Workspace readiness dependency.
 
 ## Relation to the canonical ChatGPT transport
 
-ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 require Day-0 ChatGPT **Google Drive Exchange**.
-ER-36 is an optional Gemini service integration, not a replacement ADR or the Drive adapter.
+ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 describe the historical Day-0 ChatGPT **Google Drive
+Exchange** profile. Those requirements apply to that separate custom server-owned profile; they are
+not a prerequisite for the active Workspace MCP selection recorded on 2026-09-09.
+ER-36 is an optional Gemini service integration, not a replacement ADR or that custom Drive adapter.
 `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` currently enables only this no-effect helper. The existing
 mutual-exclusion check still disables its sync tools in `drive-exchange` mode; that flag alone does
 not implement Drive. Do not activate a second ChatGPT write transport. Missing Drive OAuth, leased
