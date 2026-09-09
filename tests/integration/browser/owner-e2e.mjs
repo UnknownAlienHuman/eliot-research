@@ -17,6 +17,7 @@ import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertC
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
+import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -4171,6 +4172,7 @@ export async function runOwnerE2E() {
   let bridge;
   let jwks;
   let exhaustiveWorkflow;
+  let rawUpload;
   let teardownError = null;
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
@@ -4202,6 +4204,7 @@ export async function runOwnerE2E() {
     cross_client_ledger: "PENDING",
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
+    raw_file_capture: "PENDING",
     early_cleanup: "PENDING",
     catalog_transport_probe: "PENDING",
     teardown_inventory: "PENDING",
@@ -4694,6 +4697,14 @@ export async function runOwnerE2E() {
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
     const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
+    // Real raw-file owner flow: the PWA selects a UTF-8 filename and sends the
+    // file through the paired browser session to the live Worker. Recovery is
+    // completed after the existing authenticated reload below, so this phase
+    // proves POST -> reload/reselect -> idempotency GET without minting a new
+    // capture identity. D1/R2 are read back only after the Worker is stopped.
+    rawUpload = await runRawFileUploadOwnerScenario({
+      page: playwright.page, expectedGeneration: paths.generation, ledger,
+    });
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -4792,6 +4803,10 @@ export async function runOwnerE2E() {
     await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
+    await recoverRawFileUploadOwnerScenario({
+      page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
+      idempotencyKey: rawUpload.idempotencyKey, captureId: rawUpload.captureId, ledger,
+    });
     const browserCatalog = await browserJson(playwright.page, ledger, "/api/v1/research/catalog?limit=20",
       { correlation: "e2e-import-1/browser-catalog" });
     assert.equal(browserCatalog.status, 200, "browser-originated Library catalog must list the admitted source");
@@ -4821,6 +4836,8 @@ export async function runOwnerE2E() {
         { method: "POST", path: "/api/v1/ingest/bundles/prepare", status: 200 },
         { method: "GET", path: "/api/v1/research/catalog?limit=20", status: 200 },
         { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
+        { method: "POST", path: "/api/v1/ingest/raw", status: 200 },
+        { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
       // a listed mutation: the exact browser artifact lifecycle paths
@@ -4919,6 +4936,35 @@ export async function runOwnerE2E() {
     assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`),
       revisionRows.map((row) => ({ source_revision_ref: row.source_revision_ref })),
       "restart must preserve the admitted revision rows");
+    // The raw capture route records transport settlement only. Once the Worker
+    // is stopped, reconcile its single durable row and original R2 bytes from
+    // the authoritative local stores. This intentionally does not assert a
+    // Library source/revision for the raw file.
+    const rawRows = d1Query(paths, "CORE_DB",
+      "SELECT capture_id,principal_ref,source_namespace_id,idempotency_key,original_file_name,content_sha256,size_bytes,content_type,state,object_key " +
+      `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
+    assert.equal(rawRows.length, 1, "raw upload must leave exactly one durable capture row");
+    const rawRow = rawRows[0];
+    assert.equal(rawRow.capture_id, rawUpload.captureId, "D1 raw capture identity must match the browser receipt");
+    assert.equal(rawRow.source_namespace_id, namespace, "raw capture must bind the current owner namespace");
+    assert.equal(rawRow.original_file_name, rawUpload.expected.name, "D1 raw filename must preserve UTF-8 text");
+    assert.equal(rawRow.content_sha256, rawUpload.expected.digest, "D1 raw digest must match selected bytes");
+    assert.equal(rawRow.size_bytes, rawUpload.expected.bytes.length, "D1 raw size must match selected bytes");
+    assert.equal(rawRow.content_type, rawUpload.expected.type, "D1 raw MIME must match selected file");
+    assert.equal(rawRow.state, "CAPTURED", "raw upload must settle as CAPTURED");
+    assert.ok(typeof rawRow.object_key === "string" && rawRow.object_key.length > 0, "D1 raw row must retain its R2 key");
+    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
+      "same-file recovery must not create an extra raw capture row");
+    assert.equal(d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source WHERE source_namespace_id='${namespace}'`)[0].n,
+      sourceRows.length, "raw capture must not create an extra Library source row");
+    assert.equal(d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`)[0].n,
+      revisionRows.length, "raw capture must not create an extra Library source revision row");
+    const rawObject = await tryR2ObjectGet(paths, evidenceBucket, rawRow.object_key);
+    assert.equal(rawObject.ok, true, "original raw bytes must be readable from EVIDENCE_BUCKET");
+    const rawBytes = Buffer.from(rawObject.output ?? "", "utf8");
+    assert.deepEqual(rawBytes, rawUpload.expected.bytes, "R2 raw bytes must match the selected file exactly");
+    assert.equal(await sha256Hex(rawBytes), rawUpload.expected.digest, "R2 raw bytes must retain the selected digest");
+    receipt.raw_file_capture = `PASS (browser POST + reload/reselect idempotency GET, one D1 capture row, original R2 bytes; transport only, not ADMITTED/INDEXED)`;
     assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
@@ -5266,6 +5312,8 @@ export async function runOwnerE2E() {
         "e2e-import-1/replay-prepare",
         "e2e-import-1/browser-catalog",
         "e2e-import-1/browser-revisions",
+        "e2e-raw-upload/post",
+        "e2e-raw-upload/recovery",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
@@ -5306,9 +5354,9 @@ export async function runOwnerE2E() {
         }
       }
       const ingestEntries = ledger.entries.filter((entry) => entry.path.startsWith("/api/v1/ingest/"));
-      assert.equal(ingestEntries.length, imported.artifactPaths.length + 1,
-        "ingest ledger must hold exactly the lifecycle calls plus the DUPLICATE prepare replay");
-      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay, all browser-origin, exact status/ordering/correlation)`;
+      assert.equal(ingestEntries.length, imported.artifactPaths.length + 3,
+        "ingest ledger must hold the normalized lifecycle, DUPLICATE replay and raw POST/readback");
+      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay + raw capture/recovery, all browser-origin, exact status/ordering/correlation)`;
       receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
     }
     receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;

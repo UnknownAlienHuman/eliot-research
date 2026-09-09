@@ -260,6 +260,14 @@ export async function startOwnerBridge({ workerOrigin, token, generation, port =
       for (const name of ["accept", "content-type", "idempotency-key", "range", "if-none-match"]) {
         if (typeof request.headers[name] === "string") forwarded.set(name, request.headers[name]);
       }
+      // Raw capture's HTTP boundary requires the browser-declared byte length
+      // to bind the streamed file envelope. Forward this one header only for
+      // that exact owner upload route; other mutations keep the existing
+      // fixed header surface and never trust a caller-supplied length.
+      if (url.pathname === "/api/v1/ingest/raw" && request.method === "POST" &&
+          typeof request.headers["content-length"] === "string") {
+        forwarded.set("content-length", request.headers["content-length"]);
+      }
       if (!publicManifest) forwarded.set("cf-access-jwt-assertion", bearer);
       // Fixed destination, no redirects and no forwarded cookie. The Worker authenticates every API request.
       const upstream = await fetchImpl(`${workerOrigin}${url.pathname}${url.search}`, {

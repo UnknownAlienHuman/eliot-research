@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { readFile, mkdtemp, rm, access } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { extname, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,104 @@ const dist = resolve(root, "apps/eliotr-pwa/dist");
 const generation = "browser-fixture";
 const trace = "raw-file-browser";
 const envelope = (data, deploymentGeneration = generation) => ({ data, trace_id: trace, deployment_generation: deploymentGeneration });
+
+function assertRawEnvelope(value, expectedGeneration, expected) {
+  assert.ok(value && typeof value === "object" && !Array.isArray(value), "raw capture response must be an object");
+  assert.equal(value.trace_id !== undefined, true, "raw capture response must carry a trace id");
+  assert.equal(value.deployment_generation, expectedGeneration, "raw capture response must bind the current deployment");
+  const receipt = value.data;
+  assert.ok(receipt && typeof receipt === "object" && !Array.isArray(receipt), "raw capture response must carry a receipt");
+  assert.equal(receipt.protocol, "eliotr.raw-file-capture.v1");
+  assert.equal(receipt.disposition, "CAPTURED");
+  assert.match(receipt.capture_id, /^raw-capture-[a-f0-9]{48}$/u);
+  assert.match(receipt.idempotency_key, /^raw-upload-[a-f0-9]{64}$/u);
+  assert.equal(receipt.original_file_name, expected.name);
+  assert.equal(receipt.content_sha256, expected.digest);
+  assert.equal(receipt.size_bytes, expected.bytes.length);
+  assert.equal(receipt.content_type, expected.type);
+  assert.match(receipt.captured_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u);
+  return receipt;
+}
+
+async function waitForRawResponse(page, method, action) {
+  const responsePromise = page.waitForResponse((response) => {
+    try {
+      return response.request().method() === method && new URL(response.url()).pathname === "/api/v1/ingest/raw";
+    } catch { return false; }
+  }, { timeout: 30000 });
+  await action();
+  const response = await responsePromise;
+  if (response.status() !== 200) {
+    let code = "unavailable";
+    try {
+      const body = await response.json();
+      code = String(body?.code ?? body?.data?.code ?? body?.title ?? "unavailable").slice(0, 128);
+    } catch { /* bounded status/code diagnostic only */ }
+    throw new Error(`raw ${method} must succeed through the real Worker: status=${response.status()} code=${code}`);
+  }
+  return response;
+}
+
+/**
+ * Real Worker owner scenario. The browser drives the actual PWA panel and
+ * same-origin owner session; this helper never intercepts or fabricates API
+ * responses. The caller supplies the current generation and later performs
+ * stopped-Worker D1/R2 readback.
+ */
+export async function runRawFileUploadOwnerScenario({ page, expectedGeneration, ledger }) {
+  assert.ok(page && typeof page.waitForSelector === "function", "raw owner scenario requires a Playwright page");
+  assert.ok(typeof expectedGeneration === "string" && expectedGeneration.length > 0, "raw owner scenario requires a deployment generation");
+  const bytes = Buffer.from("raw upload owner fixture\n", "utf8");
+  const expected = {
+    name: "исследование.txt",
+    type: "text/plain",
+    bytes,
+    digest: createHash("sha256").update(bytes).digest("hex"),
+  };
+  const panel = page.locator("#raw-upload");
+  await page.waitForSelector("#raw-upload [data-raw-file]", { timeout: 15000 });
+  const input = panel.locator("input[data-raw-file]");
+  const setFile = async () => input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
+  await setFile();
+  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
+  const postResponse = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click());
+  const postHeaders = await postResponse.request().allHeaders();
+  assert.equal(decodeURIComponent(postHeaders["x-eliotr-original-file-name"] ?? ""), expected.name,
+    "browser upload must preserve the UTF-8 original filename header");
+  assert.equal(postHeaders["x-eliotr-content-sha256"], expected.digest, "browser upload must bind the selected bytes");
+  assert.equal(postHeaders["content-type"], expected.type, "browser upload must bind the selected MIME type");
+  assert.ok(Number.parseInt(postHeaders["content-length"] ?? "", 10) === expected.bytes.length,
+    "Chromium must supply Content-Length for the File body");
+  const postEnvelope = await postResponse.json();
+  const receipt = assertRawEnvelope(postEnvelope, expectedGeneration, expected);
+  ledger?.record({ client: "browser", method: "POST", path: "/api/v1/ingest/raw", status: postResponse.status(),
+    correlation: "e2e-raw-upload/post", token_present: false });
+  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
+  assert.match(await panel.locator("[data-raw-status]").textContent(), /File saved/u);
+  return { expected, receipt, idempotencyKey: receipt.idempotency_key, captureId: receipt.capture_id };
+}
+
+/** Complete the real browser reload/reselect leg with the same selection. */
+export async function recoverRawFileUploadOwnerScenario({ page, expectedGeneration, expected, idempotencyKey, captureId, ledger }) {
+  assert.ok(expected && Buffer.isBuffer(expected.bytes), "raw recovery requires the original selected bytes");
+  assert.equal(typeof idempotencyKey, "string");
+  assert.equal(typeof captureId, "string");
+  const panel = page.locator("#raw-upload");
+  const input = panel.locator("input[data-raw-file]");
+  await page.waitForSelector("#raw-upload [data-raw-file]", { timeout: 15000 });
+  await input.setInputFiles({ name: expected.name, mimeType: expected.type, buffer: expected.bytes });
+  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-recover]")?.disabled === false, null, { timeout: 15000 });
+  const response = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-recover]").click());
+  const requestHeaders = await response.request().allHeaders();
+  assert.equal(requestHeaders["idempotency-key"], idempotencyKey, "recovery GET must use the original idempotency key");
+  const receipt = assertRawEnvelope(await response.json(), expectedGeneration, expected);
+  assert.equal(receipt.capture_id, captureId, "recovery GET must return the original durable capture");
+  ledger?.record({ client: "browser", method: "GET", path: "/api/v1/ingest/raw", status: response.status(),
+    correlation: "e2e-raw-upload/recovery", token_present: false });
+  await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
+  assert.match(await panel.locator("[data-raw-status]").textContent(), /Existing upload found/u);
+  return receipt;
+}
 
 function contentType(path) {
   return ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml",
