@@ -56,8 +56,10 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.test.ts`
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
+- `apps/eliotr-core/test/exhaustive-workflow-output.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
+- `packages/cloudflare-navigation/src/exhaustive-workflow-output.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-service.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
@@ -146,7 +148,12 @@ active policy and cancellation state. Local Q1 import-to-projection HTTP tests
 cover launch, readback, cancellation and no-resume behavior; deployed Workflow
 and live user-loop qualification remain `NOT EXECUTED`. A Q7
 `result_artifact_ref` is a receipt reference; it is not a published research
-artifact.
+artifact. Before a terminal Workflow result is exposed, the binding strictly
+decodes the versioned COMPLETE/UNFINISHED shape and reads the canonical Q7 job
+through the existing retrieval store, matching the owner credential/job tuple
+and currentness callbacks. A transport output cannot fabricate a receipt or
+pending coverage state; this remains local `IMPLEMENTED_NOT_LIVE` evidence and
+does not qualify deployed Workflow, live user-loop handles or RETRIEVAL.
 
 The owner-only `GET /api/v1/research/query/jobs` route provides a bounded recent metadata page for
 reload recovery. It accepts `limit` in `[1,20]` (default `20`) and an opaque keyset `cursor`; the

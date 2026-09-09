@@ -1,6 +1,5 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.
 import type {
-  ExhaustiveQueryResult,
   ExhaustiveWorkflowJobState,
   ExhaustiveWorkflowJobsRequest,
   ExhaustiveWorkflowPage,
@@ -8,7 +7,11 @@ import type {
   ExhaustiveWorkflowSummary,
   AuthenticatedRequestContext,
 } from "@eliotr/interfaces";
-import { canonicalRetrievalJson, exhaustiveJobId } from "@eliotr/retrieval";
+import {
+  canonicalRetrievalJson,
+  exhaustiveJobId,
+} from "@eliotr/retrieval";
+import { validateExhaustiveWorkflowOutput } from "./exhaustive-workflow-output.js";
 
 export interface ExhaustiveWorkflowBindingInput<T> {
   readonly database: D1Database;
@@ -90,25 +93,6 @@ async function requestWorkflowIdentity<T>(context: AuthenticatedRequestContext, 
   return { id: `exhaustive-workflow-${hex}`, digest: hex };
 }
 
-function outputResult(output: unknown): ExhaustiveQueryResult | null {
-  if (output === null || typeof output !== "object") return null;
-  const value = output as Record<string, unknown>;
-  if (value.protocol !== "eliotr.exhaustive-query.v1") return null;
-  const job = value.job;
-  if (job === null || typeof job !== "object") return null;
-  const status = (job as Record<string, unknown>).status;
-  if (status === "COMPLETE") {
-    const receipt = (job as Record<string, unknown>).receipt;
-    if (receipt === null || typeof receipt !== "object" ||
-        (receipt as Record<string, unknown>).coverage_claim !== "COMPLETE") return null;
-  } else if (status === "UNFINISHED") {
-    const pending = job as Record<string, unknown>;
-    if (typeof pending.job_id !== "string" || !Number.isSafeInteger(pending.denominator_shards) ||
-        !Number.isSafeInteger(pending.settled_shards) || !Array.isArray(pending.unsettled_shard_ids)) return null;
-  } else return null;
-  return output as ExhaustiveQueryResult;
-}
-
 async function envelope(
   database: D1Database,
   binding: WorkflowBindingRow,
@@ -116,18 +100,18 @@ async function envelope(
   status: WorkflowStatus,
   context: AuthenticatedRequestContext,
   validateCurrentJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
+  validateCurrentWorkflowJob?: (jobId: string, context: AuthenticatedRequestContext) => Promise<void>,
 ): Promise<ExhaustiveWorkflowResult> {
-  const result = outputResult(status.output);
-  if (result?.job?.status === "COMPLETE") {
-    const receipt = result.job.receipt;
-    const current = await database.prepare(
-      "SELECT state,request_digest,result_artifact_ref,coverage_receipt_ref FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
-    ).bind(binding.job_id).first<{ readonly state: string; readonly request_digest: string; readonly result_artifact_ref: string | null; readonly coverage_receipt_ref: string | null }>();
-    if (current === null || current.state !== "COMPLETE" || current.result_artifact_ref !== receipt.result_artifact_ref ||
-        current.coverage_receipt_ref !== receipt.coverage_receipt_ref || current.request_digest !== receipt.request_digest) {
+  let result = status.status === "complete"
+    ? await validateExhaustiveWorkflowOutput(database, binding, context, status.output)
+    : null;
+  if (result !== null) {
+    await validateCurrentWorkflowJob?.(binding.job_id, context);
+    if (result.job.status === "COMPLETE") await validateCurrentJob?.(binding.job_id, context);
+    result = await validateExhaustiveWorkflowOutput(database, binding, context, status.output);
+    if (result === null) {
       return { protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: instanceId, workflow_status: status.status };
     }
-    await validateCurrentJob?.(binding.job_id, context);
   }
   return {
     protocol: "eliotr.exhaustive-query.v1",
@@ -400,7 +384,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
         try { instance = await workflow.get(id); }
         catch { failWorkflow("exhaustive Workflow create/readback is uncertain"); }
       }
-      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob);
+      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob, input.validateCurrentWorkflowJob);
     },
     async list(context, request) {
       requireOwner(context);
@@ -497,7 +481,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       let instance: WorkflowInstance;
       try { instance = await workflow.get(id); }
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
-      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob);
+      return envelope(input.database, binding, id, await instance.status(), context, input.validateCurrentJob, input.validateCurrentWorkflowJob);
     },
     async cancel(context, instanceId) {
       requireOwner(context);
@@ -508,7 +492,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
       const before = await instance.status();
       if (before.status === "complete" || before.status === "terminated" || before.status === "errored") {
-        return envelope(input.database, binding, id, before, context, input.validateCurrentJob);
+        return envelope(input.database, binding, id, before, context, input.validateCurrentJob, input.validateCurrentWorkflowJob);
       }
       await input.database.prepare("UPDATE retrieval_exhaustive_workflow SET state='CANCEL_REQUESTED' WHERE workflow_id=?1 AND state='BOUND'")
         .bind(id).run().catch(() => failWorkflow("exhaustive Workflow cancellation is uncertain"));
@@ -517,7 +501,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
       if (marked?.state !== "CANCEL_REQUESTED") failWorkflow("exhaustive Workflow cancellation readback is uncertain");
       try { await instance.terminate({ rollback: false }); }
       catch { failWorkflow("exhaustive Workflow cancellation is uncertain"); }
-      return envelope(input.database, { ...binding, state: "CANCEL_REQUESTED" }, id, await instance.status(), context, input.validateCurrentJob);
+      return envelope(input.database, { ...binding, state: "CANCEL_REQUESTED" }, id, await instance.status(), context, input.validateCurrentJob, input.validateCurrentWorkflowJob);
     },
   };
 }
