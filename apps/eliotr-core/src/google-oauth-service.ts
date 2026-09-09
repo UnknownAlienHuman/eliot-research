@@ -1,5 +1,6 @@
 import { createGoogleOAuthAdmission, GoogleCredentialError, importGoogleTokenKey, oauthConfiguration,
-  type GoogleOAuthAdmissionOptions, type GoogleOAuthConfiguration } from "@eliotr/google-drive-exchange";
+  oauthIdentifier, type GoogleOAuthAdmissionOptions, type GoogleOAuthConfiguration } from "@eliotr/google-drive-exchange";
+import type { AccessIdentity, AccessVerifier } from "@eliotr/platform-cloudflare";
 import { createD1GoogleOAuthIntentStore } from "./google-oauth-store.js";
 import type { Env } from "./env.js";
 
@@ -7,6 +8,69 @@ import type { Env } from "./env.js";
 export function createD1GoogleOAuthAdmission(options: Omit<GoogleOAuthAdmissionOptions, "store"> & { readonly database: D1Database }) {
   return createGoogleOAuthAdmission({ ...options,
     store: createD1GoogleOAuthIntentStore(options.database, options.configuration, options.owner, options.now) });
+}
+
+export interface GoogleOAuthOwnerContext {
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+}
+
+/**
+ * Compose the server-owned Google admission once for both begin and callback.
+ * Request and Access identity are only used to re-check the same owner before
+ * each durable or provider operation; no callback field can influence this
+ * configuration.
+ */
+export async function createGoogleOAuthAdmissionForOwner(input: {
+  readonly env: Env;
+  readonly request: Request;
+  readonly context: GoogleOAuthOwnerContext;
+  readonly identity: AccessIdentity;
+  readonly verifier: AccessVerifier;
+  readonly fetchImpl?: typeof fetch;
+}): Promise<{
+  readonly configuration: GoogleOAuthConfiguration;
+  readonly service: ReturnType<typeof createD1GoogleOAuthAdmission>;
+}> {
+  const configuration = readGoogleOAuthServerConfiguration(input.env);
+  let owner: { readonly principal_id: string; readonly session_generation: string };
+  try {
+    owner = {
+      principal_id: oauthIdentifier(input.context.principal_ref),
+      session_generation: oauthIdentifier(input.context.credential_generation),
+    };
+  } catch (error) {
+    if (error instanceof GoogleCredentialError) throw new GoogleCredentialError("GOOGLE_OAUTH_OWNER_INVALID");
+    throw error;
+  }
+  const { key, version: keyVersion } = await importGoogleOAuthServerKey(input.env);
+  const clientSecret = readGoogleOAuthClientSecret(input.env);
+  const assertOwnerCurrent = async (signal: AbortSignal): Promise<void> => {
+    signal.throwIfAborted();
+    let current: AccessIdentity;
+    try { current = await input.verifier.verify(input.request); }
+    catch { throw new GoogleCredentialError("GOOGLE_OAUTH_OWNER_REVOKED"); }
+    if (current.principal_ref !== input.identity.principal_ref ||
+        current.credential_generation !== input.identity.credential_generation ||
+        current.authentication_method !== input.identity.authentication_method) {
+      throw new GoogleCredentialError("GOOGLE_OAUTH_OWNER_REVOKED");
+    }
+    signal.throwIfAborted();
+  };
+  return {
+    configuration,
+    service: createD1GoogleOAuthAdmission({
+      database: input.env.CORE_DB,
+      configuration,
+      owner,
+      keys: new Map([[keyVersion, key]]),
+      activeKeyVersion: keyVersion,
+      clientSecret,
+      deadlineEpochMs: Date.now() + 60000,
+      assertOwnerCurrent,
+      ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+    }),
+  };
 }
 
 function requiredEnvText(value: string | undefined, label: string): string {

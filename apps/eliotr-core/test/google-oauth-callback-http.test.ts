@@ -79,7 +79,7 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     const env = googleEnv();
     const started = await begin(env, "g2-owner-happy", "g2-happy");
     callbackNonce = started.nonce;
-    const response = await handleHttp(callbackRequest(`iss=${encodeURIComponent("https://accounts.google.com")}&state=${started.state}&code=code-fixture&scope=openid%20email&authuser=0&prompt=consent`), env as never,
+    const response = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture&scope=openid%20email&authuser=0&prompt=consent`), env as never,
       {} as ExecutionContext, { accessVerifier: verifier("g2-owner-happy") as never });
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(`${ORIGIN}/#eliotr-google-oauth=authorized`);
@@ -90,7 +90,7 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     expect(row?.state).toBe("ADMITTED");
     const connection = await db.prepare("SELECT state FROM google_exchange_connection WHERE connection_id IN (SELECT json_extract(configuration_json,'$.connection_id') FROM google_oauth_intent WHERE principal_id=?1 AND operation_ref=?2)").bind("g2-owner-happy", "g2-happy").first<{ state: string }>();
     expect(connection?.state).toBe("AUTHORIZING");
-    const replay = await handleHttp(callbackRequest(`iss=${encodeURIComponent("https://accounts.google.com")}&state=${started.state}&code=code-fixture&scope=openid%20email&authuser=0&prompt=consent`), env as never,
+    const replay = await handleHttp(callbackRequest(`state=${started.state}&code=code-fixture&scope=openid%20email&authuser=0&prompt=consent`), env as never,
       {} as ExecutionContext, { accessVerifier: verifier("g2-owner-happy") as never });
     expect(replay.status).toBe(303);
     expect(replay.headers.get("location")).toBe(`${ORIGIN}/#eliotr-google-oauth=authorized`);
@@ -100,7 +100,7 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
   it("denies provider consent without token/JWKS calls and uses a fixed fragment", async () => {
     const env = googleEnv();
     const started = await begin(env, "g2-owner-denied", "g2-denied");
-    const response = await handleHttp(callbackRequest(`iss=${encodeURIComponent("https://accounts.google.com")}&state=${started.state}&error=access_denied`), env as never,
+    const response = await handleHttp(callbackRequest(`state=${started.state}&error=access_denied`), env as never,
       {} as ExecutionContext, { accessVerifier: verifier("g2-owner-denied") as never });
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(`${ORIGIN}/#eliotr-google-oauth=denied`);
@@ -117,6 +117,8 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     for (const query of [
       `iss=${encodeURIComponent("https://evil.example")}&state=${started.state}&code=code-fixture`,
       `iss=${encodeURIComponent("https://accounts.google.com")}&state=${started.state}&code=code-fixture&extra=x`,
+      `state=${started.state}&code=code-fixture&error_description=unexpected`,
+      `state=${started.state}&error=access_denied&scope=openid`,
     ]) {
       const response = await handleHttp(callbackRequest(query), env as never, {} as ExecutionContext, { accessVerifier: verifier("g2-owner-invalid") as never });
       expect(response.status).toBe(400);
@@ -125,6 +127,15 @@ describe("G2 owner-only Google OAuth callback over real HTTP/D1/crypto", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
     const row = await db.prepare("SELECT state FROM google_oauth_intent WHERE principal_id=?1 AND operation_ref=?2").bind("g2-owner-invalid", "g2-invalid").first<{ state: string }>();
     expect(row?.state).toBe("PENDING");
+  });
+
+  it("normalizes malformed callbacks before checking D1 readiness", async () => {
+    const env = { ...googleEnv(), CORE_DB: { prepare: () => { throw new Error("readiness must not run"); } } };
+    const response = await handleHttp(callbackRequest("state=short&code=code-fixture"), env as never,
+      {} as ExecutionContext, { accessVerifier: verifier("g2-owner-invalid-before-readiness") as never });
+    expect(response.status).toBe(400);
+    expect((await json(response)).code).toBe("GOOGLE_OAUTH_CALLBACK_INVALID");
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
   it("returns 401 when Access currentness is revoked and keeps the callback pending", async () => {
