@@ -4,3 +4,4 @@ export * from "./orientation-input.js";
 export * from "./orientation-service.js";
 export { createOwnerScopeAuthority } from "./orientation-authority.js";
 export * from "./exhaustive-workflow-binding.js";
+export * from "./exhaustive-query-service.js";

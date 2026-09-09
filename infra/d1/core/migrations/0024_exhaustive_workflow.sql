@@ -9,6 +9,7 @@ CREATE TABLE retrieval_exhaustive_workflow (
   principal_ref TEXT NOT NULL CHECK(length(principal_ref) BETWEEN 1 AND 256),
   client_class TEXT NOT NULL CHECK(client_class = 'owner_pwa'),
   credential_generation TEXT NOT NULL CHECK(length(credential_generation) BETWEEN 1 AND 256),
+  deployment_generation TEXT NOT NULL CHECK(length(deployment_generation) BETWEEN 1 AND 256),
   request_identity_digest TEXT NOT NULL CHECK(
     length(request_identity_digest) = 64 AND request_identity_digest NOT GLOB '*[^0-9a-f]*'
   ),
@@ -26,6 +27,7 @@ WHEN NEW.workflow_id IS NOT OLD.workflow_id
   OR NEW.principal_ref IS NOT OLD.principal_ref
   OR NEW.client_class IS NOT OLD.client_class
   OR NEW.credential_generation IS NOT OLD.credential_generation
+  OR NEW.deployment_generation IS NOT OLD.deployment_generation
   OR NEW.request_identity_digest IS NOT OLD.request_identity_digest
   OR NEW.created_at IS NOT OLD.created_at
   OR (OLD.state = 'CANCEL_REQUESTED' AND NEW.state <> OLD.state)

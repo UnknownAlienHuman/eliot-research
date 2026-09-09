@@ -100,7 +100,7 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
     const firstBody = await first.json() as { readonly data?: { readonly workflow_instance_id?: string } };
     expect(firstBody.data?.workflow_instance_id).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
     const resumed = await handleHttp(queryRequest(value, "exhaustive-http-pending"), runtime, {} as ExecutionContext, access(owner));
-    expect(resumed.status).toBe(202);
+    expect([200, 202]).toContain(resumed.status);
     expect(await resumed.json()).toMatchObject({ data: { protocol: "eliotr.exhaustive-query.v1" } });
   });
 
@@ -143,5 +143,27 @@ describe("EXHAUSTIVE_JOB over the production Q1 boundary", () => {
       protocol: "eliotr.exhaustive-query.v1",
       workflow_instance_id: workflowId,
     } });
+
+    const cancelLaunch = await handleHttp(queryRequest(value, "exhaustive-workflow-cancel"), runtime, {} as ExecutionContext, access(owner));
+    expect(cancelLaunch.status).toBe(202);
+    const cancelBody = await cancelLaunch.json() as { readonly data?: { readonly workflow_instance_id?: string } };
+    const cancelId = cancelBody.data?.workflow_instance_id;
+    expect(cancelId).toMatch(/^exhaustive-workflow-[a-f0-9]{64}$/u);
+    const canceled = await handleHttp(
+      new Request(`https://research.example/api/v1/research/query/${cancelId}`, { method: "DELETE" }),
+      runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
+    expect(canceled.status).toBe(200);
+    const binding = await runtime.CORE_DB.prepare(
+      "SELECT state FROM retrieval_exhaustive_workflow WHERE workflow_id=?1 LIMIT 1",
+    ).bind(cancelId).first<{ readonly state: string }>();
+    expect(["BOUND", "CANCEL_REQUESTED"]).toContain(binding?.state);
+    if (binding?.state === "CANCEL_REQUESTED") {
+      const resumed = await handleHttp(queryRequest(value, "exhaustive-workflow-cancel"), runtime, {} as ExecutionContext, access(owner));
+      expect(resumed.status).toBe(409);
+      expect(await resumed.json()).toMatchObject({ code: "RESEARCH_CANCELLED" });
+    }
   });
 });

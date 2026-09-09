@@ -127,13 +127,14 @@ interface WorkflowBindingRow {
   readonly principal_ref: string;
   readonly client_class: string;
   readonly credential_generation: string;
+  readonly deployment_generation: string;
   readonly request_identity_digest: string;
   readonly state: "BOUND" | "CANCEL_REQUESTED";
 }
 
 async function bindWorkflow(database: D1Database, input: {
   readonly workflow_id: string; readonly job_id: string; readonly principal_ref: string;
-  readonly credential_generation: string; readonly request_identity_digest: string;
+  readonly credential_generation: string; readonly deployment_generation: string; readonly request_identity_digest: string;
 }): Promise<WorkflowBindingRow> {
   try {
     const prior = await database.prepare(
@@ -146,17 +147,17 @@ async function bindWorkflow(database: D1Database, input: {
     }
     await database.prepare(
       "INSERT INTO retrieval_exhaustive_workflow " +
-      "(workflow_id,job_id,principal_ref,client_class,credential_generation,request_identity_digest,state,created_at) " +
-      "VALUES (?1,?2,?3,'owner_pwa',?4,?5,'BOUND',?6) ON CONFLICT DO NOTHING",
+      "(workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state,created_at) " +
+      "VALUES (?1,?2,?3,'owner_pwa',?4,?5,?6,'BOUND',?7) ON CONFLICT DO NOTHING",
     ).bind(input.workflow_id, input.job_id, input.principal_ref, input.credential_generation,
-      input.request_identity_digest, new Date().toISOString()).run();
+      input.deployment_generation, input.request_identity_digest, new Date().toISOString()).run();
     const row = await database.prepare(
-      "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,request_identity_digest,state " +
+      "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
       "FROM retrieval_exhaustive_workflow WHERE workflow_id=?1 LIMIT 1",
     ).bind(input.workflow_id).first<WorkflowBindingRow>();
     if (row === null) {
       const raced = await database.prepare(
-        "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,request_identity_digest,state " +
+        "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
         "FROM retrieval_exhaustive_workflow WHERE job_id=?1 AND principal_ref=?2 AND client_class='owner_pwa' AND credential_generation=?3 LIMIT 1",
       ).bind(input.job_id, input.principal_ref, input.credential_generation).first<WorkflowBindingRow>();
       if (raced !== null && raced.request_identity_digest !== input.request_identity_digest) {
@@ -166,6 +167,7 @@ async function bindWorkflow(database: D1Database, input: {
     }
     if (row.job_id !== input.job_id || row.principal_ref !== input.principal_ref ||
         row.client_class !== "owner_pwa" || row.credential_generation !== input.credential_generation ||
+        row.deployment_generation !== input.deployment_generation ||
         row.request_identity_digest !== input.request_identity_digest) {
       throw new ExhaustiveWorkflowBindingError("RESEARCH_CONFLICT", "workflow identity is bound to different inputs", 409, false);
     }
@@ -176,9 +178,14 @@ async function bindWorkflow(database: D1Database, input: {
   }
 }
 
-async function readWorkflowBinding(database: D1Database, instanceId: string, context: AuthenticatedRequestContext): Promise<WorkflowBindingRow> {
+async function readWorkflowBinding(
+  database: D1Database,
+  instanceId: string,
+  context: AuthenticatedRequestContext,
+  deploymentGeneration: string,
+): Promise<WorkflowBindingRow> {
   const row = await database.prepare(
-    "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,request_identity_digest,state " +
+    "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
     "FROM retrieval_exhaustive_workflow WHERE workflow_id=?1 LIMIT 1",
   ).bind(instanceId).first<WorkflowBindingRow>().catch(() => {
     failWorkflow("exhaustive Workflow binding readback is unavailable");
@@ -188,8 +195,49 @@ async function readWorkflowBinding(database: D1Database, instanceId: string, con
       row.credential_generation !== context.credential_generation) {
     throw new ExhaustiveWorkflowBindingError("RESEARCH_OWNER_REQUIRED", "exhaustive Workflow owner does not match", 403, false);
   }
+  if (row.deployment_generation !== deploymentGeneration) {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_AUTHORITY_STALE", "exhaustive Workflow deployment generation is stale", 409, false);
+  }
   await requireActiveOwnerPolicy(database, context);
   return row;
+}
+
+/** Re-check the durable owner fence immediately before a Workflow step runs. */
+export async function validateExhaustiveWorkflowPayload<T>(
+  database: D1Database,
+  payload: ExhaustiveWorkflowPayload<T>,
+  deploymentGeneration: string,
+): Promise<void> {
+  if (payload.deployment_generation !== deploymentGeneration) {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_AUTHORITY_STALE", "Workflow deployment generation is stale", 409, false);
+  }
+  const context: AuthenticatedRequestContext = {
+    request: new Request("https://workflow.internal/api/v1/research/query", {
+      headers: { "idempotency-key": payload.idempotency_key },
+    }),
+    principal_ref: payload.principal_ref,
+    client_class: "owner_pwa",
+    credential_generation: payload.credential_generation,
+    trace_id: `workflow-${payload.operation_id}`,
+  };
+  const identity = await requestWorkflowIdentity(context, payload.idempotency_key, payload.exhaustive_request);
+  const binding = await database.prepare(
+    "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
+    "FROM retrieval_exhaustive_workflow WHERE job_id=?1 AND principal_ref=?2 AND client_class='owner_pwa' " +
+    "AND credential_generation=?3 LIMIT 1",
+  ).bind(payload.operation_id, payload.principal_ref, payload.credential_generation).first<WorkflowBindingRow>().catch(() => {
+    failWorkflow("exhaustive Workflow binding readback is unavailable");
+  });
+  if (binding === null) {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_WORKFLOW_NOT_FOUND", "exhaustive Workflow binding does not exist", 404, false);
+  }
+  if (binding.deployment_generation !== deploymentGeneration || binding.request_identity_digest !== identity.digest) {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_AUTHORITY_STALE", "exhaustive Workflow binding is stale", 409, false);
+  }
+  await requireActiveOwnerPolicy(database, context);
+  if (binding.state === "CANCEL_REQUESTED") {
+    throw new ExhaustiveWorkflowBindingError("RESEARCH_CANCELLED", "exhaustive Workflow was cancelled", 409, false);
+  }
 }
 
 export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBindingInput<T>): {
@@ -225,10 +273,11 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
         job_id: jobId,
         principal_ref: context.principal_ref,
         credential_generation: context.credential_generation,
+        deployment_generation: input.deployment_generation,
         request_identity_digest: identity.digest,
       });
       if (binding.state === "CANCEL_REQUESTED") {
-        failWorkflow("exhaustive Workflow was cancelled", 409, false);
+        throw new ExhaustiveWorkflowBindingError("RESEARCH_CANCELLED", "exhaustive Workflow was cancelled", 409, false);
       }
       let instance: WorkflowInstance;
       try {
@@ -242,7 +291,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
     async status(context, instanceId) {
       requireOwner(context);
       const id = workflowId(instanceId);
-      const binding = await readWorkflowBinding(input.database, id, context);
+      const binding = await readWorkflowBinding(input.database, id, context, input.deployment_generation);
       let instance: WorkflowInstance;
       try { instance = await workflow.get(id); }
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }
@@ -251,7 +300,7 @@ export function createExhaustiveWorkflowBinding<T>(input: ExhaustiveWorkflowBind
     async cancel(context, instanceId) {
       requireOwner(context);
       const id = workflowId(instanceId);
-      const binding = await readWorkflowBinding(input.database, id, context);
+      const binding = await readWorkflowBinding(input.database, id, context, input.deployment_generation);
       let instance: WorkflowInstance;
       try { instance = await workflow.get(id); }
       catch { failWorkflow("exhaustive Workflow status is unavailable"); }

@@ -10,6 +10,7 @@ import type { Env } from "./env.js";
 import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
 import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
+import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -149,6 +150,14 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
   public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
     const params = parseParams(event.payload);
     if (params.workflow_kind === "EXHAUSTIVE_QUERY") {
+      if (params.deployment_generation !== this.env.DEPLOYMENT_GENERATION) {
+        failWorkflow("WORKFLOW_AUTHORITY_STALE");
+      }
+      try {
+        await validateExhaustiveWorkflowPayload(this.env.CORE_DB, params, this.env.DEPLOYMENT_GENERATION);
+      } catch (error) {
+        failWorkflow(error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_AUTHORITY_STALE");
+      }
       const request = new Request("https://workflow.internal/api/v1/research/query", {
         method: "POST",
         headers: { "idempotency-key": params.idempotency_key },
@@ -160,13 +169,20 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         credential_generation: params.credential_generation,
         trace_id: `workflow-${params.operation_id}`,
       };
-      const result = await step.do("q8-exhaustive-job", async () =>
-        createExhaustiveQueryService(this.env).query(context, params.exhaustive_request));
-      // Workflow step results are durable payloads. Keep the Q8 receipt under
-      // the same canonical envelope limit as every ER09 checkpoint result.
-      if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
-        failWorkflow("WORKFLOW_INPUT_INVALID");
-      }
+      const result = await step.do("q8-exhaustive-job", async () => {
+        try {
+          await validateExhaustiveWorkflowPayload(this.env.CORE_DB, params, this.env.DEPLOYMENT_GENERATION);
+        } catch (error) {
+          failWorkflow(error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_AUTHORITY_STALE");
+        }
+        const output = await createExhaustiveQueryService(this.env).query(context, params.exhaustive_request);
+        // Workflow step results are durable payloads. Keep the Q8 receipt under
+        // the same canonical envelope limit as every ER09 checkpoint result.
+        if (new TextEncoder().encode(JSON.stringify(output)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+          failWorkflow("WORKFLOW_INPUT_INVALID");
+        }
+        return output;
+      });
       return result;
     }
     const principal: WorkflowPrincipal = {
