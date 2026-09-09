@@ -156,6 +156,7 @@ const consent = flag("--consent");
 const skipEliot = flag("--skip-eliot-extension");
 const skipWorkspace = flag("--skip-workspace");
 const skipGcloud = flag("--skip-gcloud");
+const includeGcloud = flag("--include-gcloud");
 const geminiCommand = argumentValue("--gemini-command") ?? "gemini";
 const workspaceRef = argumentValue("--workspace-ref") ?? WORKSPACE_EXTENSION_REF;
 const gcloudRef = argumentValue("--gcloud-ref") ?? GCLOUD_EXTENSION_REF;
@@ -163,13 +164,16 @@ const gcloudRef = argumentValue("--gcloud-ref") ?? GCLOUD_EXTENSION_REF;
 if (installExtensions && !consent) {
   throw new Error("--install-extensions requires --consent because Gemini extension installation executes third-party code");
 }
+if (includeGcloud && skipGcloud) {
+  throw new Error("--include-gcloud and --skip-gcloud cannot be used together");
+}
 
 const existing = await readSettings(settingsPath);
 const next = configuredSettings(existing, endpoint);
 const installationPlan = [
   ...(skipEliot ? [] : [{ name: "eliot-research", source: extensionDirectory, ref: undefined }]),
   ...(skipWorkspace ? [] : [{ name: "google-workspace", source: WORKSPACE_EXTENSION_URL, ref: workspaceRef }]),
-  ...(skipGcloud ? [] : [{ name: "gcloud", source: GCLOUD_EXTENSION_URL, ref: gcloudRef }]),
+  ...(includeGcloud && !skipGcloud ? [{ name: "gcloud", source: GCLOUD_EXTENSION_URL, ref: gcloudRef }] : []),
 ];
 
 if (dryRun) {
@@ -178,6 +182,7 @@ if (dryRun) {
     mode: "DRY_RUN_NO_MUTATION",
     settings_path: settingsPath,
     settings: next,
+    gcloud_ref: includeGcloud && !skipGcloud ? gcloudRef : null,
     extensions: installationPlan.map((item) => ({
       name: item.name,
       source: item.source,
@@ -204,5 +209,5 @@ process.stdout.write(`${JSON.stringify({
   secrets_written: false,
   extension_installation: installExtensions ? "REQUESTED" : "NOT_REQUESTED",
   workspace_ref: skipWorkspace ? null : workspaceRef,
-  gcloud_ref: skipGcloud ? null : gcloudRef,
+  gcloud_ref: includeGcloud && !skipGcloud ? gcloudRef : null,
 }, null, 2)}\n`);

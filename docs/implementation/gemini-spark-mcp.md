@@ -3,17 +3,29 @@
 ## Status
 
 `IMPLEMENTED_NOT_LIVE` after deterministic protocol, authorization, setup, and negative fixtures pass.
-Live qualification requires a deployed dedicated Cloudflare Access service-token round trip plus real
-Google Workspace and gcloud action/readback receipts.
+Live qualification is profile-specific: the selected Workspace profile requires a deployed dedicated
+Cloudflare Access service-token round trip plus real Google Workspace action/readback receipts. The
+optional Cloud profile additionally requires its gcloud action/readback receipts when explicitly
+selected; gcloud is not a Workspace readiness dependency.
 
 ## Relation to the canonical ChatGPT transport
 
-ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 require Day-0 ChatGPT **Google Drive Exchange**.
-ER-36 is an optional Gemini service integration, not a replacement ADR or the Drive adapter.
+ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 describe the historical Day-0 ChatGPT **Google Drive
+Exchange** profile. Those requirements apply to that separate custom server-owned profile; they are
+not a prerequisite for the active Workspace MCP selection recorded on 2026-09-09.
+ER-36 is an optional Gemini service integration, not a replacement ADR or that custom Drive adapter.
 `GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp` currently enables only this no-effect helper. The existing
 mutual-exclusion check still disables its sync tools in `drive-exchange` mode; that flag alone does
 not implement Drive. Do not activate a second ChatGPT write transport. Missing Drive OAuth, leased
-cursor, freeze/reconciliation and delivery implementations remain mandatory Launch 07 work.
+cursor, freeze/reconciliation and delivery implementations remain open for the separate, unfinished
+server-owned ChatGPT Drive Exchange profile; they are not prerequisites for the selected Workspace
+MCP profile.
+
+The active 2026-09-09 user scope is Workspace/Google Drive through the official Gemini client MCP.
+The default Gemini setup is Workspace-only and does not require ELIOT to provision or own a Google
+Cloud project, Cloud OAuth client, Vertex route, or Gemini API key. gcloud and Google AI
+Studio/Gemini API are optional future profiles and are not live-qualified here. The unfinished
+server-owned ChatGPT Drive Exchange remains a separate unselected product path.
 
 ## Runtime contour
 
@@ -69,8 +81,10 @@ The setup pins reviewed source commits for:
 
 ```text
 gemini-cli-extensions/workspace  089927ead01433f38c65c12cdcd2ed9a18165277
-gemini-cli-extensions/gcloud     ec545cd8252d33c83f02b97939690b8ae16888ef
 ```
+
+The pinned `gemini-cli-extensions/gcloud` ref remains available only through the explicit optional
+Cloud profile; it is not a default or Drive readiness dependency.
 
 Update these only after reviewing upstream changes and rerunning deterministic setup/security fixtures.
 A Gemini subscription does not imply Google Cloud project billing, IAM, API enablement, OAuth consent,

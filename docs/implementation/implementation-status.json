@@ -46,7 +46,7 @@
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
         "apps/eliotr-core/src/exhaustive-query-service.ts, apps/eliotr-core/src/exhaustive-workflow-service.ts and packages/cloudflare-navigation/src/exhaustive-query-service.ts: versioned Q8 EXHAUSTIVE_JOB parser/runtime over admitted normalized manifests, persisted structural ranges, batched owner authority and pinned R2 evidence",
         "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts and infra/d1/core/migrations/0024_exhaustive_workflow.sql: durable Workflow binding with request/principal/credential/deployment identity, current-policy checks, cancel intent readback and terminal output validation",
-        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 8 local Q1 boundary cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry, actual DELETE cancellation/no-resume control, withdrawal during async inventory, and a small selected scope with 65 active policies; the 65-source case uses one Q1 import plus canonical admitted/projected D1/R2 fixture rows",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 8 local Q1 boundary cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry, actual DELETE cancellation/no-resume control, withdrawal during async inventory, and a small selected scope with 65 active policies; the 65-source case uses one Q1 import plus canonical admitted/projected D1/R2 fixture rows, and the import/projection HTTP and withdrawal-race cases use explicit 20-second per-test integration deadlines for their fresh D1/R2 setup and durable Workflow work",
         "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; the existing research.query operation launches/status-reads/cancels the durable Workflow locally, while deployed Workflow/live Access, live user-loop handles, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
       ]
     },
@@ -185,7 +185,7 @@
       "completion_evidence": [
         "MCP version/body/principal negative tests",
         "secret-free idempotent setup fixture",
-        "live Access initialize/tools/call and Google Workspace/gcloud exact readback receipts",
+        "live Access initialize/tools/call and exact readback receipts for the selected profile; default Workspace/Drive qualification is independent of optional gcloud/Google Cloud",
         "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
         "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]

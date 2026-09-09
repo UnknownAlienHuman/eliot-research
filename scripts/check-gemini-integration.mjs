@@ -70,11 +70,35 @@ try {
   );
   assert.deepEqual(
     plan.extensions.filter((entry) => entry.name !== "eliot-research").map((entry) => entry.ref),
-    [
-      "089927ead01433f38c65c12cdcd2ed9a18165277",
-      "ec545cd8252d33c83f02b97939690b8ae16888ef",
-    ],
+    ["089927ead01433f38c65c12cdcd2ed9a18165277"],
   );
+  assert.deepEqual(plan.extensions.map((entry) => entry.name), ["eliot-research", "google-workspace"]);
+  assert.equal(plan.gcloud_ref, null);
+
+  const cloudProfile = spawnSync(process.execPath, [
+    setupPath,
+    "--endpoint", "https://research.example.test/mcp",
+    "--settings", settingsPath,
+    "--include-gcloud",
+    "--dry-run",
+  ], { cwd: root, encoding: "utf8", env: environment });
+  assert.equal(cloudProfile.status, 0, cloudProfile.stderr);
+  const cloudPlan = JSON.parse(cloudProfile.stdout);
+  assert.deepEqual(cloudPlan.extensions.map((entry) => entry.name), ["eliot-research", "google-workspace", "gcloud"]);
+  assert.equal(cloudPlan.gcloud_ref, "ec545cd8252d33c83f02b97939690b8ae16888ef");
+  assert.equal(await readFile(settingsPath, "utf8"), original, "dry-run profile mutated settings");
+
+  const conflictingProfile = spawnSync(process.execPath, [
+    setupPath,
+    "--endpoint", "https://research.example.test/mcp",
+    "--settings", settingsPath,
+    "--include-gcloud",
+    "--skip-gcloud",
+    "--dry-run",
+  ], { cwd: root, encoding: "utf8", env: environment });
+  assert.notEqual(conflictingProfile.status, 0);
+  assert.match(conflictingProfile.stderr, /cannot be used together/u);
+  assert.equal(await readFile(settingsPath, "utf8"), original, "invalid profile mutated settings");
 
   const apply = spawnSync(process.execPath, [
     setupPath,

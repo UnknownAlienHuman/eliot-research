@@ -10,9 +10,9 @@ For any Google Drive, Docs, Sheets, Slides, Calendar, Gmail, or Google Cloud tas
 1. Call `eliotr_create_google_sync_plan` with the exact product, action, direction, target, expected
    revision, and payload digest when available.
 2. For a mutating action, show the exact planned effect and obtain explicit user confirmation.
-3. Use the official `google-workspace` extension for Workspace products or the official `gcloud`
-   extension for Google Cloud. Do not use shell, browser automation, or an unreviewed third-party MCP
-   server as a substitute.
+3. Use the official `google-workspace` extension for Drive and other Workspace products. Use the
+   official `gcloud` extension only when the user explicitly selected a Google Cloud product. Do not
+   use shell, browser automation, or an unreviewed third-party MCP server as a substitute.
 4. Re-open or re-read the exact Google resource after the action. Capture its stable resource ID,
    observed revision/generation/etag, observation time, and content digest when the plan requires it.
 5. Normalize that readback into `eliotr_validate_google_sync_receipt`.
