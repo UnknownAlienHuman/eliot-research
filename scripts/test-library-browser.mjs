@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
+import { resolveLocalBrowserExecutable } from "./lib/local-launch.mjs";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -84,9 +85,12 @@ async function until(test, label, milliseconds = 10000) {
   throw new Error(`Browser deadline: ${label}`);
 }
 async function executable() {
-  const candidates = [process.env.ELIOTR_BROWSER_EXECUTABLE, "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
-  for (const candidate of candidates.filter(Boolean)) { try { await access(candidate); return candidate; } catch { /* Try installed alternative. */ } }
-  throw new Error("Chromium is required; set ELIOTR_BROWSER_EXECUTABLE to the installed executable");
+  // Deterministic discovery shared with the owner-e2e harness: explicit
+  // ELIOTR_BROWSER_EXECUTABLE wins, otherwise only fixed OS standard paths
+  // (Windows Chrome standard paths present on this host, Linux /usr/bin/* for
+  // CI). Clear fail when absent; no registry/network probing and no arbitrary
+  // executables.
+  return resolveLocalBrowserExecutable();
 }
 try {
   await access(resolve(dist, "index.html"));

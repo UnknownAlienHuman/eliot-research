@@ -1,195 +1,115 @@
-# Launch 01 — Source ingest and owner Library
+# Launch 01 / #98 — Finish the usable Library and source-ingest loop
 
-Status: #89 checkpoint merged into main as `5d7ea2a` at the owner's explicit request.
-Unfinished L2/L4/L6 acceptance is tracked by #98; this is not Launch 01 completion.
-Owners: ER-25 UI, ER-21 transport, ER-13/14/29/37 ingest. Integration: ER-24 composition and ER-26 local setup.
-Read `../local-launch.md`, `../gap-register.md`, the named packets, `packages/interfaces/src/owner-api.ts`,
-`apps/eliotr-core/src/ingest-http.ts`, `ingest-service.ts`, and `packages/contracts/src/normalized-bundle.ts`.
-If a referenced module moved, resolve it from the package barrel before editing; do not recreate it.
+This continues merged #89; its historical implementation remains accepted only for the checkpoints
+actually tested. Code baseline f94bd7a. Follow [execution-contract.md](execution-contract.md).
+Canonical reading: ELIOT_RESEARCH §§2–4 (especially 4.1–4.5 and 4.10), §§12.1,13.1–13.3,
+15.1–15.5,19.2,19.5; LANGUAGE_RUNTIME_CONTRACT §§4–8. Owning packets: ER-05/14/29/30/37/44;
+ER-21/24 shared transport, ER-25 PWA, ER-13 SQL, ER-27 browser integration.
 
-## Result
+## Reuse
 
-An owner can initialize required namespace/admission policy, import an existing normalized bundle,
-observe durable ingest and projection readiness, browse permitted sources/revisions and select a source
-for Corpus Lens or retrieval. Do not add OCR, PDF parsers or a second normalization engine to the Worker.
-External normalization remains an explicit input boundary, not a fabricated conversion success.
+Normalized-folder prepare/parts/complete/commit, same-tab and reload recovery, read-only lost-ID
+folder discovery, explicit local namespace/read policy, authorized Library/catalog and recorded-only
+revision history already exist. Use `apps/eliotr-core/src/{ingest-service,catalog-service,source-revisions}.ts`,
+`packages/retrieval/src/projection.ts`, `packages/domain/src/{source-admission,qualification,project-membership}.ts`,
+existing platform ingest/projection adapters and `docs/implementation/local-launch.md`.
+Do not replace these with a demo uploader, duplicate corpus or browser-persisted tokens/files.
 
-## Small sequential checkpoints
+Checkpoint numbering below supersedes the old L0/L2c/L4a/L4b/L6 shorthand; their unfinished acceptance
+is retained, not erased. Each numbered checkpoint is one bounded claim; split an adapter from its caller
+when necessary, retaining the same acceptance ID.
 
-- [x] L1. Audit the existing ingest HTTP request/result contracts and fixtures. Implement a bounded PWA
-  normalized-bundle input validator and strict transport decoders. Reject unsafe/duplicate/missing paths,
-  oversized files, hash/manifest mismatch and response identity drift before the next effect.
-- [ ] L2. Connect a visible owner import panel to prepare -> multipart parts -> exact file completion ->
-  admission commit -> durable status. Retain stable request identity during retries; never retry a
-  potentially committed mutation blindly. Cancellation stops future calls; an uncertain result requires
-  status/readback. ADMITTED is not INDEXED; rejection/quarantine is not success.
-- [x] L3. Provide explicit LOCAL initial immutable-import namespace/admission-policy initialization with
-  absent-state guards and exact replay/readback. Existing read-policy grant is separate. Other ownership
-  modes, policy updates and remote administration are not implemented by this command.
-- [ ] L4. Implement authorized cursor-paginated projects/sources/revision views and readiness. Audit the
-  current catalog's principal scope before exposing titles. Reject cross-principal/project cursor reuse;
-  do not disclose source metadata excluded by current policy or purge.
-- [x] L5. Wire source selection to the existing orientation panel; replace only working navigation buttons.
-  Keep all data generation-bound, clear it on logout/offline/policy denial, and avoid private SW caching.
-- [ ] L6. Add a populated clean-local browser loop through actual Worker/D1/R2, restart/replay, lost ACK,
-  partial upload, invalid policy/owner, logout race and provider-outage cases. No live Access bypass.
+## Local implementation checkpoints
 
-Each checkpoint is one bounded commit, preferably 2–5 related files and its negative test. A checkpoint
-may split further; never compress the whole topic into one agent-sized task. ER-25 owns PWA files;
-shared contracts/routes/migrations need their existing packet's integration permission and synchronized
-manifest/document entries. Keep source files <600 lines and packages <10k source lines.
+### L1 — Real-browser, real-local-storage harness (may start immediately)
 
-## Tests and completion
+Files: ER-25 PWA tests; proposed `tests/integration/browser/library.spec.ts` and harness under ER-27;
+ER-00 alone adds pinned dev-only Playwright/lockfile and `pnpm test:owner-e2e` (NEW command).
+Launch the actual built PWA and Worker with all D1 migrations and isolated R2. Use the existing local
+owner bridge and a controlled signed issuer, never an auth-off switch. Stub only external Google/AI
+responses, not the application's API, SQL, R2, crypto or routes. Test fresh setup, 401 denial, successful
+owner Library access, restart persistence, logout and teardown. PASS: assertions observe real stored
+state and UI; unrelated development databases remain untouched. Include browser error/console checks
+and failed-start cleanup. This is not a real Access-provider qualification.
 
-Run `pnpm check:affected`, strict Workers fixture typecheck, `pnpm local:smoke`, `pnpm cf:dry-run` and
-exact-head CI. Add PWA unit tests and actual Workers integration tests for the above cases, plus a
-browser-level import -> status -> Library -> Lens loop. Representative RU/EN/code/table bundles must
-use exact admitted bytes; no seeded fixture may be described as a real provider receipt.
+### L2 — Governed ordinary-file ingress (ER-14/29/37, transport ER-21/24)
 
-The checkpoint PR is merged; #98 remains open until L1–L6 pass. A docs-only diff or green boot test does not close the theme.
-Update implementation status and gap register for exact changed contours, preserving NOT_EXECUTED live
-receipts. No remote deployment until mandatory launch code is complete. Dependencies: none for initial
-implementation. Topic 02 consumes admitted sources; topic 07 imports through this same boundary.
+Add the bounded raw-file acquisition path missing from §4.1 behind the existing admission/residency
+interfaces. Persist candidate/intent, stream staging bytes, verify declared length/media/hash and exact
+readback; require current namespace owner, usage/disclosure/retention and an admitted immutable source
+before later evidence use. Original and derivative identities remain separate; no fabricated normalized
+manifest supplied by the browser. Register any additive DTO/migration with ER-01/13 first.
+Tests: empty/oversize/corrupt media, changed hash, missing/withdrawn grant, retention conflict, duplicate
+and lost ACK at each write. PASS: one intended revision/receipt/outbox on exact replay; rejected or
+quarantined content cannot reach retrieval/model context; buffered R2 data stays <=8 MiB.
 
-## Implemented checkpoint — initial import panel
+### L3 — Managed conversion adapter and qualification (after L2)
 
-L1 and the initial L2 connected path are implemented: a folder is bounded/validated, snapshotted and
-hashed once; the actual owner API performs prepare, sequential multipart upload, file completion,
-admission and final durable status readback. The panel exposes progress, stop-sending and explicit
-status inspection. Admission does not imply read access or search readiness. L2 remains unchecked
-until safe partial-upload resume and its remaining failure/UI coverage are complete. The local initial-import profile in L3 is implemented below; L4 and full L6 remain open; the Library-to-Lens selection below closes L5.
+Files: ER-05 `projection.ts`, ER-29 `qualification.ts`; new bounded managed-conversion adapter belongs
+to the existing platform/ER-16 owner, not a Worker PDF/OCR engine. Check the selected official toMarkdown
+contract when implementing and record its version; use fixed approved bindings, explicit budget/deadline,
+no blanket provider retries. Persist output/readback before qualification. Build deterministic structure
+only where mappings exist; retain loss/quality warnings rather than inventing pages, tables or exactness.
+Tests: supported PDF/Office/HTML/CSV recorded responses, empty/truncated/corrupt text, login/soft-404,
+missing coordinates, malformed/oversized reply, timeout/cancel/lost result. PASS: valid source converges
+on existing normalized/projection contract; bad extraction produces typed rejection/degradation, never
+false structure_qualified/exact_ready. Genuine conversion quality remains a later live test.
 
-The prepare response now includes the server's `manifest_sha256`: the canonical authority digest,
-NOT the raw manifest-file checksum. Strict clients require a coordinated update; the new PWA rejects
-old/mismatched prepare responses rather than calculating a second canonical identity. Existing stored
-manifest fingerprints and schema generations do not change; no migration/backfill is required.
+### L4 — Current per-channel readiness (after L3 and #90 Q1)
 
-Actual local Worker/D1/R2 testing also closes two inherited ingest defects: validated multipart streams
-now preserve a known length via Workers FixedLengthStream, and exact prepare replay uses the original
-reservation's expected head rather than the head changed by its own successful commit. Current owner,
-policy and complete request fingerprint checks still run. Multipart ETags are validated as bounded
-opaque R2 tokens, not application identifiers. No source/index/read-grant authority is fabricated.
+Reuse `source-revisions.ts`, ChannelReadiness, projection manifests/watermarks/receipts and Library panels.
+Read the exact current source/project/parser/index generations; distinguish unrecorded, queued, running,
+ready, degraded, failed, stale and redacted. Keep the existing RECORDED_ONLY view explicitly separate
+from active assessment. Do not probe a provider or mutate grants/indexes from a history GET.
+Tests: admission without projection, outbox pending, partial generation, stale ready row, retired generation,
+purge/head change during read and dependency outage. PASS: no ready claim without its current required
+readback/receipt; metadata cannot count as verified evidence; UI states agree with actual local projection.
 
-The owning ER-25 packet delegates the narrow integration edits in ER-14 `ingest-multipart.ts`, ER-37
-`d1-ingest-authority.ts`, ER-29 `ingest-service.ts` and ER-21 `owner-api.ts`/`ingest-http.ts` for this
-checkpoint. Existing owners remain unchanged. New cross-layer tests are
-`tests/bundle-import.test.ts` and `apps/eliotr-core/test/bundle-import-http.test.ts`; PWA paths remain
-under ER-25. This integration permission does not permit parallel edits to those files.
+### L5 — Projects and membership without corpus copies (independent of L3)
 
-The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
-finished Library product or upload it to Cloudflare for continued development.
+Files: ER-30 `project-membership.ts`/scope service; ER-13 existing project/membership tables;
+ER-21/24 APIs; ER-25 Library project panel. Implement authorized create/edit/attach/detach with expected
+revision, idempotent intent/receipt and validity intervals. Reuse global Source and immutable revision.
+Membership changes invalidate dependent scopes/Atlas/results and schedule only rebuildable projections;
+joining a project never grants source access. Existing imported/federated ownership cannot be overwritten.
+Tests: two competing title/membership writes, lost ACK, duplicate attach, expired membership, foreign
+source, policy withdrawal and one source in two projects. PASS: exactly one CAS winner; one canonical
+object within equal residency; no cross-residency physical/key reuse; UNION/INTERSECT/EXCEPT remain exact.
 
+### L6 — Finish interruption and recovery UI (after L2; retain prior recovery code)
 
-## Authorized Library checkpoint
+Use existing import panels and recovery/discovery APIs. Handle reauthentication, unavailable or changed
+reselected files, expired reservation, server restart, lost prepare/complete/commit reply and uncertain
+outcomes. The user explicitly resumes the SAME operation; read-only discovery never writes. Clear private
+panels on logout/denial/offline; cancelled/out-of-order responses cannot repopulate them. Do not keep source
+bytes, credentials or token-bearing URLs in localStorage/IndexedDB/service-worker caches.
+Tests in L1 browser harness plus real D1/R2: interrupt each boundary, reload, rediscover, resume; then
+withdraw policy and repeat. PASS: one source revision/head/outbox, no silent replacement upload, no stale
+private data and actionable typed error/status. Existing known-ID/lost-ID positives remain passing.
 
-L4 has owner-policy-filtered source-head/project pagination, authorized revision history and strict PWA
-decoding. Channel states are recorded-only; active projection-readiness assessment and project editing remain open. Projects are visible only with a
-currently readable admitted source through active membership; hidden and absent project filters both
-return an empty page. Read policies, admission digests, owner generations, purge state and a primary D1
-mutation/time fence are checked before output. v2 cursors bind session/deployment/project and expire;
-they are navigation tokens, not authentication or a frozen corpus denominator.
+### L7 — Complete acceptance loop (after L1–L6, #90 Q2/Q3 and #91 N2)
 
-L5 uses the real PWA Library buttons and existing orientation request, not a duplicated scope resolver.
-Private panels clear on offline/authorization failure and page exit; late responses cannot repopulate
-an obsolete page. The browser regression runs the actual built PWA with controlled HTTP fixtures.
-Separate Workers/D1 tests run the real catalog -> PWA decoder -> orientation path, including revocation,
-corruption, current membership, borrowed cursors, database failure and time-only expiry.
+From empty isolated stores use supported setup, not fixture INSERTs for final acceptance: initialize
+namespace, explicitly grant read access, import both a raw file and a prepared normalized folder,
+create two projects, attach one source to both, inspect revisions/readiness, select scope, open Lens
+and a pinned exact evidence fragment. Restart and repeat; then revoke/purge and verify UI/API denial.
+Use RU/EN text, code and a table with units/conditions. External conversion/IdP may be controlled and
+labelled; storage/runtime must be real. PASS: every displayed fact maps to the persisted exact revision;
+no duplicated corpus, implicit grant, fabricated page or ready/complete label.
 
-The real MCP catalog previously reused the unscoped reader. It now rejects calls before D1 and is hidden
-from discovery until Launch 07 supplies explicit service-scope read authority. Keep #98 open:
-active readiness assessment/project editing, remaining failure UI and the full populated browser import-to-evidence
-loop still need off-account implementation and acceptance. Real IdP testing is a separate live gate.
+## Tests, commands and completion
 
+Run execution-contract.md commands, existing ingest/catalog/history/recovery tests, the NEW L1 harness
+once implemented, and exact-head Linux/Windows CI. Suggested new focused tests must be registered under
+ER-27 `tests/integration/` or the owning packet, not random unowned directories. All L1–L7 are required
+for Library code completion; merging a checkpoint must retain the rest. PWA initial JS <=600 KiB gzip;
+ordinary JSON <=256 KiB, semantic reply <=512 KiB, with existing smaller limits preserved.
 
-## Initial namespace and explicit upload continuation
+## Cloudflare/Google tests only after O7 entry approval
 
-`pnpm local:owner --initialize-namespace path/to/namespace.json` initializes only an absent ERC-owned
-immutable-import namespace under a Worker-verified owner identity. The full command/profile is in
-`../local-launch.md`. Policy is written and read back before guarded owner activation; an interrupted
-policy-only state cannot admit sources. Exact retries reconcile the same rows. No takeover, owner
-reactivation, broad policy update, read grant, remote target or hidden browser administration exists.
-
-Same-tab Resume retains the original bytes, operation key, prepared session and acknowledged parts.
-It reads durable status before continuing; a committed result needs no new upload. Unknown part or
-complete acknowledgements repeat only the same explicit slot/parts; no automatic retry or new identity
-is introduced. A page exit, offline event, sign-out or denied response clears private in-memory state.
-Known-operation cross-session continuation is implemented below; L2/L6 retain their remaining acceptance.
-
-Continuation and promotion re-read the current namespace owner and exact admission-policy bytes. The
-final D1 source/head/outbox batch also guards those bytes, so policy substitution after precheck rolls
-back canonical admission. R2 staging/promotion alone remains insufficient to create source authority.
-Tests cover lost acknowledgements at all three upload boundaries, no resend of acknowledged parts,
-withdrawal before continuation, and a policy change immediately before the actual D1 transaction.
-
-ER-44 owns the narrow local initializer and signed-owner storage test; ER-37 owns the extracted current
-policy adapter and transaction guard. ER-25 owns the browser in-memory checkpoint and UI fixtures.
-No migration or canonical stored identity rewrite is required. The new initial owner-token family is
-specified in ER-44 and must join Launch 09 differential vectors before authority promotion.
-
-Cloudflare agent work is assigned in [cloudflare-handoff.md](cloudflare-handoff.md), with separate
-checklists in #89–#97. A missing account does not block the unfinished local Library/revision/browser
-work. Issue #98 stays open until the remaining code acceptance passes.
-
-
-## Known-operation recovery after reload
-
-The owner reselects the exact normalized folder and enters the retained operation ID. The protected
-`GET /api/v1/ingest/bundles/:operation_id/recovery` returns `eliotr.ingest-recovery.v1` with the original
-reservation key, file hashes, byte total, canonical manifest digest and current status. Principal,
-current ownership and admission-policy checks are identical to status reads; unknown/foreign operations
-reveal no recovery metadata. The browser compares every file hash and byte total before any mutation.
-It rechecks status/generation and uses the existing identity; terminal receipts need no upload or commit.
-
-With `parts: []`, existing file completion is reconciliation-only: verify the exact materialized object
-and completion receipt, or repair a lost receipt from verified bytes. No multipart completion is invoked
-with empty/invented parts. `STAGING_FILE_NOT_COMPLETED` alone permits explicitly resending the original
-incomplete-file slots; other failures block. Current policy is still checked at final D1 admission.
-No automatic retry, browser credential/source persistence, new migration or canonical identity change.
-
-Tests cover before/after part, completion and commit loss across discarded client state in real local
-Workers/D1/R2, lost completion-receipt repair, changed files, policy withdrawal and foreign/unsigned
-recovery. The built-PWA Chromium test reloads, reselects files and reopens an admitted operation using
-only authenticated-read-shaped fixture calls. Its HTTP backend is controlled; it does not qualify the
-full real-storage browser lifecycle or live Access.
-
-## Exact-folder discovery when the operation ID was lost
-
-The connected Find previous upload action posts only manifest, full file hashes and byte total to the
-bounded authenticated `/api/v1/ingest/bundles/discover` endpoint. It reads the existing UNIQUE
-source_revision_ref for the current principal, checks canonical manifest/file identity and rechecks
-current owner/policy after digest computation. It returns the unchanged recovery-v1 envelope with the
-original operation/key/session. No new index, schema, reservation, read grant or R2 action is introduced.
-
-A user must explicitly Resume after discovery. Missing/foreign operations share 404; changed input,
-expired uploads, withdrawn policy and ambiguous reads never trigger a fresh prepare. Browser metadata
-and original bytes are frozen before requests; nothing is persisted to browser storage. Recovery still
-requires the exact reselected folder and existing server state. A PREPARING reservation with no session
-or a lost final commit acknowledgement can reuse the original continuation path.
-
-Tests exercise real Worker/D1/R2 with lost prepare replies, PREPARING state, interrupted part/commit,
-no-write discovery, foreign/unsigned denial, altered metadata/bytes, expiry and withdrawal. A service
-negative forces revocation during discovery's final authority reread. The built-PWA Chromium fixture
-reloads without an ID, discovers read-only, and explicitly resumes terminal reconciliation. Its backend
-is controlled; full initial-setup/partial-upload/browser/storage acceptance remains in #98 along with
-active readiness assessment/project editing. No live Cloudflare qualification is inferred.
-
-## L4a metadata-history checkpoint
-
-The actual Library now opens a read-only, bounded revision page for a visible source. The Worker reuses
-catalog policy/admission validation and rechecks the current owner, each historical admission digest,
-purge state and the primary D1 epoch/temporal fence before output. Pages use source/session/credential/
-deployment/expiry-bound cursors; inaccessible versions and their counts are not disclosed.
-
-The panel displays recorded `ChannelReadiness` with original generation, timestamp, receipt and reasons,
-and clearly distinguishes absent records. Every response declares `readiness_basis: RECORDED_ONLY`;
-there is no provider call or fabricated active-index success. A stored `ready` value alone cannot close
-the active-readiness portion of L4a or the exact-query/evidence acceptance in #90.
-
-New Worker/D1 tests cover historical corruption, pagination, hidden heads/versions, stale/foreign cursors,
-authority withdrawal/purge/time races and bounded stored metadata. PWA tests and the built-PWA Chrome
-fixture cover strict decoding, pages, recorded-state rendering, auth/deployment loss and cancelled late
-responses. That browser fixture has controlled HTTP responses; full real-storage lifecycle L6 remains open.
-ER-21 owns additive owner DTO/route, ER-24 the shared read fence/reader/HTTP tests, ER-25 the PWA/test
-integration. Ownership manifest and packet lists are synchronized. No schema, identities, grants,
-provider configuration, evidence authority or release gate changes.
+Run the SAME owner upload/recovery/project/history/Lens loop with signed real Access, actual multipart
+R2/D1 and managed conversion. Retain input/manifests/revision digests, per-channel generation/receipt,
+exact open/readback, duplicate/lost-ACK and withdrawal/purge observations. Missing maps must still lower
+precision. Record actual conversion quality and throughput against high-fidelity corpus, not HTTP 200.
+Use `cloudflare-handoff.md` Library matrix (the old #89 section now belongs to #98). No partial deployment;
+remote setup must use a governed adapter, never raw fixture SQL. Live state remains NOT_EXECUTED here.
