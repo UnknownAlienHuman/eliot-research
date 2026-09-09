@@ -193,3 +193,17 @@ responses. That browser fixture has controlled HTTP responses; full real-storage
 ER-21 owns additive owner DTO/route, ER-24 the shared read fence/reader/HTTP tests, ER-25 the PWA/test
 integration. Ownership manifest and packet lists are synchronized. No schema, identities, grants,
 provider configuration, evidence authority or release gate changes.
+
+## PR98 owner browser harness addendum (new L1, legacy L6 label)
+
+The actual owner browser harness now runs the built PWA with an isolated local Worker/D1/R2 profile,
+restarts and reads back the same namespace, and exercises the existing denial, logout, storage and
+cleanup boundaries. Namespace setup makes one mutation attempt and performs exact readback; only an
+explicit transient local-runner lock may retry a read-only readback. Marker creation failures clean
+their known-created temporary directory, and a timed teardown stops the dependent cleanup chain.
+
+The exact local verification command was `pnpm test:owner-e2e` with the configured local Chrome
+executable; it completed successfully in this worktree. The three deterministic checks also passed:
+phase ledger identity, readback retry classification and marker-failure cleanup. This closes the
+current PR98 new L1 harness boundary (the legacy L6 label), not the full Library L6/L7 product
+acceptance. Live Access/provider qualification remains `NOT_EXECUTED`.
