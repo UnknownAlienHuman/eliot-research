@@ -4424,6 +4424,7 @@ export async function runOwnerE2E() {
     assertPhaseNetwork(playwright, "post-restart", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases.post_restart = summarizePhaseLedger(playwright);
     receipt.persistence = "PASS";
+    playwright.resetLedger();
     try { await bridge.close(); } catch { /* replaced below */ }
     bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
     assert.ok(isChromiumSafePort(Number(new URL(bridge.origin).port)),
