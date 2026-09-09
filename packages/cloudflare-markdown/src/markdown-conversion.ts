@@ -1,7 +1,7 @@
 import {
   MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES,
   MARKDOWN_CONVERSION_MAX_ERROR_BYTES,
-  MARKDOWN_CONVERSION_MAX_INPUT_BYTES,
+  MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES,
   MARKDOWN_CONVERSION_MAX_MIME_BYTES,
   MARKDOWN_CONVERSION_MAX_NAME_BYTES,
   MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES,
@@ -9,6 +9,7 @@ import {
   type MarkdownConversionAdapter,
   type MarkdownConversionBounds,
   type MarkdownConversionContext,
+  type MarkdownConversionDispatchState,
   type MarkdownConversionFailure,
   type MarkdownConversionInput,
   type MarkdownConversionOptions,
@@ -79,7 +80,8 @@ function validContext(context: unknown): context is MarkdownConversionContext {
 }
 
 function validBounds(value: unknown): value is MarkdownConversionBounds {
-  return record(value) && safeBound(value.max_output_bytes, MAX_SAFE_BOUND) &&
+  return record(value) && safeBound(value.max_input_bytes, MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES) &&
+    safeBound(value.max_output_bytes, MAX_SAFE_BOUND) &&
     safeBound(value.max_tokens, MAX_SAFE_BOUND) &&
     safeBound(value.timeout_ms, MARKDOWN_CONVERSION_MAX_TIMEOUT_MS);
 }
@@ -95,6 +97,7 @@ function snapshotContext(value: MarkdownConversionContext): MarkdownConversionCo
 
 function snapshotBounds(value: MarkdownConversionBounds): MarkdownConversionBounds {
   return Object.freeze({
+    max_input_bytes: value.max_input_bytes,
     max_output_bytes: value.max_output_bytes,
     max_tokens: value.max_tokens,
     timeout_ms: value.timeout_ms,
@@ -124,8 +127,14 @@ function snapshotOptions(value: MarkdownConversionOptions | undefined): Markdown
   });
 }
 
-function failure(code: MarkdownConversionFailureCode, context?: MarkdownConversionContext): MarkdownConversionFailure {
-  return context === undefined ? { disposition: "FAILED", code } : { disposition: "FAILED", code, context };
+function failure(
+  code: MarkdownConversionFailureCode,
+  context?: MarkdownConversionContext,
+  dispatch_state: MarkdownConversionDispatchState = "NOT_STARTED",
+): MarkdownConversionFailure {
+  return context === undefined
+    ? { disposition: "FAILED", code, dispatch_state }
+    : { disposition: "FAILED", code, dispatch_state, context };
 }
 
 type MarkdownConversionFailureCode = MarkdownConversionFailure["code"];
@@ -206,8 +215,9 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
       const candidate = input;
       if (!boundedText(candidate.name, MARKDOWN_CONVERSION_MAX_NAME_BYTES) ||
           !(candidate.blob instanceof Blob) || candidate.blob.size < 1 ||
-          candidate.blob.size > MARKDOWN_CONVERSION_MAX_INPUT_BYTES || !validContext(candidate.context) ||
-          !validBounds(candidate.bounds) || !validConversionOptions(candidate.conversion_options)) {
+          !validContext(candidate.context) || !validBounds(candidate.bounds) ||
+          candidate.blob.size > candidate.bounds.max_input_bytes ||
+          !validConversionOptions(candidate.conversion_options)) {
         return failure("INPUT_INVALID");
       }
       const name = candidate.name;
@@ -218,6 +228,7 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
       const signal = candidate.signal as AbortSignal | undefined;
       if (signal?.aborted) return failure("ABORTED", context);
       let raw: unknown;
+      let dispatched = false;
       try {
         // The pinned workers-types package still spells this result field `mimeType`;
         // current binding documentation specifies the wire field `mimetype`. Decode
@@ -227,13 +238,15 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
           : ai.toMarkdown({ name, blob }, {
             conversionOptions: conversion_options,
           });
+        dispatched = true;
         raw = await awaitProvider(call, bounds.timeout_ms, signal);
       } catch (error) {
-        if (error instanceof AbortedSignal) return failure("ABORTED", context);
-        if (error instanceof TimeoutSignal) return failure("TIMEOUT", context);
-        return failure("PROVIDER_UNAVAILABLE", context);
+        const state = dispatched ? "OUTCOME_UNKNOWN" : "NOT_STARTED";
+        if (error instanceof AbortedSignal) return failure("ABORTED", context, state);
+        if (error instanceof TimeoutSignal) return failure("TIMEOUT", context, state);
+        return failure("PROVIDER_UNAVAILABLE", context, state);
       }
-      if (signal?.aborted) return failure("ABORTED", context);
+      if (signal?.aborted) return failure("ABORTED", context, "RESPONSE_RECEIVED");
       const request: MarkdownConversionInput = signal === undefined
         ? (conversion_options === undefined
           ? { name, blob, context, bounds }
@@ -242,11 +255,11 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
           ? { name, blob, context, bounds, signal }
           : { name, blob, context, bounds, conversion_options, signal });
       const decoded = decodeProviderResult(raw, request);
-      if (decoded.kind === "provider-error") return failure("PROVIDER_ERROR", context);
-      if (decoded.kind === "invalid") return failure("RESPONSE_INVALID", context);
-      if (decoded.kind === "empty") return failure("EMPTY_OUTPUT", context);
-      if (decoded.kind === "output-limit") return failure("OUTPUT_LIMIT_EXCEEDED", context);
-      if (decoded.kind === "token-limit") return failure("TOKEN_LIMIT_EXCEEDED", context);
+      if (decoded.kind === "provider-error") return failure("PROVIDER_ERROR", context, "RESPONSE_RECEIVED");
+      if (decoded.kind === "invalid") return failure("RESPONSE_INVALID", context, "RESPONSE_RECEIVED");
+      if (decoded.kind === "empty") return failure("EMPTY_OUTPUT", context, "RESPONSE_RECEIVED");
+      if (decoded.kind === "output-limit") return failure("OUTPUT_LIMIT_EXCEEDED", context, "RESPONSE_RECEIVED");
+      if (decoded.kind === "token-limit") return failure("TOKEN_LIMIT_EXCEEDED", context, "RESPONSE_RECEIVED");
       const dataBytes = new TextEncoder().encode(decoded.result.data).byteLength;
       const observation: MarkdownConversionObservation = {
         disposition: "CONVERTED",
@@ -260,6 +273,7 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
         data_sha256: await sha256(decoded.result.data),
         data_bytes: dataBytes,
       };
+      if (signal?.aborted) return failure("ABORTED", context, "RESPONSE_RECEIVED");
       return observation;
     },
   };

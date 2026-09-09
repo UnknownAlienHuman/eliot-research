@@ -15,4 +15,5 @@ export type {
   MarkdownConversionOutcome,
   WorkersAiMarkdownBinding,
 } from "./markdown-conversion-contract.js";
-export { MARKDOWN_CONVERSION_MAX_INPUT_BYTES } from "./markdown-conversion-contract.js";
+export { MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES } from "./markdown-conversion-contract.js";
+export type { MarkdownConversionDispatchState } from "./markdown-conversion-contract.js";

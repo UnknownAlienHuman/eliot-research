@@ -1,11 +1,11 @@
-export const MARKDOWN_CONVERSION_MAX_NAME_BYTES = 256;
+export const MARKDOWN_CONVERSION_MAX_NAME_BYTES = 512;
 export const MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_MIME_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_ERROR_BYTES = 512;
 export const MARKDOWN_CONVERSION_MAX_TIMEOUT_MS = 300_000;
-/** Application admission bound; this is not a claim about a provider limit. */
-export const MARKDOWN_CONVERSION_MAX_INPUT_BYTES = 256 * 1024;
+/** Existing application buffered-file ceiling; this is not a claim about a provider limit. */
+export const MARKDOWN_CONVERSION_MAX_BUFFERED_FILE_BYTES = 16 * 1024 * 1024;
 
 export type MarkdownConversionFormat = "markdown" | "text";
 
@@ -24,6 +24,7 @@ export interface MarkdownConversionContext {
 }
 
 export interface MarkdownConversionBounds {
+  readonly max_input_bytes: number;
   readonly max_output_bytes: number;
   readonly max_tokens: number;
   readonly timeout_ms: number;
@@ -59,6 +60,8 @@ export interface MarkdownConversionObservation {
   readonly data_bytes: number;
 }
 
+export type MarkdownConversionDispatchState = "NOT_STARTED" | "OUTCOME_UNKNOWN" | "RESPONSE_RECEIVED";
+
 export type MarkdownConversionFailureCode =
   | "INPUT_INVALID"
   | "ABORTED"
@@ -73,6 +76,7 @@ export type MarkdownConversionFailureCode =
 export interface MarkdownConversionFailure {
   readonly disposition: "FAILED";
   readonly code: MarkdownConversionFailureCode;
+  readonly dispatch_state: MarkdownConversionDispatchState;
   readonly context?: MarkdownConversionContext;
 }
 
