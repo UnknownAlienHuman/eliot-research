@@ -283,12 +283,15 @@
         "ER-31"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; full structural/Atlas materialization and live conformance remain open",
+      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; N1 structural SourceCard/DocumentMap materialization now reads admitted normalized R2 bytes and persists exact UTF-8 ranges through the same D1 store, while Atlas, evidence handles and live conformance remain open",
       "completion_evidence": [
         "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
         "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
         "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
-        "Full structural/Atlas navigation, R2 source-span expansion and remote live receipts NOT_EXECUTED"
+        "packages/retrieval/src/structural-navigation.test.ts: Unicode/nested exact-range, digest-mismatch and approximate-coordinate-gap cases",
+        "apps/eliotr-core/test/structural-navigation-q1.test.ts: actual Q1 HTTP import/projection, manifest/content R2 readback, D1 map persistence/replay and purge currentness rejection",
+        "packages/cloudflare-evidence/src/content-store.ts and packages/cloudflare-navigation/src/orientation-materialization.ts: bounded admitted-content reader and delegated structural adapter",
+        "N1 local structural path is implemented; native page/table/code maps, LIVE EvidenceHandles, Atlas/N2-N4, broad corpus, remote and live receipts remain NOT_EXECUTED"
       ]
     },
     {

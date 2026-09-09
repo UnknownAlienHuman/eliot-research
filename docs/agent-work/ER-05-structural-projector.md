@@ -12,6 +12,13 @@ outside the paths below.
 ## Owned paths
 
 - `packages/retrieval/src/projection.ts`
+- `packages/retrieval/src/structural-navigation.ts`
+
+Delegated integration paths:
+
+- `packages/cloudflare-evidence/src/content-store.ts` (bounded admitted-content reader)
+- `packages/cloudflare-navigation/src/orientation-materialization.ts` (delegated adapter)
+- `apps/eliotr-core/test/structural-navigation-q1.test.ts`
 
 ## Read only
 
@@ -28,16 +35,22 @@ outside the paths below.
 - Create stable section-level ProjectionItems from normalized structure without semantic chunking.
 - Preserve heading path, document context, offsets, taint, source revision and content hash.
 - Materialize projection source items to R2 Work before managed-index upload.
+- Derive SourceCard and DocumentMap navigation from exact admitted normalized bytes, preserving explicit
+  gaps for absent or approximate native coordinates and persisting through the existing immutable D1 store.
 
 ## Acceptance
 
 - Same admitted revision and projector generation produce identical item keys/hashes.
 - Items remain below target/hard byte budgets.
 - Project duplication is explicit and capacity-counted.
+- A Q1 HTTP import followed by local D1/R2 materialization reads back exact UTF-8 ranges, replays without
+  duplicate navigation rows, and rejects a purged source through the existing currentness authority.
 
 ## Mandatory negative boundary
 
 Supply mapping-free Markdown and prove the projector does not invent page, bounding-box, or table-cell coordinates.
+The structural navigation path must retain those coordinates as typed unresolved gaps and must never create
+EvidenceHandles or source grants.
 
 ## Handoff contract
 
