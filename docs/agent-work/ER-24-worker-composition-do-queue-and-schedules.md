@@ -202,9 +202,9 @@ WebSocket receipts remain `NOT_EXECUTED`; status is `IMPLEMENTED_NOT_LIVE`.
 
 ## Active local-first integration
 
-See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation and trace
-routes are active and tested through actual Worker/D1 dispatch; full structural navigation, research
-and live qualification remain separate gates. The integration library replaces moved core service
+See [`local-launch.md`](../implementation/local-launch.md). The owner metadata orientation, bounded
+FAST_SEARCH retrieval and trace routes are active and tested through actual Worker/D1 dispatch;
+full research products and live qualification remain separate gates. The integration library replaces moved core service
 implementations, rather than duplicating them. No new service or production language is introduced.
 
 
