@@ -1,6 +1,6 @@
 import type { D1Database, D1PreparedStatement } from "@cloudflare/workers-types";
 import { credentialSnapshot, sameGoogleCredentials, type GoogleCredentialSnapshot } from "./token-credentials.js";
-import { GoogleCredentialError, tokenBinding, type GoogleTokenBinding } from "./token-vault.js";
+import { GoogleCredentialError } from "./token-vault.js";
 import { intentBinding, oauthClock, oauthConfiguration, oauthDigest, oauthFail, oauthIdentifier, oauthOwner,
   validateOAuthIntent, type GoogleOAuthConfiguration, type GoogleOAuthIntent, type GoogleOAuthIntentStore, type GoogleOAuthOwner } from "./oauth-types.js";
 import { createD1GoogleCredentialStore } from "./google-token-store.js";

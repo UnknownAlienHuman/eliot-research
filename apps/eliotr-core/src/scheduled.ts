@@ -55,7 +55,7 @@ export async function handleScheduled(
     ).first<{ value: string }>();
     lifecycleReady = row?.value === "google-oauth-lifecycle-v1";
   } catch {
-    lifecycleReady = false;
+    // A partially applied lifecycle migration keeps cleanup disabled.
   }
   if (readiness.core_schema_generation === REQUIRED_CORE_SCHEMA_GENERATION && lifecycleReady) {
     await cleanupExpiredGoogleOAuthIntents(env.CORE_DB, Date.now, 32);
