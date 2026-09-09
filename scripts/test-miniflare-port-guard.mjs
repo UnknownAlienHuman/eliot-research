@@ -34,7 +34,7 @@ test("Windows guard holds a free loopback port and releases only its socket", as
   assert.deepEqual(guard.reservations, [{ host: "127.0.0.1", port }]);
   await assert.rejects(listen("127.0.0.1", port), (error) => error?.code === "EADDRINUSE");
   await guard.release();
-  const after = await listen();
+  const after = await listen("127.0.0.1", port);
   await close(after);
 });
 

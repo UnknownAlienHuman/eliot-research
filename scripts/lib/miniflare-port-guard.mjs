@@ -79,10 +79,11 @@ export async function reserveMiniflareForbiddenPorts({
   const reservations = [];
   const skipped = [];
   const release = async () => {
-    const current = reservations.splice(0);
-    const results = await Promise.allSettled(current.map(closeServer));
-    const failure = results.find((result) => result.status === "rejected");
-    if (failure) throw failure.reason;
+    const current = reservations.slice();
+    const results = await Promise.allSettled(current.map((server) => closeServer(server)));
+    const failures = results.filter((result) => result.status === "rejected").map((result) => result.reason);
+    if (failures.length > 0) throw new AggregateError(failures, "failed to release one or more port guard listeners");
+    reservations.splice(0, current.length);
   };
 
   try {
@@ -101,7 +102,12 @@ export async function reserveMiniflareForbiddenPorts({
       }
     }
   } catch (error) {
-    await release().catch(() => undefined);
+    try {
+      await release();
+    } catch (cleanupError) {
+      const cleanupFailures = cleanupError instanceof AggregateError ? cleanupError.errors : [cleanupError];
+      throw new AggregateError([error, ...cleanupFailures], "port guard setup failed and cleanup was incomplete", { cause: cleanupError });
+    }
     throw error;
   }
 
