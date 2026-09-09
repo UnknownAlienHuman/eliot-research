@@ -61,14 +61,15 @@ async function sha256(bytes: ArrayBuffer): Promise<string> {
     .map((value) => value.toString(16).padStart(2, "0")).join("");
 }
 
-async function idempotencyKey(name: string, contentSha256: string): Promise<string> {
-  const material = new TextEncoder().encode(`eliotr.raw-file-upload.v1\u0000${name}\u0000${contentSha256}`);
+async function idempotencyKey(name: string, contentSha256: string, contentType: string): Promise<string> {
+  const material = new TextEncoder().encode(`eliotr.raw-file-upload.v1\u0000${name}\u0000${contentSha256}\u0000${contentType}`);
   return `raw-upload-${await sha256(material.buffer)}`;
 }
 
 export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal): Promise<RawFileSelection> {
-  if (!record(file) || typeof file.name !== "string" || file.name.length === 0 ||
-      new TextEncoder().encode(file.name).byteLength > 512 || /[\u0000-\u001f\u007f]/u.test(file.name) ||
+  if (!record(file) || typeof file.name !== "string" || file.name.length === 0 || file.name !== file.name.trim() ||
+      new TextEncoder().encode(file.name).byteLength > 512 || /[\u0000-\u001f\u007f/\\]/u.test(file.name) ||
+      file.name === "." || file.name === ".." ||
       typeof file.type !== "string" ||
       !Number.isSafeInteger(file.size) || file.size < 1 || file.size > RAW_FILE_MAX_BYTES ||
       typeof file.arrayBuffer !== "function") {
@@ -88,7 +89,7 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
   if (new TextEncoder().encode(contentType).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(contentType)) {
     throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "The selected file type is invalid." });
   }
-  const key = await idempotencyKey(file.name, contentSha256);
+  const key = await idempotencyKey(file.name, contentSha256, contentType);
   if (signal?.aborted) throw new ApiRequestError({ status: 499, code: "RAW_FILE_UPLOAD_CANCELLED", message: "File preparation was cancelled." });
   return {
     file,

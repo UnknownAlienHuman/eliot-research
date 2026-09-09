@@ -21,7 +21,9 @@ describe("raw file capture API", () => {
     const second = await prepareRawFileSelection(file());
     expect(second.content_sha256).toBe(first.content_sha256);
     expect(second.idempotency_key).toBe(first.idempotency_key);
+    expect((await prepareRawFileSelection({ ...file(), type: "application/pdf" })).idempotency_key).not.toBe(first.idempotency_key);
     await expect(prepareRawFileSelection({ ...file(), size: 16 * 1024 * 1024 + 1 })).rejects.toMatchObject({ code: "RAW_FILE_INPUT_INVALID" });
+    await expect(prepareRawFileSelection({ ...file(), name: "../notes.txt" })).rejects.toMatchObject({ code: "RAW_FILE_INPUT_INVALID" });
   });
 
   it("accepts only an exact CAPTURED receipt for the selected file", async () => {
