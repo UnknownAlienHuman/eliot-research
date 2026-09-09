@@ -5,6 +5,7 @@ import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
 import { mountOrientationPanel } from "./orientation-panel.js";
 import { mountRetrievalPanel } from "./retrieval-panel.js";
+import { mountEvidenceRail } from "./evidence-rail.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence } from "@eliotr/contracts";
 
@@ -90,6 +91,11 @@ function render(health: SystemHealth | null): void {
   const library = app.querySelector<HTMLElement>("#library");
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
+  const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
+  const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
+  const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
+    ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
   const workspaceViews: Record<string, { title: string; lede: string }> = {
     "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
     "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
@@ -115,9 +121,8 @@ function render(health: SystemHealth | null): void {
     });
   }
   const clearEvidenceRail = (resetSummary = true): void => {
-    const empty = app.querySelector<HTMLElement>("#evidence-empty");
-    const evidence = app.querySelector<HTMLElement>("#evidence-detail");
-    if (empty && evidence) { empty.hidden = false; evidence.hidden = true; evidence.replaceChildren(); }
+    if (evidenceRail) evidenceRail.clear();
+    else if (evidenceEmpty && evidenceDetail) { evidenceEmpty.hidden = false; evidenceDetail.hidden = true; evidenceDetail.replaceChildren(); }
     if (resetSummary) {
       const count = app.querySelector("#evidence-count");
       if (count) count.textContent = "0 resolved";
@@ -156,14 +161,7 @@ function render(health: SystemHealth | null): void {
   window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
-    const empty = app.querySelector<HTMLElement>("#evidence-empty");
-    const detail = app.querySelector<HTMLElement>("#evidence-detail");
-    if (!empty || !detail) return;
-    empty.hidden = true;
-    detail.hidden = false;
-    const anchor = evidence.handle.anchor;
-    const anchorText = anchor.kind === "normalized_byte_range" ? `bytes ${anchor.start}–${anchor.end}` : anchor.kind === "normalized_line_range" ? `lines ${anchor.start_line}–${anchor.end_line}` : anchor.kind;
-    detail.innerHTML = `<span class="eyebrow">Resolved excerpt</span><h3>${escapeHtml(evidence.source_title ?? evidence.handle.source_revision_ref)}</h3><blockquote>${escapeHtml(evidence.exact_excerpt)}</blockquote><div class="evidence-meta"><span><b>Revision</b><code>${escapeHtml(evidence.handle.source_revision_ref)}</code></span><span><b>Anchor</b><code>${escapeHtml(anchorText)}</code></span><span><b>Excerpt SHA-256</b><code>${escapeHtml(evidence.handle.excerpt_sha256)}</code></span><span><b>Verification</b><code>${escapeHtml(evidence.verification_receipt_ref)}</code></span><span><b>Integrity</b><code>${escapeHtml(evidence.handle.terminal_state)} · ${escapeHtml(evidence.instruction_taint)}</code></span></div><p class="evidence-note">Pinned to the admitted revision. This panel mirrors the decoded query result; it does not issue a second verification request. Neighboring context is shown only when the API supplies a resolvable reference.</p>`;
+    evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const cleanups = [orientation, retrieval, importer ? mountBundleImportPanel(importer) : undefined,
     googleOAuth ? mountGoogleOAuthPanel(googleOAuth) : undefined,
@@ -171,7 +169,7 @@ function render(health: SystemHealth | null): void {
       orientation?.selectSource(id);
       retrieval?.selectSource(id);
     }) : undefined];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearEvidenceOnEvent); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
