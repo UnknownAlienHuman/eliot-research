@@ -61,7 +61,7 @@ describe("durable raw markdown conversion", () => {
     expect(second).toEqual(first);
     expect(provider).toHaveBeenCalledTimes(1);
   });
-  it("withholds a COMPLETE replay when the durable result digest is tampered", async () => {
+  it("withholds a COMPLETE replay when the persisted result identity is foreign", async () => {
     const { database, rows } = fakeDatabase();
     const contentSha = await sha256(bytes);
     const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-2", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "note.pdf", object_key: "raw/capture-2", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
@@ -73,7 +73,9 @@ describe("durable raw markdown conversion", () => {
     const first = await service.convert(context, "capture-2", request);
     const row = [...rows.values()][0];
     if (row === undefined) throw new Error("durable conversion row was not persisted");
-    row.result_sha256 = "0".repeat(64);
+    const foreign = { ...JSON.parse(String(row.result_json)), capture_id: "foreign-capture" };
+    row.result_json = JSON.stringify(foreign);
+    row.result_sha256 = await sha256(new TextEncoder().encode(String(row.result_json)));
     const second = await service.convert(context, "capture-2", request);
     expect(first.state).toBe("COMPLETE");
     expect(second).toMatchObject({ state: "UNKNOWN", failure_code: "PROVIDER_UNCERTAIN" });

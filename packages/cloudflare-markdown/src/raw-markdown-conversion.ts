@@ -118,10 +118,13 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
   async function verifyStoredResult(
     row: Record<string, unknown>,
     result: RawMarkdownResult,
+    context: RawMarkdownConversionContext,
     capture: RawMarkdownCaptureReceipt,
   ): Promise<boolean> {
     return row.state === result.state && row.operation_id === result.operation_id &&
-      row.capture_id === capture.capture_id && row.content_sha256 === capture.content_sha256 &&
+      row.capture_id === result.capture_id && row.capture_id === capture.capture_id &&
+      row.principal_ref === context.principal_ref && row.content_sha256 === result.content_sha256 &&
+      row.content_sha256 === capture.content_sha256 &&
       typeof row.result_sha256 === "string" && row.result_sha256 === await sha256Utf8(canonical(result));
   }
 
@@ -131,7 +134,12 @@ export function createRawMarkdownConversionService(dependencies: RawMarkdownConv
     capture: RawMarkdownCaptureReceipt,
   ): Promise<RawMarkdownResult | null> {
     const result = decode(row);
-    if (result === null || !(await verifyStoredResult(row, result, capture))) return null;
+    if (result === null || !(await verifyStoredResult(row, result, context, capture))) return null;
+    try {
+      await dependencies.source.assertCurrent(context, capture);
+    } catch {
+      return null;
+    }
     if (result.state !== "COMPLETE") return result;
     try {
       return await verifyComplete(row, result, context, capture);
