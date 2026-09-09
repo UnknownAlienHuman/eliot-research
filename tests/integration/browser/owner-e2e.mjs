@@ -1251,10 +1251,9 @@ async function launchPlaywright(runId, orphanedProfiles = []) {
       serviceWorkerEvents.push(Object.freeze({ kind, origin, path, at: Date.now() }));
       if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
     };
-    context.on("serviceworker", (worker) => recordServiceWorkerEvent("serviceworker", worker));
-    context.on("close", () => {
-      serviceWorkerEvents.push(Object.freeze({ kind: "context-close", origin: "unavailable", path: "unavailable", at: Date.now() }));
-      if (serviceWorkerEvents.length > 32) serviceWorkerEvents.shift();
+    context.on("serviceworker", (worker) => {
+      recordServiceWorkerEvent("serviceworker", worker);
+      worker.on?.("close", () => recordServiceWorkerEvent("worker-close", worker));
     });
     let trafficSequence = 0;
     const settleRequest = (request) => {
@@ -3243,6 +3242,9 @@ async function settleLedger(page, harness) {
   // stays in the ledger and must still pair or anchor.
   const startedAt = Date.now();
   await settleServiceWorkerLifecycle(page, harness);
+  // Preserve the original phase budget: networkidle and callback drain share
+  // one deadline. Diagnostics must not extend the settle boundary.
+  const deadline = Date.now() + 10000;
   const networkIdleStartedAt = Date.now();
   let networkIdle = "timeout";
   try {
@@ -3251,7 +3253,6 @@ async function settleLedger(page, harness) {
   } catch { /* unpaired traffic fails closed */ }
   const networkIdleElapsedMs = Math.max(0, Date.now() - networkIdleStartedAt);
   const drainStartedAt = Date.now();
-  const deadline = drainStartedAt + 10000;
   let quietRounds = 0;
   try {
     while (Date.now() < deadline && quietRounds < 3) {
@@ -3277,7 +3278,8 @@ async function settleLedger(page, harness) {
       networkIdle,
       networkIdleElapsedMs,
       drainElapsedMs: Math.max(0, Date.now() - drainStartedAt),
-      drainDeadlineMs: 10000,
+      phaseBudgetMs: 10000,
+      drainBudgetRemainingMs: Math.max(0, deadline - drainStartedAt),
       quietRounds,
       pending: typeof harness.pendingRequestCount === "function" ? harness.pendingRequestCount() : null,
       trafficSequence: typeof harness.trafficSequence === "function" ? harness.trafficSequence() : null,
