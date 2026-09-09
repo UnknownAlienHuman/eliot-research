@@ -144,7 +144,8 @@
         "ER-29"
       ],
       "owned_paths": [
-        "packages/retrieval/src/projection.ts"
+        "packages/retrieval/src/projection.ts",
+        "packages/retrieval/src/structural-navigation.ts"
       ],
       "mandatory_negative_case": "Supply mapping-free Markdown and prove the projector does not invent page, bounding-box, or table-cell coordinates.",
       "document": "ER-05-structural-projector.md",

@@ -15,6 +15,7 @@ import {
   type MaterializedEvidenceExcerpt,
 } from "./types.js";
 import type { EvidenceAnchor } from "@eliotr/contracts";
+import { MAX_CANONICAL_BYTES } from "@eliotr/retrieval";
 
 const MAX_EXCERPT_BYTES = 256 * 1024;
 // A line anchor is not permission to scan an unbounded object or whole corpus.
@@ -217,6 +218,59 @@ async function locateLines(
 
 export interface R2EvidenceContentDependencies {
   readonly evidence_bucket: R2Bucket;
+}
+
+export interface AdmittedNormalizedMarkdown {
+  readonly markdown: string;
+  readonly normalized_object_ref: string;
+  readonly readback_sha256: string;
+  readonly size_bytes: number;
+}
+
+/** Read one bounded normalized object under the same immutable authority as evidence excerpts. */
+export async function readAdmittedNormalizedMarkdown(
+  bucket: R2Bucket,
+  source: EvidenceSourceAuthority,
+): Promise<AdmittedNormalizedMarkdown> {
+  const key = await normalizedContentKey(source);
+  const head = await bucket.head(key);
+  if (head === null) {
+    fail("EVIDENCE_OBJECT_NOT_FOUND", "normalized Evidence object is missing", {
+      retryable: true,
+      invalidation_state: "BROKEN_INTEGRITY",
+    });
+  }
+  requireObjectMetadata(head, source);
+  if (head.size > MAX_CANONICAL_BYTES) {
+    fail("EVIDENCE_RANGE_INVALID", "normalized Evidence object exceeds the bounded materialization limit");
+  }
+  const opened = await openRange(bucket, key, source, head, { start: 0, end: head.size });
+  const bytes = await bufferBounded(opened.body, MAX_CANONICAL_BYTES);
+  if (bytes.byteLength !== head.size) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "normalized object streamed size differs from its pinned head", {
+      retryable: true,
+    });
+  }
+  const digest = await evidenceSha256Bytes(bytes);
+  if (digest !== source.content_sha256) {
+    fail("EVIDENCE_OBJECT_INTEGRITY", "normalized object digest differs from the admitted source", {
+      invalidation_state: "BROKEN_INTEGRITY",
+    });
+  }
+  let markdown: string;
+  try {
+    markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (cause) {
+    fail("EVIDENCE_OBJECT_INTEGRITY", "normalized object is not valid UTF-8", {
+      invalidation_state: "BROKEN_INTEGRITY",
+      cause,
+    });
+  }
+  if (markdown.length === 0) fail("EVIDENCE_RANGE_INVALID", "normalized object is empty");
+  const settled = await bucket.head(key);
+  requireSameObject(settled, head);
+  if (settled !== null) requireObjectMetadata(settled, source);
+  return { markdown, normalized_object_ref: key, readback_sha256: digest, size_bytes: bytes.byteLength };
 }
 
 export function createR2EvidenceContentPort(

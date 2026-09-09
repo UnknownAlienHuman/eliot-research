@@ -3,6 +3,7 @@ export * from "./planner.js";
 export * from "./fusion.js";
 export * from "./projection.js";
 export * from "./structural-projector.js";
+export * from "./structural-navigation.js";
 export * from "./evidence-resolver.js";
 export * from "./exhaustive.js";
 export * from "./exhaustive-reconcile.js";
