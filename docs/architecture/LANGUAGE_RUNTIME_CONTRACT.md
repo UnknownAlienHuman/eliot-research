@@ -452,6 +452,11 @@ Until a Rust capability is promoted:
 - no new large TypeScript domain package is allowed;
 - no direct one-file-for-one-file Rust rewrite is allowed.
 
+The N1 native coordinate-map contract is one such migration debt: its deterministic table-cell
+mapping and source/content identity semantics currently execute in the TypeScript R2/D1 adapter,
+with `eliotr-projection-core` as the named future Rust target. This checkpoint adds versioned
+fixtures and strict wire validation but does not claim Rust/Wasm parity or promote a new authority.
+
 ### 10.2 Shadow-mode rule
 
 Shadow execution:

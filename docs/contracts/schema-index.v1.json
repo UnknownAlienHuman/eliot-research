@@ -353,21 +353,21 @@
     {
       "export_name": "CoordinateMapEntrySchema",
       "family": "navigation",
-      "json_schema_sha256": "ff52ba1dda7dbe7b62a6afa5c802d3fb5856d354166c8ea2e9fe82fd858924e0",
+      "json_schema_sha256": "1e3c19c1ddf6155f77fa4ef8af35acaef39022429e640da9512eda0ba0eb31d0",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map-entry:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "CoordinateMapSchema",
       "family": "navigation",
-      "json_schema_sha256": "8a37473823710139645c2360113f606466b539e3bce2b372a18d60779f978d5e",
+      "json_schema_sha256": "207fcb5e990421fe8f5c1df203d62aa03e84ad5a61203d49366313d982e0a0af",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:navigation:coordinate-map:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -577,6 +577,16 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:evidence:evidence-resolution-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "EvidenceTableCellAnchorSchema",
+      "family": "evidence",
+      "json_schema_sha256": "6d2fc0fffe59c13adcd9a3375e0f0b7701de70b17fb1ca4d476f2b572ffd82e8",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:evidence:evidence-table-cell-anchor:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1314,5 +1324,5 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
   "registry_generation": 2,
-  "schema_count": 131
+  "schema_count": 132
 }

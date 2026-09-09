@@ -101,19 +101,20 @@ async function fixture() {
       disclosure_ceiling: "owner-only", allowed_use: ["research"],
     },
     normalization: { analyzer: "fixture", analyzer_version: "1", profile: "native-map", config_hash: "a".repeat(64), created_at: "2026-09-09T00:00:00.000Z" },
-    content: { markdown: "content.md", markdown_sha256: contentDigest, mappings: "coordinate-map.json", coordinate_map_digest: mapDigest },
+    content: { markdown: "content.md", markdown_sha256: contentDigest, mappings: "coordinate-map.json", tables: "tables.json", coordinate_map_digest: mapDigest },
     capabilities: { text_ranges: true, pages: false, bounding_boxes: false, tables: true, figures: false },
     quality: { state: "standard", assurance_ceiling: "source-local", warnings: [] },
     export: { purpose: "test", receipt_ref: "export-1" },
   };
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
+  const manifestDigest = await evidenceSha256Bytes(manifestBytes);
   const admission = "admission-1";
   const authority = {
     source_id: "source-1", owner_system_id: "owner-1", source_namespace_id: "namespace-1",
     source_owner_generation: "generation-1", source_revision_ref: "revision-1", source_title: "Fixture",
     source_class: "document", content_sha256: contentDigest, object_residency_key_digest: "pending",
     normalized_artifact_ref: "manifest-key", purge_state: "LIVE", admission_receipt_ref: admission,
-    source_assurance_ceiling: "CAPTURED", instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY", allowed_use: ["research"], disclosure_ceiling: "owner-only",
+    source_assurance_ceiling: "QUALIFIED", instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY", allowed_use: ["research"], disclosure_ceiling: "owner-only",
   } as EvidenceSourceAuthority;
   const residency: ObjectResidencyKey = {
     scope_domain_id: "scope-1", access_domain_id: "access-1", confidentiality_domain_id: "confidential",
@@ -131,8 +132,37 @@ async function fixture() {
     source_logical_id: "source-1", source_revision_ref: "revision-1",
   }, "coordinate-map.json");
   const objects = new Map<string, Stored>();
-  objects.set("manifest-key", { bytes: manifestBytes, digest: await evidenceSha256Bytes(manifestBytes), namespace: "namespace-1", generation: "generation-1", admission, contentType: "application/json", etag: "manifest" });
+  const manifestResidencyDigest = await objectResidencyKeyDigest({
+    scope_domain_id: manifest.residency_and_disclosure.scope_domain_id,
+    access_domain_id: manifest.residency_and_disclosure.access_domain_id,
+    confidentiality_domain_id: manifest.residency_and_disclosure.confidentiality_domain_id,
+    encryption_key_domain_id: manifest.residency_and_disclosure.encryption_key_domain_id,
+    retention_domain_id: manifest.residency_and_disclosure.retention_domain_id,
+    erasure_domain_id: manifest.residency_and_disclosure.erasure_domain_id,
+    content_digest: { algorithm: "sha256", digest: manifestDigest },
+  });
+  const manifestKey = await canonicalNormalizedBundleKey(manifestResidencyDigest, {
+    owner_system_id: "owner-1", source_namespace_id: "namespace-1", source_owner_generation: "generation-1",
+    source_logical_id: "source-1", source_revision_ref: "revision-1",
+  }, "manifest.json");
+  (authority as { normalized_artifact_ref: string }).normalized_artifact_ref = manifestKey;
+  objects.set(manifestKey, { bytes: manifestBytes, digest: manifestDigest, namespace: "namespace-1", generation: "generation-1", admission, contentType: "application/json", etag: "manifest" });
   objects.set(mapKey, { bytes: mapBytes, digest: mapDigest, namespace: "namespace-1", generation: "generation-1", admission, contentType: "application/json", etag: "map" });
+  const tablesBytes = new TextEncoder().encode("[{\"table_id\":\"table-1\",\"rows\":1,\"columns\":1}]");
+  const tablesDigest = await evidenceSha256Bytes(tablesBytes);
+  const tablesKey = await canonicalNormalizedBundleKey(await objectResidencyKeyDigest({
+    scope_domain_id: manifest.residency_and_disclosure.scope_domain_id,
+    access_domain_id: manifest.residency_and_disclosure.access_domain_id,
+    confidentiality_domain_id: manifest.residency_and_disclosure.confidentiality_domain_id,
+    encryption_key_domain_id: manifest.residency_and_disclosure.encryption_key_domain_id,
+    retention_domain_id: manifest.residency_and_disclosure.retention_domain_id,
+    erasure_domain_id: manifest.residency_and_disclosure.erasure_domain_id,
+    content_digest: { algorithm: "sha256", digest: tablesDigest },
+  }), {
+    owner_system_id: "owner-1", source_namespace_id: "namespace-1", source_owner_generation: "generation-1",
+    source_logical_id: "source-1", source_revision_ref: "revision-1",
+  }, "tables.json");
+  objects.set(tablesKey, { bytes: tablesBytes, digest: tablesDigest, namespace: "namespace-1", generation: "generation-1", admission, contentType: "application/json", etag: "tables" });
   const contentKey = await canonicalNormalizedBundleKey(contentResidencyDigest, {
     owner_system_id: "owner-1", source_namespace_id: "namespace-1", source_owner_generation: "generation-1",
     source_logical_id: "source-1", source_revision_ref: "revision-1",
@@ -156,4 +186,44 @@ test("coordinate map read rechecks the current owner boundary", async () => {
     require_current: async () => { checks += 1; if (checks === 2) throw new Error("withdrawn"); },
   })).rejects.toThrow("withdrawn");
   expect(checks).toBe(2);
+});
+
+test("manifest readback hashes the bounded body and rejects bytes rewritten under old metadata", async () => {
+  const f = await fixture();
+  const key = f.authority.normalized_artifact_ref;
+  const original = f.objects.get(key);
+  if (original === undefined) throw new Error("missing admitted manifest");
+  const replacement = original.bytes.slice();
+  replacement[replacement.length - 1] = replacement[replacement.length - 1] === 0x7d ? 0x20 : 0x7d;
+  f.objects.set(key, { ...original, bytes: replacement });
+  await expect(readAdmittedCoordinateMap(bucket(f.objects), f.authority))
+    .rejects.toMatchObject({ code: "EVIDENCE_OBJECT_INTEGRITY" });
+});
+
+test("manifest readback rejects a different valid manifest whose checksum and metadata were rewritten under the old key", async () => {
+  const f = await fixture();
+  const key = f.authority.normalized_artifact_ref;
+  const original = f.objects.get(key);
+  if (original === undefined) throw new Error("missing admitted manifest");
+  const replacement = new TextEncoder().encode(
+    new TextDecoder().decode(original.bytes).replace('"state":"standard"', '"state":"degraded"'),
+  );
+  const digest = await evidenceSha256Bytes(replacement);
+  f.objects.set(key, { ...original, bytes: replacement, digest });
+  await expect(readAdmittedCoordinateMap(bucket(f.objects), f.authority))
+    .rejects.toMatchObject({ code: "EVIDENCE_LOCATOR_NOT_RESOLVABLE" });
+});
+
+test("manifest readback binds the source logical identity before selecting native coordinates", async () => {
+  const f = await fixture();
+  const key = f.authority.normalized_artifact_ref;
+  const original = f.objects.get(key);
+  if (original === undefined) throw new Error("missing admitted manifest");
+  const replacement = new TextEncoder().encode(
+    new TextDecoder().decode(original.bytes).replace('"logical_id":"source-1"', '"logical_id":"source-x"'),
+  );
+  const digest = await evidenceSha256Bytes(replacement);
+  f.objects.set(key, { ...original, bytes: replacement, digest });
+  await expect(readAdmittedCoordinateMap(bucket(f.objects), f.authority))
+    .rejects.toMatchObject({ code: "EVIDENCE_LOCATOR_NOT_RESOLVABLE" });
 });

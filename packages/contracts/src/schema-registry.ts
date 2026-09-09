@@ -278,8 +278,13 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       }
 
       // Generation 2 admits the real empty purge-ledger frontier without changing existing IDs/digests.
+      // Coordinate-map anchors narrowed from the broad EvidenceAnchor union to the supported
+      // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
       const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
-        ? { schema_version: 1, schema_generation: 2 } : familyVersion;
+        ? { schema_version: 1, schema_generation: 2 }
+        : ["CoordinateMapEntrySchema", "CoordinateMapSchema"].includes(exportName)
+          ? { schema_version: 2, schema_generation: 1 }
+          : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

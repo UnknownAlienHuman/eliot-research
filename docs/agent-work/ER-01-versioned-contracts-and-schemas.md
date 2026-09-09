@@ -39,6 +39,10 @@ outside the paths below.
 - The N1 native coordinate-map addition is registered in the navigation schema family as
   `eliotr.coordinate-map.v1`; its table-cell-only fixture is intentionally navigation metadata and
   cannot upgrade manifest qualification or create evidence authority.
+- Native N1 remains a TypeScript/Worker adapter boundary. If native map semantics expand into a
+  canonical domain field, the named Rust target is `eliotr-projection-core`; its versioned fixtures
+  then require native/Wasm differential parity before promotion, while this table-cell-only adapter
+  does not add an unproven Rust mirror.
 
 ## Acceptance
 

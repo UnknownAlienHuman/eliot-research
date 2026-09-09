@@ -55,7 +55,7 @@ beforeEach(async () => {
   await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
 });
 
-async function preparedNavigation() {
+async function preparedNavigation(nativeCoordinateMap = false) {
   const world = {
     runtime: runtime as Q1Runtime,
     db: runtime.CORE_DB,
@@ -63,7 +63,7 @@ async function preparedNavigation() {
     owner,
     ...(await prepareQ1Namespace(runtime as Q1Runtime, runtime.CORE_DB, runtime.SEARCH_DB, owner)),
   };
-  await importAndProject(world);
+  await importAndProject(world, { native_coordinate_map: nativeCoordinateMap });
   await runtime.CORE_DB.prepare(
     "INSERT INTO scope_read_policy (source_namespace_id,principal_ref,client_class,policy_ref,generation," +
       "allowed_use_json,disclosure_ceiling,state,expires_at,created_at) VALUES (?1,?2,'owner_pwa',?3,1,'[\"research\"]','owner-only','ACTIVE',?4,?5)",
@@ -77,12 +77,12 @@ async function preparedNavigation() {
   await authority.exhaustiveGrant(snapshot);
   const store = createD1NavigationStore({ database: runtime.CORE_DB, scope_snapshot: snapshot, access,
     require_current: (scope) => scopes.requireCurrent(scope) });
-  return { world, authority, snapshot, sources, source, store };
+  return { world, authority, scopes, snapshot, sources, source, store };
 }
 
 describe("N1 structural navigation over the real Q1 import path", () => {
   it("reads the imported map from its canonical R2 key and persists the adapted map in D1", async () => {
-    const { snapshot, sources, source, store } = await preparedNavigation();
+    const { snapshot, sources, source, store } = await preparedNavigation(true);
     if (source === undefined) throw new Error("missing Q1 source authority");
     const content = await readAdmittedNormalizedMarkdown(runtime.EVIDENCE_BUCKET, source.authority);
     const derived = await deriveStructuralNavigation({
@@ -90,13 +90,49 @@ describe("N1 structural navigation over the real Q1 import path", () => {
       source_kind: "document", generator_generation: "structural-v1", created_at: snapshot.created_at,
     });
     const admitted = await readAdmittedCoordinateMap(runtime.EVIDENCE_BUCKET, source.authority);
+    expect(admitted.map.entries).toEqual([expect.objectContaining({
+      normalized_start_byte: 48,
+      normalized_end_byte: 49,
+      excerpt_sha256: await digestBytes(new TextEncoder().encode("B")),
+    })]);
+    expect(new TextDecoder().decode(new TextEncoder().encode(content.markdown).slice(48, 49))).toBe("B");
     await store.putArtifact("SOURCE_CARD", derived.sourceCard);
     const merged = await persistCoordinateMap({ store, source_revision: source.revision,
       structural_map: derived.documentMap, admitted_map: admitted, generator_generation: "coordinate-v1", created_at: snapshot.created_at });
     expect(merged.tables).toEqual([expect.objectContaining({ coordinate_kind: "table_cell", table_id: "q1-table",
-      normalized_start_byte: 0, normalized_end_byte: content.size_bytes, navigation_authority: "NAVIGATION_ONLY" })]);
+      row: 0, column: 1, normalized_start_byte: 48, normalized_end_byte: 49, navigation_authority: "NAVIGATION_ONLY" })]);
+    const replay = await persistCoordinateMap({ store, source_revision: source.revision,
+      structural_map: derived.documentMap, admitted_map: admitted, generator_generation: "coordinate-v1", created_at: snapshot.created_at });
+    expect(replay.map_ref).toEqual(merged.map_ref);
     const reopened = await store.getDocumentMaps([sources[0]?.revision.source_revision_ref ?? ""]);
     expect(reopened[0]).toMatchObject({ mappings_to_original_ref: admitted.map_object_ref });
+  });
+
+  it("rejects owner withdrawal during the admitted map read before any D1 artifact is written", async () => {
+    const { world, scopes, snapshot, source, store } = await preparedNavigation(true);
+    const mapKey = (await readAdmittedCoordinateMap(runtime.EVIDENCE_BUCKET, source.authority)).map_object_ref;
+    let withdrawn = false;
+    const bucket = {
+      async head(key: string) { return runtime.EVIDENCE_BUCKET.head(key); },
+      async get(key: string, options?: R2GetOptions) {
+        const result = await runtime.EVIDENCE_BUCKET.get(key, options);
+        if (!withdrawn && key === mapKey && options?.onlyIf !== undefined) {
+          withdrawn = true;
+          await runtime.CORE_DB.prepare(
+            "UPDATE source_namespace_ownership SET status='RETIRED' WHERE source_namespace_id=?1",
+          ).bind(world.namespace).run();
+        }
+        return result;
+      },
+    } as unknown as R2Bucket;
+    await expect(readAdmittedCoordinateMap(bucket, source.authority, {
+      require_current: async () => { await scopes.requireCurrent(snapshot); },
+    })).rejects.toBeDefined();
+    const persisted = await runtime.CORE_DB.prepare(
+      "SELECT COUNT(*) AS n FROM navigation_artifact WHERE scope_snapshot_id=?1",
+    ).bind(snapshot.snapshot_id).first<{ readonly n: number }>("n");
+    expect(withdrawn).toBe(true);
+    expect(persisted).toBe(0);
   });
 
   it("reads admitted R2 bytes, persists exact maps, replays immutably, and rejects purge", async () => {

@@ -16,6 +16,7 @@ outside the paths below.
 
 Delegated N1 admitted-map reader paths:
 
+- `packages/cloudflare-evidence/src/exhaustive-manifest.ts` (canonical manifest identity/readback)
 - `packages/cloudflare-evidence/src/coordinate-map-reader.ts`
 - `packages/cloudflare-evidence/src/coordinate-map-reader.test.ts`
 

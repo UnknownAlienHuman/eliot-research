@@ -5,20 +5,14 @@ import {
   IsoDateTimeSchema,
   Sha256Schema,
 } from "./common.js";
-import { EvidenceAnchorSchema } from "./evidence.js";
+import { EvidenceTableCellAnchorSchema } from "./evidence.js";
 
 export const COORDINATE_MAP_PROTOCOL = "eliotr.coordinate-map.v1" as const;
 export const COORDINATE_MAP_PRECISION = "table_cell" as const;
 export const COORDINATE_MAP_MAX_ENTRIES = 4_096 as const;
 
-const TableCellAnchorSchema = EvidenceAnchorSchema.superRefine((value, context) => {
-  if (value.kind !== "table_cell") {
-    context.addIssue({ code: "custom", path: ["kind"], message: "coordinate map supports table-cell anchors only" });
-  }
-});
-
 export const CoordinateMapEntrySchema = z.object({
-  anchor: TableCellAnchorSchema,
+  anchor: EvidenceTableCellAnchorSchema,
   normalized_start_byte: ByteLengthSchema,
   normalized_end_byte: ByteLengthSchema,
   excerpt_sha256: Sha256Schema,

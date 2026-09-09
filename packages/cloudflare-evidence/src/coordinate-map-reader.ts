@@ -125,7 +125,9 @@ export async function readAdmittedCoordinateMap(
 ): Promise<AdmittedCoordinateMap> {
   await options.require_current?.();
   const { manifest } = await readAdmittedNormalizedManifest(bucket, source);
-  if (!manifest.capabilities.tables) {
+  if (!manifest.capabilities.tables || manifest.content.tables === undefined ||
+      manifest.content.mappings === undefined || manifest.content.coordinate_map_digest === undefined ||
+      (source.source_assurance_ceiling !== "QUALIFIED" && source.source_assurance_ceiling !== "EXACT")) {
     fail("EVIDENCE_PRECISION_UNSUPPORTED", "admitted manifest does not qualify table-cell coordinates");
   }
   const path = manifest.content.mappings;

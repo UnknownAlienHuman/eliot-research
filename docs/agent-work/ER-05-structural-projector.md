@@ -49,6 +49,10 @@ The bounded native N1 follow-up is implemented through these coordinated delegat
   identity and currentness, then merges only `NAVIGATION_ONLY` metadata into the existing DocumentMap.
   It does not create EvidenceHandles, raise manifest capability ceilings, or infer native coordinates from
   caller JSON. Native page/region/code precision and evidence resolution remain later gaps.
+  The current N1 qualification gate requires an admitted `QUALIFIED`/`EXACT` source assurance plus
+  manifest table and mapping artifacts; absent qualification stays an explicit precision gap. Any future
+  canonical native-map domain semantics target `eliotr-projection-core` and must add versioned TS/Rust/Wasm
+  parity fixtures before promotion.
 
 ## Acceptance
 

@@ -199,9 +199,19 @@ export async function prepareQ1Namespace(
   return { namespace, revision };
 }
 
-export async function importQ1Bundle(world: Q1Namespace): Promise<void> {
+export interface Q1ImportOptions {
+  readonly native_coordinate_map?: boolean;
+}
+
+export async function importQ1Bundle(
+  world: Q1Namespace,
+  options: Q1ImportOptions = {},
+): Promise<void> {
   const { namespace, revision, runtime, owner } = world;
   const fixture = await bundleFixture();
+  const native = options.native_coordinate_map === true;
+  const nativeMarkdown = "# Evidence\n\n| Key | Value |\n| --- | --- |\n| A | B |\n";
+  const nativeContent = new TextEncoder().encode(nativeMarkdown);
   const manifest = {
     ...fixture.manifest,
     origin: {
@@ -210,44 +220,58 @@ export async function importQ1Bundle(world: Q1Namespace): Promise<void> {
       source_revision_ref: revision,
     },
     source: { ...fixture.manifest.source, logical_id: `source-${namespace}` },
-    capabilities: { ...fixture.manifest.capabilities, tables: true },
+    capabilities: { ...fixture.manifest.capabilities, tables: native },
   };
   const { sha256Utf8 } = await import("@eliotr/platform-cloudflare");
-  const content = fixture.files["content.md"];
+  const content = native ? nativeContent : fixture.files["content.md"];
   if (content === undefined) throw new Error("Missing fixture content");
-  const map = {
+  const contentDigest = await sha256Hex(content);
+  const normalizedManifest = {
+    ...manifest,
+    source: { ...manifest.source, original_sha256: contentDigest },
+    content: { ...manifest.content, markdown_sha256: contentDigest },
+  };
+  const marker = new TextEncoder().encode("| B |");
+  const markerOffset = content.findIndex((_, index) => marker.every((value, markerIndex) => content[index + markerIndex] === value));
+  if (native && markerOffset < 0) throw new Error("native table fixture marker is missing");
+  const cellStart = markerOffset + 2;
+  const cellEnd = cellStart + 1;
+  const cellBytes = content.slice(cellStart, cellEnd);
+  const map = native ? {
     protocol: "eliotr.coordinate-map.v1",
-    source_owner_system_id: manifest.origin.owner_system_id,
-    source_namespace_id: manifest.origin.source_namespace_id,
-    source_owner_generation: manifest.origin.source_owner_generation,
-    source_logical_id: manifest.source.logical_id,
-    source_revision_ref: manifest.origin.source_revision_ref,
-    source_content_sha256: manifest.content.markdown_sha256,
+    source_owner_system_id: normalizedManifest.origin.owner_system_id,
+    source_namespace_id: normalizedManifest.origin.source_namespace_id,
+    source_owner_generation: normalizedManifest.origin.source_owner_generation,
+    source_logical_id: normalizedManifest.source.logical_id,
+    source_revision_ref: normalizedManifest.origin.source_revision_ref,
+    source_content_sha256: contentDigest,
     normalized_content_path: "content.md",
     precision_ceiling: "table_cell",
     generator_generation: "coordinate-map-q1-v1",
-    created_at: manifest.normalization.created_at,
-    entries: [{ anchor: { kind: "table_cell", table_id: "q1-table", row: 0, column: 0 },
-      normalized_start_byte: 0, normalized_end_byte: content.byteLength,
-      excerpt_sha256: manifest.content.markdown_sha256 }],
-  };
-  const mapBytes = new TextEncoder().encode(JSON.stringify(map));
-  const mapDigest = await sha256Hex(mapBytes);
-  const tablesBytes = new TextEncoder().encode("[]");
-  const tablesDigest = await sha256Hex(tablesBytes);
-  const manifestWithMap = { ...manifest, content: { ...manifest.content,
-    mappings: "coordinate-map.json", tables: "tables.json", coordinate_map_digest: mapDigest } };
+    created_at: normalizedManifest.normalization.created_at,
+    entries: [{ anchor: { kind: "table_cell", table_id: "q1-table", row: 0, column: 1 },
+      normalized_start_byte: cellStart, normalized_end_byte: cellEnd,
+      excerpt_sha256: await sha256Hex(cellBytes) }],
+  } : undefined;
+  const mapBytes = map === undefined ? undefined : new TextEncoder().encode(JSON.stringify(map));
+  const mapDigest = mapBytes === undefined ? undefined : await sha256Hex(mapBytes);
+  const tablesBytes = native ? new TextEncoder().encode("[{\"table_id\":\"q1-table\",\"rows\":1,\"columns\":2}]") : undefined;
+  const tablesDigest = tablesBytes === undefined ? undefined : await sha256Hex(tablesBytes);
+  const manifestWithMap = mapDigest === undefined || tablesDigest === undefined
+    ? normalizedManifest
+    : { ...normalizedManifest, content: { ...normalizedManifest.content,
+      mappings: "coordinate-map.json", tables: "tables.json", coordinate_map_digest: mapDigest } };
   const bytes = JSON.stringify(manifestWithMap);
   const manifestDigest = await sha256Utf8(bytes);
   const bundle = await prepareBrowserBundle([
-    { path: "content.md", blob: new Blob([new Uint8Array(content)]) },
-    { path: "manifest.json", blob: new Blob([new TextEncoder().encode(bytes)]) },
-    { path: "coordinate-map.json", blob: new Blob([new Uint8Array(mapBytes)]) },
-    { path: "tables.json", blob: new Blob([new Uint8Array(tablesBytes)]) },
+    { path: "content.md", blob: new Blob([content.buffer as ArrayBuffer]) },
+    { path: "manifest.json", blob: new Blob([new TextEncoder().encode(bytes).buffer as ArrayBuffer]) },
+    ...(mapBytes === undefined ? [] : [{ path: "coordinate-map.json", blob: new Blob([mapBytes.buffer as ArrayBuffer]) }]),
+    ...(tablesBytes === undefined ? [] : [{ path: "tables.json", blob: new Blob([tablesBytes.buffer as ArrayBuffer]) }]),
     {
       path: "hashes.sha256",
       blob: new Blob([
-        `${manifestWithMap.content.markdown_sha256}  content.md\n${mapDigest}  coordinate-map.json\n${tablesDigest}  tables.json\n${manifestDigest}  manifest.json\n`,
+        `${contentDigest}  content.md\n${mapDigest === undefined ? "" : `${mapDigest}  coordinate-map.json\n`}${tablesDigest === undefined ? "" : `${tablesDigest}  tables.json\n`}${manifestDigest}  manifest.json\n`,
       ]),
     },
   ]);
@@ -429,14 +453,14 @@ export async function readProjectedItem(
  * Queue consumer (inbox fence) -> delivery acceptance -> projector.
  * Returns the consumed message, its terminal receipt, and one live item.
  */
-export async function importAndProject(world: Q1Namespace): Promise<{
+export async function importAndProject(world: Q1Namespace, options: Q1ImportOptions = {}): Promise<{
   readonly message: DeliveryMessage;
   readonly receiptRef: string;
   readonly item: Q1ProjectedItem;
   readonly pipeline: Q1Consumer;
   readonly dispatcher: Q1Dispatcher;
 }> {
-  await importQ1Bundle(world);
+  await importQ1Bundle(world, options);
   const dispatcher = createQ1Dispatcher(world.db);
   const summary = await dispatcher.dispatch();
   expect(summary).toMatchObject({ claimed: 1, delivered: 1, uncertain_settlements: 0 });
