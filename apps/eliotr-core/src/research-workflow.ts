@@ -7,6 +7,8 @@ import {
   type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
+import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
+import { createExhaustiveQueryService } from "./exhaustive-query-service.js";
 
 export interface ResearchWorkflowParams {
   readonly operation_id: string;
@@ -18,6 +20,8 @@ export interface ResearchWorkflowParams {
   readonly credential_generation: string;
   readonly deployment_generation: string;
   readonly requested_by_principal_ref?: string;
+  /** Q8 uses this same canonical Workflow host for a durable exhaustive job. */
+  readonly exhaustive_request?: unknown;
 }
 
 export interface ResearchWorkflowResult {
@@ -59,7 +63,7 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
   const requested = value.requested_by_principal_ref;
   if (requested !== undefined && requested !== principal_ref) failWorkflow("WORKFLOW_CONFLICT");
   const allowed = new Set(["operation_id", "investigation_ref", "idempotency_key", "handler_generation",
-    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref"]);
+    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref", "exhaustive_request"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) failWorkflow("WORKFLOW_INPUT_INVALID");
   }
@@ -70,6 +74,7 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
     principal_ref: principal_ref as string, credential_generation: credential_generation as string,
     deployment_generation: deployment_generation as string,
     ...(value.requested_by_principal_ref === undefined ? {} : { requested_by_principal_ref: value.requested_by_principal_ref as string }),
+    ...(value.exhaustive_request === undefined ? {} : { exhaustive_request: value.exhaustive_request }),
   };
 }
 
@@ -119,13 +124,34 @@ async function deterministicStageBytes(
 }
 
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
-  public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult> {
+  public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
     const params = parseParams(event.payload);
     const principal: WorkflowPrincipal = {
       principal_ref: params.principal_ref,
       credential_generation: params.credential_generation,
       deployment_generation: params.deployment_generation,
     };
+    if (params.exhaustive_request !== undefined) {
+      const request = new Request("https://workflow.internal/api/v1/research/query", {
+        method: "POST",
+        headers: { "idempotency-key": params.idempotency_key },
+      });
+      const context = {
+        request,
+        principal_ref: params.principal_ref,
+        client_class: "owner_pwa" as const,
+        credential_generation: params.credential_generation,
+        trace_id: `workflow-${params.operation_id}`,
+      };
+      const result = await step.do("q8-exhaustive-job", async () =>
+        createExhaustiveQueryService(this.env).query(context, params.exhaustive_request));
+      // Workflow step results are durable payloads. Keep the Q8 receipt under
+      // the same canonical envelope limit as every ER09 checkpoint result.
+      if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+        failWorkflow("WORKFLOW_INPUT_INVALID");
+      }
+      return result;
+    }
     const ports = createServerPorts(this.env.CORE_DB, params.operation_id);
     const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
     let investigation_ref: VersionedRef = { ...params.investigation_ref };

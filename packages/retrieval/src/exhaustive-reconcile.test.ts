@@ -117,6 +117,19 @@ async function jobError(promise: Promise<unknown>): Promise<RetrievalQueryError>
 }
 
 describe("Q7 ordered reconcile loop over migration 0023", () => {
+  it("binds the canonical scope expression into the request identity", async () => {
+    const base = { plan_id: "plan-1", scope_digest: hex64("a"), probes: ["needle"] };
+    const selected = await exhaustiveRequestDigest({
+      ...base,
+      scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] },
+    });
+    const global = await exhaustiveRequestDigest({
+      ...base,
+      scope_expression: { kind: "GLOBAL_LIBRARY" },
+    });
+    expect(selected).not.toBe(global);
+  });
+
   it("persists an earned COMPLETE with its denominator and reads it back", async () => {
     const world = await twoShardWorld();
     const status = await reconcileExhaustiveJob({
@@ -187,7 +200,11 @@ describe("Q7 ordered reconcile loop over migration 0023", () => {
     if (partial.status !== "UNFINISHED") throw new Error("expected UNFINISHED");
     expect(partial.settled_shards).toBe(1);
     expect(partial.unsettled_shard_ids).toEqual([secondShard]);
-    expect(await world.store.load("job-1")).toBeNull();
+    expect(await world.store.load("job-1")).toMatchObject({
+      request_digest: world.digest,
+      scope_snapshot_id: world.scope.snapshot_id,
+      settled_shards: 1,
+    });
     failOpen = false;
     const resumed = await reconcileExhaustiveJob({ ...input, ports: flaky });
     if (resumed.status !== "COMPLETE") throw new Error("expected COMPLETE after resume");
@@ -218,7 +235,11 @@ describe("Q7 ordered reconcile loop over migration 0023", () => {
     if (status.status !== "UNFINISHED") throw new Error("expected UNFINISHED");
     expect(status.settled_shards).toBe(1);
     expect(status.unsettled_shard_ids).toEqual([secondShard]);
-    expect(await world.store.load("job-1")).toBeNull();
+    expect(await world.store.load("job-1")).toMatchObject({
+      request_digest: world.digest,
+      scope_snapshot_id: world.scope.snapshot_id,
+      settled_shards: 1,
+    });
     expect(jobState(world.raw, "job-1")).toBe("PENDING");
     expect(count(world.raw, "retrieval_exhaustive_shard")).toBe(1);
     expect(count(world.raw, "retrieval_query_result")).toBe(0);
@@ -301,6 +322,10 @@ describe("Q7 ordered reconcile loop over migration 0023", () => {
     expect(failure.code).toBe("RETRIEVAL_INPUT_INVALID");
     expect(failure.message).toBe("exhaustive merge did not earn COMPLETE; the job stays unfinished");
     expect(jobState(world.raw, "job-1")).toBe("PENDING");
-    expect(await world.store.load("job-1")).toBeNull();
+    expect(await world.store.load("job-1")).toMatchObject({
+      request_digest: world.digest,
+      scope_snapshot_id: world.scope.snapshot_id,
+      settled_shards: 1,
+    });
   });
 });

@@ -21,15 +21,11 @@ import { RetrievalQueryError, type RetrievalQueryErrorCode } from "./service.js"
  * Entry-point decision (the M20 open design question), with evidence:
  *
  * - CHOSEN: a retrieval-local D1-backed job port plus this loop in
- *   `packages/retrieval`, entered through direct port calls; Worker/HTTP
- *   composition is deferred. `research-session.ts` rejects anything but the
- *   ORIENT/E0 metadata profile (`RESEARCH_PROFILE_UNSUPPORTED`, 422), so an
- *   exhaustive scan cannot enter through `research.query` without widening the
- *   ORIENT DTO to carry a different product; `planner.ts` already treats
- *   `EXHAUSTIVE_JOB` as its own product with its own lanes. The only host
- *   that needs no contract widening and no slice enablement is this package
- *   behind injected ports — the same pattern Q3 (pure service plus D1 ports)
- *   and Q5 (pure plan/execute/merge) followed.
+ *   `packages/retrieval`, entered through direct port calls. The app layer
+ *   composes it behind the existing `research.query` route with a separate
+ *   strict `EXHAUSTIVE_JOB` parser, while preserving the ORIENT/E0 contract;
+ *   `planner.ts` treats the product as its own bounded lane. The ER09
+ *   ResearchWorkflow host wraps the same service in one durable step.
  * - REJECTED: loosening `parseResearchQueryRequest` to admit EXHAUSTIVE (it
  *   would widen the ORIENT contract and its 64-source metadata-Lens bound);
  *   enabling the RETRIEVAL slice or touching the slice lists (forbidden);
@@ -125,6 +121,22 @@ export interface ExhaustiveJobReceipt {
   readonly result_artifact_ref: string;
   readonly coverage_receipt_ref: string;
 }
+
+/** Persisted identity for a job whose denominator is still being settled. */
+export interface ExhaustiveJobPending {
+  readonly job_id: string;
+  readonly idempotency_key: string;
+  readonly request_digest: string;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_digest: string;
+  readonly plan_id: string;
+  readonly coverage_denominator_ref: string;
+  readonly denominator_shards: number;
+  readonly settled_shards: number;
+}
+
+export type ExhaustiveJobLoad = ExhaustiveJobReceipt | ExhaustiveJobPending | null;
 
 export type ExhaustiveReconcileStatus =
   | { readonly status: "COMPLETE"; readonly receipt: ExhaustiveJobReceipt }
@@ -235,6 +247,40 @@ function decodeJobReceipt(row: ExhaustiveJobRow, idempotencyKey: string): Exhaus
   };
 }
 
+function decodePendingJob(row: ExhaustiveJobRow, idempotencyKey: string): ExhaustiveJobPending {
+  if (row.state === "INVALIDATED") {
+    failJob("RETRIEVAL_SCOPE_STALE", "stored exhaustive scope is invalidated");
+  }
+  if (
+    row.state !== "PENDING" || typeof row.job_id !== "string" || typeof idempotencyKey !== "string" ||
+    typeof row.request_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.request_digest) ||
+    typeof row.scope_snapshot_id !== "string" || typeof row.scope_snapshot_revision !== "number" ||
+    !Number.isSafeInteger(row.scope_snapshot_revision) || typeof row.scope_digest !== "string" ||
+    !/^[a-f0-9]{64}$/u.test(row.scope_digest) || typeof row.plan_id !== "string" ||
+    typeof row.coverage_denominator_ref !== "string" || typeof row.denominator_shards !== "number" ||
+    !Number.isSafeInteger(row.denominator_shards) || row.denominator_shards < 1 ||
+    (row.settled_shards !== null &&
+      (typeof row.settled_shards !== "number" || !Number.isSafeInteger(row.settled_shards) ||
+        row.settled_shards < 0 || row.settled_shards > row.denominator_shards))
+  ) {
+    failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive pending job is unavailable", true);
+  }
+  return {
+    job_id: row.job_id,
+    idempotency_key: idempotencyKey,
+    request_digest: row.request_digest,
+    scope_snapshot_id: row.scope_snapshot_id,
+    scope_snapshot_revision: row.scope_snapshot_revision,
+    scope_digest: row.scope_digest,
+    plan_id: row.plan_id,
+    coverage_denominator_ref: row.coverage_denominator_ref,
+    denominator_shards: row.denominator_shards,
+    // Migration 0023 deliberately keeps this column NULL while PENDING;
+    // callers receive the journal count from load() below.
+    settled_shards: row.settled_shards === null ? 0 : row.settled_shards,
+  };
+}
+
 async function readJobRow(database: RetrievalQueryD1, jobId: string): Promise<ExhaustiveJobRow | null> {
   try {
     return await database.prepare(
@@ -263,7 +309,7 @@ export interface ExhaustiveJobInput {
 }
 
 export interface ExhaustiveJobStore {
-  load(idempotencyKey: string): Promise<ExhaustiveJobReceipt | null>;
+  load(idempotencyKey: string): Promise<ExhaustiveJobLoad>;
   start(input: ExhaustiveJobInput): Promise<{ job_id: string; state: "PENDING" | "COMPLETE"; receipt: ExhaustiveJobReceipt | null }>;
   settledOutcomes(jobId: string): Promise<readonly ExhaustiveShardOutcome[]>;
   recordSettledOutcome(jobId: string, outcome: ExhaustiveShardOutcome): Promise<void>;
@@ -277,10 +323,22 @@ export function createD1ExhaustiveJobStore(
 ): ExhaustiveJobStore {
   checkJobAccess(access);
   return {
-    async load(idempotencyKey: string): Promise<ExhaustiveJobReceipt | null> {
+    async load(idempotencyKey: string): Promise<ExhaustiveJobLoad> {
       const key = checkIdempotencyKey(idempotencyKey);
       const row = await readJobRow(database, await exhaustiveJobId(access, key));
-      if (row === null || row.state === "PENDING") return null;
+      if (row === null) return null;
+      if (row.state === "PENDING") {
+        const pending = decodePendingJob(row, jobRowKey(row));
+        const count = await database.prepare(
+          "SELECT COUNT(*) AS n FROM retrieval_exhaustive_shard WHERE job_id = ?1",
+        ).bind(pending.job_id).first<{ readonly n: unknown }>().catch(() => {
+          failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "exhaustive job settlement is uncertain", true);
+        });
+        if (count === null || typeof count.n !== "number" || !Number.isSafeInteger(count.n) || count.n < 0 || count.n > pending.denominator_shards) {
+          failJob("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored exhaustive pending job is unavailable", true);
+        }
+        return { ...pending, settled_shards: count.n };
+      }
       return decodeJobReceipt(row, jobRowKey(row));
     },
     async start(input: ExhaustiveJobInput): Promise<{ job_id: string; state: "PENDING" | "COMPLETE"; receipt: ExhaustiveJobReceipt | null }> {
@@ -568,10 +626,13 @@ export async function exhaustiveRequestDigest(input: {
   readonly plan_id: string;
   readonly scope_digest: string;
   readonly probes: readonly string[];
+  /** Bind the caller's canonical scope expression to the idempotency identity. */
+  readonly scope_expression?: unknown;
 }): Promise<string> {
   return sha256Hex(canonicalRetrievalJson({
     plan_id: input.plan_id,
     scope_digest: input.scope_digest,
     probes: [...input.probes],
+    ...(input.scope_expression === undefined ? {} : { scope_expression: input.scope_expression }),
   }));
 }

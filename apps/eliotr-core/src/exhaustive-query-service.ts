@@ -20,15 +20,16 @@ import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
 import { NormalizedBundleManifestSchema, ScopeExpressionSchema } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
 import {
+  canonicalNormalizedBundleKey,
+} from "@eliotr/platform-cloudflare";
+import {
   createD1EvidenceAuthorityPort,
-  createD1NavigationStore,
+  createCloudflareEvidenceResolver,
   createR2EvidenceContentPort,
   EvidenceRuntimeError,
   type EvidenceSourceAuthority,
 } from "@eliotr/cloudflare-evidence";
-import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
-import { extractNavigationSections } from "@eliotr/retrieval";
 import type {
   AuthenticatedRequestContext,
   ExhaustiveQueryResult,
@@ -188,7 +189,7 @@ function mapRuntimeError(error: unknown): never {
     fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted exhaustive navigation is unavailable", 503, true);
   }
   if (error instanceof EvidenceRuntimeError) {
-    if (error.code === "EVIDENCE_OWNER_GENERATION_MISMATCH" || error.code === "EVIDENCE_SCOPE_MISMATCH" || error.code === "EVIDENCE_SOURCE_NOT_LIVE") {
+    if (error.code === "EVIDENCE_AUTHORIZATION_DENIED" || error.code === "EVIDENCE_OWNER_GENERATION_MISMATCH" || error.code === "EVIDENCE_SCOPE_MISMATCH" || error.code === "EVIDENCE_SOURCE_NOT_LIVE") {
       fail("RESEARCH_AUTHORITY_STALE", "exhaustive evidence authority is stale", 409);
     }
     fail("RESEARCH_SETTLEMENT_UNCERTAIN", "exhaustive evidence settlement is uncertain", 503, true);
@@ -200,18 +201,11 @@ function manifestText(raw: string): unknown {
   try { return JSON.parse(raw); } catch { fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest is malformed", 503, true); }
 }
 
-async function readManifest(bucket: R2Bucket, authority: EvidenceSourceAuthority): Promise<void> {
-  const expectedKey = await canonicalNormalizedBundleKey(authority.object_residency_key_digest, {
-    owner_system_id: authority.owner_system_id,
-    source_namespace_id: authority.source_namespace_id,
-    source_owner_generation: authority.source_owner_generation,
-    source_logical_id: authority.source_id,
-    source_revision_ref: authority.source_revision_ref,
-  }, "manifest.json");
-  if (expectedKey !== authority.normalized_artifact_ref) {
-    fail("RESEARCH_AUTHORITY_STALE", "normalized manifest reference is not canonical", 409);
-  }
-  const object = await bucket.get(expectedKey).catch(() => null);
+async function readManifest(bucket: R2Bucket, authority: EvidenceSourceAuthority): Promise<{ readonly content_size: number }> {
+  // The admission receipt binds this exact manifest key. Its residency digest
+  // includes the manifest bytes, while the source revision digest binds the
+  // normalized content.md object, so deriving one key from the other is wrong.
+  const object = await bucket.get(authority.normalized_artifact_ref).catch(() => null);
   if (object === null || object.size > 512 * 1024) {
     fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest is unavailable", 503, true);
   }
@@ -225,6 +219,39 @@ async function readManifest(bucket: R2Bucket, authority: EvidenceSourceAuthority
       parsed.data.content.markdown_sha256 !== authority.content_sha256 || !parsed.data.capabilities.text_ranges) {
     fail("RESEARCH_AUTHORITY_STALE", "normalized manifest does not match admitted source authority", 409);
   }
+  // The manifest binds the normalized content digest, but its own residency
+  // object is not the content object. Pin the canonical content object as
+  // well, so inventory ranges can be checked against the authoritative byte
+  // length before any shard runs. The resolver performs the stronger
+  // checksum/metadata readback when a section is actually read.
+  const contentKey = await canonicalNormalizedBundleKey(authority.object_residency_key_digest, {
+    owner_system_id: authority.owner_system_id,
+    source_namespace_id: authority.source_namespace_id,
+    source_owner_generation: authority.source_owner_generation,
+    source_logical_id: authority.source_id,
+    source_revision_ref: authority.source_revision_ref,
+  }, "content.md");
+  const content = await bucket.head(contentKey).catch(() => null);
+  if (content === null || !Number.isSafeInteger(content.size) || content.size < 1) {
+    fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized content is unavailable", 503, true);
+  }
+  const metadata = content.customMetadata ?? {};
+  if (metadata.eliotr_sha256 !== undefined && metadata.eliotr_sha256 !== authority.content_sha256) {
+    fail("RESEARCH_AUTHORITY_STALE", "normalized content digest metadata conflicts with source authority", 409);
+  }
+  if (metadata.eliotr_size_bytes !== undefined && metadata.eliotr_size_bytes !== String(content.size)) {
+    fail("RESEARCH_AUTHORITY_STALE", "normalized content size metadata conflicts with R2 authority", 409);
+  }
+  return { content_size: content.size };
+}
+
+interface ExhaustiveProjectionRow {
+  readonly item_key: unknown;
+  readonly canonical_section_id: unknown;
+  readonly content_sha256: unknown;
+  readonly projection_generation: unknown;
+  readonly normalized_start_byte: unknown;
+  readonly normalized_end_byte: unknown;
 }
 
 function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET">, context: AuthenticatedRequestContext): ExhaustiveQueryRuntime {
@@ -234,9 +261,9 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
   const evidence = createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB });
   const content = createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET });
-  let navigation: ReturnType<typeof createD1NavigationStore> | undefined;
+  const resolver = createCloudflareEvidenceResolver({ authority: evidence, content });
   let scopeForRequest: ScopeSnapshot | undefined;
-  const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly start: number; readonly end: number }>();
+  const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly item_key: string; readonly projection_generation: string; readonly start: number; readonly end: number }>();
   async function authorize(scope: ScopeSnapshot): Promise<void> {
     await freezer.requireCurrent(scope);
     await owner.grant(scope);
@@ -248,7 +275,6 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
       const snapshot = await freezer.freeze(expression, credentialGeneration);
       await authorize(snapshot);
       scopeForRequest = snapshot;
-      navigation = createD1NavigationStore({ database: env.CORE_DB, scope_snapshot: snapshot, access, require_current: (current) => freezer.requireCurrent(current) });
       return snapshot;
     },
     async loadScope(snapshotId, revision) {
@@ -257,38 +283,68 @@ function productionRuntime(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BU
       await evidence.authorizeScope(authority, access);
       await authorize(authority.snapshot);
       scopeForRequest = authority.snapshot;
-      navigation = createD1NavigationStore({ database: env.CORE_DB, scope_snapshot: authority.snapshot, access, require_current: (current) => freezer.requireCurrent(current) });
       return authority.snapshot;
     },
     requireCurrentScope: async (scope) => { await authorize(scope); },
     async inventorySections(scope) {
-      if (scopeForRequest === undefined || scopeForRequest.snapshot_id !== scope.snapshot_id || navigation === undefined) {
+      if (scopeForRequest === undefined || scopeForRequest.snapshot_id !== scope.snapshot_id) {
         throw new ExhaustiveQueryError("RESEARCH_AUTHORITY_STALE", "exhaustive scope runtime is not bound", 409);
       }
       const sources = await owner.sources(scope.member_source_revision_refs);
-      const sourceByRef = new Map(sources.map((source) => [source.revision.source_revision_ref, source]));
-      const maps = await navigation.getDocumentMaps(scope.member_source_revision_refs);
       const descriptors: ExhaustiveSectionDescriptor[] = [];
-      for (const source of sources) await readManifest(env.EVIDENCE_BUCKET, source.authority);
-      for (const map of maps) {
-        const sourceRef = "source_revision_ref" in (map as object) ? String((map as { source_revision_ref: unknown }).source_revision_ref) : "";
-        if (!sourceByRef.has(sourceRef)) fail("RESEARCH_AUTHORITY_STALE", "navigation map escaped the frozen scope", 409);
-        for (const section of extractNavigationSections(map)) {
-          if (section.normalized_start_byte === undefined || section.normalized_end_byte === undefined) {
-            fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest has no structural section ranges", 503, true);
+      const contentSizes = new Map<string, number>();
+      for (const source of sources) {
+        const manifest = await readManifest(env.EVIDENCE_BUCKET, source.authority);
+        contentSizes.set(source.revision.source_revision_ref, manifest.content_size);
+      }
+      for (const source of sources) {
+        const sourceRef = source.revision.source_revision_ref;
+        const result = await env.SEARCH_DB.prepare(
+          "SELECT p.item_key, p.canonical_section_id, p.content_sha256, p.projection_generation, " +
+          "s.normalized_start_byte, s.normalized_end_byte FROM projection_item p JOIN projection_span s " +
+          "ON s.item_key=p.item_key WHERE p.source_revision_ref=?1 AND p.active=1 " +
+          "ORDER BY p.canonical_section_id LIMIT 4097",
+        ).bind(sourceRef).all<ExhaustiveProjectionRow>();
+        if (!result.success || !Array.isArray(result.results)) throw new ExhaustiveQueryError("RESEARCH_SETTLEMENT_UNCERTAIN", "admitted projection inventory is unavailable", 503, true);
+        if (result.results.length === 0) fail("RESEARCH_EXHAUSTIVE_NOT_READY", "admitted normalized manifest has no projected section ranges", 503, true);
+        if (result.results.length > 4096) fail("RESEARCH_INPUT_LIMIT", "exhaustive section inventory exceeds its bound", 413);
+        for (const row of result.results) {
+          if (typeof row.item_key !== "string" || typeof row.canonical_section_id !== "string" ||
+              typeof row.content_sha256 !== "string" || row.content_sha256 !== source.authority.content_sha256 ||
+              typeof row.projection_generation !== "string" || typeof row.normalized_start_byte !== "number" ||
+              typeof row.normalized_end_byte !== "number" || !Number.isSafeInteger(row.normalized_start_byte) ||
+              !Number.isSafeInteger(row.normalized_end_byte) || row.normalized_start_byte < 0 ||
+              row.normalized_end_byte <= row.normalized_start_byte ||
+              row.normalized_end_byte > (contentSizes.get(sourceRef) ?? 0)) {
+            fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory conflicts with source authority", 409);
           }
-          const key = `${sourceRef}:${section.section_ref}`;
-          sections.set(key, { source_revision_ref: sourceRef, section_ref: section.section_ref, start: section.normalized_start_byte, end: section.normalized_end_byte });
-          descriptors.push({ section_ref: key, source_revision_ref: sourceRef, uncompressed_bytes: section.normalized_end_byte - section.normalized_start_byte });
+          const key = `${sourceRef}:${row.canonical_section_id}`;
+          if (sections.has(key)) fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory repeats a section", 409);
+          sections.set(key, { source_revision_ref: sourceRef, section_ref: row.canonical_section_id, item_key: row.item_key, projection_generation: row.projection_generation, start: row.normalized_start_byte, end: row.normalized_end_byte });
+          descriptors.push({ section_ref: key, source_revision_ref: sourceRef, uncompressed_bytes: row.normalized_end_byte - row.normalized_start_byte });
         }
       }
       return descriptors;
     },
     async readSection(scope, sectionRef) {
       const selected = sections.get(sectionRef);
-      if (selected === undefined || navigation === undefined) throw new Error("RETRIEVAL_RESOLUTION_UNCERTAIN");
-      const handle = await navigation.getEvidenceHandleForSection({ scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, source_revision_ref: selected.source_revision_ref, section_ref: selected.section_ref });
-      if (handle === null) throw new Error("RETRIEVAL_RESOLUTION_UNCERTAIN");
+      if (selected === undefined) throw new Error("RETRIEVAL_RESOLUTION_UNCERTAIN");
+      const resolved = await resolver.resolveCandidate({
+        candidate: {
+          candidate_id: selected.item_key,
+          lane: "EXHAUSTIVE",
+          source_revision_ref: selected.source_revision_ref,
+          canonical_section_id: selected.section_ref,
+          preview: "",
+          raw_score: 0,
+          rank: 1,
+          index_generation: selected.projection_generation,
+          metadata: { item_key: selected.item_key, content_sha256: "" },
+        },
+        scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
+        access,
+      });
+      const handle = resolved.handle;
       const source = await evidence.loadSource(selected.source_revision_ref);
       if (source === null) throw new EvidenceRuntimeError("EVIDENCE_SOURCE_NOT_FOUND", "admitted source authority is unavailable");
       const materialized = await content.materialize(source, { kind: "normalized_byte_range", start: selected.start, end: selected.end });
@@ -332,7 +388,6 @@ export function createExhaustiveQueryService(
         scope = await runtime.freezeScope(request.scope_expression, context.credential_generation).catch(mapRuntimeError);
       }
       await runtime.requireCurrentScope(scope).catch(mapRuntimeError);
-      try { runtime.checkBudget(context.request.signal); } catch (error) { mapRuntimeError(error); }
       const sections = await runtime.inventorySections(scope).catch(mapRuntimeError);
       let plan: ExactScanPlan;
       try { plan = planExhaustiveScan({ scope, probes: [request.query], sections }); } catch (error) { mapRetrievalError(error); }
@@ -340,11 +395,14 @@ export function createExhaustiveQueryService(
         plan_id: plan.plan_id,
         scope_digest: scope.digest,
         probes: plan.probes,
+        scope_expression: request.scope_expression,
       });
       if (prior !== null && prior.request_digest !== requestDigest) {
         fail("RESEARCH_CONFLICT", "idempotency identity is bound to different inputs", 409);
       }
-      if (prior !== null) return result({ status: "COMPLETE", receipt: prior });
+      if (prior !== null && "coverage_claim" in prior) {
+        return result({ status: "COMPLETE", receipt: prior });
+      }
       const reader: ExhaustiveSectionReader = {
         readSection: (sectionRef) => runtime.readSection(scope, sectionRef),
       };

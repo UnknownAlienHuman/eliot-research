@@ -127,11 +127,13 @@ limits remain unchanged. The Q8 adapter owns scope freeze/currentness,
 authoritative normalized-section inventory and pinned section reads as injected
 ports, then delegates planning, exact verification, shard reconciliation and
 coverage to ER-07 Q7. The default Worker wiring binds those authorities to the
-owner ScopeSnapshot, admitted normalized manifest, persisted DocumentMap and
-pinned R2 evidence ports. Missing LIVE user-loop handles remain unsettled and
-cannot earn COMPLETE. The canonical Workflow host for asynchronous exhaustive
-execution remains open. A Q7 `result_artifact_ref` is a receipt reference; it
-is not a published research artifact.
+owner ScopeSnapshot, admitted normalized manifest, persisted structural
+projection ranges and pinned R2 evidence ports. Missing LIVE user-loop handles remain unsettled and
+cannot earn COMPLETE. The existing ER09 `ResearchWorkflow` host now accepts a
+bounded Q8 job through one `step.do` owner boundary; HTTP currently uses the
+bounded D1 loop directly and Workflow launch/readback remains a deployment
+qualification item. A Q7 `result_artifact_ref` is a receipt reference; it is
+not a published research artifact.
 
 ## Acceptance
 

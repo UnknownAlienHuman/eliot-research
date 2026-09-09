@@ -45,7 +45,7 @@
         "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
         "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
         "apps/eliotr-core/src/exhaustive-query-service.ts and exhaustive-query-service.test.ts: versioned Q8 EXHAUSTIVE_JOB result, separate parser, authority-port boundary, COMPLETE replay and UNFINISHED denominator-preserving negative",
-        "one canonical Workflow host for asynchronous exhaustive execution, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
+        "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; HTTP Workflow launch/readback qualification, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; missing LIVE user-loop handles keep jobs UNFINISHED"
       ]
     },
     {
