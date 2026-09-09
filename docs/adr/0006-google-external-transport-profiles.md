@@ -11,11 +11,13 @@ The deployment selects one value of the existing `GOOGLE_EXTERNAL_TRANSPORT` set
 configuration and must agree with the implementation release profile. Unknown or mixed values fail closed;
 there is no launch-check override argument.
 
-`gemini-mcp` is the selected Workspace profile. Gemini Spark Connected Apps and Google Antigravity own
-Google Drive, Docs and Sheets actions on the client side. ELIOT's MCP surface only supplies bounded plans
-and candidate readback validation. It does not receive Google credentials, perform Google I/O, or promote
-a caller-supplied receipt into canonical D1 state. Workspace selection therefore does not require a Google
-Cloud project, custom OAuth client, Vertex configuration, or Gemini API key. The legacy Gemini CLI
+`gemini-mcp` is the selected Workspace profile. Gemini Spark Connected Apps and Google Antigravity are
+the selected MCP clients; a separately connected Workspace/Drive connector within the selected client
+performs Google Drive, Docs and Sheets actions. Connector availability inside either client remains
+unqualified. ELIOT's MCP surface only supplies bounded plans and candidate readback validation. It does
+not receive Google credentials, perform Google I/O, or promote a caller-supplied receipt into canonical
+D1 state. Workspace selection therefore does not require a Google Cloud project, custom OAuth client,
+Vertex configuration, or Gemini API key. The legacy Gemini CLI
 extension installer remains retained but is explicitly unselected; it is not a Spark or Antigravity setup.
 
 Antigravity uses a project-local `.agents/mcp_config.json` with remote `serverUrl` entries. Spark uses
