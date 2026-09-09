@@ -4,6 +4,8 @@ export const MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_MIME_BYTES = 256;
 export const MARKDOWN_CONVERSION_MAX_ERROR_BYTES = 512;
 export const MARKDOWN_CONVERSION_MAX_TIMEOUT_MS = 300_000;
+/** Application admission bound; this is not a claim about a provider limit. */
+export const MARKDOWN_CONVERSION_MAX_INPUT_BYTES = 256 * 1024;
 
 export type MarkdownConversionFormat = "markdown" | "text";
 

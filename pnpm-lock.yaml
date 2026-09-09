@@ -164,6 +164,8 @@ importers:
         specifier: workspace:*
         version: link:../contracts
 
+  packages/cloudflare-markdown: {}
+
   packages/cloudflare-navigation:
     dependencies:
       '@eliotr/cloudflare-evidence':

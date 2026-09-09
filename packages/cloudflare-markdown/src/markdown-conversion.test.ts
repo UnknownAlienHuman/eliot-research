@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { createWorkersAiMarkdownConversionAdapter } from "./markdown-conversion.js";
-import type { MarkdownConversionInput, WorkersAiMarkdownBinding } from "./markdown-conversion-contract.js";
+import { MARKDOWN_CONVERSION_MAX_INPUT_BYTES } from "./markdown-conversion-contract.js";
+import type {
+  MarkdownConversionInput,
+  WorkersAiMarkdownBinding,
+} from "./markdown-conversion-contract.js";
 
 const context = {
   operation_id: "operation-1",
@@ -55,6 +59,46 @@ describe("Workers AI Markdown Conversion binding", () => {
     }));
     expect(result).toMatchObject({ disposition: "FAILED", code: "INPUT_INVALID" });
     expect(ai.toMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("returns INPUT_INVALID when bounds are absent instead of throwing", async () => {
+    const ai = binding({ id: "result-1", name: "source.pdf", format: "markdown", mimetype: "application/pdf", tokens: 1, data: "ok" });
+    const result = await createWorkersAiMarkdownConversionAdapter(ai).convert(input({ bounds: undefined as never }));
+    expect(result).toMatchObject({ disposition: "FAILED", code: "INPUT_INVALID" });
+    expect(ai.toMarkdown).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new Blob([]),
+    new Blob(["x".repeat(MARKDOWN_CONVERSION_MAX_INPUT_BYTES + 1)]),
+  ])("rejects empty or over-bound input blobs before the provider call", async (blob) => {
+    const ai = binding({ id: "result-1", name: "source.pdf", format: "markdown", mimetype: "application/pdf", tokens: 1, data: "ok" });
+    const result = await createWorkersAiMarkdownConversionAdapter(ai).convert(input({ blob }));
+    expect(result).toMatchObject({ disposition: "FAILED", code: "INPUT_INVALID" });
+    expect(ai.toMarkdown).not.toHaveBeenCalled();
+  });
+
+  it("snapshots identity, bounds, and options before awaiting the provider", async () => {
+    let resolveProvider: (value: unknown) => void = () => undefined;
+    let receivedOptions: unknown;
+    const ai: WorkersAiMarkdownBinding = {
+      toMarkdown: vi.fn((_file, options) => {
+        receivedOptions = options?.conversionOptions;
+        return new Promise<unknown>((resolve) => { resolveProvider = resolve; });
+      }),
+    };
+    const mutableContext = { ...context } as { operation_id: string; attempt_id: string; input_sha256: string; profile_generation: string };
+    const mutableBounds = { max_output_bytes: 1024, max_tokens: 100, timeout_ms: 1000 };
+    const mutableOptions = { output: { format: "markdown" as "markdown" | "text" } };
+    const request = input({ context: mutableContext, bounds: mutableBounds, conversion_options: mutableOptions });
+    const pending = createWorkersAiMarkdownConversionAdapter(ai).convert(request);
+    mutableContext.operation_id = "changed-after-dispatch";
+    mutableBounds.max_output_bytes = 1;
+    mutableOptions.output.format = "text";
+    resolveProvider({ id: "result-1", name: "source.pdf", format: "markdown", mimetype: "application/pdf", tokens: 1, data: "ok" });
+    const result = await pending;
+    expect(result).toMatchObject({ disposition: "CONVERTED", context });
+    expect(receivedOptions).toEqual({ output: { format: "markdown" } });
   });
 
   it("enforces caller output and token bounds without retrying", async () => {

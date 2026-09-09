@@ -1,14 +1,17 @@
 import {
   MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES,
   MARKDOWN_CONVERSION_MAX_ERROR_BYTES,
+  MARKDOWN_CONVERSION_MAX_INPUT_BYTES,
   MARKDOWN_CONVERSION_MAX_MIME_BYTES,
   MARKDOWN_CONVERSION_MAX_NAME_BYTES,
   MARKDOWN_CONVERSION_MAX_RESULT_ID_BYTES,
   MARKDOWN_CONVERSION_MAX_TIMEOUT_MS,
   type MarkdownConversionAdapter,
+  type MarkdownConversionBounds,
   type MarkdownConversionContext,
   type MarkdownConversionFailure,
   type MarkdownConversionInput,
+  type MarkdownConversionOptions,
   type MarkdownConversionObservation,
   type MarkdownConversionOutcome,
   type WorkersAiMarkdownBinding,
@@ -48,7 +51,7 @@ function safeBound(value: unknown, maximum: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= maximum;
 }
 
-function validConversionOptions(value: unknown): boolean {
+function validConversionOptions(value: unknown): value is MarkdownConversionOptions {
   if (value === undefined) return true;
   if (!record(value)) return false;
   const keys = Object.keys(value);
@@ -68,11 +71,57 @@ function validConversionOptions(value: unknown): boolean {
     (pdf.metadata === undefined || typeof pdf.metadata === "boolean"));
 }
 
-function validContext(context: MarkdownConversionContext): boolean {
+function validContext(context: unknown): context is MarkdownConversionContext {
   return record(context) && boundedText(context.operation_id, MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES) &&
     boundedText(context.attempt_id, MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES) &&
-    SHA256.test(context.input_sha256) &&
+    typeof context.input_sha256 === "string" && SHA256.test(context.input_sha256) &&
     boundedText(context.profile_generation, MARKDOWN_CONVERSION_MAX_CONTEXT_BYTES);
+}
+
+function validBounds(value: unknown): value is MarkdownConversionBounds {
+  return record(value) && safeBound(value.max_output_bytes, MAX_SAFE_BOUND) &&
+    safeBound(value.max_tokens, MAX_SAFE_BOUND) &&
+    safeBound(value.timeout_ms, MARKDOWN_CONVERSION_MAX_TIMEOUT_MS);
+}
+
+function snapshotContext(value: MarkdownConversionContext): MarkdownConversionContext {
+  return Object.freeze({
+    operation_id: value.operation_id,
+    attempt_id: value.attempt_id,
+    input_sha256: value.input_sha256,
+    profile_generation: value.profile_generation,
+  });
+}
+
+function snapshotBounds(value: MarkdownConversionBounds): MarkdownConversionBounds {
+  return Object.freeze({
+    max_output_bytes: value.max_output_bytes,
+    max_tokens: value.max_tokens,
+    timeout_ms: value.timeout_ms,
+  });
+}
+
+function snapshotOptions(value: MarkdownConversionOptions | undefined): MarkdownConversionOptions | undefined {
+  if (value === undefined) return undefined;
+  const output = value.output === undefined ? undefined : Object.freeze({
+    ...(value.output.format === undefined ? {} : { format: value.output.format }),
+  });
+  const image = value.image === undefined ? undefined : Object.freeze({
+    ...(value.image.descriptionLanguage === undefined ? {} : { descriptionLanguage: value.image.descriptionLanguage }),
+  });
+  const html = value.html === undefined ? undefined : Object.freeze({
+    ...(value.html.hostname === undefined ? {} : { hostname: value.html.hostname }),
+    ...(value.html.cssSelector === undefined ? {} : { cssSelector: value.html.cssSelector }),
+  });
+  const pdf = value.pdf === undefined ? undefined : Object.freeze({
+    ...(value.pdf.metadata === undefined ? {} : { metadata: value.pdf.metadata }),
+  });
+  return Object.freeze({
+    ...(output === undefined ? {} : { output }),
+    ...(image === undefined ? {} : { image }),
+    ...(html === undefined ? {} : { html }),
+    ...(pdf === undefined ? {} : { pdf }),
+  });
 }
 
 function failure(code: MarkdownConversionFailureCode, context?: MarkdownConversionContext): MarkdownConversionFailure {
@@ -153,41 +202,55 @@ async function awaitProvider(
 export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBinding): MarkdownConversionAdapter {
   return {
     async convert(input): Promise<MarkdownConversionOutcome> {
-      if (!record(input) || !boundedText(input.name, MARKDOWN_CONVERSION_MAX_NAME_BYTES) ||
-          !(input.blob instanceof Blob) || !validContext(input.context) || !validConversionOptions(input.conversion_options) ||
-          !safeBound(input.bounds.max_output_bytes, MAX_SAFE_BOUND) ||
-          !safeBound(input.bounds.max_tokens, MAX_SAFE_BOUND) ||
-          !safeBound(input.bounds.timeout_ms, MARKDOWN_CONVERSION_MAX_TIMEOUT_MS)) {
+      if (!record(input)) return failure("INPUT_INVALID");
+      const candidate = input;
+      if (!boundedText(candidate.name, MARKDOWN_CONVERSION_MAX_NAME_BYTES) ||
+          !(candidate.blob instanceof Blob) || candidate.blob.size < 1 ||
+          candidate.blob.size > MARKDOWN_CONVERSION_MAX_INPUT_BYTES || !validContext(candidate.context) ||
+          !validBounds(candidate.bounds) || !validConversionOptions(candidate.conversion_options)) {
         return failure("INPUT_INVALID");
       }
-      if (input.signal?.aborted) return failure("ABORTED", input.context);
+      const name = candidate.name;
+      const blob = candidate.blob;
+      const context = snapshotContext(candidate.context);
+      const bounds = snapshotBounds(candidate.bounds);
+      const conversion_options = snapshotOptions(candidate.conversion_options);
+      const signal = candidate.signal as AbortSignal | undefined;
+      if (signal?.aborted) return failure("ABORTED", context);
       let raw: unknown;
       try {
         // The pinned workers-types package still spells this result field `mimeType`;
         // current binding documentation specifies the wire field `mimetype`. Decode
         // the current documented shape at the untrusted provider boundary.
-        const call = input.conversion_options === undefined
-          ? ai.toMarkdown({ name: input.name, blob: input.blob })
-          : ai.toMarkdown({ name: input.name, blob: input.blob }, {
-            conversionOptions: input.conversion_options,
+        const call = conversion_options === undefined
+          ? ai.toMarkdown({ name, blob })
+          : ai.toMarkdown({ name, blob }, {
+            conversionOptions: conversion_options,
           });
-        raw = await awaitProvider(call, input.bounds.timeout_ms, input.signal);
+        raw = await awaitProvider(call, bounds.timeout_ms, signal);
       } catch (error) {
-        if (error instanceof AbortedSignal) return failure("ABORTED", input.context);
-        if (error instanceof TimeoutSignal) return failure("TIMEOUT", input.context);
-        return failure("PROVIDER_UNAVAILABLE", input.context);
+        if (error instanceof AbortedSignal) return failure("ABORTED", context);
+        if (error instanceof TimeoutSignal) return failure("TIMEOUT", context);
+        return failure("PROVIDER_UNAVAILABLE", context);
       }
-      if (input.signal?.aborted) return failure("ABORTED", input.context);
-      const decoded = decodeProviderResult(raw, input);
-      if (decoded.kind === "provider-error") return failure("PROVIDER_ERROR", input.context);
-      if (decoded.kind === "invalid") return failure("RESPONSE_INVALID", input.context);
-      if (decoded.kind === "empty") return failure("EMPTY_OUTPUT", input.context);
-      if (decoded.kind === "output-limit") return failure("OUTPUT_LIMIT_EXCEEDED", input.context);
-      if (decoded.kind === "token-limit") return failure("TOKEN_LIMIT_EXCEEDED", input.context);
+      if (signal?.aborted) return failure("ABORTED", context);
+      const request: MarkdownConversionInput = signal === undefined
+        ? (conversion_options === undefined
+          ? { name, blob, context, bounds }
+          : { name, blob, context, bounds, conversion_options })
+        : (conversion_options === undefined
+          ? { name, blob, context, bounds, signal }
+          : { name, blob, context, bounds, conversion_options, signal });
+      const decoded = decodeProviderResult(raw, request);
+      if (decoded.kind === "provider-error") return failure("PROVIDER_ERROR", context);
+      if (decoded.kind === "invalid") return failure("RESPONSE_INVALID", context);
+      if (decoded.kind === "empty") return failure("EMPTY_OUTPUT", context);
+      if (decoded.kind === "output-limit") return failure("OUTPUT_LIMIT_EXCEEDED", context);
+      if (decoded.kind === "token-limit") return failure("TOKEN_LIMIT_EXCEEDED", context);
       const dataBytes = new TextEncoder().encode(decoded.result.data).byteLength;
       const observation: MarkdownConversionObservation = {
         disposition: "CONVERTED",
-        context: input.context,
+        context,
         provider_result_id: decoded.result.id,
         name: decoded.result.name,
         detected_mime: decoded.result.mimetype,

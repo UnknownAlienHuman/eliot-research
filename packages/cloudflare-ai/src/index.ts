@@ -25,23 +25,6 @@ export {
 } from "./ai-search-provisioning-decode.js";
 export { ensureAiSearchInstance } from "./ai-search-provisioning.js";
 export {
-  createWorkersAiMarkdownConversionAdapter,
-  decodeWorkersAiMarkdownResult,
-} from "./markdown-conversion.js";
-export type {
-  MarkdownConversionAdapter,
-  MarkdownConversionBounds,
-  MarkdownConversionContext,
-  MarkdownConversionFailure,
-  MarkdownConversionFailureCode,
-  MarkdownConversionFormat,
-  MarkdownConversionInput,
-  MarkdownConversionObservation,
-  MarkdownConversionOptions,
-  MarkdownConversionOutcome,
-  WorkersAiMarkdownBinding,
-} from "./markdown-conversion-contract.js";
-export {
   ModelGatewayExecutionError,
   type CompiledModelGatewayPrompt,
   type DecodedModelGatewayResponse,
