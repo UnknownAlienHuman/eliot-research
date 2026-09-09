@@ -241,7 +241,7 @@ function updateHealth(health: SystemHealth): void {
   }
   const connector = app.querySelector("#connector-mode");
   if (connector) connector.textContent = googleConnectorLabel(health.google_external_transport);
-  app.dispatchEvent(new Event("eliotr:health-updated"));
+  app.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true }));
 }
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
