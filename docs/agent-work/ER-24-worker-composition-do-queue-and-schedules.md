@@ -15,7 +15,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
 - `apps/eliotr-core/src/research-query-http.ts`
-- `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/src/queue.ts`
 - `apps/eliotr-core/src/scheduled.ts`
 - `apps/eliotr-core/src/readiness.ts`
@@ -23,7 +22,6 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/test/research-query-jobs.test.ts`
-- `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/wrangler.jsonc`
 - `packages/cloudflare-navigation/src/index.ts`
 - `packages/cloudflare-navigation/src/orientation-authority.ts`
@@ -60,12 +58,15 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
+- `packages/cloudflare-navigation/src/exhaustive-workflow-service.ts`
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
 
 ER-36 owns the Google transport profile selection and legacy OAuth route gating. ER-24 retains the
-underlying OAuth service and storage authority.
+underlying OAuth service and storage authority. ER-36 is also the canonical owner of the shared
+`composition-root.ts` and `index.test.ts` integration files; ER-24 contributes through the reviewed
+integration handoff without claiming those paths.
 
 ## Implemented HTTP contour
 
