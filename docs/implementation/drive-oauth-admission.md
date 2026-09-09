@@ -11,13 +11,14 @@ signal)` persists an intent before returning Google's authorization URL. `finish
 signal)` verifies a normalized callback and atomically records the first encrypted credential plus
 admission receipt. `{state, iss, error}` consumes a denied attempt without token exchange.
 
-This is an **internal control-plane service**, not yet the public Connect Google UI or HTTP callback.
+This internal control-plane service now has an authenticated owner HTTP/PWA begin and callback adapter.
 The authenticated owner principal/session and `assertOwnerCurrent` are trusted caller inputs. The same
 is true of server configuration: connection/client/redirect, expected dedicated Google subject/email,
 deployment, and an explicit In production attestation reference. A Google JWT cannot attest the OAuth
-client's publishing status. A browser must never supply those trust decisions. HTTP routes, operator
-configuration admission, CSRF/duplicate-query handling, secret-free callback redirect and full browser
-acceptance remain required. There is no token-paste or raw-SQL setup shortcut.
+client's publishing status. A browser must never supply those trust decisions. The HTTP adapter enforces
+operator configuration, same-origin/CSRF, duplicate-query rejection and a secret-free fixed callback
+redirect. Full browser acceptance and genuine Google qualification remain open. There is no token-paste
+or raw-SQL setup shortcut.
 
 Admission returns only connection/intent/credential references, AUTHORIZING and `exchange_ready:false`.
 It creates no folder, Sheet, cursor, grant, source or result. The refresh adapter deliberately rejects
@@ -54,9 +55,12 @@ at 32 KiB / 256 chunks, ID token at 16 KiB, and the JWKS set at eight keys. Ther
 Verification uses the actual RS256 signature and an appropriate 2048–4096-bit RSA key. It checks issuer,
 exact audience/authorized presenter, expected subject/email, boolean email_verified, nonce and bounded
 issue/expiry/not-before times. The current Google server-flow access-token `at_hash` is mandatory and
-verified; `c_hash` is verified when present. The normalized callback requires
-`iss=https://accounts.google.com`. Provider-returned scope and offline refresh grant must match the
-narrow profile; metadata in callback query parameters never substitutes for token/identity verification.
+verified; `c_hash` is verified when present. The normalized callback accepts the documented `state` plus
+`code` or `error` response and treats `iss=https://accounts.google.com` as optional; when supplied it
+must match exactly, otherwise the server uses its pinned Google issuer while the stored state intent
+remains the binding. Provider-returned scope and offline refresh grant must match the narrow profile;
+metadata in callback query parameters never substitutes for token/identity verification. See Google's
+[web-server callback parameter table](https://developers.google.com/identity/protocols/oauth2/web-server#handlingresponse).
 
 ## Atomic persistence
 
@@ -83,9 +87,9 @@ lost intent/claim/admission ACKs, uncertain token response, rollback, owner with
 no-overwrite behavior. Provider responses and authenticated owner context are controlled fixtures;
 Google signature verification, encryption and D1 persistence are not substituted with success stubs.
 
-Next: owner HTTP/PWA and operator-configuration integration, explicit new authorization after an uncertain
-attempt, disconnect/reconnect with credential fencing, bounded intent retention, then generation/asset/
-cursor qualification. Keep one active ChatGPT write transport and the existing application launch hold.
+Next: explicit new authorization after an uncertain attempt, disconnect/reconnect with credential fencing,
+bounded intent retention, then generation/asset/cursor qualification. Keep one active ChatGPT write
+transport and the existing application launch hold.
 The complete real-storage browser lifecycle and genuine Google login are NOT_EXECUTED, not implied by
 the internal service tests. Missing implementation stays local; no partial Cloudflare deployment.
 
