@@ -36,15 +36,20 @@ class FakeProcess extends EventEmitter {
         return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: ACCOUNT_ID } }) }] };
       }
       if (request.path === `/accounts/${ACCOUNT_ID}/access/apps?per_page=100`) {
-        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) }] };
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 0 } }) }] };
       }
       if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`) {
-        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 1 } }) }] };
+        if (request.method === "POST") return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: { id: "policy-test" } }) }] };
+        const result = Array.from({ length: 100 }, (_, index) => ({ id: `policy-${index + 1}` }));
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result, result_info: { page: 1, per_page: 100, count: 100, total_count: 101, total_pages: 2 } }) }] };
+      }
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies?page=2&per_page=100`) {
+        return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [{ id: "policy-101" }], result_info: { page: 2, per_page: 100, count: 1, total_count: 101, total_pages: 2 } }) }] };
       }
       if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-error/policies`) {
         return { isError: true, content: [{ type: "text", text: "this must not be parsed" }] };
       }
-      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies`) {
+      if (request.path === `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies` && request.method === "GET") {
         return { content: [{ type: "text", text: JSON.stringify({ status: 200, success: true, result: [], result_info: { page: 1, per_page: 100, count: 0, total_count: 0, total_pages: 2 } }) }] };
       }
       assert.equal(request.path, `/accounts/${ACCOUNT_ID}/access/organizations`);
@@ -102,13 +107,14 @@ const transport = createCloudflareMcpTransport({
 await transport.verifyAccount();
 assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/organizations`), [{ auth_domain: "test.cloudflareaccess.com" }]);
 assert.deepEqual(await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps?per_page=100`), []);
-assert.deepEqual(await transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`, { name: "owner", decision: "allow", include: [] }), []);
+assert.deepEqual(await transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`, { name: "owner", decision: "allow", include: [] }), { id: "policy-test" });
+assert.equal((await transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps/app-test/policies`)).length, 101);
 await assert.rejects(
   () => transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-error/policies`, { name: "owner", decision: "allow", include: [] }),
   (error) => error?.code === "MCP_PROTOCOL_ERROR",
 );
 await assert.rejects(
-  () => transport.request("POST", `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies`, { name: "owner", decision: "allow", include: [] }),
+  () => transport.request("GET", `/accounts/${ACCOUNT_ID}/access/apps/app-bad/policies`),
   (error) => error?.code === "MCP_PROTOCOL_INVALID",
 );
 await assert.rejects(
@@ -130,9 +136,11 @@ assert.deepEqual(fake.calls.map((call) => call.method), [
   "mcpServer/tool/call",
   "mcpServer/tool/call",
   "mcpServer/tool/call",
+  "mcpServer/tool/call",
+  "mcpServer/tool/call",
 ]);
-assert.equal(fake.calls[8]?.params?.server, "cloudflare-api");
-assert.equal(fake.calls[8]?.params?.tool, "execute");
+assert.equal(fake.calls[10]?.params?.server, "cloudflare-api");
+assert.equal(fake.calls[10]?.params?.tool, "execute");
 assert.throws(
   () => createCloudflareMcpTransport({ cwd: resolve("."), accountId: ACCOUNT_ID, env: { CLOUDFLARE_API_TOKEN: "redacted" } }),
   (error) => error?.code === "MCP_AUTH_UNAVAILABLE",

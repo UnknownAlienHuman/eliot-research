@@ -15,6 +15,7 @@ const TOOL = "execute";
 const SERVER_URL = "https://mcp.cloudflare.com/mcp";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_LINE_BYTES = 512 * 1024;
+const MAX_ACCESS_LIST_PAGES = 100;
 
 export class CloudflareMcpOAuthError extends Error {
   constructor(code, message) {
@@ -65,6 +66,16 @@ function appIdFromPath(path, accountSegment) {
   return match[1];
 }
 
+function accessListDescriptor(path, accountSegment) {
+  const appPath = `/accounts/${accountSegment}/access/apps`;
+  if (path === `${appPath}?per_page=100`) return { base: appPath, page: 1 };
+  const appPage = path.match(new RegExp(`^${appPath}\\?page=([1-9][0-9]{0,2})&per_page=100$`, "u"));
+  if (appPage !== null) return { base: appPath, page: Number(appPage[1]) };
+  const policy = path.match(new RegExp(`^${appPath}/([^/]+)/policies(?:\\?page=([1-9][0-9]{0,2})&per_page=100)?$`, "u"));
+  if (policy === null || policy[1].length === 0 || policy[1].length > 128) return null;
+  return { base: `${appPath}/${policy[1]}/policies`, page: policy[2] === undefined ? 1 : Number(policy[2]) };
+}
+
 function checkKnownRequest(accountId, method, path, body) {
   if (typeof method !== "string" || (method !== "GET" && method !== "POST") ||
       typeof path !== "string" || path.length > 512 || !path.startsWith("/accounts/")) {
@@ -83,6 +94,11 @@ function checkKnownRequest(accountId, method, path, body) {
   }
   if (method === "GET" && path === `${appPath}?per_page=100`) {
     if (body !== undefined) fail("MCP_REQUEST_INVALID", "application list cannot carry a body");
+    return;
+  }
+  const list = accessListDescriptor(path, accountSegment);
+  if (method === "GET" && list !== null) {
+    if (body !== undefined) fail("MCP_REQUEST_INVALID", "Access list read cannot carry a body");
     return;
   }
   const appId = appIdFromPath(path, accountSegment);
@@ -288,7 +304,7 @@ export function createCloudflareMcpTransport(options = {}) {
     return ready;
   }
 
-  async function request(method, path, body) {
+  async function requestPage(method, path, body) {
     checkKnownRequest(accountId, method, path, body);
     const threadId = await ensureReady();
     const result = await rpc("mcpServer/tool/call", {
@@ -301,20 +317,47 @@ export function createCloudflareMcpTransport(options = {}) {
     if (!envelope.success || envelope.status < 200 || envelope.status >= 300) {
       throw new CloudflareMcpOAuthError("MCP_REQUEST_FAILED", `${method} ${path} failed (${envelope.status})`);
     }
-    const listPath = path === `/accounts/${encodeURIComponent(accountId)}/access/apps?per_page=100` ||
-      appIdFromPath(path, encodeURIComponent(accountId)) !== null;
-    if (listPath) {
+    const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
+    if (list !== null) {
       const info = envelope.result_info;
       const listed = envelope.result;
       if (!Array.isArray(listed) || info === null || typeof info !== "object" || Array.isArray(info) ||
           !Number.isSafeInteger(info.page) || !Number.isSafeInteger(info.per_page) ||
           !Number.isSafeInteger(info.count) || !Number.isSafeInteger(info.total_count) ||
-          !Number.isSafeInteger(info.total_pages) || info.page !== 1 || info.total_pages !== 1 ||
-          info.count !== info.total_count || info.count !== listed.length || info.count < 0 || info.per_page < 1) {
+          !Number.isSafeInteger(info.total_pages) || info.page !== list.page || info.page < 1 ||
+          info.per_page < 1 || info.count < 0 || info.total_count < 0 || info.total_pages < 0 ||
+          info.count !== listed.length || info.total_count < info.count ||
+          (info.total_pages > 0 && Math.ceil(info.total_count / info.per_page) !== info.total_pages) ||
+          (info.total_pages === 0 && (info.page !== 1 || info.count !== 0 || info.total_count !== 0 || listed.length !== 0)) ||
+          (info.total_pages > 0 && info.page > info.total_pages) ||
+          (info.total_pages > 0 && info.page < info.total_pages && info.count !== info.per_page) ||
+          (info.total_pages > 0 && info.page === info.total_pages && info.count > info.per_page) ||
+          info.total_pages > MAX_ACCESS_LIST_PAGES) {
         throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
       }
+      return { list, listed, info };
     }
     return envelope.result ?? envelope;
+  }
+
+  async function request(method, path, body) {
+    checkKnownRequest(accountId, method, path, body);
+    const list = method === "GET" ? accessListDescriptor(path, encodeURIComponent(accountId)) : null;
+    if (list === null) return requestPage(method, path, body);
+    const all = [];
+    let current = path;
+    for (let page = 1; page <= MAX_ACCESS_LIST_PAGES; page += 1) {
+      const result = await requestPage("GET", current);
+      all.push(...result.listed);
+      if (result.info.total_pages === 0 || page === result.info.total_pages) {
+        if (result.info.total_count !== all.length) {
+          throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination is incomplete");
+        }
+        return all;
+      }
+      current = `${list.base}?page=${page + 1}&per_page=100`;
+    }
+    throw new CloudflareMcpOAuthError("MCP_PROTOCOL_INVALID", "Cloudflare Access list pagination exceeds its bound");
   }
 
   async function verifyAccount() {
