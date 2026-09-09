@@ -149,4 +149,17 @@ describe("Workers AI Markdown Conversion binding", () => {
     expect(after).toMatchObject({ disposition: "FAILED", code: "TIMEOUT", dispatch_state: "OUTCOME_UNKNOWN" });
     expect(pending.toMarkdown).toHaveBeenCalledTimes(1);
   });
+
+  it("classifies a synchronous provider throw after invocation as outcome unknown", async () => {
+    let started = false;
+    const ai: WorkersAiMarkdownBinding = {
+      toMarkdown: vi.fn(() => {
+        started = true;
+        throw new Error("provider boundary failed after dispatch");
+      }),
+    };
+    const result = await createWorkersAiMarkdownConversionAdapter(ai).convert(input());
+    expect(started).toBe(true);
+    expect(result).toMatchObject({ disposition: "FAILED", code: "PROVIDER_UNAVAILABLE", dispatch_state: "OUTCOME_UNKNOWN" });
+  });
 });

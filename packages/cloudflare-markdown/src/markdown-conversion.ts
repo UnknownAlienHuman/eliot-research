@@ -233,12 +233,12 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
         // The pinned workers-types package still spells this result field `mimeType`;
         // current binding documentation specifies the wire field `mimetype`. Decode
         // the current documented shape at the untrusted provider boundary.
+        dispatched = true;
         const call = conversion_options === undefined
           ? ai.toMarkdown({ name, blob })
           : ai.toMarkdown({ name, blob }, {
             conversionOptions: conversion_options,
           });
-        dispatched = true;
         raw = await awaitProvider(call, bounds.timeout_ms, signal);
       } catch (error) {
         const state = dispatched ? "OUTCOME_UNKNOWN" : "NOT_STARTED";
