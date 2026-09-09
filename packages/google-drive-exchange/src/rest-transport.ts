@@ -93,9 +93,11 @@ export function createGoogleJsonTransport(options: GoogleRestOptions) {
     }
     const isBatchUpdate = url.pathname.endsWith(":batchUpdate");
     const isBatchRead = url.pathname.endsWith("/values:batchGetByDataFilter");
-    const isCreate = url.pathname === "/drive/v3/files" || url.pathname === "/v4/spreadsheets";
+    const isDriveFilesCollection = url.hostname === "www.googleapis.com" && url.pathname === "/drive/v3/files";
+    const isSheetsCollection = url.hostname === "sheets.googleapis.com" && url.pathname === "/v4/spreadsheets";
+    const isCreate = isDriveFilesCollection || isSheetsCollection;
     const isFilePatch = url.hostname === "www.googleapis.com" && /^\/drive\/v3\/files\/[A-Za-z0-9_-]+$/u.test(url.pathname);
-    const writeEndpoint = isBatchUpdate || isCreate || (isFilePatch && writes);
+    const writeEndpoint = isBatchUpdate || (isCreate && body !== undefined) || (isFilePatch && writes);
     if (writes !== writeEndpoint || (writes && body === undefined) || (!writes && body !== undefined && !isBatchRead)) throw new GoogleRestError("GOOGLE_METHOD_REJECTED");
     if (writes && !isBatchUpdate && !isCreate && !isFilePatch) throw new GoogleRestError("GOOGLE_METHOD_REJECTED");
     const requestUrl = url.href; // Capture the validated target before authorization yields.

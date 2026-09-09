@@ -99,7 +99,7 @@ export function createGoogleExchangeProvisioningPort(options: GoogleRestOptions)
     return value;
   };
   const createFolder = (name: string) => json(endpoint("https://www.googleapis.com/drive/v3/files", fileFields),
-    { name: text(name), mimeType: GOOGLE_FOLDER_MIME }, true, (raw) => asset(raw, GOOGLE_FOLDER_MIME));
+    { name: text(name), mimeType: GOOGLE_FOLDER_MIME, parents: ["root"] }, true, (raw) => asset(raw, GOOGLE_FOLDER_MIME));
   const createSpreadsheet = (name: string, sheetNames: readonly string[]) => {
     if (!Array.isArray(sheetNames) || sheetNames.length < 1 || sheetNames.length > 16) throw new Error("GOOGLE_PROVISIONING_SHEET_INVALID");
     const names = sheetNames.map((sheetName) => text(sheetName));

@@ -26,13 +26,14 @@ export interface ProvisioningRecord extends ProvisioningIntent {
 
 export interface ExchangeProvisioningIntentStore {
   begin(input: ProvisioningIntent): Promise<ProvisioningRecord>;
+  markCreateAttempt(input: ProvisioningIntent): Promise<ProvisioningRecord>;
   recordAssets(input: { readonly intent: ProvisioningIntent; readonly generation_id: string; readonly folder_id: string; readonly spreadsheet_id: string; readonly sheet_ids_json: string }): Promise<ProvisioningRecord>;
   qualify(input: { readonly intent: ProvisioningIntent; readonly generation_id: string; readonly start_page_token: string }): Promise<ProvisioningRecord>;
   read(input: Pick<ProvisioningIntent, "principal_id" | "operation_ref">): Promise<ProvisioningRecord | null>;
 }
 
 export interface ExchangeGenerationD1Repository extends ExchangeGenerationRepository, ExchangeProvisioningIntentStore {
-  initializeCursor(connectionId: string, startPageToken: string): Promise<void>;
+  initializeCursor(connectionId: string, startPageToken: string): Promise<string>;
 }
 
 function validText(value: unknown, code: string, max = 256): string {
@@ -93,12 +94,22 @@ export function createD1ExchangeGenerationRepository(database: D1Database): Exch
         (input.generation_id !== undefined && actual.generation_id !== input.generation_id)) throw new Error("GOOGLE_PROVISIONING_INTENT_CONFLICT");
     return actual;
   };
+  const markCreateAttempt = async (raw: ProvisioningIntent) => {
+    const input = intent(raw);
+    await db.prepare(`UPDATE google_exchange_provisioning_intent SET failure_code='GOOGLE_CREATE_OUTCOME_UNKNOWN',updated_at=?3
+      WHERE principal_id=?1 AND operation_ref=?2 AND connection_id=?4 AND expected_credential_generation=?5
+        AND expected_credential_revision=?6 AND state='PENDING' AND failure_code IS NULL`)
+      .bind(input.principal_id,input.operation_ref,input.created_at,input.connection_id,input.expected_credential_generation,input.expected_credential_revision).run();
+    const actual = await read(input);
+    if (!actual || actual.failure_code !== "GOOGLE_CREATE_OUTCOME_UNKNOWN") throw new Error("GOOGLE_PROVISIONING_CREATE_FENCE_UNCONFIRMED");
+    return actual;
+  };
   const recordAssets = async (input: { readonly intent: ProvisioningIntent; readonly generation_id: string; readonly folder_id: string; readonly spreadsheet_id: string; readonly sheet_ids_json: string }) => {
     const base = intent(input.intent); const folder = validText(input.folder_id, "GOOGLE_PROVISIONING_INPUT_INVALID");
     const spreadsheet = validText(input.spreadsheet_id, "GOOGLE_PROVISIONING_INPUT_INVALID"); const sheets = validText(input.sheet_ids_json, "GOOGLE_PROVISIONING_INPUT_INVALID", 4096);
     const generationId = validText(input.generation_id, "GOOGLE_PROVISIONING_INPUT_INVALID");
     JSON.parse(sheets);
-    await db.prepare(`UPDATE google_exchange_provisioning_intent SET generation_id=?3,folder_id=?4,spreadsheet_id=?5,sheet_ids_json=?6,updated_at=?7
+    await db.prepare(`UPDATE google_exchange_provisioning_intent SET generation_id=?3,folder_id=?4,spreadsheet_id=?5,sheet_ids_json=?6,failure_code=NULL,updated_at=?7
       WHERE principal_id=?1 AND operation_ref=?2 AND connection_id=?8 AND expected_credential_generation=?9
         AND expected_credential_revision=?10 AND state='PENDING'
         AND (generation_id IS NULL OR generation_id=?3)
@@ -136,12 +147,18 @@ export function createD1ExchangeGenerationRepository(database: D1Database): Exch
     const results = await db.batch([
       db.prepare(`UPDATE exchange_generation SET state='draining',retired_at=?2 WHERE generation_id<>?1 AND state='active'
         AND connection_id=(SELECT connection_id FROM exchange_generation WHERE generation_id=?1)
+        AND (?3 IS NOT NULL OR NOT EXISTS (SELECT 1 FROM exchange_generation AS current
+          WHERE current.connection_id=exchange_generation.connection_id AND current.state='active'))
         AND (?3 IS NULL OR generation_id=?3)`).bind(id,now,expected),
       db.prepare(`UPDATE exchange_generation AS candidate SET state='active',retired_at=NULL WHERE generation_id=?1 AND state='draining'
+        AND EXISTS (SELECT 1 FROM google_exchange_provisioning_intent AS intent
+          WHERE intent.generation_id=candidate.generation_id AND intent.connection_id=candidate.connection_id AND intent.state='QUALIFIED')
         AND (changes()=1 OR (?2 IS NULL AND NOT EXISTS (SELECT 1 FROM exchange_generation AS active
           WHERE active.connection_id=candidate.connection_id AND active.state='active')))`).bind(id,expected),
+      db.prepare(`UPDATE google_exchange_provisioning_intent SET state='ACTIVATED',updated_at=?2
+        WHERE generation_id=?1 AND state='QUALIFIED' AND changes()=1`).bind(id,now),
     ]);
-    if (results[1]?.meta?.changes !== 1) throw new Error("GOOGLE_GENERATION_ACTIVATION_CONFLICT");
+    if (results[1]?.meta?.changes !== 1 || results[2]?.meta?.changes !== 1) throw new Error("GOOGLE_GENERATION_ACTIVATION_CONFLICT");
     const actual = await db.prepare(`SELECT generation_id,state FROM exchange_generation WHERE generation_id=?1`).bind(id).first<{ generation_id: string; state: string }>();
     if (!actual || actual.state !== "active") throw new Error("GOOGLE_GENERATION_ACTIVATION_UNCONFIRMED");
   };
@@ -156,7 +173,8 @@ export function createD1ExchangeGenerationRepository(database: D1Database): Exch
     await db.prepare(`INSERT OR IGNORE INTO drive_cursor(connection_id,start_page_token,last_grid_extent_json,updated_at) VALUES (?1,?2,'{}',?3)`)
       .bind(connectionId,token,new Date().toISOString()).run();
     const actual = await db.prepare(`SELECT start_page_token FROM drive_cursor WHERE connection_id=?1`).bind(connectionId).first<{ start_page_token: string }>();
-    if (!actual || actual.start_page_token !== token) throw new Error("GOOGLE_CURSOR_CONFLICT");
+    if (!actual || typeof actual.start_page_token !== "string") throw new Error("GOOGLE_CURSOR_WRITE_UNCONFIRMED");
+    return validText(actual.start_page_token, "GOOGLE_CURSOR_RECORD_INVALID", 1024);
   };
-  return { begin, read, recordAssets, qualify, persistShadow, activateShadow, retire, initializeCursor };
+  return { begin, read, markCreateAttempt, recordAssets, qualify, persistShadow, activateShadow, retire, initializeCursor };
 }

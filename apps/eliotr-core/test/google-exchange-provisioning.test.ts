@@ -33,7 +33,12 @@ describe("G4 generation authority over real local D1", () => {
     const active = await db.prepare("SELECT state FROM exchange_generation WHERE generation_id=?1").bind(`generation-${suffix}`).first<{ state: string }>();
     const cursor = await db.prepare("SELECT start_page_token FROM drive_cursor WHERE connection_id=?1").bind(input.connection_id).first<{ start_page_token: string }>();
     expect(active?.state).toBe("active"); expect(cursor?.start_page_token).toBe("cursor-g4");
-    expect((await repo.begin(input)).state).toBe("QUALIFIED");
+    expect((await repo.begin(input)).state).toBe("ACTIVATED");
+    const nextInput: ProvisioningIntent = { ...input, operation_ref: `${input.operation_ref}-next`, generation_id: `generation-${suffix}-next` };
+    await repo.begin(nextInput);
+    await repo.recordAssets({ intent: nextInput, generation_id: `generation-${suffix}-next`, folder_id: `folder-${suffix}-next`, spreadsheet_id: `sheet-${suffix}-next`,
+      sheet_ids_json: JSON.stringify({ system: 11, catalog: 12, requests: 13, payload_parts: 14, receipts: 15, results: 16, dashboard: 17 }) });
+    await repo.qualify({ intent: nextInput, generation_id: `generation-${suffix}-next`, start_page_token: "cursor-g4-next" });
     await repo.persistShadow({ generation_id: `generation-${suffix}-next`, connection_id: input.connection_id, folder_id: `folder-${suffix}-next`, spreadsheet_id: `sheet-${suffix}-next`,
       sheet_ids: { system: 11, catalog: 12, requests: 13, payload_parts: 14, receipts: 15, results: 16, dashboard: 17 }, protocol_version: "eliotr.drive.exchange.v1",
       status: "draining", created_at: input.created_at });
