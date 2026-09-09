@@ -1,14 +1,30 @@
 import { createHash } from "node:crypto";
 import { localSqlIdentifier as id, sqlLiteral } from "./local-sql.mjs";
-import { executeLocal, wranglerArgs } from "./local-launch.mjs";
+import { executeLocal, executeLocalD1WithRetry, wranglerArgs } from "./local-launch.mjs";
 
 const COLUMNS = ["source_namespace_id", "principal_ref", "client_class", "policy_ref", "generation", "allowed_use_json",
   "disclosure_ceiling", "state", "expires_at", "created_at"];
 export { sqlLiteral } from "./local-sql.mjs";
-export function localPolicyQuery(paths) {
+const READ_ONLY_SQL = /^\s*(?:SELECT|PRAGMA|EXPLAIN)\b/iu;
+export function localPolicyQuery(paths, { execute = executeLocal } = {}) {
   return async (sql) => {
-    const text = executeLocal(wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]), { capture: true });
-    const batches = JSON.parse(text);
+    // CLI D1 reads share SQLite files with a running `wrangler dev` Worker.
+    // Bounded retry covers documented transient locks only; schema/authority/
+    // data errors stay fail-closed. Mutations deliberately take one attempt:
+    // a lost acknowledgement must be reconciled by the caller, never replayed
+    // by this transport adapter.
+    const args = wranglerArgs(paths, ["d1", "execute", "CORE_DB", "--command", sql, "--json"]);
+    const text = READ_ONLY_SQL.test(sql)
+      ? executeLocalD1WithRetry(args, { execute })
+      : execute(args, { capture: true });
+    let batches;
+    try {
+      batches = JSON.parse(text);
+    } catch (error) {
+      const wrapped = new Error("Local policy D1 readback is invalid");
+      wrapped.cause = error;
+      throw wrapped;
+    }
     if (!Array.isArray(batches) || batches.length !== 1 || batches[0]?.success !== true ||
         !Array.isArray(batches[0].results) || batches[0].results.length > 1) throw new Error("Local policy D1 readback is invalid");
     return batches[0].results;
