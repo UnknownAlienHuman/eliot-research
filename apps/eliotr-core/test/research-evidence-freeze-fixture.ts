@@ -27,6 +27,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
 import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
+import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
@@ -148,7 +149,7 @@ export async function freezeFixture(): Promise<FreezeFixture> {
     require_current: (requested) => scopes.requireCurrent(requested), now: () => nowMs });
   const stage_zero: StageRequest = {
     protocol: "eliotr.workflow-stage.v1", operation_id: operationId, investigation_ref: { id: investigationId, revision: 1 },
-    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "freeze-workflow-idempotency", handler_generation: "freeze-workflow-v3",
+    stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: "freeze-workflow-idempotency", handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
     input_manifest: { object_ref: payloadKey, sha256: payloadDigest, byte_length: payloadBytes.byteLength,
       residency: { scope_domain_id: scope.snapshot_id, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
         encryption_key_domain_id: "freeze-key-v1", retention_domain_id: "freeze-retention-v1", erasure_domain_id: "freeze-erasure-v1",
