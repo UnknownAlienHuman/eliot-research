@@ -1,4 +1,5 @@
 export * from "./http.js";
+export * from "./artifact-http.js";
 export * from "./semantic-api.js";
 export * from "./owner-api.js";
 export * from "./routes.js";

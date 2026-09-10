@@ -130,7 +130,13 @@ receipt. Missing and foreign runs share the same 404 response; services are refu
 returns 409 and storage read failures return 503. Unknown query parameters are refused.
 The focused local Worker run at `5f2645b` passed both run-status and held-scope fixtures (7 cases),
 including read-only repeat access, final receipt validation, cancellation and revoked access.
-PWA integration, synthesized answer persistence and an answer-result reader remain open.
+The existing Astro Research card now offers explicit launch, manual refresh and recovery using a
+known Run ID. Its strict decoder binds the returned handle and deployment, refuses inconsistent
+execution state and never accepts an answer claim. Private run state clears on authority/session loss,
+workspace generation change and offline events; it is not saved in browser storage. The built-PWA
+Chromium fixture at `6279b58` passed POST, ACTIVE/completed GET, known-ID recovery and explicit
+offline clearing against a controlled HTTP backend. It does not prove live Access or a deployed Worker.
+Synthesized answer persistence and an answer-result reader remain open.
 
 ## W2 monotone bounded executor
 
@@ -227,6 +233,11 @@ handles from that source. Migration `0034_research_reference_manifests.sql` stor
 owner, credential, pack, trace and stage bindings. WORK R2 stores bounded canonical manifest bytes;
 readback independently checks residency, the canonical key, ETag, size, platform metadata, both content
 and manifest digests, and scope/client/expiry coherence. Reads recheck current authority around R2 I/O.
+The store binds residency to the held scope and principal. Before persistence and after readback,
+manifest permissions must be a subset of the current grant, disclosure must match, and expiry must
+remain within both scope and grant validity. The two actual D1/R2 cases passed at source `715598b`
+on Node 22.23.2, including refusal of a foreign residency and a grant restriction before persistence,
+with no manifest row written for the refused operation.
 Stage, pack, trace and route selection remain trusted production-composition inputs.
 
 The model prompt adapter binds the call to the supplied deployment generations and persisted manifest,

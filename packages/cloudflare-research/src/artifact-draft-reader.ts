@@ -68,6 +68,20 @@ export interface ArtifactDraftReadInput {
   readonly now?: () => number;
 }
 
+export interface ArtifactDraftSectionReadInput extends ArtifactDraftReadInput {
+  readonly section_ref: VersionedRef;
+}
+
+export interface ArtifactDraftSectionRead {
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly body_object_ref: string;
+  readonly section_ordinal: number;
+  readonly body_sha256: string;
+  readonly size_bytes: number;
+  readonly body: Uint8Array;
+}
+
 interface ArtifactRow {
   readonly artifact_id: unknown;
   readonly revision: unknown;
@@ -303,7 +317,13 @@ function parseManifest(bytes: Uint8Array): { readonly spec: ArtifactSpec; readon
   } catch { fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest contract is invalid"); }
 }
 
-async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifactRef: VersionedRef): Promise<ArtifactRevision | null> {
+async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifactRef: VersionedRef): Promise<ArtifactRevision | null>;
+async function readArtifactDraftInternal(input: ArtifactDraftSectionReadInput, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ArtifactDraftSectionRead | null>;
+async function readArtifactDraftInternal(
+  input: ArtifactDraftReadInput | ArtifactDraftSectionReadInput,
+  artifactRef: VersionedRef,
+  sectionRef?: VersionedRef,
+): Promise<ArtifactRevision | ArtifactDraftSectionRead | null> {
   const { database } = input;
   const artifact = await database.prepare(
     "SELECT artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at FROM artifact_revision WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
@@ -433,6 +453,18 @@ async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifact
       artifact.dependency_manifest_ref !== parsedManifest.revision.dependency_manifest_ref || artifact.created_at !== parsedManifest.revision.created_at) {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest contract does not match durable identity");
   }
+  const selectedSection = sectionRef === undefined
+    ? undefined
+    : parsedManifest.revision.sections.filter((section) =>
+      section.section_ref.id === sectionRef.id && section.section_ref.revision === sectionRef.revision);
+  if (sectionRef !== undefined && selectedSection?.length !== 1) {
+    if (selectedSection?.length !== 0) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft section reference is ambiguous");
+    return null;
+  }
+  const selectedSectionValue = selectedSection?.[0];
+  const selectedSectionOrdinal = selectedSectionValue === undefined
+    ? undefined
+    : parsedManifest.revision.sections.indexOf(selectedSectionValue);
   const expected = new Map<string, ExpectedObject>();
   addExpected(expected, { object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, sha256: manifestSha, prefix: MANIFEST_PREFIX, content_type: "application/json" });
   const contracts = new Set(parsedManifest.spec.section_contracts.map((contract) => contract.section_id));
@@ -456,7 +488,13 @@ async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifact
     if (row.artifact_id !== artifactRef.id || row.revision !== artifactRef.revision || row.created_at !== artifact.created_at) {
       fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity is inconsistent");
     }
-    storedByRef.set(expectedObject.object_ref, await readStoredObject(store, row, expectedObject));
+    storedByRef.set(expectedObject.object_ref, await readStoredObject(
+      store,
+      row,
+      expectedObject,
+      selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
+        expectedObject.object_ref === selectedSectionValue.body_object_ref && expectedObject.section_ordinal === selectedSectionOrdinal,
+    ));
   }
   const plannedStored = parseCanonical(reservation.planned_objects_json, "draft planned objects");
   if (!Array.isArray(plannedStored) || plannedStored.length !== expected.size) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft planned object set is invalid");
@@ -497,6 +535,23 @@ async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifact
     "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
   ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
   if (finalArtifact === null || finalBinding === null || canonicalJson(finalArtifact) !== canonicalJson(artifact) || canonicalJson(finalBinding) !== canonicalJson(binding)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft identity changed during authorization readback");
+  if (selectedSectionValue !== undefined && selectedSectionOrdinal !== undefined) {
+    const body = storedByRef.get(selectedSectionValue.body_object_ref);
+    if (body?.bytes === undefined || body.row.section_ordinal !== selectedSectionOrdinal) {
+      fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft section body is unavailable");
+    }
+    const ownedBody = new ArrayBuffer(body.bytes.byteLength);
+    new Uint8Array(ownedBody).set(body.bytes);
+    return {
+      artifact_ref: parsedManifest.revision.artifact_ref,
+      section_ref: selectedSectionValue.section_ref,
+      body_object_ref: selectedSectionValue.body_object_ref,
+      section_ordinal: selectedSectionOrdinal,
+      body_sha256: selectedSectionValue.body_sha256,
+      size_bytes: body.bytes.byteLength,
+      body: new Uint8Array(ownedBody),
+    };
+  }
   return parsedManifest.revision;
 }
 
@@ -506,6 +561,23 @@ export async function readArtifactDraft(input: ArtifactDraftReadInput): Promise<
   catch { fail("ARTIFACT_DRAFT_READ_INVALID", 400, "draft reference is invalid"); }
   if (input.access.client_class !== "owner_pwa") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
   try { return await readArtifactDraftInternal(input, artifactRef); }
+  catch (error) {
+    if (error instanceof ArtifactDraftReadError) throw error;
+    return mapAuthorityFailure(error);
+  }
+}
+
+export async function readArtifactDraftSection(input: ArtifactDraftSectionReadInput): Promise<ArtifactDraftSectionRead | null> {
+  let artifactRef: VersionedRef;
+  let sectionRef: VersionedRef;
+  try {
+    artifactRef = VersionedRefSchema.parse(input.artifact_ref);
+    sectionRef = VersionedRefSchema.parse(input.section_ref);
+  } catch {
+    fail("ARTIFACT_DRAFT_READ_INVALID", 400, "draft or section reference is invalid");
+  }
+  if (input.access.client_class !== "owner_pwa") fail("ARTIFACT_DRAFT_READ_DENIED", 403, "draft read authorization denied");
+  try { return await readArtifactDraftInternal(input, artifactRef, sectionRef); }
   catch (error) {
     if (error instanceof ArtifactDraftReadError) throw error;
     return mapAuthorityFailure(error);

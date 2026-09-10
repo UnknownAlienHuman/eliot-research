@@ -16,6 +16,7 @@ outside the paths below.
 - `packages/retrieval/src/fusion.ts`
 - `packages/retrieval/src/service.ts`
 - `packages/retrieval/src/query-codec.ts`
+- `packages/retrieval/src/research-checkpoint-codec.ts`
 - `packages/retrieval/src/query-persistence.ts`
 - `packages/retrieval/src/query-persistence.test.ts`
 - `packages/retrieval/src/retrieval.test.ts`

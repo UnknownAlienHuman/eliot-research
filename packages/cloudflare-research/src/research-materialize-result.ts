@@ -2,6 +2,7 @@ import { IdentifierSchema, Sha256Schema, VersionedRefSchema, type VersionedRef }
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { RUNTIME_LIMITS, assertWithinBytes } from "@eliotr/platform-cloudflare";
 import type { PrepareArtifactDraftResult } from "./artifact-draft-types.js";
+import { materializeResearchArtifactDraft, type ResearchArtifactDraftMaterializationInput } from "./research-artifact-draft.js";
 import type { ResearchSynthesisOutputReadback } from "./research-synthesis-output-reader.js";
 
 const PROTOCOL = "eliotr.research.materialize-result.v1" as const;
@@ -53,6 +54,12 @@ export interface ResearchMaterializeResultInput {
   readonly synthesis_readback: ResearchSynthesisOutputReadback;
   /** The result returned by the actual DRAFT prepare transaction. */
   readonly draft_result: PrepareArtifactDraftResult;
+}
+
+export interface ResearchMaterializeResultWriterInput extends ResearchArtifactDraftMaterializationInput {
+  /** Server-created MATERIALIZE attempt identity, separate from SYNTHESIZE lineage. */
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
 }
 
 function fail(code: ResearchMaterializeResultErrorCode, message: string, cause?: unknown): never {
@@ -214,4 +221,16 @@ export async function encodeResearchMaterializeResult(input: ResearchMaterialize
 /** Stage handlers use the writer name; it returns bytes for the existing W2 object store. */
 export async function writeResearchMaterializeResult(input: ResearchMaterializeResultInput): Promise<Uint8Array> {
   return encodeResearchMaterializeResult(input);
+}
+
+/** Run the existing server-authorized DRAFT materializer, then emit its W2 stage payload. */
+export async function materializeResearchResult(input: ResearchMaterializeResultWriterInput): Promise<Uint8Array> {
+  const draft = await materializeResearchArtifactDraft(input);
+  return writeResearchMaterializeResult({
+    operation_id: input.operation_id,
+    stage_attempt_ref: input.stage_attempt_ref,
+    stage_request_sha256: input.stage_request_sha256,
+    synthesis_readback: input.synthesis_readback,
+    draft_result: draft,
+  });
 }
