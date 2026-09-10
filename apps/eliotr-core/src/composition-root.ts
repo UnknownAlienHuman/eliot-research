@@ -31,6 +31,7 @@ import { createSourceAdmissionService } from "./source-admission-service.js";
 import { readGoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
+import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -147,7 +148,7 @@ function ownerApi(env: Env): OwnerApi {
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
   });
-  return {
+  const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus"> = {
     ...ingest,
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),
     readRawFile: (context, captureId) => rawCapture.readRawFile(context, captureId),
@@ -163,6 +164,17 @@ function ownerApi(env: Env): OwnerApi {
     async systemCapabilities(): Promise<Record<string, unknown>> {
       return capabilities(env);
     },
+  };
+  const rawNormalized = createRawNormalizedAdmissionService({
+    database: env.CORE_DB,
+    bucket: env.EVIDENCE_BUCKET,
+    owner: ownerBase,
+    readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
+  });
+  return {
+    ...ownerBase,
+    admitRawFileToNormalized: rawNormalized.admit,
+    getRawNormalizedAdmissionStatus: rawNormalized.getStatus,
   };
 }
 async function countPendingOutbox(database: D1Database): Promise<number> {

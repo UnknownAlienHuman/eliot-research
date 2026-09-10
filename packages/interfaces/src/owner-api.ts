@@ -156,6 +156,32 @@ export interface RawMarkdownConversionResult {
   readonly failure_code?: string;
 }
 
+/** Owner-only server-composed raw conversion admission. The client supplies no authority fields. */
+export interface RawNormalizedAdmissionRequest {
+  readonly idempotency_key: string;
+  readonly conversion_operation_id: string;
+}
+export type RawNormalizedAdmissionState =
+  | "PREPARING" | "UPLOAD_REQUIRED" | "VERIFIED" | "AUTHORIZED" | "PROMOTED"
+  | "COMMITTED" | "QUARANTINED" | "REJECTED" | "UNKNOWN";
+export interface RawNormalizedAdmissionResult {
+  readonly protocol: "eliotr.raw-normalized-admission.v1";
+  readonly admission_operation_id: string;
+  readonly capture_id: string;
+  readonly conversion_operation_id: string;
+  readonly candidate_ref: string;
+  readonly state: RawNormalizedAdmissionState;
+  readonly source_revision_ref: string;
+  readonly source_view_ref: string;
+  readonly conversion_state: "COMPLETE";
+  /** Present once the governed normalized ingest operation has been allocated. */
+  readonly status?: BundleIngestStatus;
+  readonly admission_receipt?: BundleAdmissionReceipt;
+  readonly reason_codes: readonly string[];
+  readonly expires_at: string;
+  readonly updated_at: string;
+}
+
 /** Owner UI metadata only; not a query, evidence grant or index validation receipt. */
 export interface SourceRevisionsRequest {
   readonly source_id: string;
@@ -254,6 +280,16 @@ export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContex
     captureId: string,
     request: RawMarkdownConversionRequest,
   ): Promise<RawMarkdownConversionResult>;
+  admitRawFileToNormalized(
+    context: AuthenticatedRequestContext,
+    captureId: string,
+    request: RawNormalizedAdmissionRequest,
+  ): Promise<RawNormalizedAdmissionResult>;
+  getRawNormalizedAdmissionStatus(
+    context: AuthenticatedRequestContext,
+    captureId: string,
+    admissionOperationId: string,
+  ): Promise<RawNormalizedAdmissionResult>;
   systemHealth(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
   systemCapabilities(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
 }
