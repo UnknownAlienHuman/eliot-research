@@ -3,6 +3,7 @@ import { handleGeminiMcp, type WorkspaceMcpRuntime } from "@eliotr/cloudflare-wo
 import { handleHttp } from "./http.js";
 import { handleQueue } from "./queue.js";
 import { readReadiness } from "./readiness.js";
+import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
 import { handleScheduled } from "./scheduled.js";
 export { ResearchSession } from "./research-session.js";
 export { ResearchWorkflow } from "./research-workflow.js";
@@ -18,6 +19,7 @@ function workspaceMcpRuntime(env: Env): WorkspaceMcpRuntime {
     MCP_ACCESS_AUDIENCE: env.MCP_ACCESS_AUDIENCE,
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
     ACCESS_AUDIENCE: env.ACCESS_AUDIENCE,
+    workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
     readReadiness: () => readReadiness(env),
   };
 }

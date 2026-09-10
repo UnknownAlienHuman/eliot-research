@@ -32,6 +32,7 @@ export interface WorkspaceMcpRuntime {
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
   readonly ACCESS_AUDIENCE?: string | undefined;
+  readonly workspaceCandidateStore?: import("./workspace-mcp-ledger.js").WorkspaceMcpCandidateStore;
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
     readonly blocking_reason_codes: readonly string[];
@@ -277,6 +278,8 @@ function serverDependencies(
       // The current read-policy schema is owner-only. Never impersonate an owner for a service token.
       throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "An explicit service catalog scope is required");
     },
+    mcp_auth_profile: profile,
+    ...(env.workspaceCandidateStore === undefined ? {} : { workspaceCandidateStore: env.workspaceCandidateStore }),
   } as const;
   return {
     server_version: "0.1.0",

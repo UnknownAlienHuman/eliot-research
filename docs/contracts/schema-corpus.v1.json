@@ -2,7 +2,7 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
   "registry_generation": 3,
-  "schema_count": 136,
+  "schema_count": 141,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -13927,6 +13927,786 @@
       "schema_id": "urn:eliotr:contracts:publication:wiki-page-type:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "WorkspaceMcpObservationV2Schema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.google-sync.observation.v2",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema10": {
+            "additionalProperties": false,
+            "properties": {
+              "idempotency_key": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "plan_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "plan_sha256": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "retry": {
+                "const": "SAME_KEY",
+                "type": "string"
+              },
+              "write_state": {
+                "enum": [
+                  "COMMITTED",
+                  "UNKNOWN"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "idempotency_key",
+              "write_state",
+              "retry"
+            ],
+            "type": "object"
+          },
+          "__schema2": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema3": {
+            "enum": [
+              "OBSERVED",
+              "UNKNOWN"
+            ],
+            "type": "string"
+          },
+          "__schema4": {
+            "enum": [
+              "OBSERVED_MATCH",
+              "OBSERVED_MISMATCH",
+              "UNKNOWN"
+            ],
+            "type": "string"
+          },
+          "__schema5": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "__schema6": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "__schema7": {
+            "const": true,
+            "type": "boolean"
+          },
+          "__schema8": {
+            "const": false,
+            "type": "boolean"
+          },
+          "__schema9": {
+            "const": "OBSERVED",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-observation-v2:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "candidate_ledger_mutation": {
+            "$ref": "#/$defs/__schema9"
+          },
+          "candidate_only": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "disposition": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "idempotency_key": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "observation_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "plan_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "plan_sha256": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "reason_codes": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "receipt_sha256": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "reconciliation": {
+            "$ref": "#/$defs/__schema10"
+          },
+          "source_evidence_authority_changed": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "state": {
+            "$ref": "#/$defs/__schema3"
+          }
+        },
+        "required": [
+          "protocol",
+          "observation_id",
+          "plan_id",
+          "idempotency_key",
+          "plan_sha256",
+          "state",
+          "disposition",
+          "reason_codes",
+          "candidate_only",
+          "source_evidence_authority_changed",
+          "reconciliation"
+        ],
+        "title": "WorkspaceMcpObservationV2",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-observation-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "WorkspaceMcpPlanV2InputSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-input:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "inspect",
+              "read",
+              "search",
+              "create",
+              "append",
+              "update",
+              "export"
+            ],
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "google_to_eliot_candidate",
+              "eliot_to_google",
+              "bidirectional_candidate"
+            ],
+            "type": "string"
+          },
+          "dry_run": {
+            "const": true,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "google_product": {
+            "enum": [
+              "drive",
+              "docs",
+              "sheets",
+              "slides",
+              "calendar",
+              "gmail"
+            ],
+            "type": "string"
+          },
+          "idempotency_key": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.google-sync.plan.v2",
+            "type": "string"
+          },
+          "source_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "target_ref": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "idempotency_key",
+          "google_product",
+          "action",
+          "direction",
+          "dry_run"
+        ],
+        "title": "WorkspaceMcpPlanV2Input",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "WorkspaceMcpPlanV2ResultSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema1": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema3": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-result:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "inspect",
+                  "read",
+                  "search",
+                  "create",
+                  "append",
+                  "update",
+                  "export"
+                ],
+                "type": "string"
+              },
+              "auth_profile": {
+                "enum": [
+                  "service-token",
+                  "managed-oauth"
+                ],
+                "type": "string"
+              },
+              "candidate_ledger_mutation": {
+                "const": "ISSUED",
+                "type": "string"
+              },
+              "candidate_only": {
+                "const": true,
+                "type": "boolean"
+              },
+              "confirmation_required": {
+                "type": "boolean"
+              },
+              "connector": {
+                "const": "google-workspace",
+                "type": "string"
+              },
+              "deployment_generation": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "direction": {
+                "enum": [
+                  "google_to_eliot_candidate",
+                  "eliot_to_google",
+                  "bidirectional_candidate"
+                ],
+                "type": "string"
+              },
+              "dry_run": {
+                "const": true,
+                "type": "boolean"
+              },
+              "effect_ceiling": {
+                "const": "NO_EXTERNAL_EFFECT",
+                "type": "string"
+              },
+              "eliot_authority_changed": {
+                "const": false,
+                "type": "boolean"
+              },
+              "exact_readback_required": {
+                "const": true,
+                "type": "boolean"
+              },
+              "expected_revision": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "google_product": {
+                "enum": [
+                  "drive",
+                  "docs",
+                  "sheets",
+                  "slides",
+                  "calendar",
+                  "gmail"
+                ],
+                "type": "string"
+              },
+              "google_transport": {
+                "const": "gemini-mcp",
+                "type": "string"
+              },
+              "idempotency_key": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "input_fingerprint": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "issued_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "payload_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "plan_id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "plan_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "protocol": {
+                "const": "eliotr.google-sync.plan.v2",
+                "type": "string"
+              },
+              "required_readback_fields": {
+                "items": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              "source_ref": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "state": {
+                "const": "ISSUED",
+                "type": "string"
+              },
+              "target_ref": {
+                "maxLength": 2048,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "protocol",
+              "idempotency_key",
+              "google_product",
+              "action",
+              "direction",
+              "dry_run",
+              "plan_id",
+              "input_fingerprint",
+              "plan_sha256",
+              "issued_at",
+              "expires_at",
+              "deployment_generation",
+              "auth_profile",
+              "google_transport",
+              "connector",
+              "candidate_only",
+              "effect_ceiling",
+              "candidate_ledger_mutation",
+              "exact_readback_required",
+              "eliot_authority_changed",
+              "confirmation_required",
+              "required_readback_fields",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "idempotency_key": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "input_fingerprint": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "issued_at": {},
+              "observation_id": {},
+              "plan_id": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "plan_sha256": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "protocol": {
+                "const": "eliotr.google-sync.plan.v2",
+                "type": "string"
+              },
+              "reconciliation": {
+                "additionalProperties": false,
+                "properties": {
+                  "idempotency_key": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "plan_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "plan_sha256": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "retry": {
+                    "const": "SAME_KEY",
+                    "type": "string"
+                  },
+                  "write_state": {
+                    "const": "UNKNOWN",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "idempotency_key",
+                  "write_state",
+                  "retry"
+                ],
+                "type": "object"
+              },
+              "state": {
+                "const": "UNKNOWN",
+                "type": "string"
+              }
+            },
+            "required": [
+              "protocol",
+              "state",
+              "idempotency_key",
+              "input_fingerprint",
+              "reconciliation"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "WorkspaceMcpPlanV2Result",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "WorkspaceMcpPlanV2Schema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema1": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema3": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "inspect",
+              "read",
+              "search",
+              "create",
+              "append",
+              "update",
+              "export"
+            ],
+            "type": "string"
+          },
+          "auth_profile": {
+            "enum": [
+              "service-token",
+              "managed-oauth"
+            ],
+            "type": "string"
+          },
+          "candidate_ledger_mutation": {
+            "const": "ISSUED",
+            "type": "string"
+          },
+          "candidate_only": {
+            "const": true,
+            "type": "boolean"
+          },
+          "confirmation_required": {
+            "type": "boolean"
+          },
+          "connector": {
+            "const": "google-workspace",
+            "type": "string"
+          },
+          "deployment_generation": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "direction": {
+            "enum": [
+              "google_to_eliot_candidate",
+              "eliot_to_google",
+              "bidirectional_candidate"
+            ],
+            "type": "string"
+          },
+          "dry_run": {
+            "const": true,
+            "type": "boolean"
+          },
+          "effect_ceiling": {
+            "const": "NO_EXTERNAL_EFFECT",
+            "type": "string"
+          },
+          "eliot_authority_changed": {
+            "const": false,
+            "type": "boolean"
+          },
+          "exact_readback_required": {
+            "const": true,
+            "type": "boolean"
+          },
+          "expected_revision": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "expires_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "google_product": {
+            "enum": [
+              "drive",
+              "docs",
+              "sheets",
+              "slides",
+              "calendar",
+              "gmail"
+            ],
+            "type": "string"
+          },
+          "google_transport": {
+            "const": "gemini-mcp",
+            "type": "string"
+          },
+          "idempotency_key": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "input_fingerprint": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "issued_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "payload_sha256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "plan_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "plan_sha256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "protocol": {
+            "const": "eliotr.google-sync.plan.v2",
+            "type": "string"
+          },
+          "required_readback_fields": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "source_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "target_ref": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "idempotency_key",
+          "google_product",
+          "action",
+          "direction",
+          "dry_run",
+          "plan_id",
+          "input_fingerprint",
+          "plan_sha256",
+          "issued_at",
+          "expires_at",
+          "deployment_generation",
+          "auth_profile",
+          "google_transport",
+          "connector",
+          "candidate_only",
+          "effect_ceiling",
+          "candidate_ledger_mutation",
+          "exact_readback_required",
+          "eliot_authority_changed",
+          "confirmation_required",
+          "required_readback_fields"
+        ],
+        "title": "WorkspaceMcpPlanV2",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "WorkspaceMcpReceiptV2Schema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-receipt-v2:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "inspect",
+              "read",
+              "search",
+              "create",
+              "append",
+              "update",
+              "export"
+            ],
+            "type": "string"
+          },
+          "connector": {
+            "const": "google-workspace",
+            "type": "string"
+          },
+          "google_product": {
+            "enum": [
+              "drive",
+              "docs",
+              "sheets",
+              "slides",
+              "calendar",
+              "gmail"
+            ],
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "observed_revision": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "readback_payload_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "readback_performed": {
+            "type": "boolean"
+          },
+          "resource_id": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector",
+          "google_product",
+          "action",
+          "resource_id",
+          "observed_revision",
+          "observed_at",
+          "readback_performed"
+        ],
+        "title": "WorkspaceMcpReceiptV2",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-receipt-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ]
 }

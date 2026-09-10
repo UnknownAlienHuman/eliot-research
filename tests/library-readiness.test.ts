@@ -1,0 +1,59 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { decodeLibraryReadiness, readLibraryReadiness } from "../apps/eliotr-pwa/src/library-readiness-api.js";
+import { renderLibraryReadiness } from "../apps/eliotr-pwa/src/library-readiness-panel.js";
+
+const revision = "revision-1";
+const envelope = () => ({
+  data: {
+    protocol: "eliotr.library-readiness.v1", source_id: "source-1", source_revision_ref: revision,
+    deployment_generation: "deploy-1", catalog_generation: "7", observed_at: "2026-09-09T12:00:00.000Z",
+    currentness: { verification: "VERIFIED", value: {
+      source_revision_ref: revision, owner_system_id: "owner-1", source_owner_generation: "owner-gen-1",
+      source_view_ref: "snapshot-view:v1:abc", observation_freshness: "current_confirmed",
+      observed_at: "2026-09-09T12:00:00.000Z", gap_refs: [],
+    } }, quality_state: "standard", readiness_basis: "ACTIVE_VERIFIED",
+    channels: ["exact_ready", "lexical_ready", "semantic_ready"].map((channel) => ({
+      source_revision_ref: revision, channel, state: channel === "semantic_ready" ? "degraded" : "ready",
+      ...(channel === "semantic_ready" ? {} : { generation: "projection-1", receipt_ref: "receipt-1" }),
+      reason_codes: channel === "semantic_ready" ? ["MANAGED_SEMANTIC_UNAVAILABLE"] : [],
+      observed_at: "2026-09-09T12:00:00.000Z",
+    })),
+  }, trace_id: "trace-1", deployment_generation: "deploy-1",
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("active Library readiness boundary", () => {
+  it("decodes independently verified channels and currentness", () => {
+    const value = decodeLibraryReadiness(envelope(), "source-1", "deploy-1", revision);
+    expect(value.readiness_basis).toBe("ACTIVE_VERIFIED");
+    expect(value.currentness.verification).toBe("VERIFIED");
+    expect(value.channels.find((channel) => channel.channel === "semantic_ready")?.state).toBe("degraded");
+  });
+
+  it("does not accept a changed deployment or selected head", () => {
+    expect(() => decodeLibraryReadiness(envelope(), "source-1", "deploy-2", revision))
+      .toThrowError(expect.objectContaining({ code: "LIBRARY_DEPLOYMENT_CHANGED" }));
+    expect(() => decodeLibraryReadiness(envelope(), "source-1", "deploy-1", "revision-2"))
+      .toThrowError(expect.objectContaining({ code: "LIBRARY_SOURCE_HEAD_CHANGED" }));
+  });
+
+  it("renders unverified freshness without manufacturing a current claim", () => {
+    const value = envelope();
+    value.data.currentness = { verification: "NOT_VERIFIED", recorded_freshness: "observed_with_age", reason_codes: ["CURRENTNESS_SNAPSHOT_WITNESS_UNAVAILABLE"] };
+    const decoded = decodeLibraryReadiness(value, "source-1", "deploy-1", revision);
+    const rendered = renderLibraryReadiness(decoded);
+    expect(rendered).toContain("Freshness not verified");
+    expect(rendered).toContain("recorded freshness observed_with_age");
+    expect(rendered).not.toContain("Current source verified");
+  });
+
+  it("uses the owner-only source-id path and generation fence", async () => {
+    const fetched = vi.fn(async () => Response.json(envelope()));
+    vi.stubGlobal("fetch", fetched);
+    const value = await readLibraryReadiness("source-1", "deploy-1");
+    expect(value.source_revision_ref).toBe(revision);
+    expect(fetched.mock.calls[0]).toMatchObject(["/api/v1/library/readiness?source_id=source-1",
+      { credentials: "same-origin", cache: "no-store", redirect: "manual" }]);
+  });
+});

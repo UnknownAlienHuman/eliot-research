@@ -255,7 +255,7 @@ async function managedSemantic(
   }
 }
 
-/** IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate. */
+// IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.
 export async function readLibraryReadiness(
   database: D1Database,
   searchDatabase: D1Database,
