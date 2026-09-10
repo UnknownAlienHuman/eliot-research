@@ -94,6 +94,7 @@ function semanticApi(env: Env): SemanticApi {
     },
     queryStatus: (context, workflowInstanceId) => exhaustiveWorkflow.status(context, workflowInstanceId),
     queryCancel: (context, workflowInstanceId) => exhaustiveWorkflow.cancel(context, workflowInstanceId),
+    runStatus: (context, workflowInstanceId) => researchRun.runStatus(context, workflowInstanceId),
     queryJobs: (context, request) => exhaustiveWorkflow.list(context, request),
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),

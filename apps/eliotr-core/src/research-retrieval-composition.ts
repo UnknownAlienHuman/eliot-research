@@ -4,6 +4,11 @@ import {
   createR2EvidenceContentPort,
   EvidenceRuntimeError,
 } from "@eliotr/cloudflare-evidence";
+import {
+  readHeldResearchScope as readStoredHeldResearchScope,
+  ResearchHeldScopeError,
+  type HeldResearchScope,
+} from "@eliotr/cloudflare-research";
 import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
 import { createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
 import {
@@ -21,7 +26,7 @@ import {
   type RetrievalQueryPorts,
   type ScopeProfileBinding,
 } from "@eliotr/retrieval";
-import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
+import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
 import type { Env } from "./env.js";
 
@@ -43,32 +48,6 @@ export interface HeldScopeRetrievalInput {
   readonly profile: ScopeProfileBinding;
 }
 
-export interface HeldResearchScope {
-  readonly operation_id: string;
-  readonly investigation_id: string;
-  readonly scope_snapshot_ref: VersionedRef;
-  readonly scope_snapshot: ScopeSnapshot;
-  readonly policy_generation: string;
-  readonly policy_authority_ref: string;
-  readonly authorization_receipt_ref: string;
-  readonly purge_revision: number;
-  readonly deployment_generation: string;
-}
-
-interface StoredRunScopeRow {
-  readonly operation_id: unknown;
-  readonly investigation_id: unknown;
-  readonly principal_ref: unknown;
-  readonly credential_generation: unknown;
-  readonly deployment_generation: unknown;
-  readonly policy_generation: unknown;
-  readonly policy_authority_ref: unknown;
-  readonly authorization_receipt_ref: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly purge_revision: unknown;
-}
-
 const OMITTED_CANDIDATE_CODES: ReadonlySet<string> = new Set([
   "EVIDENCE_INPUT_INVALID", "EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_LOCATOR_NOT_RESOLVABLE",
   "EVIDENCE_PRECISION_UNSUPPORTED", "EVIDENCE_OBJECT_NOT_FOUND", "EVIDENCE_OBJECT_INTEGRITY",
@@ -84,76 +63,28 @@ function fail(code: "RETRIEVAL_RESOLUTION_UNCERTAIN" | "RETRIEVAL_AUTHORITY_STAL
   throw new RetrievalQueryError(code, message, code === "RETRIEVAL_RESOLUTION_UNCERTAIN");
 }
 
-function requiredString(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0) fail("RETRIEVAL_RESOLUTION_UNCERTAIN", `stored research scope ${field} is invalid`);
-  return value;
-}
-
-function positiveRevision(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) fail("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored research scope revision is invalid");
-  return value as number;
-}
-
-function nonnegativeInteger(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0) fail("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored research purge revision is invalid");
-  return value as number;
-}
-
-/**
- * Loads the scope pinned by a durable W1/W2 run. The workflow view is the
- * trusted binding for principal, policy, deployment and research grant; the
- * snapshot reader then supplies the canonical stored bytes. This never
- * freezes, grants, or derives a scope from caller input.
- */
+export type { HeldResearchScope } from "@eliotr/cloudflare-research";
 export async function loadHeldResearchScope(
   env: Pick<Env, "CORE_DB" | "SEARCH_DB">,
   access: RetrievalQueryAccess,
   operationId: string,
   deploymentGeneration: string,
 ): Promise<HeldResearchScope> {
-  requiredString(deploymentGeneration, "deployment_generation");
-  let row: StoredRunScopeRow | null;
   try {
-    row = await env.CORE_DB.prepare(
-      "SELECT operation_id, investigation_id, principal_ref, credential_generation, deployment_generation, " +
-      "policy_generation, policy_authority_ref, authorization_receipt_ref, scope_snapshot_id, " +
-      "scope_snapshot_revision, purge_revision FROM research_workflow_current " +
-      "WHERE operation_id = ?1 AND principal_ref = ?2 AND credential_generation = ?3 " +
-      "AND deployment_generation = ?4 LIMIT 1",
-    ).bind(operationId, access.principal_ref, access.credential_generation, deploymentGeneration)
-      .first<StoredRunScopeRow>();
-  } catch {
-    fail("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored research scope authority is unavailable");
+    return await readStoredHeldResearchScope({
+      core_database: env.CORE_DB,
+      search_database: env.SEARCH_DB,
+      access,
+      operation_id: operationId,
+      deployment_generation: deploymentGeneration,
+      require_current_scope: async (scope) => { await createD1ScopePorts(env.CORE_DB, access).requireCurrentScope(scope); },
+    });
+  } catch (error) {
+    if (error instanceof ResearchHeldScopeError) {
+      fail(error.code === "RESEARCH_HELD_SCOPE_STALE" ? "RETRIEVAL_AUTHORITY_STALE" : "RETRIEVAL_RESOLUTION_UNCERTAIN", "stored research scope authority is unavailable");
+    }
+    throw error;
   }
-  if (row === null) fail("RETRIEVAL_AUTHORITY_STALE", "durable research scope is not current for this owner");
-  const scopeRef = { id: requiredString(row.scope_snapshot_id, "snapshot_id"), revision: positiveRevision(row.scope_snapshot_revision) };
-  const authority = await createD1EvidenceAuthorityPort({
-    core_database: env.CORE_DB,
-    search_database: env.SEARCH_DB,
-  }).loadScope(scopeRef).catch(() => {
-    fail("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored research ScopeSnapshot read is unavailable");
-  });
-  if (authority === null || authority.invalidated_at !== null) fail("RETRIEVAL_AUTHORITY_STALE", "durable research ScopeSnapshot is unavailable");
-  const scope = authority.snapshot;
-  await createD1ScopePorts(env.CORE_DB, access).requireCurrentScope(scope);
-  if (requiredString(row.operation_id, "operation_id") !== operationId ||
-      requiredString(row.principal_ref, "principal_ref") !== access.principal_ref ||
-      requiredString(row.credential_generation, "credential_generation") !== access.credential_generation ||
-      requiredString(row.deployment_generation, "deployment_generation") !== deploymentGeneration ||
-      scope.snapshot_id !== scopeRef.id || scope.revision !== scopeRef.revision) {
-    fail("RETRIEVAL_AUTHORITY_STALE", "durable research scope identity changed");
-  }
-  return {
-    operation_id: operationId,
-    investigation_id: requiredString(row.investigation_id, "investigation_id"),
-    scope_snapshot_ref: scopeRef,
-    scope_snapshot: scope,
-    policy_generation: requiredString(row.policy_generation, "policy_generation"),
-    policy_authority_ref: requiredString(row.policy_authority_ref, "policy_authority_ref"),
-    authorization_receipt_ref: requiredString(row.authorization_receipt_ref, "authorization_receipt_ref"),
-    purge_revision: nonnegativeInteger(row.purge_revision),
-    deployment_generation: requiredString(row.deployment_generation, "deployment_generation"),
-  };
 }
 
 export async function retrieveWithHeldScope(

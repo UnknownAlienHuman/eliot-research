@@ -2,8 +2,8 @@
 
 `@eliotr/cloudflare-research` implements the D1/R2 checkpoint boundary, not the research product.
 W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
-executable `ResearchWorkflow` binding over the same boundary. No new Worker route, model, endpoint
-or deployment is enabled. Governed model/evidence handlers (W3/W4) and live qualification remain open.
+executable `ResearchWorkflow` binding over the same boundary. Owner HTTP composition can start runs
+and read their durable status. Governed model/evidence handlers (W3/W4) and live qualification remain open.
 
 The owner's current priority is composing the existing protocol, retrieval, evidence and answer
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
@@ -116,6 +116,28 @@ attempt; the app no longer reads and decodes the same R2 object twice. The chang
 refusal and HTTP v2 replay cases passed together at `aaa13fa` (two selected cases, thirteen skipped).
 Earlier unchanged reader cases remain retained evidence, not a claim that the whole suite was rerun.
 
+## Owner run-status readback
+
+`GET /api/v1/research/run/:workflow_id` reads the existing owner-bound W2 run without advancing it.
+The versioned response separates `ACTIVE`, `CANCELLED` and `ENGINE_COMPLETED` from
+`answer.availability`, which is currently always `unavailable`. It returns the investigation revision
+and next stage index, with a cancellation receipt only for a cancelled run; it never invents an
+artifact reference, a live-process status or a research completion disposition.
+
+The reader checks the persisted run/current view, held scope and current owner authority before and
+after readback. Engine completion also requires the exact committed final request and checkpoint
+receipt. Missing and foreign runs share the same 404 response; services are refused, stale authority
+returns 409 and storage read failures return 503. Unknown query parameters are refused.
+The focused local Worker run at `5f2645b` passed both run-status and held-scope fixtures (7 cases),
+including read-only repeat access, final receipt validation, cancellation and revoked access.
+The existing Astro Research card now offers explicit launch, manual refresh and recovery using a
+known Run ID. Its strict decoder binds the returned handle and deployment, refuses inconsistent
+execution state and never accepts an answer claim. Private run state clears on authority/session loss,
+workspace generation change and offline events; it is not saved in browser storage. The built-PWA
+Chromium fixture at `6279b58` passed POST, ACTIVE/completed GET, known-ID recovery and explicit
+offline clearing against a controlled HTTP backend. It does not prove live Access or a deployed Worker.
+Synthesized answer persistence and an answer-result reader remain open.
+
 ## W2 monotone bounded executor
 
 `createMonotoneStageExecutor(CORE_DB, WORK_BUCKET, ports)` reuses `createWorkflowCheckpointExecutor`
@@ -211,6 +233,11 @@ handles from that source. Migration `0034_research_reference_manifests.sql` stor
 owner, credential, pack, trace and stage bindings. WORK R2 stores bounded canonical manifest bytes;
 readback independently checks residency, the canonical key, ETag, size, platform metadata, both content
 and manifest digests, and scope/client/expiry coherence. Reads recheck current authority around R2 I/O.
+The store binds residency to the held scope and principal. Before persistence and after readback,
+manifest permissions must be a subset of the current grant, disclosure must match, and expiry must
+remain within both scope and grant validity. The two actual D1/R2 cases passed at source `715598b`
+on Node 22.23.2, including refusal of a foreign residency and a grant restriction before persistence,
+with no manifest row written for the refused operation.
 Stage, pack, trace and route selection remain trusted production-composition inputs.
 
 The model prompt adapter binds the call to the supplied deployment generations and persisted manifest,

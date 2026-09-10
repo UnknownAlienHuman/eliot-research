@@ -75,6 +75,16 @@ export interface ExhaustiveWorkflowResult {
   readonly job?: ExhaustiveReconcileStatus;
 }
 
+export interface ResearchRunStatus {
+  readonly protocol: "eliotr.research-run-status.v1";
+  readonly workflow_instance_id: string;
+  readonly investigation_ref: VersionedRef;
+  readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
+  readonly next_stage_index: number;
+  readonly answer: { readonly availability: "unavailable" };
+  readonly cancellation_receipt_ref?: string;
+}
+
 export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
 export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
 
@@ -115,6 +125,7 @@ export interface SemanticApi {
   query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult | ExhaustiveQueryResult | ExhaustiveWorkflowResult>;
   queryStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
   queryCancel(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ExhaustiveWorkflowResult>;
+  runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus>;
   queryJobs(context: AuthenticatedRequestContext, request: ExhaustiveWorkflowJobsRequest): Promise<ExhaustiveWorkflowPage>;
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
   verify(context: AuthenticatedRequestContext, request: VerifyEvidenceRequest): Promise<VerifyEvidenceResult>;

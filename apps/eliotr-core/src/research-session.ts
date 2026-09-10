@@ -3,8 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import { retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES } from "@eliotr/cloudflare-research";
+import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
+import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus } from "@eliotr/cloudflare-research";
 import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -12,7 +12,7 @@ import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERA
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
-import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
@@ -107,7 +107,55 @@ async function scopedPolicyGeneration(policyAuthorityRef: string): Promise<strin
   return value;
 }
 function logicalMatch(head: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string; model_profile_ref: string }, want: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string }): boolean { return head.investigation_id === want.investigation_id && head.goal === want.goal && head.scope_snapshot_id === want.scope_snapshot_id && head.scope_snapshot_revision === want.scope_snapshot_revision && head.evidence_grade === want.evidence_grade && head.lane === want.lane && head.portfolio_ref === want.portfolio_ref && head.principal_ref === want.principal_ref && head.input_digest === want.input_digest && head.policy_generation === want.policy_generation && head.policy_authority_ref === want.policy_authority_ref && head.deployment_generation === want.deployment_generation && head.idempotency_key === want.idempotency_key && head.model_profile_ref === MODEL_PROFILE; }
-export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }> } {
+function mapRunStatusFailure(error: unknown): never {
+  if (error instanceof ResearchServiceError) throw error;
+  if (error instanceof WorkflowCheckpointError) {
+    if (error.code === "WORKFLOW_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
+    if (error.code === "WORKFLOW_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", "research run status input is invalid", 400);
+    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run status readback is unavailable", 503, true);
+  }
+  if (error instanceof RetrievalQueryError) {
+    if (error.code === "RETRIEVAL_AUTHORITY_STALE" || error.code === "RETRIEVAL_SCOPE_STALE") {
+      fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
+    }
+    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run authority readback is unavailable", 503, true);
+  }
+  throw error;
+}
+async function readResearchRunStatus(env: Env, context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> {
+  requireOwner(context);
+  const operationId = checkId(workflowInstanceId, "workflow_instance_id");
+  const principal: WorkflowPrincipal = {
+    principal_ref: context.principal_ref,
+    credential_generation: context.credential_generation,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+  };
+  const recheckAuthority = async () => {
+    const held = await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, {
+      principal_ref: context.principal_ref, client_class: context.client_class,
+      credential_generation: context.credential_generation,
+    } as const, operationId, env.DEPLOYMENT_GENERATION).catch(mapRunStatusFailure);
+    return {
+      investigation_id: held.investigation_id,
+      scope_snapshot_id: held.scope_snapshot_ref.id,
+      scope_snapshot_revision: held.scope_snapshot_ref.revision,
+    };
+  };
+  const status = await readStoredResearchRunStatus({
+    database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
+  }).catch(mapRunStatusFailure);
+  if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  return {
+    protocol: "eliotr.research-run-status.v1",
+    workflow_instance_id: status.operation_id,
+    investigation_ref: { id: status.investigation_id, revision: status.current_revision },
+    execution_state: status.state,
+    next_stage_index: status.next_stage_index,
+    answer: { availability: "unavailable" },
+    ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }),
+  };
+}
+export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>; runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> } {
   return {
     async run(context, raw) {
       requireOwner(context);
@@ -242,6 +290,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (!last) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow produced no receipts", 503, true);
       return { investigation_ref: { ...last.investigation_ref }, workflow_instance_id: operation_id };
     },
+    runStatus: (context, workflowInstanceId) => readResearchRunStatus(env, context, workflowInstanceId),
   };
 }
 interface SessionRecord { protocol: typeof RESEARCH_SESSION_PROTOCOL; session_id: string; investigation_id: string; investigation_revision: number; operation_id: string; idempotency_key: string; handler_generation: string; principal_ref: string; credential_generation: string; deployment_generation: string; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED"; receipt_refs: readonly string[]; output_manifest_ref: string | null; updated_at: string; }
