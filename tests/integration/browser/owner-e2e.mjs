@@ -19,7 +19,7 @@ import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.m
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
-import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario } from "./raw-file-browser.mjs";
+import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponse } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -885,22 +885,29 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
 
   const retrieval = page.locator("#retrieval");
   await retrieval.locator('input[name="query"]').fill("Recorded raw owner fixture");
-  const queryRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
-  const queryResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
+  const queryRequest = page.waitForRequest((request) => {
+    try {
+      const url = new URL(request.url());
+      return request.method() === "POST" && url.origin === new URL(page.url()).origin &&
+        url.pathname === "/api/v1/research/query" && url.search === "";
+    } catch { return false; }
+  }, { timeout: 30000 });
   const traceResponse = page.waitForResponse((response) => response.request().method() === "GET" && /^\/api\/v1\/research\/trace\/query-[0-9a-f]{48}$/u.test(new URL(response.url()).pathname), { timeout: 30000 });
-  await retrieval.locator('button[type="submit"]').click();
+  const querySnapshot = await waitForRawResponse(page, "POST", () => retrieval.locator('button[type="submit"]').click(), "/api/v1/research/query");
   const request = await queryRequest;
   const body = JSON.parse(request.postData() ?? "{}");
+  assert.equal(querySnapshot.requestBody, request.postData(), "FAST_SEARCH response must pair with the exact request body");
   assert.equal(body.product, "FAST_SEARCH");
   assert.equal(body.budget_ref, "retrieval-fast-v1");
   assert.deepEqual(body.scope_expression, { kind: "SELECTED_SOURCES", source_ids: [rawSourceId] });
-  const response = await queryResponse;
-  assert.equal(response.status(), 200);
-  const responseJson = await response.json();
+  assert.equal(querySnapshot.status, 200);
+  assert.equal(querySnapshot.requestHeaders.accept, "application/json");
+  assert.equal(querySnapshot.requestHeaders["content-type"], "application/json");
+  const responseJson = querySnapshot.payload;
   const traceRef = responseJson?.data?.trace_ref;
   assert.match(traceRef?.id ?? "", /^query-[0-9a-f]{48}$/u);
   assert.ok(responseJson?.data?.evidence_pack?.resolved_evidence?.some((item) => item?.handle?.source_revision_ref === sourceRevisionRef));
-  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: response.status(),
+  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: querySnapshot.status,
     correlation: "e2e-raw-projection/query", token_present: false });
   const trace = await traceResponse;
   assert.equal(trace.status(), 200);
