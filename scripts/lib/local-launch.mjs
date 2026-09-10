@@ -216,9 +216,11 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   return { ...paths, generation: config.vars.DEPLOYMENT_GENERATION, config_sha256: createHash("sha256").update(JSON.stringify(config)).digest("hex") };
 }
 
-export function devArguments(paths, port = 8787) {
+export function devArguments(paths, port = 8787, { testScheduled = false } = {}) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error("Local port must be an integer in [1024, 65535]");
   if (CHROMIUM_UNSAFE_PORTS.has(port)) throw new Error(`Local port ${port} is Chromium-unsafe (ERR_UNSAFE_PORT); refusing to bind`);
+  if (typeof testScheduled !== "boolean") throw new Error("testScheduled must be a boolean");
   return wranglerArgs(paths, ["dev", "--ip", "127.0.0.1", "--port", String(port),
-    "--inspector-port", "0", "--show-interactive-dev-session", "false"]);
+    "--inspector-port", "0", "--show-interactive-dev-session", "false",
+    ...(testScheduled ? ["--test-scheduled"] : [])]);
 }
