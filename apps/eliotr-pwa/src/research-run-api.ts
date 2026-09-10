@@ -1,5 +1,5 @@
-import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, VersionedRefSchema, type ArtifactRevision } from "@eliotr/contracts";
-import { ApiRequestError, requestApi } from "./api.js";
+import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
+import { ApiRequestError, requestApi, requestApiBytes } from "./api.js";
 
 export interface ResearchRunLaunchView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
@@ -17,6 +17,15 @@ export interface ResearchRunStatusView {
     | { readonly availability: "draft"; readonly artifact_ref: { readonly id: string; readonly revision: number } };
   readonly cancellation_receipt_ref?: string;
   readonly deployment_generation: string;
+}
+
+export interface ResearchArtifactSectionView {
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly body_object_ref: string;
+  readonly body_sha256: string;
+  readonly size_bytes: number;
+  readonly bytes: Uint8Array;
 }
 
 const MAX_RESULTS = 16;
@@ -53,6 +62,10 @@ function versionedRef(value: unknown, label: string): { readonly id: string; rea
   try { return VersionedRefSchema.parse(value); } catch { invalid(`${label} is invalid`); }
 }
 
+function sameRef(left: VersionedRef, right: VersionedRef): boolean {
+  return left.id === right.id && left.revision === right.revision;
+}
+
 function envelope(value: unknown): { readonly data: Record<string, unknown>; readonly deployment_generation: string } {
   const outer = record(value, ["data", "trace_id", "deployment_generation"]);
   const trace = boundedString(outer.trace_id, "trace_id", 128);
@@ -75,6 +88,29 @@ function checkWorkflowId(value: unknown): string {
 function artifactRevision(value: unknown): ArtifactRevision {
   try { return ArtifactRevisionSchema.parse(value); }
   catch { invalid("research artifact response is invalid"); }
+}
+
+function header(headers: Headers, name: string, label: string): string {
+  const value = headers.get(name);
+  if (value === null || value.length === 0 || value !== value.trim() || value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(value)) invalid(`${label} header is invalid`);
+  return value;
+}
+
+function decodedHeader(headers: Headers, name: string, label: string): string {
+  try { return decodeURIComponent(header(headers, name, label)); }
+  catch { invalid(`${label} header is invalid`); }
+}
+
+function headerRef(headers: Headers, name: string, label: string): VersionedRef {
+  const value = decodedHeader(headers, name, label);
+  const separator = value.lastIndexOf(":");
+  if (separator <= 0 || !/^[1-9][0-9]*$/u.test(value.slice(separator + 1))) invalid(`${label} header is invalid`);
+  return versionedRef({ id: value.slice(0, separator), revision: Number(value.slice(separator + 1)) }, label);
+}
+
+async function sha256(bytes: Uint8Array): Promise<string> {
+  const owned = new Uint8Array(bytes.byteLength); owned.set(bytes);
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", owned))].map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
 export function researchRunBody(query: string, sourceIds: readonly string[], maxResults = MAX_RESULTS): string {
@@ -125,6 +161,27 @@ export async function readResearchArtifact(artifactRef: { readonly id: string; r
   const artifact = artifactRevision(parsed.data);
   if (artifact.artifact_ref.id !== ref.id || artifact.artifact_ref.revision !== ref.revision) invalid("research artifact identity does not match the requested ref");
   return artifact;
+}
+
+export async function readResearchArtifactSection(
+  artifactRef: { readonly id: string; readonly revision: number },
+  section: ArtifactRevision["sections"][number],
+  signal?: AbortSignal,
+): Promise<ResearchArtifactSectionView> {
+  const artifact = versionedRef(artifactRef, "artifact_ref");
+  const sectionRef = versionedRef(section.section_ref, "section_ref");
+  const raw = await requestApiBytes(`/api/v1/research/artifact/${encodeURIComponent(`${artifact.id}:${artifact.revision}`)}/sections/${encodeURIComponent(`${sectionRef.id}:${sectionRef.revision}`)}`, signal, 1024 * 1024);
+  const returnedArtifact = headerRef(raw.headers, "x-eliotr-artifact-ref", "artifact");
+  const returnedSection = headerRef(raw.headers, "x-eliotr-section-ref", "section");
+  const objectRef = decodedHeader(raw.headers, "x-eliotr-section-object-ref", "section object");
+  const returnedSha = header(raw.headers, "x-eliotr-section-sha256", "section digest");
+  if (!Sha256Schema.safeParse(returnedSha).success) invalid("section digest header is invalid");
+  const length = header(raw.headers, "content-length", "content length");
+  if (!/^[0-9]+$/u.test(length) || Number(length) !== raw.bytes.byteLength) invalid("section content length does not match the response body");
+  if (!sameRef(returnedArtifact, artifact) || !sameRef(returnedSection, sectionRef) || objectRef !== section.body_object_ref || returnedSha !== section.body_sha256) invalid("section response identity does not match the declared section");
+  const actualSha = await sha256(raw.bytes);
+  if (actualSha !== returnedSha) invalid("section response digest does not match the response body");
+  return { artifact_ref: returnedArtifact, section_ref: returnedSection, body_object_ref: objectRef, body_sha256: returnedSha, size_bytes: raw.bytes.byteLength, bytes: raw.bytes };
 }
 
 export async function startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView> {
