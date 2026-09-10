@@ -49,6 +49,15 @@ export const CANONICAL_FIXTURE_REGISTRY =
         canonical_body_sha256: NORMALIZED_BUNDLE_CANONICAL_BODY_SHA256,
       },
       {
+        fixture_id: "workspace-mcp-plan-input-v2",
+        protocol: "eliotr.google-sync.plan.v2",
+        schema_export: "WorkspaceMcpPlanV2InputSchema",
+        fixture_path: "tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "3946aea772f88011d0e131b731f7d9e49875adf349efcbd27f7e49d839d61716",
+      },
+      {
         fixture_id: "source-owner-cutover-v1",
         protocol: SOURCE_OWNER_CUTOVER_PROTOCOL,
         schema_export: "SourceOwnerCutoverReceiptSchema",

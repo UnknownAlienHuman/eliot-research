@@ -6,6 +6,7 @@ import compatibilityRegistryRaw from "../../../docs/contracts/compatibility-regi
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import schemaIndexRaw from "../../../docs/contracts/schema-index.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
+import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -464,10 +465,13 @@ describe("ER-01 public contract registry", () => {
     ).toBe(false);
   });
 
-  it("round-trips the Library readiness canonical fixture with its published digest", async () => {
-    const fixture = CANONICAL_FIXTURE_REGISTRY.fixtures.find((item) => item.fixture_id === "library-readiness-v1");
-    if (fixture === undefined) throw new Error("Library readiness fixture is missing from the registry");
-    const value = parseJson(libraryReadinessFixtureRaw);
+  it.each([
+    ["library-readiness-v1", libraryReadinessFixtureRaw],
+    ["workspace-mcp-plan-input-v2", workspaceMcpFixtureRaw],
+  ])("round-trips %s with its published canonical digest", async (fixtureId, raw) => {
+    const fixture = CANONICAL_FIXTURE_REGISTRY.fixtures.find((item) => item.fixture_id === fixtureId);
+    if (fixture === undefined) throw new Error(`Missing canonical fixture ${fixtureId}`);
+    const value = parseJson(raw);
     const schema = requireContractSchemaDescriptor(fixture.schema_export).schema;
     expect(schema.parse(value)).toEqual(value);
     expect(schema.parse(parseJson(serializeCanonicalContractJson(value)))).toEqual(value);

@@ -1891,6 +1891,66 @@
       "schema_id": "urn:eliotr:contracts:library-readiness:library-readiness:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "WorkspaceMcpObservationV2Schema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "eab9ddabd2fb53daf9f63c58dbf413a227a8deaef0c9597cf2ba89693c178cb2",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 durable Workspace MCP v2 candidate contract; source/evidence authority and existing Workspace MCP v1 remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-observation-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "WorkspaceMcpPlanV2InputSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "109c73c1f03d85f56c0913ef4400e6271e8c67e5d8b5f61b1673609024a7c338",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 durable Workspace MCP v2 candidate contract; source/evidence authority and existing Workspace MCP v1 remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "WorkspaceMcpPlanV2ResultSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "0f7c414bdea94c2cc7d7d88ea8c786ec56dbcfef8b72efa2927de54e6ac2e9c8",
+      "kind": "UNION",
+      "note": "Initial ER-36 durable Workspace MCP v2 candidate contract; source/evidence authority and existing Workspace MCP v1 remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "WorkspaceMcpPlanV2Schema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "89f9d8030a2187e6736b419cdf725ca233e881f96c3d858380a1d12cf0093f3d",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 durable Workspace MCP v2 candidate contract; source/evidence authority and existing Workspace MCP v1 remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-plan-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "WorkspaceMcpReceiptV2Schema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "b736e7294cca262c355e462348e561e08c1cb1e8ecf881f5b5651caaefcd1a94",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 durable Workspace MCP v2 candidate contract; source/evidence authority and existing Workspace MCP v1 remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-receipt-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
