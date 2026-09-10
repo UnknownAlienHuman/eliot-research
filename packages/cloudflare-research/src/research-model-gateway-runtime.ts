@@ -50,6 +50,19 @@ function abortError(message: string): Error {
   return error;
 }
 
+function assertLifecycleActive(lifecycle: RequestLifecycle): void {
+  if (lifecycle.signal.aborted) {
+    const error = abortError("model gateway call was cancelled");
+    lifecycle.abort(error);
+    throw error;
+  }
+  if (Date.now() >= lifecycle.deadlineAt) {
+    const error = abortError("model gateway response deadline exceeded");
+    lifecycle.abort(error);
+    throw error;
+  }
+}
+
 function requestTimeout(init: RequestInit): number {
   const value = new Headers(init.headers).get(REQUEST_TIMEOUT_HEADER);
   if (value === null || !/^(?:0|[1-9]\d*)$/u.test(value)) {
@@ -171,7 +184,9 @@ async function bufferResponseBody(
   try {
     while (true) {
       const next = await Promise.race([reader.read(), lifecycle.abortPromise]);
+      assertLifecycleActive(lifecycle);
       if (next.done) break;
+      if (next.value.byteLength === 0) continue;
       length += next.value.byteLength;
       if (length > maximumBytes) {
         const error = abortError("model gateway response exceeds its bounded byte budget");
@@ -181,6 +196,7 @@ async function bufferResponseBody(
       }
       chunks.push(next.value);
     }
+    assertLifecycleActive(lifecycle);
     lifecycle.finish();
     lifecycle.signal.removeEventListener("abort", onLifecycleAbort);
     releaseReader(reader);
@@ -267,11 +283,14 @@ export function createResearchModelGatewayRuntime(
       );
       if (parents.some((signal) => signal.aborted)) throw abortError("model gateway call was cancelled");
       const lifecycle = createRequestLifecycle(timeoutMs, parents);
-      const fetchPromise = Promise.resolve().then(() => fetchImpl(url, {
-        ...init,
-        redirect: "error",
-        signal: lifecycle.signal,
-      }));
+      const fetchPromise = Promise.resolve().then(() => {
+        assertLifecycleActive(lifecycle);
+        return fetchImpl(url, {
+          ...init,
+          redirect: "error",
+          signal: lifecycle.signal,
+        });
+      });
       void fetchPromise.then((response) => {
         if (lifecycle.signal.aborted && response instanceof Response) {
           cancelResponseBody(response, abortError("model gateway call was cancelled"));
