@@ -85,6 +85,8 @@ export function decodeRetrievalResult(raw: unknown, expectedDeploymentGeneration
   });
   const trace = parsed(() => VersionedRefSchema.parse(data.trace_ref));
   if (!QUERY_TRACE_ID.test(trace.id)) mismatch();
+  const packTrace = parsed(() => VersionedRefSchema.parse(pack.trace_ref));
+  if (packTrace.id !== trace.id || packTrace.revision !== trace.revision) mismatch();
   const bytes = pack.total_utf8_bytes;
   if (!Number.isSafeInteger(bytes) || (bytes as number) < 0) mismatch();
   const declared = evidence.reduce((total, item) => total + new TextEncoder().encode(item.exact_excerpt).byteLength, 0);
@@ -111,9 +113,18 @@ export async function runRetrievalQuery(body: string, key: string, signal?: Abor
   return decodeRetrievalResult(value, expectedDeploymentGeneration);
 }
 
-export function assertRetrievalSelection(view: RetrievalResultView, sourceRevisionRefs: readonly string[]): void {
-  const allowed = new Set(sourceRevisionRefs);
-  if (view.evidence.some((item) => !allowed.has(item.handle.source_revision_ref))) {
+export function assertRetrievalSelection(view: RetrievalResultView, traceView: RetrievalTraceView,
+  sourceRevisionRefs: readonly string[]): void {
+  const trace = traceView.trace;
+  if (trace.trace_ref.id !== view.trace.id || trace.trace_ref.revision !== view.trace.revision ||
+      trace.scope_snapshot.snapshot_id !== view.scope.id || trace.scope_snapshot.revision !== view.scope.revision ||
+      (trace.evidence_pack_ref !== undefined &&
+        trace.evidence_pack_ref !== view.pack.id)) {
+    mismatch();
+  }
+  const scopeMembers = new Set(trace.scope_snapshot.member_source_revision_refs);
+  if (sourceRevisionRefs.some((ref) => !scopeMembers.has(ref)) ||
+      view.evidence.some((item) => !scopeMembers.has(item.handle.source_revision_ref))) {
     throw new ApiRequestError({ status: 409, code: "RETRIEVAL_SOURCE_HEAD_CHANGED", message: "The selected source changed; refresh the Library", retryable: true });
   }
 }

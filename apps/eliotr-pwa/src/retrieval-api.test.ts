@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "./api.js";
-import { decodeRetrievalResult, decodeRetrievalTrace, retrievalBody } from "./retrieval-api.js";
+import { assertRetrievalSelection, decodeRetrievalResult, decodeRetrievalTrace, readRetrievalTrace, retrievalBody } from "./retrieval-api.js";
 
 const SHA = "a".repeat(64);
 
@@ -44,6 +44,8 @@ function envelope(pack: Record<string, unknown>, traceId = `query-${"b".repeat(4
     deployment_generation: "generation-1",
   };
 }
+
+afterEach(() => vi.unstubAllGlobals());
 
 function pack(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -103,6 +105,12 @@ describe("retrieval result decoding", () => {
     expect(() => decodeRetrievalResult(envelope(pack(), `orient-${"c".repeat(64)}`))).toThrow(ApiRequestError);
   });
 
+  it("binds the pack trace reference to the outer retrieval trace", () => {
+    expect(() => decodeRetrievalResult(envelope(pack({
+      trace_ref: { id: `query-${"c".repeat(48)}`, revision: 1 },
+    })))).toThrow(ApiRequestError);
+  });
+
   it("refuses an unknown field in the evidence pack", () => {
     expect(() => decodeRetrievalResult(envelope(pack({ extra: true })))).toThrow(ApiRequestError);
   });
@@ -145,6 +153,7 @@ describe("retrieval trace decoding", () => {
     omitted_sources: [],
     stale_or_degraded_channels: [],
     budget_receipt_ref: "budget-1",
+    evidence_pack_ref: "pack-1",
   };
 
   it("decodes lanes, skips and the coverage claim", () => {
@@ -172,5 +181,35 @@ describe("retrieval trace decoding", () => {
       trace_id: "trace-1",
       deployment_generation: "generation-1",
     })).toThrow(ApiRequestError);
+  });
+
+  it("fences a zero-hit result against a changed selected head from the authoritative trace scope", () => {
+    const view = decodeRetrievalResult(envelope(pack({ resolved_evidence: [], total_utf8_bytes: 0 })));
+    const traceView = decodeRetrievalTrace({
+      data: { ...trace, coverage_claim: "NONE" },
+      trace_id: "trace-1",
+      deployment_generation: "generation-1",
+    });
+    expect(() => assertRetrievalSelection(view, traceView, ["source-2"]))
+      .toThrowError(expect.objectContaining({ code: "RETRIEVAL_SOURCE_HEAD_CHANGED", status: 409 }));
+  });
+
+  it("binds the authoritative trace evidence pack to the returned pack", () => {
+    const view = decodeRetrievalResult(envelope(pack()));
+    const traceView = decodeRetrievalTrace({
+      data: { ...trace, evidence_pack_ref: "pack-2", coverage_claim: "SAMPLED" },
+      trace_id: "trace-1",
+      deployment_generation: "generation-1",
+    });
+    expect(() => assertRetrievalSelection(view, traceView, ["source-1"]))
+      .toThrowError(expect.objectContaining({ code: "RETRIEVAL_RESPONSE_INVALID", status: 502 }));
+  });
+
+  it("rejects a late trace read from a deployment that no longer owns the submitted query", async () => {
+    vi.stubGlobal("fetch", async () => Response.json({
+      data: { ...trace, coverage_claim: "NONE" }, trace_id: "trace-1", deployment_generation: "generation-2",
+    }));
+    await expect(readRetrievalTrace({ id: trace.trace_ref.id, revision: 1 }, undefined, "generation-1"))
+      .rejects.toThrowError(expect.objectContaining({ code: "RETRIEVAL_DEPLOYMENT_CHANGED", status: 409 }));
   });
 });
