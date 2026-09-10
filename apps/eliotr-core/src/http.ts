@@ -35,6 +35,7 @@ import {
 import {
   ArtifactHttpInputError,
   parseArtifactRef,
+  parseArtifactSectionRef,
 } from "./artifact-draft-http.js";
 import {
   dispatchIngestOperation,
@@ -349,6 +350,14 @@ async function dispatch(
       const ref = match.params.ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       return apiResult(request, env, await application.services.semantic.artifact(context, parseArtifactRef(ref)));
+    }
+    case "research.artifact.section": {
+      requireNoQuery(url);
+      const ref = match.params.ref;
+      const sectionRef = match.params.section_ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      if (sectionRef === undefined) throw new ArtifactHttpInputError("section reference path parameter is missing");
+      return application.services.semantic.artifactSection(context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef));
     }
     case "research.verify": {
       return apiResult(

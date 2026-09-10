@@ -16,8 +16,8 @@ export class ArtifactReadNotFoundError extends Error {
   public readonly status = 404;
   public readonly retryable = false;
 
-  public constructor() {
-    super("artifact revision does not exist");
+  public constructor(message = "artifact revision does not exist") {
+    super(message);
     this.name = "ArtifactReadNotFoundError";
   }
 }
@@ -40,6 +40,27 @@ export function parseArtifactRef(value: string): VersionedRef {
     return VersionedRefSchema.parse({ id, revision });
   } catch {
     throw new ArtifactHttpInputError();
+  }
+}
+
+export function parseArtifactSectionRef(value: string): VersionedRef {
+  const separator = value.lastIndexOf(":");
+  if (separator <= 0 || separator === value.length - 1) {
+    throw new ArtifactHttpInputError("section reference must end with :revision");
+  }
+  const id = value.slice(0, separator);
+  const rawRevision = value.slice(separator + 1);
+  if (!/^[1-9][0-9]*$/u.test(rawRevision)) {
+    throw new ArtifactHttpInputError("section revision must be a positive integer");
+  }
+  const revision = Number(rawRevision);
+  if (!Number.isSafeInteger(revision)) {
+    throw new ArtifactHttpInputError("section revision is outside the safe integer range");
+  }
+  try {
+    return VersionedRefSchema.parse({ id, revision });
+  } catch {
+    throw new ArtifactHttpInputError("section reference is invalid");
   }
 }
 
