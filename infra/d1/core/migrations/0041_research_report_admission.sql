@@ -64,6 +64,9 @@ WHEN NOT EXISTS (
     AND r.scope_snapshot_revision = NEW.scope_snapshot_revision
     AND s.snapshot_digest = NEW.scope_snapshot_digest
     AND julianday(s.expires_at) > julianday('now')
+    AND julianday(NEW.expires_at) > julianday('now')
+    AND julianday(NEW.policy_expires_at) > julianday('now')
+    AND CAST(json_extract(NEW.input_json, '$.workflow_revision') AS INTEGER) = r.current_revision
     AND NEW.client_class = 'owner_pwa'
     AND EXISTS (
       SELECT 1
