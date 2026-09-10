@@ -97,12 +97,18 @@ function normalizeMigrationDiagnostic(context) {
   return { binding: context.binding, phase: context.phase };
 }
 
+function boundedTail(value, limit = 4096) {
+  const text = String(value ?? "");
+  return text.length > limit ? text.slice(-limit) : text;
+}
+
 function localRuntimeErrorCode(stdout, stderr) {
-  const text = `${stdout}\n${stderr}`.slice(0, 4096);
-  const match = text.match(/\b(SQLITE_(?:BUSY|CANTOPEN|CORRUPT|ERROR|FULL|IOERR|LOCKED|MISUSE|NOMEM|READONLY)|EAGAIN|EBUSY|ENOMEM|EPERM|ETIMEDOUT)\b/iu);
-  const code = match?.[1]?.toUpperCase();
-  if (code && LOCAL_RUNTIME_ERROR_CODES.has(code)) return code;
-  return /\bout of memory\b/iu.test(text) ? "SQLITE_NOMEM" : "UNKNOWN";
+  for (const text of [boundedTail(stderr), boundedTail(stdout)]) {
+    const match = text.match(/\b(SQLITE_(?:BUSY|CANTOPEN|CORRUPT|ERROR|FULL|IOERR|LOCKED|MISUSE|NOMEM|READONLY)|EAGAIN|EBUSY|ENOMEM|EPERM|ETIMEDOUT)\b/iu);
+    const code = match?.[1]?.toUpperCase();
+    if (code && LOCAL_RUNTIME_ERROR_CODES.has(code)) return code;
+  }
+  return "UNKNOWN";
 }
 
 function migrationDiagnostic(context, stdout, stderr) {
@@ -125,10 +131,12 @@ export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), captu
     const redacted = raw.replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
       .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]").slice(0, 1000);
     const suffix = diagnostic ? ` [${diagnostic}]` : "";
-    const error = new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested${suffix}${migrationDiagnosticSuffix(migration)}${redacted.trim() ? ` :: ${redacted.trim()}` : ""}`);
-    error.cause = { code: result.error?.code ?? result.status ?? "unknown", diagnostic,
-      stdout: String(result.stdout ?? "").slice(0, 4096), stderr: String(result.stderr ?? "").slice(0, 4096),
-      ...(migration ? { migration } : {}) };
+    const outputSuffix = migration ? "" : (redacted.trim() ? ` :: ${redacted.trim()}` : "");
+    const error = new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested${migration ? "" : suffix}${migrationDiagnosticSuffix(migration)}${outputSuffix}`);
+    error.cause = migration
+      ? { code: result.error?.code ?? result.status ?? "unknown", migration }
+      : { code: result.error?.code ?? result.status ?? "unknown", diagnostic,
+        stdout: String(result.stdout ?? "").slice(0, 4096), stderr: String(result.stderr ?? "").slice(0, 4096) };
     throw error;
   }
   return result.stdout ?? "";

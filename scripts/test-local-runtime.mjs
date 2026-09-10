@@ -69,12 +69,33 @@ try {
 } finally { await rm(directory, { recursive: true, force: true }); }
 
 assert.throws(
-  () => executeLocal(["-e", "console.error('out of memory: SQLITE_NOMEM'); process.exit(1)"], {
+  () => executeLocal(["-e", "process.stdout.write('x'.repeat(6000)); process.stderr.write('y'.repeat(6000) + ' SQLITE_NOMEM'); process.exit(1)"], {
     capture: true, diagnosticContext: { binding: "SEARCH_DB", phase: "d1-migrations" },
   }),
   (error) => {
     assert.match(error.message, /migration=SEARCH_DB\/d1-migrations; runtime=SQLITE_NOMEM/u);
     assert.equal(error.cause.migration.runtime_code, "SQLITE_NOMEM");
+    assert.equal(Object.hasOwn(error.cause, "stdout"), false);
+    assert.equal(Object.hasOwn(error.cause, "stderr"), false);
+    return true;
+  },
+);
+assert.throws(
+  () => executeLocal(["-e", "console.error('out of memory'); process.exit(1)"], {
+    capture: true, diagnosticContext: { binding: "CORE_DB", phase: "d1-migrations" },
+  }),
+  (error) => {
+    assert.match(error.message, /migration=CORE_DB\/d1-migrations; runtime=UNKNOWN/u);
+    return true;
+  },
+);
+assert.throws(
+  () => executeLocal(["-e", "console.error('SELECT secret_value FROM private_table; super-secret'); process.exit(1)"], {
+    capture: true, diagnosticContext: { binding: "CORE_DB", phase: "d1-migrations" },
+  }),
+  (error) => {
+    assert.doesNotMatch(error.message, /SELECT secret_value|super-secret/u);
+    assert.deepEqual(Object.keys(error.cause), ["code", "migration"]);
     return true;
   },
 );
