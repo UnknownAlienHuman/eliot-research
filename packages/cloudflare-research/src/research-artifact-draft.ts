@@ -52,13 +52,17 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly synthesis_readback: ResearchSynthesisOutputReadback;
-  readonly section: ArtifactSectionRevision;
-  readonly section_residency: ObjectResidencyKey;
+  /** Server-selected section identity and labels; body and verification identity are derived below. */
+  readonly section: ArtifactSectionMaterializationTemplate;
+  readonly section_residency: ObjectResidencyTemplate;
   readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
-  readonly manifest_residency: ObjectResidencyKey;
+  readonly manifest_residency: ObjectResidencyTemplate;
   readonly created_at: string;
   readonly now?: () => number;
 }
+
+export type ArtifactSectionMaterializationTemplate = Omit<ArtifactSectionRevision, "body_sha256" | "verification_receipt_ref">;
+export type ObjectResidencyTemplate = Omit<ObjectResidencyKey, "content_digest">;
 
 export type ResearchArtifactDraftErrorCode =
   | "RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID"
@@ -138,7 +142,7 @@ async function derivedVerificationObject(input: {
   readonly evidence_pack: ResearchEvidencePack;
   readonly cited: readonly ResearchEvidencePack["resolved_evidence"][number][];
   readonly section_sha256: string;
-  readonly residency: ObjectResidencyKey;
+  readonly residency_template: ObjectResidencyTemplate;
 }): Promise<{ readonly section_verification_ref: string; readonly object: ArtifactDraftReferencedObjectInput }> {
   const record = {
     schema: "eliotr.research.draft-verification.v1",
@@ -167,7 +171,7 @@ async function derivedVerificationObject(input: {
   const digest = await evidenceSha256Bytes(bytes);
   const ref = `verification-${digest}`;
   const residency: ObjectResidencyKey = {
-    ...input.residency,
+    ...input.residency_template,
     content_digest: { algorithm: "sha256", digest },
   };
   return {
@@ -229,9 +233,9 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     ArtifactSpecSchema.parse(input.spec);
     EvidenceFreezeSchema.parse(input.evidence_freeze);
     AllowedReferenceManifestSchema.parse(input.reference_manifest);
-    ArtifactSectionRevisionSchema.parse(input.section);
-    ObjectResidencyKeySchema.parse(input.section_residency);
-    ObjectResidencyKeySchema.parse(input.manifest_residency);
+    ArtifactSectionRevisionSchema.omit({ body_sha256: true, verification_receipt_ref: true }).parse(input.section);
+    ObjectResidencyKeySchema.omit({ content_digest: true }).parse(input.section_residency);
+    ObjectResidencyKeySchema.omit({ content_digest: true }).parse(input.manifest_residency);
     VersionedRefSchema.parse(input.artifact_ref);
   } catch {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "materialization input failed its versioned contracts");
@@ -290,18 +294,17 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "current scope authority changed during evidence readback"); }
   if (canonicalEvidenceJson(initialGrant) !== canonicalEvidenceJson(finalGrant)) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "scope authority changed during evidence readback");
   const sectionBytes = new TextEncoder().encode(candidate.section_text);
-  if (await evidenceSha256Bytes(sectionBytes) !== input.section.body_sha256) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "section text differs from the server-selected section revision");
   for (const evidence of input.evidence_pack.resolved_evidence) {
     if (candidate.cited_handle_refs.some((ref) => sameRef(ref, evidence.handle.handle_ref)) && evidence.handle.expires_at !== undefined && Date.parse(evidence.handle.expires_at) <= now) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "cited evidence handle is expired");
   }
   const dependencyRef = refKey(input.reference_manifest.manifest_ref);
   const dependency = requiredObject(input.referenced_objects, dependencyRef, "DEPENDENCY_MANIFEST");
   const ledger = requiredObject(input.referenced_objects, input.section.evidence_ledger_ref, "EVIDENCE_LEDGER");
-  const verificationTemplate = requiredObject(input.referenced_objects, input.section.verification_receipt_ref, "VERIFICATION_RECEIPT");
   let dependencyText: string;
   try { dependencyText = new TextDecoder("utf-8", { fatal: true }).decode(dependency.bytes); }
   catch { fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "dependency manifest encoding is invalid"); }
   if (dependencyText !== canonicalEvidenceJson(input.reference_manifest)) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "dependency manifest bytes differ from the verified manifest");
+  const sectionSha256 = await evidenceSha256Bytes(sectionBytes);
   const verification = await derivedVerificationObject({
     operation_id: input.operation_id,
     investigation_ref: readback.investigation_ref,
@@ -311,11 +314,12 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     manifest: input.reference_manifest,
     evidence_pack: input.evidence_pack,
     cited: authoritativeEvidence,
-    section_sha256: input.section.body_sha256,
-    residency: verificationTemplate.residency,
+    section_sha256: sectionSha256,
+    residency_template: input.section_residency,
   });
   const draftSection: ArtifactSectionRevision = {
     ...input.section,
+    body_sha256: sectionSha256,
     verification_receipt_ref: verification.section_verification_ref,
   };
   const revision: ArtifactRevision = ArtifactRevisionSchema.parse({
@@ -323,9 +327,14 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     evidence_freeze_ref: input.evidence_freeze.freeze_ref, sections: [draftSection], dependency_manifest_ref: dependencyRef,
     deterministic_export_refs: {}, status: "DRAFT", created_at: input.created_at,
   });
+  const manifestSha256 = await canonicalDigest({ spec: input.spec, revision });
+  const manifestResidency: ObjectResidencyKey = {
+    ...input.manifest_residency,
+    content_digest: { algorithm: "sha256", digest: manifestSha256 },
+  };
   return createArtifactDraftStore(input.database, input.work_bucket).prepare({
     intent: input.intent, expected_draft_head_revision: input.expected_draft_head_revision, spec: input.spec, revision,
-    sections: [{ section: draftSection, bytes: sectionBytes, residency: input.section_residency }],
-    referenced_objects: [dependency, ledger, verification.object], manifest_residency: input.manifest_residency,
+    sections: [{ section: draftSection, bytes: sectionBytes, residency: { ...input.section_residency, content_digest: { algorithm: "sha256", digest: sectionSha256 } } }],
+    referenced_objects: [dependency, ledger, verification.object], manifest_residency: manifestResidency,
   });
 }
