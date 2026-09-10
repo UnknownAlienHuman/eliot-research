@@ -169,8 +169,11 @@ output store and mandatory preparation hook, the prompt compiler and the gateway
 credentials and transport are initialized only when a new model call executes, with that invocation's
 cancellation signal. Exact successful recovery and UNKNOWN replay need no fresh gateway credentials,
 prompt preparation or pricing call. Deployment resolution defaults to PRODUCTION and rejects
-fixture-only qualifications. Trusted request preparation, currentness and pricing are required inputs;
-this factory does not supply spending approval or replace the deterministic app Workflow stages.
+fixture-only qualifications. The factory now composes the actual D1 currentness revalidator with a
+required trusted spend-authorization reader. Each invocation retains the immutable approved deployment;
+the gateway uses that configuration without another registry read after the final D1 guard. Trusted
+request preparation, spending authorization and pricing remain required inputs; this factory does not
+produce owner consent or replace the deterministic app Workflow stages.
 
 `createD1ResearchModelPricingSnapshotStore` stores immutable canonical pricing observations in
 `0038_research_model_pricing.sql`, bound to an exact snapshot reference, route/version, provider and
@@ -186,8 +189,11 @@ The same canonical request encoder is used for reservation and readback. Its req
 reader binds the operation, scope, quote, reservation and exact expected model deployment. External
 spend and route reads precede a final D1 readback; the final clock is sampled after those reads, with
 no later external reader await. Known provider result settlement remains separate from fresh-call
-authorization. The production spend reader and propagation of its approved deployment pin to the
-actual gateway fetch remain open; this adapter alone does not authorize or wire live model stages.
+authorization. Its approved deployment now reaches the composed gateway adapter. The production spend
+reader and app Workflow wiring remain open. This is a local configuration pin, not proof of a remote
+route version: the current transport selects a dynamic-route alias and observes provider/model headers.
+See Cloudflare's [dynamic-route usage](https://developers.cloudflare.com/ai-gateway/features/dynamic-routing/usage/)
+(updated 2026-08-07; checked 2026-09-10). Live route qualification remains a separate requirement.
 
 ## Bounds and proof ceiling
 
@@ -275,6 +281,15 @@ revocation/expiry during awaited readers. The positive case was then strengthene
 with an exact one-route-read assertion, excluding the former late second read. Spend/route readers
 and the opaque currentness digest are controlled fixture inputs; provider invocation, production
 spending authority and app-stage composition are not qualified by these tests.
+
+The stage-handler suite subsequently passed eight actual local Worker/D1/R2 cases on 2026-09-10
+using real STARTED W2 records and the directly composed D1 revalidator. It covers immutable output
+and fingerprint readback, exact terminal replay with unusable current credentials, UNKNOWN replay
+without another provider attempt, fixture-only production denial, approved deployment propagation,
+registry rotation and missing/malformed spend approval. Pre-provider denials persist the existing
+CANCELLED attempt/operation receipt and SETTLED reservation lifecycle with zero transport calls.
+The LIVE qualification rows, spend reader, pricing, manifest-service result and fetch response are
+controlled test inputs; no live provider or remote route-version evidence is claimed.
 
 The earlier focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
