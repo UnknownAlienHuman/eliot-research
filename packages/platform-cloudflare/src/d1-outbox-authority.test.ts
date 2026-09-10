@@ -88,6 +88,7 @@ describe("D1 intent/outbox authority", () => {
     });
     expect(calls).toHaveLength(0);
     expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan.intent_ref)).toBe(true);
     expect(Object.isFrozen(plan.statements)).toBe(true);
     const changed = { success: true, meta: { changes: 1 } } as D1Result<unknown>;
     expect(() => plan.assertBatchResults([changed, changed, changed], 1)).not.toThrow();

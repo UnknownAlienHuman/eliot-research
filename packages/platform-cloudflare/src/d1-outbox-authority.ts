@@ -204,6 +204,10 @@ export async function prepareIntentWithOutboxMutation(
     payload_sha256: rawInput.payload_sha256,
   };
   const outboxId = await stableOutboxId(intent.intent_ref);
+  const intentRef = Object.freeze({
+    id: intent.intent_ref.id,
+    revision: intent.intent_ref.revision,
+  });
   const nextAttemptAt = Date.parse(intent.created_at);
   if (!Number.isSafeInteger(nextAttemptAt) || nextAttemptAt < 0) {
     fail("DELIVERY_INPUT_INVALID", "intent created_at is invalid");
@@ -251,7 +255,7 @@ export async function prepareIntentWithOutboxMutation(
     };
   };
   return Object.freeze({
-    intent_ref: intent.intent_ref,
+    intent_ref: intentRef,
     outbox_id: outboxId,
     statements,
     assertBatchResults(results: readonly D1Result<unknown>[], offset = 0) {
