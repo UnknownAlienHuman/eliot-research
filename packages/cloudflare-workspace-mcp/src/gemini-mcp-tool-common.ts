@@ -1,4 +1,5 @@
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
+import type { WorkspaceMcpCandidateStore } from "./workspace-mcp-ledger.js";
 
 export type GoogleExternalTransport = "disabled" | "gemini-mcp" | "drive-exchange";
 
@@ -25,6 +26,9 @@ export interface GeminiMcpToolDependencies {
     input: { readonly project_id?: string; readonly cursor?: string; readonly limit: number },
     context: McpToolCallContext,
   ) => Promise<unknown>;
+  /** Verified deployment context and the server-owned durable candidate ledger. */
+  readonly mcp_auth_profile?: "service-token" | "managed-oauth";
+  readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
 }
 
 export class GeminiMcpToolError extends Error {

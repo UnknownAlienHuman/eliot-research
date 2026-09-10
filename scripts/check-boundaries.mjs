@@ -35,7 +35,7 @@ const PACKAGE_RULES = new Map([
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
-  ["packages/cloudflare-workspace-mcp", new Set(["@eliotr/cloudflare-access", "@eliotr/platform-cloudflare"])],
+  ["packages/cloudflare-workspace-mcp", new Set(["@eliotr/cloudflare-access", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-raw-ingest", new Set(["@eliotr/contracts", "@eliotr/interfaces", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-markdown", new Set(["@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-erasure", new Set(["@eliotr/contracts"])],
