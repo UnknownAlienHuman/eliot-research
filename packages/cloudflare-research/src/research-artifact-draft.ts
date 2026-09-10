@@ -136,6 +136,19 @@ function sameEvidence(left: ResearchEvidencePack["resolved_evidence"][number], r
       scope_snapshot_digest: right.scope_snapshot_digest, instruction_taint: right.instruction_taint, allowed_effects: right.allowed_effects });
 }
 
+function requireCurrentEvidenceAuthority(
+  evidence: ResearchEvidencePack["resolved_evidence"][number],
+  scope: VersionedRef,
+  access: NavigationReadAuthority["access"],
+  grant: Awaited<ReturnType<NavigationReadAuthority["current"]>>,
+): void {
+  if (!sameRef(evidence.handle.scope_snapshot_ref, scope) ||
+      evidence.authorization_receipt_ref !== grant.authorization_receipt_ref ||
+      evidence.credential_generation !== access.credential_generation) {
+    fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "evidence authority does not match the current owner grant");
+  }
+}
+
 /** Converts one committed SYNTHESIZE output into one DRAFT section. */
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
   const readback = input.synthesis_readback;
@@ -193,10 +206,12 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   for (const ref of candidate.cited_handle_refs) {
     const expected = input.evidence_pack.resolved_evidence.find((item) => sameRef(item.handle.handle_ref, ref));
     if (expected === undefined) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "cited evidence readback is missing");
+    requireCurrentEvidenceAuthority(expected, scope, input.navigation.access, initialGrant);
     let actual;
     try {
       actual = await input.evidence_resolver.resolveHandle({ handle_ref: ref, expected_scope_snapshot_ref: scope, access: input.navigation.access });
     } catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "cited evidence is no longer currently resolvable"); }
+    requireCurrentEvidenceAuthority(actual, scope, input.navigation.access, initialGrant);
     if (!sameEvidence(expected, actual)) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "cited evidence differs from current authoritative readback");
   }
   let finalGrant;
