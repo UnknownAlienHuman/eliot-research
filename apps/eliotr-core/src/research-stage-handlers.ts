@@ -7,6 +7,9 @@ import {
   fail,
   type MonotoneHandlerFactory,
   type WorkflowStageHandler,
+  createEvidenceFreezeSynthesisHandler,
+  createResearchMaterializeStageHandler,
+  type ResearchMaterializeStageDependencies,
 } from "@eliotr/cloudflare-research";
 import {
   createRetrieveBranchesStageHandler,
@@ -37,6 +40,8 @@ export type ResearchStageHandlerFactoryMode =
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
+      readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
+      readonly materialize?: ResearchMaterializeStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -74,6 +79,10 @@ export function createResearchStageHandlerFactory(
     mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.freeze !== undefined
     ? createEvidenceFreezeComposition(mode.freeze)
     : undefined;
+  const materializeHandler = mode.kind === "server-owned-exploratory" &&
+    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.materialize !== undefined
+    ? createResearchMaterializeStageHandler(mode.materialize)
+    : undefined;
 
   return (stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
@@ -90,6 +99,12 @@ export function createResearchStageHandlerFactory(
     if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION &&
         (stage === "RECONCILE" || stage === "FREEZE_EVIDENCE")) {
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
+    }
+    if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      return mode.synthesis === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createEvidenceFreezeSynthesisHandler(mode.synthesis).handler;
+    }
+    if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);

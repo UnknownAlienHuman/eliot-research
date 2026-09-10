@@ -177,5 +177,3 @@ export interface DraftObjectRow {
   readonly residency_key_json: unknown;
   readonly residency_key_digest: unknown;
 }
-
-

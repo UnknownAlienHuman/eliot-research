@@ -12,6 +12,7 @@
     "src/**/*.ts"
   ],
   "references": [
+    { "path": "../cloudflare-artifacts" },
     {
       "path": "../cloudflare-ai"
     },

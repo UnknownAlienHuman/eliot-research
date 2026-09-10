@@ -1,5 +1,16 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
+import type { ArtifactSpec, OperationIntent } from "@eliotr/contracts";
+import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
+import type {
+  ResearchMaterializeContext,
+  ResearchMaterializeTrustedMetadata,
+} from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
+import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
+import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
+import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
+import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
@@ -12,6 +23,15 @@ import {
   runtime,
   type ArtifactDraftReadFixture,
 } from "./artifact-draft-fixture.js";
+import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
+import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+
+const freezeAccess = {
+  principal_ref: freezePrincipal.principal_ref,
+  client_class: "owner_pwa" as const,
+  credential_generation: freezePrincipal.credential_generation,
+};
 
 async function count(table: string, artifactId: string): Promise<number> {
   const row = await runtime.CORE_DB.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE artifact_id=?1`)
@@ -82,6 +102,62 @@ async function readSection(
     require_current: current.requireCurrent,
     now: current.now,
   });
+}
+
+function residencyTemplate(scopeId: string, principalRef: string, tag: string) {
+  return {
+    scope_domain_id: scopeId,
+    access_domain_id: principalRef,
+    confidentiality_domain_id: `materialize-confidential-${tag}`,
+    encryption_key_domain_id: `materialize-key-${tag}`,
+    retention_domain_id: `materialize-retention-${tag}`,
+    erasure_domain_id: `materialize-erasure-${tag}`,
+  };
+}
+
+async function materializeMetadata(
+  context: ResearchMaterializeContext,
+  tag: string,
+): Promise<ResearchMaterializeTrustedMetadata> {
+  const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(context.manifest));
+  const ledgerBytes = new TextEncoder().encode(canonicalEvidenceJson(context.stage_five.evidence_pack));
+  const manifestRef = `${context.manifest.manifest_ref.id}:${context.manifest.manifest_ref.revision}`;
+  const ledgerRef = `evidence-ledger-${tag}`;
+  const manifestSha = await evidenceSha256Bytes(manifestBytes);
+  const ledgerSha = await evidenceSha256Bytes(ledgerBytes);
+  const domains = residencyTemplate(context.freeze.scope_snapshot_ref.id, freezePrincipal.principal_ref, tag);
+  const spec: ArtifactSpec = {
+    spec_ref: { id: `materialize-spec-${tag}`, revision: 1 }, kind: "research_report",
+    title: "Controlled frozen research draft", scope_snapshot_ref: context.freeze.scope_snapshot_ref,
+    inquiry_protocol_ref: { id: "materialize-protocol-v1", revision: 1 }, audience: "owner", language: "en",
+    section_contracts: [{ section_id: "summary", title: "Summary", purpose: "Frozen evidence summary",
+      required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 }],
+    citation_policy_ref: "materialize-citation-v1", verification_policy_ref: "materialize-verification-v1",
+    include_counterevidence: true, include_methodology: true, length_policy_ref: "materialize-length-v1",
+    export_formats: ["markdown"], budget_ref: "materialize-fixture-budget",
+  };
+  const section = {
+    section_ref: { id: `materialize-section-${tag}`, revision: 1 }, contract_id: "summary",
+    body_object_ref: `materialize-section-body-${tag}`, statement_labels: { claim: "UNRESOLVED" as const },
+    evidence_ledger_ref: ledgerRef,
+  };
+  const intent: OperationIntent = {
+    intent_ref: { id: `materialize-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",
+    principal_ref: freezePrincipal.principal_ref, idempotency_key: `materialize-idempotency-${tag}`,
+    payload_ref: `materialize-payload-${tag}`, policy_decision_ref: `materialize-policy-${tag}`,
+    created_at: new Date().toISOString(),
+  };
+  return {
+    intent, expected_draft_head_revision: null, artifact_ref: { id: `materialize-artifact-${tag}`, revision: 1 },
+    spec, section, section_residency: domains,
+    referenced_objects: [
+      { object_ref: manifestRef, object_kind: "DEPENDENCY_MANIFEST", bytes: manifestBytes,
+        residency: { ...domains, content_digest: { algorithm: "sha256", digest: manifestSha } } },
+      { object_ref: ledgerRef, object_kind: "EVIDENCE_LEDGER", bytes: ledgerBytes,
+        residency: { ...domains, content_digest: { algorithm: "sha256", digest: ledgerSha } } },
+    ],
+    manifest_residency: domains, created_at: new Date().toISOString(),
+  };
 }
 
 describe("actual D1/R2 artifact draft reader", () => {
@@ -388,4 +464,120 @@ describe("actual D1/R2 artifact draft reader", () => {
     );
     expect(service.status).toBe(403);
   });
+
+  it("materializes committed SYNTHESIZE output through stage 17 and serves the durable draft", async () => {
+    const synthesis = await committedFreezeSynthesisFixture();
+    const stageTwelve = await synthesis.freeze.executor.execute(synthesis.stage_twelve, freezePrincipal, synthesis.handler.handler);
+    let previous = stageTwelve;
+    for (const stage of ["VERIFY", "AUDIT_CLAIMS", "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
+      const request = { ...synthesis.stage_twelve, stage, investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
+      previous = await synthesis.freeze.executor.execute(request, freezePrincipal, async ({ request: current }) =>
+        new TextEncoder().encode(JSON.stringify({ stage: current.stage })));
+    }
+    const materializeRequest = {
+      ...synthesis.stage_twelve, stage: "MATERIALIZE" as const,
+      investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest,
+    };
+    const context = createEvidenceFreezeMaterializeContextReader({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+      manifest_store: synthesis.freeze.freeze_store, read_stage_five: synthesis.freeze.readers.read_stage_five,
+    }, synthesis.freeze.navigation, synthesis.freeze.readers);
+    const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal, input_bytes: new Uint8Array() });
+    const tag = crypto.randomUUID();
+    const metadata = await materializeMetadata(materializeContext, tag);
+    const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
+    const materialize = {
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+      navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver,
+      context, recheck_authority: async () => {
+        const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, freezePrincipal);
+        if (status === null) throw new Error("materialize fixture run status is missing");
+        return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id,
+          scope_snapshot_revision: status.scope_snapshot_revision };
+      }, metadata: () => metadata,
+    };
+    const handler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: synthesis.freeze.navigation, ledger: synthesis.freeze.ledger, materialize,
+    })("MATERIALIZE");
+    let handlerFailure: unknown;
+    const first = await synthesis.freeze.executor.execute(materializeRequest, freezePrincipal, async (input) => {
+      try { return await handler(input); }
+      catch (error) { handlerFailure = error; throw error; }
+    }).catch((error: unknown) => { throw handlerFailure ?? error; });
+    expect(first.stage).toBe("MATERIALIZE");
+    expect(synthesis.provider_calls()).toBe(1);
+    const resultBytes = await readWorkflowObject(synthesis.freeze.bucket, first.output_manifest, true);
+    const result = decodeResearchMaterializeResult(resultBytes);
+    expect(result.operation_id).toBe(synthesis.freeze.operation_id);
+    expect(result.synthesis.stage_attempt_ref).toBe(stageTwelve.attempt_ref);
+    expect(result.synthesis.stage_request_sha256).toBe(stageTwelve.request_sha256);
+    expect(result.draft.artifact_ref).toEqual(metadata.artifact_ref);
+    expect(result.draft.manifest.size_bytes).toBeGreaterThan(0);
+    const storedGeneration = await synthesis.freeze.db.prepare(
+      "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+    ).bind(synthesis.freeze.operation_id).first<{ readonly handler_generation: string }>();
+    expect(storedGeneration?.handler_generation).toBe(SERVER_OWNED_FREEZE_HANDLER_GENERATION);
+    const committed = await readCommittedResearchMaterializeOutput({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, operation_id: synthesis.freeze.operation_id,
+      principal: freezePrincipal, materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      recheck_authority: async () => {
+        const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, freezePrincipal);
+        if (status === null) throw new Error("materialize fixture run status is missing");
+        return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id,
+          scope_snapshot_revision: status.scope_snapshot_revision };
+      },
+    });
+    expect(committed?.materialization).toEqual(result);
+    expect(committed?.artifact.status).toBe("DRAFT");
+
+    const artifact = await readArtifactDraft({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      access: freezeAccess, require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    });
+    expect(artifact?.status).toBe("DRAFT");
+    expect(artifact?.evidence_freeze_ref).toEqual(materializeContext.freeze.freeze_ref);
+    const section = await readArtifactDraftSection({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      section_ref: metadata.section.section_ref, access: freezeAccess,
+      require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    });
+    expect(section?.body.byteLength).toBeGreaterThan(0);
+    expect(await evidenceSha256Bytes(section?.body ?? new Uint8Array())).toBe(section?.body_sha256);
+    expect(section?.section_ref).toEqual(metadata.section.section_ref);
+    expect(metadata.section.statement_labels).toEqual({ claim: "UNRESOLVED" });
+
+    const artifactPath = `${result.draft.artifact_ref.id}:${result.draft.artifact_ref.revision}`;
+    const sectionPath = `${metadata.section.section_ref.id}:${metadata.section.section_ref.revision}`;
+    const verify = { accessVerifier: { async verify() {
+      return { principal_ref: freezePrincipal.principal_ref, credential_generation: freezePrincipal.credential_generation,
+        authentication_method: "cloudflare_access" as const, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+    } } };
+    const metadataResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}`), runtime, {} as ExecutionContext, verify);
+    expect(metadataResponse.status).toBe(200);
+    expect((await metadataResponse.json() as { readonly data: unknown }).data).toEqual(artifact);
+    const response = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(section?.body);
+
+    const beforeReplay = await Promise.all([
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_revision WHERE artifact_id=?1").bind(result.draft.artifact_ref.id).first<{ n: number }>(),
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=17").bind(synthesis.freeze.operation_id).first<{ n: number }>(),
+    ]);
+    const replay = await synthesis.freeze.executor.execute(materializeRequest, freezePrincipal, handler);
+    expect(replay.receipt_ref).toBe(first.receipt_ref);
+    expect(synthesis.provider_calls()).toBe(1);
+    const afterReplay = await Promise.all([
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_revision WHERE artifact_id=?1").bind(result.draft.artifact_ref.id).first<{ n: number }>(),
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=17").bind(synthesis.freeze.operation_id).first<{ n: number }>(),
+    ]);
+    expect(afterReplay).toEqual(beforeReplay);
+
+    await synthesis.freeze.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
+      .bind(synthesis.freeze.scope.snapshot_id, synthesis.freeze.scope.revision, freezePrincipal.principal_ref).run();
+    const revoked = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
+    expect(revoked.status).toBe(403);
+  }, 30_000);
 });

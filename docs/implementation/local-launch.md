@@ -358,5 +358,6 @@ controller and strict failed-request accounting are unchanged.
 This ordering correction follows the Ubuntu owner failure at main `ebe6012`: the launch/cancel/
 recovery actions completed, but the phase ledger rejected an aborted launch POST. The exact run's
 other four jobs, including Windows owner acceptance, passed. Source `b8e3eb0` passed syntax, ESLint
-and diff checks; the complete owner runtime is left to subsequent exact-main CI, not reported as a
-local passing rerun. The browser event timing explanation is not a live provider or deployment receipt.
+and diff checks. Exact main `9e7fd3a` subsequently passed all five CI jobs, including both owner browser
+operating systems (run `34516348939`). The browser event timing explanation is not a live provider or
+deployment receipt.

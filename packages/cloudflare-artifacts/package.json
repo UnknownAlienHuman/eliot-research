@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./artifact-draft.js": "./src/artifact-draft.ts",
-    "./artifact-draft-reader.js": "./src/artifact-draft-reader.ts"
+    "./artifact-draft-reader.js": "./src/artifact-draft-reader.ts",
+    "./artifact-draft-types.js": "./src/artifact-draft-types.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
