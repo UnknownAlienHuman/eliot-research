@@ -136,6 +136,7 @@ function render(health: SystemHealth | null): void {
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
+  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
   const workspaceViews: Record<string, { title: string; lede: string }> = {
     "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
     "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
@@ -172,7 +173,7 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); };
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); libraryPanel?.clearPrivate(); };
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
@@ -211,13 +212,15 @@ function render(health: SystemHealth | null): void {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
+  libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
+    if (!id) { retrieval?.clearPrivate(); return; }
+    orientation?.selectSource(id);
+    retrieval?.selectSource(id, context);
+    exhaustive?.selectSource(id);
+  }) : undefined;
   const cleanups = [orientation, retrieval, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
-    library ? mountLibraryPanel(library, (id) => {
-      orientation?.selectSource(id);
-      retrieval?.selectSource(id);
-      exhaustive?.selectSource(id);
-    }) : undefined];
+    libraryPanel];
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 
