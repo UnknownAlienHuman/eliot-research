@@ -15,6 +15,10 @@ retrieval, authentication semantics, or database schemas.
 
 - `scripts/provision-cloudflare-core.mjs`
 - `scripts/provision-cloudflare-access.mjs`
+- `scripts/lib/access-runtime-config.mjs`
+- `scripts/lib/cloudflare-access-mcp.mjs`
+- `scripts/test-access-runtime-config.mjs`
+- `scripts/test-cloudflare-access-mcp.mjs`
 - `scripts/lib/cloudflare-mcp-oauth.mjs`
 - `scripts/provision-ai-search.mjs`
 - `scripts/lib/cloudflare-d1-http.mjs`
@@ -85,6 +89,15 @@ retrieval, authentication semantics, or database schemas.
 - A second foundation provisioning run is idempotent and creates no duplicate resources.
 - Worker-level Access is absent; hostname Access protects the exact hostname with an explicit owner
   policy and rejects undeclared extra policies.
+- The selected Workspace MCP profile uses a separate Access application at the same hostname's
+  `/mcp` path. Both `domain` and public destination retain that path, its cookie is path-scoped,
+  and a fresh application readback supplies an audience distinct from the owner application.
+- MCP service-token policies use `non_identity` with the exact service-token resource UUID;
+  managed OAuth uses an owner `allow` policy and explicitly enabled OAuth configuration. The
+  signed runtime Client ID is reconciled separately and is absent from managed OAuth runtime vars.
+- Existing application or policy drift fails before any mutation. After an uncertain create,
+  one bounded inventory reconciliation may recover the same application; a replacement POST is
+  forbidden. Receipts contain read-back authority, never an environment value labelled as readback.
 - Deployment does not claim Google Drive, ingestion, retrieval-quality, erasure, or workload live gates
   that were not executed.
 - Rollback preserves the previous Worker deployment and AI Search generation until their declared

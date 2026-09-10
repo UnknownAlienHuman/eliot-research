@@ -614,6 +614,10 @@
       "owned_paths": [
         "scripts/provision-cloudflare-core.mjs",
         "scripts/provision-cloudflare-access.mjs",
+        "scripts/lib/access-runtime-config.mjs",
+        "scripts/lib/cloudflare-access-mcp.mjs",
+        "scripts/test-access-runtime-config.mjs",
+        "scripts/test-cloudflare-access-mcp.mjs",
         "scripts/lib/cloudflare-mcp-oauth.mjs",
         "scripts/provision-ai-search.mjs",
         "scripts/lib/cloudflare-d1-http.mjs",
