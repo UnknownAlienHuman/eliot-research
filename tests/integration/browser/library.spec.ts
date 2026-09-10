@@ -42,6 +42,7 @@ type E2EReceipt = {
 type E2EHarness = {
   runOwnerE2E: () => Promise<E2EReceipt>;
   verifyPhaseLedgerIdentityRegression: () => { state: string };
+  verifyAsyncLaunchTerminalRegression: () => { state: string };
   verifyServiceWorkerFinishedTerminalRegression: () => { state: string };
   verifyLedgerResetBoundaryRegression: () => { state: string };
   verifyServiceWorkerSettlementRegression: () => Promise<{ state: string }>;
@@ -59,6 +60,11 @@ async function loadHarness(): Promise<E2EHarness> {
 test("L6 phase ledger: exact request identity across service worker phases", async () => {
   const harness = await loadHarness();
   assert.equal(harness.verifyPhaseLedgerIdentityRegression().state, "PASS");
+});
+
+test("L6 phase terminal: accept same-request 202 before duplicate abort", async () => {
+  const harness = await loadHarness();
+  assert.equal(harness.verifyAsyncLaunchTerminalRegression().state, "PASS");
 });
 
 test("L6 phase settlement: wait for late service-worker update before freezing the ledger", async () => {

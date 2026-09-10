@@ -4679,6 +4679,28 @@ export function verifyPhaseLedgerIdentityRegression(origin = "http://127.0.0.1:4
   return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 2 };
 }
 
+export function verifyAsyncLaunchTerminalRegression(origin = "http://127.0.0.1:43123") {
+  const tracker = createRequestTerminalTracker();
+  assert.equal(tracker.noteResponse(900, 202), true,
+    "same-request async launch 202 must be a contract response");
+  assert.equal(tracker.shouldSuppressFailure(900), true,
+    "same-request ERR_ABORTED after accepted 202 must be suppressed");
+  assert.equal(tracker.shouldSuppressFailure(901), false,
+    "a different request must never inherit 202 suppression");
+
+  const request = Object.freeze({ reqId: 902, method: "POST", origin,
+    path: "/api/v1/research/query", resourceType: "fetch", epoch: 1, serial: 1,
+    opId: 1, docId: 1, role: "catalog-read", slotId: null });
+  const response = Object.freeze({ ...request, status: 202, contentType: "application/json" });
+  assert.throws(() => assertPhaseNetwork({
+    websockets: [], pageWorkers: [], requests: [request], networkResponses: [response],
+    failedRequestEntries: [], serviceWorkerFinishedWithoutResponse: [], context: { serviceWorkers: () => [] },
+  }, "async-launch-unlisted-202", { origins: [origin], api: [], workerOrigins: [origin] }),
+  /unexpected application traffic/,
+  "202 must remain rejected when the route is absent from the phase allowlist");
+  return { protocol: "eliotr.owner-e2e.async-launch-terminal.v1", state: "PASS", negatives: 2 };
+}
+
 export function verifyServiceWorkerFinishedTerminalRegression(origin = "http://127.0.0.1:43123") {
   const toolingTerminal = createRequestTerminalTracker();
   assert.equal(toolingTerminal.noteServiceWorkerFinished(699), true,
