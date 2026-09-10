@@ -25,7 +25,8 @@
     },
     "policy": {
       "name_prefix": "Eliot Research MCP",
-      "decision": "allow"
+      "decision": "allow",
+      "service_token_decision": "non_identity"
     }
   },
   "requirements": {

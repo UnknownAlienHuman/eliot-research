@@ -79,7 +79,7 @@
           "properties": {
             "id": { "type": ["string", "null"] },
             "name": { "type": "string", "minLength": 1 },
-            "decision": { "const": "allow" },
+            "decision": { "enum": ["allow", "non_identity"] },
             "selector": { "enum": ["email", "service_token"] },
             "service_token_id": { "type": "string", "format": "uuid" },
             "owner_email_count": { "type": "integer", "minimum": 1 },
@@ -94,7 +94,9 @@
       },
       "allOf": [
         { "if": { "properties": { "auth_profile": { "const": "service-token" } } }, "then": { "properties": { "oauth_configuration_enabled": { "const": false } }, "required": ["service_token_client_id_sha256", "service_token_id"] } },
-        { "if": { "properties": { "auth_profile": { "const": "managed-oauth" } } }, "then": { "properties": { "oauth_configuration_enabled": { "const": true } }, "not": { "required": ["service_token_client_id_sha256", "service_token_id"] } } }
+        { "if": { "properties": { "auth_profile": { "const": "managed-oauth" } } }, "then": { "properties": { "oauth_configuration_enabled": { "const": true } }, "not": { "required": ["service_token_client_id_sha256", "service_token_id"] } } },
+        { "if": { "properties": { "auth_profile": { "const": "service-token" } } }, "then": { "properties": { "policy": { "properties": { "decision": { "const": "non_identity" }, "selector": { "const": "service_token" } } } } } },
+        { "if": { "properties": { "auth_profile": { "const": "managed-oauth" } } }, "then": { "properties": { "policy": { "properties": { "decision": { "const": "allow" }, "selector": { "const": "email" } } } } } }
       ]
     },
     "websocket_compatible_contour": { "const": "HOSTNAME_BASED_ACCESS" },
