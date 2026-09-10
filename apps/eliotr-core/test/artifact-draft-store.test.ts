@@ -1,6 +1,6 @@
 import type {
   ArtifactDraftError,
-  type PrepareArtifactDraftResult,
+  PrepareArtifactDraftResult,
 } from "@eliotr/cloudflare-research";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
