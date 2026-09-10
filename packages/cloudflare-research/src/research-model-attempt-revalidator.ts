@@ -247,7 +247,7 @@ function verifyWorkflow(row: WorkflowRow, input: ModelAttemptPreparationContext,
   return text(row.authorization_receipt_ref, "workflow authorization receipt");
 }
 
-async function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput, nowMs: number): Promise<void> {
+function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput, nowMs: number, encoded: Awaited<ReturnType<typeof validatedRequest>>): void {
   requireEqual(row.model_state, "STARTED", "model attempt state");
   requireEqual(row.operation_attempt_state, "STARTED", "operation attempt state");
   requireEqual(row.reservation_state, "RESERVED", "model reservation state");
@@ -278,12 +278,6 @@ async function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput
   requireEqual(row.reservation_quote_ref, prepared.quote.quote_ref, "reservation quote");
   requireEqual(row.reservation_stage_attempt_ref, prepared.stage_attempt_ref, "reservation stage attempt");
   requireEqual(row.reservation_stage_request_sha256, prepared.stage_request_sha256, "reservation stage request");
-  let encoded: Awaited<ReturnType<typeof validatedRequest>>;
-  try { encoded = await validatedRequest(prepared); }
-  catch (cause) {
-    if (cause instanceof ModelAttemptError) stale("prepared model request failed strict revalidation", cause);
-    throw cause;
-  }
   if (row.model_request_sha256 !== encoded.request_sha256 ||
       canonicalStoredJson(row.model_request_json, "stored model attempt request") !== encoded.request_json ||
       row.reservation_request_sha256 !== encoded.request_sha256 ||
@@ -351,10 +345,16 @@ export function createD1ResearchModelAttemptRevalidator(
   return async (context, prepared): Promise<void> => {
     const nowMs = now();
     if (!Number.isFinite(nowMs)) stale("model revalidation clock is invalid");
+    let encoded: Awaited<ReturnType<typeof validatedRequest>>;
+    try { encoded = await validatedRequest(prepared); }
+    catch (cause) {
+      if (cause instanceof ModelAttemptError) stale("prepared model request failed strict revalidation", cause);
+      throw cause;
+    }
     const workflow = await readWorkflow(input.database, context, prepared);
     const workflowAuthorizationReceipt = verifyWorkflow(workflow, context, prepared, nowMs);
     const model = await readModel(input.database, prepared);
-    await verifyModel(model, prepared, nowMs);
+    verifyModel(model, prepared, nowMs, encoded);
     const spendRequest: SpendAuthorizationReadRequest = {
       operation_id: prepared.intent.intent_ref.id,
       principal_ref: prepared.authority.principal_ref,
@@ -375,19 +375,13 @@ export function createD1ResearchModelAttemptRevalidator(
     try { currentDeployment = decodeModelRouteDeployment(currentRaw); }
     catch (cause) { stale("active model deployment is malformed", cause); }
     if (canonicalJson(currentDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during revalidation");
+    const finalWorkflow = await readWorkflow(input.database, context, prepared);
+    const finalModel = await readModel(input.database, prepared);
     const finalNowMs = now();
     if (!Number.isFinite(finalNowMs)) stale("model revalidation clock is invalid");
-    const finalWorkflow = await readWorkflow(input.database, context, prepared);
     const finalReceipt = verifyWorkflow(finalWorkflow, context, prepared, finalNowMs);
-    const finalModel = await readModel(input.database, prepared);
-    await verifyModel(finalModel, prepared, finalNowMs);
+    verifyModel(finalModel, prepared, finalNowMs, encoded);
     if (finalReceipt !== spendRequest.workflow_authorization_receipt_ref) stale("workflow authorization changed during revalidation");
     verifySpendAuthorization(authorization, { ...spendRequest, workflow_authorization_receipt_ref: finalReceipt }, prepared, finalNowMs);
-    const finalRaw = await input.routeAuthority.resolve(prepared.call.route_ref);
-    if (finalRaw === null) stale("active model deployment is unavailable after currentness readback");
-    let finalDeployment: ModelRouteDeployment;
-    try { finalDeployment = decodeModelRouteDeployment(finalRaw); }
-    catch (cause) { stale("active model deployment is malformed after currentness readback", cause); }
-    if (canonicalJson(finalDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during final revalidation");
   };
 }
