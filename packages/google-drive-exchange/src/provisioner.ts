@@ -1,5 +1,5 @@
 import type { ExchangeGeneration } from "@eliotr/contracts";
-import type { GoogleDrivePort } from "./port.js";
+import type { DriveFileMetadata, GoogleDrivePort } from "./port.js";
 import type { GoogleExchangeProvisioningPort, GoogleSpreadsheetResource } from "./provisioning-port.js";
 import type { ExchangeProvisioningIntentStore, ProvisioningIntent } from "./provisioning-store.js";
 import { validateExchangeGeneration } from "./serializer.js";
@@ -30,6 +30,7 @@ export interface ExchangeProvisionerDependencies {
 }
 
 export const GOOGLE_EXCHANGE_SHEET_NAMES = Object.freeze(["SYSTEM", "CATALOG", "REQUESTS", "PAYLOAD_PARTS", "RECEIPTS", "RESULTS", "DASHBOARD"] as const);
+export const GOOGLE_EXCHANGE_RESULTS_FOLDER_NAME = "Eliot Research Results" as const;
 export interface GoogleExchangeProvisioningInput extends ProvisioningIntent {
   readonly folder_name: "Eliot Research Exchange";
   readonly spreadsheet_name: "ERC Exchange";
@@ -75,7 +76,30 @@ export function createGoogleExchangeProvisioner(options: GoogleExchangeProvision
     if (input.folder_name !== "Eliot Research Exchange" || input.spreadsheet_name !== "ERC Exchange") provisioningError("GOOGLE_PROVISIONING_TEMPLATE_INVALID");
     signal.throwIfAborted(); await options.assertBootstrapCurrent(input, signal); signal.throwIfAborted();
     const record = await options.generations.begin(intent);
-    if (record.failure_code) provisioningError("GOOGLE_PROVISIONING_CREATE_OUTCOME_UNKNOWN");
+    let uncertainPurpose: "folder" | "results" | "spreadsheet" | undefined;
+    let uncertainAttemptId: string | undefined;
+    if (record.failure_code !== undefined) {
+      const match = /^GOOGLE_CREATE_OUTCOME_UNKNOWN:(folder|results|spreadsheet)$/u.exec(record.failure_code);
+      if (!match) provisioningError("GOOGLE_PROVISIONING_CREATE_OUTCOME_UNKNOWN");
+      uncertainPurpose = match[1] as typeof uncertainPurpose;
+      if (record.create_attempt_purpose !== uncertainPurpose || record.create_attempt_id === undefined) provisioningError("GOOGLE_PROVISIONING_CREATE_OUTCOME_UNKNOWN");
+      uncertainAttemptId = record.create_attempt_id;
+    }
+    const rank = (purpose: "folder" | "results" | "spreadsheet") => purpose === "folder" ? 0 : purpose === "results" ? 1 : 2;
+    const matchesFor = async (purpose: "folder" | "results" | "spreadsheet", matches: readonly DriveFileMetadata[], duplicateCode: string) => {
+      if (matches.length > 1) provisioningError(duplicateCode);
+      if (uncertainPurpose !== undefined && rank(purpose) <= rank(uncertainPurpose) && matches.length === 0) provisioningError("GOOGLE_PROVISIONING_CREATE_OUTCOME_UNKNOWN");
+      if (uncertainPurpose === purpose && matches.length === 1) {
+        if (uncertainAttemptId === undefined) provisioningError("GOOGLE_PROVISIONING_CREATE_OUTCOME_UNKNOWN");
+        await options.generations.clearCreateAttempt(intent, purpose, uncertainAttemptId); uncertainPurpose = undefined; uncertainAttemptId = undefined;
+      }
+      return matches[0];
+    };
+    const create = async <T>(purpose: "folder" | "results" | "spreadsheet", operation: () => Promise<T>): Promise<T> => {
+      const claim = await options.generations.markCreateAttempt(intent, purpose);
+      if (!claim.create_attempt_id) provisioningError("GOOGLE_PROVISIONING_CREATE_FENCE_UNCONFIRMED");
+      const value = await operation(); await options.generations.clearCreateAttempt(intent, purpose, claim.create_attempt_id); uncertainPurpose = undefined; uncertainAttemptId = undefined; return value;
+    };
     if (record.state === "ACTIVATED" && record.generation_id) {
       const active = await options.generations.read({ principal_id: intent.principal_id, operation_ref: intent.operation_ref });
       if (!active?.generation_id) provisioningError("GOOGLE_PROVISIONING_RECORD_INVALID");
@@ -85,12 +109,12 @@ export function createGoogleExchangeProvisioner(options: GoogleExchangeProvision
     if (record.state === "QUALIFIED" && record.generation_id) return generationFromRecord(record);
     const generationId = record.generation_id ?? requestedGenerationId;
     let folder;
-    if (record.folder_id) folder = await options.drive.readFileMetadata(record.folder_id, "application/vnd.google-apps.folder");
+    if (record.folder_id) folder = await options.drive.readFileMetadata(record.folder_id, "application/vnd.google-apps.folder", "exchange");
     else {
-      const matches = await options.drive.findExactFile(input.folder_name, "application/vnd.google-apps.folder", "root");
-      if (matches.length > 1) provisioningError("GOOGLE_PROVISIONING_DUPLICATE_FOLDER");
-      if (matches[0]) folder = matches[0];
-      else { await options.generations.markCreateAttempt(intent); folder = await options.drive.createFolder(input.folder_name); }
+      const matches = await options.drive.findExactFile(input.folder_name, "application/vnd.google-apps.folder", "root", "exchange");
+      const found = await matchesFor("folder", matches, "GOOGLE_PROVISIONING_DUPLICATE_FOLDER");
+      if (found) folder = found;
+      else folder = await create("folder", () => options.drive.createFolder(input.folder_name, "exchange"));
     }
     if (folder.name !== input.folder_name || folder.mimeType !== "application/vnd.google-apps.folder" || folder.parents.length !== 1) provisioningError("GOOGLE_PROVISIONING_FOLDER_INVALID");
     signal.throwIfAborted(); await options.assertBootstrapCurrent(input, signal);
@@ -98,18 +122,22 @@ export function createGoogleExchangeProvisioner(options: GoogleExchangeProvision
     let spreadsheetId = record.spreadsheet_id;
     if (spreadsheetId) spreadsheet = await options.drive.readSpreadsheet(spreadsheetId);
     else {
-      const matches = await options.drive.findExactFile(input.spreadsheet_name, "application/vnd.google-apps.spreadsheet", folder.fileId);
-      if (matches.length > 1) provisioningError("GOOGLE_PROVISIONING_DUPLICATE_SPREADSHEET");
-      if (matches.length === 1) { const match = matches[0]; if (!match) provisioningError("GOOGLE_PROVISIONING_MATCH_INVALID"); const discoveredId = match.fileId; spreadsheetId = discoveredId; spreadsheet = await options.drive.readSpreadsheet(discoveredId); }
-      else { await options.generations.markCreateAttempt(intent); spreadsheet = await options.drive.createSpreadsheet(input.spreadsheet_name, GOOGLE_EXCHANGE_SHEET_NAMES); spreadsheetId = spreadsheet.spreadsheetId; }
+      const matches = await options.drive.findExactFile(input.spreadsheet_name, "application/vnd.google-apps.spreadsheet", folder.fileId, "exchange");
+      const found = await matchesFor("spreadsheet", matches, "GOOGLE_PROVISIONING_DUPLICATE_SPREADSHEET");
+      if (found) { const discoveredId = found.fileId; spreadsheetId = discoveredId; spreadsheet = await options.drive.readSpreadsheet(discoveredId); }
+      else { spreadsheet = await create("spreadsheet", () => options.drive.createSpreadsheet(input.spreadsheet_name, GOOGLE_EXCHANGE_SHEET_NAMES, folder.fileId)); spreadsheetId = spreadsheet.spreadsheetId; }
     }
     const finalSpreadsheetId = spreadsheetId; if (!finalSpreadsheetId || finalSpreadsheetId !== spreadsheet.spreadsheetId) provisioningError("GOOGLE_PROVISIONING_SPREADSHEET_INVALID");
     resourceSheets(spreadsheet);
     const metadata = await options.drive.attachToFolder(finalSpreadsheetId, folder.fileId);
     if (metadata.fileId !== finalSpreadsheetId || metadata.parents.length !== 1 || metadata.parents[0] !== folder.fileId || metadata.name !== input.spreadsheet_name) provisioningError("GOOGLE_PROVISIONING_PARENT_INVALID");
-    const verified = await options.drive.readFileMetadata(finalSpreadsheetId, "application/vnd.google-apps.spreadsheet");
+    const verified = await options.drive.readFileMetadata(finalSpreadsheetId, "application/vnd.google-apps.spreadsheet", "exchange");
     if (verified.parents.length !== 1 || verified.parents[0] !== folder.fileId || verified.name !== input.spreadsheet_name) provisioningError("GOOGLE_PROVISIONING_PARENT_INVALID");
-    await options.generations.recordAssets({ intent, generation_id: generationId, folder_id: folder.fileId, spreadsheet_id: finalSpreadsheetId, sheet_ids_json: JSON.stringify(resourceSheets(spreadsheet)) });
+    const resultMatches = await options.drive.findExactFile(GOOGLE_EXCHANGE_RESULTS_FOLDER_NAME, "application/vnd.google-apps.folder", "root", "results");
+    const foundResults = await matchesFor("results", resultMatches, "GOOGLE_PROVISIONING_DUPLICATE_RESULTS_FOLDER");
+    const resultsFolder = foundResults ?? await create("results", () => options.drive.createFolder(GOOGLE_EXCHANGE_RESULTS_FOLDER_NAME, "results"));
+    if (resultsFolder.name !== GOOGLE_EXCHANGE_RESULTS_FOLDER_NAME || resultsFolder.mimeType !== "application/vnd.google-apps.folder" || resultsFolder.parents.length !== 1) provisioningError("GOOGLE_PROVISIONING_RESULTS_FOLDER_INVALID");
+    await options.generations.recordAssets({ intent, generation_id: generationId, folder_id: folder.fileId, results_folder_id: resultsFolder.fileId, spreadsheet_id: finalSpreadsheetId, sheet_ids_json: JSON.stringify(resourceSheets(spreadsheet)) });
     signal.throwIfAborted(); await options.assertBootstrapCurrent(input, signal);
     const cursor = await options.drive.getStartPageToken(); safeText(cursor, "GOOGLE_PROVISIONING_CURSOR_INVALID", 1024);
     const generation: ExchangeGeneration = { generation_id: generationId, connection_id: intent.connection_id, folder_id: folder.fileId,

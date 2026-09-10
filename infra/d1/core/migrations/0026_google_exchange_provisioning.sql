@@ -6,11 +6,14 @@ CREATE TABLE google_exchange_provisioning_intent (
   expected_credential_revision INTEGER NOT NULL CHECK (expected_credential_revision > 0 AND expected_credential_revision < 9007199254740991),
   state TEXT NOT NULL CHECK (state IN ('PENDING','QUALIFIED','ACTIVATED','FAILED')),
   folder_id TEXT CHECK(folder_id IS NULL OR length(folder_id) BETWEEN 1 AND 256),
+  results_folder_id TEXT CHECK(results_folder_id IS NULL OR length(results_folder_id) BETWEEN 1 AND 256),
   spreadsheet_id TEXT CHECK(spreadsheet_id IS NULL OR length(spreadsheet_id) BETWEEN 1 AND 256),
   sheet_ids_json TEXT CHECK (sheet_ids_json IS NULL OR (json_valid(sheet_ids_json) AND length(sheet_ids_json) <= 4096)),
   start_page_token TEXT CHECK(start_page_token IS NULL OR length(start_page_token) BETWEEN 1 AND 1024),
   generation_id TEXT CHECK(generation_id IS NULL OR length(generation_id) BETWEEN 1 AND 256),
   failure_code TEXT CHECK(failure_code IS NULL OR length(failure_code) BETWEEN 1 AND 128),
+  create_attempt_id TEXT CHECK(create_attempt_id IS NULL OR length(create_attempt_id) BETWEEN 1 AND 128),
+  create_attempt_purpose TEXT CHECK(create_attempt_purpose IS NULL OR create_attempt_purpose IN ('folder','results','spreadsheet')),
   created_at TEXT NOT NULL CHECK(length(created_at) BETWEEN 1 AND 64),
   updated_at TEXT NOT NULL CHECK(length(updated_at) BETWEEN 1 AND 64),
   PRIMARY KEY (principal_id, operation_ref),
@@ -22,3 +25,12 @@ CREATE INDEX google_exchange_provisioning_connection_idx
 
 INSERT INTO schema_state(key,value,updated_at)
   VALUES ('google_exchange_provisioning_generation','google-exchange-provisioning-v1','2026-09-09T00:00:00Z');
+
+CREATE TRIGGER google_exchange_generation_qualified_guard
+BEFORE UPDATE OF state ON exchange_generation
+WHEN NEW.state='active' AND NOT EXISTS (
+  SELECT 1 FROM google_exchange_provisioning_intent
+  WHERE generation_id=NEW.generation_id AND connection_id=NEW.connection_id
+    AND state IN ('QUALIFIED','ACTIVATED')
+)
+BEGIN SELECT RAISE(ABORT, 'google_exchange_generation_not_qualified'); END;

@@ -10,10 +10,10 @@ const folder: DriveFileMetadata = { fileId: "folder-1", name: "Eliot Research Ex
 const sheet: GoogleSpreadsheetResource = { spreadsheetId: "sheet-1", title: "ERC Exchange", sheets: GOOGLE_EXCHANGE_SHEET_NAMES.map((title, index) => ({ sheetId: index + 1, title, index })) };
 const metadata: DriveFileMetadata = { fileId: sheet.spreadsheetId, name: sheet.title, mimeType: "application/vnd.google-apps.spreadsheet", parents: [folder.fileId], webViewUrl: "https://docs.google.com/spreadsheets/d/sheet-1/edit", modifiedTime: "2026-09-09T00:00:00Z" };
 function setup() {
-  const state: { folder?: DriveFileMetadata; sheet?: GoogleSpreadsheetResource; intent?: ProvisioningRecord; cursor?: string; generation?: Parameters<ExchangeGenerationRepository["persistShadow"]>[0] } = {};
+  const state: { folder?: DriveFileMetadata; results?: DriveFileMetadata; sheet?: GoogleSpreadsheetResource; intent?: ProvisioningRecord; cursor?: string; generation?: Parameters<ExchangeGenerationRepository["persistShadow"]>[0] } = {};
   const drive: GoogleExchangeProvisioningPort = {
-    findExactFile: vi.fn(async (name, mime, parent) => name === folder.name ? (state.folder ? [state.folder] : []) : state.sheet && parent === folder.fileId ? [metadata] : []),
-    createFolder: vi.fn(async () => state.folder = folder),
+    findExactFile: vi.fn(async (name, mime, parent, _purpose) => name === folder.name ? (state.folder ? [state.folder] : []) : name === "Eliot Research Results" ? (state.results ? [state.results] : []) : state.sheet && parent === folder.fileId ? [metadata] : []),
+    createFolder: vi.fn(async (name) => name === "Eliot Research Results" ? (state.results = { ...folder, fileId: "results-1", name }) : (state.folder = folder)),
     createSpreadsheet: vi.fn(async () => state.sheet = sheet),
     attachToFolder: vi.fn(async () => metadata),
     readFileMetadata: vi.fn(async (id) => id === folder.fileId ? folder : metadata),
@@ -22,8 +22,9 @@ function setup() {
   };
   const generations: ExchangeProvisioningIntentStore & ExchangeGenerationRepository & { initializeCursor: (connectionId: string, token: string) => Promise<string> } = {
     begin: vi.fn(async (input: ProvisioningIntent) => state.intent ??= { ...input, state: "PENDING" }),
-    markCreateAttempt: vi.fn(async (input) => { const current = state.intent; if (!current || current.operation_ref !== input.operation_ref) throw new Error("missing intent"); if (current.failure_code) return current; state.intent = { ...current, failure_code: "GOOGLE_CREATE_OUTCOME_UNKNOWN" }; return state.intent; }),
-    recordAssets: vi.fn(async (input) => { const current = state.intent; if (!current) throw new Error("missing intent"); const { failure_code: _failureCode, ...withoutFailure } = current; state.intent = { ...withoutFailure, generation_id: input.generation_id, folder_id: input.folder_id, spreadsheet_id: input.spreadsheet_id, sheet_ids_json: input.sheet_ids_json }; return state.intent; }),
+    markCreateAttempt: vi.fn(async (input, purpose) => { const current = state.intent; if (!current || current.operation_ref !== input.operation_ref) throw new Error("missing intent"); if (current.failure_code) throw new Error("claim already held"); state.intent = { ...current, failure_code: `GOOGLE_CREATE_OUTCOME_UNKNOWN:${purpose}`, create_attempt_id: `attempt-${purpose}`, create_attempt_purpose: purpose }; return state.intent; }),
+    clearCreateAttempt: vi.fn(async (input, purpose, attemptId) => { const current = state.intent; if (!current || current.operation_ref !== input.operation_ref || current.create_attempt_purpose !== purpose || current.create_attempt_id !== attemptId) throw new Error("claim mismatch"); const { failure_code: _failureCode, create_attempt_id: _attemptId, create_attempt_purpose: _purpose, ...withoutFailure } = current; state.intent = withoutFailure; return state.intent; }),
+    recordAssets: vi.fn(async (input) => { const current = state.intent; if (!current) throw new Error("missing intent"); const { failure_code: _failureCode, ...withoutFailure } = current; state.intent = { ...withoutFailure, generation_id: input.generation_id, folder_id: input.folder_id, results_folder_id: input.results_folder_id, spreadsheet_id: input.spreadsheet_id, sheet_ids_json: input.sheet_ids_json }; return state.intent; }),
     qualify: vi.fn(async (input) => { const current = state.intent; if (!current) throw new Error("missing intent"); state.intent = { ...current, state: "QUALIFIED", generation_id: input.generation_id, start_page_token: input.start_page_token }; return state.intent; }),
     read: vi.fn(async (input) => { const current = state.intent; return current !== undefined && current.principal_id === input.principal_id && current.operation_ref === input.operation_ref ? current : null; }),
     initializeCursor: vi.fn(async (_id: string, token: string) => { state.cursor ??= token; return state.cursor; }),
@@ -40,9 +41,9 @@ const input = { principal_id: "owner-1", operation_ref: "provision-1", connectio
 describe("fixed Google exchange provisioning boundary", () => {
   it("reconciles a completed intent without creating a second resource", async () => {
     const test = setup(); const generation = await test.service.provision(input); expect(generation.status).toBe("draining");
-    expect(test.state.cursor).toBe("start-1"); expect(test.drive.createFolder).toHaveBeenCalledOnce(); expect(test.drive.createSpreadsheet).toHaveBeenCalledOnce();
+    expect(test.state.cursor).toBe("start-1"); expect(test.drive.createFolder).toHaveBeenCalledTimes(2); expect(test.drive.createSpreadsheet).toHaveBeenCalledOnce();
     const retry = await test.service.provision(input); expect(retry.generation_id).toBe(generation.generation_id);
-    expect(test.drive.createFolder).toHaveBeenCalledOnce(); expect(test.drive.createSpreadsheet).toHaveBeenCalledOnce();
+    expect(test.drive.createFolder).toHaveBeenCalledTimes(2); expect(test.drive.createSpreadsheet).toHaveBeenCalledOnce();
   });
   it("rejects ambiguous fixed-name assets before schema qualification", async () => {
     const test = setup(); test.drive.findExactFile = vi.fn(async () => [folder, { ...folder, fileId: "folder-2" }]);
@@ -59,26 +60,28 @@ describe("fixed Google exchange provisioning boundary", () => {
     const lease: GoogleAccessLease = { connection_id: "connection-1", exchange_generation_id: "generation-1", access_token: "access-token", expires_at_epoch_ms: Date.now() + 60000, assertCurrent: async () => {} };
     const fetchImpl: typeof fetch = async (url, init) => {
       const parsed = String(url); calls.push({ url: parsed, method: String(init?.method), body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
-      const apiFolder = { id: folder.fileId, name: folder.name, mimeType: folder.mimeType, parents: folder.parents, webViewLink: folder.webViewUrl, modifiedTime: folder.modifiedTime, trashed: false, ownedByMe: true };
-      const apiSheet = { id: metadata.fileId, name: metadata.name, mimeType: metadata.mimeType, parents: metadata.parents, webViewLink: metadata.webViewUrl, modifiedTime: metadata.modifiedTime, trashed: false, ownedByMe: true };
-      if (parsed.includes("/drive/v3/files?") && init?.method === "POST") return Response.json(apiFolder);
+      const apiFolder = { id: folder.fileId, name: folder.name, mimeType: folder.mimeType, parents: folder.parents, webViewLink: folder.webViewUrl, modifiedTime: folder.modifiedTime, trashed: false, ownedByMe: true,
+        appProperties: { eliotr_g4_operation: "eliotr-g4:connection-1:operation-1:exchange" } };
+      const apiSheet = { id: metadata.fileId, name: metadata.name, mimeType: metadata.mimeType, parents: metadata.parents, webViewLink: metadata.webViewUrl, modifiedTime: metadata.modifiedTime, trashed: false, ownedByMe: true,
+        appProperties: { eliotr_g4_operation: "eliotr-g4:connection-1:operation-1:exchange" } };
+      if (parsed.includes("/drive/v3/files?") && init?.method === "POST" && String(init.body).includes("application/vnd.google-apps.folder")) return Response.json(apiFolder);
       if (parsed.includes("/drive/v3/files?") && init?.method === "GET") return Response.json({ files: [apiFolder] });
       const apiSpreadsheet = { spreadsheetId: sheet.spreadsheetId, properties: { title: sheet.title }, sheets: sheet.sheets.map((item) => ({ properties: item })) };
-      if (parsed.includes("/v4/spreadsheets?") && init?.method === "POST") return Response.json(apiSpreadsheet);
+      if (parsed.includes("/drive/v3/files?") && init?.method === "POST" && String(init.body).includes("application/vnd.google-apps.spreadsheet")) return Response.json(apiSheet);
       if (parsed.includes("/drive/v3/files/sheet-1?") && init?.method === "PATCH") return Response.json(apiSheet);
       if (parsed.includes("/drive/v3/files/sheet-1?") && init?.method === "GET") return Response.json(apiSheet);
       if (parsed.includes("/v4/spreadsheets/sheet-1?") && init?.method === "GET") return Response.json(apiSpreadsheet);
       throw new Error("unexpected controlled endpoint");
     };
     const port = createGoogleExchangeProvisioningPort({ connectionId: "connection-1", generationId: "generation-1", operationRef: "operation-1", deadlineEpochMs: Date.now() + 60000, maxRequests: 8, authorize: async () => lease, fetchImpl });
-    expect((await port.createFolder(folder.name)).fileId).toBe(folder.fileId);
-    expect((await port.findExactFile(folder.name, "application/vnd.google-apps.folder", "root"))).toHaveLength(1);
-    expect((await port.createSpreadsheet(sheet.title, GOOGLE_EXCHANGE_SHEET_NAMES)).spreadsheetId).toBe(sheet.spreadsheetId);
+    expect((await port.createFolder(folder.name, "exchange")).fileId).toBe(folder.fileId);
+    expect((await port.findExactFile(folder.name, "application/vnd.google-apps.folder", "root", "exchange"))).toHaveLength(1);
+    expect((await port.createSpreadsheet(sheet.title, GOOGLE_EXCHANGE_SHEET_NAMES, folder.fileId)).spreadsheetId).toBe(sheet.spreadsheetId);
     expect((await port.attachToFolder(sheet.spreadsheetId, folder.fileId)).parents).toEqual([folder.fileId]);
-    expect((await port.readFileMetadata(sheet.spreadsheetId, "application/vnd.google-apps.spreadsheet")).fileId).toBe(sheet.spreadsheetId);
+    expect((await port.readFileMetadata(sheet.spreadsheetId, "application/vnd.google-apps.spreadsheet", "exchange")).fileId).toBe(sheet.spreadsheetId);
     expect((await port.readSpreadsheet(sheet.spreadsheetId)).sheets).toHaveLength(7);
     expect(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`)).toEqual([
-      "POST /drive/v3/files", "GET /drive/v3/files", "POST /v4/spreadsheets", "PATCH /drive/v3/files/sheet-1", "GET /drive/v3/files/sheet-1", "GET /v4/spreadsheets/sheet-1",
+      "POST /drive/v3/files", "GET /drive/v3/files", "POST /drive/v3/files", "GET /v4/spreadsheets/sheet-1", "PATCH /drive/v3/files/sheet-1", "GET /drive/v3/files/sheet-1", "GET /v4/spreadsheets/sheet-1",
     ]);
   });
   it("never retries a create after an uncertain acknowledgement without durable reconciliation", async () => {

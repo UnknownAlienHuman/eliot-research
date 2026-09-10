@@ -18,11 +18,12 @@ export interface GoogleSpreadsheetResource {
 
 export interface GoogleExchangeProvisioningPort {
   findExactFile(name: string, mimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME,
-    parentId?: string): Promise<readonly DriveFileMetadata[]>;
-  createFolder(name: string): Promise<DriveFileMetadata>;
-  createSpreadsheet(name: string, sheetNames: readonly string[]): Promise<GoogleSpreadsheetResource>;
+    parentId: string | undefined, purpose: "exchange" | "results"): Promise<readonly DriveFileMetadata[]>;
+  createFolder(name: string, purpose: "exchange" | "results"): Promise<DriveFileMetadata>;
+  createSpreadsheet(name: string, sheetNames: readonly string[], parentId: string): Promise<GoogleSpreadsheetResource>;
   attachToFolder(fileId: string, parentId: string): Promise<DriveFileMetadata>;
-  readFileMetadata(fileId: string, expectedMimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME): Promise<DriveFileMetadata>;
+  readFileMetadata(fileId: string, expectedMimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME,
+    purpose: "exchange" | "results"): Promise<DriveFileMetadata>;
   readSpreadsheet(spreadsheetId: string): Promise<GoogleSpreadsheetResource>;
   getStartPageToken(): Promise<string>;
 }
@@ -35,8 +36,8 @@ function endpoint(path: string, fields: string, query: Record<string, string> = 
 
 function text(value: unknown, maximum = 256): string { return boundedString(value, maximum); }
 
-function asset(value: unknown, expectedMimeType?: string): DriveFileMetadata {
-  const raw = object(value, ["id", "name", "mimeType", "webViewLink", "modifiedTime", "trashed", "ownedByMe"], ["parents"]);
+function asset(value: unknown, expectedMimeType?: string, expectedMarker?: string): DriveFileMetadata {
+  const raw = object(value, ["id", "name", "mimeType", "webViewLink", "modifiedTime", "trashed", "ownedByMe"], ["parents", "appProperties"]);
   const id = googleFileId(raw.id); const mimeType = text(raw.mimeType, 128);
   if (expectedMimeType !== undefined && mimeType !== expectedMimeType) throw new Error("GOOGLE_PROVISIONING_METADATA_INVALID");
   if (raw.trashed !== false || raw.ownedByMe !== true) throw new Error("GOOGLE_PROVISIONING_METADATA_INVALID");
@@ -45,6 +46,10 @@ function asset(value: unknown, expectedMimeType?: string): DriveFileMetadata {
     throw new Error("GOOGLE_PROVISIONING_METADATA_INVALID");
   }
   const parentIds = parents.map((parent) => googleFileId(parent));
+  if (expectedMarker !== undefined) {
+    const properties = object(raw.appProperties, ["eliotr_g4_operation"]);
+    if (properties.eliotr_g4_operation !== expectedMarker) throw new Error("GOOGLE_PROVISIONING_METADATA_INVALID");
+  }
   const link = new URL(text(raw.webViewLink, 1024));
   if (link.protocol !== "https:" || link.port || link.username || link.password || link.hash ||
       link.hostname !== (mimeType === GOOGLE_SPREADSHEET_MIME ? "docs.google.com" : "drive.google.com") ||
@@ -80,12 +85,14 @@ function sheetsIndexGuard(value: unknown): number {
 
 export function createGoogleExchangeProvisioningPort(options: GoogleRestOptions): GoogleExchangeProvisioningPort {
   const json = createGoogleJsonTransport(options);
-  const fileFields = "id,name,mimeType,parents,webViewLink,modifiedTime,trashed,ownedByMe";
+  const marker = (purpose: "exchange" | "results") => boundedString(`eliotr-g4:${options.connectionId}:${options.operationRef}:${purpose}`, 1024);
+  const fileFields = "id,name,mimeType,parents,webViewLink,modifiedTime,trashed,ownedByMe,appProperties";
   const findExactFile = async (name: string, mimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME,
-    parentId?: string): Promise<readonly DriveFileMetadata[]> => {
+    parentId: string | undefined, purpose: "exchange" | "results"): Promise<readonly DriveFileMetadata[]> => {
     const safeName = text(name); const safeParent = parentId === undefined ? undefined : googleFileId(parentId);
     const escapedName = safeName.replace(/\\/gu, "\\\\").replace(/'/gu, "\\'");
-    const clauses = [`name = '${escapedName}'`, `mimeType = '${mimeType}'`, "trashed = false"];
+    const escapedMarker = marker(purpose).replace(/\\/gu, "\\\\").replace(/'/gu, "\\'");
+    const clauses = [`name = '${escapedName}'`, `mimeType = '${mimeType}'`, "trashed = false", `appProperties has { key='eliotr_g4_operation' and value='${escapedMarker}' }`];
     if (safeParent !== undefined) clauses.push(`'${safeParent}' in parents`);
     const value = await json(endpoint("https://www.googleapis.com/drive/v3/files", `files(${fileFields}),nextPageToken`,
       { q: clauses.join(" and "), pageSize: "100", spaces: "drive", orderBy: "createdTime desc" }), undefined, false,
@@ -94,34 +101,37 @@ export function createGoogleExchangeProvisioningPort(options: GoogleRestOptions)
         if (!Array.isArray(result.files) || result.files.length > 100 || result.nextPageToken !== undefined) {
           throw new Error("GOOGLE_PROVISIONING_MATCHES_INCOMPLETE");
         }
-        return result.files.map((entry) => asset(entry, mimeType));
+        return result.files.map((entry) => asset(entry, mimeType, marker(purpose)));
       });
     return value;
   };
-  const createFolder = (name: string) => json(endpoint("https://www.googleapis.com/drive/v3/files", fileFields),
-    { name: text(name), mimeType: GOOGLE_FOLDER_MIME, parents: ["root"] }, true, (raw) => asset(raw, GOOGLE_FOLDER_MIME));
-  const createSpreadsheet = (name: string, sheetNames: readonly string[]) => {
-    if (!Array.isArray(sheetNames) || sheetNames.length < 1 || sheetNames.length > 16) throw new Error("GOOGLE_PROVISIONING_SHEET_INVALID");
-    const names = sheetNames.map((sheetName) => text(sheetName));
-    if (new Set(names).size !== names.length) throw new Error("GOOGLE_PROVISIONING_SHEET_INVALID");
-    return json(endpoint("https://sheets.googleapis.com/v4/spreadsheets", "spreadsheetId,properties(title),sheets(properties(sheetId,title,index))"),
-      { properties: { title: text(name) }, sheets: names.map((title, index) => ({ properties: { title, index } })) }, true,
-      (raw) => spreadsheet(raw));
-  };
-  const attachToFolder = (fileId: string, parentId: string) => {
-    const file = googleFileId(fileId); const parent = googleFileId(parentId);
-    return json(endpoint(`https://www.googleapis.com/drive/v3/files/${file}`, fileFields, { addParents: parent, removeParents: "root" }),
-      {}, true, (raw) => asset(raw, GOOGLE_SPREADSHEET_MIME));
-  };
-  const readFileMetadata = (fileId: string, expectedMimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME) => {
-    const file = googleFileId(fileId);
-    return json(endpoint(`https://www.googleapis.com/drive/v3/files/${file}`, fileFields), undefined, false,
-      (raw) => asset(raw, expectedMimeType));
-  };
+  const createFolder = (name: string, purpose: "exchange" | "results") => json(endpoint("https://www.googleapis.com/drive/v3/files", fileFields),
+    { name: text(name), mimeType: GOOGLE_FOLDER_MIME, parents: ["root"], appProperties: { eliotr_g4_operation: marker(purpose) } }, true,
+    (raw) => asset(raw, GOOGLE_FOLDER_MIME, marker(purpose)));
   const readSpreadsheet = (spreadsheetId: string) => {
     const id = googleFileId(spreadsheetId);
     return json(endpoint(`https://sheets.googleapis.com/v4/spreadsheets/${id}`, "spreadsheetId,properties(title),sheets(properties(sheetId,title,index))"),
       undefined, false, spreadsheet);
+  };
+  const createSpreadsheet = async (name: string, sheetNames: readonly string[], parentId: string): Promise<GoogleSpreadsheetResource> => {
+    if (!Array.isArray(sheetNames) || sheetNames.length < 1 || sheetNames.length > 16) throw new Error("GOOGLE_PROVISIONING_SHEET_INVALID");
+    const names = sheetNames.map((sheetName) => text(sheetName));
+    if (new Set(names).size !== names.length) throw new Error("GOOGLE_PROVISIONING_SHEET_INVALID");
+    const parent = googleFileId(parentId);
+    return await json(endpoint("https://www.googleapis.com/drive/v3/files", fileFields),
+      { name: text(name), mimeType: GOOGLE_SPREADSHEET_MIME, parents: [parent], appProperties: { eliotr_g4_operation: marker("exchange") } }, true,
+      (raw) => { const file = asset(raw, GOOGLE_SPREADSHEET_MIME, marker("exchange")); return readSpreadsheet(file.fileId); });
+  };
+  const attachToFolder = (fileId: string, parentId: string) => {
+    const file = googleFileId(fileId); const parent = googleFileId(parentId);
+    return json(endpoint(`https://www.googleapis.com/drive/v3/files/${file}`, fileFields, { addParents: parent, removeParents: "root" }),
+      {}, true, (raw) => asset(raw, GOOGLE_SPREADSHEET_MIME, marker("exchange")));
+  };
+  const readFileMetadata = (fileId: string, expectedMimeType: typeof GOOGLE_FOLDER_MIME | typeof GOOGLE_SPREADSHEET_MIME,
+    purpose: "exchange" | "results") => {
+    const file = googleFileId(fileId);
+    return json(endpoint(`https://www.googleapis.com/drive/v3/files/${file}`, fileFields), undefined, false,
+      (raw) => asset(raw, expectedMimeType, marker(purpose)));
   };
   return { findExactFile, createFolder, createSpreadsheet, attachToFolder, readFileMetadata, readSpreadsheet,
     getStartPageToken: () => json(endpoint("https://www.googleapis.com/drive/v3/changes/startPageToken", "startPageToken"), undefined, false,

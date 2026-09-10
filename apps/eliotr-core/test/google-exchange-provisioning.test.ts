@@ -22,8 +22,8 @@ describe("G4 generation authority over real local D1", () => {
     const repo = createD1ExchangeGenerationRepository(db);
     const pending = await repo.begin(input); expect(pending.state).toBe("PENDING");
     const sheets = JSON.stringify({ system: 1, catalog: 2, requests: 3, payload_parts: 4, receipts: 5, results: 6, dashboard: 7 });
-    await repo.recordAssets({ intent: input, generation_id: `generation-${suffix}`, folder_id: `folder-${suffix}`, spreadsheet_id: `sheet-${suffix}`, sheet_ids_json: sheets });
-    await expect(repo.recordAssets({ intent: input, generation_id: "foreign-generation", folder_id: "foreign-folder", spreadsheet_id: "foreign-sheet", sheet_ids_json: sheets })).rejects.toThrow("GOOGLE_PROVISIONING_WRITE_UNCONFIRMED");
+    await repo.recordAssets({ intent: input, generation_id: `generation-${suffix}`, folder_id: `folder-${suffix}`, results_folder_id: `results-${suffix}`, spreadsheet_id: `sheet-${suffix}`, sheet_ids_json: sheets });
+    await expect(repo.recordAssets({ intent: input, generation_id: "foreign-generation", folder_id: "foreign-folder", results_folder_id: "foreign-results", spreadsheet_id: "foreign-sheet", sheet_ids_json: sheets })).rejects.toThrow("GOOGLE_PROVISIONING_WRITE_UNCONFIRMED");
     await repo.initializeCursor(input.connection_id, "cursor-g4");
     await repo.persistShadow({ generation_id: `generation-${suffix}`, connection_id: input.connection_id, folder_id: `folder-${suffix}`, spreadsheet_id: `sheet-${suffix}`,
       sheet_ids: { system: 1, catalog: 2, requests: 3, payload_parts: 4, receipts: 5, results: 6, dashboard: 7 }, protocol_version: "eliotr.drive.exchange.v1",
@@ -36,7 +36,7 @@ describe("G4 generation authority over real local D1", () => {
     expect((await repo.begin(input)).state).toBe("ACTIVATED");
     const nextInput: ProvisioningIntent = { ...input, operation_ref: `${input.operation_ref}-next`, generation_id: `generation-${suffix}-next` };
     await repo.begin(nextInput);
-    await repo.recordAssets({ intent: nextInput, generation_id: `generation-${suffix}-next`, folder_id: `folder-${suffix}-next`, spreadsheet_id: `sheet-${suffix}-next`,
+    await repo.recordAssets({ intent: nextInput, generation_id: `generation-${suffix}-next`, folder_id: `folder-${suffix}-next`, results_folder_id: `results-${suffix}-next`, spreadsheet_id: `sheet-${suffix}-next`,
       sheet_ids_json: JSON.stringify({ system: 11, catalog: 12, requests: 13, payload_parts: 14, receipts: 15, results: 16, dashboard: 17 }) });
     await repo.qualify({ intent: nextInput, generation_id: `generation-${suffix}-next`, start_page_token: "cursor-g4-next" });
     await repo.persistShadow({ generation_id: `generation-${suffix}-next`, connection_id: input.connection_id, folder_id: `folder-${suffix}-next`, spreadsheet_id: `sheet-${suffix}-next`,
@@ -46,6 +46,16 @@ describe("G4 generation authority over real local D1", () => {
     expect((await db.prepare("SELECT state FROM exchange_generation WHERE generation_id=?1").bind(`generation-${suffix}`).first<{ state: string }>())?.state).toBe("active");
     await repo.activateShadow(`generation-${suffix}-next`, `generation-${suffix}`);
     expect((await db.prepare("SELECT state FROM exchange_generation WHERE generation_id=?1").bind(`generation-${suffix}-next`).first<{ state: string }>())?.state).toBe("active");
+    await repo.persistShadow({ generation_id: `generation-${suffix}-unqualified`, connection_id: input.connection_id, folder_id: `folder-${suffix}-unqualified`, spreadsheet_id: `sheet-${suffix}-unqualified`,
+      sheet_ids: { system: 21, catalog: 22, requests: 23, payload_parts: 24, receipts: 25, results: 26, dashboard: 27 }, protocol_version: "eliotr.drive.exchange.v1",
+      status: "draining", created_at: input.created_at });
+    await expect(repo.activateShadow(`generation-${suffix}-unqualified`, `generation-${suffix}-next`)).rejects.toThrow("GOOGLE_GENERATION_ACTIVATION_CONFLICT");
+    expect((await db.prepare("SELECT state FROM exchange_generation WHERE generation_id=?1").bind(`generation-${suffix}-next`).first<{ state: string }>())?.state).toBe("active");
+    const uncertain: ProvisioningIntent = { ...input, operation_ref: `${input.operation_ref}-uncertain`, generation_id: `generation-${suffix}-uncertain` };
+    await repo.begin(uncertain);
+    const claims = await Promise.allSettled([repo.markCreateAttempt(uncertain, "folder"), repo.markCreateAttempt(uncertain, "folder")]);
+    expect(claims.filter((claim) => claim.status === "fulfilled")).toHaveLength(1);
+    expect(claims.filter((claim) => claim.status === "rejected")).toHaveLength(1);
   });
 
   it("refreshes an admitted AUTHORIZING credential through the server-owned D1 lease", async () => {
