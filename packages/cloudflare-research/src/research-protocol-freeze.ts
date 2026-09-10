@@ -230,7 +230,7 @@ function assertHeadBinding(head: LedgerHead, payload: RunPayload, request: Stage
       head.principal_ref !== principal.principal_ref || head.principal_ref !== payload.principal_ref ||
       head.scope_snapshot_id !== scope.snapshot_id || head.scope_snapshot_revision !== scope.revision ||
       head.portfolio_ref !== request.input_manifest.object_ref || head.input_digest !== inputDigest ||
-      head.evidence_grade !== payload.evidence_grade) {
+      head.evidence_grade !== payload.evidence_grade || head.goal !== payload.query) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 ledger does not match the stage input");
   }
 }
@@ -289,11 +289,13 @@ function assertReadbackBinding(
       !sameRef(checkpoint.investigation_ref, request.investigation_ref) || checkpoint.principal_ref !== principal.principal_ref ||
       !sameRef(checkpoint.scope_snapshot_ref, expectedScope) || checkpoint.w1_revision !== run.initial_revision ||
       request.investigation_ref.revision !== run.initial_revision || checkpoint.w1_protocol_version !== head.protocol_version ||
-      checkpoint.requested_evidence_grade !== head.evidence_grade || head.revision < run.initial_revision ||
+      checkpoint.requested_evidence_grade !== head.evidence_grade || checkpoint.protocol_profile.evidence_grade !== checkpoint.requested_evidence_grade ||
+      checkpoint.protocol_profile.question !== head.goal || head.revision < run.initial_revision ||
       head.revision !== run.current_revision || head.status !== "OPEN" || head.lane !== "exploratory" ||
       head.investigation_id !== run.investigation_id || head.principal_ref !== principal.principal_ref ||
       head.scope_snapshot_id !== scope.snapshot_id || head.scope_snapshot_revision !== scope.revision ||
       run.operation_id !== request.operation_id || run.principal_ref !== principal.principal_ref ||
+      run.credential_generation !== principal.credential_generation ||
       run.investigation_id !== request.investigation_ref.id || run.scope_snapshot_id !== scope.snapshot_id ||
       run.scope_snapshot_revision !== scope.revision || run.policy_generation !== head.policy_generation ||
       run.policy_authority_ref !== head.policy_authority_ref || run.deployment_generation !== head.deployment_generation ||
@@ -393,6 +395,7 @@ export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeC
         parsed.protocol_profile.profile_ref.revision !== 1 ||
         parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
         parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}` ||
+        parsed.coverage_denominator.denominator_ref.revision !== 1 ||
         parsed.external_acquisition !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.external_acquisition) {
       fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint is not the server-owned corpus profile");
     }
@@ -441,6 +444,7 @@ export async function readFreezeProtocolAndScopeCheckpoint(
       scope_snapshot_id, scope_snapshot_revision, initial_manifest_json, state
     FROM research_workflow_run WHERE operation_id = ?1`).bind(input.request.operation_id).first<WorkflowRunBinding>();
   if (run === null || run.credential_generation !== input.navigation.access.credential_generation ||
+      run.credential_generation !== input.principal.credential_generation ||
       run.deployment_generation !== input.principal.deployment_generation) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "persisted workflow identity is unavailable or mismatched");
   }
@@ -481,7 +485,9 @@ export async function readFreezeProtocolAndScopeCheckpoint(
       principal_ref, credential_generation, deployment_generation, policy_generation, policy_authority_ref,
       scope_snapshot_id, scope_snapshot_revision, initial_manifest_json, state
     FROM research_workflow_run WHERE operation_id = ?1`).bind(input.request.operation_id).first<WorkflowRunBinding>();
-  if (final === null || finalRun === null || canonicalEvidenceJson(final.head) !== canonicalEvidenceJson(initial.head) ||
+  const finalCurrentRow = await input.database.prepare("SELECT operation_id FROM research_workflow_current WHERE operation_id = ?1")
+    .bind(input.request.operation_id).first<{ readonly operation_id: string }>();
+  if (final === null || finalRun === null || finalCurrentRow === null || canonicalEvidenceJson(final.head) !== canonicalEvidenceJson(initial.head) ||
       canonicalEvidenceJson(finalRun) !== canonicalEvidenceJson(run)) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "workflow or W1 authority changed during protocol scope readback");
   }
