@@ -4,7 +4,6 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import {
   IdentifierSchema,
-  ResolvedEvidenceSchema,
   RetrievalTraceSchema,
   Sha256Schema,
   VersionedRefSchema,
@@ -12,11 +11,14 @@ import {
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import {
   canonicalRetrievalJson,
+  decodeCanonicalRetrievalJson,
+  decodeEvidencePack,
+  createD1RetrievalResultStore,
+  createD1ScopeProfilePort,
   retrievalRequestDigest,
-  type EvidencePack,
-  type RetrievalResult,
   type RetrievalQueryAccess,
   type ScopeProfileBinding,
+  type StoredRetrievalResult,
 } from "@eliotr/retrieval";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import {
@@ -160,27 +162,6 @@ interface StoredRetrieveAttempt {
   readonly state: string;
 }
 
-interface RetrievalResultRow {
-  readonly principal_ref: unknown;
-  readonly client_class: unknown;
-  readonly credential_generation: unknown;
-  readonly idempotency_key: unknown;
-  readonly request_digest: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly state: unknown;
-  readonly result_json: unknown;
-  readonly result_digest: unknown;
-  readonly trace_id: unknown;
-  readonly trace_revision: unknown;
-  readonly coverage_claim: unknown;
-}
-
-interface RetrievalTraceRow {
-  readonly trace_json: unknown;
-  readonly trace_digest: unknown;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -190,50 +171,20 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index]);
 }
 
-function parseEvidencePack(value: unknown): EvidencePack | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["pack_ref", "scope_snapshot_ref", "resolved_evidence", "omitted_candidates", "trace_ref", "total_utf8_bytes"])) return null;
-  if (!VersionedRefSchema.safeParse(value.pack_ref).success || !VersionedRefSchema.safeParse(value.scope_snapshot_ref).success ||
-      !VersionedRefSchema.safeParse(value.trace_ref).success || !Array.isArray(value.resolved_evidence) ||
-      value.resolved_evidence.length > 512 || !Array.isArray(value.omitted_candidates) ||
-      typeof value.total_utf8_bytes !== "number" || !Number.isSafeInteger(value.total_utf8_bytes) || value.total_utf8_bytes < 0 || value.total_utf8_bytes > MAX_WORKFLOW_OUTPUT_BYTES) return null;
-  if (value.resolved_evidence.some((item) => !ResolvedEvidenceSchema.safeParse(item).success) || value.omitted_candidates.some((item) => {
-    if (!isRecord(item) || !hasExactKeys(item, ["candidate_id", "reason_code"])) return true;
-    return !IdentifierSchema.safeParse(item.candidate_id).success || !IdentifierSchema.safeParse(item.reason_code).success;
-  })) return null;
-  return value as unknown as EvidencePack;
-}
-
-function parseRetrievalResult(value: unknown): RetrievalResult | null {
-  if (!isRecord(value) || !hasExactKeys(value, ["evidence_pack", "trace", "coverage_claim"])) return null;
-  const evidencePack = parseEvidencePack(value.evidence_pack);
-  const trace = RetrievalTraceSchema.safeParse(value.trace);
-  if (evidencePack === null || !trace.success || value.coverage_claim !== "NONE" && value.coverage_claim !== "SAMPLED" && value.coverage_claim !== "COMPLETE_SCOPE") return null;
-  return { evidence_pack: evidencePack, trace: trace.data, coverage_claim: value.coverage_claim } as RetrievalResult;
-}
-
-function parseCanonicalJson(text: string, code: "WORKFLOW_OUTPUT_CORRUPT" | "WORKFLOW_AUTHORITY_STALE"): unknown {
-  try {
-    const value: unknown = JSON.parse(text);
-    if (canonicalRetrievalJson(value) !== text) fail(code);
-    return value;
-  } catch {
-    fail(code);
-  }
-}
-
 function decodeRetrieveBranchesCheckpoint(bytes: Uint8Array): RetrieveBranchesCheckpoint {
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_OUTPUT_CORRUPT");
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
   catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
-  const raw = parseCanonicalJson(text, "WORKFLOW_OUTPUT_CORRUPT");
+  const raw = decodeCanonicalRetrievalJson(text);
+  if (raw === undefined) fail("WORKFLOW_OUTPUT_CORRUPT");
   if (!isRecord(raw) || !hasExactKeys(raw, ["protocol", "workflow_stage", "operation_id", "investigation_ref", "principal_ref", "scope_snapshot_ref", "protocol_digest", "denominator_digest", "retrieval_request_digest", "evidence_pack", "trace", "coverage_claim"]) ||
       raw.protocol !== RETRIEVE_BRANCHES_PROTOCOL || raw.workflow_stage !== "RETRIEVE_BRANCHES" ||
       typeof raw.operation_id !== "string" || raw.operation_id.length < 1 || raw.operation_id.length > 128 ||
       !VersionedRefSchema.safeParse(raw.investigation_ref).success || !IdentifierSchema.safeParse(raw.principal_ref).success ||
       !VersionedRefSchema.safeParse(raw.scope_snapshot_ref).success || !Sha256Schema.safeParse(raw.protocol_digest).success ||
       !Sha256Schema.safeParse(raw.denominator_digest).success || !Sha256Schema.safeParse(raw.retrieval_request_digest).success ||
-      parseEvidencePack(raw.evidence_pack) === null || !RetrievalTraceSchema.safeParse(raw.trace).success ||
+      decodeEvidencePack(raw.evidence_pack) === null || !RetrievalTraceSchema.safeParse(raw.trace).success ||
       (raw.coverage_claim !== "NONE" && raw.coverage_claim !== "SAMPLED" && raw.coverage_claim !== "COMPLETE_SCOPE")) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
@@ -318,16 +269,9 @@ export async function readRetrieveBranchesCheckpoint(
       (checkpoint.trace.evidence_pack_ref !== undefined && checkpoint.trace.evidence_pack_ref !== checkpoint.evidence_pack.pack_ref.id)) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  let profileRow: { readonly profile_version: unknown; readonly max_sources: unknown; readonly max_results: unknown } | null;
   try {
-    profileRow = await dependencies.database.prepare(
-      "SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
-    ).bind(held.scope_snapshot_ref.id, held.scope_snapshot_ref.revision).first();
+    await createD1ScopeProfilePort(dependencies.database).requireBinding(held.scope_snapshot, dependencies.profile);
   } catch {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
-  if (profileRow === null || profileRow.profile_version !== dependencies.profile.version ||
-      profileRow.max_sources !== dependencies.profile.max_sources || profileRow.max_results !== dependencies.profile.max_results) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
   const expectedRequestDigest = await retrievalRequestDigest({
@@ -337,42 +281,20 @@ export async function readRetrieveBranchesCheckpoint(
     requested_limit: dependencies.profile.max_results,
     scope_digest: held.scope_snapshot.digest,
   });
-  let resultRow: RetrievalResultRow | null;
+  const retrievalIdempotencyKey = `retrieve-branches:${await textDigest(JSON.stringify(persisted.stage_request))}`;
+  let storedResult: StoredRetrievalResult | null;
   try {
-    resultRow = await dependencies.database.prepare(
-      "SELECT principal_ref, client_class, credential_generation, idempotency_key, request_digest, scope_snapshot_id, scope_snapshot_revision, state, result_json, result_digest, trace_id, trace_revision, coverage_claim FROM retrieval_query_result WHERE trace_id = ?1 AND trace_revision = ?2 AND principal_ref = ?3 AND client_class = ?4 AND credential_generation = ?5 LIMIT 1",
-    ).bind(checkpoint.evidence_pack.trace_ref.id, checkpoint.evidence_pack.trace_ref.revision, principal.principal_ref,
-      dependencies.access.client_class, principal.credential_generation).first<RetrievalResultRow>();
+    storedResult = await createD1RetrievalResultStore(dependencies.database, dependencies.access)
+      .load(retrievalIdempotencyKey);
   } catch {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
-  if (resultRow === null || resultRow.state !== "COMPLETE" || resultRow.principal_ref !== principal.principal_ref ||
-      resultRow.client_class !== dependencies.access.client_class || resultRow.credential_generation !== principal.credential_generation ||
-      resultRow.request_digest !== expectedRequestDigest || resultRow.request_digest !== checkpoint.retrieval_request_digest ||
-      resultRow.scope_snapshot_id !== held.scope_snapshot_ref.id || resultRow.scope_snapshot_revision !== held.scope_snapshot_ref.revision ||
-      resultRow.trace_id !== checkpoint.evidence_pack.trace_ref.id || resultRow.trace_revision !== checkpoint.evidence_pack.trace_ref.revision ||
-      resultRow.coverage_claim !== checkpoint.coverage_claim ||
-      resultRow.idempotency_key !== `retrieve-branches:${await textDigest(JSON.stringify(persisted.stage_request))}` ||
-      typeof resultRow.result_json !== "string" || typeof resultRow.result_digest !== "string" ||
-      resultRow.result_digest !== await digest(new TextEncoder().encode(resultRow.result_json))) {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  const storedResult = parseRetrievalResult(parseCanonicalJson(resultRow.result_json, "WORKFLOW_OUTPUT_CORRUPT"));
-  if (storedResult === null || canonicalRetrievalJson(storedResult) !== canonicalRetrievalJson({
-    evidence_pack: checkpoint.evidence_pack, trace: checkpoint.trace, coverage_claim: checkpoint.coverage_claim,
-  })) fail("WORKFLOW_OUTPUT_CORRUPT");
-  let traceRow: RetrievalTraceRow | null;
-  try {
-    traceRow = await dependencies.database.prepare(
-      "SELECT trace_json, trace_digest FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
-    ).bind(checkpoint.trace.trace_ref.id, checkpoint.trace.trace_ref.revision).first<RetrievalTraceRow>();
-  } catch {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  if (traceRow === null || typeof traceRow.trace_json !== "string" || typeof traceRow.trace_digest !== "string" ||
-      traceRow.trace_digest !== await digest(new TextEncoder().encode(traceRow.trace_json))) fail("WORKFLOW_OUTPUT_CORRUPT");
-  const storedTrace = RetrievalTraceSchema.safeParse(parseCanonicalJson(traceRow.trace_json, "WORKFLOW_OUTPUT_CORRUPT"));
-  if (!storedTrace.success || canonicalRetrievalJson(storedTrace.data) !== canonicalRetrievalJson(checkpoint.trace)) {
+  if (storedResult === null || storedResult.idempotency_key !== retrievalIdempotencyKey ||
+      storedResult.request_digest !== expectedRequestDigest ||
+      storedResult.request_digest !== checkpoint.retrieval_request_digest ||
+      canonicalRetrievalJson(storedResult.result) !== canonicalRetrievalJson({
+        evidence_pack: checkpoint.evidence_pack, trace: checkpoint.trace, coverage_claim: checkpoint.coverage_claim,
+      })) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   const after = await dependencies.navigation.current();
