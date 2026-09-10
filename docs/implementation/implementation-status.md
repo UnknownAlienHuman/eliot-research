@@ -72,7 +72,7 @@ setup is not a prerequisite for the selected Workspace path. See
 
 ## Artifact drafts
 
-The internal `cloudflare-research` draft store persists canonical ArtifactSpec/ArtifactRevision
+The internal `cloudflare-artifacts` draft store persists canonical ArtifactSpec/ArtifactRevision
 manifests, section bodies and referenced objects with explicit residency. It reserves the operation
 before R2 writes, verifies actual object readback, then commits the DRAFT revision, draft head and
 intent/outbox together through a guarded D1 transaction. Finalized replay reads the original receipt
@@ -89,9 +89,17 @@ typed failures. This metadata endpoint does not return object bodies or mutate d
 stored bytes through the same verified historical manifest and owner authority. The response uses
 `application/octet-stream`, `no-store` and `nosniff`; artifact, section and object reference headers
 are percent-encoded and must be decoded with `decodeURIComponent`. Section selection does not bypass
-verification of the manifest's other declared objects. No artifact is attached to a Research run yet.
+verification of the manifest's other declared objects. The explicitly configured exploratory.v3
+composition attaches a DRAFT through stage 17; the ordinary public run still uses exploratory.v2.
 The local D1/R2 reader suite passed 12 cases at source `0118208`; the subsequent Unicode-header change
 passed its one affected case at `5de069f` with the other 11 skipped.
+
+The section's `/citations` endpoint returns its stored verification reference and exact cited handle
+and excerpt digests after the same owner and current-scope checks. The PWA opens those sources through
+the existing evidence reader and visibly retains `DRAFT` and `NOT_EXECUTED` semantics. The native
+Worker AI Gateway adapter and persisted model-profile authority reader now support the configured
+source-to-draft path; model responses remain controlled in local acceptance. Production REPORT
+admission, actual provider/profile configuration and the remaining governed stages are still open.
 
 These draft transitions do not establish semantic verification or accepted publication. The artifact
 compiler, publication checks, Wiki/change products and complete report user loop remain open in the
