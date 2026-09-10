@@ -24,9 +24,7 @@ import {
   type GeminiMcpToolDependencies,
 } from "./gemini-mcp-tool-common.js";
 import type {
-  WorkspaceMcpCandidateStore,
   WorkspaceMcpPlanStoreResult,
-  WorkspaceMcpObservationStoreResult,
 } from "./workspace-mcp-ledger.js";
 
 const PLAN_TTL_MS = 15 * 60 * 1000;
@@ -72,11 +70,6 @@ function v2Input(value: unknown) {
     dry_run: record.dry_run,
   };
   return asZod(WorkspaceMcpPlanV2InputSchema, normalized, "Workspace MCP v2 plan input");
-}
-
-function planWithoutDigest(plan: WorkspaceMcpPlanV2): Record<string, unknown> {
-  const { plan_sha256: _ignored, ...rest } = plan;
-  return rest;
 }
 
 function planForStore(result: WorkspaceMcpPlanStoreResult): WorkspaceMcpPlanV2 {

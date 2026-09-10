@@ -21,6 +21,7 @@ import {
   GEMINI_MCP_TOOLS,
   type GoogleExternalTransport,
 } from "./gemini-mcp-tools.js";
+import type { WorkspaceMcpCandidateStore } from "./workspace-mcp-ledger.js";
 
 export interface WorkspaceMcpRuntime {
   readonly DEPLOYMENT_GENERATION: string;
@@ -32,7 +33,7 @@ export interface WorkspaceMcpRuntime {
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
   readonly ACCESS_AUDIENCE?: string | undefined;
-  readonly workspaceCandidateStore?: import("./workspace-mcp-ledger.js").WorkspaceMcpCandidateStore;
+  readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
     readonly blocking_reason_codes: readonly string[];

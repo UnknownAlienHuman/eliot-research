@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -102,6 +102,132 @@ export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), captu
   return result.stdout ?? "";
 }
 
+function localCommandFailure({ error, status, signal, stdout = "", stderr = "", capture, diagnosticOverride } = {}) {
+  const raw = capture ? `${stdout}\n${stderr}` : "";
+  const diagnostic = diagnosticOverride ?? (capture ? classifyLocalFailure(stdout, stderr) : "");
+  const code = error?.code ?? (signal ? `signal:${signal}` : status ?? "unknown");
+  const redacted = raw.replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
+    .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]").slice(0, 1000);
+  const suffix = diagnostic ? ` [${diagnostic}]` : "";
+  const failure = new Error(`Local command failed (${code}); no remote deploy was requested${suffix}${redacted.trim() ? ` :: ${redacted.trim()}` : ""}`);
+  failure.cause = { code, diagnostic, stdout: String(stdout).slice(0, 4096), stderr: String(stderr).slice(0, 4096) };
+  return failure;
+}
+
+function waitForAsyncChildClose(child, timeoutMs = 5000) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("close", done);
+      resolve();
+    };
+    const timer = setTimeout(done, timeoutMs);
+    child.once("close", done);
+  });
+}
+
+async function terminateAsyncChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === "win32" && Number.isSafeInteger(child.pid) && child.pid > 0) {
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try { child.kill(); } catch { /* Already exited. */ }
+        finish();
+      }, 5000);
+      let killer;
+      try {
+        killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
+          shell: false, windowsHide: true, stdio: "ignore",
+        });
+      } catch {
+        try { child.kill(); } catch { /* Already exited. */ }
+        finish();
+        return;
+      }
+      killer.once("error", () => {
+        try { child.kill(); } catch { /* Already exited. */ }
+        finish();
+      });
+      killer.once("close", finish);
+    });
+    await waitForAsyncChildClose(child);
+    if (child.exitCode === null && child.signalCode === null) {
+      try { child.kill(); } catch { /* Already exited. */ }
+      await waitForAsyncChildClose(child);
+    }
+    return;
+  }
+  try { child.kill("SIGTERM"); } catch { /* Already exited. */ }
+  await waitForAsyncChildClose(child);
+  if (child.exitCode === null && child.signalCode === null) {
+    try { child.kill("SIGKILL"); } catch { /* Already exited. */ }
+    await waitForAsyncChildClose(child);
+  }
+}
+
+/** Async counterpart for long local CLI work. The sync API above remains for existing callers. */
+export function executeLocalAsync(args, { cwd = ROOT, env = localEnvironment(), capture = false, timeoutMs = 180_000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 180_000) {
+    throw new RangeError("Local command timeout must be a positive integer no greater than 180000ms");
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, {
+      cwd, env, shell: false, windowsHide: true,
+      stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "inherit", "inherit"],
+    });
+    const stdoutChunks = []; const stderrChunks = [];
+    let totalBytes = 0; let overflow = false; let timedOut = false; let spawnError;
+    let terminated = false;
+    const append = (target, chunk) => {
+      if (!capture || overflow) return target;
+      if (totalBytes + chunk.byteLength > 8 * 1024 * 1024) {
+        overflow = true;
+        requestTermination();
+        return;
+      }
+      target.push(chunk);
+      totalBytes += chunk.byteLength;
+    };
+    const requestTermination = () => {
+      if (terminated) return;
+      terminated = true;
+      void terminateAsyncChild(child).catch(() => {});
+    };
+    if (capture) {
+      child.stdout.on("data", (chunk) => { append(stdoutChunks, chunk); });
+      child.stderr.on("data", (chunk) => { append(stderrChunks, chunk); });
+    }
+    child.once("error", (error) => { spawnError = error; });
+    const timer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null || terminated) return;
+      timedOut = true;
+      requestTermination();
+    }, timeoutMs);
+    child.once("close", (status, signal) => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (spawnError || status !== 0 || overflow || timedOut) {
+        reject(localCommandFailure({ error: spawnError ?? (overflow ? { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" } : timedOut ? { code: "ETIMEDOUT" } : undefined),
+          status, signal, stdout, stderr, capture, diagnosticOverride: overflow || timedOut ? "" : undefined }));
+        return;
+      }
+      resolve(capture ? stdout : "");
+    });
+  });
+}
+
 const TRANSIENT_D1_PATTERNS = [
   /SQLITE_BUSY/i, /SQLITE_LOCKED/i, /database is locked/i, /database is busy/i,
   /database table is locked/i, /database schema is locked/i, /resource busy or locked/i,
@@ -142,6 +268,25 @@ export function executeLocalD1WithRetry(args, { execute = executeLocal, attempts
       lastError = error;
       if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > deadline) throw error;
       sleepSync(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+export async function executeLocalD1WithRetryAsync(args, { execute = executeLocalAsync, attempts = 6, deadlineMs = 15000, delayMs = 250 } = {}) {
+  const deadline = Date.now() + deadlineMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      if (lastError) throw lastError;
+      throw new Error("Local D1 command deadline expired");
+    }
+    try { return await execute(args, { capture: true, timeoutMs: Math.min(180_000, remainingMs) }); }
+    catch (error) {
+      lastError = error;
+      if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw lastError;

@@ -136,7 +136,6 @@ function render(health: SystemHealth | null): void {
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
-  let libraryPanel: ReturnType<typeof mountLibraryPanel> | undefined;
   const workspaceViews: Record<string, { title: string; lede: string }> = {
     "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
     "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
@@ -212,7 +211,7 @@ function render(health: SystemHealth | null): void {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
-  libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
+  const libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
     if (!id) { retrieval?.clearPrivate(); return; }
     orientation?.selectSource(id);
     retrieval?.selectSource(id, context);

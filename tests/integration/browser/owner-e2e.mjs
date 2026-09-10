@@ -11,7 +11,7 @@ import process from "node:process";
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
   requestAnimationFrame: readonly */
-import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
+import { prepareLocal, executeLocalAsync, executeLocalD1WithRetryAsync, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
@@ -424,7 +424,7 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-function d1Query(paths, binding, sql) {
+async function d1Query(paths, binding, sql) {
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -432,7 +432,7 @@ function d1Query(paths, binding, sql) {
   // While the Worker is running, Worker/API readback (catalog/revisions/
   // session) is the primary active-runtime signal; CLI reads below reconcile
   // the same durable state and must replay exactly after restart.
-  const output = executeLocalD1WithRetry(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocal });
+  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocalAsync });
   let batches;
   try {
     batches = JSON.parse(output);
@@ -486,8 +486,8 @@ async function seedRawMarkdownConversionFixture(paths, input) {
   const fixtureFile = resolve(paths.directory, `raw-markdown-fixture-${operationId}.md`);
   await writeFile(fixtureFile, output, { mode: 0o600 });
   const evidenceBucket = await resolveEvidenceBucket(paths);
-  executeLocal(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
-  d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
+  await executeLocalAsync(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
+  await d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
     (operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,attempt_id,state,result_json,result_sha256,output_object_key,receipt_object_key,created_at,updated_at)
     VALUES(${sqlText(operationId)},${sqlText("e2e-owner")},${sqlText(input.captureId)},${sqlText(input.contentSha256)},${input.sizeBytes},${sqlText(requestSha256)},${sqlText(requestJson)},${sqlText(authoritySha256)},${sqlText(`recorded-${operationId}`)},'COMPLETE',${sqlText(resultJson)},${sqlText(resultSha256)},${sqlText(outputObjectKey)},${sqlText(receiptObjectKey)},${sqlText("2026-09-09T00:00:00.000Z")},${sqlText("2026-09-09T00:00:00.000Z")})`);
   return { idempotencyKey, operationId, outputObjectKey, outputSha256, resultSha256, fixtureFile };
@@ -498,7 +498,7 @@ async function verifyMigrationLedgers(paths) {
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(root, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
     assert.ok(expected.length > 0, "migration streams must be non-empty");
-    const rows = d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
     counts[binding] = expected.length;
   }
@@ -4348,7 +4348,7 @@ export async function importBundleViaBrowser(page, ledger, bundle, idempotencyKe
 
 async function r2ObjectGet(paths, bucket, key) {
   const args = wranglerArgs(paths, ["r2", "object", "get", `${bucket}/${key}`, "--pipe"]);
-  const output = executeLocal(args, { capture: true });
+  const output = await executeLocalAsync(args, { capture: true });
   return output;
 }
 
@@ -4736,13 +4736,13 @@ export async function runOwnerE2E() {
     // Zero-mutation baseline: no namespace/grant/source exists yet, so every
     // negative below must leave all protected counts exactly unchanged while
     // denying both the session route and the authorized Library view.
-    const protectedD1Counts = () => ({
-      source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
-      revision: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision")[0].n,
-      policy: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy")[0].n,
-      operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
+    const protectedD1Counts = async () => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
+      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision"))[0].n,
+      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
     });
-    const d1BeforeNegatives = protectedD1Counts();
+    const d1BeforeNegatives = await protectedD1Counts();
     const goodForTamper = await sign();
     const tamperSegs = goodForTamper.split(".");
     const tamperedPayloadClaims = JSON.parse(decoder.decode(base64UrlDecode(tamperSegs[1])));
@@ -4806,7 +4806,7 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
     }
-    assert.deepEqual(protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
+    assert.deepEqual(await protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
     {
       const good = await sign();
       const segs = good.split(".");
@@ -4878,7 +4878,7 @@ export async function runOwnerE2E() {
     const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
       "login/init alone must not create an implicit read grant");
     const namespaceReplay = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
@@ -4979,9 +4979,9 @@ export async function runOwnerE2E() {
     // Replay where applicable: the same bearer authorizes twice identically,
     // and prepare with the same idempotency key replays DUPLICATE with the
     // same operation_id and the existing receipt instead of a second operation.
-    const d1CountsForReplay = () => ({
-      source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
-      operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
+    const d1CountsForReplay = async () => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
     });
     let imported;
     try {
@@ -5013,7 +5013,7 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
-    const countsBeforePrepareReplay = d1CountsForReplay();
+    const countsBeforePrepareReplay = await d1CountsForReplay();
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -5024,23 +5024,23 @@ export async function runOwnerE2E() {
     assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
     assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
     assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
-    assert.deepEqual(d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    assert.deepEqual(await d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
-    const sourceRows = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    const sourceRows = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
     assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist");
     const sourceId = sourceRows[0].source_id;
-    const revisionRows = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    const revisionRows = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
-    const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
+    const policyRows = await d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
     // Freeze every pre-raw authority row so the new admission cannot rewrite
     // the original source, owner, admission policy, read grant, or scope view.
-    const ownerRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
-    const admissionPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
-    const readPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
-    const scopeSnapshotRowsBeforeRaw = d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
+    const ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
+    const admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
+    const readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
+    const scopeSnapshotRowsBeforeRaw = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
     assert.equal(ownerRowsBeforeRaw.length, 1, "authoritative owner row must exist before raw admission");
     assert.equal(admissionPolicyRowsBeforeRaw.length, 1, "authoritative admission policy row must exist before raw admission");
     assert.equal(readPolicyRowsBeforeRaw.length, 1, "explicit read policy row must exist before raw admission");
@@ -5116,7 +5116,7 @@ export async function runOwnerE2E() {
     assert.ok(evidenceBucket.includes("evidence"), "evidence bucket name must identify the immutable store");
     assert.ok(workBucket.includes("work"), "work bucket name must identify staging");
     assert.ok(evidenceBucket !== workBucket, "evidence and work buckets must differ");
-    const revisionDetail = d1Query(paths, "CORE_DB",
+    const revisionDetail = await d1Query(paths, "CORE_DB",
       `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
       `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
       `WHERE s.source_namespace_id='${namespace}'`);
@@ -5126,7 +5126,7 @@ export async function runOwnerE2E() {
     assert.equal(imported.receipt.object_residency_key_digest,
       revisionDetail.find((row) => row.source_revision_ref === revisionRef)?.object_residency_key_digest,
       "commit receipt residency digest must match D1");
-    const operationRows = d1Query(paths, "CORE_DB",
+    const operationRows = await d1Query(paths, "CORE_DB",
       `SELECT state, decision_receipt_ref, promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${imported.operationId}'`);
     assert.equal(operationRows.length, 1, "authoritative ingest operation must exist");
     assert.equal(operationRows[0].state, "COMMITTED", "operation must be COMMITTED");
@@ -5229,7 +5229,7 @@ export async function runOwnerE2E() {
     // never values. Replay is covered above (identical bearer + DUPLICATE
     // prepare replay with zero new rows).
     {
-      const matrixBefore = protectedD1Counts();
+      const matrixBefore = await protectedD1Counts();
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
@@ -5268,7 +5268,7 @@ export async function runOwnerE2E() {
         assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
         assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
           `browser ${item.name} must leak no catalog rows`);
-        assert.deepEqual(protectedD1Counts(), matrixBefore,
+        assert.deepEqual(await protectedD1Counts(), matrixBefore,
           `browser ${item.name} must cause zero protected D1 mutation`);
         matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
       }
@@ -5302,16 +5302,16 @@ export async function runOwnerE2E() {
     assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
       ownerRowsBeforeRaw, "restart must preserve the exact namespace owner row");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
       admissionPolicyRowsBeforeRaw, "restart must preserve the exact admission policy snapshot");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
       readPolicyRowsBeforeRaw, "restart must preserve the exact explicit read grant");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
       scopeSnapshotRowsBeforeRaw, "restart must preserve the exact scope snapshots");
-    const sourceRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
-    const revisionRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    const sourceRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    const revisionRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.deepEqual(sourceRowsAfterRaw.filter((row) => sourceRows.some((original) => original.source_id === row.source_id)),
       sourceRows, "raw admission must preserve every original source row exactly");
     assert.deepEqual(revisionRowsAfterRaw.filter((row) => revisionRows.some((original) => original.source_revision_ref === row.source_revision_ref)),
@@ -5320,7 +5320,7 @@ export async function runOwnerE2E() {
     // server-composed admission and their immutable R2 readbacks from the
     // authoritative local stores. The conversion fixture stands in for the
     // provider boundary; live Workers AI remains explicitly unqualified.
-    const rawRows = d1Query(paths, "CORE_DB",
+    const rawRows = await d1Query(paths, "CORE_DB",
       "SELECT capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_digest,content_sha256,size_bytes,content_type,state,object_key " +
       `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
     assert.equal(rawRows.length, 1, "raw upload must leave exactly one durable capture row");
@@ -5337,14 +5337,14 @@ export async function runOwnerE2E() {
     assert.equal(rawRow.content_type, rawUpload.expected.type, "D1 raw MIME must match selected file");
     assert.equal(rawRow.state, "CAPTURED", "raw upload must settle as CAPTURED");
     assert.ok(typeof rawRow.object_key === "string" && rawRow.object_key.length > 0, "D1 raw row must retain its R2 key");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
       "same-file recovery must not create an extra raw capture row");
     const rawObject = await tryR2ObjectGet(paths, evidenceBucket, rawRow.object_key);
     assert.equal(rawObject.ok, true, "original raw bytes must be readable from EVIDENCE_BUCKET");
     const rawBytes = Buffer.from(rawObject.output ?? "", "utf8");
     assert.deepEqual(rawBytes, rawUpload.expected.bytes, "R2 raw bytes must match the selected file exactly");
     assert.equal(await sha256Hex(rawBytes), rawUpload.expected.digest, "R2 raw bytes must retain the selected digest");
-    const conversionRows = d1Query(paths, "CORE_DB",
+    const conversionRows = await d1Query(paths, "CORE_DB",
       "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,state,result_json,result_sha256,output_object_key,receipt_object_key " +
       `FROM raw_markdown_conversion WHERE operation_id='${rawUpload.conversionOperationId}'`);
     assert.equal(conversionRows.length, 1, "raw conversion fixture must leave exactly one durable conversion row");
@@ -5385,7 +5385,7 @@ export async function runOwnerE2E() {
       "conversion output R2 bytes must match the recorded result digest");
     assert.notEqual(rawUpload.conversionFixture.outputSha256, rawUpload.expected.digest,
       "recorded conversion fixture must keep the normalized output digest distinct from the original capture digest");
-    const admissionRows = d1Query(paths, "CORE_DB",
+    const admissionRows = await d1Query(paths, "CORE_DB",
       "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,ingest_operation_id,reason_codes_json,receipt_json " +
       `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
     assert.equal(admissionRows.length, 1, "raw admission must leave exactly one durable admission row");
@@ -5456,7 +5456,7 @@ export async function runOwnerE2E() {
         admissionRow.candidate_ref, admissionRow.source_view_ref, admissionRow.policy_snapshot_sha256,
         rawRow.content_sha256, rawUpload.conversionOperationId,
       ]), "utf8")), "admission input fingerprint must bind candidate, witness, policy and conversion");
-    const rawOperationRows = d1Query(paths, "CORE_DB",
+    const rawOperationRows = await d1Query(paths, "CORE_DB",
       `SELECT state,decision_receipt_ref,promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${String(admissionRow.ingest_operation_id).replaceAll("'", "''")}'`);
     assert.equal(rawOperationRows.length, 1, "raw admission ingest operation must exist");
     assert.equal(rawOperationRows[0].state, "COMMITTED", "raw admission ingest operation must be COMMITTED");
@@ -5464,7 +5464,7 @@ export async function runOwnerE2E() {
     assert.equal(admissionRow.reason_codes_json, canonicalJson(admissionReceipt.reason_codes), "admission reason codes must match the committed receipt");
     assert.ok(typeof rawOperationRows[0].decision_receipt_ref === "string" && rawOperationRows[0].decision_receipt_ref.length > 0);
     assert.ok(typeof rawOperationRows[0].promotion_receipt_ref === "string" && rawOperationRows[0].promotion_receipt_ref.length > 0);
-    const rawRevisionRows = d1Query(paths, "CORE_DB",
+    const rawRevisionRows = await d1Query(paths, "CORE_DB",
       `SELECT r.source_revision_ref,r.source_id,r.source_owner_generation,r.content_sha256,r.object_residency_key_digest,r.normalized_artifact_ref,r.source_view_ref ` +
       `FROM source_revision r WHERE r.source_revision_ref='${String(admissionRow.source_revision_ref).replaceAll("'", "''")}'`);
     assert.equal(rawRevisionRows.length, 1, "raw admission must persist one bound Library revision");
@@ -5474,7 +5474,7 @@ export async function runOwnerE2E() {
     assert.equal(rawRevisionRows[0].source_view_ref, admissionRow.source_view_ref, "raw Library revision must retain the admission witness reference");
     assert.equal(rawRevisionRows[0].object_residency_key_digest, admissionReceipt.object_residency_key_digest,
       "raw Library revision residency must match the committed admission receipt");
-    const rawSourceRows = d1Query(paths, "CORE_DB",
+    const rawSourceRows = await d1Query(paths, "CORE_DB",
       `SELECT source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,source_class,default_storage_policy,default_residency_profile_id,default_retention_policy_id ` +
       `FROM source WHERE source_id='${String(rawRevisionRows[0].source_id).replaceAll("'", "''")}'`);
     assert.equal(rawSourceRows.length, 1, "raw admission must persist one bound Library source");
@@ -5664,7 +5664,7 @@ export async function runOwnerE2E() {
     // token is allowed, and Chromium itself re-pairs with the v2 identity and
     // retrieves the admitted Library source. Zero protected mutation throughout.
     {
-      const rotationBefore = protectedD1Counts();
+      const rotationBefore = await protectedD1Counts();
       const ROTATION_KID = "e2e-key-2";
       const v2keys = await createOwnerE2EKey();
       const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
@@ -5700,7 +5700,7 @@ export async function runOwnerE2E() {
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
-      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
@@ -5760,7 +5760,7 @@ export async function runOwnerE2E() {
         { correlation: "e2e-rotation/v2-revisions-browser" });
       assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
-      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "rotation must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
@@ -6012,7 +6012,7 @@ export async function runOwnerE2E() {
         // must retain their durable owner binding and CANCEL_REQUESTED state.
         const ids = exhaustiveWorkflow.workflowIds;
         const quotedIds = ids.map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
-        const bindings = d1Query(paths, "CORE_DB",
+        const bindings = await d1Query(paths, "CORE_DB",
           "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
           `FROM retrieval_exhaustive_workflow WHERE workflow_id IN (${quotedIds}) ORDER BY workflow_id`);
         assert.equal(bindings.length, ids.length, "D1 must retain one binding row per browser workflow identity");
@@ -6021,7 +6021,7 @@ export async function runOwnerE2E() {
           assert.equal(binding.deployment_generation, paths.generation, "D1 workflow binding must retain the current deployment");
         }
         const jobIds = [...new Set(bindings.map((row) => row.job_id))];
-        const jobs = jobIds.length === 0 ? [] : d1Query(paths, "CORE_DB",
+        const jobs = jobIds.length === 0 ? [] : await d1Query(paths, "CORE_DB",
           `SELECT job_id,principal_ref,client_class,credential_generation,state FROM retrieval_exhaustive_job WHERE job_id IN (${jobIds.map((id) => `'${String(id).replaceAll("'", "''")}'`).join(",")})`);
         const readback = assertWorkflowJobReadback(bindings, jobs);
         receipt.exhaustive_workflow_d1 = `PASS (${readback.bindingCount} browser workflow bindings, ${readback.jobRowCount} canonical retrieval job rows, owner identity and CANCEL_REQUESTED read back after Worker stop)`;
