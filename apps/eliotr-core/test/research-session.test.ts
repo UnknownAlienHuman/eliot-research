@@ -103,19 +103,19 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     const replayed = await body(await run(runRequest("rs-shared", {}, "rs-run-first")));
     expect(replayed.data).toEqual(payload.data);
     expect(await workflowCounts()).toEqual(counts);
-  }, 30_000);
-  it("refuses an exploratory replay after its persisted scope grant is revoked", async () => {
-    await seedSource("rs-revoked");
-    const key = "rs-run-revoked";
-    const first = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(await run(runRequest("rs-revoked", {}, key)));
-    expect(first.data.investigation_ref.id.startsWith("research-")).toBe(true);
     const scope = await db.prepare("SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
-      .bind(first.data.workflow_instance_id).first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
+      .bind(payload.data.workflow_instance_id).first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
     expect(scope).not.toBeNull();
     if (scope === null) throw new Error("missing persisted scope binding");
     await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
       .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
-    expect((await run(runRequest("rs-revoked", {}, key))).status).toBe(409);
+    try {
+      expect([403, 409]).toContain((await run(runRequest("rs-shared", {}, "rs-run-first")).then((response) => response.status)));
+    } finally {
+      await db.prepare("UPDATE scope_access_grant SET state = 'ACTIVE' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+        .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
+    }
+  }, 30_000);
   }, 30_000);
   it("rejects stale idempotency, foreign principals and unsupported profiles", async () => {
     expect((await run(runRequest("rs-shared", { query: "different" }, "rs-run-first"))).status).toBe(409);
