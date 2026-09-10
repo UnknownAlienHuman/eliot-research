@@ -78,9 +78,32 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     await expect(failing.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(failedCalls).toBe(1);
 
-    const replay = createGovernedModelAttemptHandler(fixture.dependencies);
+    let replayPrepares = 0;
+    let replayReservations = 0;
+    let replayOutputPreparations = 0;
+    const replay = createGovernedModelAttemptHandler({
+      ...fixture.dependencies,
+      prepare: async (context) => {
+        replayPrepares += 1;
+        return fixture.dependencies.prepare(context);
+      },
+      prepareOutputBinding: async (input) => {
+        replayOutputPreparations += 1;
+        return fixture.dependencies.prepareOutputBinding(input);
+      },
+      attempts: {
+        ...fixture.dependencies.attempts,
+        reserve: async (input) => {
+          replayReservations += 1;
+          return fixture.dependencies.attempts.reserve(input);
+        },
+      },
+    });
     await expect(replay.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(fixture.calls()).toBe(0);
+    expect(replayPrepares).toBe(0);
+    expect(replayReservations).toBe(0);
+    expect(replayOutputPreparations).toBe(0);
     const requestSha256 = await stageRequestSha256(input.request);
     const identity = await deriveModelAttemptIdentity({
       stage_request_sha256: requestSha256, principal_ref: fixture.principal.principal_ref,
@@ -112,6 +135,138 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     const invocation = { ...cancelled.invocation("FREEZE_PROTOCOL_AND_SCOPE", cancelled.stageAttemptRef), principal: { ...cancelled.principal, signal: controller.signal } };
     await expect(cancelling.handler(invocation)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
     expect(cancelled.calls()).toBe(0);
+  });
+
+  it("prepares output before the route and records preparation failures with cancellation precedence", async () => {
+    const ordered = await governedModelAttemptFixture("handler-output-order");
+    const events: string[] = [];
+    const orderedHandler = createGovernedModelAttemptHandler({
+      ...ordered.dependencies,
+      prepareOutputBinding: async (input) => {
+        events.push("prepare");
+        return ordered.dependencies.prepareOutputBinding(input);
+      },
+      route: {
+        execute: async (call) => {
+          events.push("route");
+          return ordered.dependencies.route.execute(call);
+        },
+      },
+    });
+    await expect(orderedHandler.handler(ordered.invocation("FREEZE_PROTOCOL_AND_SCOPE", ordered.stageAttemptRef)))
+      .resolves.toEqual(expect.any(Uint8Array));
+    expect(events).toEqual(["prepare", "route"]);
+
+    const failure = await governedModelAttemptFixture("handler-output-preparation-failed");
+    const failing = createGovernedModelAttemptHandler({
+      ...failure.dependencies,
+      prepareOutputBinding: async () => { throw new Error("controlled output preparation failure"); },
+    });
+    await expect(failing.handler(failure.invocation("FREEZE_PROTOCOL_AND_SCOPE", failure.stageAttemptRef)))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_UNAVAILABLE" });
+    expect(failure.calls()).toBe(0);
+    const failureSha = await stageRequestSha256(failure.invocation("FREEZE_PROTOCOL_AND_SCOPE", failure.stageAttemptRef).request);
+    const failureIdentity = await deriveModelAttemptIdentity({
+      stage_request_sha256: failureSha, principal_ref: failure.principal.principal_ref,
+      credential_generation: failure.principal.credential_generation, deployment_generation: failure.principal.deployment_generation,
+    });
+    await expect(failure.dependencies.attempts.readByIdempotency({
+      principal_ref: failure.principal.principal_ref, operation_kind: "REPORT", idempotency_key: failureIdentity.idempotency_key,
+    })).resolves.toMatchObject({ state: "FAILED", persisted_state: "FAILED", error_code: "MODEL_OUTPUT_PREPARATION_FAILED" });
+
+    const cancelled = await governedModelAttemptFixture("handler-output-preparation-cancelled");
+    const controller = new AbortController();
+    const cancelledHandler = createGovernedModelAttemptHandler({
+      ...cancelled.dependencies,
+      prepareOutputBinding: async () => {
+        controller.abort();
+        throw new Error("controlled cancellation during output preparation");
+      },
+    });
+    const cancelledInput = { ...cancelled.invocation("FREEZE_PROTOCOL_AND_SCOPE", cancelled.stageAttemptRef), principal: { ...cancelled.principal, signal: controller.signal } };
+    await expect(cancelledHandler.handler(cancelledInput)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
+    expect(cancelled.calls()).toBe(0);
+    const cancelledSha = await stageRequestSha256(cancelledInput.request);
+    const cancelledIdentity = await deriveModelAttemptIdentity({
+      stage_request_sha256: cancelledSha, principal_ref: cancelled.principal.principal_ref,
+      credential_generation: cancelled.principal.credential_generation, deployment_generation: cancelled.principal.deployment_generation,
+    });
+    await expect(cancelled.dependencies.attempts.readByIdempotency({
+      principal_ref: cancelled.principal.principal_ref, operation_kind: "REPORT", idempotency_key: cancelledIdentity.idempotency_key,
+    })).resolves.toMatchObject({ state: "CANCELLED", persisted_state: "CANCELLED", error_code: "WORKFLOW_CANCELLED" });
+
+    const expired = await governedModelAttemptFixture("handler-output-preparation-expired");
+    let now = Date.parse("2026-09-10T12:00:00.000Z");
+    const expiring = createGovernedModelAttemptHandler({
+      ...expired.dependencies,
+      now: () => now,
+      prepareOutputBinding: async () => {
+        now = Date.parse("2026-09-10T14:00:00.000Z");
+        throw new Error("controlled expiry during output preparation");
+      },
+    });
+    const expiredInput = expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", expired.stageAttemptRef);
+    await expect(expiring.handler(expiredInput)).rejects.toMatchObject({ code: "WORKFLOW_BUDGET_STOP" });
+    expect(expired.calls()).toBe(0);
+    const expiredSha = await stageRequestSha256(expiredInput.request);
+    const expiredIdentity = await deriveModelAttemptIdentity({
+      stage_request_sha256: expiredSha, principal_ref: expired.principal.principal_ref,
+      credential_generation: expired.principal.credential_generation, deployment_generation: expired.principal.deployment_generation,
+    });
+    await expect(expired.dependencies.attempts.readByIdempotency({
+      principal_ref: expired.principal.principal_ref, operation_kind: "REPORT", idempotency_key: expiredIdentity.idempotency_key,
+    })).resolves.toMatchObject({ state: "CANCELLED", persisted_state: "CANCELLED", error_code: "WORKFLOW_BUDGET_STOP" });
+  });
+
+  it("fences a second revalidation cancellation after durable output preparation", async () => {
+    const fixture = await governedModelAttemptFixture("handler-second-revalidate-cancel");
+    const controller = new AbortController();
+    let revalidations = 0;
+    const handler = createGovernedModelAttemptHandler({
+      ...fixture.dependencies,
+      revalidate: async () => {
+        revalidations += 1;
+        if (revalidations === 2) controller.abort();
+      },
+    });
+    const input = { ...fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef), principal: { ...fixture.principal, signal: controller.signal } };
+    await expect(handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
+    expect(revalidations).toBe(2);
+    expect(fixture.calls()).toBe(0);
+    const requestSha256 = await stageRequestSha256(input.request);
+    const identity = await deriveModelAttemptIdentity({
+      stage_request_sha256: requestSha256, principal_ref: fixture.principal.principal_ref,
+      credential_generation: fixture.principal.credential_generation, deployment_generation: fixture.principal.deployment_generation,
+    });
+    await expect(fixture.dependencies.attempts.readByIdempotency({
+      principal_ref: fixture.principal.principal_ref, operation_kind: "REPORT", idempotency_key: identity.idempotency_key,
+    })).resolves.toMatchObject({ state: "CANCELLED", persisted_state: "CANCELLED", error_code: "WORKFLOW_CANCELLED" });
+  });
+
+  it("fences a second revalidation expiry after durable output preparation", async () => {
+    const fixture = await governedModelAttemptFixture("handler-second-revalidate-expiry");
+    let now = Date.parse("2026-09-10T12:00:00.000Z");
+    let revalidations = 0;
+    const handler = createGovernedModelAttemptHandler({
+      ...fixture.dependencies,
+      now: () => now,
+      revalidate: async () => {
+        revalidations += 1;
+        if (revalidations === 2) now = Date.parse("2026-09-10T14:00:00.000Z");
+      },
+    });
+    const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef);
+    await expect(handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_BUDGET_STOP" });
+    expect(revalidations).toBe(2);
+    expect(fixture.calls()).toBe(0);
+    const requestSha256 = await stageRequestSha256(input.request);
+    const identity = await deriveModelAttemptIdentity({
+      stage_request_sha256: requestSha256, principal_ref: fixture.principal.principal_ref,
+      credential_generation: fixture.principal.credential_generation, deployment_generation: fixture.principal.deployment_generation,
+    });
+    await expect(fixture.dependencies.attempts.readByIdempotency({
+      principal_ref: fixture.principal.principal_ref, operation_kind: "REPORT", idempotency_key: identity.idempotency_key,
+    })).resolves.toMatchObject({ state: "CANCELLED", persisted_state: "CANCELLED", error_code: "WORKFLOW_BUDGET_STOP" });
   });
 
   it("rejects missing, mismatched, and foreign W2 grants before any W3 effect", async () => {
