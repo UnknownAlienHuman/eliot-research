@@ -425,7 +425,7 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-async function d1Query(paths, binding, sql, { deadlineMs = 15000, hardDeadlineMs } = {}) {
+async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -433,7 +433,7 @@ async function d1Query(paths, binding, sql, { deadlineMs = 15000, hardDeadlineMs
   // While the Worker is running, Worker/API readback (catalog/revisions/
   // session) is the primary active-runtime signal; CLI reads below reconcile
   // the same durable state and must replay exactly after restart.
-  const retryOptions = { execute: executeLocalAsync, deadlineMs };
+  const retryOptions = { execute: executeLocalAsync };
   if (hardDeadlineMs !== undefined) retryOptions.hardDeadlineMs = hardDeadlineMs;
   const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
   let batches;
@@ -551,30 +551,33 @@ function rawProjectionObservation(rows, sourceRevisionRef) {
     }
   }
   return {
-    source_revision_ref: bounded(sourceRevisionRef),
-    row_count: Array.isArray(rows) ? Math.min(rows.length, 2) : 0,
-    outbox_id: bounded(row?.outbox_id),
-    intent_id: bounded(row?.intent_id),
-    intent_revision: boundedNumberOrIdentifier(row?.intent_revision, 64),
-    job_id: bounded(row?.job_id),
-    projection_generation: boundedNumberOrIdentifier(row?.projection_generation, 64),
-    terminal_receipt_ref: bounded(row?.terminal_receipt_ref),
     outbox_state: bounded(row?.state, 64),
     job_state: bounded(row?.job_state, 64),
     current_stage: bounded(row?.current_stage, 96),
     projection_state: bounded(row?.projection_state, 64),
     reason_codes: reasonCodes,
+    source_revision_ref: bounded(sourceRevisionRef, 96),
+    outbox_id: bounded(row?.outbox_id, 64),
+    intent_id: bounded(row?.intent_id, 64),
+    intent_revision: boundedNumberOrIdentifier(row?.intent_revision, 64),
+    job_id: bounded(row?.job_id, 64),
+    projection_generation: boundedNumberOrIdentifier(row?.projection_generation, 64),
+    terminal_receipt_ref: bounded(row?.terminal_receipt_ref, 96),
+    row_count: Array.isArray(rows) ? Math.min(rows.length, 2) : 0,
   };
 }
 
 function isRawProjectionD1Timeout(error) {
   const code = error?.cause?.code ?? error?.code;
   return code === "ETIMEDOUT" || error?.message === "Local D1 command deadline expired" ||
+    error?.message === "Local D1 hard deadline expired" ||
     error?.message === "raw projection polling deadline expired before D1 readback";
 }
 
 function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError }) {
   const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const originalCode = String(originalError?.cause?.code ?? originalError?.code ?? "unknown")
+    .replaceAll(/[^A-Za-z0-9_.:-]/gu, "").slice(0, 64) || "unknown";
   const cause = {
     phase,
     elapsed_ms: elapsedMs,
@@ -582,12 +585,28 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
     last_successful_observation: rawProjectionObservation(latest, sourceRevisionRef),
     original_error: originalError ? {
       name: "LocalD1CommandTimeout",
-      code: String(originalError?.cause?.code ?? originalError?.code ?? "unknown").slice(0, 64),
+      code: originalCode,
       message: "D1 CLI readback command timed out",
     } : null,
   };
-  const observation = JSON.stringify(cause.last_successful_observation).slice(0, 900);
-  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); phase=${phase}; observation=${observation}`, { cause });
+  const observation = JSON.stringify(cause.last_successful_observation);
+  const compactObservation = observation.length <= 900 ? observation : JSON.stringify({
+    outbox_state: cause.last_successful_observation.outbox_state,
+    job_state: cause.last_successful_observation.job_state,
+    current_stage: cause.last_successful_observation.current_stage,
+    projection_state: cause.last_successful_observation.projection_state,
+    reason_codes: cause.last_successful_observation.reason_codes?.slice(0, 4),
+    ids: {
+      source_revision_ref: cause.last_successful_observation.source_revision_ref?.slice(0, 32),
+      outbox_id: cause.last_successful_observation.outbox_id?.slice(0, 32),
+      intent_id: cause.last_successful_observation.intent_id?.slice(0, 32),
+      job_id: cause.last_successful_observation.job_id?.slice(0, 32),
+      projection_generation: cause.last_successful_observation.projection_generation?.toString().slice(0, 32),
+      terminal_receipt_ref: cause.last_successful_observation.terminal_receipt_ref?.slice(0, 32),
+    },
+  });
+  const visibleCode = cause.original_error?.code ?? "unknown";
+  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); phase=${phase}; original_error_code=${visibleCode}; observation=${compactObservation}`, { cause });
   error.code = "RAW_PROJECTION_DEADLINE_EXCEEDED";
   return error;
 }
@@ -610,7 +629,7 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
       latest = await readbackWithBoundedRetry("raw-projection-state", () => {
         const remainingMs = deadlineMs - (Date.now() - startedAt);
         if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
-        return d1Query(paths, "CORE_DB", query, { deadlineMs: remainingMs, hardDeadlineMs: remainingMs });
+        return d1Query(paths, "CORE_DB", query, { hardDeadlineMs: remainingMs });
       }, {
         attempts: 2, delayMs: 100,
       });
