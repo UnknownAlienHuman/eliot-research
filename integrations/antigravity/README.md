@@ -33,9 +33,13 @@ Antigravity's documented config locations are global `~/.gemini/config/mcp_confi
 local `.agents/mcp_config.json`. Its remote schema uses `serverUrl`; legacy `url` and `httpUrl` fields
 are unsupported. Antigravity documents OAuth/DCR and custom headers, but this repository does not
 infer a safe secret-reference mechanism for a Cloudflare Access service token. The ELIOT endpoint still
-requires its dedicated Access JWT/service-token Client ID contract; the remaining prerequisite is an
-Antigravity auth binding followed by the deployed Access round trip. Complete authentication through a
-supported client flow only after that contract is qualified.
+requires its dedicated Access host/team/audience contract. Set `MCP_ACCESS_AUTH_PROFILE=service-token`
+with the exact Access service-token Client ID for the retained service profile, or
+`MCP_ACCESS_AUTH_PROFILE=managed-oauth` for a verified human Access identity. Managed OAuth must use an
+audience distinct from ordinary `ACCESS_AUDIENCE`, rejects service-token JWTs, and binds a
+domain-separated hash of the verified subject so raw identity values do not enter ELIOT context. Both
+profiles remain pending an Antigravity auth binding followed by the deployed Access round trip; this
+local setup does not claim either profile is authenticated or live-qualified.
 
 ## Gemini Spark is a separate client
 

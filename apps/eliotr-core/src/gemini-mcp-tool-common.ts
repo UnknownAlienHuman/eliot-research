@@ -53,6 +53,8 @@ export const GOOGLE_PRODUCTS = [
   "gmail",
   "cloud",
 ] as const;
+/** The selected ER36 profile is Workspace-only; Cloud/gcloud is a separate future profile. */
+export const WORKSPACE_GOOGLE_PRODUCTS = GOOGLE_PRODUCTS.filter((product) => product !== "cloud") as readonly Exclude<typeof GOOGLE_PRODUCTS[number], "cloud">[];
 export const GOOGLE_ACTIONS = [
   "inspect",
   "read",

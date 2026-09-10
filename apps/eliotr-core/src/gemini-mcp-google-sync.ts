@@ -63,8 +63,11 @@ export async function createPlan(
     );
   }
   const decoded = decodePlanInput(input);
-  if (decoded.google_product === "cloud" && decoded.google_project_id === undefined) {
-    throw new GeminiMcpToolError("INPUT_INVALID", "google_project_id is required for Google Cloud plans");
+  if (decoded.google_product === "cloud") {
+    throw new GeminiMcpToolError(
+      "GOOGLE_CLOUD_PROFILE_UNSELECTED",
+      "Google Cloud/gcloud is not part of the selected Workspace MCP profile",
+    );
   }
   const identity = {
     protocol: "eliotr.google-sync.plan-identity.v1",
@@ -78,7 +81,7 @@ export async function createPlan(
     throw new GeminiMcpToolError("CLOCK_INVALID", "clock returned an invalid value", true);
   }
   const mutating = MUTATING_ACTIONS.has(decoded.action);
-  const connector = decoded.google_product === "cloud" ? "gcloud" : "google-workspace";
+  const connector = "google-workspace" as const;
   return {
     protocol: "eliotr.google-sync.plan.v1",
     plan_id: planId,
@@ -132,6 +135,12 @@ function decodePlan(value: unknown): GoogleSyncPlan {
     payload_sha256: record.payload_sha256,
     dry_run: record.dry_run,
   });
+  if (decodedInput.google_product === "cloud") {
+    throw new GeminiMcpToolError(
+      "GOOGLE_CLOUD_PROFILE_UNSELECTED",
+      "Google Cloud/gcloud is not part of the selected Workspace MCP profile",
+    );
+  }
   if (
     record.protocol !== "eliotr.google-sync.plan.v1" ||
     typeof record.plan_id !== "string" ||
@@ -153,7 +162,7 @@ function decodePlan(value: unknown): GoogleSyncPlan {
   if (Date.parse(expiresAt) - Date.parse(createdAt) !== PLAN_TTL_MS) {
     throw new GeminiMcpToolError("INPUT_INVALID", "sync plan expiry is invalid");
   }
-  const expectedConnector = decodedInput.google_product === "cloud" ? "gcloud" : "google-workspace";
+  const expectedConnector = "google-workspace" as const;
   const mutating = MUTATING_ACTIONS.has(decodedInput.action);
   if (record.connector !== expectedConnector || record.confirmation_required !== mutating ||
       !exactStrings(record.required_readback_fields, readbackFields(decodedInput.google_product)) ||

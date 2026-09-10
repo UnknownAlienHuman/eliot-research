@@ -385,11 +385,16 @@ describe("Google observation contract regressions", () => {
     const input = await fixture(); input.receipt.observed_at = value;
     await expect(validate(input)).rejects.toMatchObject({ code: "INPUT_INVALID" });
   });
-  it.each(["cloud", "calendar", "gmail"] as const)("never validates an untyped %s state from a status string", async (product) => {
-    const input = await fixture({ google_product: product, ...(product === "cloud" ? { google_project_id: "project-1" } : {}) });
-    const connector = product === "cloud" ? "gcloud" : "google-workspace";
+  it.each(["calendar", "gmail"] as const)("never validates an untyped %s state from a status string", async (product) => {
+    const input = await fixture({ google_product: product });
+    const connector = "google-workspace";
     await mismatch({ ...input, receipt: { ...input.receipt, google_product: product, connector,
       google_project_id: "project-1", status: "SUCCESS" } }, "PRODUCT_STATE_UNVERIFIED");
+  });
+  it("rejects Google Cloud planning in the selected Workspace profile", async () => {
+    await expect(createPlan({ google_product: "cloud", google_project_id: "project-1", action: "read",
+      direction: "google_to_eliot_candidate" }, toolDependencies("gemini-mcp"), context))
+      .rejects.toMatchObject({ code: "GOOGLE_CLOUD_PROFILE_UNSELECTED" });
   });
   it("requires an expected payload digest instead of trusting a supplied one", async () => {
     const input = await fixture();

@@ -70,6 +70,9 @@ create a reverse authority channel and do not let a Google transport result prom
 - Drive Exchange and Gemini direct orchestration cannot simultaneously own the transport.
 - the validated `GOOGLE_EXTERNAL_TRANSPORT` profile selects the applicable gate; unknown, mixed and
   explicitly disabled deployment profiles fail closed, and no launch-check argument can override it;
+- `MCP_ACCESS_AUTH_PROFILE` selects `service-token` or `managed-oauth`; managed-oauth uses the existing
+  signed Access verifier, a dedicated audience and a domain-separated hashed actor binding, while
+  rejecting service-token credentials and mixed profile configuration;
 - `gemini-mcp` retains a pending authenticated Workspace candidate-admission/readback gate, while
   `drive-exchange` retains the server-owned legacy OAuth/Exchange gate; common product gates are unchanged;
 - legacy Google OAuth routes reject requests unless `GOOGLE_EXTERNAL_TRANSPORT=drive-exchange`.

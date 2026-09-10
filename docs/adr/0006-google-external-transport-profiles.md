@@ -24,6 +24,15 @@ Antigravity uses a project-local `.agents/mcp_config.json` with remote `serverUr
 Gemini web Connected Apps and an MCP server URL. The exact Cloudflare Access authentication path for
 these clients remains pending qualification; no token or secret is written by the client setup.
 
+The existing verifier supports two explicit MCP authentication profiles. `service-token` requires the
+exact signed Client ID in `MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` and preserves the logical
+`gemini-spark` principal. `managed-oauth` accepts only a verified human Access identity, requires a
+dedicated `MCP_ACCESS_AUDIENCE` distinct from ordinary `ACCESS_AUDIENCE`, and derives a
+domain-separated SHA-256 actor binding from the verified issuer, audience, subject and profile. A
+service-token credential, unknown or mixed profile, or ordinary audience is denied before MCP dispatch.
+These changes are deterministic auth behavior only; deployed routing, client compatibility, candidate
+admission and Workspace readback remain `NOT_EXECUTED`.
+
 The client distinction follows the [Gemini Spark Connected Apps guidance](https://support.google.com/gemini/answer/17209137)
 and [Antigravity MCP configuration](https://antigravity.google/docs/mcp/) checked on 2026-09-09.
 The [Google transition announcement](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/)

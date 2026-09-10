@@ -6,7 +6,7 @@ import type {
 } from "./gemini-mcp-protocol.js";
 import {
   GOOGLE_ACTIONS,
-  GOOGLE_PRODUCTS,
+  WORKSPACE_GOOGLE_PRODUCTS,
   STRICT_EMPTY_KEYS,
   SYNC_DIRECTIONS,
   GeminiMcpToolError,
@@ -54,7 +54,7 @@ export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
       additionalProperties: false,
       required: ["google_product", "action", "direction"],
       properties: {
-        google_product: { type: "string", enum: GOOGLE_PRODUCTS },
+        google_product: { type: "string", enum: WORKSPACE_GOOGLE_PRODUCTS },
         action: { type: "string", enum: GOOGLE_ACTIONS },
         direction: { type: "string", enum: SYNC_DIRECTIONS },
         source_ref: { type: "string", maxLength: 256 },
