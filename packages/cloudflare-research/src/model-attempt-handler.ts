@@ -50,6 +50,11 @@ export interface GovernedModelAttemptDependencies {
   readOutput(binding: Pick<ModelOutputBinding, "output_object_ref" | "output_sha256">): Promise<Uint8Array>;
 }
 
+type WorkflowBudgetBoundReservation = ModelAttemptReservationInput & {
+  /** W2's persisted receipt; distinct from the W3 reservation identifier. */
+  readonly workflow_budget_receipt_ref: string;
+};
+
 export interface GovernedModelAttemptHandler {
   readonly handler: WorkflowStageHandler;
   readonly recoverStartedAttempt: (
@@ -111,6 +116,7 @@ function validatePrepared(
   operationKind: GovernedModelAttemptDependencies["operation_kind"],
 ): void {
   const { intent, authority, call, quote } = prepared;
+  const workflowBudgetReceipt = (prepared as Partial<WorkflowBudgetBoundReservation>).workflow_budget_receipt_ref;
   if (intent.operation_kind !== operationKind || quote.operation_kind !== operationKind ||
       intent.intent_ref.id !== input.model_operation_id || intent.principal_ref !== input.principal.principal_ref ||
       intent.idempotency_key !== input.model_idempotency_key || prepared.idempotency_key !== input.model_idempotency_key ||
@@ -119,6 +125,7 @@ function validatePrepared(
       authority.deployment_generation !== input.principal.deployment_generation ||
       !sameScope(input.request.input_manifest.residency.scope_domain_id, input.request, authority) ||
       intent.budget_reservation_ref !== quote.reservation_id || call.budget_reservation_ref !== quote.reservation_id ||
+      workflowBudgetReceipt !== input.budget_receipt_ref ||
       call.output_object_ref !== input.model_output_object_ref || prepared.stage_attempt_ref !== input.attempt_ref ||
       prepared.stage_request_sha256 !== input.stage_request_sha256) {
     uncertain("trusted model attempt preparation does not match the W2 identity");
