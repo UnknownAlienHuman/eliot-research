@@ -186,13 +186,21 @@ function requiredObject(objects: readonly ArtifactDraftReferencedObjectInput[], 
   return matches[0] as ArtifactDraftReferencedObjectInput;
 }
 
+function evidenceIdentity(evidence: ResearchEvidencePack["resolved_evidence"][number]): Record<string, unknown> {
+  return {
+    handle: evidence.handle,
+    exact_excerpt: evidence.exact_excerpt,
+    ...(evidence.neighboring_text_ref === undefined ? {} : { neighboring_text_ref: evidence.neighboring_text_ref }),
+    ...(evidence.source_title === undefined ? {} : { source_title: evidence.source_title }),
+    source_revision_content_sha256: evidence.source_revision_content_sha256,
+    scope_snapshot_digest: evidence.scope_snapshot_digest,
+    instruction_taint: evidence.instruction_taint,
+    allowed_effects: evidence.allowed_effects,
+  };
+}
+
 function sameEvidence(left: ResearchEvidencePack["resolved_evidence"][number], right: ResearchEvidencePack["resolved_evidence"][number]): boolean {
-  return canonicalEvidenceJson({ handle: left.handle, exact_excerpt: left.exact_excerpt, neighboring_text_ref: left.neighboring_text_ref,
-    source_title: left.source_title, source_revision_content_sha256: left.source_revision_content_sha256,
-    scope_snapshot_digest: left.scope_snapshot_digest, instruction_taint: left.instruction_taint, allowed_effects: left.allowed_effects }) ===
-    canonicalEvidenceJson({ handle: right.handle, exact_excerpt: right.exact_excerpt, neighboring_text_ref: right.neighboring_text_ref,
-      source_title: right.source_title, source_revision_content_sha256: right.source_revision_content_sha256,
-      scope_snapshot_digest: right.scope_snapshot_digest, instruction_taint: right.instruction_taint, allowed_effects: right.allowed_effects });
+  return canonicalEvidenceJson(evidenceIdentity(left)) === canonicalEvidenceJson(evidenceIdentity(right));
 }
 
 function requireCurrentEvidenceAuthority(
