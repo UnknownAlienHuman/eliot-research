@@ -9,7 +9,8 @@ const modelBytes = () => new TextEncoder().encode("known model result — вос
 async function readObject(bucket: R2Bucket, key: string): Promise<Uint8Array> {
   const object = await bucket.get(key);
   expect(object).not.toBeNull();
-  return new Uint8Array(await object!.arrayBuffer());
+  if (object === null) throw new Error("expected durable workflow object");
+  return new Uint8Array(await object.arrayBuffer());
 }
 
 describe("W3 started model attempt recovery", () => {
