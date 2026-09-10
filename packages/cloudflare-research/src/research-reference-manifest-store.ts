@@ -118,6 +118,13 @@ function refKey(value: VersionedRef): string {
   return `${value.id}:${value.revision}`;
 }
 
+function isNavigationScopeError(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
+  const code = (cause as { readonly code?: unknown }).code;
+  return code === "NAVIGATION_SCOPE_NOT_CURRENT" || code === "NAVIGATION_SCOPE_MISMATCH" ||
+    code === "RETRIEVAL_SCOPE_STALE" || code === "RETRIEVAL_AUTHORITY_STALE";
+}
+
 function manifestBytes(manifest: AllowedReferenceManifest): { readonly json: string; readonly bytes: Uint8Array; readonly digest: string } {
   const parsed = AllowedReferenceManifestSchema.parse(manifest);
   const json = canonicalEvidenceJson(parsed);
@@ -203,7 +210,7 @@ async function readR2(
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object metadata differs from D1", true);
   }
   const metadata = object.customMetadata ?? {};
-  if (metadata.eliotr_kind !== "research-reference-manifest" || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
+  if (Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest immutable metadata differs from D1", true);
   }
   let residency: ObjectResidencyKey;
@@ -248,7 +255,15 @@ export function createResearchReferenceManifestStore(input: {
         input.navigation.scope.revision !== input.context.scope_snapshot_ref.revision) {
       fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest store authority context differs from navigation authority");
     }
-    const grant = await input.navigation.current();
+    let grant: Awaited<ReturnType<typeof input.navigation.current>>;
+    try {
+      grant = await input.navigation.current();
+    } catch (cause) {
+      if (isNavigationScopeError(cause)) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest navigation authority is stale or denied", true, cause);
+      }
+      throw cause;
+    }
     if (grant.authorization_receipt_ref !== input.context.authorization_receipt_ref ||
         grant.policy_authority_ref !== input.context.policy_authority_ref) {
       fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed before readback", true);
@@ -321,7 +336,7 @@ export function createResearchReferenceManifestStore(input: {
         expected_sha256: contentDigest,
         expected_size_bytes: encoded.bytes.byteLength,
         content_type: "application/json",
-        custom_metadata: { eliotr_kind: "research-reference-manifest" },
+        custom_metadata: {},
       });
     } catch (cause) {
       fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 write/readback is uncertain", true, cause);
