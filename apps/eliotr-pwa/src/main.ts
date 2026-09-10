@@ -17,6 +17,7 @@ const app: HTMLDivElement = root;
 
 let googleOAuthCleanup: (() => void) | undefined;
 let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
+type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
 
 function healthBadge(health: SystemHealth | null): string {
   if (health === null) return '<span class="status status--pending">checking</span>';
@@ -49,6 +50,15 @@ function googleConnectorLabel(transport: GoogleExternalTransport | undefined): s
     case "disabled": return "Unavailable";
     default: return "Unknown";
   }
+}
+
+function healthSummary(health: SystemHealth | null): string {
+  if (health === null) return "Checking current deployment…";
+  if (health.ready) return "Ready · authenticated owner surface";
+  if (health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE")) {
+    return "Workspace connection unavailable. Retry to reconnect.";
+  }
+  return "Workspace unavailable. Retry to check again.";
 }
 
 function renderGoogleConnector(health: SystemHealth | null): void {
@@ -225,16 +235,28 @@ function render(health: SystemHealth | null): void {
 
 function updateHealth(health: SystemHealth): void {
   const previousGeneration = app.dataset.healthGeneration;
-  if (!health.ready || (previousGeneration !== undefined && previousGeneration !== "" && previousGeneration !== health.deployment_generation)) {
-    app.dispatchEvent(new Event("eliotr:health-lost"));
+  const previousReady = app.dataset.healthReady === "true";
+  const healthObserved = app.dataset.healthObserved === "true";
+  const endpointUnreachable = health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE");
+  const generationChanged = !endpointUnreachable && previousGeneration !== undefined && previousGeneration !== "" && previousGeneration !== "unreachable" && previousGeneration !== health.deployment_generation;
+  const reason: HealthLossReason | undefined = generationChanged
+    ? "generation-changed"
+    : !health.ready
+      ? healthObserved && previousReady ? "connection-lost" : "initial-unavailable"
+      : undefined;
+  if (reason !== undefined) {
+    app.dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason } }));
   }
   app.dataset.healthGeneration = health.deployment_generation;
   app.dataset.healthReady = health.ready ? "true" : "false";
+  app.dataset.healthObserved = "true";
   renderGoogleConnector(health);
   const badge = app.querySelector("#health-badge");
   if (badge) badge.innerHTML = healthBadge(health);
   const summary = app.querySelector("#health-summary");
-  if (summary) summary.textContent = health.ready ? "Ready · authenticated owner surface" : `Blocked · ${health.blocking_reason_codes.join(", ")}`;
+  if (summary) summary.textContent = healthSummary(health);
+  const refresh = app.querySelector<HTMLButtonElement>("[data-refresh]");
+  if (refresh) refresh.textContent = health.ready ? "Refresh" : "Retry connection";
   const dot = app.querySelector(".health-dot");
   if (dot) dot.className = `health-dot health-dot--${health.ready ? "ready" : "blocked"}`;
   const generation = app.querySelector(".health-generation");

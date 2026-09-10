@@ -19,6 +19,8 @@ interface RawFilePanelHost {
   readonly ready: () => boolean;
 }
 
+type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
+
 function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
@@ -400,11 +402,19 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     lastGeneration = generation;
     renderButtons();
   };
+  const clearOnHealthLost = (event: Event): void => {
+    const reason = (event as CustomEvent<{ readonly reason?: HealthLossReason }>).detail?.reason;
+    clear(reason === "generation-changed"
+      ? "Application changed. Private upload and processing state cleared; choose the file again."
+      : reason === "connection-lost"
+        ? "Workspace connection lost. Retry connection above; private upload state was cleared."
+        : "Workspace connection unavailable. Retry connection above before choosing a file.");
+  };
   const clearOnAuth = () => clear("Authorization changed. Private upload state cleared. Choose the file again.");
   const clearOnOffline = () => clear("Offline. Private upload state cleared; choose the file again when online.");
   const app = element.closest("#app");
   app?.addEventListener("eliotr:health-updated", healthUpdated);
-  app?.addEventListener("eliotr:health-lost", clearOnAuth);
+  app?.addEventListener("eliotr:health-lost", clearOnHealthLost);
   window.addEventListener("eliotr:authorization-cleared", clearOnAuth);
   window.addEventListener("offline", clearOnOffline);
   window.addEventListener("pagehide", clearOnOffline);
@@ -414,7 +424,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     clear("Upload panel closed.");
     form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null; stopButton.onclick = null;
     app?.removeEventListener("eliotr:health-updated", healthUpdated);
-    app?.removeEventListener("eliotr:health-lost", clearOnAuth);
+    app?.removeEventListener("eliotr:health-lost", clearOnHealthLost);
     window.removeEventListener("eliotr:authorization-cleared", clearOnAuth);
     window.removeEventListener("offline", clearOnOffline);
     window.removeEventListener("pagehide", clearOnOffline);
