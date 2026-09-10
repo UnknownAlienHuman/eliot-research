@@ -14,6 +14,7 @@ import process from "node:process";
 import { prepareLocal, executeLocalAsync, executeLocalD1WithRetryAsync, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
+import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
@@ -4500,6 +4501,7 @@ export async function runOwnerE2E() {
   let rawUpload;
   let rawProjectionFastSearch;
   let teardownError = null;
+  const miniflarePortGuard = await reserveMiniflareForbiddenPorts();
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
     started_at: startedAt,
@@ -5946,6 +5948,9 @@ export async function runOwnerE2E() {
       admission_receipt_ref: evidenceMeta.admission_receipt_ref,
       generation: stoppedGeneration,
     };
+  } catch (error) {
+    teardownError = error;
+    throw error;
   } finally {
     // Unconditional nested finally: EVERY owned resource is released while
     // dependent cleanup is still safe. Each step runs inside its own guard,
@@ -6134,6 +6139,11 @@ export async function runOwnerE2E() {
           } catch { /* removed: expected */ }
         }
       });
+    // Port reservations are released even when a prior dependent cleanup
+    // step timed out and set teardownStopped; otherwise the guard itself
+    // would survive the run and mask the original cleanup failure.
+    try { await miniflarePortGuard.release(); }
+    catch (error) { stepErrors.push(`miniflarePortGuard.release: ${error?.message ?? error}`); }
     if (Date.now() - teardownStarted >= teardownDeadlineMs) {
       fail("outer teardown deadline exceeded with full reconciliation");
     }
