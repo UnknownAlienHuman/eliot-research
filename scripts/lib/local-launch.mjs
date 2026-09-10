@@ -85,18 +85,58 @@ export function wranglerArgs(paths, command) {
   return [WRANGLER, ...command, "--config", paths.config, "--persist-to", paths.persist, "--local"];
 }
 
-export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), capture = false } = {}) {
+const LOCAL_RUNTIME_ERROR_CODES = new Set([
+  "SQLITE_BUSY", "SQLITE_CANTOPEN", "SQLITE_CORRUPT", "SQLITE_ERROR", "SQLITE_FULL",
+  "SQLITE_IOERR", "SQLITE_LOCKED", "SQLITE_MISUSE", "SQLITE_NOMEM", "SQLITE_READONLY",
+  "EAGAIN", "EBUSY", "ENOMEM", "EPERM", "ETIMEDOUT", "UNKNOWN",
+]);
+const LOCAL_MIGRATION_BINDINGS = new Set(["CORE_DB", "SEARCH_DB"]);
+
+function normalizeMigrationDiagnostic(context) {
+  if (!context || context.phase !== "d1-migrations" || !LOCAL_MIGRATION_BINDINGS.has(context.binding)) return null;
+  return { binding: context.binding, phase: context.phase };
+}
+
+function boundedTail(value, limit = 4096) {
+  const text = String(value ?? "");
+  return text.length > limit ? text.slice(-limit) : text;
+}
+
+function localRuntimeErrorCode(stdout, stderr) {
+  for (const text of [boundedTail(stderr), boundedTail(stdout)]) {
+    const match = text.match(/\b(SQLITE_(?:BUSY|CANTOPEN|CORRUPT|ERROR|FULL|IOERR|LOCKED|MISUSE|NOMEM|READONLY)|EAGAIN|EBUSY|ENOMEM|EPERM|ETIMEDOUT)\b/iu);
+    const code = match?.[1]?.toUpperCase();
+    if (code && LOCAL_RUNTIME_ERROR_CODES.has(code)) return code;
+  }
+  return "UNKNOWN";
+}
+
+function migrationDiagnostic(context, stdout, stderr) {
+  const migration = normalizeMigrationDiagnostic(context);
+  if (!migration) return null;
+  return { ...migration, runtime_code: localRuntimeErrorCode(stdout, stderr) };
+}
+
+function migrationDiagnosticSuffix(context) {
+  return context ? ` [migration=${context.binding}/${context.phase}; runtime=${context.runtime_code}]` : "";
+}
+
+export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), capture = false, diagnosticContext } = {}) {
   const result = spawnSync(process.execPath, args, { cwd, env, shell: false, timeout: 180_000,
     encoding: "utf8", maxBuffer: 8 * 1024 * 1024, stdio: capture ? "pipe" : "inherit" });
   if (result.error || result.status !== 0) {
     const raw = capture ? `${result.stdout ?? ""}\n${result.stderr ?? ""}` : "";
     const diagnostic = capture ? classifyLocalFailure(result.stdout ?? "", result.stderr ?? "") : "";
+    const migration = migrationDiagnostic(diagnosticContext, result.stdout ?? "", result.stderr ?? "");
     const redacted = raw.replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
       .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]").slice(0, 1000);
     const suffix = diagnostic ? ` [${diagnostic}]` : "";
-    const error = new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested${suffix}${redacted.trim() ? ` :: ${redacted.trim()}` : ""}`);
-    error.cause = { code: result.error?.code ?? result.status ?? "unknown", diagnostic,
-      stdout: String(result.stdout ?? "").slice(0, 4096), stderr: String(result.stderr ?? "").slice(0, 4096) };
+    const outputSuffix = migration ? "" : (redacted.trim() ? ` :: ${redacted.trim()}` : "");
+    const error = new Error(`Local command failed (${result.error?.code ?? result.status ?? "unknown"}); no remote deploy was requested${migration ? "" : suffix}${migrationDiagnosticSuffix(migration)}${outputSuffix}`);
+    error.cause = migration
+      ? { code: result.error?.code ?? result.status ?? "unknown", migration }
+      : { code: result.error?.code ?? result.status ?? "unknown", diagnostic,
+        stdout: String(result.stdout ?? "").slice(0, 4096), stderr: String(result.stderr ?? "").slice(0, 4096) };
     throw error;
   }
   return result.stdout ?? "";
@@ -414,7 +454,8 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   await rename(temporary, paths.config);
   execute([ASTRO, "build"], { cwd: resolve(ROOT, "apps/eliotr-pwa") });
   for (const binding of ["CORE_DB", "SEARCH_DB"]) {
-    execute(wranglerArgs(paths, ["d1", "migrations", "apply", binding]));
+    execute(wranglerArgs(paths, ["d1", "migrations", "apply", binding]),
+      { capture: true, diagnosticContext: { binding, phase: "d1-migrations" } });
   }
   log("Local PWA and both D1 migration streams prepared. Providers are disabled; Access authentication is unchanged.");
   return { ...paths, generation: config.vars.DEPLOYMENT_GENERATION, config_sha256: createHash("sha256").update(JSON.stringify(config)).digest("hex") };
