@@ -52,16 +52,22 @@ function decode(row: Record<string, unknown>): RawMarkdownResult | null {
         result.protocol !== "eliotr.raw-markdown-conversion.v1" || !validId(result.operation_id) || !validId(result.capture_id) ||
         typeof result.content_sha256 !== "string" || !SHA256.test(result.content_sha256) ||
         !["COMPLETE", "FAILED", "UNKNOWN"].includes(String(result.state))) return null;
-    if (result.state === "COMPLETE" && (typeof result.output_sha256 !== "string" || !SHA256.test(result.output_sha256) ||
+    if (result.state === "COMPLETE" && (Object.keys(result).some((key) => key === "failure_code") ||
+        Object.keys(result).length !== 10 || typeof result.output_sha256 !== "string" || !SHA256.test(result.output_sha256) ||
         !Number.isSafeInteger(result.output_bytes) || (result.output_bytes as number) < 1 ||
         typeof result.detected_mime !== "string" || !["markdown", "text"].includes(String(result.format)) ||
         !Number.isSafeInteger(result.tokens) || (result.tokens as number) < 0)) return null;
     if ((result.state === "FAILED" || result.state === "UNKNOWN") &&
-        !["SOURCE_UNAVAILABLE", "SOURCE_INTEGRITY_MISMATCH", "AUTHORITY_STALE", "IDEMPOTENCY_CONFLICT", "PROVIDER_UNCERTAIN", "PROVIDER_FAILED", "OUTPUT_UNAVAILABLE", "INVALID_REQUEST", "CANCELED"].includes(String(result.failure_code))) return null;
+        (Object.keys(result).length !== 6 || !["SOURCE_UNAVAILABLE", "SOURCE_INTEGRITY_MISMATCH", "AUTHORITY_STALE", "IDEMPOTENCY_CONFLICT", "PROVIDER_UNCERTAIN", "PROVIDER_FAILED", "OUTPUT_UNAVAILABLE", "INVALID_REQUEST", "CANCELED"].includes(String(result.failure_code)))) return null;
     return result as unknown as RawMarkdownResult;
   } catch {
     return null;
   }
+}
+
+/** Strict decoder reused by the owner admission reader; it performs no storage or provider effect. */
+export function decodeStoredRawMarkdownResult(row: Record<string, unknown>): RawMarkdownResult | null {
+  return decode(row);
 }
 
 function snapshotContext(context: RawMarkdownConversionContext): RawMarkdownConversionContext {

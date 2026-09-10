@@ -2,6 +2,7 @@ export * from "./common.js";
 export * from "./security.js";
 export * from "./residency.js";
 export * from "./source.js";
+export * from "./snapshot-view.js";
 export * from "./owner-cutover.js";
 export * from "./scope.js";
 export * from "./normalized-bundle.js";
