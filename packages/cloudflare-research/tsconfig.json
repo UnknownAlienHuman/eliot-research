@@ -13,6 +13,9 @@
   ],
   "references": [
     {
+      "path": "../cloudflare-evidence"
+    },
+    {
       "path": "../contracts"
     },
     {
