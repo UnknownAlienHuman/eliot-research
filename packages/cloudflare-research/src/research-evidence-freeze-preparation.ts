@@ -12,51 +12,24 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
-import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { LedgerHead } from "@eliotr/research";
 import type { ReferenceManifestStorageContext, ResearchReferenceManifestStore } from "./research-reference-manifest-store.js";
 import {
   buildAllowedReferenceManifest,
-  type ReferenceManifestPolicyProfile,
   type ResearchEvidencePack,
 } from "./research-reference-manifest.js";
 import { CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS } from "./research-protocol-freeze.js";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
+import type {
+  ModelProfileBinding as EvidenceFreezeModelBinding,
+  ModelProfileDefinition as EvidenceFreezeModelDefinition,
+} from "./research-model-profile-binding.js";
 import type { StageRequest, WorkflowPrincipal } from "./types.js";
+
+export type { EvidenceFreezeModelBinding, EvidenceFreezeModelDefinition };
 
 const MAX_BYTES = 64 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-
-export interface EvidenceFreezeModelBinding {
-  readonly schema: "eliotr.research.model-profile-binding.v1";
-  readonly binding_ref: VersionedRef;
-  readonly binding_sha256: string;
-  readonly definition_ref: VersionedRef;
-  readonly definition_sha256: string;
-  readonly config_provenance_ref: string;
-  readonly model_profile_ref: string;
-  readonly policy_authority_ref: string;
-  readonly policy_generation: string;
-  readonly deployment_generation: string;
-  readonly scope_snapshot_ref: VersionedRef;
-  readonly scope_snapshot_digest: string;
-  readonly expires_at: string;
-  readonly max_context_bytes: number;
-  readonly deployment: ModelRouteDeployment;
-  readonly policy: ReferenceManifestPolicyProfile;
-}
-
-export interface EvidenceFreezeModelDefinition {
-  readonly schema: "eliotr.research.model-profile-definition.v1";
-  readonly definition_ref: VersionedRef;
-  readonly definition_sha256: string;
-  readonly config_provenance_ref: string;
-  readonly model_profile_ref: string;
-  readonly expires_at: string;
-  readonly max_context_bytes: number;
-  readonly deployment: ModelRouteDeployment;
-  readonly policy: ReferenceManifestPolicyProfile;
-}
 
 export interface EvidenceFreezeStageFiveLineage {
   readonly operation_id: string;
