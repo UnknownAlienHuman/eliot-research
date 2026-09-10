@@ -80,6 +80,12 @@ Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE
 
 ## Additive navigation schema
 
+The ER-09 W3 pricing handoff is allocated `0038_research_model_pricing.sql` for immutable model pricing
+snapshot storage. This allocation supplies no prices or budget approval. ER-27 owns
+`apps/eliotr-core/test/research-model-pricing-store.test.ts`, including exact replay, conflict/corruption
+refusal and lost-write-acknowledgement readback. Existing `budget_reservation` remains the reservation
+authority; this migration must not create a competing reservation or payment receipt.
+
 `0010_navigation_artifacts.sql` adds ER-31's scope-bound immutable navigation rows, insertion guards
 and dependent-body deletion triggers. It changes no existing source/evidence authority, global schema
 head, outbox semantics or enabled Worker route. Apply it with the other Core migrations before composing
