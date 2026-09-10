@@ -52,7 +52,7 @@ function abortError(message: string): Error {
 
 function requestTimeout(init: RequestInit): number {
   const value = new Headers(init.headers).get(REQUEST_TIMEOUT_HEADER);
-  if (value === null || !/^\d+$/u.test(value)) {
+  if (value === null || !/^(?:0|[1-9]\d*)$/u.test(value)) {
     requestInvalid("prepared model gateway request is missing its canonical timeout header");
   }
   const timeout = Number(value);
