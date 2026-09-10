@@ -16,7 +16,22 @@ const dist = resolve(root, "apps/eliotr-pwa/dist");
 const temporary = await mkdtemp(resolve(tmpdir(), "eliotr-browser-"));
 const envelope = (data) => ({ data, deployment_generation: "browser-fixture", trace_id: "browser-trace" });
 const researchWorkflowId = `run-${"c".repeat(48)}`;
+const draftWorkflowId = `run-${"d".repeat(48)}`;
+const draftArtifactRef = { id: "artifact-draft-1", revision: 1 };
+const draftSectionRef = { id: "section-draft-1", revision: 1 };
+const draftSectionText = "Draft section bytes from the persisted report.\n";
+const draftSectionSha = createHash("sha256").update(draftSectionText).digest("hex");
+const draftArtifact = {
+  artifact_ref: draftArtifactRef, spec_ref: { id: "spec-draft-1", revision: 1 }, spec_digest: "1".repeat(64),
+  evidence_freeze_ref: { id: "freeze-draft-1", revision: 1 },
+  sections: [{ section_ref: draftSectionRef, contract_id: "summary", body_object_ref: "artifact-section-object-1",
+    body_sha256: draftSectionSha, statement_labels: { "statement-1": "SOURCE_SUPPORTED" },
+    evidence_ledger_ref: "evidence-ledger-draft-1", verification_receipt_ref: "verification-draft-1" }],
+  dependency_manifest_ref: "manifest-draft-1", deterministic_export_refs: {}, status: "DRAFT",
+  created_at: "2026-09-10T12:00:00.000Z",
+};
 let researchRunStatusReads = 0;
+let draftRunStatusReads = 0;
 const page = (id, title, next) => envelope({ projects: [{ id: "project-1", title: "Проект", generation: "1" }],
   sources: [{ id, title, readiness_ref: `readiness:${id}:revision-1` }], ...(next ? { next_cursor: next } : {}) });
 const orientation = () => {
@@ -94,7 +109,7 @@ const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.s
     quality_state: "standard", currentness_state: "unknown", readiness: older ? [] : [{
       source_revision_ref: "revision-1", channel: "semantic_ready", state: "degraded", reason_codes: ["AI_SEARCH_UNAVAILABLE"],
       observed_at: "2026-09-02T12:00:00.000Z" }] }], ...(older ? {} : { next_cursor: "olderFixture" }) });
-let revisionMode = "normal"; let pendingRevision;
+let revisionMode = "normal"; let pendingRevision; let sectionMode = "normal"; let pendingSection;
 let mode = "normal"; let pending; let pendingOrientation; let orientationMode = "normal"; const selectionOrder = [];
 let browser; let socket; let closing;
 const HEALTH_DELAY_MS = 250;
@@ -154,18 +169,44 @@ const server = createServer((request, response) => {
       assert.ok(request.headers["idempotency-key"]);
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      assert.deepEqual(body, { query: "research question", product: "RESEARCH",
-        scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] }, literals: [],
+      const expectedQuery = body.query === "research question" || body.query === "draft research question" ? body.query : "";
+      assert.ok(expectedQuery, "research fixture accepts only its declared run queries");
+      assert.deepEqual(body, { query: expectedQuery, product: "RESEARCH",
+        scope_expression: body.scope_expression, literals: [],
         evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: 16 });
-      researchRunStatusReads = 0;
-      return json(envelope({ investigation_ref: { id: `research-${"c".repeat(48)}`, revision: 1 }, workflow_instance_id: researchWorkflowId }));
+      assert.ok(JSON.stringify(body.scope_expression) === JSON.stringify({ kind: "SELECTED_SOURCES", source_ids: ["source-1"] }) ||
+        JSON.stringify(body.scope_expression) === JSON.stringify({ kind: "GLOBAL_LIBRARY" }),
+      "research fixture must receive an explicit selected or global scope");
+      const draft = expectedQuery === "draft research question";
+      if (draft) draftRunStatusReads = 0; else researchRunStatusReads = 0;
+      return json(envelope({ investigation_ref: { id: `research-${draft ? "d".repeat(48) : "c".repeat(48)}`, revision: 1 }, workflow_instance_id: draft ? draftWorkflowId : researchWorkflowId }));
     }
-    if (url.pathname === `/api/v1/research/run/${researchWorkflowId}`) {
+    if (url.pathname === `/api/v1/research/run/${researchWorkflowId}` || url.pathname === `/api/v1/research/run/${draftWorkflowId}`) {
       assert.equal(request.method, "GET"); assert.equal(url.search, "");
-      const executionState = researchRunStatusReads++ === 0 ? "ACTIVE" : "ENGINE_COMPLETED";
-      return json(envelope({ protocol: "eliotr.research-run-status.v1", workflow_instance_id: researchWorkflowId,
-        investigation_ref: { id: `research-${"c".repeat(48)}`, revision: 1 }, execution_state: executionState,
-        next_stage_index: executionState === "ENGINE_COMPLETED" ? 18 : 3, answer: { availability: "unavailable" } }));
+      const draft = url.pathname.endsWith(draftWorkflowId);
+      const readCount = draft ? draftRunStatusReads++ : researchRunStatusReads++;
+      const executionState = readCount === 0 ? "ACTIVE" : "ENGINE_COMPLETED";
+      return json(envelope({ protocol: "eliotr.research-run-status.v1", workflow_instance_id: draft ? draftWorkflowId : researchWorkflowId,
+        investigation_ref: { id: `research-${draft ? "d".repeat(48) : "c".repeat(48)}`, revision: 1 }, execution_state: executionState,
+        next_stage_index: executionState === "ENGINE_COMPLETED" ? 18 : 3,
+        answer: draft && executionState === "ENGINE_COMPLETED" ? { availability: "draft", artifact_ref: draftArtifactRef } : { availability: "unavailable" } }));
+    }
+    if (url.pathname === `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}`) {
+      assert.equal(request.method, "GET"); assert.equal(url.search, "");
+      return json(envelope(draftArtifact));
+    }
+    if (url.pathname === `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}/sections/${encodeURIComponent(`${draftSectionRef.id}:${draftSectionRef.revision}`)}`) {
+      assert.equal(request.method, "GET"); assert.equal(url.search, "");
+      const sendSection = () => {
+        const bytes = Buffer.from(draftSectionText, "utf8");
+        response.setHeader("content-type", "application/octet-stream"); response.setHeader("content-length", String(bytes.length));
+        response.setHeader("cache-control", "no-store"); response.setHeader("x-eliotr-artifact-ref", encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`));
+        response.setHeader("x-eliotr-section-ref", encodeURIComponent(`${draftSectionRef.id}:${draftSectionRef.revision}`));
+        response.setHeader("x-eliotr-section-object-ref", encodeURIComponent("artifact-section-object-1"));
+        response.setHeader("x-eliotr-section-sha256", draftSectionSha); response.end(bytes);
+      };
+      if (sectionMode === "delayed") { pendingSection = sendSection; return; }
+      return sendSection();
     }
     if (url.pathname === `/api/v1/research/trace/${queryTraceRef.id}`) {
       assert.equal(request.method, "GET");
@@ -308,6 +349,16 @@ try {
     return evaluate(expression);
   }, label);
   const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const launchDraft = async (label) => {
+    await evaluate(`(() => { const input = document.querySelector('#research-run input[name="query"]'); input.value = "draft research question"; input.closest("form").requestSubmit(); })()`);
+    await wait(`document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")`, `${label}: draft launch`);
+    assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
+    await click("#research-run [data-run-refresh]");
+    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("still processing")', `${label}: draft active status`);
+    await click("#research-run [data-run-refresh]");
+    await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("draft report is ready")', `${label}: draft completed status`);
+    await wait('document.querySelector("#research-run [data-run-result]")?.textContent.includes("Draft artifact artifact-draft-1:1")', `${label}: draft metadata`);
+  };
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
   await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
@@ -379,6 +430,26 @@ try {
     input.value = ${JSON.stringify(researchWorkflowId)}; document.querySelector('#research-run [data-recover]').click();
   })()`);
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run handle recovery");
+  await launchDraft("Initial draft");
+  await click('#research-run [data-run-result] button');
+  await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
+  assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
+  assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").innerHTML.includes("<")'), false);
+  await evaluate('document.querySelector("#app").dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason: "generation-changed" } }))');
+  await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft generation clearing");
+  await launchDraft("Session clearing");
+  sectionMode = "delayed";
+  await click('#research-run [data-run-result] button');
+  await until(() => Boolean(pendingSection), "Delayed draft section request");
+  await evaluate('window.dispatchEvent(new Event("eliotr:authorization-cleared"))');
+  await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft session clearing");
+  pendingSection?.(); pendingSection = undefined; sectionMode = "normal"; await delay(100);
+  assert.equal(await evaluate('document.querySelector("#research-run .research-section-body")'), null);
+  await launchDraft("Offline clearing");
+  await click('#research-run [data-run-result] button');
+  await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Second draft section open");
+  await evaluate('window.dispatchEvent(new Event("offline"))');
+  await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft offline clearing");
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
