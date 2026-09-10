@@ -32,6 +32,10 @@ describe("research run transport", () => {
     const bad = status(); bad.answer = { availability: "available" };
     expect(() => decodeResearchRunStatus({ data: bad, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
     expect(() => decodeResearchRunStatus({ data: status(), trace_id: "trace-1", deployment_generation: "deployment-2" }, generation)).toThrowError(/Application changed/);
+    const cancelled = status("CANCELLED"); cancelled.cancellation_receipt_ref = `workflow-cancelled:${workflow}`;
+    expect(decodeResearchRunStatus({ data: cancelled, trace_id: "trace-1", deployment_generation: generation }, generation).execution_state).toBe("CANCELLED");
+    const activeAtTerminal = status("ACTIVE"); activeAtTerminal.next_stage_index = 18;
+    expect(() => decodeResearchRunStatus({ data: activeAtTerminal, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
     await expect(readResearchRunStatus("../foreign", generation)).rejects.toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
   });
 });

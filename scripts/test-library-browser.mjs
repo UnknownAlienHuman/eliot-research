@@ -15,6 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = resolve(root, "apps/eliotr-pwa/dist");
 const temporary = await mkdtemp(resolve(tmpdir(), "eliotr-browser-"));
 const envelope = (data) => ({ data, deployment_generation: "browser-fixture", trace_id: "browser-trace" });
+const researchWorkflowId = `run-${"c".repeat(48)}`;
+let researchRunStatusReads = 0;
 const page = (id, title, next) => envelope({ projects: [{ id: "project-1", title: "Проект", generation: "1" }],
   sources: [{ id, title, readiness_ref: `readiness:${id}:revision-1` }], ...(next ? { next_cursor: next } : {}) });
 const orientation = () => {
@@ -142,6 +144,23 @@ const server = createServer((request, response) => {
         scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] }, literals: [],
         evidence_grade: "E0", budget_ref: "retrieval-fast-v1", max_results: 16 });
       return json(queryEvidence());
+    }
+    if (url.pathname === "/api/v1/research/run" && request.method === "POST") {
+      assert.ok(request.headers["idempotency-key"]);
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.deepEqual(body, { query: "research question", product: "RESEARCH",
+        scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] }, literals: [],
+        evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: 16 });
+      researchRunStatusReads = 0;
+      return json(envelope({ investigation_ref: { id: `research-${"c".repeat(48)}`, revision: 1 }, workflow_instance_id: researchWorkflowId }));
+    }
+    if (url.pathname === `/api/v1/research/run/${researchWorkflowId}`) {
+      assert.equal(request.method, "GET"); assert.equal(url.search, "");
+      const executionState = researchRunStatusReads++ === 0 ? "ACTIVE" : "ENGINE_COMPLETED";
+      return json(envelope({ protocol: "eliotr.research-run-status.v1", workflow_instance_id: researchWorkflowId,
+        investigation_ref: { id: `research-${"c".repeat(48)}`, revision: 1 }, execution_state: executionState,
+        next_stage_index: executionState === "ENGINE_COMPLETED" ? 18 : 3, answer: { availability: "unavailable" } }));
     }
     if (url.pathname === `/api/v1/research/trace/${queryTraceRef.id}`) {
       assert.equal(request.method, "GET");
@@ -334,6 +353,22 @@ try {
   await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Evidence verify and open");
   assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
   assert.equal(await evaluate('document.querySelector(".evidence-source").tagName'), "PRE");
+  await evaluate(`(() => {
+    const input = document.querySelector('#research-run input[name="query"]');
+    input.value = "research question"; input.closest("form").requestSubmit();
+  })()`);
+  await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")', "Research run launch");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), researchWorkflowId);
+  await click("#research-run [data-run-refresh]");
+  await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("still processing")', "Research run active status");
+  await click("#research-run [data-run-refresh]");
+  await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run completed status");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").textContent.includes("available" )'), false);
+  await evaluate(`(() => {
+    const input = document.querySelector('#research-run [data-workflow-id]');
+    input.value = ${JSON.stringify(researchWorkflowId)}; document.querySelector('#research-run [data-recover]').click();
+  })()`);
+  await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run handle recovery");
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
   await evaluate(`(() => {
@@ -419,7 +454,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, XSS, denial, generation drift, stale responses, offline clearing, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, owner research run POST→manual GET/recovery with unavailable answer, XSS, denial, generation drift, stale responses, offline clearing, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {
