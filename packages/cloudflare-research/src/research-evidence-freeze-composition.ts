@@ -26,6 +26,7 @@ import {
 } from "./research-evidence-freeze-preparation.js";
 import { readFreezeProtocolAndScopeCheckpoint } from "./research-protocol-freeze.js";
 import { WorkflowCheckpointStore } from "./store.js";
+import { readCommittedStageLineage } from "./research-committed-lineage.js";
 
 export interface EvidenceFreezePredecessorReadback {
   readonly stage_zero: ProtocolScopeCheckpoint;
@@ -249,11 +250,6 @@ function parseCommittedFreeze(bytes: Uint8Array): EvidenceFreeze {
   }
 }
 
-function committedOrCorrupt<T>(value: T | null): T {
-  if (value === null) fail("WORKFLOW_OUTPUT_CORRUPT");
-  return value;
-}
-
 function ref(value: { readonly id: string; readonly revision: number }): string {
   return `${value.id}:${value.revision}`;
 }
@@ -332,10 +328,10 @@ function createSynthesisContextReader(
           input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      const stageTen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "RECONCILE"));
-      const stageTenReceipt = committedOrCorrupt(await checkpoints.receipt(stageTen.request, stageTen.request_sha256));
-      const stageEleven = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "FREEZE_EVIDENCE"));
-      const stageElevenReceipt = committedOrCorrupt(await checkpoints.receipt(stageEleven.request, stageEleven.request_sha256));
+      const stageTen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "RECONCILE");
+      const stageEleven = await readCommittedStageLineage(checkpoints, input.request.operation_id, "FREEZE_EVIDENCE");
+      const stageTenReceipt = stageTen.receipt;
+      const stageElevenReceipt = stageEleven.receipt;
       assertSynthesisLineage(input.request, stageTen, stageTenReceipt, stageEleven, stageElevenReceipt);
       const authorizationReceiptRef = await readers.read_authorization_receipt_ref(
         input.request.operation_id, input.request.investigation_ref.id, input.principal,
@@ -438,8 +434,8 @@ export function createEvidenceFreezeVerificationContextReader(
   return {
     async read(input): Promise<EvidenceFreezeSynthesisContext> {
       if (input.request.stage !== "VERIFY") fail("WORKFLOW_INPUT_INVALID");
-      const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
-      const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
+      const stageTwelve = await readCommittedStageLineage(checkpoints, input.request.operation_id, "SYNTHESIZE");
+      const stageTwelveReceipt = stageTwelve.receipt;
       if (stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
           stageTwelveReceipt.stage !== "SYNTHESIZE" ||
           stageTwelveReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
@@ -491,10 +487,10 @@ export function createEvidenceFreezeMaterializeContextReader(
           input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
-      const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
-      const stageSixteen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "CALCULATE_COVERAGE"));
-      const stageSixteenReceipt = committedOrCorrupt(await checkpoints.receipt(stageSixteen.request, stageSixteen.request_sha256));
+      const stageTwelve = await readCommittedStageLineage(checkpoints, input.request.operation_id, "SYNTHESIZE");
+      const stageTwelveReceipt = stageTwelve.receipt;
+      const stageSixteen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "CALCULATE_COVERAGE");
+      const stageSixteenReceipt = stageSixteen.receipt;
       if (stageTwelve.request.stage !== "SYNTHESIZE" ||
           stageTwelve.request.operation_id !== input.request.operation_id ||
           stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
