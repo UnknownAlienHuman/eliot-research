@@ -65,16 +65,6 @@ describe("research.run status over the owner-bound Worker route", () => {
       .bind(workflowId).first<{ readonly scope_snapshot_id: string; readonly scope_snapshot_revision: number }>();
     expect(scope).not.toBeNull();
     if (scope === null) throw new Error("missing status scope binding");
-    try {
-      await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
-        .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
-      const revoked = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }));
-      expect(revoked.status).toBe(409);
-      expect((await body(revoked)).code).toBe("RESEARCH_AUTHORITY_STALE");
-    } finally {
-      await db.prepare("UPDATE scope_access_grant SET state = 'ACTIVE' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
-        .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
-    }
     const staleCredential = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }), {
       async verify() {
         return { principal_ref: "orientation-owner", credential_generation: "credential-v2", authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 60_000).toISOString() };
@@ -82,6 +72,14 @@ describe("research.run status over the owner-bound Worker route", () => {
     });
     expect(staleCredential.status).toBe(409);
     expect((await body(staleCredential)).code).toBe("RESEARCH_AUTHORITY_STALE");
+    await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+      .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
+    const revokedGrant = await db.prepare("SELECT state FROM scope_access_grant WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+      .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).first<{ readonly state: string }>();
+    expect(revokedGrant?.state).toBe("REVOKED");
+    const revoked = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }));
+    expect(revoked.status).toBe(409);
+    expect((await body(revoked)).code).toBe("RESEARCH_AUTHORITY_STALE");
   }, 30_000);
 
   it("reads a durably cancelled run without treating it as engine completion", async () => {

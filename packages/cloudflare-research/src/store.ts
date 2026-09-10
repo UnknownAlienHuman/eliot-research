@@ -115,6 +115,9 @@ export class WorkflowCheckpointStore {
         (run.cancellation_receipt_ref !== null && run.cancellation_receipt_ref !== `workflow-cancelled:${operationId}`)) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
+    if (run.state === "ACTIVE" && run.next_stage_index === RESEARCH_WORKFLOW_STAGES.length) {
+      fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
     if (run.credential_generation === principal.credential_generation &&
         run.deployment_generation === principal.deployment_generation) {
       let current: StoredCurrentRunRow | null;
