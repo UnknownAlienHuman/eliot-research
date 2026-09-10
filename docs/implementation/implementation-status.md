@@ -98,7 +98,10 @@ The section's `/citations` endpoint returns its stored verification reference an
 and excerpt digests after the same owner and current-scope checks. The PWA opens those sources through
 the existing evidence reader and visibly retains `DRAFT` and `NOT_EXECUTED` semantics. The native
 Worker AI Gateway adapter and persisted model-profile authority reader now support the configured
-source-to-draft path; model responses remain controlled in local acceptance. Production REPORT
+source-to-draft path; configured v3 now executes source verification at stage 13 and binds its receipt
+to the committed synthesis bytes and current frozen evidence. The actual local source-to-draft case
+passed at `0c0506e`, including replay and revoked reads; semantic verification remains `NOT_EXECUTED`
+and stages 14–16 and model responses remain controlled in local acceptance. Production REPORT
 admission, actual provider/profile configuration and the remaining governed stages are still open.
 
 These draft transitions do not establish semantic verification or accepted publication. The artifact

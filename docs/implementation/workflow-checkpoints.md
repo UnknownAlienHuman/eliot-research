@@ -1,6 +1,7 @@
 # Durable research stage checkpoints — W2a + W2
 
-`@eliotr/cloudflare-research` implements the D1/R2 checkpoint boundary, not the research product.
+`@eliotr/cloudflare-workflows` implements the D1/R2 checkpoint boundary, with compatibility exports
+from `@eliotr/cloudflare-research`. Research-specific handlers remain in the research adapter.
 W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
 executable `ResearchWorkflow` binding over the same boundary. Owner HTTP composition can start runs
 and read their durable status. Governed model/evidence handlers (W3/W4) and live qualification remain open.
@@ -86,6 +87,26 @@ protocol family leaves the artifact row count unchanged, and revoked scope acces
 and HTTP citation reads. The HTTP assertion was corrected to include its versioned protocol field;
 production output was unchanged. Public v3 activation, provider configuration, REPORT admission and
 semantic verification remain open.
+
+## Configured source verification
+
+The v3 factory also selects the actual stage-13 `VERIFY` handler. It rereads the committed synthesis
+attempt and provider output, derives the requested source handles from that output, and resolves them
+against the frozen evidence and current navigation/scope authority. Exact evidence identity is bound
+to the freeze; authority and the W1 head are checked again after awaited source reads. The durable
+verification result binds the synthesis output digest and records source resolution separately from
+`semantic_verification: NOT_EXECUTED`.
+
+At `0c0506e` on Node 22.23.2, the actual local Worker/D1/R2 source-to-draft case passed with factory
+stages 12, 13 and 17, exact source/citation readback, one model invocation across replay, and denied
+reads after grant revocation (one selected case; twelve unchanged cases skipped). Stages 14–16 and
+provider response bytes remain controlled. This proves source verification, not claim support or
+research completion. The same source passed workspace and test TypeScript checks, ESLint, package
+boundaries, source limits, packet/status checks and the Worker deployment dry run.
+
+The W2 extraction at this source moves six existing execution/storage modules into
+`@eliotr/cloudflare-workflows` without changing their content. Research handlers use its public API;
+the dependency direction stays acyclic. It changes no persisted protocol, schema or handler generation.
 
 ## Execution
 
