@@ -13,9 +13,17 @@ outside the paths below.
 
 - `packages/research/src/evidence-freeze.ts`
 - `packages/research/src/claim-audit.ts`
+- `packages/research/src/synthesis-candidate*.ts`
+- `packages/research/src/semantic-verifier*.ts`
 - `packages/research/src/coverage.ts`
 
 ## Read only
+
+The versioned synthesis candidate decoder derives claim identities from explicit text spans and
+frozen references. Semantic verifier decoding keeps model observations separate from server-owned
+current evidence, applicability and verifier qualification. These are transitional TypeScript owners
+until the corresponding Rust family is promoted under the language/runtime contract; there is no
+parallel promoted authority. Cloudflare stage composition belongs to ER-09.
 
 - `packages/contracts/src/research.ts`
 - `packages/domain/src/coverage.ts`

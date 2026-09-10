@@ -101,8 +101,11 @@ Worker AI Gateway adapter and persisted model-profile authority reader now suppo
 source-to-draft path; configured v3 now executes source verification at stage 13 and binds its receipt
 to the committed synthesis bytes and current frozen evidence. The actual local source-to-draft case
 passed at `0c0506e`, including replay and revoked reads; semantic verification remains `NOT_EXECUTED`
-and stages 14–16 and model responses remain controlled in local acceptance. Production REPORT
-admission, actual provider/profile configuration and the remaining governed stages are still open.
+and stages 14–16 and model responses remain controlled in local acceptance. Configured REPORT
+admission now executes inside the stage-17 handler and the final artifact transaction; its separate
+actual D1/R2 case passed at `74203c9`, including missing-policy/revoked-grant refusal and replay.
+Installed production policies, actual provider/profile configuration, semantic stage composition and
+the remaining governed stages are still open.
 
 These draft transitions do not establish semantic verification or accepted publication. The artifact
 compiler, publication checks, Wiki/change products and complete report user loop remain open in the

@@ -242,6 +242,8 @@
       "owned_paths": [
         "packages/research/src/evidence-freeze.ts",
         "packages/research/src/claim-audit.ts",
+        "packages/research/src/synthesis-candidate*.ts",
+        "packages/research/src/semantic-verifier*.ts",
         "packages/research/src/coverage.ts"
       ],
       "mandatory_negative_case": "Provide the correct source but a cropped excerpt missing the hedge; claim audit must fail excerpt sufficiency.",

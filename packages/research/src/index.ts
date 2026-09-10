@@ -4,6 +4,8 @@ export * from "./investigation-service.js";
 export * from "./workflow.js";
 export * from "./evidence-freeze.js";
 export * from "./claim-audit.js";
+export * from "./synthesis-candidate.js";
+export * from "./semantic-verifier-output.js";
 export * from "./coverage.js";
 export * from "./artifact-compiler.js";
 export * from "./wiki.js";

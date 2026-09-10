@@ -31,6 +31,7 @@ export * from "./research-materialize-result.js";
 export * from "./research-materialize-stage-handler.js";
 export * from "./research-report-admission.js";
 export * from "./research-report-materialize-stage-handler.js";
+export * from "./research-report-config.js";
 export * from "./research-artifact-metadata.js";
 export * from "./research-materialize-output-reader.js";
 export * from "./research-verification-result.js";

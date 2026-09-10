@@ -102,6 +102,33 @@ semantic verification remain open.
 
 ## Configured source verification
 
+The configured v3 factory now also accepts `report_materialize`: the real per-request composer
+prepares REPORT permission and deterministic metadata inside the handler. The artifact store remains
+the sole owner of the final decision/intent/outbox/draft transaction after R2 readback. Migration
+`0041_research_report_admission.sql` checks the current owner grant, authorization receipt, disclosure,
+workflow revision and database-time expiries. Admission readback rereads current policy and authority.
+Legacy explicit `materialize` composition remains supported; supplying both modes is refused.
+
+At `74203c9`, two selected actual local Worker/D1/R2 cases passed (twelve unchanged cases skipped):
+the existing source-VERIFY-to-draft/HTTP path and the configured REPORT factory path with atomic
+readback, missing-policy and revoked-grant refusal, and duplicate-free replay. The REPORT case uses
+controlled stages 13–16; the separate source case executes stage 13. Full semantic stages and public
+run selection remain open. The browser network tracker also recognizes a valid same-request `202`
+response before Chromium's duplicate aborted terminal; unlisted routes still fail. The changed owner
+Worker/Playwright harness passed 11/11 cases in the agent checkout at `9e6cc415`.
+
+`ELIOTR_RESEARCH_REPORT_CONFIG_JSON` is the explicit versioned REPORT configuration source. It
+snapshots admission and report-format policy, verifies installed provenance, and distinguishes absent
+configuration from malformed/unknown fields. Its three focused cases passed at `933f6ba`. No policy
+has been installed or inferred from a scope read grant by this implementation.
+
+The strict `synthesis-claims-candidate.v2` decoder and semantic verifier batch decoder are available
+for the remaining W4 composition. Explicit claim spans, exact UTF-8 digests and frozen references
+produce server-owned claim identities. One verifier response covers the exact claim set and evidence
+input digest; source/excerpt support are model observations, while reference resolution, required
+checks and verifier qualification remain server facts. Candidate tests passed 5/5 at `1751789` and
+semantic batch tests 5/5 at `c20797a`. These pure modules do not yet qualify an actual stage-14 call.
+
 The v3 factory also selects the actual stage-13 `VERIFY` handler. It rereads the committed synthesis
 attempt and provider output, derives the requested source handles from that output, and resolves them
 against the frozen evidence and current navigation/scope authority. Exact evidence identity is bound
