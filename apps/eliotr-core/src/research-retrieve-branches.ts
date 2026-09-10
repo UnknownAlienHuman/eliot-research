@@ -3,16 +3,12 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import {
-  IdentifierSchema,
-  RetrievalTraceSchema,
-  Sha256Schema,
-  VersionedRefSchema,
+  type ScopeSnapshot,
 } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import {
   canonicalRetrievalJson,
-  decodeCanonicalRetrievalJson,
-  decodeEvidencePack,
+  decodeRetrieveBranchesCheckpoint,
   createD1RetrievalResultStore,
   createD1ScopeProfilePort,
   retrievalRequestDigest,
@@ -20,7 +16,6 @@ import {
   type ScopeProfileBinding,
   type StoredRetrievalResult,
 } from "@eliotr/retrieval";
-import type { ScopeSnapshot } from "@eliotr/contracts";
 import {
   MAX_WORKFLOW_OUTPUT_BYTES,
   readFreezeProtocolAndScopeCheckpoint,
@@ -56,20 +51,8 @@ export interface RetrieveBranchesStageDependencies {
   readonly profile: ScopeProfileBinding;
 }
 
-export interface RetrieveBranchesCheckpoint {
-  readonly protocol: typeof RETRIEVE_BRANCHES_PROTOCOL;
-  readonly workflow_stage: "RETRIEVE_BRANCHES";
-  readonly operation_id: string;
-  readonly investigation_ref: { readonly id: string; readonly revision: number };
-  readonly principal_ref: string;
-  readonly scope_snapshot_ref: { readonly id: string; readonly revision: number };
-  readonly protocol_digest: string;
-  readonly denominator_digest: string;
-  readonly retrieval_request_digest: string;
-  readonly evidence_pack: Awaited<ReturnType<typeof retrieveWithHeldScope>>["evidence_pack"];
-  readonly trace: Awaited<ReturnType<typeof retrieveWithHeldScope>>["trace"];
-  readonly coverage_claim: Awaited<ReturnType<typeof retrieveWithHeldScope>>["coverage_claim"];
-}
+export type { RetrieveBranchesCheckpoint } from "@eliotr/retrieval";
+import type { RetrieveBranchesCheckpoint } from "@eliotr/retrieval";
 
 interface RetrieveBranchesInput {
   readonly request: StageRequest;
@@ -120,34 +103,6 @@ async function persistedStageZero(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  const actual = Object.keys(value).sort();
-  return actual.length === keys.length && actual.every((key, index) => key === [...keys].sort()[index]);
-}
-
-function decodeRetrieveBranchesCheckpoint(bytes: Uint8Array): RetrieveBranchesCheckpoint {
-  if (bytes.byteLength === 0 || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_OUTPUT_CORRUPT");
-  let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-  catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
-  const raw = decodeCanonicalRetrievalJson(text);
-  if (raw === undefined) fail("WORKFLOW_OUTPUT_CORRUPT");
-  if (!isRecord(raw) || !hasExactKeys(raw, ["protocol", "workflow_stage", "operation_id", "investigation_ref", "principal_ref", "scope_snapshot_ref", "protocol_digest", "denominator_digest", "retrieval_request_digest", "evidence_pack", "trace", "coverage_claim"]) ||
-      raw.protocol !== RETRIEVE_BRANCHES_PROTOCOL || raw.workflow_stage !== "RETRIEVE_BRANCHES" ||
-      typeof raw.operation_id !== "string" || raw.operation_id.length < 1 || raw.operation_id.length > 128 ||
-      !VersionedRefSchema.safeParse(raw.investigation_ref).success || !IdentifierSchema.safeParse(raw.principal_ref).success ||
-      !VersionedRefSchema.safeParse(raw.scope_snapshot_ref).success || !Sha256Schema.safeParse(raw.protocol_digest).success ||
-      !Sha256Schema.safeParse(raw.denominator_digest).success || !Sha256Schema.safeParse(raw.retrieval_request_digest).success ||
-      decodeEvidencePack(raw.evidence_pack) === null || !RetrievalTraceSchema.safeParse(raw.trace).success ||
-      (raw.coverage_claim !== "NONE" && raw.coverage_claim !== "SAMPLED" && raw.coverage_claim !== "COMPLETE_SCOPE")) {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  return raw as unknown as RetrieveBranchesCheckpoint;
-}
 
 async function persistedStageFive(
   dependencies: RetrieveBranchesStageDependencies,
@@ -173,7 +128,9 @@ async function persistedStageFive(
   let bytes: Uint8Array;
   try { bytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true); }
   catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
-  return { stage_request: stageRequest, receipt, checkpoint: decodeRetrieveBranchesCheckpoint(bytes) };
+  const checkpoint = decodeRetrieveBranchesCheckpoint(bytes);
+  if (checkpoint === null) fail("WORKFLOW_OUTPUT_CORRUPT");
+  return { stage_request: stageRequest, receipt, checkpoint };
 }
 
 /** Read the committed RETRIEVE_BRANCHES result; caller-supplied EvidencePack bytes are never authoritative. */
