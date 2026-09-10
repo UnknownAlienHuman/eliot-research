@@ -49,6 +49,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `docs/implementation/README.md`
 - `docs/implementation/implementation-status.md`
 - `docs/implementation/audit-2026-09-09.md`
+- `docs/implementation/checkpoints/**`
 - `docs/implementation/production-readiness-plan.md`
 - `docs/implementation/gap-register.md`
 - `docs/implementation/canonical-alignment.md`

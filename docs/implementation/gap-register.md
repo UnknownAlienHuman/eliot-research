@@ -80,6 +80,12 @@ New financial budgeting/accounting work remains deferred. Existing authorization
 
 ### Preserved local Luna work
 
+The follow-up cleanup audit saved the unfinished files as inactive artifacts in
+[the 2026-09-10 recovery checkpoint](checkpoints/2026-09-10/README.md), and pushed four annotated
+recovery tags for their exact base histories. Original worktrees remain intact. The checkpoint also
+preserves the older six-file Drive provisioning WIP and records the verified scratch archive.
+Both `verify` and `windows-tooling` in CI34534923253 failed the same source-line limit gate.
+
 - Raw admission / stage15: local branch agent/er24-library-active-readiness-20260909 in eliot-research-wt-deps; WIP commitdf9f814131c3cb7e033f0b56c362bea030242c8c adds research-citations-stage-handler.ts and research-citations-result.ts. ESLint/diff check passed; no runtime proof. It still needs the actual stage14 semantic batch reader. Merge current main normally to remove that worktree's stale W2 imports before building; do not recreate old ./types.js or ./store.js modules.
 - Astro / v2 decoder: local branch agent/checkpoint-raw-admission-integration-20260909 in eliot-research-wt-retrieval; one uncommitted WIP edit in packages/research/src/synthesis-candidate.ts extracts shared validation/citation-union helpers. No post-edit validation. Preserve this edit before any merge.
 - REPORT/coverage: local branch agent/er36-workspace-candidate-ledger-20260909 in eliot-research-wt-astro; uncommitted, unverified packages/cloudflare-research/src/research-coverage-result.ts. The accepted REPORT changes through933f6ba are integrated; coverage handler and actual fixture are not implemented.

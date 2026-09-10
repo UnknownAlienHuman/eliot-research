@@ -1,0 +1,310 @@
+diff --git a/packages/cloudflare-research/src/research-citations-result.ts b/packages/cloudflare-research/src/research-citations-result.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..64d1cdc8fe1d94bf2c24beac74ee721b8f77e6a5
+--- /dev/null
++++ b/packages/cloudflare-research/src/research-citations-result.ts
+@@ -0,0 +1,120 @@
++import {
++  ClaimAuditItemSchema,
++  CitationResolutionReceiptSchema,
++  Sha256Schema,
++  VersionedRefSchema,
++  type ClaimAuditItem,
++  type CitationResolutionReceipt,
++  type VersionedRef,
++} from "@eliotr/contracts";
++import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
++import { MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
++import { z } from "zod";
++
++const PROTOCOL = "eliotr.research.citations.v1" as const;
++const STAGE = "RESOLVE_CITATIONS" as const;
++const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
++
++const ResearchCitationsResultSchema = z.object({
++  protocol: z.literal(PROTOCOL),
++  operation_id: z.string().regex(IDENTIFIER),
++  stage: z.literal(STAGE),
++  stage_attempt_ref: z.string().regex(IDENTIFIER),
++  stage_request_sha256: Sha256Schema,
++  audit: z.object({
++    stage_attempt_ref: z.string().regex(IDENTIFIER),
++    stage_request_sha256: Sha256Schema,
++    input_sha256: Sha256Schema,
++    claim_audit_items: z.array(ClaimAuditItemSchema).max(512),
++  }).strict(),
++  freeze_ref: VersionedRefSchema,
++  manifest_ref: VersionedRefSchema,
++  scope_snapshot_ref: VersionedRefSchema,
++  evidence_pack_ref: VersionedRefSchema,
++  citation_resolution_receipt: CitationResolutionReceiptSchema,
++}).strict();
++
++export type ResearchCitationsResult = z.infer<typeof ResearchCitationsResultSchema>;
++
++export interface ResearchCitationsResultInput {
++  readonly operation_id: string;
++  readonly stage_attempt_ref: string;
++  readonly stage_request_sha256: string;
++  readonly audit: {
++    readonly stage_attempt_ref: string;
++    readonly stage_request_sha256: string;
++    readonly input_sha256: string;
++    readonly claim_audit_items: readonly ClaimAuditItem[];
++  };
++  readonly freeze_ref: VersionedRef;
++  readonly manifest_ref: VersionedRef;
++  readonly scope_snapshot_ref: VersionedRef;
++  readonly evidence_pack_ref: VersionedRef;
++  readonly citation_resolution_receipt: CitationResolutionReceipt;
++}
++
++function refKey(ref: VersionedRef): string {
++  return `${ref.id}:${ref.revision}`;
++}
++
++/** Exact union used by RESOLVE_CITATIONS; support and counterevidence are both material. */
++export function citationRefsFromClaimAudit(items: readonly ClaimAuditItem[]): readonly VersionedRef[] {
++  const refs = new Map<string, VersionedRef>();
++  for (const item of items) {
++    for (const handle of [...item.exact_support_handles, ...item.counterevidence_handles]) {
++      const parsed = VersionedRefSchema.parse(handle.handle_ref);
++      refs.set(refKey(parsed), Object.freeze({ ...parsed }));
++    }
++  }
++  return Object.freeze([...refs.values()].sort((left, right) => refKey(left).localeCompare(refKey(right))));
++}
++
++function failInput(message: string, cause?: unknown): never {
++  void message; void cause;
++  throw new WorkflowCheckpointError("WORKFLOW_INPUT_INVALID");
++}
++
++function failCorrupt(message: string, cause?: unknown): never {
++  void message; void cause;
++  throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT");
++}
++
++function decodeValue(value: unknown): ResearchCitationsResult {
++  const parsed = ResearchCitationsResultSchema.safeParse(value);
++  if (!parsed.success) failCorrupt("citation resolution result failed strict validation", parsed.error);
++  const expected = citationRefsFromClaimAudit(parsed.data.audit.claim_audit_items);
++  const actual = parsed.data.citation_resolution_receipt.requested_handle_refs;
++  if (canonicalEvidenceJson(expected) !== canonicalEvidenceJson(actual)) {
++    failCorrupt("citation resolution receipt is not bound to the audited support and counterevidence union");
++  }
++  return Object.freeze({ ...parsed.data, audit: Object.freeze({ ...parsed.data.audit }), citation_resolution_receipt: Object.freeze(parsed.data.citation_resolution_receipt) });
++}
++
++export function encodeResearchCitationsResult(input: ResearchCitationsResultInput): Uint8Array {
++  let parsed: ResearchCitationsResult;
++  try {
++    parsed = decodeValue({ protocol: PROTOCOL, operation_id: input.operation_id, stage: STAGE,
++      stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256,
++      audit: input.audit, freeze_ref: input.freeze_ref, manifest_ref: input.manifest_ref,
++      scope_snapshot_ref: input.scope_snapshot_ref, evidence_pack_ref: input.evidence_pack_ref,
++      citation_resolution_receipt: input.citation_resolution_receipt });
++  } catch (cause) { failInput("citation resolution result input is invalid", cause); }
++  const bytes = new TextEncoder().encode(canonicalEvidenceJson(parsed));
++  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) failInput("citation resolution result exceeds the workflow output bound");
++  return bytes;
++}
++
++export function decodeResearchCitationsResult(bytes: Uint8Array): ResearchCitationsResult {
++  if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
++    failCorrupt("citation resolution result bytes exceed the workflow output bound");
++  }
++  let text: string;
++  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
++  catch (cause) { failCorrupt("citation resolution result is not valid UTF-8", cause); }
++  let value: unknown;
++  try { value = JSON.parse(text) as unknown; }
++  catch (cause) { failCorrupt("citation resolution result is not valid JSON", cause); }
++  const parsed = decodeValue(value);
++  if (canonicalEvidenceJson(parsed) !== text) failCorrupt("citation resolution result is not canonical JSON");
++  return parsed;
++}
+diff --git a/packages/cloudflare-research/src/research-citations-stage-handler.ts b/packages/cloudflare-research/src/research-citations-stage-handler.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..d2f69ecca2001c458c413b364d4054f127fd2680
+--- /dev/null
++++ b/packages/cloudflare-research/src/research-citations-stage-handler.ts
+@@ -0,0 +1,178 @@
++import {
++  canonicalEvidenceJson,
++  type CloudflareEvidenceResolver,
++  type NavigationReadAuthority,
++} from "@eliotr/cloudflare-evidence";
++import {
++  ClaimAuditItemSchema,
++  type ClaimAuditItem,
++  type VersionedRef,
++} from "@eliotr/contracts";
++import {
++  digest,
++  readCommittedStageLineage,
++  type StageRequest,
++  type WorkflowPrincipal,
++  type WorkflowStageHandler,
++  WorkflowCheckpointError,
++  WorkflowCheckpointStore,
++} from "@eliotr/cloudflare-workflows";
++import type { EvidenceFreezeSynthesisContext, EvidenceFreezeVerificationContextReader } from "./research-evidence-freeze-composition.js";
++import { citationRefsFromClaimAudit, encodeResearchCitationsResult } from "./research-citations-result.js";
++
++export interface ResearchClaimAuditProjection {
++  /** Server-owned semantic decoder output; these are not caller-supplied refs. */
++  readonly claim_audit_items: readonly ClaimAuditItem[];
++}
++
++export interface ResearchClaimAuditReader {
++  read(input: {
++    readonly bytes: Uint8Array;
++    readonly stage_attempt_ref: string;
++    readonly stage_request_sha256: string;
++  }): Promise<ResearchClaimAuditProjection>;
++}
++
++export interface ResearchCitationsStageDependencies {
++  readonly database: D1Database;
++  readonly navigation: NavigationReadAuthority;
++  readonly evidence_resolver: CloudflareEvidenceResolver;
++  /** Reader validates the current stage15 frozen lineage before and after external evidence reads. */
++  readonly context: EvidenceFreezeVerificationContextReader;
++  /** Astro semantic decoder for the committed AUDIT_CLAIMS model output. */
++  readonly audit: ResearchClaimAuditReader;
++}
++
++function sameRef(left: VersionedRef, right: VersionedRef): boolean {
++  return left.id === right.id && left.revision === right.revision;
++}
++
++function refKey(ref: VersionedRef): string {
++  return `${ref.id}:${ref.revision}`;
++}
++
++function sameJson(left: unknown, right: unknown): boolean {
++  return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
++}
++
++function failCode(code: "WORKFLOW_INPUT_INVALID" | "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_OUTPUT_CORRUPT"): never {
++  throw new WorkflowCheckpointError(code);
++}
++
++function requireContext(request: StageRequest, principal: WorkflowPrincipal, context: EvidenceFreezeSynthesisContext): void {
++  if (context.operation_id !== request.operation_id || context.investigation_id !== request.investigation_ref.id ||
++      context.principal_ref !== principal.principal_ref || context.credential_generation !== principal.credential_generation ||
++      context.deployment_generation !== principal.deployment_generation || context.current_revision !== request.investigation_ref.revision) {
++    failCode("WORKFLOW_AUTHORITY_STALE");
++  }
++}
++
++function requireResearchAccess(navigation: NavigationReadAuthority, current: Awaited<ReturnType<NavigationReadAuthority["current"]>>): void {
++  if (!current.allowed_use.includes("research") || Date.parse(current.expires_at) <= Date.parse(navigation.timestamp())) {
++    failCode("WORKFLOW_AUTHORITY_STALE");
++  }
++}
++
++function requireAuditedHandles(
++  items: readonly ClaimAuditItem[],
++  context: EvidenceFreezeSynthesisContext,
++): readonly VersionedRef[] {
++  for (const item of items) {
++    try { ClaimAuditItemSchema.parse(item); }
++    catch { failCode("WORKFLOW_OUTPUT_CORRUPT"); }
++  }
++  const refs = citationRefsFromClaimAudit(items);
++  const manifest = new Set(context.manifest.allowed_evidence_handle_refs.map(refKey));
++  const frozen = new Map(context.freeze.included_evidence.map((item) => [refKey(item.handle_ref), item.digest]));
++  const packed = new Map(context.stage_five.evidence_pack.resolved_evidence.map((item) => [refKey(item.handle.handle_ref), item.handle.excerpt_sha256]));
++  for (const ref of refs) {
++    const key = refKey(ref);
++    if (!manifest.has(key) || !frozen.has(key) || !packed.has(key) || frozen.get(key) !== packed.get(key)) {
++      failCode("WORKFLOW_OUTPUT_CORRUPT");
++    }
++  }
++  return refs;
++}
++
++function requireResolvedEvidence(
++  result: Awaited<ReturnType<CloudflareEvidenceResolver["resolveCitationSet"]>>,
++  requested: readonly VersionedRef[],
++  context: EvidenceFreezeSynthesisContext,
++  current: Awaited<ReturnType<NavigationReadAuthority["current"]>>,
++): void {
++  const requestedKeys = new Set(requested.map(refKey));
++  const receiptKeys = result.receipt.requested_handle_refs.map(refKey);
++  if (!sameRef(result.receipt.scope_snapshot_ref, context.freeze.scope_snapshot_ref) ||
++      !sameJson(receiptKeys, [...requestedKeys].sort()) || result.receipt.resolved_count !== result.resolved_evidence.length ||
++      result.resolved_evidence.some((item) => !requestedKeys.has(refKey(item.handle.handle_ref)))) {
++    failCode("WORKFLOW_OUTPUT_CORRUPT");
++  }
++  const receiptByKey = new Map(result.receipt.resolved.map((item) => [refKey(item.handle_ref), item]));
++  if (receiptByKey.size !== result.receipt.resolved.length || result.resolved_evidence.some((item) => {
++    const receipt = receiptByKey.get(refKey(item.handle.handle_ref));
++    return receipt === undefined || receipt.excerpt_sha256 !== item.handle.excerpt_sha256 ||
++      receipt.verification_receipt_ref !== item.verification_receipt_ref;
++  })) failCode("WORKFLOW_OUTPUT_CORRUPT");
++  for (const item of result.resolved_evidence) {
++    const frozen = context.freeze.included_evidence.find((entry) => sameRef(entry.handle_ref, item.handle.handle_ref));
++    const packed = context.stage_five.evidence_pack.resolved_evidence.find((entry) => sameRef(entry.handle.handle_ref, item.handle.handle_ref));
++    if (frozen === undefined || packed === undefined || frozen.digest !== item.handle.excerpt_sha256 ||
++        packed.handle.excerpt_sha256 !== item.handle.excerpt_sha256 || item.handle.terminal_state !== "LIVE" ||
++        !sameRef(item.handle.scope_snapshot_ref, context.freeze.scope_snapshot_ref) ||
++        item.authorization_receipt_ref !== current.authorization_receipt_ref ||
++        item.credential_generation !== context.stage_five.evidence_pack.resolved_evidence.find((packedItem) => sameRef(packedItem.handle.handle_ref, item.handle.handle_ref))?.credential_generation) {
++      failCode("WORKFLOW_OUTPUT_CORRUPT");
++    }
++  }
++}
++
++/** Resolves exactly the support plus counterevidence handles from committed AUDIT_CLAIMS output. */
++export function createResearchCitationsStageHandler(
++  dependencies: ResearchCitationsStageDependencies,
++): WorkflowStageHandler {
++  return async ({ request, principal, input_bytes, attempt_ref }) => {
++    if (request.stage !== "RESOLVE_CITATIONS") failCode("WORKFLOW_INPUT_INVALID");
++    const request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(request)));
++    if (request.input_manifest.sha256 !== await digest(input_bytes)) failCode("WORKFLOW_OUTPUT_CORRUPT");
++    const checkpoints = new WorkflowCheckpointStore(dependencies.database);
++    const auditStage = await readCommittedStageLineage(checkpoints, request.operation_id, "AUDIT_CLAIMS");
++    if (auditStage.request.investigation_ref.id !== request.investigation_ref.id ||
++        !sameJson(auditStage.receipt.output_manifest, request.input_manifest) ||
++        auditStage.receipt.stage !== "AUDIT_CLAIMS") failCode("WORKFLOW_OUTPUT_CORRUPT");
++    let context: EvidenceFreezeSynthesisContext;
++    try { context = await dependencies.context.read({ request, principal, input_bytes }); }
++    catch { failCode("WORKFLOW_AUTHORITY_STALE"); }
++    requireContext(request, principal, context);
++    const before = await dependencies.navigation.current();
++    requireResearchAccess(dependencies.navigation, before);
++    let audit: ResearchClaimAuditProjection;
++    try {
++      audit = await dependencies.audit.read({ bytes: input_bytes, stage_attempt_ref: auditStage.attempt_ref, stage_request_sha256: auditStage.request_sha256 });
++    } catch { failCode("WORKFLOW_OUTPUT_CORRUPT"); }
++    const items = audit.claim_audit_items;
++    if (!Array.isArray(items)) failCode("WORKFLOW_OUTPUT_CORRUPT");
++    const requested = requireAuditedHandles(items, context);
++    let citation: Awaited<ReturnType<CloudflareEvidenceResolver["resolveCitationSet"]>>;
++    try {
++      citation = await dependencies.evidence_resolver.resolveCitationSet({
++        handle_refs: requested, scope_snapshot_ref: context.freeze.scope_snapshot_ref, access: dependencies.navigation.access,
++      });
++    } catch { failCode("WORKFLOW_AUTHORITY_STALE"); }
++    requireResolvedEvidence(citation, requested, context, before);
++    const after = await dependencies.navigation.current();
++    requireResearchAccess(dependencies.navigation, after);
++    const finalContext = await dependencies.context.read({ request, principal, input_bytes });
++    requireContext(request, principal, finalContext);
++    if (!sameJson(context.freeze, finalContext.freeze) || !sameJson(context.manifest, finalContext.manifest) ||
++        !sameJson(context.stage_five.evidence_pack, finalContext.stage_five.evidence_pack) ||
++        !sameJson(before, after)) failCode("WORKFLOW_AUTHORITY_STALE");
++    return encodeResearchCitationsResult({
++      operation_id: request.operation_id, stage_attempt_ref: attempt_ref, stage_request_sha256: request_sha256,
++      audit: { stage_attempt_ref: auditStage.attempt_ref, stage_request_sha256: auditStage.request_sha256,
++        input_sha256: request.input_manifest.sha256, claim_audit_items: items },
++      freeze_ref: finalContext.freeze.freeze_ref, manifest_ref: finalContext.manifest.manifest_ref,
++      scope_snapshot_ref: finalContext.freeze.scope_snapshot_ref, evidence_pack_ref: finalContext.stage_five.evidence_pack.pack_ref,
++      citation_resolution_receipt: citation.receipt,
++    });
++  };
++}
