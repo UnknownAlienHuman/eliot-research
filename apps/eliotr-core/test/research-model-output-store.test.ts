@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ModelCallInput, ModelCallReceipt } from "@eliotr/research";
 import { createResearchModelOutputStore, type ModelOutputStorage } from "../../../packages/cloudflare-research/src/research-model-output-store.js";
+import { createModelOutputPreparationHook } from "../../../packages/cloudflare-research/src/research-model-output-preparation.js";
 import { createGovernedModelAttemptHandler, type GovernedModelAttemptDependencies } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import { digest } from "../../../packages/cloudflare-research/src/types.js";
 import {
@@ -29,15 +30,6 @@ interface ModelOutputRow {
   readonly state: string;
   readonly created_at: string;
   readonly committed_at: string | null;
-}
-
-interface StageBindingRow {
-  readonly attempt_id: string;
-  readonly principal_ref: string;
-  readonly stage_attempt_ref: string;
-  readonly stage_request_sha256: string;
-  readonly request_sha256: string;
-  readonly workflow_budget_receipt_ref: string;
 }
 
 type GovernedFixture = Awaited<ReturnType<typeof governedModelAttemptFixture>>;
@@ -130,26 +122,6 @@ async function outputFixture(
   const route = {
     execute: async (call: ModelCallInput): Promise<ModelCallReceipt> => {
       calls += 1;
-      const binding = await runtime.CORE_DB.prepare(
-        "SELECT m.attempt_id,m.principal_ref,m.stage_attempt_ref,m.stage_request_sha256,m.request_sha256,w.budget_receipt_ref AS workflow_budget_receipt_ref " +
-          "FROM research_model_attempt m JOIN budget_reservation b ON b.reservation_id = m.reservation_id " +
-          "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
-          "WHERE m.reservation_id = ?1 LIMIT 1",
-      ).bind(call.budget_reservation_ref).first<StageBindingRow>();
-      if (binding === null) throw new Error("controlled model attempt binding is missing");
-      const residency = { ...base.request.input_manifest.residency };
-      delete (residency as { content_digest?: unknown }).content_digest;
-      await storage.prepareOutputBinding({
-        attempt_id: binding.attempt_id,
-        output_object_ref: call.output_object_ref,
-        principal_ref: binding.principal_ref,
-        stage_attempt_ref: binding.stage_attempt_ref,
-        stage_request_sha256: binding.stage_request_sha256,
-        request_sha256: binding.request_sha256,
-        workflow_budget_receipt_ref: binding.workflow_budget_receipt_ref,
-        residency_domains: residency,
-        created_at: NOW,
-      });
       options.beforePut?.(putCounter.value);
       const body = new Response(outputBytes).body;
       if (body === null) throw new Error("controlled output body is unavailable");
@@ -174,6 +146,7 @@ async function outputFixture(
   const dependencies: GovernedModelAttemptDependencies = {
     ...base.dependencies,
     route,
+    prepareOutputBinding: createModelOutputPreparationHook(storage),
     readOutput: storage.readOutput,
   };
   return {
