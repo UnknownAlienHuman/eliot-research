@@ -83,6 +83,35 @@ interface ManifestRow {
   readonly expires_at: unknown;
 }
 
+interface ValidatedManifestRow {
+  readonly manifest_ref: VersionedRef;
+  readonly manifest_id: string;
+  readonly manifest_revision: number;
+  readonly manifest_digest: string;
+  readonly r2_content_sha256: string;
+  readonly r2_residency_key_json: string;
+  readonly r2_residency_key_digest: string;
+  readonly r2_key: string;
+  readonly r2_etag: string;
+  readonly r2_size_bytes: number;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly policy_authority_ref: string;
+  readonly authorization_receipt_ref: string;
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly pack_ref_id: string;
+  readonly pack_ref_revision: number;
+  readonly trace_ref_id: string;
+  readonly trace_ref_revision: number;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+  readonly state: "WRITING" | "COMMITTED";
+  readonly created_at: string;
+  readonly expires_at: string;
+}
+
 function fail(code: ConstructorParameters<typeof ReferenceManifestError>[0], message: string, retryable = false, cause?: unknown): never {
   throw new ReferenceManifestError(code, message, retryable, cause);
 }
@@ -97,8 +126,23 @@ function sha(value: unknown, label: string): string {
   return value;
 }
 
+function etag(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.trim() !== value ||
+      new TextEncoder().encode(value).byteLength > 512 || /[\u0000-\u001f\u007f]/u.test(value)) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is invalid`, true);
+  }
+  return value;
+}
+
 function revision(value: unknown, label: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) fail("REFERENCE_MANIFEST_INPUT_INVALID", `${label} is invalid`);
+  return value as number;
+}
+
+function sizeBytes(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_MANIFEST_BYTES) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is outside the manifest bound`, true);
+  }
   return value as number;
 }
 
@@ -116,6 +160,19 @@ function ref(value: unknown, label: string): VersionedRef {
 
 function refKey(value: VersionedRef): string {
   return `${value.id}:${value.revision}`;
+}
+
+function canonicalResidencyJson(value: unknown, label: string): string {
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 4096) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not bounded canonical JSON`, true);
+  }
+  let parsed: ObjectResidencyKey;
+  try { parsed = ObjectResidencyKeySchema.parse(JSON.parse(value)); }
+  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not a valid residency key`, true, cause); }
+  if (canonicalEvidenceJson(parsed) !== value) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not canonical JSON`, true);
+  }
+  return value;
 }
 
 function isNavigationScopeError(cause: unknown): boolean {
@@ -149,26 +206,35 @@ function validateContext(context: ReferenceManifestStorageContext): void {
   iso(context.created_at, "created_at");
 }
 
-function validateRow(row: ManifestRow): {
-  readonly manifest_ref: VersionedRef;
-  readonly manifest_digest: string;
-  readonly r2_content_sha256: string;
-  readonly r2_residency_key_json: string;
-  readonly r2_residency_key_digest: string;
-  readonly r2_key: string;
-  readonly r2_etag: string;
-  readonly r2_size_bytes: number;
-} {
-  const manifestRef = { id: text(row.manifest_id, "stored manifest id"), revision: revision(row.manifest_revision, "stored manifest revision") };
+function validateRow(row: ManifestRow): ValidatedManifestRow {
+  const manifestId = text(row.manifest_id, "stored manifest id");
+  const manifestRevision = revision(row.manifest_revision, "stored manifest revision");
+  const manifestRef = { id: manifestId, revision: manifestRevision };
   const digest = sha(row.manifest_digest, "stored manifest digest");
   const contentDigest = sha(row.r2_content_sha256, "stored manifest R2 digest");
-  const residencyJson = text(row.r2_residency_key_json, "stored manifest residency key");
+  const residencyJson = canonicalResidencyJson(row.r2_residency_key_json, "stored manifest residency key");
   const residencyDigest = sha(row.r2_residency_key_digest, "stored manifest residency digest");
   const r2Key = text(row.r2_key, "stored manifest R2 key");
-  const etag = text(row.r2_etag, "stored manifest ETag");
-  const size = revision(row.r2_size_bytes, "stored manifest R2 size");
+  const r2Etag = etag(row.r2_etag, "stored manifest ETag");
+  const size = sizeBytes(row.r2_size_bytes, "stored manifest R2 size");
+  const scopeSnapshotId = text(row.scope_snapshot_id, "stored scope snapshot id");
+  const scopeSnapshotRevision = revision(row.scope_snapshot_revision, "stored scope snapshot revision");
+  const scopeSnapshotDigest = sha(row.scope_snapshot_digest, "stored scope snapshot digest");
+  const policyAuthorityRef = text(row.policy_authority_ref, "stored policy authority ref");
+  const authorizationReceiptRef = text(row.authorization_receipt_ref, "stored authorization receipt ref");
+  const principalRef = text(row.principal_ref, "stored principal ref");
+  const credentialGeneration = text(row.credential_generation, "stored credential generation");
+  const packRefId = text(row.pack_ref_id, "stored pack ref id");
+  const packRefRevision = revision(row.pack_ref_revision, "stored pack ref revision");
+  const traceRefId = text(row.trace_ref_id, "stored trace ref id");
+  const traceRefRevision = revision(row.trace_ref_revision, "stored trace ref revision");
+  const stageAttemptRef = text(row.stage_attempt_ref, "stored stage attempt ref");
+  const stageRequestSha256 = sha(row.stage_request_sha256, "stored stage request digest");
+  const createdAt = iso(row.created_at, "stored manifest created_at");
+  const expiresAt = iso(row.expires_at, "stored manifest expires_at");
   if (row.state !== "WRITING" && row.state !== "COMMITTED") fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "stored reference manifest state is invalid", true);
-  return { manifest_ref: manifestRef, manifest_digest: digest, r2_content_sha256: contentDigest, r2_residency_key_json: residencyJson, r2_residency_key_digest: residencyDigest, r2_key: r2Key, r2_etag: etag, r2_size_bytes: size };
+  const state: "WRITING" | "COMMITTED" = row.state === "WRITING" ? "WRITING" : "COMMITTED";
+  return { manifest_ref: manifestRef, manifest_id: manifestRef.id, manifest_revision: manifestRef.revision, manifest_digest: digest, r2_content_sha256: contentDigest, r2_residency_key_json: residencyJson, r2_residency_key_digest: residencyDigest, r2_key: r2Key, r2_etag: r2Etag, r2_size_bytes: size, scope_snapshot_id: scopeSnapshotId, scope_snapshot_revision: scopeSnapshotRevision, scope_snapshot_digest: scopeSnapshotDigest, policy_authority_ref: policyAuthorityRef, authorization_receipt_ref: authorizationReceiptRef, principal_ref: principalRef, credential_generation: credentialGeneration, pack_ref_id: packRefId, pack_ref_revision: packRefRevision, trace_ref_id: traceRefId, trace_ref_revision: traceRefRevision, stage_attempt_ref: stageAttemptRef, stage_request_sha256: stageRequestSha256, state, created_at: createdAt, expires_at: expiresAt };
 }
 
 function sameBinding(row: ManifestRow, manifest: AllowedReferenceManifest, context: ReferenceManifestStorageContext, residencyDigest: string): boolean {
@@ -202,8 +268,18 @@ function contextMatchesRow(row: ManifestRow, context: ReferenceManifestStorageCo
 
 async function readR2(
   store: ReturnType<typeof createR2EvidenceObjectStore>,
-  row: ReturnType<typeof validateRow>,
+  row: ValidatedManifestRow,
 ): Promise<ReferenceManifestReceipt & { readonly json: string }> {
+  let residency: ObjectResidencyKey;
+  try { residency = ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)); }
+  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding is invalid", true, cause); }
+  if (canonicalEvidenceJson(residency) !== row.r2_residency_key_json ||
+      await objectResidencyKeyDigest(residency) !== row.r2_residency_key_digest ||
+      residency.content_digest.digest !== row.r2_content_sha256) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding differs from D1 content", true);
+  }
+  const expectedKey = await canonicalEvidenceObjectKey(residency, "research/reference-manifest", row.r2_content_sha256);
+  if (expectedKey !== row.r2_key) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 key differs from its residency binding", true);
   const object = await store.open(row.r2_key);
   if (object === null) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object is missing", true);
   if (object.etag !== row.r2_etag || object.size !== row.r2_size_bytes || object.httpMetadata?.contentType !== "application/json") {
@@ -213,14 +289,6 @@ async function readR2(
   if (Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest immutable metadata differs from D1", true);
   }
-  let residency: ObjectResidencyKey;
-  try { residency = ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)); }
-  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding is invalid", true, cause); }
-  if (canonicalEvidenceJson(residency) !== row.r2_residency_key_json ||
-      await objectResidencyKeyDigest(residency) !== row.r2_residency_key_digest ||
-      residency.content_digest.digest !== row.r2_content_sha256) {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding differs from R2 content", true);
-  }
   const bytes = new Uint8Array(await object.arrayBuffer());
   if (bytes.byteLength !== row.r2_size_bytes || await evidenceSha256Bytes(bytes) !== row.r2_content_sha256) {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback digest differs from D1", true);
@@ -229,8 +297,13 @@ async function readR2(
   let parsed: AllowedReferenceManifest;
   try { parsed = AllowedReferenceManifestSchema.parse(JSON.parse(json)); }
   catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not a valid contract", true, cause); }
+  const { manifest_digest: _digest, ...manifestDigestPayload } = parsed;
+  const computedManifestDigest = await evidenceSha256(manifestDigestPayload);
   if (canonicalEvidenceJson(parsed) !== json || parsed.manifest_digest !== row.manifest_digest ||
-      refKey(parsed.manifest_ref) !== refKey(row.manifest_ref)) {
+      computedManifestDigest !== row.manifest_digest || refKey(parsed.manifest_ref) !== refKey(row.manifest_ref) ||
+      parsed.scope_snapshot_ref.id !== row.scope_snapshot_id ||
+      parsed.scope_snapshot_ref.revision !== row.scope_snapshot_revision ||
+      parsed.client_fence_ref !== row.credential_generation || parsed.expires_at !== row.expires_at) {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not canonical", true);
   }
   return { manifest_ref: row.manifest_ref, manifest_digest: row.manifest_digest, r2_content_sha256: row.r2_content_sha256, r2_key: row.r2_key, r2_etag: row.r2_etag, r2_size_bytes: row.r2_size_bytes, existed_identically: true, json };
@@ -280,10 +353,10 @@ export function createResearchReferenceManifestStore(input: {
   async function receipt(refValue: VersionedRef): Promise<ReferenceManifestReceipt | null> {
     const found = await find(refValue);
     if (found === null || found.state !== "COMMITTED") return null;
-    const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
-    if (!contextMatchesRow(found, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
-    const before = await ensureCurrent();
     const row = validateRow(found);
+    const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
+    if (!contextMatchesRow(row, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
+    const before = await ensureCurrent();
     const readback = await readR2(store, row);
     const after = await ensureCurrent();
     if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
@@ -308,7 +381,8 @@ export function createResearchReferenceManifestStore(input: {
     if (computedManifestDigest !== manifest.manifest_digest) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest digest is invalid");
     const existing = await find(manifest.manifest_ref);
     if (existing !== null) {
-      if (!sameBinding(existing, manifest, input.context, residencyDigest) || existing.r2_key !== expectedKey) {
+      const existingRow = validateRow(existing);
+      if (!sameBinding(existingRow, manifest, input.context, residencyDigest) || existingRow.r2_key !== expectedKey) {
         fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest identity or authority binding conflicts with durable row");
       }
       if (existing.state === "COMMITTED") {
@@ -363,10 +437,11 @@ export function createResearchReferenceManifestStore(input: {
     async get(refValue) {
       const found = await find(refValue);
       if (found === null || found.state !== "COMMITTED") return null;
+      const row = validateRow(found);
       const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
-      if (!contextMatchesRow(found, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
+      if (!contextMatchesRow(row, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
       const before = await ensureCurrent();
-      const readback = await readR2(store, validateRow(found));
+      const readback = await readR2(store, row);
       const after = await ensureCurrent();
       if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
       return AllowedReferenceManifestSchema.parse(JSON.parse(readback.json));
