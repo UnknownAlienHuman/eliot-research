@@ -116,6 +116,7 @@ describe("held research scope retrieval over real D1", () => {
       deployment,
     );
     profile = await createD1ScopeProfilePort(db).loadBinding(held.scope_snapshot);
+    expect(profile).toEqual({ version: "retrieval-scope-v1", max_sources: 64, max_results: 8 });
     const unboundResponse = await run(request(`source-${projectedWorld.namespace}`, {}, "held-scope-unbound-orientation"));
     const unboundPayload = await body<{ readonly evidence_pack: { readonly scope_snapshot_ref: { readonly id: string; readonly revision: number } } }>(unboundResponse);
     expect(unboundResponse.status, JSON.stringify(unboundPayload)).toBe(200);
@@ -126,6 +127,7 @@ describe("held research scope retrieval over real D1", () => {
     }).loadScope(unboundRef);
     if (unboundAuthority === null) throw new Error("Missing fresh orientation scope for unbound profile test");
     unboundHeld = { scope_snapshot_ref: unboundRef, scope_snapshot: unboundAuthority.snapshot };
+    expect(unboundHeld.scope_snapshot_ref).not.toEqual(held.scope_snapshot_ref);
   }, 30_000);
 
   it("reuses the persisted W1 scope for a real FAST_SEARCH hit and replays exact D1/R2 evidence", async () => {
@@ -192,7 +194,7 @@ describe("held research scope retrieval over real D1", () => {
     expect(afterFirst).toEqual({
       snapshots: before.snapshots,
       grants: before.grants,
-      profiles: before.profiles + 1,
+      profiles: before.profiles,
       results: before.results + 1,
       traces: before.traces + 1,
     });
