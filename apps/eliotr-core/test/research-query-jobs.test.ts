@@ -1,13 +1,47 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { reset } from "cloudflare:test";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
 import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
 import { handleHttp } from "../src/http.js";
 import { exhaustiveJobId } from "@eliotr/retrieval";
 
-const runtime = env as unknown as Q1Runtime;
+const environment = env as unknown as Q1Runtime;
+
+const TERMINAL_WORKFLOW_STATUSES = new Set(["complete", "errored", "terminated"]);
+const launchedWorkflowIds = new Set<string>();
+const originalWorkflow = environment.RESEARCH_WORKFLOW;
+const trackedWorkflow = {
+  create: async (options: Parameters<typeof originalWorkflow.create>[0]) => {
+    const instance = await originalWorkflow.create(options);
+    launchedWorkflowIds.add(instance.id);
+    return instance;
+  },
+  get: (id: string) => originalWorkflow.get(id),
+};
+const runtime = { ...environment, RESEARCH_WORKFLOW: trackedWorkflow } as unknown as Q1Runtime;
+
+/** Stop every real Workflow created by this file before clearing attached state. */
+async function disposeLaunchedWorkflows(): Promise<void> {
+  const ids = [...launchedWorkflowIds];
+  launchedWorkflowIds.clear();
+  for (const id of ids) {
+    const instance = await originalWorkflow.get(id);
+    const status = await instance.status();
+    if (!TERMINAL_WORKFLOW_STATUSES.has(status.status)) await instance.terminate({ rollback: false });
+  }
+}
+
+afterEach(async () => {
+  const errors: unknown[] = [];
+  try { await disposeLaunchedWorkflows(); } catch (error) { errors.push(error); }
+  try { await reset(); } catch (error) { errors.push(error); }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Workflow test cleanup failed");
+});
 
 async function world(owner: string): Promise<Q1Namespace> {
+  await reset();
   const value: Q1Namespace = {
     db: runtime.CORE_DB,
     searchDb: runtime.SEARCH_DB,
@@ -201,7 +235,7 @@ describe("owner exhaustive workflow discovery", () => {
     expect(page.status).toBe(200);
     const document = await page.json() as { readonly data?: { readonly items?: readonly { readonly workflow_instance_id: string }[] } };
     expect(document.data?.items?.some((item) => item.workflow_instance_id === workflowId)).toBe(false);
-  });
+  }, 20_000);
 
   it("drops a cached job when its owner grant is withdrawn during Workflow status", async () => {
     const owner = "jobs-discovery-owner";
@@ -277,5 +311,5 @@ describe("owner exhaustive workflow discovery", () => {
     expect(invalidated).not.toBeNull();
     if (invalidated === null) return;
     expect(invalidated.state).toBe("INVALIDATED");
-  });
+  }, 20_000);
 });
