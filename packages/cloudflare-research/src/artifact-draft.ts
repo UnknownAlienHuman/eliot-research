@@ -166,6 +166,14 @@ function validateInput(input: PrepareArtifactDraftInput): void {
   if (!/^[a-z][a-z0-9._-]{0,127}$/u.test(topic)) fail("ARTIFACT_DRAFT_INPUT_INVALID", "draft topic is invalid");
 }
 
+function snapshotInput(input: PrepareArtifactDraftInput): PrepareArtifactDraftInput {
+  try {
+    return structuredClone(input);
+  } catch (cause) {
+    fail("ARTIFACT_DRAFT_INPUT_INVALID", "draft input could not be snapshotted", false, cause);
+  }
+}
+
 async function buildPlan(input: PrepareArtifactDraftInput): Promise<{ readonly objects: readonly PlannedObject[]; readonly request_sha256: string; readonly manifest: PlannedObject }> {
   validateInput(input);
   const specDigest = await canonicalDigest(input.spec);
@@ -318,13 +326,12 @@ function resultFromRows(
       revision.spec_digest !== input.revision.spec_digest || revision.evidence_freeze_id !== input.revision.evidence_freeze_ref.id ||
       revision.evidence_freeze_revision !== input.revision.evidence_freeze_ref.revision ||
        revision.dependency_manifest_ref !== input.revision.dependency_manifest_ref ||
+       binding.expected_head_revision !== input.expected_draft_head_revision ||
        binding.principal_ref !== input.intent.principal_ref || binding.spec_ref_id !== input.spec.spec_ref.id ||
        binding.spec_ref_revision !== input.spec.spec_ref.revision || binding.scope_snapshot_id !== input.spec.scope_snapshot_ref.id ||
        binding.scope_snapshot_revision !== input.spec.scope_snapshot_ref.revision || binding.manifest_sha256 !== manifestPlan.sha256 ||
        binding.manifest_size_bytes !== manifestPlan.size_bytes || binding.created_at !== input.revision.created_at ||
-       revision.created_at !== input.revision.created_at || head.head_revision !== input.revision.artifact_ref.revision ||
-       head.manifest_r2_key !== manifestPlan.physical_key || head.intent_id !== input.intent.intent_ref.id ||
-       head.intent_revision !== input.intent.intent_ref.revision || head.updated_at !== input.revision.created_at) {
+       revision.created_at !== input.revision.created_at) {
     fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft binding is inconsistent");
   }
   const byRef = new Map(rows.map((row) => [String(row.object_ref), row]));
@@ -417,6 +424,21 @@ async function readExactDraft(
   if (binding === null || artifact === null || head === null || rows.results === undefined) {
     fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "finalized draft durable rows are incomplete");
   }
+  const currentHeadRevision = safePositive(head.head_revision, "draft head revision");
+  if (currentHeadRevision < revision) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft head regressed below finalized revision");
+  const currentBinding = currentHeadRevision === revision
+    ? binding
+    : await database.prepare("SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id = ?1 AND revision = ?2 LIMIT 1").bind(artifactId, currentHeadRevision).first<DraftBindingRow>();
+  const currentRevision = currentHeadRevision === revision
+    ? artifact
+    : await database.prepare("SELECT artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at FROM artifact_revision WHERE artifact_id = ?1 AND revision = ?2 LIMIT 1").bind(artifactId, currentHeadRevision).first<DraftRevisionRow>();
+  if (currentBinding === null || currentRevision === null || currentRevision.status !== "DRAFT" ||
+      currentBinding.artifact_id !== artifactId || currentBinding.revision !== currentHeadRevision ||
+      currentBinding.manifest_r2_key !== head.manifest_r2_key || currentRevision.manifest_r2_key !== head.manifest_r2_key ||
+      currentBinding.intent_id !== head.intent_id || currentBinding.intent_revision !== head.intent_revision ||
+      currentBinding.created_at !== head.updated_at) {
+    fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "current draft head binding is inconsistent");
+  }
   if (binding.intent_id !== input.intent.intent_ref.id || binding.intent_revision !== input.intent.intent_ref.revision) fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft revision is bound to another intent");
   for (const object of plan.objects) {
     const row = rows.results.find((candidate) => candidate.object_ref === object.object_ref);
@@ -449,11 +471,12 @@ export async function prepareArtifactDraft(
   bucket: R2Bucket,
   input: PrepareArtifactDraftInput,
 ): Promise<PrepareArtifactDraftResult> {
-  const plan = await buildPlan(input);
-  const topic = input.topic ?? DEFAULT_TOPIC;
+  const snapshot = snapshotInput(input);
+  const plan = await buildPlan(snapshot);
+  const topic = snapshot.topic ?? DEFAULT_TOPIC;
   const store = createR2EvidenceObjectStore(bucket);
-  const intentPlan = await prepareIntentWithOutboxMutation(database, { intent: input.intent, topic, payload_sha256: plan.manifest.sha256 });
-  const existing = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
+  const intentPlan = await prepareIntentWithOutboxMutation(database, { intent: snapshot.intent, topic, payload_sha256: plan.manifest.sha256 });
+  const existing = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
   if (existing !== null) return existing;
   const intentStatement = intentPlan.statements[0];
   if (intentStatement === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "prepared intent mutation is incomplete");
@@ -461,16 +484,16 @@ export async function prepareArtifactDraft(
   const reservationInsert = database.prepare(
     "INSERT INTO artifact_draft_reservation(intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, spec_digest, manifest_r2_key, expected_head_revision, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, intent_json, principal_ref, idempotency_key, payload_ref, topic, planned_objects_json, state, created_at, updated_at) " +
     "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,'RESERVED',?19,?19)",
-  ).bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.revision.artifact_ref.id, input.revision.artifact_ref.revision, plan.request_sha256, input.revision.spec_digest, plan.manifest.physical_key, input.expected_draft_head_revision, input.spec.spec_ref.id, input.spec.spec_ref.revision, input.spec.scope_snapshot_ref.id, input.spec.scope_snapshot_ref.revision, canonicalJson(input.intent), input.intent.principal_ref, input.intent.idempotency_key, input.intent.payload_ref, topic, reservationJson(plan.objects), input.revision.created_at);
+  ).bind(snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, plan.request_sha256, snapshot.revision.spec_digest, plan.manifest.physical_key, snapshot.expected_draft_head_revision, snapshot.spec.spec_ref.id, snapshot.spec.spec_ref.revision, snapshot.spec.scope_snapshot_ref.id, snapshot.spec.scope_snapshot_ref.revision, canonicalJson(snapshot.intent), snapshot.intent.principal_ref, snapshot.intent.idempotency_key, snapshot.intent.payload_ref, topic, reservationJson(plan.objects), snapshot.revision.created_at);
   try {
     const reservationResults = await database.batch([reservationInsert]);
     if ((reservationResults[0]?.meta?.changes ?? 0) !== 1) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft reservation did not mutate exactly one row", true);
   } catch (cause) {
-    const raced = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
+    const raced = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
     if (raced !== null) return raced;
-    const reserved = await readReservationByArtifactRevision(database, input.revision.artifact_ref.id, input.revision.artifact_ref.revision);
+    const reserved = await readReservationByArtifactRevision(database, snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision);
     if (reserved !== null) {
-      validateReservation(reserved, input, plan.request_sha256);
+      validateReservation(reserved, snapshot, plan.request_sha256);
     } else {
       fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft intent reservation failed without exact readback", true, cause);
     }
@@ -495,27 +518,27 @@ export async function prepareArtifactDraft(
   const statements: D1PreparedStatement[] = [
     intentStatement,
     outboxStatement,
-    database.prepare("INSERT INTO artifact_revision(artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'DRAFT',?9)").bind(input.revision.artifact_ref.id, input.revision.artifact_ref.revision, input.spec.kind, input.revision.spec_digest, input.revision.evidence_freeze_ref.id, input.revision.evidence_freeze_ref.revision, manifestReceipt.receipt.key, input.revision.dependency_manifest_ref, input.revision.created_at),
-    database.prepare("INSERT INTO artifact_draft_binding(artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)").bind(input.revision.artifact_ref.id, input.revision.artifact_ref.revision, input.intent.intent_ref.id, input.intent.intent_ref.revision, input.expected_draft_head_revision, input.intent.principal_ref, input.spec.spec_ref.id, input.spec.spec_ref.revision, input.spec.scope_snapshot_ref.id, input.spec.scope_snapshot_ref.revision, manifestReceipt.receipt.key, manifestReceipt.receipt.expected_sha256, manifestReceipt.receipt.size_bytes, input.revision.created_at),
+    database.prepare("INSERT INTO artifact_revision(artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'DRAFT',?9)").bind(snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, snapshot.spec.kind, snapshot.revision.spec_digest, snapshot.revision.evidence_freeze_ref.id, snapshot.revision.evidence_freeze_ref.revision, manifestReceipt.receipt.key, snapshot.revision.dependency_manifest_ref, snapshot.revision.created_at),
+    database.prepare("INSERT INTO artifact_draft_binding(artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)").bind(snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.expected_draft_head_revision, snapshot.intent.principal_ref, snapshot.spec.spec_ref.id, snapshot.spec.spec_ref.revision, snapshot.spec.scope_snapshot_ref.id, snapshot.spec.scope_snapshot_ref.revision, manifestReceipt.receipt.key, manifestReceipt.receipt.expected_sha256, manifestReceipt.receipt.size_bytes, snapshot.revision.created_at),
   ];
   for (const item of receipts) {
-    statements.push(database.prepare("INSERT INTO artifact_draft_object(artifact_id, revision, object_kind, object_ref, section_ordinal, receipt_json, residency_key_json, residency_key_digest, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)").bind(input.revision.artifact_ref.id, input.revision.artifact_ref.revision, item.object_kind, item.object_ref, item.section_ordinal, receiptJson(item.receipt), canonicalJson(item.residency), await objectResidencyKeyDigest(item.residency), input.revision.created_at));
+    statements.push(database.prepare("INSERT INTO artifact_draft_object(artifact_id, revision, object_kind, object_ref, section_ordinal, receipt_json, residency_key_json, residency_key_digest, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)").bind(snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, item.object_kind, item.object_ref, item.section_ordinal, receiptJson(item.receipt), canonicalJson(item.residency), await objectResidencyKeyDigest(item.residency), snapshot.revision.created_at));
   }
-  statements.push(database.prepare("UPDATE artifact_draft_reservation SET state='FINALIZED', updated_at=?3 WHERE intent_id=?1 AND intent_revision=?2 AND state='RESERVED'").bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.revision.created_at));
+  statements.push(database.prepare("UPDATE artifact_draft_reservation SET state='FINALIZED', updated_at=?3 WHERE intent_id=?1 AND intent_revision=?2 AND state='RESERVED'").bind(snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.revision.created_at));
   try {
     const results = await database.batch(statements);
     if (results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch did not mutate exactly one row per statement", true);
   } catch (cause) {
-    const recovered = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
+    const recovered = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
     if (recovered !== null) return recovered;
-    const head = await database.prepare("SELECT head_revision FROM artifact_draft_head WHERE artifact_id=?1 LIMIT 1").bind(input.revision.artifact_ref.id).first<{ readonly head_revision: unknown }>();
-    if ((head === null && input.expected_draft_head_revision !== null) ||
-        (head !== null && (input.expected_draft_head_revision === null || head.head_revision !== input.expected_draft_head_revision))) {
+    const head = await database.prepare("SELECT head_revision FROM artifact_draft_head WHERE artifact_id=?1 LIMIT 1").bind(snapshot.revision.artifact_ref.id).first<{ readonly head_revision: unknown }>();
+    if ((head === null && snapshot.expected_draft_head_revision !== null) ||
+        (head !== null && (snapshot.expected_draft_head_revision === null || head.head_revision !== snapshot.expected_draft_head_revision))) {
       fail("ARTIFACT_DRAFT_HEAD_CONFLICT", "draft head changed before commit", false, cause);
     }
     fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch failed without exact readback", true, cause);
   }
-  const final = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
+  const final = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
   if (final === null) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch readback is missing", true);
   return { ...final, disposition: "CREATED" };
 }

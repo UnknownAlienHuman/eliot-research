@@ -91,6 +91,14 @@ BEGIN
   SELECT RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_CONFLICT');
 END;
 
+CREATE TRIGGER artifact_draft_binding_head_monotonic
+BEFORE INSERT ON artifact_draft_binding
+WHEN EXISTS (SELECT 1 FROM artifact_draft_head WHERE artifact_id = NEW.artifact_id)
+  AND (NEW.expected_head_revision IS NULL OR NEW.revision <= NEW.expected_head_revision)
+BEGIN
+  SELECT RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_CONFLICT');
+END;
+
 CREATE TRIGGER artifact_draft_binding_head_cas_apply
 AFTER INSERT ON artifact_draft_binding
 BEGIN
