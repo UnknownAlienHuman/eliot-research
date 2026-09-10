@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
+import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 
 beforeAll(setupOrientationDatabase);
@@ -69,6 +70,24 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(response.status, JSON.stringify(payload)).toBe(200);
     expect(payload.data.investigation_ref.id.startsWith("research-")).toBe(true);
     expect(payload.data.workflow_instance_id.startsWith("run-")).toBe(true);
+    const lane = await db.prepare("SELECT lane FROM investigation_ledger_head WHERE investigation_id = ?1")
+      .bind(payload.data.investigation_ref.id).first<{ lane: string }>();
+    expect(lane?.lane).toBe("exploratory");
+    const stageZero = await db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 0")
+      .bind(payload.data.workflow_instance_id).first<{ receipt_json: string }>();
+    expect(stageZero).not.toBeNull();
+    if (stageZero === null) throw new Error("missing exploratory stage-0 receipt");
+    const stageReceipt = JSON.parse(stageZero.receipt_json) as { output_manifest?: { object_ref?: string } };
+    const stageObjectRef = stageReceipt.output_manifest?.object_ref;
+    expect(typeof stageObjectRef).toBe("string");
+    if (typeof stageObjectRef !== "string") throw new Error("missing exploratory stage-0 object ref");
+    const stageObject = await runtime.WORK_BUCKET.get(stageObjectRef);
+    expect(stageObject).not.toBeNull();
+    if (stageObject === null) throw new Error("missing exploratory stage-0 object");
+    const protocol = decodeProtocolScopeCheckpoint(new Uint8Array(await stageObject.arrayBuffer()));
+    expect(protocol.workflow_stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
+    expect(protocol.external_acquisition).toBe("none");
+    expect(protocol.protocol_profile.lane).toBe("exploratory");
     const counts = await workflowCounts();
     expect(counts.attempts).toBe(18);
     expect(counts.checkpoints).toBe(18);
@@ -84,6 +103,19 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     const replayed = await body(await run(runRequest("rs-shared", {}, "rs-run-first")));
     expect(replayed.data).toEqual(payload.data);
     expect(await workflowCounts()).toEqual(counts);
+  }, 30_000);
+  it("refuses an exploratory replay after its persisted scope grant is revoked", async () => {
+    await seedSource("rs-revoked");
+    const key = "rs-run-revoked";
+    const first = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(await run(runRequest("rs-revoked", {}, key)));
+    expect(first.data.investigation_ref.id.startsWith("research-")).toBe(true);
+    const scope = await db.prepare("SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(first.data.workflow_instance_id).first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
+    expect(scope).not.toBeNull();
+    if (scope === null) throw new Error("missing persisted scope binding");
+    await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+      .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
+    expect((await run(runRequest("rs-revoked", {}, key))).status).toBe(409);
   }, 30_000);
   it("rejects stale idempotency, foreign principals and unsupported profiles", async () => {
     expect((await run(runRequest("rs-shared", { query: "different" }, "rs-run-first"))).status).toBe(409);

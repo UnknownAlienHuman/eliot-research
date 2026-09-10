@@ -10,19 +10,26 @@ import {
 } from "@eliotr/cloudflare-research";
 
 export const runtime = env as unknown as {
-  CORE_DB: D1Database; WORK_BUCKET: R2Bucket; CORE_MIGRATIONS: { name: string; queries: string[] }[];
+  CORE_DB: D1Database; SEARCH_DB: D1Database; WORK_BUCKET: R2Bucket; CORE_MIGRATIONS: { name: string; queries: string[] }[];
 };
 export const principal: WorkflowPrincipal = {
   principal_ref: "workflow-owner", credential_generation: "workflow-credential", deployment_generation: "workflow-deployment",
 };
-export async function workflowFixture(tag: string) {
+export async function workflowFixture(tag: string, lane: "confirmatory" | "exploratory" = "confirmatory") {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
   await applyD1Migrations(db, runtime.CORE_MIGRATIONS);
   const now = new Date().toISOString();
   const expires = new Date(Date.now() + 86400_000).toISOString();
-  const bytes = new TextEncoder().encode("immutable research input — Ж🙂");
+  const operationId = `workflow-run-${tag}`;
+  const bytes = lane === "exploratory"
+    ? new TextEncoder().encode(JSON.stringify({
+      investigation_id: `workflow-investigation-${tag}`, operation_id: operationId,
+      query: "durable stage over actual local D1/R2", scope_snapshot_ref: { id: "workflow-scope", revision: 1 },
+      evidence_grade: "E2", principal_ref: principal.principal_ref,
+    }))
+    : new TextEncoder().encode("immutable research input — Ж🙂");
   const hash = await digest(bytes);
   await db.batch([
     db.prepare("INSERT INTO investigation_current_policy VALUES ('workflow-policy','workflow-policy-authority','ACTIVE',?1)").bind(now),
@@ -40,7 +47,7 @@ export async function workflowFixture(tag: string) {
   await bucket.put(key, bytes, { sha256: hash });
   const ledgerInput: CreateLedgerInput = {
     investigation_id: `workflow-investigation-${tag}`, goal: "durable stage over actual local D1/R2",
-    scope_snapshot_id: "workflow-scope", scope_snapshot_revision: 1, evidence_grade: "E2", lane: "confirmatory",
+    scope_snapshot_id: "workflow-scope", scope_snapshot_revision: 1, evidence_grade: "E2", lane,
     lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: key, debt_refs: [],
     principal_ref: principal.principal_ref, input_digest: hash, policy_generation: "workflow-policy",
     policy_authority_ref: "workflow-policy-authority", deployment_generation: principal.deployment_generation,
@@ -56,9 +63,9 @@ export async function workflowFixture(tag: string) {
   );
   await ledger.create(ledgerInput);
   const request: StageRequest = {
-    protocol: "eliotr.workflow-stage.v1", operation_id: `workflow-run-${tag}`,
+    protocol: "eliotr.workflow-stage.v1", operation_id: operationId,
     investigation_ref: { id: ledgerInput.investigation_id, revision: 1 }, stage: "FREEZE_PROTOCOL_AND_SCOPE",
-    idempotency_key: `workflow-idempotency-${tag}`, handler_generation: "controlled-handlers.v1",
+    idempotency_key: `workflow-idempotency-${tag}`, handler_generation: lane === "exploratory" ? "research-handlers.exploratory.v1" : "controlled-handlers.v1",
     input_manifest: { object_ref: key, sha256: hash, byte_length: bytes.byteLength, residency: {
       scope_domain_id: "workflow-scope", access_domain_id: "workflow-owner", confidentiality_domain_id: "private",
       encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1",

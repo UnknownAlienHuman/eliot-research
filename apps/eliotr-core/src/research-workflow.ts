@@ -187,16 +187,20 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
     };
     const ports = createServerPorts(this.env.CORE_DB, params.operation_id);
     const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
+    const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
+    const investigation = await ledger.read(params.investigation_ref.id);
+    if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
+        investigation.head.deployment_generation !== principal.deployment_generation) {
+      failWorkflow("WORKFLOW_AUTHORITY_STALE");
+    }
+    const lane = investigation.head.lane;
+    const serverOwned = params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION;
     let handlers: MonotoneHandlerFactory;
-    if (params.handler_generation !== SERVER_OWNED_RESEARCH_HANDLER_GENERATION) {
+    if (lane === "confirmatory") {
+      if (serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
       handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
-    } else {
-      const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
-      const investigation = await ledger.read(params.investigation_ref.id);
-      if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
-          investigation.head.deployment_generation !== principal.deployment_generation) {
-        failWorkflow("WORKFLOW_AUTHORITY_STALE");
-      }
+    } else if (lane === "exploratory") {
+      if (!serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
       const evidence = createD1EvidenceAuthorityPort({
         core_database: this.env.CORE_DB,
         search_database: this.env.SEARCH_DB,
@@ -219,6 +223,8 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
       });
       handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory", navigation, ledger });
+    } else {
+      failWorkflow("WORKFLOW_AUTHORITY_STALE");
     }
     let investigation_ref: VersionedRef = { ...params.investigation_ref };
     let input_manifest: WorkflowObject = params.initial_input_manifest;
