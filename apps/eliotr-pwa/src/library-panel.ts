@@ -65,8 +65,11 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
   next.onclick = () => { const cursor = page?.next_cursor; if (cursor) void load(cursor); };
   const offline = () => clear("Offline. Private Library data cleared.");
   const denied = () => clear("Authorization changed. Sign in or renew the read policy, then refresh.");
+  const admissionCompleted = () => { void load(); };
   window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
+  window.addEventListener("eliotr:raw-admission-completed", admissionCompleted);
   void load();
   return () => { disposed = true; clear("Library session closed."); first.onclick = null; next.onclick = null;
-    window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied); };
+    window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied);
+    window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted); };
 }
