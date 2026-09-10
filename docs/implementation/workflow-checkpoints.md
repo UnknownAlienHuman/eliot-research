@@ -92,7 +92,7 @@ scope and pricing authority. It rechecks cancellation and expiry before the paid
 provider results are settled durably even if later authorization prevents Workflow publication. Model
 objects use `model-output/...`; the executor separately owns `workflow/...` checkpoint objects.
 
-These adapters do not supply production prices or grant spending authority. The deployed
+These adapters do not supply production prices or grant spending authority. The existing
 `ResearchWorkflow` composition still uses the deterministic handle-producing stage handler. Full W3
 requires the actual run's resolved EvidencePack, persisted AllowedReferenceManifest and context compiler,
 current route/pricing resolution, pre-call quote and budget/consent policy, and their production
@@ -133,3 +133,10 @@ known durable result after a handler loses its acknowledgement, missing R2 outpu
 intent is recorded, unknown outcome without a second handler invocation, and refusal to overwrite a
 corrupt existing object. The model result is controlled test data; these cases do not call or qualify a
 live provider.
+
+The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
+cases and six handler cases. The composed recovery case uses the production model handler and
+Workflow executor, loses the acknowledgement after model settlement but before the Workflow output
+record, then resumes from the stored result. The controlled model route is invoked exactly once;
+the resumed checkpoint contains the exact saved bytes. This qualifies local recovery behavior,
+not live provider execution or the complete W3 production composition.
