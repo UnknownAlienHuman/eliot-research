@@ -15,10 +15,12 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
       navigation: {} as NavigationReadAuthority,
       ledger: {} as InvestigationLedgerStore,
     });
-    const handler = handlers("RECONCILE");
-    await expect(handler({ request: {} as StageRequest, principal: {} as WorkflowPrincipal,
-      input_bytes: new Uint8Array(), attempt_ref: "missing-freeze", budget_receipt_ref: "missing-budget" }))
-      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    for (const stage of ["RECONCILE", "SYNTHESIZE", "MATERIALIZE"] as const) {
+      const handler = handlers(stage);
+      await expect(handler({ request: {} as StageRequest, principal: {} as WorkflowPrincipal,
+        input_bytes: new Uint8Array(), attempt_ref: "missing-freeze", budget_receipt_ref: "missing-budget" }))
+        .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    }
   });
 
   it("persists stage 10/11 from real stage 0/5 readbacks and replays without new effects", async () => {
