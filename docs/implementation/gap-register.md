@@ -5,6 +5,11 @@ It supplements the per-agent packets; it does not create a second ownership syst
 production definition and final exit evidence are specified in
 [`production-readiness-plan.md`](production-readiness-plan.md).
 
+Current owner priority (2026-09-10): finish the document-to-question-to-answer path with verified
+sources, the Astro interface and Cloudflare delivery. New financial budget, pricing and accounting
+features are deferred; they must not displace that product work. Existing authorization and replay
+guards remain in force, and this ordering does not qualify an untested provider or deployment.
+
 | Priority | Gap | Existing owner | Closure evidence |
 |---|---|---|---|
 | P1 | Local signed owner bridge, explicit read-policy command and guarded initial immutable-import namespace setup are implemented; real Access login qualification and complete populated owner loops remain open | ER-44, ER-43, ER-24, ER-25, ER-26 | signed-verifier, loopback session/CSRF/logout and policy CAS tests; retain actual owner login and finish full source-to-evidence loops; see `local-launch.md` |

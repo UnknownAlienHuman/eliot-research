@@ -5,6 +5,10 @@ W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage ex
 executable `ResearchWorkflow` binding over the same boundary. No new Worker route, model, endpoint
 or deployment is enabled. Governed model/evidence handlers (W3/W4) and live qualification remain open.
 
+The owner's current priority is composing the existing protocol, retrieval, evidence and answer
+stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
+(2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
+
 ## Execution
 
 `createWorkflowCheckpointExecutor(CORE_DB, WORK_BUCKET, ports)` exposes `execute(request, principal,
