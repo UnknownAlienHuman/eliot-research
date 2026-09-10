@@ -22,6 +22,14 @@ const DOCUMENT_KEYS = new Set([
   "provenance_ref",
   "approval_receipt_ref",
 ]);
+const IDENTITY_KEYS = new Set([
+  "pricing_snapshot_ref",
+  "route_ref",
+  "route_version",
+  "provider",
+  "exact_model_id",
+]);
+const PUT_INPUT_KEYS = new Set(["identity", "snapshot"]);
 
 export type ResearchModelPricingBasis = typeof PRICING_BASIS;
 
@@ -125,13 +133,13 @@ function fail(
   throw new ResearchModelPricingError(code, message, retryable, cause);
 }
 
-function objectValue(value: unknown, label: string, code: ResearchModelPricingErrorCode): Record<string, unknown> {
+function objectValue(value: unknown, label: string, code: ResearchModelPricingErrorCode, allowedKeys: ReadonlySet<string>): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) fail(code, `${label} must be an object`);
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) fail(code, `${label} must be a plain object`);
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (!DOCUMENT_KEYS.has(key)) fail(code, `${label} contains unsupported fields`);
+    if (!allowedKeys.has(key)) fail(code, `${label} contains unsupported fields`);
   }
   return record;
 }
@@ -159,7 +167,7 @@ function rate(value: unknown, label: string, code: ResearchModelPricingErrorCode
 }
 
 function decodeDocument(value: unknown, code: ResearchModelPricingErrorCode): ResearchModelPricingSnapshotDocument {
-  const record = objectValue(value, "pricing snapshot", code);
+  const record = objectValue(value, "pricing snapshot", code, DOCUMENT_KEYS);
   if (record.protocol !== PRICING_PROTOCOL) fail(code, "pricing snapshot protocol is unsupported");
   if (record.pricing_basis !== PRICING_BASIS) fail(code, "pricing snapshot basis is unsupported");
   const effective = canonicalIso(record.effective_at, "pricing snapshot effective_at", code);
@@ -183,7 +191,7 @@ function decodeDocument(value: unknown, code: ResearchModelPricingErrorCode): Re
 }
 
 function decodeIdentity(value: unknown, code: ResearchModelPricingErrorCode): ResearchModelPricingSnapshotIdentity {
-  const record = objectValue(value, "pricing snapshot identity", code);
+  const record = objectValue(value, "pricing snapshot identity", code, IDENTITY_KEYS);
   return Object.freeze({
     pricing_snapshot_ref: identifier(record.pricing_snapshot_ref, "pricing_snapshot_ref", code),
     route_ref: identifier(record.route_ref, "route_ref", code),
@@ -201,8 +209,26 @@ function sameIdentity(left: ResearchModelPricingSnapshotIdentity, right: Researc
     left.exact_model_id === right.exact_model_id;
 }
 
+function documentProjection(value: ResearchModelPricingSnapshotDocument): ResearchModelPricingSnapshotDocument {
+  return {
+    protocol: value.protocol,
+    pricing_snapshot_ref: value.pricing_snapshot_ref,
+    route_ref: value.route_ref,
+    route_version: value.route_version,
+    provider: value.provider,
+    exact_model_id: value.exact_model_id,
+    pricing_basis: value.pricing_basis,
+    input_rate_usd_per_1k_tokens: value.input_rate_usd_per_1k_tokens,
+    output_rate_usd_per_1k_tokens: value.output_rate_usd_per_1k_tokens,
+    effective_at: value.effective_at,
+    expires_at: value.expires_at,
+    provenance_ref: value.provenance_ref,
+    approval_receipt_ref: value.approval_receipt_ref,
+  };
+}
+
 function sameSnapshot(left: ResearchModelPricingSnapshotDocument, right: ResearchModelPricingSnapshotDocument): boolean {
-  return canonicalJson(left) === canonicalJson(right);
+  return canonicalJson(documentProjection(left)) === canonicalJson(documentProjection(right));
 }
 
 function jsonText(value: unknown, label: string, code: ResearchModelPricingErrorCode): string {
@@ -267,8 +293,9 @@ export function createD1ResearchModelPricingSnapshotStore(
 
   return Object.freeze({
     async putImmutable(input: PutResearchModelPricingSnapshotInput): Promise<ResearchModelPricingSnapshot> {
-      const identity = decodeIdentity(input?.identity, "MODEL_PRICING_INPUT_INVALID");
-      const document = decodeDocument(input?.snapshot, "MODEL_PRICING_INPUT_INVALID");
+      const request = objectValue(input, "pricing snapshot write input", "MODEL_PRICING_INPUT_INVALID", PUT_INPUT_KEYS);
+      const identity = decodeIdentity(request.identity, "MODEL_PRICING_INPUT_INVALID");
+      const document = decodeDocument(request.snapshot, "MODEL_PRICING_INPUT_INVALID");
       if (!sameIdentity(identity, document)) fail("MODEL_PRICING_INPUT_INVALID", "pricing snapshot does not match its trusted route identity");
       const snapshotJson = canonicalJson(document);
       if (new TextEncoder().encode(snapshotJson).byteLength > MAX_JSON_BYTES) fail("MODEL_PRICING_INPUT_INVALID", "pricing snapshot exceeds its bound");
