@@ -141,13 +141,14 @@ async function readBoundOutput(
 
 function validateReadbackIdentity(
   readback: ModelAttemptReadback,
-  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string },
+  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
 ): ModelOutputBinding {
   if (readback.state !== "SUCCEEDED" || readback.persisted_state !== "SUCCEEDED" || readback.receipt === null || readback.output === null ||
       readback.intent.operation_kind !== input.operation_kind || readback.intent.intent_ref.id !== input.operation_id ||
       readback.intent.principal_ref !== input.principal_ref || readback.intent.idempotency_key !== input.idempotency_key ||
       readback.authority.principal_ref !== input.principal_ref || readback.authority.credential_generation !== input.credential_generation ||
       readback.authority.deployment_generation !== input.deployment_generation || readback.authority.scope_snapshot_ref.id !== input.scope_id ||
+      readback.stage_attempt_ref !== input.stage_attempt_ref || readback.stage_request_sha256 !== input.stage_request_sha256 ||
       readback.output.output_object_ref !== input.output_object_ref || readback.receipt.output_object_ref !== input.output_object_ref ||
       readback.receipt.output_sha256 !== readback.output.output_sha256 || readback.output.readback_sha256 !== readback.output.output_sha256) {
     uncertain("durable model attempt readback is not the requested succeeded effect");
@@ -158,7 +159,7 @@ function validateReadbackIdentity(
 async function readSucceededAttempt(
   dependencies: GovernedModelAttemptDependencies,
   readback: ModelAttemptReadback | null,
-  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string },
+  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
 ): Promise<Uint8Array | null> {
   if (readback === null) return null;
   const output = validateReadbackIdentity(readback, input);
@@ -193,6 +194,7 @@ export function createGovernedModelAttemptHandler(
       deployment_generation: input.deployment_generation, operation_id: identity.operation_id,
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: input.output_object_ref,
+      stage_attempt_ref: input.attempt_ref, stage_request_sha256: input.request_sha256,
     });
   }
 
@@ -225,6 +227,7 @@ export function createGovernedModelAttemptHandler(
         deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
         operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
         scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref,
+        stage_attempt_ref: input.attempt_ref, stage_request_sha256,
       });
       if (recovered === null) uncertain("model attempt is not durably succeeded");
       return recovered;
@@ -263,6 +266,7 @@ export function createGovernedModelAttemptHandler(
       deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref,
+      stage_attempt_ref: input.attempt_ref, stage_request_sha256,
     });
     if (settledBytes === null) uncertain("model settlement readback is missing");
     if (postFetchCode !== undefined) throw new WorkflowCheckpointError(postFetchCode);
