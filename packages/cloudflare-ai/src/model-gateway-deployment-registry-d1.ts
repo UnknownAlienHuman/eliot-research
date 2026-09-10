@@ -78,18 +78,19 @@ function plainObject(
   value: unknown,
   keys: ReadonlySet<string>,
   label: string,
+  code: DynamicRouteProvisioningErrorCode = "DYNAMIC_ROUTE_PROMOTION_FAILED",
 ): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label} must be a plain object`);
+    failure(code, `${label} must be a plain object`);
   }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) {
-    failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label} must be a plain object`);
+    failure(code, `${label} must be a plain object`);
   }
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
     if (!keys.has(key)) {
-      failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label} contains unsupported field ${key}`);
+      failure(code, `${label} contains unsupported field ${key}`);
     }
   }
   return record;
@@ -138,7 +139,7 @@ function timestamp(value: unknown, label: string, code: DynamicRouteProvisioning
 }
 
 function candidateFromJson(raw: unknown, code: DynamicRouteProvisioningErrorCode): DynamicRouteCandidate {
-  const value = plainObject(raw, CANDIDATE_KEYS, "dynamic route candidate");
+  const value = plainObject(raw, CANDIDATE_KEYS, "dynamic route candidate", code);
   if (value.schema !== "eliotr.dynamic-route-candidate.v1") {
     failure(code, "dynamic route candidate schema is unsupported");
   }
@@ -192,6 +193,9 @@ async function decodeCandidateRow(raw: unknown, label: string): Promise<{
   const artifact = await candidateArtifact(candidate);
   if (artifact.json !== value.candidate_json || artifact.sha256 !== rowSha) {
     failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label} bytes do not match its stored digest`);
+  }
+  if (candidateRef !== candidateRefForSha(artifact.sha256)) {
+    failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label}.candidate_ref is not deterministic for its bytes`);
   }
   if (candidate.deployment.route_ref !== routeRef || candidate.deployment.route_version !== routeVersion) {
     failure("DYNAMIC_ROUTE_PROMOTION_FAILED", `${label} route identity differs from candidate bytes`);
@@ -293,6 +297,8 @@ function decodePromotionCommand(raw: DynamicRoutePromotionCommand): DynamicRoute
 
 export interface D1DynamicRouteRegistryOptions {
   readonly now?: () => string;
+  /** TEST is an explicit server-owned fixture mode; production requires LIVE. */
+  readonly environment?: "TEST" | "PRODUCTION";
 }
 
 export function createD1DynamicRouteRegistry(
@@ -303,6 +309,10 @@ export function createD1DynamicRouteRegistry(
     stageFailure("dynamic route registry database binding is invalid");
   }
   const now = options.now ?? (() => new Date().toISOString());
+  const environment = options.environment ?? "PRODUCTION";
+  if (environment !== "TEST" && environment !== "PRODUCTION") {
+    stageFailure("dynamic route registry environment is invalid");
+  }
   return Object.freeze({
     async stageCandidate(rawCandidate: DynamicRouteCandidate, expectedSha256: string): Promise<DynamicRouteCandidateWriteReceipt> {
       const candidate = candidateFromJson(rawCandidate, "DYNAMIC_ROUTE_REGISTRY_STAGE_FAILED");
@@ -347,6 +357,10 @@ export function createD1DynamicRouteRegistry(
       const candidate = await readCandidate(database, command.candidate_ref);
       if (candidate === null) promotionFailure("promotion references a missing candidate");
       if (candidate.sha256 !== command.candidate_sha256 || candidate.row.route_ref !== command.route_ref || candidate.row.route_version !== command.target_route_version) promotionFailure("promotion candidate does not match the requested route identity");
+      const promotionNow = timestamp(now(), "promotion clock", "DYNAMIC_ROUTE_QUALIFICATION_INVALID");
+      const qualificationExpiry = Date.parse(candidate.candidate.qualification_expires_at);
+      if (qualificationExpiry <= Date.parse(promotionNow)) failure("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "dynamic route candidate qualification is expired");
+      if (environment === "PRODUCTION" && candidate.candidate.qualification_tier !== "LIVE") failure("DYNAMIC_ROUTE_LIVE_GATE_REQUIRED", "production route promotion requires live qualification evidence");
       const current = await readActive(database, command.route_ref);
       const targetActive = current === null ? null : current.row;
       if (targetActive !== null && targetActive.route_version === command.target_route_version && targetActive.candidate_ref === command.candidate_ref && targetActive.candidate_sha256 === command.candidate_sha256) {
@@ -355,7 +369,7 @@ export function createD1DynamicRouteRegistry(
       if ((targetActive?.route_version ?? null) !== command.expected_active_route_version) promotionFailure("active route changed before promotion");
       const promotionIdentity = await modelGatewaySha256(JSON.stringify(command));
       const promotionRef = `dynamic-route-promotion-${promotionIdentity}`;
-      const promotedAt = timestamp(now(), "promotion promoted_at", "DYNAMIC_ROUTE_PROMOTION_FAILED");
+      const promotedAt = promotionNow;
       let applied: ActiveRow | null;
       try {
         if (command.expected_active_route_version === null) {
@@ -384,9 +398,15 @@ export function createD1DynamicRouteRegistry(
 
 export function createD1ModelGatewayDeploymentRegistry(
   database: D1Database,
+  options: Pick<D1DynamicRouteRegistryOptions, "now" | "environment"> = {},
 ): ModelGatewayDeploymentRegistryPort {
   if (typeof database !== "object" || database === null || typeof database.prepare !== "function") {
     failure("DYNAMIC_ROUTE_PROMOTION_FAILED", "model gateway deployment registry database binding is invalid");
+  }
+  const now = options.now ?? (() => new Date().toISOString());
+  const environment = options.environment ?? "PRODUCTION";
+  if (environment !== "TEST" && environment !== "PRODUCTION") {
+    failure("DYNAMIC_ROUTE_PROMOTION_FAILED", "model gateway deployment registry environment is invalid");
   }
   return Object.freeze({
     async resolve(routeRef: string): Promise<unknown | null> {
@@ -394,6 +414,9 @@ export function createD1ModelGatewayDeploymentRegistry(
       const active = await readActive(database, bounded);
       if (active === null) return null;
       if (active.candidate === null) failure("DYNAMIC_ROUTE_PROMOTION_FAILED", "active route candidate is missing");
+      if (environment === "PRODUCTION" && active.candidate.candidate.qualification_tier !== "LIVE") failure("DYNAMIC_ROUTE_LIVE_GATE_REQUIRED", "production route resolution requires live qualification evidence");
+      const nowText = timestamp(now(), "deployment resolution clock", "DYNAMIC_ROUTE_PROMOTION_FAILED");
+      if (Date.parse(active.candidate.candidate.qualification_expires_at) <= Date.parse(nowText)) failure("DYNAMIC_ROUTE_QUALIFICATION_INVALID", "active dynamic route qualification is expired");
       return Object.freeze(active.candidate.candidate.deployment);
     },
   });

@@ -20,6 +20,17 @@ CREATE TABLE dynamic_route_candidate (
 CREATE UNIQUE INDEX dynamic_route_candidate_identity_idx
   ON dynamic_route_candidate(route_ref, route_version);
 
+CREATE TRIGGER dynamic_route_candidate_immutable_update
+BEFORE UPDATE ON dynamic_route_candidate
+BEGIN
+  SELECT RAISE(ABORT, 'dynamic route candidates are immutable');
+END;
+CREATE TRIGGER dynamic_route_candidate_immutable_delete
+BEFORE DELETE ON dynamic_route_candidate
+BEGIN
+  SELECT RAISE(ABORT, 'dynamic route candidates are immutable');
+END;
+
 CREATE TABLE dynamic_route_active_generation (
   route_ref TEXT PRIMARY KEY,
   route_version TEXT NOT NULL,
