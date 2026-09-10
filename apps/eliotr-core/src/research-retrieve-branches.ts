@@ -21,7 +21,6 @@ import {
   parseRequest,
   textDigest,
   WorkflowCheckpointError,
-  type StageReceipt,
   type StageRequest,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
@@ -39,6 +38,7 @@ const RETRIEVE_BRANCHES_PROTOCOL = "eliotr.research.retrieve-branches.v1" as con
 export interface RetrieveBranchesStageDependencies {
   readonly database: D1Database;
   readonly search_database: D1Database;
+  readonly work_bucket: R2Bucket;
   readonly evidence_bucket: R2Bucket;
   /** Server-verified access identity; never copied from stage input bytes. */
   readonly access: RetrievalQueryAccess;
@@ -84,11 +84,6 @@ function sameRef(left: { readonly id: string; readonly revision: number }, right
   return left.id === right.id && left.revision === right.revision;
 }
 
-function sameManifest(left: StageReceipt["output_manifest"], right: StageRequest["input_manifest"]): boolean {
-  return left.object_ref === right.object_ref && left.sha256 === right.sha256 &&
-    left.byte_length === right.byte_length && canonicalEvidenceJson(left.residency) === canonicalEvidenceJson(right.residency);
-}
-
 function sameScope(left: ScopeSnapshot, right: ScopeSnapshot): boolean {
   return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
 }
@@ -96,7 +91,6 @@ function sameScope(left: ScopeSnapshot, right: ScopeSnapshot): boolean {
 async function persistedStageZero(
   dependencies: RetrieveBranchesStageDependencies,
   request: StageRequest,
-  inputBytes: Uint8Array,
   principal: WorkflowPrincipal,
 ): Promise<ProtocolScopeCheckpoint> {
   const row = await dependencies.database.prepare(
@@ -120,12 +114,11 @@ async function persistedStageZero(
   );
   if (receipt === null || receipt.stage !== "FREEZE_PROTOCOL_AND_SCOPE" ||
       receipt.operation_id !== request.operation_id ||
-      !sameManifest(receipt.output_manifest, request.input_manifest)) {
+      receipt.output_manifest.object_ref === "" || receipt.output_manifest.sha256 === "") {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  const persistedBytes = await readWorkflowObject(dependencies.evidence_bucket, receipt.output_manifest, true);
-  if (persistedBytes.byteLength !== inputBytes.byteLength || await digest(persistedBytes) !== await digest(inputBytes) ||
-      request.input_manifest.sha256 !== await digest(inputBytes)) {
+  const persistedBytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true);
+  if (persistedBytes.byteLength === 0 || await digest(persistedBytes) !== receipt.output_manifest.sha256) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   const checkpoint = decodeProtocolScopeCheckpoint(persistedBytes);
@@ -137,7 +130,7 @@ async function persistedStageZero(
     request: stageZero,
     principal,
     database: dependencies.database,
-    bucket: dependencies.evidence_bucket,
+    bucket: dependencies.work_bucket,
     navigation: dependencies.navigation,
     ledger: dependencies.ledger,
   });
@@ -154,7 +147,7 @@ function canonicalOutput(value: RetrieveBranchesCheckpoint): Uint8Array {
 export function createRetrieveBranchesStageHandler(
   dependencies: RetrieveBranchesStageDependencies,
 ): WorkflowStageHandler {
-  return async ({ request, principal, input_bytes, signal }: RetrieveBranchesInput & { readonly budget_receipt_ref: string; readonly signal?: AbortSignal }) => {
+  return async ({ request, principal, signal }: RetrieveBranchesInput & { readonly budget_receipt_ref: string; readonly signal?: AbortSignal }) => {
     if (request.stage !== "RETRIEVE_BRANCHES" || dependencies.access.principal_ref !== principal.principal_ref ||
         dependencies.access.credential_generation !== principal.credential_generation ||
         dependencies.navigation.access.principal_ref !== principal.principal_ref ||
@@ -165,7 +158,7 @@ export function createRetrieveBranchesStageHandler(
         !Number.isSafeInteger(dependencies.profile.max_results) || dependencies.profile.max_results < 1) {
       fail("WORKFLOW_INPUT_INVALID");
     }
-    const checkpoint = await persistedStageZero(dependencies, request, input_bytes, principal);
+    const checkpoint = await persistedStageZero(dependencies, request, principal);
     const held = await loadHeldResearchScope(
       { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database },
       dependencies.access,

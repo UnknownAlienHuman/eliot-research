@@ -19,6 +19,7 @@ import {
   fail,
   readWorkflowObject,
   type StageRequest,
+  type StageReceipt,
   type WorkflowExecutionPorts,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
@@ -41,6 +42,8 @@ interface Fixture {
   readonly navigation: ReturnType<typeof createNavigationReadAuthority>;
   readonly ledger: InvestigationLedgerStore;
   readonly stage0: StageRequest;
+  readonly stage0_receipt: StageReceipt;
+  readonly executor: ReturnType<typeof createWorkflowCheckpointExecutor>;
 }
 
 async function fixture(): Promise<Fixture> {
@@ -120,25 +123,76 @@ async function fixture(): Promise<Fixture> {
     },
     checkBudget: async () => ({ receipt_ref: "retrieve-branches-budget", expires_at_ms: nowMs + 300_000 }),
   };
-  const first = await createWorkflowCheckpointExecutor(db, bucket, ports).execute(stage0, principal, createFreezeProtocolAndScopeStageHandler({ navigation, ledger: ledgerStore }));
-  return { db, bucket, scope, navigation, ledger: ledgerStore, stage0: { ...stage0, stage: "RETRIEVE_BRANCHES", investigation_ref: first.investigation_ref, input_manifest: first.output_manifest } };
+  const executor = createWorkflowCheckpointExecutor(db, bucket, ports);
+  const stage0Receipt = await executor.execute(stage0, principal, createFreezeProtocolAndScopeStageHandler({ navigation, ledger: ledgerStore }));
+  return { db, bucket, scope, navigation, ledger: ledgerStore, stage0, stage0_receipt: stage0Receipt, executor };
+}
+
+async function prepareRetrieveStage(f: Fixture): Promise<{
+  readonly request: StageRequest;
+  readonly handler: ReturnType<typeof createRetrieveBranchesStageHandler>;
+}> {
+  const deps: RetrieveBranchesStageDependencies = {
+    database: f.db,
+    search_database: runtime.SEARCH_DB,
+    work_bucket: runtime.WORK_BUCKET,
+    evidence_bucket: runtime.EVIDENCE_BUCKET,
+    access,
+    navigation: f.navigation,
+    ledger: f.ledger,
+    profile,
+  };
+  let previous = f.stage0_receipt;
+  for (const stage of ["ORIENT", "INTERPRET", "COMPILE_OBLIGATIONS", "PLAN"] as const) {
+    const request: StageRequest = { ...f.stage0, stage, investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
+    previous = await f.executor.execute(request, principal, async ({ request: current, input_bytes }) => {
+      return new TextEncoder().encode(JSON.stringify({ stage: current.stage, input_sha: await digest(input_bytes) }));
+    });
+  }
+  return {
+    request: { ...f.stage0, stage: "RETRIEVE_BRANCHES", investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest },
+    handler: createRetrieveBranchesStageHandler(deps),
+  };
+}
+
+async function rowCounts(db: D1Database): Promise<{ readonly snapshots: number; readonly grants: number; readonly profiles: number; readonly results: number; readonly traces: number }> {
+  const row = await db.prepare(
+    "SELECT (SELECT COUNT(*) FROM scope_snapshot) AS snapshots, (SELECT COUNT(*) FROM scope_access_grant) AS grants, " +
+      "(SELECT COUNT(*) FROM retrieval_scope_profile) AS profiles, (SELECT COUNT(*) FROM retrieval_query_result) AS results, " +
+      "(SELECT COUNT(*) FROM retrieval_query_trace) AS traces",
+  ).first<{ readonly snapshots: number; readonly grants: number; readonly profiles: number; readonly results: number; readonly traces: number }>();
+  if (row === null) throw new Error("missing retrieval row counts");
+  return row;
 }
 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
   it("reads stage-0 authority, searches the same scope, and replays exact evidence refs", async () => {
     const f = await fixture();
-    const deps: RetrieveBranchesStageDependencies = { database: f.db, search_database: runtime.SEARCH_DB, evidence_bucket: f.bucket, access, navigation: f.navigation, ledger: f.ledger, profile };
-    const handler = createRetrieveBranchesStageHandler(deps);
-    const firstBytes = await handler({ request: f.stage0, principal, input_bytes: await readWorkflowObject(f.bucket, f.stage0.input_manifest, true), attempt_ref: "retrieve-attempt-1", budget_receipt_ref: "retrieve-budget" });
+    const { request: retrieveRequest, handler } = await prepareRetrieveStage(f);
+    const firstReceipt = await f.executor.execute(retrieveRequest, principal, handler);
+    const firstBytes = await readWorkflowObject(runtime.WORK_BUCKET, firstReceipt.output_manifest, true);
     const first = JSON.parse(new TextDecoder().decode(firstBytes)) as { evidence_pack: { resolved_evidence: readonly { exact_excerpt: string; handle: { source_revision_ref: string; scope_snapshot_ref: { id: string; revision: number } } }[]; pack_ref: { id: string; revision: number } }; trace: { evidence_pack_ref: { id: string; revision: number } }; coverage_claim: string };
-    expect(first.coverage_claim).toBe("SAMPLED");
+    expect(first.coverage_claim, JSON.stringify(first)).toBe("SAMPLED");
     expect(first.evidence_pack.resolved_evidence).toHaveLength(1);
     expect(first.evidence_pack.resolved_evidence[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
     expect(first.evidence_pack.resolved_evidence[0]?.handle.scope_snapshot_ref).toEqual({ id: f.scope.snapshot_id, revision: f.scope.revision });
-    expect(first.evidence_pack.pack_ref).toEqual(first.trace.evidence_pack_ref);
-    const counts = await f.db.prepare("SELECT COUNT(*) AS n FROM retrieval_query_result WHERE principal_ref = ?1").bind(access.principal_ref).first<{ readonly n: number }>();
-    const replayBytes = await handler({ request: f.stage0, principal, input_bytes: await readWorkflowObject(f.bucket, f.stage0.input_manifest, true), attempt_ref: "retrieve-attempt-2", budget_receipt_ref: "retrieve-budget" });
+    expect(first.evidence_pack.pack_ref.id).toBe(first.trace.evidence_pack_ref);
+    const counts = await rowCounts(f.db);
+    const replayReceipt = await f.executor.execute(retrieveRequest, principal, handler);
+    const replayBytes = await readWorkflowObject(runtime.WORK_BUCKET, replayReceipt.output_manifest, true);
     expect(new TextDecoder().decode(replayBytes)).toBe(new TextDecoder().decode(firstBytes));
-    expect((await f.db.prepare("SELECT COUNT(*) AS n FROM retrieval_query_result WHERE principal_ref = ?1").bind(access.principal_ref).first<{ readonly n: number }>())?.n).toBe(counts?.n);
+    expect(await rowCounts(f.db)).toEqual(counts);
+  });
+
+  it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
+    const f = await fixture();
+    const { request, handler } = await prepareRetrieveStage(f);
+    const before = await rowCounts(f.db);
+    await f.db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3")
+      .bind(f.scope.snapshot_id, f.scope.revision, access.principal_ref).run();
+    const inputBytes = await readWorkflowObject(runtime.WORK_BUCKET, request.input_manifest, true);
+    await expect(handler({ request, principal, input_bytes: inputBytes, attempt_ref: "retrieve-revoked-attempt", budget_receipt_ref: "retrieve-budget" }))
+      .rejects.toMatchObject({ code: "NAVIGATION_SCOPE_NOT_CURRENT" });
+    expect(await rowCounts(f.db)).toEqual(before);
   });
 });
