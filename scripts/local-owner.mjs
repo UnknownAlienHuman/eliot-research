@@ -6,6 +6,7 @@ import { loginOwner, readOwnerIdentity } from "./lib/local-owner-login.mjs";
 import { startOwnerBridge } from "./lib/local-owner-bridge.mjs";
 import { prepareLocal } from "./lib/local-launch.mjs";
 import { startLocalWorker } from "./lib/local-worker.mjs";
+import { reserveMiniflareForbiddenPorts } from "./lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace, validateNamespaceCommand } from "./lib/local-namespace.mjs";
 import { applyLocalReadPolicy, localPolicyQuery, validatePolicyCommand } from "./lib/local-read-policy.mjs";
 
@@ -30,31 +31,47 @@ export async function runLocalOwner({ policyFile, namespaceFile, stopSignal, log
     namespaceCommand = validateNamespaceCommand(decoded);
   }
   const config = await loadOwnerConfig();
-  const paths = await prepareLocal();
-  let worker; let bridge;
+  const portGuard = await reserveMiniflareForbiddenPorts();
+  let operationFailed = false;
+  let operationError;
+  let releaseFailed = false;
+  let releaseError;
   try {
-    log("Opening the official Cloudflare Access login. No Worker or tunnel is deployed.");
-    let token = await loginOwner(config, { signal: stopSignal });
-    if (stopSignal?.aborted) return;
-    worker = await startLocalWorker(paths);
-    const identity = await readOwnerIdentity(worker.origin, token, paths.generation);
-    if (stopSignal?.aborted) return;
-    if (namespaceCommand) {
-      const receipt = await initializeLocalNamespace({ command: namespaceCommand, identity, query: localPolicyQuery(paths) });
-      log(JSON.stringify(receipt, null, 2));
-    }
-    if (stopSignal?.aborted) return;
-    if (command) {
-      const receipt = await applyLocalReadPolicy({ command, identity, query: localPolicyQuery(paths) });
-      log(JSON.stringify(receipt, null, 2));
-    }
-    if (stopSignal?.aborted) return;
-    bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation });
-    token = null;
-    log(`Owner: ${identity.principal_ref}\nOpen this one-time local link within 60 seconds:\n${bridge.pairingUrl}`);
-    log("The local session lasts at most 15 minutes. Sign out at /__local/ or press Ctrl+C. Source access is not granted by login.");
-    if (stopSignal && !stopSignal.aborted) await new Promise((resolve) => stopSignal.addEventListener("abort", resolve, { once: true }));
-  } finally { try { await bridge?.close(); } finally { await worker?.stop(); } }
+    const paths = await prepareLocal();
+    let worker; let bridge;
+    try {
+      log("Opening the official Cloudflare Access login. No Worker or tunnel is deployed.");
+      let token = await loginOwner(config, { signal: stopSignal });
+      if (stopSignal?.aborted) return;
+      worker = await startLocalWorker(paths);
+      const identity = await readOwnerIdentity(worker.origin, token, paths.generation);
+      if (stopSignal?.aborted) return;
+      if (namespaceCommand) {
+        const receipt = await initializeLocalNamespace({ command: namespaceCommand, identity, query: localPolicyQuery(paths) });
+        log(JSON.stringify(receipt, null, 2));
+      }
+      if (stopSignal?.aborted) return;
+      if (command) {
+        const receipt = await applyLocalReadPolicy({ command, identity, query: localPolicyQuery(paths) });
+        log(JSON.stringify(receipt, null, 2));
+      }
+      if (stopSignal?.aborted) return;
+      bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation });
+      token = null;
+      log(`Owner: ${identity.principal_ref}\nOpen this one-time local link within 60 seconds:\n${bridge.pairingUrl}`);
+      log("The local session lasts at most 15 minutes. Sign out at /__local/ or press Ctrl+C. Source access is not granted by login.");
+      if (stopSignal && !stopSignal.aborted) await new Promise((resolve) => stopSignal.addEventListener("abort", resolve, { once: true }));
+    } finally { try { await bridge?.close(); } finally { await worker?.stop(); } }
+  } catch (error) {
+    operationFailed = true;
+    operationError = error;
+  } finally {
+    try { await portGuard.release(); }
+    catch (error) { releaseFailed = true; releaseError = error; }
+  }
+  if (operationFailed && releaseFailed) throw new AggregateError([operationError, releaseError], "local owner failed and port guard cleanup failed");
+  if (operationFailed) throw operationError;
+  if (releaseFailed) throw releaseError;
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
