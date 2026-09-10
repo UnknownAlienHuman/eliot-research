@@ -190,8 +190,6 @@ function evidenceIdentity(evidence: ResearchEvidencePack["resolved_evidence"][nu
   return {
     handle: evidence.handle,
     exact_excerpt: evidence.exact_excerpt,
-    ...(evidence.neighboring_text_ref === undefined ? {} : { neighboring_text_ref: evidence.neighboring_text_ref }),
-    ...(evidence.source_title === undefined ? {} : { source_title: evidence.source_title }),
     source_revision_content_sha256: evidence.source_revision_content_sha256,
     scope_snapshot_digest: evidence.scope_snapshot_digest,
     instruction_taint: evidence.instruction_taint,
