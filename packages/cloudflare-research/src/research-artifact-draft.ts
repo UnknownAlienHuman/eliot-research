@@ -201,7 +201,7 @@ function evidenceIdentity(evidence: ResearchEvidencePack["resolved_evidence"][nu
   };
 }
 
-function sameEvidence(left: ResearchEvidencePack["resolved_evidence"][number], right: ResearchEvidencePack["resolved_evidence"][number]): boolean {
+export function sameEvidence(left: ResearchEvidencePack["resolved_evidence"][number], right: ResearchEvidencePack["resolved_evidence"][number]): boolean {
   return canonicalEvidenceJson(evidenceIdentity(left)) === canonicalEvidenceJson(evidenceIdentity(right));
 }
 

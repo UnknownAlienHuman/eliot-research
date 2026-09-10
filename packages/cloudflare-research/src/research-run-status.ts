@@ -1,5 +1,5 @@
-import { WorkflowCheckpointStore, type WorkflowRunStatus } from "./store.js";
-import { WorkflowCheckpointError, type WorkflowPrincipal } from "./types.js";
+import { WorkflowCheckpointStore, type WorkflowRunStatus } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointError, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 export interface RunStatusAuthoritySnapshot {
   readonly investigation_id: string;

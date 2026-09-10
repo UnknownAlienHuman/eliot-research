@@ -1,12 +1,13 @@
 import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
-import { decodeSynthesisSectionCandidate } from "./research-artifact-draft.js";
-import type { EvidenceFreezeSynthesisContext } from "./research-evidence-freeze-composition.js";
+import { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifact-draft.js";
+import type { EvidenceFreezeSynthesisContext, EvidenceFreezeVerificationContextReader } from "./research-evidence-freeze-composition.js";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import { encodeResearchVerificationResult } from "./research-verification-result.js";
-import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
-import { WorkflowCheckpointStore } from "./store.js";
+import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
 
 export interface ResearchVerificationStageDependencies {
   readonly database: D1Database;
@@ -15,15 +16,7 @@ export interface ResearchVerificationStageDependencies {
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly recheck_authority: Parameters<typeof readCommittedResearchSynthesisOutput>[0]["recheck_authority"];
   /** Fresh reader validates current stage13 head while loading committed stage12 context. */
-  readonly context: ResearchVerificationContextReader;
-}
-
-export interface ResearchVerificationContextReader {
-  read(input: {
-    readonly request: StageRequest;
-    readonly principal: WorkflowPrincipal;
-    readonly input_bytes: Uint8Array;
-  }): Promise<EvidenceFreezeSynthesisContext>;
+  readonly context: EvidenceFreezeVerificationContextReader;
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -60,16 +53,12 @@ function requireCandidateRefs(
 
 async function committedSynthesisInput(
   database: D1Database,
-
   request: StageRequest,
 ): Promise<{ readonly request: StageRequest; readonly request_sha256: string; readonly attempt_ref: string }> {
-  const checkpoint = await new WorkflowCheckpointStore(database).readCommittedStageRequest(request.operation_id, "SYNTHESIZE");
-  if (checkpoint === null) return failCorrupt();
-  const receipt = await new WorkflowCheckpointStore(database).receipt(checkpoint.request, checkpoint.request_sha256);
-  if (receipt === null || receipt.stage !== "SYNTHESIZE" || receipt.attempt_ref !== checkpoint.attempt_ref ||
-      receipt.request_sha256 !== checkpoint.request_sha256 || receipt.investigation_ref.id !== request.investigation_ref.id ||
-      !sameManifest(receipt.output_manifest, request.input_manifest)) return failCorrupt();
-  return { request: checkpoint.request, request_sha256: checkpoint.request_sha256, attempt_ref: checkpoint.attempt_ref };
+  const checkpoint = await readCommittedStageLineage(new WorkflowCheckpointStore(database), request.operation_id, "SYNTHESIZE");
+  if (checkpoint.receipt.investigation_ref.id !== request.investigation_ref.id ||
+      !sameManifest(checkpoint.receipt.output_manifest, request.input_manifest)) return failCorrupt();
+  return checkpoint;
 }
 
 function requireContext(request: StageRequest, principal: WorkflowPrincipal, context: EvidenceFreezeSynthesisContext): void {
@@ -126,7 +115,8 @@ export function createResearchVerificationStageHandler(
         JSON.stringify(resolved.map((item) => refKey(item.handle.handle_ref)).sort()) !== JSON.stringify(requested)) failCorrupt();
     const verified = resolved.map((item) => {
       const frozen = context.freeze.included_evidence.find((entry) => sameRef(entry.handle_ref, item.handle.handle_ref));
-      if (frozen === undefined || frozen.digest !== item.handle.excerpt_sha256 || item.handle.terminal_state !== "LIVE" ||
+      const packed = context.stage_five.evidence_pack.resolved_evidence.find((entry) => sameRef(entry.handle.handle_ref, item.handle.handle_ref));
+      if (frozen === undefined || packed === undefined || !sameEvidence(packed, item) || frozen.digest !== item.handle.excerpt_sha256 || item.handle.terminal_state !== "LIVE" ||
           item.handle.scope_snapshot_ref.id !== context.freeze.scope_snapshot_ref.id ||
           item.handle.scope_snapshot_ref.revision !== context.freeze.scope_snapshot_ref.revision ||
           item.authorization_receipt_ref !== before.authorization_receipt_ref || item.credential_generation !== dependencies.navigation.access.credential_generation) failCorrupt();
@@ -139,7 +129,13 @@ export function createResearchVerificationStageHandler(
       };
     });
     const after = await dependencies.navigation.current();
-    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) failAuthority();
+    const finalHead = await new WorkflowCheckpointStore(dependencies.database).head(request.investigation_ref.id);
+    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) ||
+        canonicalEvidenceJson(finalHead) !== canonicalEvidenceJson(context.w1_head) ||
+        finalHead.investigation_id !== request.investigation_ref.id ||
+        finalHead.revision !== request.investigation_ref.revision ||
+        finalHead.principal_ref !== principal.principal_ref ||
+        finalHead.deployment_generation !== principal.deployment_generation) failAuthority();
     return encodeResearchVerificationResult({
       protocol: "eliotr.research.verification.v1", operation_id: request.operation_id, stage: "VERIFY",
       stage_attempt_ref: attempt_ref, stage_request_sha256: request_sha256,

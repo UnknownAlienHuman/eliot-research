@@ -28,7 +28,7 @@ import {
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-research";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,

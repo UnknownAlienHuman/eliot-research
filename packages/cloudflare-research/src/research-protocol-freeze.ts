@@ -20,9 +20,9 @@ import {
   type StageRequest,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
-} from "./types.js";
-import { readWorkflowObject } from "./objects.js";
-import { WorkflowCheckpointStore } from "./store.js";
+} from "@eliotr/cloudflare-workflows";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { z } from "zod";
 
 /** The server-owned profile family for bounded corpus-only lookup. */

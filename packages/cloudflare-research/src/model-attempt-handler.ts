@@ -3,7 +3,7 @@ import {
   digest, MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError,
   type WorkflowAttemptRecoveryInput, type WorkflowPrincipal, type WorkflowStageHandler,
   type StageRequest,
-} from "./types.js";
+} from "@eliotr/cloudflare-workflows";
 import type {
   ModelAttemptReadback,
   ModelAttemptReservationInput,

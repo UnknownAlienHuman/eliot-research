@@ -5,9 +5,9 @@ import {
 } from "./model-attempt-store.js";
 import type { ModelAttemptReadback, ModelOutputBinding } from "./model-attempt-types.js";
 import { createResearchModelOutputStore } from "./research-model-output-store.js";
-import { WorkflowCheckpointStore } from "./store.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { readResearchRunStatus, type RunStatusAuthoritySnapshot } from "./research-run-status.js";
-import { WorkflowCheckpointError, type StageReceipt, type WorkflowPrincipal } from "./types.js";
+import { WorkflowCheckpointError, type StageReceipt, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;

@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
 import { readCommittedResearchSynthesisOutput } from "../../../packages/cloudflare-research/src/research-synthesis-output-reader.js";
-import { digest } from "../../../packages/cloudflare-research/src/types.js";
+import { digest } from "@eliotr/cloudflare-workflows";
 import { initializeModelAttemptRuntime } from "./model-attempt-fixture.js";
 import { principal } from "./research-workflow-fixture.js";
 import {

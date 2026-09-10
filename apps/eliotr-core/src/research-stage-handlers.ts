@@ -10,6 +10,8 @@ import {
   createEvidenceFreezeSynthesisHandler,
   createResearchMaterializeStageHandler,
   type ResearchMaterializeStageDependencies,
+  createResearchVerificationStageHandler,
+  type ResearchVerificationStageDependencies,
 } from "@eliotr/cloudflare-research";
 import {
   createRetrieveBranchesStageHandler,
@@ -45,6 +47,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly freeze?: EvidenceFreezeCompositionDependencies;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
       readonly materialize?: ResearchMaterializeStageDependencies;
+      readonly verification?: ResearchVerificationStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -109,6 +112,9 @@ export function createResearchStageHandlerFactory(
     }
     if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return mode.synthesis === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createEvidenceFreezeSynthesisHandler(mode.synthesis).handler;
+    }
+    if (stage === "VERIFY" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      return mode.verification === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createResearchVerificationStageHandler(mode.verification);
     }
     if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;
