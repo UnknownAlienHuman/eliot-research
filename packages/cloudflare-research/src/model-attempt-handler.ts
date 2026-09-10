@@ -326,6 +326,10 @@ export function createGovernedModelAttemptHandler(
         residency_domains: residencyDomainsForRequest(preparation.request),
       });
     } catch (cause) {
+      if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
+      const preparationNowMs = dependencies.now?.() ?? Date.now();
+      if (quoteExpired(prepared.quote.expires_at, preparationNowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+      if (quoteExpired(prepared.authority.expires_at, preparationNowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
       return settleOutputPreparationFailure(started.attempt.attempt_id, cause);
     }
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
@@ -336,6 +340,9 @@ export function createGovernedModelAttemptHandler(
     } catch (cause) {
       return settleBeforeProvider(started.attempt.attempt_id, revalidationCode(cause));
     }
+    if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
+    if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
     catch (_cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
