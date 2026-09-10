@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { resolveLocalBrowserExecutable } from "../../../scripts/lib/local-launch.mjs";
 /* global URL:readonly, Buffer:readonly, document:readonly, window:readonly, Event:readonly,
-  process:readonly, console:readonly, fetch:readonly */
+  process:readonly, console:readonly */
 
 const root = resolve(import.meta.dirname, "../../..");
 const dist = resolve(root, "apps/eliotr-pwa/dist");
@@ -201,7 +201,9 @@ function contentType(path) {
 }
 
 async function startFixture() {
-  const raw = { mode: "lost", postCount: 0, getCount: 0, conversionCount: 0, conversionMode: "unknown", admissionMode: "lost", admissionCount: 0, capture: undefined, headers: undefined, release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [] };
+  const raw = { mode: "lost", postCount: 0, getCount: 0, conversionCount: 0, conversionMode: "unknown", conversionLossPending: false,
+    admissionMode: "lost", admissionLossPending: false, admissionStatusNonterminalPending: false, admissionCount: 0, admissionStatusCount: 0, capture: undefined, headers: undefined,
+    release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [], admissionStatusRequests: [] };
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -226,7 +228,8 @@ async function startFixture() {
         assert.equal(typeof body.idempotency_key, "string");
         raw.conversionCount += 1;
         raw.conversionRequests.push({ captureId: decodeURIComponent(conversionMatch[1]), body });
-        if (raw.conversionMode === "lost") {
+        if (raw.conversionMode === "lost" && raw.conversionLossPending) {
+          raw.conversionLossPending = false;
           response.statusCode = 503; response.setHeader("content-type", "application/json; charset=utf-8");
           response.end(JSON.stringify({ type: "urn:eliotr:problem:raw_markdown_settlement_uncertain", title: "Processing settlement is uncertain",
             status: 503, code: "PROVIDER_UNCERTAIN", trace_id: trace, retryable: true }));
@@ -249,7 +252,8 @@ async function startFixture() {
         assert.deepEqual(Object.keys(body).sort(), ["conversion_operation_id", "idempotency_key"]);
         raw.admissionCount += 1;
         raw.admissionRequests.push({ captureId: decodeURIComponent(admissionMatch[1]), body });
-        if (raw.admissionMode === "lost" && raw.admissionCount === 1) {
+        if ((raw.admissionMode === "lost" && raw.admissionCount === 1) || (raw.admissionMode === "lost-next" && raw.admissionLossPending)) {
+          raw.admissionLossPending = false;
           response.statusCode = 503; response.setHeader("content-type", "application/json; charset=utf-8");
           response.end(JSON.stringify({ type: "urn:eliotr:problem:raw_normalized_outcome_unknown", title: "Library admission outcome is uncertain",
             status: 503, code: "RAW_NORMALIZED_OUTCOME_UNKNOWN", trace_id: trace, retryable: true }));
@@ -274,6 +278,15 @@ async function startFixture() {
       if (admissionStatusMatch !== null) {
         assert.equal(request.method, "GET");
         assert.equal(admissionStatusMatch[2], "a".repeat(64));
+        raw.admissionStatusCount += 1;
+        raw.admissionStatusRequests.push({ captureId: decodeURIComponent(admissionStatusMatch[1]), admissionOperationId: admissionStatusMatch[2] });
+        if (raw.admissionStatusNonterminalPending) {
+          raw.admissionStatusNonterminalPending = false;
+          return json(envelope({ protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64),
+            capture_id: decodeURIComponent(admissionStatusMatch[1]), conversion_operation_id: "b".repeat(64), candidate_ref: `raw-normalized-candidate:${"b".repeat(64)}`, state: "PREPARING",
+            source_revision_ref: "revision-raw-1", source_view_ref: `snapshot-view:v1:${"c".repeat(64)}`, conversion_state: "COMPLETE", reason_codes: ["IN_PROGRESS"],
+            expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" }));
+        }
         return json(envelope({ protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64),
           capture_id: decodeURIComponent(admissionStatusMatch[1]), conversion_operation_id: "b".repeat(64), candidate_ref: `raw-normalized-candidate:${"b".repeat(64)}`, state: "COMMITTED",
           source_revision_ref: "revision-raw-1", source_view_ref: `snapshot-view:v1:${"c".repeat(64)}`, conversion_state: "COMPLETE",
@@ -413,20 +426,36 @@ export async function runRawFileUploadBrowser() {
     assert.equal(fixture.raw.admissionCount, 1);
     const admissionKey = fixture.raw.admissionRequests[0]?.body?.idempotency_key;
     assert.match(admissionKey, /^raw-admission-[a-f0-9]{64}$/u);
-    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admit]")?.textContent?.includes("Check Library status") === true, null, { timeout: 5000 });
+    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admit]")?.textContent?.includes("Reconcile Library add") === true, null, { timeout: 5000 });
     const admissionCommitted = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath);
     assert.equal(admissionCommitted.payload.data.state, "COMMITTED");
     assert.equal(fixture.raw.admissionCount, 2);
-    assert.equal(fixture.raw.admissionRequests[1]?.body?.idempotency_key, admissionKey, "Library status check must reuse the same admission idempotency key");
+    assert.equal(fixture.raw.admissionRequests[1]?.body?.idempotency_key, admissionKey, "Library reconcile must reuse the same admission idempotency key");
     assert.match(await panel.locator("[data-raw-status]").textContent(), /Added to Library/u);
     assert.match(await panel.locator("[data-raw-admission]").textContent(), /COMMITTED/u);
     const admissionReadbackPath = `${admissionPath}/${"a".repeat(64)}`;
-    const admissionReadback = await waitForRawResponse(page, "GET", () => page.evaluate(async (path) => {
-      const response = await fetch(path); await response.arrayBuffer(); return response.status;
-    }, admissionReadbackPath), admissionReadbackPath);
+    fixture.raw.admissionStatusNonterminalPending = true;
+    const admissionPreparing = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-admit]").click(), admissionReadbackPath);
+    assert.equal(admissionPreparing.payload.data.state, "PREPARING");
+    assert.equal(fixture.raw.admissionStatusCount, 1);
+    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admit]")?.textContent?.includes("Resume Library add") === true, null, { timeout: 5000 });
+    const admissionResumed = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath);
+    assert.equal(admissionResumed.payload.data.state, "COMMITTED");
+    assert.equal(fixture.raw.admissionCount, 3);
+    assert.equal(fixture.raw.admissionRequests[2]?.body?.idempotency_key, admissionKey, "resuming the existing Library add must reuse its idempotency key");
+    const admissionReadback = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-admit]").click(), admissionReadbackPath);
     assert.equal(admissionReadback.payload.data.state, "COMMITTED");
     assert.equal(admissionReadback.payload.data.admission_operation_id, "a".repeat(64));
     assert.equal(admissionReadback.payload.data.admission_receipt.decision, "ADMITTED");
+    assert.equal(fixture.raw.admissionStatusCount, 2);
+
+    // The next reload deliberately loses both settlement acknowledgements.
+    // Recovery must use the durable capture/conversion identities, then the
+    // same admission key, while a known operation remains GET-only in the UI.
+    fixture.raw.conversionMode = "lost";
+    fixture.raw.conversionLossPending = true;
+    fixture.raw.admissionMode = "lost-next";
+    fixture.raw.admissionLossPending = true;
 
     // pagehide clears private state; reselecting the same file starts from the
     // same deterministic identity after the page is loaded again.
@@ -438,10 +467,34 @@ export async function runRawFileUploadBrowser() {
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
-    await panel.locator("[data-raw-submit]").click();
+    await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click(), "/api/v1/ingest/raw", 503);
+    await waitForRawResponse(page, "GET", () => Promise.resolve(), "/api/v1/ingest/raw");
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
     assert.equal(fixture.raw.postCount, 3); assert.equal(fixture.raw.getCount, 2);
     assert.equal(fixture.raw.capture?.key, firstKey, "same file after reload must reuse its deterministic identity");
+
+    const reloadConversionLoss = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-process]").click(), conversionPath, 503);
+    assert.equal(reloadConversionLoss.payload.code, "PROVIDER_UNCERTAIN");
+    assert.equal(fixture.raw.conversionRequests[2]?.body?.idempotency_key, conversionKey);
+    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-process]")?.textContent?.includes("Check processing status") === true, null, { timeout: 5000 });
+    const reloadConversion = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-process]").click(), conversionPath);
+    assert.equal(reloadConversion.payload.data.state, "COMPLETE");
+    assert.equal(reloadConversion.payload.data.operation_id, completeSnapshot.payload.data.operation_id, "replayed processing must retain its operation identity");
+    assert.equal(fixture.raw.conversionRequests[3]?.body?.idempotency_key, conversionKey);
+
+    const admissionPathAfterReload = admissionPath;
+    const reloadAdmissionLoss = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPathAfterReload, 503);
+    assert.equal(reloadAdmissionLoss.payload.code, "RAW_NORMALIZED_OUTCOME_UNKNOWN");
+    assert.equal(fixture.raw.admissionCount, 4);
+    assert.equal(fixture.raw.admissionRequests[3]?.body?.idempotency_key, admissionKey);
+    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admit]")?.textContent?.includes("Reconcile Library add") === true, null, { timeout: 5000 });
+    const reloadAdmission = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPathAfterReload);
+    assert.equal(reloadAdmission.payload.data.state, "COMMITTED");
+    assert.equal(reloadAdmission.payload.data.admission_operation_id, admissionCommitted.payload.data.admission_operation_id, "replayed admission must retain its operation identity");
+    assert.equal(fixture.raw.admissionRequests[4]?.body?.idempotency_key, admissionKey);
+    const reloadAdmissionReadback = await waitForRawResponse(page, "GET", () => panel.locator("[data-raw-admit]").click(), admissionReadbackPath);
+    assert.equal(reloadAdmissionReadback.payload.data.admission_operation_id, admissionCommitted.payload.data.admission_operation_id);
+    assert.equal(fixture.raw.admissionStatusCount, 3);
 
     // A generation change rejects readback rather than promoting a receipt
     // from the old deployment.
