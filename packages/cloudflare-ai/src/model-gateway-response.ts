@@ -442,6 +442,66 @@ function decodeAssistantContent(rawChoices: unknown): string {
   return boundedString(message.content, "AI Gateway response assistant content");
 }
 
+/**
+ * Decode the bounded raw gateway body shared by the online transport and
+ * persisted output readers. Header policy is deliberately outside this
+ * function because persisted bodies do not retain response headers.
+ */
+export async function decodeModelGatewayBody(bodyBytes: Uint8Array): Promise<{
+  readonly body_bytes: Uint8Array;
+  readonly body_sha256: string;
+  readonly assistant_content: string;
+  readonly response_model: string;
+  readonly usage: ModelGatewayUsageObservation;
+}> {
+  let rawBody: unknown;
+  try {
+    rawBody = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes));
+  } catch (cause) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response is not valid UTF-8 JSON",
+      { cause },
+    );
+  }
+  const body = exactObject(rawBody, RESPONSE_KEYS, "AI Gateway response");
+  const responseId = boundedString(body.id, "AI Gateway response id", 256);
+  if (!IDENTIFIER.test(responseId)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response id is not a bounded identifier",
+    );
+  }
+  if (body.object !== "chat.completion") {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response object is not chat.completion",
+    );
+  }
+  nonnegativeInteger(body.created, "AI Gateway response created");
+  optionalBoundedString(body.service_tier, "AI Gateway response service_tier");
+  optionalBoundedString(
+    body.system_fingerprint,
+    "AI Gateway response system_fingerprint",
+  );
+  const responseModel = boundedString(body.model, "AI Gateway response model", 256);
+  if (!IDENTIFIER.test(responseModel)) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response model is not a bounded model identifier",
+    );
+  }
+  const assistantContent = decodeAssistantContent(body.choices);
+  const usage = decodeUsage(body.usage);
+  return Object.freeze({
+    body_bytes: bodyBytes,
+    body_sha256: await modelGatewaySha256(bodyBytes),
+    assistant_content: assistantContent,
+    response_model: responseModel,
+    usage,
+  });
+}
+
 function decodeFingerprint(
   headers: Headers,
   deployment: ModelRouteDeployment,
@@ -510,51 +570,9 @@ export async function decodeModelGatewayResponse(
   }
   const successfulStep = header(response.headers, "cf-aig-step", false);
   const bodyBytes = await readBoundedBody(response, maximumBytes, true);
-  let rawBody: unknown;
-  try {
-    rawBody = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes));
-  } catch (cause) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response is not valid UTF-8 JSON",
-      { cause },
-    );
-  }
-  const body = exactObject(rawBody, RESPONSE_KEYS, "AI Gateway response");
-  const responseId = boundedString(body.id, "AI Gateway response id", 256);
-  if (!IDENTIFIER.test(responseId)) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response id is not a bounded identifier",
-    );
-  }
-  if (body.object !== "chat.completion") {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response object is not chat.completion",
-    );
-  }
-  nonnegativeInteger(body.created, "AI Gateway response created");
-  optionalBoundedString(body.service_tier, "AI Gateway response service_tier");
-  optionalBoundedString(
-    body.system_fingerprint,
-    "AI Gateway response system_fingerprint",
-  );
-  const responseModel = boundedString(body.model, "AI Gateway response model", 256);
-  if (!IDENTIFIER.test(responseModel)) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response model is not a bounded model identifier",
-    );
-  }
-  const assistantContent = decodeAssistantContent(body.choices);
-  const usage = decodeUsage(body.usage);
+  const decodedBody = await decodeModelGatewayBody(bodyBytes);
   return Object.freeze({
-    body_bytes: bodyBytes,
-    body_sha256: await modelGatewaySha256(bodyBytes),
-    assistant_content: assistantContent,
-    response_model: responseModel,
-    usage,
+    ...decodedBody,
     fingerprint,
     log_id: logId,
     ...(cacheStatus === undefined ? {} : { cache_status: cacheStatus }),
