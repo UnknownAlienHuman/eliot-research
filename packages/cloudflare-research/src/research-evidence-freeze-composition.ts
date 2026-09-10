@@ -299,6 +299,12 @@ export function createEvidenceFreezeSynthesisContextReader(
     async read(input): Promise<EvidenceFreezeSynthesisContext> {
       if (input.request.stage !== "SYNTHESIZE") fail("WORKFLOW_INPUT_INVALID");
       const before = await navigation.current();
+      if (navigation.access.principal_ref !== input.principal.principal_ref ||
+          navigation.access.credential_generation !== input.principal.credential_generation ||
+          input.request.input_manifest.residency.scope_domain_id !== navigation.scope.snapshot_id ||
+          input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
       const stageTen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "RECONCILE"));
       const stageTenReceipt = committedOrCorrupt(await checkpoints.receipt(stageTen.request, stageTen.request_sha256));
       const stageEleven = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "FREEZE_EVIDENCE"));
