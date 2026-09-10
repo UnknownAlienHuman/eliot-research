@@ -6,7 +6,6 @@ import type { EvidenceFreezeSynthesisContext } from "./research-evidence-freeze-
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import { encodeResearchVerificationResult } from "./research-verification-result.js";
 import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
-import { readWorkflowObject } from "./objects.js";
 import { WorkflowCheckpointStore } from "./store.js";
 
 export interface ResearchVerificationStageDependencies {
@@ -15,7 +14,6 @@ export interface ResearchVerificationStageDependencies {
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly recheck_authority: Parameters<typeof readCommittedResearchSynthesisOutput>[0]["recheck_authority"];
-  /** Reads the committed freeze/manifest/evidence-pack context for SYNTHESIZE. */
   /** Fresh reader validates current stage13 head while loading committed stage12 context. */
   readonly context: ResearchVerificationContextReader;
 }
@@ -62,7 +60,7 @@ function requireCandidateRefs(
 
 async function committedSynthesisInput(
   database: D1Database,
-  work_bucket: R2Bucket,
+
   request: StageRequest,
 ): Promise<{ readonly request: StageRequest; readonly request_sha256: string; readonly attempt_ref: string }> {
   const checkpoint = await new WorkflowCheckpointStore(database).readCommittedStageRequest(request.operation_id, "SYNTHESIZE");
@@ -71,8 +69,6 @@ async function committedSynthesisInput(
   if (receipt === null || receipt.stage !== "SYNTHESIZE" || receipt.attempt_ref !== checkpoint.attempt_ref ||
       receipt.request_sha256 !== checkpoint.request_sha256 || receipt.investigation_ref.id !== request.investigation_ref.id ||
       !sameManifest(receipt.output_manifest, request.input_manifest)) return failCorrupt();
-  try { await readWorkflowObject(work_bucket, checkpoint.request.input_manifest, true); }
-  catch { return failCorrupt(); }
   return { request: checkpoint.request, request_sha256: checkpoint.request_sha256, attempt_ref: checkpoint.attempt_ref };
 }
 
@@ -95,7 +91,7 @@ export function createResearchVerificationStageHandler(
     if (request.stage !== "VERIFY") fail("WORKFLOW_INPUT_INVALID");
     const request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(request)));
     if (request.input_manifest.sha256 !== await digest(input_bytes)) failCorrupt();
-    const synthesisStage = await committedSynthesisInput(dependencies.database, dependencies.work_bucket, request);
+    const synthesisStage = await committedSynthesisInput(dependencies.database, request);
     let context: EvidenceFreezeSynthesisContext;
     try { context = await dependencies.context.read({ request, principal, input_bytes }); }
     catch { return failAuthority(); }

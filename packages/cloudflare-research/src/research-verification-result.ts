@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IdentifierSchema, IsoDateTimeSchema, Sha256Schema, VersionedRefSchema } from "@eliotr/contracts";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
-import { MAX_WORKFLOW_RECEIPT_BYTES } from "./types.js";
+import { fail, MAX_WORKFLOW_RECEIPT_BYTES } from "./types.js";
 
 const ResearchVerificationResultSchema = z.object({
   protocol: z.literal("eliotr.research.verification.v1"),
@@ -38,21 +38,23 @@ const ResearchVerificationResultSchema = z.object({
 export type ResearchVerificationResult = z.infer<typeof ResearchVerificationResultSchema>;
 
 function parseCanonical(bytes: Uint8Array): ResearchVerificationResult {
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) throw new Error("WORKFLOW_OUTPUT_CORRUPT");
+  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("WORKFLOW_OUTPUT_CORRUPT");
   let text: string;
   try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-  catch { throw new Error("WORKFLOW_OUTPUT_CORRUPT"); }
+  catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
   try {
     const value = ResearchVerificationResultSchema.parse(JSON.parse(text));
-    if (canonicalEvidenceJson(value) !== text) throw new Error("WORKFLOW_OUTPUT_CORRUPT");
+    if (canonicalEvidenceJson(value) !== text) fail("WORKFLOW_OUTPUT_CORRUPT");
     return value;
-  } catch { throw new Error("WORKFLOW_OUTPUT_CORRUPT"); }
+  } catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
 }
 
 export function encodeResearchVerificationResult(value: ResearchVerificationResult): Uint8Array {
-  const parsed = ResearchVerificationResultSchema.parse(value);
+  let parsed: ResearchVerificationResult;
+  try { parsed = ResearchVerificationResultSchema.parse(value); }
+  catch { fail("WORKFLOW_INPUT_INVALID"); }
   const bytes = new TextEncoder().encode(canonicalEvidenceJson(parsed));
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) throw new Error("WORKFLOW_INPUT_INVALID");
+  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("WORKFLOW_INPUT_INVALID");
   return bytes;
 }
 

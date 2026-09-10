@@ -420,6 +420,42 @@ export function createEvidenceFreezeSynthesisContextReader(
   return createSynthesisContextReader(environment, navigation, readers);
 }
 
+export interface EvidenceFreezeVerificationContextReader {
+  read(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly input_bytes: Uint8Array;
+  }): Promise<EvidenceFreezeSynthesisContext>;
+}
+
+/** Reads the frozen SYNTHESIZE context while pinning currentness to VERIFY. */
+export function createEvidenceFreezeVerificationContextReader(
+  environment: EvidenceFreezeSynthesisReaderEnvironment,
+  navigation: NavigationReadAuthority,
+  readers: EvidenceFreezeCommittedReaders,
+): EvidenceFreezeVerificationContextReader {
+  const checkpoints = new WorkflowCheckpointStore(environment.database);
+  return {
+    async read(input): Promise<EvidenceFreezeSynthesisContext> {
+      if (input.request.stage !== "VERIFY") fail("WORKFLOW_INPUT_INVALID");
+      const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
+      const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
+      if (stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.stage !== "SYNTHESIZE" ||
+          stageTwelveReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
+          !sameJson(stageTwelveReceipt.output_manifest, input.request.input_manifest)) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      const stageTwelveInput = await readWorkflowObject(environment.work_bucket, stageTwelve.request.input_manifest, true);
+      return createSynthesisContextReader(environment, navigation, readers, {
+        expected_head_revision: input.request.investigation_ref.revision,
+        verify_input_bytes: true,
+      }).read({ request: stageTwelve.request, principal: input.principal, input_bytes: stageTwelveInput });
+    },
+  };
+}
+
 export interface EvidenceFreezeMaterializeContext extends EvidenceFreezeSynthesisContext {
   readonly stage_sixteen_request: StageRequest;
   readonly stage_sixteen_request_sha256: string;
