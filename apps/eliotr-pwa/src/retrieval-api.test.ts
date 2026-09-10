@@ -58,14 +58,14 @@ function pack(overrides: Record<string, unknown> = {}): Record<string, unknown> 
 }
 
 describe("retrieval request", () => {
-  it("sends exactly the ORIENT metadata profile the Worker accepts", () => {
+  it("sends exactly the FAST_SEARCH profile the Worker accepts", () => {
     expect(JSON.parse(retrievalBody("pinned", []))).toEqual({
       query: "pinned",
-      product: "ORIENT",
+      product: "FAST_SEARCH",
       scope_expression: { kind: "GLOBAL_LIBRARY" },
       literals: [],
       evidence_grade: "E0",
-      budget_ref: "orientation-metadata-v1",
+      budget_ref: "retrieval-fast-v1",
       max_results: 16,
     });
   });

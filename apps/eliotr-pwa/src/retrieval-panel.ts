@@ -2,9 +2,10 @@ import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { escapeHtml } from "./html.js";
 import {
-  readRetrievalTrace, retrievalBody, runRetrievalQuery,
+  assertRetrievalSelection, readRetrievalTrace, retrievalBody, runRetrievalQuery,
   type RetrievalResultView, type RetrievalTraceView,
 } from "./retrieval-api.js";
+import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
 function anchorText(anchor: Record<string, unknown>): string {
   const kind = String(anchor.kind ?? "unknown");
@@ -55,7 +56,7 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
   ].join("\n");
 }
 
-export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void; clearPrivate(): void } {
+export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string, context?: LibrarySelectionContext): void; clearPrivate(): void } {
   element.innerHTML = `<h2>Retrieval</h2>
     <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
     Coverage is sampled: a miss does not prove absence, and no model is called.</p>
@@ -77,6 +78,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   let previous = "";
   let lastTrace: RetrievalResultView["trace"] | undefined;
   let lastEvidence: RetrievalResultView["evidence"] = [];
+  let selectedContext: LibrarySelectionContext | undefined;
 
   const errorText = (error: unknown) => error instanceof ApiRequestError
     ? `${error.code}: ${error.message}${error.traceId ? ` · trace ${error.traceId}` : ""}${
@@ -87,6 +89,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   const clearPrivate = (): void => {
     stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
     lastTrace = undefined; lastEvidence = [];
+    selectedContext = undefined; sources.value = ""; previous = ""; key = "";
     status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
   };
   cancel.onclick = () => {
@@ -120,9 +123,10 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     if (body !== previous) { previous = body; key = crypto.randomUUID(); }
     cancel.disabled = false;
     status.textContent = "Running retrieval…";
-    void runRetrievalQuery(body, key, controller.signal)
+    void runRetrievalQuery(body, key, controller.signal, selectedContext?.deploymentGeneration)
       .then((view) => {
         if (serial !== active) return;
+        if (selectedContext?.sourceRevisionRef) assertRetrievalSelection(view, selectedContext.sourceRevisionRef);
         lastTrace = view.trace;
         lastEvidence = view.evidence;
         result.innerHTML = renderRetrieval(view);
@@ -152,7 +156,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     const serial = active;
     traceResult.hidden = false;
     traceResult.textContent = "Reading trace…";
-    void readRetrievalTrace(ref)
+    void readRetrievalTrace(ref, undefined, selectedContext?.deploymentGeneration)
       .then((view) => { if (serial === active) traceResult.textContent = renderRetrievalTrace(view); })
       .catch((error: unknown) => { if (serial === active) traceResult.textContent = errorText(error); });
   });
@@ -160,10 +164,11 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   const cleanup = () => { stop(); };
   return Object.assign(cleanup, {
     clearPrivate,
-    selectSource(id: string): void {
+    selectSource(id: string, context?: LibrarySelectionContext): void {
       IdentifierSchema.parse(id);
       const current = sources.value.split(",").map((value) => value.trim()).filter(Boolean);
       if (!current.includes(id)) sources.value = [...current, id].join(", ");
+      selectedContext = context;
     },
   });
 }
