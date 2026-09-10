@@ -19,13 +19,13 @@ const researchWorkflowId = `run-${"c".repeat(48)}`;
 const draftWorkflowId = `run-${"d".repeat(48)}`;
 const draftArtifactRef = { id: "artifact-draft-1", revision: 1 };
 const draftSectionRef = { id: "section-draft-1", revision: 1 };
-const draftSectionText = "Draft section bytes from the persisted report.\n";
+const draftSectionText = "Draft section bytes from the persisted report: <em>quoted source</em>.\n";
 const draftSectionSha = createHash("sha256").update(draftSectionText).digest("hex");
 const draftArtifact = {
   artifact_ref: draftArtifactRef, spec_ref: { id: "spec-draft-1", revision: 1 }, spec_digest: "1".repeat(64),
   evidence_freeze_ref: { id: "freeze-draft-1", revision: 1 },
   sections: [{ section_ref: draftSectionRef, contract_id: "summary", body_object_ref: "artifact-section-object-1",
-    body_sha256: draftSectionSha, statement_labels: { "statement-1": "SOURCE_SUPPORTED" },
+    body_sha256: draftSectionSha, statement_labels: { "statement-1": "UNRESOLVED" },
     evidence_ledger_ref: "evidence-ledger-draft-1", verification_receipt_ref: "verification-draft-1" }],
   dependency_manifest_ref: "manifest-draft-1", deterministic_export_refs: {}, status: "DRAFT",
   created_at: "2026-09-10T12:00:00.000Z",
@@ -171,12 +171,15 @@ const server = createServer((request, response) => {
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       const expectedQuery = body.query === "research question" || body.query === "draft research question" ? body.query : "";
       assert.ok(expectedQuery, "research fixture accepts only its declared run queries");
+      const expectedScope = { kind: "SELECTED_SOURCES", source_ids: ["source-1"] };
       assert.deepEqual(body, { query: expectedQuery, product: "RESEARCH",
         scope_expression: body.scope_expression, literals: [],
         evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: 16 });
-      assert.ok(JSON.stringify(body.scope_expression) === JSON.stringify({ kind: "SELECTED_SOURCES", source_ids: ["source-1"] }) ||
+      if (expectedQuery === "research question") assert.deepEqual(body.scope_expression, expectedScope,
+        "legacy research run must retain its selected source scope");
+      else assert.ok(JSON.stringify(body.scope_expression) === JSON.stringify(expectedScope) ||
         JSON.stringify(body.scope_expression) === JSON.stringify({ kind: "GLOBAL_LIBRARY" }),
-      "research fixture must receive an explicit selected or global scope");
+      "draft research fixture must receive one of its explicit selected or global scopes");
       const draft = expectedQuery === "draft research question";
       if (draft) draftRunStatusReads = 0; else researchRunStatusReads = 0;
       return json(envelope({ investigation_ref: { id: `research-${draft ? "d".repeat(48) : "c".repeat(48)}`, revision: 1 }, workflow_instance_id: draft ? draftWorkflowId : researchWorkflowId }));
@@ -434,7 +437,7 @@ try {
   await click('#research-run [data-run-result] button');
   await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
-  assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").innerHTML.includes("<")'), false);
+  assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").querySelector("em")'), null);
   await evaluate('document.querySelector("#app").dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason: "generation-changed" } }))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft generation clearing");
   await launchDraft("Session clearing");
@@ -537,7 +540,7 @@ try {
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   assert.deepEqual(errors, []);
-  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, owner research run POST→manual GET/recovery with unavailable answer, XSS, denial, generation drift, stale responses, offline clearing, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
+  console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
   pending?.(); socket?.close();
   if (browser && browser.exitCode === null) {
