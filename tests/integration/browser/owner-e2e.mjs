@@ -120,6 +120,24 @@ async function sha256Hex(bytes) {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Keep the recorded conversion fixture byte-identical to the production
+// d1-ingest-validation canonicalDigest(requestSnapshot) contract. Arrays keep
+// their order; object keys are sorted and undefined properties are omitted.
+function canonicalJson(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    assert.ok(Number.isFinite(value), "canonical JSON fixture values must be finite");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (typeof value === "object") {
+    const record = value;
+    const keys = Object.keys(record).filter((key) => record[key] !== undefined).sort();
+    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
+  }
+  throw new TypeError("canonical JSON fixture contains a non-JSON value");
+}
+
 export async function createOwnerE2EKey() {
   const keys = await webcrypto.subtle.generateKey(
     { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -451,7 +469,7 @@ async function seedRawMarkdownConversionFixture(paths, input) {
     conversion_options: { output: { format: "markdown" } },
   };
   const requestJson = JSON.stringify(request);
-  const requestSha256 = await sha256Hex(Buffer.from(requestJson, "utf8"));
+  const requestSha256 = await sha256Hex(Buffer.from(canonicalJson(request), "utf8"));
   const authoritySha256 = await sha256Hex(Buffer.from(JSON.stringify([
     input.credentialGeneration, input.expectedGeneration, input.expectedGeneration,
     input.captureId, input.contentSha256, input.sourceOwnerGeneration,
@@ -4740,13 +4758,22 @@ export async function runOwnerE2E() {
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
-    const sourceRows = d1Query(paths, "CORE_DB", `SELECT source_id, source_namespace_id FROM source WHERE source_namespace_id='${namespace}'`);
+    const sourceRows = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
     assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist");
     const sourceId = sourceRows[0].source_id;
-    const revisionRows = d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref, r.content_sha256 FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`);
+    const revisionRows = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
     const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
+    // Freeze every pre-raw authority row so the new admission cannot rewrite
+    // the original source, owner, admission policy, read grant, or scope view.
+    const ownerRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
+    const admissionPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
+    const readPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
+    const scopeSnapshotRowsBeforeRaw = d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
+    assert.equal(ownerRowsBeforeRaw.length, 1, "authoritative owner row must exist before raw admission");
+    assert.equal(admissionPolicyRowsBeforeRaw.length, 1, "authoritative admission policy row must exist before raw admission");
+    assert.equal(readPolicyRowsBeforeRaw.length, 1, "explicit read policy row must exist before raw admission");
     // Real raw-file owner flow: the PWA selects a UTF-8 filename and sends the
     // file through the paired browser session to the live Worker. Recovery is
     // completed after the existing authenticated reload below, so this phase
@@ -4996,24 +5023,35 @@ export async function runOwnerE2E() {
     assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 1 }],
-      "restart must preserve the explicit read grant");
-    const sourceRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT source_id, source_namespace_id FROM source WHERE source_namespace_id='${namespace}'`);
-    const revisionRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`);
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`),
-      revisionRowsAfterRaw,
-      "restart must preserve the original and raw-admitted revision rows");
+    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
+      ownerRowsBeforeRaw, "restart must preserve the exact namespace owner row");
+    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
+      admissionPolicyRowsBeforeRaw, "restart must preserve the exact admission policy snapshot");
+    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
+      readPolicyRowsBeforeRaw, "restart must preserve the exact explicit read grant");
+    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
+      scopeSnapshotRowsBeforeRaw, "restart must preserve the exact scope snapshots");
+    const sourceRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    const revisionRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    assert.deepEqual(sourceRowsAfterRaw.filter((row) => sourceRows.some((original) => original.source_id === row.source_id)),
+      sourceRows, "raw admission must preserve every original source row exactly");
+    assert.deepEqual(revisionRowsAfterRaw.filter((row) => revisionRows.some((original) => original.source_revision_ref === row.source_revision_ref)),
+      revisionRows, "raw admission must preserve every original revision row exactly");
     // Once the Worker is stopped, reconcile the capture, recorded conversion,
     // server-composed admission and their immutable R2 readbacks from the
     // authoritative local stores. The conversion fixture stands in for the
     // provider boundary; live Workers AI remains explicitly unqualified.
     const rawRows = d1Query(paths, "CORE_DB",
-      "SELECT capture_id,principal_ref,source_namespace_id,idempotency_key,original_file_name,content_sha256,size_bytes,content_type,state,object_key " +
+      "SELECT capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_digest,content_sha256,size_bytes,content_type,state,object_key " +
       `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
     assert.equal(rawRows.length, 1, "raw upload must leave exactly one durable capture row");
     const rawRow = rawRows[0];
     assert.equal(rawRow.capture_id, rawUpload.captureId, "D1 raw capture identity must match the browser receipt");
+    assert.equal(rawRow.principal_ref, "e2e-owner", "raw capture must bind the verified owner");
+    assert.equal(rawRow.owner_system_id, ownerRowsBeforeRaw[0].owner_system_id, "raw capture must bind the active owner system");
     assert.equal(rawRow.source_namespace_id, namespace, "raw capture must bind the current owner namespace");
+    assert.ok(typeof rawRow.source_revision_ref === "string" && rawRow.source_revision_ref.length > 0, "raw capture must retain its source revision binding");
+    assert.equal(rawRow.source_owner_generation, ownerGeneration, "raw capture must bind the active owner generation");
     assert.equal(rawRow.original_file_name, rawUpload.expected.name, "D1 raw filename must preserve UTF-8 text");
     assert.equal(rawRow.content_sha256, rawUpload.expected.digest, "D1 raw digest must match selected bytes");
     assert.equal(rawRow.size_bytes, rawUpload.expected.bytes.length, "D1 raw size must match selected bytes");
@@ -5028,42 +5066,140 @@ export async function runOwnerE2E() {
     assert.deepEqual(rawBytes, rawUpload.expected.bytes, "R2 raw bytes must match the selected file exactly");
     assert.equal(await sha256Hex(rawBytes), rawUpload.expected.digest, "R2 raw bytes must retain the selected digest");
     const conversionRows = d1Query(paths, "CORE_DB",
-      "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,state,result_sha256,output_object_key,receipt_object_key " +
+      "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,state,result_json,result_sha256,output_object_key,receipt_object_key " +
       `FROM raw_markdown_conversion WHERE operation_id='${rawUpload.conversionOperationId}'`);
     assert.equal(conversionRows.length, 1, "raw conversion fixture must leave exactly one durable conversion row");
-    assert.deepEqual(conversionRows[0], {
+    assert.deepEqual({
+      operation_id: conversionRows[0].operation_id, principal_ref: conversionRows[0].principal_ref,
+      capture_id: conversionRows[0].capture_id, content_sha256: conversionRows[0].content_sha256,
+      size_bytes: conversionRows[0].size_bytes, state: conversionRows[0].state,
+      result_sha256: conversionRows[0].result_sha256, output_object_key: conversionRows[0].output_object_key,
+      receipt_object_key: conversionRows[0].receipt_object_key,
+    }, {
       operation_id: rawUpload.conversionOperationId, principal_ref: "e2e-owner", capture_id: rawUpload.captureId,
       content_sha256: rawUpload.expected.digest, size_bytes: rawUpload.expected.bytes.length, state: "COMPLETE",
       result_sha256: rawUpload.conversionFixture.resultSha256,
       output_object_key: rawUpload.conversionFixture.outputObjectKey, receipt_object_key: `raw-markdown/${rawUpload.conversionOperationId}/receipt.json`,
     }, "conversion row must retain the recorded provider-boundary identity");
+    const conversionRequest = JSON.parse(conversionRows[0].request_json);
+    assert.equal(conversionRows[0].request_sha256,
+      await sha256Hex(Buffer.from(canonicalJson(conversionRequest), "utf8")),
+      "conversion request digest must use the production canonical JSON contract");
+    assert.equal(conversionRows[0].request_sha256,
+      await sha256Hex(Buffer.from(canonicalJson({
+        idempotency_key: rawUpload.conversionFixture.idempotencyKey,
+        max_output_bytes: 8 * 1024 * 1024, max_tokens: 1_000_000, timeout_ms: 300_000,
+        conversion_options: { output: { format: "markdown" } },
+      }), "utf8")), "conversion request must bind the fixed processing profile");
+    assert.equal(conversionRows[0].authority_sha256,
+      await sha256Hex(Buffer.from(JSON.stringify([
+        identity.credential_generation, paths.generation, paths.generation, rawUpload.captureId,
+        rawUpload.expected.digest, ownerGeneration,
+      ]), "utf8")), "conversion authority digest must bind owner and deployment generations");
+    assert.equal(conversionRows[0].result_sha256,
+      await sha256Hex(Buffer.from(conversionRows[0].result_json, "utf8")),
+      "conversion result digest must match the persisted converter serialization");
     const convertedObject = await tryR2ObjectGet(paths, evidenceBucket, rawUpload.conversionFixture.outputObjectKey);
     assert.equal(convertedObject.ok, true, "recorded conversion output must be readable from EVIDENCE_BUCKET");
     const convertedBytes = Buffer.from(convertedObject.output ?? "", "utf8");
     assert.equal(await sha256Hex(convertedBytes), rawUpload.conversionFixture.outputSha256,
       "conversion output R2 bytes must match the recorded result digest");
     const admissionRows = d1Query(paths, "CORE_DB",
-      "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,candidate_ref,source_revision_ref,source_view_ref,state,ingest_operation_id,receipt_json " +
+      "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,ingest_operation_id,reason_codes_json,receipt_json " +
       `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
     assert.equal(admissionRows.length, 1, "raw admission must leave exactly one durable admission row");
     const admissionRow = admissionRows[0];
     assert.equal(admissionRow.principal_ref, "e2e-owner");
     assert.equal(admissionRow.capture_id, rawUpload.captureId);
     assert.equal(admissionRow.conversion_operation_id, rawUpload.conversionOperationId);
+    const expectedAdmissionKey = `raw-admission-${await sha256Hex(Buffer.from(
+      `raw-normalized-admission-ui-v1\u0000${rawUpload.captureId}\u0000${rawUpload.conversionOperationId}`, "utf8"))}`;
+    assert.equal(admissionRow.idempotency_key, expectedAdmissionKey,
+      "raw admission must persist the browser-owned deterministic admission key");
     assert.match(admissionRow.admission_operation_id, /^[a-f0-9]{64}$/u);
     assert.match(admissionRow.candidate_ref, /^raw-normalized-candidate:[a-f0-9]{64}$/u);
     assert.match(admissionRow.source_view_ref, /^snapshot-view:v1:[a-f0-9]{64}$/u);
+    assert.equal(admissionRow.candidate_ref, rawProcessed.admission.candidate_ref, "admission row must retain the browser candidate identity");
+    assert.equal(admissionRow.source_revision_ref, rawRow.source_revision_ref, "admission must bind the captured source revision");
+    assert.equal(admissionRow.source_view_ref, rawProcessed.admission.source_view_ref, "admission row must retain the server witness reference");
     assert.equal(admissionRow.state, "COMMITTED");
     assert.ok(typeof admissionRow.ingest_operation_id === "string" && admissionRow.ingest_operation_id.length > 0);
     assert.ok(typeof admissionRow.receipt_json === "string" && admissionRow.receipt_json.length > 0);
     const admissionReceipt = JSON.parse(admissionRow.receipt_json);
     assert.ok(["ADMITTED", "DUPLICATE"].includes(admissionReceipt.decision), "COMMITTED admission must carry an admitted receipt");
+    assert.equal(admissionReceipt.source_revision_ref, admissionRow.source_revision_ref, "admission receipt must bind the durable source revision");
+    if (rawProcessed.admission.status !== undefined) {
+      assert.equal(admissionReceipt.operation_id, rawProcessed.admission.status.operation_id,
+        "admission receipt operation must agree with the status witness");
+      assert.equal(admissionRow.source_revision_ref, rawProcessed.admission.status.source_revision_ref,
+        "admission status must bind the durable source revision");
+    }
+    const snapshotWitness = JSON.parse(admissionRow.snapshot_view_json);
+    assert.equal(admissionRow.snapshot_view_json, canonicalJson(snapshotWitness), "snapshot witness JSON must be canonical and immutable");
+    assert.equal(admissionRow.snapshot_view_sha256,
+      await sha256Hex(Buffer.from(canonicalJson(snapshotWitness), "utf8")), "snapshot witness digest must match its persisted bytes");
+    assert.equal(snapshotWitness.protocol, "eliotr.snapshot-view.v1");
+    assert.equal(snapshotWitness.source_view_ref, admissionRow.source_view_ref);
+    assert.equal(snapshotWitness.capture_id, rawRow.capture_id);
+    assert.equal(snapshotWitness.source_revision_ref, rawRow.source_revision_ref);
+    assert.equal(snapshotWitness.verified_principal_ref, rawRow.principal_ref);
+    assert.equal(snapshotWitness.owner_system_id, rawRow.owner_system_id);
+    assert.equal(snapshotWitness.source_namespace_id, rawRow.source_namespace_id);
+    assert.equal(snapshotWitness.source_owner_generation, rawRow.source_owner_generation);
+    assert.equal(snapshotWitness.original_sha256, rawRow.content_sha256);
+    assert.equal(snapshotWitness.original_size_bytes, rawRow.size_bytes);
+    assert.equal(snapshotWitness.residency_key_digest, rawRow.residency_key_digest);
+    assert.equal(snapshotWitness.policy_snapshot_sha256, admissionRow.policy_snapshot_sha256);
+    assert.equal(snapshotWitness.policy_revision, admissionRow.policy_revision);
+    const policySnapshot = JSON.parse(admissionRow.policy_snapshot_json);
+    assert.equal(admissionRow.policy_snapshot_json, canonicalJson(policySnapshot), "policy snapshot JSON must be canonical and immutable");
+    assert.equal(admissionRow.policy_snapshot_sha256,
+      await sha256Hex(Buffer.from(canonicalJson(policySnapshot), "utf8")), "policy snapshot digest must match its persisted bytes");
+    const storedPolicy = admissionPolicyRowsBeforeRaw[0];
+    const expectedPolicySnapshot = {
+      source_namespace_id: storedPolicy.source_namespace_id, revision: storedPolicy.revision,
+      authorized_principal_refs: JSON.parse(storedPolicy.authorized_principal_refs_json),
+      allowed_ownership_modes: JSON.parse(storedPolicy.allowed_ownership_modes_json),
+      source_class: storedPolicy.source_class, assurance_ceiling: storedPolicy.assurance_ceiling,
+      instruction_taint: storedPolicy.instruction_taint, allowed_effects: storedPolicy.allowed_effects,
+      allowed_use: JSON.parse(storedPolicy.allowed_use_json), disclosure_ceiling: storedPolicy.disclosure_ceiling,
+      license_policy_ref: storedPolicy.license_policy_ref, default_storage_policy: storedPolicy.default_storage_policy,
+      default_residency_profile_id: storedPolicy.default_residency_profile_id,
+      default_retention_policy_id: storedPolicy.default_retention_policy_id,
+      minimum_quality_state: storedPolicy.minimum_quality_state, created_at: storedPolicy.created_at,
+    };
+    assert.deepEqual(policySnapshot, expectedPolicySnapshot, "admission must persist the exact active policy snapshot");
+    assert.equal(admissionRow.policy_revision, storedPolicy.revision, "admission must bind the active policy revision");
+    assert.equal(admissionRow.input_fingerprint,
+      await sha256Hex(Buffer.from(canonicalJson([
+        admissionRow.candidate_ref, admissionRow.source_view_ref, admissionRow.policy_snapshot_sha256,
+        rawRow.content_sha256, rawUpload.conversionOperationId,
+      ]), "utf8")), "admission input fingerprint must bind candidate, witness, policy and conversion");
     const rawOperationRows = d1Query(paths, "CORE_DB",
       `SELECT state,decision_receipt_ref,promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${String(admissionRow.ingest_operation_id).replaceAll("'", "''")}'`);
     assert.equal(rawOperationRows.length, 1, "raw admission ingest operation must exist");
     assert.equal(rawOperationRows[0].state, "COMMITTED", "raw admission ingest operation must be COMMITTED");
+    assert.equal(admissionRow.ingest_operation_id, admissionReceipt.operation_id, "admission row must bind the committed ingest operation");
+    assert.equal(admissionRow.reason_codes_json, canonicalJson(admissionReceipt.reason_codes), "admission reason codes must match the committed receipt");
     assert.ok(typeof rawOperationRows[0].decision_receipt_ref === "string" && rawOperationRows[0].decision_receipt_ref.length > 0);
     assert.ok(typeof rawOperationRows[0].promotion_receipt_ref === "string" && rawOperationRows[0].promotion_receipt_ref.length > 0);
+    const rawRevisionRows = d1Query(paths, "CORE_DB",
+      `SELECT r.source_revision_ref,r.source_id,r.source_owner_generation,r.content_sha256,r.object_residency_key_digest,r.normalized_artifact_ref,r.source_view_ref ` +
+      `FROM source_revision r WHERE r.source_revision_ref='${String(admissionRow.source_revision_ref).replaceAll("'", "''")}'`);
+    assert.equal(rawRevisionRows.length, 1, "raw admission must persist one bound Library revision");
+    assert.equal(rawRevisionRows[0].source_owner_generation, rawRow.source_owner_generation, "raw Library revision must retain the capture owner generation");
+    assert.equal(rawRevisionRows[0].content_sha256, rawRow.content_sha256, "raw Library revision must retain the capture digest");
+    assert.equal(rawRevisionRows[0].source_view_ref, admissionRow.source_view_ref, "raw Library revision must retain the admission witness reference");
+    assert.equal(rawRevisionRows[0].object_residency_key_digest, admissionReceipt.object_residency_key_digest,
+      "raw Library revision residency must match the committed admission receipt");
+    const rawSourceRows = d1Query(paths, "CORE_DB",
+      `SELECT source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,source_class,default_storage_policy,default_residency_profile_id,default_retention_policy_id ` +
+      `FROM source WHERE source_id='${String(rawRevisionRows[0].source_id).replaceAll("'", "''")}'`);
+    assert.equal(rawSourceRows.length, 1, "raw admission must persist one bound Library source");
+    assert.equal(rawSourceRows[0].source_namespace_id, namespace, "raw Library source must bind the captured namespace");
+    assert.equal(rawSourceRows[0].source_owner_system_id, rawRow.owner_system_id, "raw Library source must bind the capture owner system");
+    assert.equal(rawSourceRows[0].source_owner_generation, rawRow.source_owner_generation, "raw Library source must bind the capture owner generation");
+    assert.equal(rawSourceRows[0].ownership_mode, "immutable_import", "raw Library source must use the admitted immutable import mode");
     assert.equal(sourceRowsAfterRaw.length, sourceRows.length + 1, "raw admission must add one Library source");
     assert.equal(revisionRowsAfterRaw.length, revisionRows.length + 1, "raw admission must add one Library revision");
     receipt.raw_file_capture = `PASS (browser POST + reload/reselect idempotency GET, one D1 capture row, original R2 bytes)`;
