@@ -62,6 +62,38 @@ async function world(owner: string): Promise<Q1Namespace> {
   return value;
 }
 
+interface FrozenScopeRow {
+  readonly snapshot_id: string;
+  readonly revision: number;
+  readonly snapshot_digest: string;
+}
+
+/** Wait for the specific durable scope required by the launched Workflow. */
+async function waitForFrozenScope(owner: string, sourceRevision: string): Promise<FrozenScopeRow> {
+  let lastAttempt = 0;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    lastAttempt = attempt;
+    const scope = await runtime.CORE_DB.prepare(
+      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' AND instr(s.member_source_revision_refs_json,?2)>0 ORDER BY s.created_at DESC LIMIT 1",
+    ).bind(owner, sourceRevision).first<FrozenScopeRow>();
+    if (scope !== null) return scope;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`frozen scope was not materialized after ${lastAttempt + 1} bounded polls`);
+}
+
+/** Wait for the Q7 row before stopping the background Workflow for mutation. */
+async function waitForExhaustiveJob(jobId: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const job = await runtime.CORE_DB.prepare(
+      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(jobId).first<{ readonly present: number }>();
+    if (job !== null) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("exhaustive job was not materialized before the controlled workflow stop");
+}
+
 function access(owner: string, credential_generation = "credential-1") {
   return { accessVerifier: { async verify() {
     return { principal_ref: owner, credential_generation, authentication_method: "cloudflare_access" as const,
@@ -206,11 +238,7 @@ describe("owner exhaustive workflow discovery", () => {
       access(owner),
     );
     expect(seedStatus.status).toBe(200);
-    const scope = await runtime.CORE_DB.prepare(
-      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' ORDER BY s.created_at DESC LIMIT 1",
-    ).bind(owner).first<{
-      readonly snapshot_id: string; readonly revision: number; readonly snapshot_digest: string;
-    }>();
+    const scope = await waitForFrozenScope(owner, value.revision);
     expect(scope).not.toBeNull();
     if (scope === null) return;
     const expiredKey = "jobs-discovery-expired-bound";
@@ -250,21 +278,24 @@ describe("owner exhaustive workflow discovery", () => {
     ).bind(workflowId).first<{ readonly job_id: string }>();
     expect(binding).not.toBeNull();
     if (binding === null) return;
-    // Force the durable binding into its legitimate queued-before-job state so
-    // the route must observe job creation and grant withdrawal after status.
-    await runtime.CORE_DB.prepare(
-      "DELETE FROM retrieval_exhaustive_job WHERE job_id=?1",
-    ).bind(binding.job_id).run();
-    const queued = await runtime.CORE_DB.prepare(
-      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
-    ).bind(binding.job_id).first<{ readonly present: number }>();
-    expect(queued).toBeNull();
-    const scope = await runtime.CORE_DB.prepare(
-      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' AND g.state='ACTIVE' ORDER BY s.created_at DESC LIMIT 1",
-    ).bind(owner).first<{ readonly snapshot_id: string; readonly revision: number; readonly snapshot_digest: string }>();
+    const original = runtime.RESEARCH_WORKFLOW;
+    await waitForExhaustiveJob(binding.job_id);
+    const seededWorkflow = await original.get(workflowId as string);
+    const seededBeforeStop = await seededWorkflow.status();
+    if (!TERMINAL_WORKFLOW_STATUSES.has(seededBeforeStop.status)) {
+      await seededWorkflow.terminate({ rollback: false });
+    }
+    const seededStatus = await seededWorkflow.status();
+    expect(TERMINAL_WORKFLOW_STATUSES.has(seededStatus.status)).toBe(true);
+    // The Q7 row is append-only. Keep its durable state intact so the route
+    // observes the real grant-withdrawal invalidation during Workflow status.
+    const seededJob = await runtime.CORE_DB.prepare(
+      "SELECT state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(binding.job_id).first<{ readonly state: string }>();
+    expect(seededJob).not.toBeNull();
+    const scope = await waitForFrozenScope(owner, value.revision);
     expect(scope).not.toBeNull();
     if (scope === null) return;
-    const original = runtime.RESEARCH_WORKFLOW;
     let withdrawn = false;
     const interleavingWorkflow = {
       create: (options: Parameters<typeof original.create>[0]) => original.create(options),
