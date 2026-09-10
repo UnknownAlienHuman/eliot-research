@@ -538,6 +538,7 @@
         "apps/eliotr-core/src/scheduled.ts",
         "apps/eliotr-core/src/readiness.ts",
         "apps/eliotr-core/src/research-session.ts",
+        "apps/eliotr-core/src/research-retrieval-composition.ts",
         "apps/eliotr-core/src/exhaustive-query-service.ts",
         "apps/eliotr-core/src/exhaustive-workflow-service.ts",
         "apps/eliotr-core/test/research-query-jobs.test.ts",
@@ -670,6 +671,7 @@
         "apps/eliotr-core/test/model-attempt-handler.test.ts",
         "apps/eliotr-core/test/model-attempt-fixture.ts",
         "apps/eliotr-core/test/research-workflow-recovery.test.ts",
+        "apps/eliotr-core/test/research-held-scope.test.ts",
         "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts",
         "apps/eliotr-core/test/raw-normalized-admission-http.test.ts"
       ],
