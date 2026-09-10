@@ -18,6 +18,7 @@ import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-p
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
+import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -818,7 +819,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
   assert.equal(excerpt, "# Recorded raw owner fixture\n");
-  return { scheduledPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
+  return { scheduledPath, readinessPath, sourceId: rawSourceId, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
     queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
 }
 
@@ -4678,6 +4679,8 @@ export async function runOwnerE2E() {
     cross_client_ledger: "PENDING",
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
+    exhaustive_workflow_complete: "PENDING",
+    exhaustive_workflow_complete_d1: "PENDING",
     raw_file_capture: "PENDING",
     raw_projection_fast_search: "PENDING",
     early_cleanup: "PENDING",
@@ -5223,6 +5226,14 @@ export async function runOwnerE2E() {
       expectedGeneration: paths.generation,
     });
     receipt.raw_projection_fast_search = `PASS (scheduled -> Queue -> projection -> Chromium FAST_SEARCH ${rawProjectionFastSearch.traceRef}; semantic=${rawProjectionFastSearch.semanticState})`;
+    const exhaustiveWorkflowComplete = await runExhaustiveWorkflowCompleteBrowser({
+      page: playwright.page, browserJson, ledger, paths, d1Query,
+      sourceId: rawProjectionFastSearch.sourceId,
+      sourceRevisionRef: rawProjectionFastSearch.sourceRevisionRef,
+      expectedGeneration: paths.generation,
+    });
+    receipt.exhaustive_workflow_complete = `PASS (PWA EXHAUSTIVE_JOB ${exhaustiveWorkflowComplete.workflowId} reached COMPLETE with settled denominator and owner D1 readback)`;
+    receipt.exhaustive_workflow_complete_d1 = `PASS (workflow ${exhaustiveWorkflowComplete.d1.workflow_id}, job ${exhaustiveWorkflowComplete.d1.job_id}, source revision ${exhaustiveWorkflowComplete.d1.source_revision_ref})`;
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -5360,6 +5371,7 @@ export async function runOwnerE2E() {
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
         { method: "GET", path: rawProjectionFastSearch.readinessPath, status: 200 },
         { method: "POST", path: "/api/v1/research/query", status: 200 },
+        ...exhaustiveWorkflowComplete.api,
         { method: "GET", path: `/api/v1/research/trace/${rawProjectionFastSearch.traceRef}`, status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
