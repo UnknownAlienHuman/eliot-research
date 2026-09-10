@@ -3,6 +3,7 @@ import {
   QualificationReportSchema,
   SourceAdmissionDecisionSchema,
   type BundleAdmissionReceipt,
+  type SourceAdmissionDecision,
 } from "@eliotr/contracts";
 import { canonicalJson } from "./ingest-validation.js";
 import { objectResidencyKeyDigest } from "./r2.js";
@@ -16,6 +17,7 @@ import {
   IngestAuthorityError,
   authorityFail,
   authorityIdentifier,
+  authoritySha256,
   canonicalDigest,
   decodeOperationRow,
   ingestInputFingerprint,
@@ -287,6 +289,27 @@ export function createD1IngestAdmissionAuthority(
       // source_revision_ref is UNIQUE: an indexed point read, not a scan/list of private uploads.
       return authorizedRead("WHERE source_revision_ref = ?1 AND principal_ref = ?2",
         authorityIdentifier(sourceRevisionRef, "source_revision_ref"), principalRef);
+    },
+
+    async loadDecision(operationId) {
+      const operation = await authority.load(operationId);
+      if (operation === null || operation.decision_receipt_ref === null) return null;
+      const row = await database.prepare(
+        "SELECT decision_json, decision_sha256 FROM source_admission_decision WHERE operation_id=?1 LIMIT 1",
+      ).bind(operation.operation_id).first<{ decision_json: unknown; decision_sha256: unknown }>();
+      if (row === null) return null;
+      let decoded: unknown;
+      try { decoded = JSON.parse(row.decision_json as string); }
+      catch (cause) { authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "stored admission decision is malformed", false, cause); }
+      let decision: SourceAdmissionDecision;
+      try { decision = SourceAdmissionDecisionSchema.parse(decoded); }
+      catch (cause) { authorityFail("INGEST_AUTHORITY_INPUT_INVALID", "stored admission decision failed strict validation", false, cause); }
+      if (typeof row.decision_json !== "string" || canonicalJson(decision) !== row.decision_json ||
+          await canonicalDigest(decision) !== authoritySha256(row.decision_sha256, "stored admission decision digest") ||
+          decision.decision_receipt_ref !== operation.decision_receipt_ref) {
+        authorityFail("INGEST_AUTHORITY_CONFLICT", "stored admission decision is not bound to the ingest operation");
+      }
+      return decision;
     },
 
     async recordQualificationDecision(input: RecordQualificationDecisionInput) {

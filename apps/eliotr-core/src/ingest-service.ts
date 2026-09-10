@@ -276,6 +276,38 @@ export function createIngestService(dependencies: IngestServiceDependencies): Pi
           "commit manifest digest does not match prepared authority",
         );
       }
+      // A guarded D1 commit can fail after R2 promotion has durably written its
+      // receipt. Reuse that exact persisted decision and promotion on replay;
+      // re-evaluating would mint a different decision ref and be rejected by R2.
+      const existingPromotion = dependencies.stagedBundles.readPromotion === undefined
+        ? null
+        : await dependencies.stagedBundles.readPromotion(request.multipart_session_ref);
+      if (existingPromotion !== null) {
+        if (operation.decision_receipt_ref === null || dependencies.authority.loadDecision === undefined) {
+          throw new IngestServiceError("INGEST_STAGING_CONFLICT", 409, "promoted staging session has no persisted admission decision");
+        }
+        const decision = await dependencies.authority.loadDecision(operation.operation_id);
+        if (decision === null || decision.decision !== "ADMITTED" || decision.decision_receipt_ref !== existingPromotion.admission_receipt_ref) {
+          throw new IngestServiceError("INGEST_STAGING_CONFLICT", 409, "promotion receipt is not bound to the persisted admission decision");
+        }
+        const receipt = BundleAdmissionReceiptSchema.parse({
+          operation_id: operation.operation_id,
+          manifest_sha256: operation.manifest_sha256,
+          source_revision_ref: operation.source_revision_ref,
+          normalized_artifact_ref: existingPromotion.canonical_manifest_ref,
+          object_residency_key_digest: operation.residency_key_digest,
+          decision: "ADMITTED",
+          reason_codes: decision.reason_codes,
+          readback_sha256: existingPromotion.readback_digest,
+          committed_at: existingPromotion.promoted_at,
+        });
+        return dependencies.authority.commitAdmitted({
+          operation_id: operation.operation_id,
+          staging_session_ref: request.multipart_session_ref,
+          promotion_receipt: existingPromotion,
+          bundle_receipt: receipt,
+        });
+      }
       const verification = await dependencies.stagedBundles.verifyReadback(
         request.multipart_session_ref,
       );
