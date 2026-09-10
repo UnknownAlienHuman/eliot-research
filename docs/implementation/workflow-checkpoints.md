@@ -233,6 +233,11 @@ handles from that source. Migration `0034_research_reference_manifests.sql` stor
 owner, credential, pack, trace and stage bindings. WORK R2 stores bounded canonical manifest bytes;
 readback independently checks residency, the canonical key, ETag, size, platform metadata, both content
 and manifest digests, and scope/client/expiry coherence. Reads recheck current authority around R2 I/O.
+The store binds residency to the held scope and principal. Before persistence and after readback,
+manifest permissions must be a subset of the current grant, disclosure must match, and expiry must
+remain within both scope and grant validity. The two actual D1/R2 cases passed at source `715598b`
+on Node 22.23.2, including refusal of a foreign residency and a grant restriction before persistence,
+with no manifest row written for the refused operation.
 Stage, pack, trace and route selection remain trusted production-composition inputs.
 
 The model prompt adapter binds the call to the supplied deployment generations and persisted manifest,
