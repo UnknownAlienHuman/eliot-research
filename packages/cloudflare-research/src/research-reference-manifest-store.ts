@@ -209,7 +209,7 @@ async function readR2(
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object metadata differs from D1", true);
   }
   const metadata = object.customMetadata ?? {};
-  if (metadata.eliotr_kind !== "research-reference-manifest" || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
+  if (Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest immutable metadata differs from D1", true);
   }
   let residency: ObjectResidencyKey;
@@ -335,7 +335,7 @@ export function createResearchReferenceManifestStore(input: {
         expected_sha256: contentDigest,
         expected_size_bytes: encoded.bytes.byteLength,
         content_type: "application/json",
-        custom_metadata: { eliotr_kind: "research-reference-manifest" },
+        custom_metadata: {},
       });
     } catch (cause) {
       fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 write/readback is uncertain", true, cause);
