@@ -1,0 +1,22 @@
+{
+  "name": "@eliotr/cloudflare-artifacts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./artifact-draft.js": "./src/artifact-draft.ts",
+    "./artifact-draft-reader.js": "./src/artifact-draft-reader.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*"
+  }
+}
