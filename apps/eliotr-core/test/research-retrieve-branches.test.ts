@@ -12,6 +12,7 @@ import {
 } from "@eliotr/research";
 import {
   createFreezeProtocolAndScopeStageHandler,
+  readFreezeProtocolAndScopeCheckpoint,
 } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
 import {
   createWorkflowCheckpointExecutor,
@@ -218,12 +219,15 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
 
   it("binds stage-0 readback to the committed attempt reference", async () => {
     const f = await fixture();
-    const { request, handler, dependencies } = await prepareRetrieveStage(f);
-    await f.executor.execute(request, principal, handler);
-    await f.db.prepare(
-      "UPDATE research_workflow_attempt SET attempt_ref = ?1 WHERE operation_id = ?2 AND stage_index = 0",
-    ).bind("tampered-stage-zero-attempt", request.operation_id).run();
-    await expect(readRetrieveBranchesCheckpoint(dependencies, request, principal))
+    await expect(readFreezeProtocolAndScopeCheckpoint({
+      request: f.stage0,
+      principal,
+      database: f.db,
+      bucket: f.bucket,
+      navigation: f.navigation,
+      ledger: f.ledger,
+      expected_attempt_ref: "tampered-stage-zero-attempt",
+    }))
       .rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
   });
 
