@@ -244,6 +244,9 @@ importers:
       '@eliotr/domain':
         specifier: workspace:*
         version: link:../domain
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
       '@eliotr/research':
         specifier: workspace:*
         version: link:../research

@@ -12,6 +12,8 @@ outside the paths below.
 ## Owned paths
 
 - `tests/integration/**`
+- `apps/eliotr-core/test/artifact-draft-store.test.ts`
+- `apps/eliotr-core/test/artifact-draft-fixture.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
@@ -62,6 +64,13 @@ The response-lifecycle regression for the raw-file leg is registered as a native
 Node test in the same `test:owner-e2e` command (`tests/integration/browser/raw-file-browser.test.mjs`).
 It verifies that response body snapshots are captured before a browser action can
 change the document lifecycle; it does not replace the real Worker acceptance.
+
+The P1 artifact draft storage fixture uses actual local Worker D1/R2 bindings. It
+must inspect immutable manifest and section bytes, exact draft-head CAS, the
+atomic revision/intent/outbox record, and lost-acknowledgement reconciliation.
+Draft persistence must leave the published `artifact_head` unchanged. This
+storage acceptance does not qualify compilation, publication, PWA flows or live
+Cloudflare; those remain separate requirements in the Wiki/report theme.
 
 ## Mandatory negative boundary
 

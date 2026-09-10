@@ -31,6 +31,24 @@ outside the paths below.
 
 ## Required implementation
 
+### P1 storage handoff
+
+`packages/cloudflare-research` also hosts the Cloudflare effects adapter for the
+artifact compiler. ER-11 owns compilation semantics, ER-13 owns the additive D1
+schema and atomic mutation primitives, and ER-14 supplies the existing immutable
+R2/residency implementation. The integrator serializes the package dependency and
+export changes; this adapter reuses those primitives rather than adding storage
+code to the nearly full platform package. ER-27 owns its actual-binding fixture.
+
+The first storage path records immutable `DRAFT` revisions and advances a
+dedicated draft head. It cannot advance the published `artifact_head`, turn a
+receipt reference into a publication decision, or map historical SQL `PUBLISHED`
+rows to canonical `ACCEPTED`. P1, P3 publication and the complete owner user loop
+remain separate acceptance requirements; no existing implementation state is
+promoted by this ownership handoff.
+
+### Workflow execution
+
 - Implement idempotent stage machine from protocol/scope freeze through materialization.
 - Each stage checks cancellation and budget, performs at most one expensive call, writes large output immediately, and returns handles.
 - Default independent fan-out two, normal max four, nested fan-out zero.
