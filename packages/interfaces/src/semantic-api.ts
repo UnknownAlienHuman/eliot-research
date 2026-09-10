@@ -5,13 +5,13 @@ import type {
   RetrievalTrace,
   ScopeExpression,
   VersionedRef,
+  ArtifactRevision,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
   ExhaustiveReconcileStatus,
   OrientationResult,
 } from "@eliotr/retrieval";
-import type { ResearchRunResult } from "@eliotr/research";
 import type { AuthenticatedRequestContext } from "./http.js";
 
 export const SEMANTIC_API_OPERATIONS = [
@@ -119,7 +119,7 @@ export interface SemanticApi {
   open(context: AuthenticatedRequestContext, handleRef: VersionedRef, range?: { start: number; end: number }): Promise<Response>;
   verify(context: AuthenticatedRequestContext, request: VerifyEvidenceRequest): Promise<VerifyEvidenceResult>;
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
-  artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ResearchRunResult>;
+  artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   proposeWiki(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<VersionedRef>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, afterCursor: string, allowedScopes: readonly string[]): Promise<{ refs: readonly string[]; next_cursor: string }>;
