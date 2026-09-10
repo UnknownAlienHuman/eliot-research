@@ -542,8 +542,11 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef, { deadline
     `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
   let latest = [];
   while (Date.now() - startedAt < deadlineMs) {
-    const remainingMs = Math.max(1, deadlineMs - (Date.now() - startedAt));
-    latest = await readbackWithBoundedRetry("raw-projection-state", () => d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) }), {
+    latest = await readbackWithBoundedRetry("raw-projection-state", () => {
+      const remainingMs = deadlineMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
+      return d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) });
+    }, {
       attempts: 2, delayMs: 100,
     });
     if (latest.length !== 1) {
