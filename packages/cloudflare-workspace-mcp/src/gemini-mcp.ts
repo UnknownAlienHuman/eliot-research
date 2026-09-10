@@ -13,8 +13,10 @@ import {
 } from "./gemini-mcp-tool-common.js";
 import {
   handleGeminiMcpProtocol,
+  type McpAccessAuthProfile,
   type GeminiMcpServerDependencies,
   type McpToolCallContext,
+  type McpVerifiedActorContext,
 } from "./gemini-mcp-protocol.js";
 import {
   callGeminiMcpTool,
@@ -46,7 +48,6 @@ const SAFE_HOSTNAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u;
 const ACCESS_SERVICE_TOKEN_CLIENT_ID =
   /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u;
 const MCP_ACCESS_AUTH_PROFILES = ["service-token", "managed-oauth"] as const;
-type McpAccessAuthProfile = typeof MCP_ACCESS_AUTH_PROFILES[number];
 
 interface AccessVerifierCache {
   readonly key: string;
@@ -201,7 +202,16 @@ function googleTransport(env: WorkspaceMcpRuntime): GoogleExternalTransport {
   return readGoogleExternalTransportValue(env.GOOGLE_EXTERNAL_TRANSPORT);
 }
 
-async function authenticatedContext(
+function hasVerifiedIdentityShape(identity: AccessIdentity): boolean {
+  return typeof identity.principal_ref === "string" && identity.principal_ref.length > 0 &&
+    typeof identity.credential_generation === "string" && identity.credential_generation.length > 0 &&
+    identity.credential_generation.length <= 256 &&
+    (identity.authentication_method === "cloudflare_access" || identity.authentication_method === "service_token") &&
+    typeof identity.expires_at === "string" && Number.isSafeInteger(Date.parse(identity.expires_at)) &&
+    new Date(identity.expires_at).toISOString() === identity.expires_at;
+}
+
+export async function authenticatedContext(
   identity: AccessIdentity,
   trace: string,
   profile: McpAccessAuthProfile,
@@ -210,6 +220,9 @@ async function authenticatedContext(
   accessAudience: string | undefined,
   deploymentGeneration: string,
 ): Promise<McpToolCallContext | Response> {
+  if (!hasVerifiedIdentityShape(identity)) {
+    return jsonError(401, "MCP_AUTHENTICATION_FAILED", trace);
+  }
   if (profile === "service-token") {
     if (
       identity.authentication_method !== "service_token" ||
@@ -217,11 +230,20 @@ async function authenticatedContext(
     ) {
       return jsonError(403, "MCP_SERVICE_PRINCIPAL_DENIED", trace);
     }
-    return {
+    const verifiedActor: McpVerifiedActorContext = Object.freeze({
+      actor_ref: MCP_LOGICAL_PRINCIPAL,
+      credential_generation: identity.credential_generation,
+      authentication_method: identity.authentication_method,
+      expires_at: identity.expires_at,
+      auth_profile: profile,
+      deployment_generation: deploymentGeneration,
+    });
+    return Object.freeze({
       principal_ref: MCP_LOGICAL_PRINCIPAL,
       trace_id: trace,
       deployment_generation: deploymentGeneration,
-    };
+      verified_actor: verifiedActor,
+    });
   }
 
   if (identity.authentication_method !== "cloudflare_access") {
@@ -240,11 +262,20 @@ async function authenticatedContext(
     audience,
     subject: identity.principal_ref,
   })));
-  return {
+  const verifiedActor: McpVerifiedActorContext = Object.freeze({
+    actor_ref: `mcp-actor-${principalRef}`,
+    credential_generation: identity.credential_generation,
+    authentication_method: identity.authentication_method,
+    expires_at: identity.expires_at,
+    auth_profile: profile,
+    deployment_generation: deploymentGeneration,
+  });
+  return Object.freeze({
     principal_ref: `mcp-actor-${principalRef}`,
     trace_id: trace,
     deployment_generation: deploymentGeneration,
-  };
+    verified_actor: verifiedActor,
+  });
 }
 
 function serverDependencies(
