@@ -15,14 +15,14 @@ outside the paths below.
 - `apps/eliotr-core/src/research-workflow.ts`
 - `infra/workflows/**`
 - `packages/cloudflare-research/**`
+- `apps/eliotr-core/test/research-workflow.test.ts`
+- `apps/eliotr-core/test/research-workflow-fixture.ts`
+- `docs/implementation/workflow-checkpoints.md`
 
 The durable model-route D1 registry belongs to this package alongside model-attempt persistence.
 Its provider contracts and codecs are imported from ER-16's `@eliotr/cloudflare-ai` public API.
 The `0035_model_route_registry.sql` migration remains an ER-13 integration handoff; the actual D1
 fixture `apps/eliotr-core/test/model-deployment-registry.test.ts` remains an ER-27 handoff.
-- `apps/eliotr-core/test/research-workflow.test.ts`
-- `apps/eliotr-core/test/research-workflow-fixture.ts`
-- `docs/implementation/workflow-checkpoints.md`
 
 ## Read only
 
