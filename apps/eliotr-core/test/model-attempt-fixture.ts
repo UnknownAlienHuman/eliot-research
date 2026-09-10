@@ -4,16 +4,16 @@ import type { OperationIntent } from "@eliotr/contracts";
 import {
   createModelAttemptStore,
   type ModelAttemptAuthority,
-  type ModelAttemptReservationInput,
   type ModelCostQuote,
   type ModelOutputBinding,
 } from "../../../packages/cloudflare-research/src/model-attempt-store.js";
 import type { GovernedModelAttemptDependencies, ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
-import type { ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
+import type { ModelAttemptReservationInput, ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import { digest, type StageRequest, type WorkflowPrincipal } from "../../../packages/cloudflare-research/src/types.js";
 import type { ModelCallInput, ModelCallReceipt } from "@eliotr/research";
 import type { EvidencePack } from "@eliotr/retrieval";
 import type { Env } from "../src/env.js";
+import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
 
 export const runtime = env as unknown as Env & {
   readonly CORE_MIGRATIONS: D1Migration[];
@@ -38,6 +38,10 @@ function evidencePack(tag: string, scopeRevision = 1, scopeId = identifier(tag, 
   };
 }
 
+function bindWorkflowBudget<T extends object>(value: T, receiptRef: string): T & { readonly workflow_budget_receipt_ref: string } {
+  return Object.assign(value, { workflow_budget_receipt_ref: receiptRef });
+}
+
 export interface ModelAttemptFixture {
   readonly input: ModelAttemptReservationInput;
   readonly receipt: ModelCallReceipt;
@@ -51,21 +55,26 @@ export function createModelAttemptRuntime(database: D1Database = runtime.CORE_DB
   return createModelAttemptStore(database, now);
 }
 
-export function modelAttemptFixture(tag: string, options: { readonly now?: string; readonly scopeRevision?: number } = {}): ModelAttemptFixture {
+export function modelAttemptFixture(tag: string, options: {
+  readonly now?: string;
+  readonly scopeRevision?: number;
+  readonly workflow?: ModelAttemptWorkflowBinding;
+} = {}): ModelAttemptFixture {
   const nowValue = options.now ?? "2026-09-10T12:00:00.000Z";
   const now = () => nowValue;
-  const principal = identifier(tag, "principal");
+  const principal = options.workflow?.principal_ref ?? identifier(tag, "principal");
   const operationKind: OperationIntent["operation_kind"] = "REPORT";
   const reservationId = identifier(tag, "reservation");
   const idempotencyKey = identifier(tag, "idempotency");
   const scopeRevision = options.scopeRevision ?? 1;
+  const scopeId = options.workflow?.scope_snapshot_id ?? identifier(tag, "scope");
   const authority: ModelAttemptAuthority = {
     principal_ref: principal,
     client_class: "owner_pwa",
     policy_decision_ref: identifier(tag, "policy-decision"),
-    scope_snapshot_ref: { id: identifier(tag, "scope"), revision: scopeRevision },
-    credential_generation: identifier(tag, "credential"),
-    deployment_generation: identifier(tag, "deployment"),
+    scope_snapshot_ref: { id: scopeId, revision: scopeRevision },
+    credential_generation: options.workflow?.credential_generation ?? identifier(tag, "credential"),
+    deployment_generation: options.workflow?.deployment_generation ?? identifier(tag, "deployment"),
     policy_generation: identifier(tag, "policy"),
     currentness_digest: "a".repeat(64),
     expires_at: "2026-09-10T13:00:00.000Z",
@@ -86,7 +95,7 @@ export function modelAttemptFixture(tag: string, options: { readonly now?: strin
     route_ref: "dynamic/eliotr-report-section",
     prompt_generation: identifier(tag, "prompt"),
     schema_generation: identifier(tag, "schema"),
-    evidence_pack: evidencePack(tag, scopeRevision),
+    evidence_pack: evidencePack(tag, scopeRevision, scopeId),
     output_object_ref: identifier(tag, "output"),
     max_input_bytes: 64 * 1024,
     max_output_bytes: 64 * 1024,
@@ -130,15 +139,15 @@ export function modelAttemptFixture(tag: string, options: { readonly now?: strin
     readback_sha256: outputSha,
   };
   return {
-    input: {
+    input: bindWorkflowBudget({
       intent,
       idempotency_key: idempotencyKey,
       call,
       quote,
       authority,
-      stage_attempt_ref: identifier(tag, "stage-attempt"),
-      stage_request_sha256: "c".repeat(64),
-    },
+      stage_attempt_ref: options.workflow?.stage_attempt_ref ?? identifier(tag, "stage-attempt"),
+      stage_request_sha256: options.workflow?.stage_request_sha256 ?? "c".repeat(64),
+    }, options.workflow?.budget_receipt_ref ?? identifier(tag, "budget")),
     receipt,
     output,
     authority,
@@ -151,6 +160,7 @@ export interface GovernedModelAttemptFixture {
   readonly request: StageRequest;
   readonly principal: WorkflowPrincipal;
   readonly inputBytes: Uint8Array;
+  readonly stageAttemptRef: string;
   readonly dependencies: GovernedModelAttemptDependencies;
   readonly calls: () => number;
   requestFor(stage: StageRequest["stage"]): StageRequest;
@@ -171,9 +181,19 @@ export interface GovernedModelAttemptFixtureOptions {
   readonly inputBytes?: Uint8Array;
 }
 
+export interface ModelAttemptWorkflowBinding {
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
+  readonly scope_snapshot_id: string;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+  readonly budget_receipt_ref: string;
+}
+
 /** Production handler fixture: the route is controlled, but its output is persisted in real local R2. */
 export async function governedModelAttemptFixture(tag: string, options: GovernedModelAttemptFixtureOptions = {}): Promise<GovernedModelAttemptFixture> {
-  const inputBytes = options.inputBytes === undefined ? new TextEncoder().encode(`controlled W3 input ${tag} — Ж🙂`) : new Uint8Array(options.inputBytes);
+  let inputBytes = options.inputBytes === undefined ? new TextEncoder().encode(`controlled W3 input ${tag} — Ж🙂`) : new Uint8Array(options.inputBytes);
   const inputSha256 = await digest(inputBytes);
   const nowValue = "2026-09-10T12:00:00.000Z";
   const defaultScopeId = identifier(tag, "scope");
@@ -192,11 +212,23 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
       },
     },
   };
-  const principal = options.principal ?? defaultPrincipal;
-  const request = options.request ?? defaultRequest;
+  let principal = options.principal ?? defaultPrincipal;
+  let request = options.request ?? defaultRequest;
+  let database = options.database ?? runtime.CORE_DB;
+  let bucket = options.bucket ?? runtime.WORK_BUCKET;
+  if (options.database === undefined && options.request === undefined && options.principal === undefined && options.inputBytes === undefined) {
+    const workflow = await workflowFixture(`model-attempt-${tag}`);
+    await workflow.executor.execute(workflow.request, workflowPrincipal, async ({ input_bytes }) => new Uint8Array(input_bytes));
+    inputBytes = new Uint8Array(workflow.bytes);
+    principal = workflowPrincipal;
+    request = workflow.request;
+    database = workflow.db;
+    bucket = workflow.bucket;
+  }
   const scopeId = request.input_manifest.residency.scope_domain_id;
-  const database = options.database ?? runtime.CORE_DB;
-  const bucket = options.bucket ?? runtime.WORK_BUCKET;
+  const boundStage = await database.prepare(
+    "SELECT attempt_ref, budget_receipt_ref FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = 0 LIMIT 1",
+  ).bind(request.operation_id).first<{ readonly attempt_ref: string; readonly budget_receipt_ref: string }>();
   const store = createModelAttemptRuntime(database, () => nowValue);
   let routeCalls = 0;
   const outputBytes = new TextEncoder().encode(`controlled W3 output ${tag} — результат🙂`);
@@ -213,13 +245,17 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
     },
   };
   const requestFor = (stage: StageRequest["stage"]): StageRequest => Object.freeze({ ...request, stage });
-  const invocation = (stage: StageRequest["stage"], attemptRef: string) => ({
-    request: requestFor(stage), principal, input_bytes: new Uint8Array(inputBytes), attempt_ref: attemptRef,
-    budget_receipt_ref: `${tag}-budget`,
-  });
+  const stageAttemptRef = boundStage?.attempt_ref ?? "unbound-stage";
+  const invocation = (stage: StageRequest["stage"], attemptRef: string) => {
+    if (boundStage === null || stage !== request.stage || attemptRef !== boundStage.attempt_ref) {
+      throw new Error("controlled fixture invocation must use its persisted W2 stage grant");
+    }
+    return { request, principal, input_bytes: new Uint8Array(inputBytes), attempt_ref: attemptRef,
+      budget_receipt_ref: boundStage.budget_receipt_ref };
+  };
   const dependencies: GovernedModelAttemptDependencies = {
     operation_kind: "REPORT", attempts: store, route,
-    prepare: async (context: ModelAttemptPreparationContext): Promise<ModelAttemptReservationInput> => {
+    prepare: async (context: ModelAttemptPreparationContext) => {
       const reservationId = `${context.model_operation_id}-reservation`;
       const authority: ModelAttemptAuthority = {
         principal_ref: context.principal.principal_ref, client_class: "owner_pwa",
@@ -247,7 +283,8 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
         expires_at: authority.expires_at,
       };
       return { intent, idempotency_key: context.model_idempotency_key, call, quote, authority,
-        stage_attempt_ref: context.attempt_ref, stage_request_sha256: context.stage_request_sha256 };
+        stage_attempt_ref: context.attempt_ref, stage_request_sha256: context.stage_request_sha256,
+        workflow_budget_receipt_ref: context.budget_receipt_ref };
     },
     revalidate: async () => undefined,
     now: () => Date.parse(nowValue),
@@ -257,5 +294,5 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
       return new Uint8Array(await object.arrayBuffer());
     },
   };
-  return { request, principal, inputBytes, dependencies, calls: () => routeCalls, requestFor, invocation };
+  return { request, principal, inputBytes, stageAttemptRef, dependencies, calls: () => routeCalls, requestFor, invocation };
 }

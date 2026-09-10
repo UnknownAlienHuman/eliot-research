@@ -31,7 +31,7 @@ const PACKAGE_RULES = new Map([
   ["packages/research", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval"])],
   ["packages/backup-o2", new Set(["@eliotr/contracts"])],
   ["packages/platform-cloudflare", new Set(["@eliotr/backup-o2", "@eliotr/contracts", "@eliotr/domain", "@eliotr/retrieval", "@eliotr/research"])],
-  ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research"])],
+  ["packages/cloudflare-research", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research"])],
   ["packages/cloudflare-federation", new Set(["@eliotr/contracts"])],
   ["packages/cloudflare-ai", new Set(["@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-access", new Set(["@eliotr/platform-cloudflare"])],
