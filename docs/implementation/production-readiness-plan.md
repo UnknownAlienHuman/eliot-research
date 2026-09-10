@@ -56,9 +56,14 @@ Production release is blocked while any of the following is true:
 - an overdue erasure case, unresolved material citation, schema drift, unknown denominator, partial index
   generation, secret exposure, or untested rollback exists.
 
-## 1. Current baseline
+## 1. Historical baseline
 
 Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
+
+The lists in this section describe the 2026-09-01 baseline, not current route availability. Use
+`pnpm check:implementation-status`, `pnpm launch:code` and `gap-register.md` for the current state.
+The selected `gemini-mcp` Workspace profile is governed by the profile-specific requirements below;
+the separate Drive Exchange OAuth path and optional Google Cloud profiles are not its prerequisites.
 
 ### Implemented but not live-qualified
 
@@ -89,7 +94,7 @@ Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
 - Durable Object hibernation/reconnect;
 - Workflow retry/resume/cancellation/budget behavior;
 - managed AI Search generation promotion and locator-to-evidence path;
-- Google Workspace, Drive and gcloud exact write/readback;
+- selected-profile Google Workspace and Drive exact write/readback;
 - external federation provider execution;
 - clean-account backup restore with purge-ledger replay;
 - representative T2/T3 corpus quality and T6 workload results.
