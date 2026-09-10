@@ -9,10 +9,12 @@ import {
   type ResearchMaterializeTrustedMetadata,
 } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
+import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
 import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
+import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
   createArtifactDraftRuntime,
@@ -505,6 +507,22 @@ describe("actual D1/R2 artifact draft reader", () => {
     expect(result.synthesis.stage_request_sha256).toBe(stageTwelve.request_sha256);
     expect(result.draft.artifact_ref).toEqual(metadata.artifact_ref);
     expect(result.draft.manifest.size_bytes).toBeGreaterThan(0);
+    const storedGeneration = await synthesis.freeze.db.prepare(
+      "SELECT handler_generation FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+    ).bind(synthesis.freeze.operation_id).first<{ readonly handler_generation: string }>();
+    expect(storedGeneration?.handler_generation).toBe(SERVER_OWNED_FREEZE_HANDLER_GENERATION);
+    const committed = await readCommittedResearchMaterializeOutput({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, operation_id: synthesis.freeze.operation_id,
+      principal: freezePrincipal, materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      recheck_authority: async () => {
+        const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, freezePrincipal);
+        if (status === null) throw new Error("materialize fixture run status is missing");
+        return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id,
+          scope_snapshot_revision: status.scope_snapshot_revision };
+      },
+    });
+    expect(committed?.materialization).toEqual(result);
+    expect(committed?.artifact.status).toBe("DRAFT");
 
     const artifact = await readArtifactDraft({
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
@@ -528,6 +546,9 @@ describe("actual D1/R2 artifact draft reader", () => {
       return { principal_ref: freezePrincipal.principal_ref, credential_generation: freezePrincipal.credential_generation,
         authentication_method: "cloudflare_access" as const, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
     } } };
+    const metadataResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}`), runtime, {} as ExecutionContext, verify);
+    expect(metadataResponse.status).toBe(200);
+    expect((await metadataResponse.json() as { readonly data: unknown }).data).toEqual(artifact);
     const response = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
