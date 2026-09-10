@@ -76,8 +76,9 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 `tests/bundle-import.test.ts` and `apps/eliotr-core/test/bundle-import-http.test.ts`; PWA paths remain
 under ER-25. This integration permission does not permit parallel edits to those files.
 
-The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
+The normalized-folder browser profile accepts bounded prepared bundles (64 files, 16 MiB/file, 32 MiB
+aggregate, 256 KiB metadata). The raw-file profile additionally captures at most 16 MiB and offers
+bounded conversion (at most 8 MiB input/output), followed by explicit Library admission. The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented for normalized folders; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this checkpoint as a
 finished Library product or upload it to Cloudflare for continued development.
 
 Raw conversion candidates now have an owner-only server admission continuation. The browser posts only
