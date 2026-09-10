@@ -22,12 +22,15 @@ WIP histories also have annotated checkpoint tags, so branch-hygiene expiry cann
 | Work | GitHub branch | Commit | Checkpoint tag |
 |---|---|---|---|
 | Coverage codec | `agent/er36-workspace-candidate-ledger-20260909` | `1abf2fa09ee78c3daa8bb0073b42630e1cb00e8c` | `checkpoint/20260910-coverage-wip` |
-| Synthesis validation helpers | `agent/checkpoint-raw-admission-integration-20260909` | `874a96de7bd7491b066d830f49b759f1ff3a66c9` | `checkpoint/20260910-synthesis-wip` |
+| Synthesis validation helpers | `quarantine/synthesis-helpers-20260910` | `874a96de7bd7491b066d830f49b759f1ff3a66c9` | `checkpoint/20260910-synthesis-wip` |
 | Legacy Drive provisioning | `agent/er18-google-provisioning-20260909` | `f9443ee8c87b891583d0c93149aa26e7ecb1fad5` | `checkpoint/20260910-legacy-drive-wip` |
 | Citation stage15 | `agent/er24-library-active-readiness-20260909` | `df9f814131c3cb7e033f0b56c362bea030242c8c` | `checkpoint/20260910-stage15-wip` |
 
 These are WIP commits, not runtime acceptance. The inactive recovery snapshots remain in `main`.
 No tests were rerun for merely committing existing source; product limitations below still apply.
+Branch hygiene removed the old synthesis branch name because its previous PR was closed
+(`CLOSED_PULL_REQUEST`, run34536533542). The same commit is republished under the quarantine name
+above; no history was rewritten and its checkpoint tag remained available throughout.
 
 ## Recoverable unfinished source
 
