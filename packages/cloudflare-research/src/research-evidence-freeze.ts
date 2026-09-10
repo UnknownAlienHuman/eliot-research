@@ -188,6 +188,7 @@ async function parseModelDefinition(value: unknown): Promise<EvidenceFreezeModel
   let definitionRef: VersionedRef;
   try { definitionRef = VersionedRefSchema.parse(record.definition_ref); }
   catch (cause) { fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition reference is invalid", false, cause); }
+  if (definitionRef.revision !== 1) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition revision is unsupported");
   const definitionSha = record.definition_sha256;
   if (typeof definitionSha !== "string" || !SHA256.test(definitionSha)) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition digest is invalid");
   const maxContext = record.max_context_bytes;
@@ -240,6 +241,7 @@ async function parseInput(bytes: Uint8Array): Promise<EvidenceFreezeStageInput> 
     manifestRef = VersionedRefSchema.parse(raw.manifest_ref);
     denominatorRef = VersionedRefSchema.parse(raw.coverage_denominator_ref);
     modelProfileBindingRef = VersionedRefSchema.parse(raw.model_profile_binding_ref);
+    if (modelProfileBindingRef.revision !== 1) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile binding revision is unsupported");
     modelProfileDefinition = await parseModelDefinition(raw.model_profile_definition);
     protocolProfile = InquiryProtocolProfileSchema.parse(raw.protocol_profile);
     const definition = exactObject(raw.protocol_definition, new Set([
@@ -339,7 +341,10 @@ async function validateAuthority(
   validateId(snapshot.stage_zero_attempt_ref, "stage zero attempt reference");
   validateId(snapshot.stage_five_attempt_ref, "stage five attempt reference");
   validateSha(snapshot.stage_five_request_sha256, "stage five request digest");
-  try { VersionedRefSchema.parse(snapshot.model_profile_binding_ref); }
+  try {
+    const bindingRef = VersionedRefSchema.parse(snapshot.model_profile_binding_ref);
+    if (bindingRef.revision !== 1) fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile binding revision is unsupported");
+  }
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile binding reference is invalid", false, cause); }
   let modelProfileDefinition: EvidenceFreezeModelDefinition;
   let protocolProfile: ProtocolScopeCheckpoint["protocol_profile"];
@@ -347,7 +352,7 @@ async function validateAuthority(
   let laneMaterial: EvidenceFreezeLaneMaterial;
   try { modelProfileDefinition = await parseModelDefinition(snapshot.model_profile_definition); }
   catch (cause) {
-    if (cause instanceof EvidenceFreezeStageError) throw cause;
+    if (cause instanceof EvidenceFreezeStageError && cause.code === "EVIDENCE_FREEZE_AUTHORITY_INVALID") throw cause;
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile definition is invalid", false, cause);
   }
   try {
