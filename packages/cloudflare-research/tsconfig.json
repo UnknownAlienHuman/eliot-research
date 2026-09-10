@@ -13,6 +13,9 @@
   ],
   "references": [
     {
+      "path": "../cloudflare-ai"
+    },
+    {
       "path": "../cloudflare-evidence"
     },
     {
