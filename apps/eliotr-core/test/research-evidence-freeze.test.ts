@@ -28,6 +28,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
 import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
@@ -211,6 +212,19 @@ async function fixture(): Promise<FreezeFixture> {
 }
 
 describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
+  it("refuses the explicit freeze generation when its composition is absent", async () => {
+    const handlers = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory",
+      generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: {} as ReturnType<typeof createNavigationReadAuthority>,
+      ledger: {} as InvestigationLedgerStore,
+    });
+    const handler = handlers("RECONCILE");
+    await expect(handler({ request: {} as StageRequest, principal: {} as WorkflowPrincipal,
+      input_bytes: new Uint8Array(), attempt_ref: "missing-freeze", budget_receipt_ref: "missing-budget" }))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+  });
+
   it("persists stage 10/11 from real stage 0/5 readbacks and replays without new effects", async () => {
     const f = await fixture();
     const stage10: StageRequest = { ...f.stage_zero, stage: "RECONCILE", investigation_ref: f.pre_reconcile.investigation_ref,
