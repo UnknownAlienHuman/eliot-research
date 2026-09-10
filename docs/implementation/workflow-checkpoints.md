@@ -33,6 +33,34 @@ expensive provider boundary; the executor does not inspect arbitrary handler int
 Execution here is sequential. The existing 2/4/0 branch fan-out policy is unchanged; the branch scheduler
 and exhaustive-job composition remain follow-up work beyond W2.
 
+## Server-owned exploratory protocol checkpoint
+
+`createFreezeProtocolAndScopeStageHandler` in `packages/cloudflare-research/src/research-protocol-freeze.ts`
+is the first-stage producer for the explicitly server-owned `eliotr.research.profile.corpus-exploratory-lookup:1`
+definition. It is eligible only for an OPEN W1 ledger whose persisted lane is `exploratory`; a current
+`confirmatory` or mixed ledger is refused rather than reinterpreted. The handler reads the existing W2
+payload and W1 ledger through their trusted readers, checks the principal, scope, portfolio digest and
+requested grade, and rechecks both navigation currentness and the W1 head before returning bytes.
+
+The emitted `eliotr.research.protocol-scope.v1` checkpoint contains the strict
+`InquiryProtocolProfile`, a canonical `CoverageDenominator`, and SHA-256 digests of both. The profile is
+lookup-only, `corpus_only`, exploratory, and carries the requested grade as a request attribute; it does
+not claim that grade was achieved or make a confirmatory finding. Its server definitions state that source
+fragments do not become independent sources, chronology uses frozen source revisions and capture times,
+normalized text coordinates are the fidelity ceiling, one bounded corpus retrieval is the stop rule, and
+the output is a draft answer with exact handles. `acquisition_method_generations` is empty because this
+profile performs no external acquisition; participant generations are never relabeled as provider or
+acquisition generations.
+
+The denominator is a new canonical record in this stage output, revision `1`, whose eligible revisions,
+scope reference and expiry are copied from the exact current `ScopeSnapshot`. It has no required source
+classes or question branches and uses the server-defined exploratory membership observation as its
+completeness-test reference. This is an exploratory scope observation, not an exhaustive-coverage claim.
+`decodeProtocolScopeCheckpoint` is the strict readback boundary for the later `FREEZE_EVIDENCE` stage; it
+accepts only the server-owned profile and canonical checkpoint shape. The bytes remain ordinary immutable
+W2 `WORK_BUCKET` output with the existing 64 KiB checkpoint bound and D1 receipt; no new table or public
+DTO is introduced.
+
 ## W2 monotone bounded executor
 
 `createMonotoneStageExecutor(CORE_DB, WORK_BUCKET, ports)` reuses `createWorkflowCheckpointExecutor`
