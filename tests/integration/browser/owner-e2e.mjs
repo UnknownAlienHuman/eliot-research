@@ -946,6 +946,74 @@ function diagnosticRoutePath(path) {
   catch { return "/<invalid-route>"; }
 }
 
+const OWNER_BRIDGE_DIAGNOSTIC_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "DELETE"]);
+const OWNER_BRIDGE_DIAGNOSTIC_BODY_BYTES = 8192;
+
+function ownerBridgeRequestMethod(input, init) {
+  const candidate = String(init?.method ?? input?.method ?? "GET").toUpperCase();
+  return OWNER_BRIDGE_DIAGNOSTIC_METHODS.has(candidate) ? candidate : "OTHER";
+}
+
+function ownerBridgeRouteDescriptor(path) {
+  const pathname = diagnosticRoutePath(path);
+  const routes = [
+    [/^\/api\/v1\/ingest\/bundles\/prepare$/u, "bundle-prepare"],
+    [/^\/api\/v1\/ingest\/bundles\/commit$/u, "bundle-commit"],
+    [/^\/api\/v1\/ingest\/bundles\/[^/]+\/parts\/1$/u, "bundle-upload-part"],
+    [/^\/api\/v1\/ingest\/bundles\/[^/]+\/files\/complete$/u, "bundle-complete"],
+    [/^\/api\/v1\/ingest\/bundles\/[^/]+$/u, "bundle-status"],
+    [/^\/api\/v1\/ingest\/raw$/u, "raw-capture"],
+    [/^\/api\/v1\/ingest\/raw\/[^/]+\/markdown$/u, "raw-conversion"],
+    [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission$/u, "raw-admission"],
+    [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission\/[^/]+$/u, "raw-admission-status"],
+    [/^\/api\/v1\/system\/session$/u, "system-session"],
+    [/^\/api\/v1\/research\/catalog$/u, "research-catalog"],
+    [/^\/api\/v1\/research\/query(?:\/[^/]+)?$/u, "research-query"],
+    [/^\/api\/v1\/library\/revisions$/u, "library-revisions"],
+    [/^\/api\/v1\/library\/readiness$/u, "library-readiness"],
+  ];
+  const match = routes.find(([pattern]) => pattern.test(pathname));
+  const routeFamily = match?.[1] ?? "unknown-api-route";
+  return { route_family: routeFamily, stage: routeFamily };
+}
+
+function cancelDiagnosticReader(reader) {
+  if (!reader) return;
+  try {
+    const pending = reader.cancel();
+    if (pending && typeof pending.catch === "function") pending.catch(() => {});
+  } catch { /* The original response remains owned by the bridge. */ }
+}
+
+async function readOwnerBridgeProblemCode(response) {
+  if (!response || response.status < 400 || typeof response.clone !== "function") return undefined;
+  let reader;
+  let complete = false;
+  try {
+    const clone = response.clone();
+    reader = clone.body?.getReader();
+    if (!reader) return undefined;
+    const chunks = [];
+    let size = 0;
+    while (true) {
+      const item = await reader.read();
+      if (item.done) { complete = true; break; }
+      size += item.value.byteLength;
+      if (size > OWNER_BRIDGE_DIAGNOSTIC_BODY_BYTES) return undefined;
+      chunks.push(item.value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const text = new globalThis.TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return allowlistedOwnerBridgeProblemCode(JSON.parse(text));
+  } catch {
+    return undefined;
+  } finally {
+    if (!complete) cancelDiagnosticReader(reader);
+  }
+}
+
 function harnessGitHead() {
   const result = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: root, encoding: "utf8", shell: false, timeout: 5000,
@@ -1132,6 +1200,34 @@ export async function verifyWorkerFetchDiagnosticRegression() {
     },
   );
   assert.equal(transportCalls, 1, "diagnostic transport failures must propagate without retry");
+  const bridgeEvents = [];
+  const bridgeFetch = createOwnerBridgeDiagnosticFetch(bridgeEvents, async () => new globalThis.Response(
+    JSON.stringify({ code: "INTERNAL_ERROR", trace_id: "private-trace" }),
+    { status: 500, headers: { "content-type": "application/json" } },
+  ));
+  const bridgeResponse = await bridgeFetch(
+    "http://127.0.0.1:43123/api/v1/ingest/raw/raw-source/admission/raw-admission?private=query",
+    { method: "POST" },
+  );
+  assert.equal(bridgeResponse.status, 500, "diagnostic capture must return the original response unchanged");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(bridgeEvents[0], {
+    outcome: "response", method: "POST", route_family: "raw-admission-status", stage: "raw-admission-status",
+    status: 500, typed_code: "INTERNAL_ERROR", elapsed_ms: bridgeEvents[0].elapsed_ms,
+  }, "bridge diagnostics must bind a 500 to a safe route family and typed code");
+  assert.ok(!JSON.stringify(bridgeEvents).includes("private"), "bridge diagnostics must omit query/body identifiers");
+  const bridgeErrorEvents = [];
+  await assert.rejects(
+    createOwnerBridgeDiagnosticFetch(bridgeErrorEvents, async () => {
+      throw Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+    })("http://127.0.0.1:43123/api/v1/ingest/bundles/private-operation/files/complete?private=query", { method: "POST" }),
+    /fetch failed/u,
+  );
+  assert.deepEqual(bridgeErrorEvents[0], {
+    outcome: "error", method: "POST", route_family: "bundle-complete", stage: "bundle-complete",
+    error_name: "TypeError", error_code: "ECONNRESET", aborted: false, elapsed_ms: bridgeErrorEvents[0].elapsed_ms,
+  }, "bridge resets must retain only safe request context");
+  assert.ok(!JSON.stringify(bridgeErrorEvents).includes("private"), "bridge reset diagnostics must omit query/body identifiers");
   await assert.rejects(
     fetchWorkerJsonWithDiagnostics(
       async () => ({ text: async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); } }),
@@ -1333,6 +1429,11 @@ function ownerBridgeProblemCodeFromMessage(error) {
   return allowlistedOwnerBridgeProblemCode(match?.[1]);
 }
 
+function ownerBridgeProblemCodeFromEvents(events) {
+  return [...events].reverse().find((event) => event.outcome === "response" &&
+    event.status >= 400 && allowlistedOwnerBridgeProblemCode(event.typed_code))?.typed_code;
+}
+
 function recordOwnerBridgeDiagnosticEvent(events, event) {
   if (events.length >= 8) events.shift();
   events.push(event);
@@ -1341,13 +1442,26 @@ function recordOwnerBridgeDiagnosticEvent(events, event) {
 function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) {
   return async (input, init = {}) => {
     const startedAt = Date.now();
+    const method = ownerBridgeRequestMethod(input, init);
+    const route = ownerBridgeRouteDescriptor(input?.url ?? input);
     try {
       const response = await fetchImpl(input, init);
-      recordOwnerBridgeDiagnosticEvent(events, {
+      const event = {
         outcome: "response",
+        method,
+        ...route,
         status: Number.isInteger(response?.status) ? response.status : null,
+        typed_code: "UNAVAILABLE",
         elapsed_ms: Date.now() - startedAt,
-      });
+      };
+      recordOwnerBridgeDiagnosticEvent(events, event);
+      // Clone only error responses. Return the original response immediately;
+      // the bounded side-channel parser cannot alter bridge body/timing.
+      if (event.status !== null && event.status >= 400) {
+        void readOwnerBridgeProblemCode(response).then((code) => {
+          if (code) event.typed_code = code;
+        }, () => {});
+      }
       return response;
     } catch (error) {
       const errorName = typeof error?.name === "string" ? error.name : "";
@@ -1356,6 +1470,8 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
       const errorCode = directCode || causeCode;
       recordOwnerBridgeDiagnosticEvent(events, {
         outcome: "error",
+        method,
+        ...route,
         error_name: OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(errorName) ? errorName : "UnknownError",
         error_code: OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(errorCode) ? errorCode : "UNSPECIFIED",
         aborted: init?.signal?.aborted === true,
@@ -5286,7 +5402,7 @@ export async function runOwnerE2E() {
     } catch (error) {
       const diagnostic = {
         protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1",
-        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? "UNAVAILABLE",
+        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? ownerBridgeProblemCodeFromEvents(ownerBridgeDiagnosticEvents) ?? "UNAVAILABLE",
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
