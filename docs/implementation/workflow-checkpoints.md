@@ -105,6 +105,14 @@ retrieval-profile binding, enforces the profile bounds, and never creates a repl
 The public query retains its replay-before-freeze ordering. These internal preparation paths do not yet
 connect the production research stages to model execution.
 
+The D1 dynamic-route registry stores immutable canonical candidates and promotes an active route
+through an expected-version compare-and-swap. The call-time deployment resolver reads that same
+active state. Production promotion and resolution require unexpired LIVE qualification; controlled
+fixtures must select the explicit server-owned TEST mode. Migration
+`0035_model_route_registry.sql` adds the candidate and active-generation tables while preserving the
+existing `model_generation` contract. This adapter does not itself issue provider qualification or
+connect the model gateway to the research stages.
+
 These adapters do not supply production prices or grant spending authority. The existing
 `ResearchWorkflow` composition still uses the deterministic handle-producing stage handler. Full W3
 requires the actual run's resolved EvidencePack, persisted AllowedReferenceManifest and context compiler,
