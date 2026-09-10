@@ -10,7 +10,7 @@ import type {
 import {
   createD1DynamicRouteRegistry,
   createD1ModelGatewayDeploymentRegistry,
-} from "../../../packages/cloudflare-ai/src/model-gateway-deployment-registry-d1.js";
+} from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
 
 const runtime = env as unknown as {
