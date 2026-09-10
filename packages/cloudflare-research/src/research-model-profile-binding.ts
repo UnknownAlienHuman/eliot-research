@@ -4,17 +4,12 @@ import {
   type ScopeSnapshot,
   type VersionedRef,
 } from "@eliotr/contracts";
-import {
-  decodeModelRouteDeployment,
-  type ModelRouteDeployment,
-} from "@eliotr/platform-cloudflare";
-import { RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
+import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestPolicyProfile } from "./research-reference-manifest.js";
 
 const SCHEMA = "eliotr.research.model-profile-binding.v1";
 const DEFINITION_SCHEMA = "eliotr.research.model-profile-definition.v1";
-const MAX_CONTEXT_BYTES = RUNTIME_LIMITS.ordinary_json_bytes;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const DEFINITION_KEYS = new Set([
@@ -159,8 +154,8 @@ function iso(value: unknown, label: string, code: ModelProfileBindingErrorCode):
 }
 
 function contextBytes(value: unknown, label: string, code: ModelProfileBindingErrorCode): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_CONTEXT_BYTES) {
-    fail(code, `${label} must be between 1 and ${MAX_CONTEXT_BYTES}`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    fail(code, `${label} must be a positive safe integer`);
   }
   return value;
 }
