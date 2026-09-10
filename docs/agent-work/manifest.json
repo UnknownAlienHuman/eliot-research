@@ -538,6 +538,7 @@
         "apps/eliotr-core/src/scheduled.ts",
         "apps/eliotr-core/src/readiness.ts",
         "apps/eliotr-core/src/research-session.ts",
+        "apps/eliotr-core/src/research-stage-handlers.ts",
         "apps/eliotr-core/src/research-retrieval-composition.ts",
         "apps/eliotr-core/src/exhaustive-query-service.ts",
         "apps/eliotr-core/src/exhaustive-workflow-service.ts",
