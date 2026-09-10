@@ -11,3 +11,6 @@ export {
   createD1ModelGatewayDeploymentRegistry,
   type D1DynamicRouteRegistryOptions,
 } from "./model-gateway-deployment-registry-d1.js";
+export * from "./research-reference-manifest.js";
+export * from "./research-reference-manifest-store.js";
+export * from "./research-model-prompt.js";
