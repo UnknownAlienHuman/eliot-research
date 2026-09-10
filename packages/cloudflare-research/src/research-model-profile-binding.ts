@@ -16,7 +16,7 @@ const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const BINDING_KEYS = new Set([
   "binding_ref", "config_provenance_ref", "deployment", "deployment_generation",
-  "expires_at", "model_profile_ref", "policy", "policy_authority_ref",
+  "expires_at", "model_profile_ref", "policy", "policy_authority_ref", "policy_generation",
   "scope_snapshot_digest", "scope_snapshot_ref", "schema", "binding_sha256",
 ]);
 const POLICY_KEYS = new Set([
@@ -25,6 +25,11 @@ const POLICY_KEYS = new Set([
   "stale_or_revoked_entries", "permitted_acquisition_or_expansion_routes",
   "disclosure_ceiling", "allowed_use", "expires_at",
 ]);
+const STAGE_KEYS = new Set([
+  "deployment_generation", "model_profile_ref", "policy_authority_ref", "policy_generation",
+  "scope_snapshot_digest", "scope_snapshot_ref",
+]);
+const CURRENT_KEYS = new Set([...STAGE_KEYS, "scope_snapshot", "state"]);
 
 export type ModelProfileBindingErrorCode =
   | "MODEL_PROFILE_BINDING_INPUT_INVALID"
@@ -215,10 +220,38 @@ function assertStageBinding(binding: ModelProfileBinding, stage: ModelProfileSta
       stage.scope_snapshot_digest !== binding.scope_snapshot_digest) fail(code, "model profile binding differs from persisted workflow authority");
 }
 
+function stageFields(value: unknown, label: string, code: ModelProfileBindingErrorCode): ModelProfileStageAuthority {
+  const record = plainObject(value, STAGE_KEYS, label, code);
+  return Object.freeze({
+    model_profile_ref: identifier(record.model_profile_ref, `${label}.model_profile_ref`, code),
+    policy_generation: identifier(record.policy_generation, `${label}.policy_generation`, code),
+    policy_authority_ref: identifier(record.policy_authority_ref, `${label}.policy_authority_ref`, code),
+    deployment_generation: identifier(record.deployment_generation, `${label}.deployment_generation`, code),
+    scope_snapshot_ref: versionedRef(record.scope_snapshot_ref, `${label}.scope_snapshot_ref`, code),
+    scope_snapshot_digest: digest(record.scope_snapshot_digest, `${label}.scope_snapshot_digest`, code),
+  });
+}
+
+function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
+  const record = plainObject(value, CURRENT_KEYS, "current model profile authority", "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
+  if (record.state !== "ACTIVE") fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current research authority is not active");
+  const fields = stageFields({
+    model_profile_ref: record.model_profile_ref,
+    policy_generation: record.policy_generation,
+    policy_authority_ref: record.policy_authority_ref,
+    deployment_generation: record.deployment_generation,
+    scope_snapshot_ref: record.scope_snapshot_ref,
+    scope_snapshot_digest: record.scope_snapshot_digest,
+  }, "current model profile authority", "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
+  const parsed = ScopeSnapshotSchema.safeParse(record.scope_snapshot);
+  if (!parsed.success) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot is invalid");
+  return Object.freeze({ ...fields, state: "ACTIVE", scope_snapshot: parsed.data });
+}
+
 function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number): void {
-  if (current.state !== "ACTIVE") fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current research authority is not active");
-  assertStageBinding(binding, current, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
-  const parsed = ScopeSnapshotSchema.safeParse(current.scope_snapshot);
+  const authority = currentAuthority(current);
+  assertStageBinding(binding, authority, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
+  const parsed = ScopeSnapshotSchema.safeParse(authority.scope_snapshot);
   if (!parsed.success || parsed.data.snapshot_id !== binding.scope_snapshot_ref.id || parsed.data.revision !== binding.scope_snapshot_ref.revision ||
       parsed.data.digest !== binding.scope_snapshot_digest || parsed.data.policy_authority_ref !== binding.policy_authority_ref) {
     fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot does not match the binding");
@@ -235,15 +268,17 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
   const now = input.now ?? (() => Date.now());
   return Object.freeze({
     async resolve(stage: ModelProfileStageAuthority): Promise<ResolvedModelProfileBinding> {
-      if (typeof now() !== "number" || !Number.isFinite(now())) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
-      const profileRef = identifier(stage.model_profile_ref, "stage model_profile_ref", "MODEL_PROFILE_BINDING_INPUT_INVALID");
+      const nowMs = now();
+      if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
+      const parsedStage = stageFields(stage, "stage model profile authority", "MODEL_PROFILE_BINDING_INPUT_INVALID");
+      const profileRef = parsedStage.model_profile_ref;
       const raw = await input.source.read(profileRef);
       if (raw === null) fail("MODEL_PROFILE_BINDING_CONFIG_MISSING", "server-owned model profile binding is unavailable");
       const binding = await decodeBinding(raw, input.source.provenance_ref);
-      assertStageBinding(binding, stage, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
-      if (Date.parse(binding.expires_at) <= now()) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile binding is expired");
+      assertStageBinding(binding, parsedStage, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
+      if (Date.parse(binding.expires_at) <= nowMs) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile binding is expired");
       const first = await input.readCurrentAuthority();
-      assertCurrent(binding, first, now());
+      assertCurrent(binding, first, nowMs);
       let rawDeployment: unknown | null;
       try { rawDeployment = await input.routeAuthority.resolve(binding.deployment.route_ref); }
       catch (cause) { fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING", "approved model deployment could not be read", true, cause); }
