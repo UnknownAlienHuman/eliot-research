@@ -1,6 +1,4 @@
-import { OrientationError, ScopeServiceError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
-import { NavigationError } from "@eliotr/retrieval";
-import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
+import { OrientationError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
 import type {
   ApiProblem,
   ApplicationLifecycle,
@@ -12,10 +10,7 @@ import type {
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
 import {
-  IngestAuthorityError,
-  IngestStorageError,
   RUNTIME_LIMITS,
-  RuntimeLimitError,
   serializeJsonWithinBytes,
 } from "@eliotr/platform-cloudflare";
 import {
@@ -26,7 +21,6 @@ import {
 } from "@eliotr/cloudflare-access";
 import {
   CapabilityUnavailableError,
-  CatalogInputError,
   createApplication,
   type CompositionRootInput,
 } from "./composition-root.js";
@@ -40,21 +34,18 @@ import {
 } from "./evidence-http.js";
 import {
   ArtifactHttpInputError,
-  ArtifactReadNotFoundError,
-  isArtifactReadError,
   parseArtifactRef,
 } from "./artifact-draft-http.js";
 import {
   dispatchIngestOperation,
-  IngestHttpInputError,
 } from "./ingest-http.js";
-import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
-import { IngestServiceError } from "./ingest-service.js";
-import { dispatchRawCaptureOperation, RawCaptureError, RawCaptureHttpError, rawCaptureProblem } from "@eliotr/cloudflare-raw-ingest";
+import { dispatchRawCaptureOperation } from "@eliotr/cloudflare-raw-ingest";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
 import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
+import { HttpRequestError, mapError } from "./http-errors.js";
+export { HttpRequestError } from "./http-errors.js";
 export interface HttpDependencies {
   readonly accessVerifier?: AccessVerifier;
   readonly applicationFactory?: (input: CompositionRootInput) => ApplicationLifecycle;
@@ -66,18 +57,6 @@ interface RouteMatch {
 interface AccessVerifierCache {
   readonly key: string;
   readonly verifier: AccessVerifier;
-}
-export class HttpRequestError extends Error {
-  public readonly code: string;
-  public readonly status: number;
-  public readonly retryable: boolean;
-  public constructor(code: string, status: number, message: string, retryable = false) {
-    super(message);
-    this.name = "HttpRequestError";
-    this.code = code;
-    this.status = status;
-    this.retryable = retryable;
-  }
 }
 const traceIds = new WeakMap<Request, string>();
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -442,138 +421,6 @@ async function dispatch(
       }
   }
 }
-function mapIngestAuthorityError(request: Request, error: IngestAuthorityError): Response {
-  if (error.code === "INGEST_SETTLEMENT_UNCERTAIN") {
-    return problem(request, 503, error.code, "Ingest authority settlement is uncertain", true);
-  }
-  if (error.code === "INGEST_AUTHORITY_MISSING") {
-    return problem(request, 404, error.code, "Ingest authority does not exist", false);
-  }
-  if (error.code === "INGEST_OWNER_NOT_ACTIVE" || error.code === "INGEST_POLICY_DENIED") {
-    return problem(request, 403, error.code, "Ingest admission is not authorized", false);
-  }
-  if (error.code === "INGEST_AUTHORITY_INPUT_INVALID") {
-    return problem(request, 400, error.code, "Ingest authority input is invalid", false);
-  }
-  return problem(request, 409, error.code, "Ingest authority conflicts with durable state", false);
-}
-function mapIngestStorageError(request: Request, error: IngestStorageError): Response {
-  if (error.retryable) {
-    return problem(request, 503, error.code, "Ingest storage is temporarily unavailable", true);
-  }
-  if (error.code === "STAGING_SESSION_NOT_FOUND") {
-    return problem(request, 404, error.code, "Staging session does not exist", false);
-  }
-  if (
-    error.code === "BUNDLE_INPUT_INVALID" ||
-    error.code === "BUNDLE_RESIDENCY_MISMATCH" ||
-    error.code === "BUNDLE_FILE_SET_INVALID" ||
-    error.code === "BUNDLE_HASH_MANIFEST_INVALID" ||
-    error.code === "BUNDLE_TOTAL_SIZE_MISMATCH" ||
-    error.code === "STAGING_FILE_UNKNOWN" ||
-    error.code === "STAGING_PART_INVALID"
-  ) {
-    return problem(request, 400, error.code, "Ingest storage input is invalid", false);
-  }
-  return problem(request, 409, error.code, "Ingest storage state or integrity conflict", false);
-}
-function mapError(request: Request, error: unknown): Response {
-  if (error instanceof OrientationError) return problem(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
-  if (error instanceof ScopeServiceError) return problem(request, 409, error.code, "Current scope authority could not be established", false);
-  if (error instanceof NavigationError) return problem(request, error.code === "NAVIGATION_LIMIT_EXCEEDED" ? 413 : 409,
-    error.code, "Navigation is unavailable under the current scope", false);
-  if (error instanceof AccessVerificationError) {
-    const unavailable = error.code === "ACCESS_CONFIG_INVALID" ||
-      error.code === "ACCESS_JWKS_UNAVAILABLE" ||
-      error.code === "ACCESS_JWKS_INVALID";
-    if (unavailable) {
-      return problem(request, 503, error.code, "Authentication service is unavailable", true);
-    }
-    if (error.code === "ACCESS_SERVICE_PRINCIPAL_DENIED") {
-      return problem(request, 403, error.code, "Authenticated service principal is not allowed", false);
-    }
-    return problem(
-      request,
-      401,
-      error.code,
-      "Authentication failed",
-      false,
-      { "www-authenticate": "Bearer realm=\"Cloudflare Access\"" },
-    );
-  }
-  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError || error instanceof EvidenceHttpInputError || error instanceof ArtifactHttpInputError || error instanceof ArtifactReadNotFoundError || error instanceof RawCaptureHttpError) {
-    return problem(request, error.status, error.code, error.message, error.retryable);
-  }
-  if (isArtifactReadError(error)) {
-    const status = error.code === "ARTIFACT_DRAFT_READ_DENIED" ? 403
-      : error.code === "ARTIFACT_DRAFT_READ_NOT_FOUND" ? 404
-      : error.code === "ARTIFACT_DRAFT_READ_STALE" ? 410
-      : error.code === "ARTIFACT_DRAFT_READ_UNAVAILABLE" ? 503
-      : error.code === "ARTIFACT_DRAFT_READ_INVALID" ? 400
-      : 409;
-    const retryable = error.code === "ARTIFACT_DRAFT_READ_UNAVAILABLE";
-    return problem(request, status, error.code, status === 400 ? "Artifact reference is invalid"
-      : status === 403 ? "Artifact access is not authorized"
-      : status === 404 ? "Artifact revision does not exist"
-      : status === 410 ? "Artifact scope is no longer current"
-      : status === 503 ? "Artifact storage is temporarily unavailable"
-      : "Artifact revision integrity could not be verified", retryable);
-  }
-  if (error instanceof RawNormalizedAdmissionError) {
-    return problem(request, error.status, error.code, error.message, error.retryable);
-  }
-  if (error instanceof IngestServiceError) {
-    return problem(request, error.status, error.code, error.message, error.retryable);
-  }
-  if (error instanceof IngestAuthorityError) return mapIngestAuthorityError(request, error);
-  if (error instanceof IngestStorageError) return mapIngestStorageError(request, error);
-  if (error instanceof RawCaptureError) { const mapped = rawCaptureProblem(error); return problem(request, mapped.status, error.code, mapped.title, error.retryable); }
-  if (error instanceof EvidenceRuntimeError) {
-    if (error.retryable) {
-      return problem(request, 503, error.code, "Exact evidence resolution is temporarily unavailable", true);
-    }
-    if (error.code === "EVIDENCE_AUTHORIZATION_DENIED") {
-      return problem(request, 403, error.code, "Exact evidence access is not authorized", false);
-    }
-    if (error.code === "EVIDENCE_SCOPE_NOT_FOUND" || error.code === "EVIDENCE_SOURCE_NOT_FOUND" ||
-        error.code === "EVIDENCE_HANDLE_NOT_FOUND" || error.code === "EVIDENCE_OBJECT_NOT_FOUND") {
-      return problem(request, 404, error.code, "Exact evidence authority does not exist", false);
-    }
-    if (error.code === "EVIDENCE_SOURCE_NOT_LIVE" || error.code === "EVIDENCE_HANDLE_NOT_LIVE" ||
-        error.code === "EVIDENCE_SCOPE_INVALIDATED" || error.code === "EVIDENCE_SCOPE_EXPIRED") {
-      return problem(request, 410, error.code, "Exact evidence is no longer available", false);
-    }
-    if (error.code === "EVIDENCE_INPUT_INVALID" || error.code === "EVIDENCE_RANGE_INVALID" ||
-        error.code === "EVIDENCE_LOCATOR_NOT_RESOLVABLE" || error.code === "EVIDENCE_PRECISION_UNSUPPORTED" ||
-        error.code === "CITATION_SET_INVALID") {
-      return problem(request, 400, error.code, "Exact evidence request is invalid", false);
-    }
-    return problem(request, 409, error.code, "Exact evidence authority conflicts with current state", false);
-  }
-  if (error instanceof CatalogInputError) {
-    return problem(request, error.status, error.code, error.message, error.retryable);
-  }
-  if (error instanceof CapabilityUnavailableError) {
-    return problem(
-      request,
-      501,
-      error.code,
-      "The operation is not available in this Worker generation",
-      false,
-    );
-  }
-  if (error instanceof RuntimeLimitError) {
-    const requestError = error.label.startsWith("http.request");
-    return problem(
-      request,
-      requestError ? 413 : 500,
-      requestError ? "REQUEST_BODY_TOO_LARGE" : "RESPONSE_LIMIT_EXCEEDED",
-      requestError ? "Request exceeds its bounded runtime envelope" : "Response exceeds its bounded runtime envelope",
-      false,
-    );
-  }
-  return problem(request, 500, "INTERNAL_ERROR", "Internal request processing failed", true);
-}
 // IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.
 export async function handleHttp(
   request: Request,
@@ -619,6 +466,6 @@ export async function handleHttp(
     const application = factory({ env, executionContext });
     return await dispatch(request, env, application, context, resolved.match, url);
   } catch (error) {
-    return mapError(request, error);
+    return mapError(request, error, problem);
   }
 }
