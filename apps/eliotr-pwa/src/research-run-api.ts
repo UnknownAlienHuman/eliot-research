@@ -199,7 +199,7 @@ export async function readResearchArtifactSection(
   return { artifact_ref: returnedArtifact, section_ref: returnedSection, body_object_ref: objectRef, body_sha256: returnedSha, size_bytes: raw.bytes.byteLength, bytes: raw.bytes };
 }
 
-export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArtifact: VersionedRef, expectedSection: VersionedRef, expectedDeploymentGeneration?: string): ResearchArtifactSectionCitationsView {
+export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArtifact: VersionedRef, expectedSection: VersionedRef, expectedDeploymentGeneration?: string, expectedVerificationReceiptRef?: string): ResearchArtifactSectionCitationsView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
   const data = record(parsed.data, ["protocol", "artifact_ref", "section_ref", "scope_snapshot_ref", "verification_receipt_ref", "semantic_verification", "cited_evidence"]);
   if (data.protocol !== "eliotr.artifact-section-citations.v1" || data.semantic_verification !== "NOT_EXECUTED") invalid("research citation protocol is invalid");
@@ -209,7 +209,8 @@ export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArt
   if (!sameRef(artifact, expectedArtifact) || !sameRef(section, expectedSection)) invalid("research citation identity does not match the requested section");
   const receipt = boundedString(data.verification_receipt_ref, "verification_receipt_ref");
   if (!IdentifierSchema.safeParse(receipt).success) invalid("verification_receipt_ref is invalid");
-  if (!Array.isArray(data.cited_evidence) || data.cited_evidence.length > 128) invalid("cited evidence is invalid");
+  if (expectedVerificationReceiptRef !== undefined && receipt !== expectedVerificationReceiptRef) invalid("research citation receipt does not match the requested section");
+  if (!Array.isArray(data.cited_evidence) || data.cited_evidence.length < 1 || data.cited_evidence.length > 512) invalid("cited evidence is invalid");
   const seen = new Set<string>();
   const citedEvidence = data.cited_evidence.map((value, index) => {
     const citation = record(value, ["handle_ref", "excerpt_sha256"]);
@@ -229,12 +230,13 @@ export async function readResearchArtifactSectionCitations(
   sectionRef: { readonly id: string; readonly revision: number },
   expectedDeploymentGeneration?: string,
   signal?: AbortSignal,
+  expectedVerificationReceiptRef?: string,
 ): Promise<ResearchArtifactSectionCitationsView> {
   const artifact = versionedRef(artifactRef, "artifact_ref");
   const section = versionedRef(sectionRef, "section_ref");
   const path = `/api/v1/research/artifact/${encodeURIComponent(`${artifact.id}:${artifact.revision}`)}/sections/${encodeURIComponent(`${section.id}:${section.revision}`)}/citations`;
   const raw = await requestApi(path, signal ? { signal } : {});
-  return decodeResearchArtifactSectionCitations(raw, artifact, section, expectedDeploymentGeneration);
+  return decodeResearchArtifactSectionCitations(raw, artifact, section, expectedDeploymentGeneration, expectedVerificationReceiptRef);
 }
 
 export async function startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView> {

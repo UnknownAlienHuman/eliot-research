@@ -448,7 +448,7 @@ try {
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").querySelector("em")'), null);
   await click('#research-run [data-open-sources="0"]');
-  await wait('document.querySelector("#research-run .research-citation-state")?.textContent.includes("NOT_EXECUTED")', "Draft citation state");
+  await wait('document.querySelector("#research-run .research-citation-state")?.textContent.includes("Opening a source checks its current bytes")', "Draft citation state");
   await click('#research-run [data-open-citation="0"]');
   await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Draft cited source verify and open");
   assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
