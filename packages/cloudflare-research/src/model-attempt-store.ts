@@ -322,6 +322,7 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     if (receiptDigest !== row.receipt_sha256) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt digest does not match persisted binding");
   }
   const operation_receipt = parseOperationReceipt(operationReceiptJson(row));
+  if (state !== "STARTED" && operation_receipt === null) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "terminal model operation receipt is missing");
   if ((state === "SUCCEEDED") !== (receipt !== null && operation_receipt !== null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "terminal model receipt is incomplete");
   if (state !== "SUCCEEDED" && receipt !== null) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "non-success model attempt has a receipt");
   if (operation_receipt !== null && (operation_receipt.attempt_id !== row.attempt_id || operation_receipt.intent_ref.id !== row.intent_id || operation_receipt.intent_ref.revision !== row.intent_revision || operation_receipt.outcome !== (state === "SUCCEEDED" ? "SUCCEEDED" : state))) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "operation receipt identity or outcome is inconsistent");
@@ -332,6 +333,11 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     readback_sha256: sha(row.readback_sha256, "readback_sha256"),
   } satisfies ModelOutputBinding;
   if ((state === "SUCCEEDED") !== (output !== null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model output binding is incomplete");
+  if (operation_receipt !== null) {
+    const expectedOutputRefs = output === null ? [] : [output.output_object_ref];
+    const expectedReadbackRefs = receipt === null ? [] : [receipt.receipt_ref];
+    if (canonicalJson(operation_receipt.output_refs) !== canonicalJson(expectedOutputRefs) || canonicalJson(operation_receipt.readback_receipt_refs) !== canonicalJson(expectedReadbackRefs) || canonicalJson(operation_receipt.reason_codes) !== canonicalJson(parseStringArray(row.reason_codes_json, "reason_codes"))) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "operation receipt output or reason bindings are inconsistent");
+  }
   if (row.operation_attempt_state !== state) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model and operation attempt states disagree");
   const readState = state === "STARTED" ? "UNKNOWN" : state as "SUCCEEDED" | "FAILED" | "CANCELLED";
   return Object.freeze({
@@ -389,7 +395,9 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
     const row = await database.prepare("SELECT * FROM budget_reservation WHERE reservation_id = ?1 LIMIT 1").bind(reservation.reservation.reservation_id).first<ReservationRow>();
     if (row === null) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model reservation readback is missing", true);
     const stored = reservationFromRow(row);
-    if (canonicalJson(stored) !== canonicalJson(reservation.reservation) || row.request_sha256 !== reservation.request_sha256 || row.stage_attempt_ref !== reservation.stage_attempt_ref || row.stage_request_sha256 !== reservation.stage_request_sha256 || canonicalStoredJson(row.request_json, "model reservation request") !== reservation.request_json || canonicalJson(parseAuthority(row.authority_json)) !== canonicalJson(reservation.authority)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation changed after its authority readback");
+    const storedIdentity = { ...stored, state: "RESERVED" as const };
+    const requestedIdentity = { ...reservation.reservation, state: "RESERVED" as const };
+    if (canonicalJson(storedIdentity) !== canonicalJson(requestedIdentity) || row.request_sha256 !== reservation.request_sha256 || row.stage_attempt_ref !== reservation.stage_attempt_ref || row.stage_request_sha256 !== reservation.stage_request_sha256 || canonicalStoredJson(row.request_json, "model reservation request") !== reservation.request_json || canonicalJson(parseAuthority(row.authority_json)) !== canonicalJson(reservation.authority)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation changed after its authority readback");
     return stored.state;
   }
 
