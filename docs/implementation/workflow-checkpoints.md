@@ -115,10 +115,25 @@ connect the model gateway to the research stages.
 
 These adapters do not supply production prices or grant spending authority. The existing
 `ResearchWorkflow` composition still uses the deterministic handle-producing stage handler. Full W3
-requires the actual run's resolved EvidencePack, persisted AllowedReferenceManifest and context compiler,
-current route/pricing resolution, pre-call quote and budget/consent policy, and their production
+requires production wiring of the actual run's resolved EvidencePack, reference-manifest service and
+prompt compiler, current route/pricing resolution, pre-call quote and budget/consent policy, and their production
 composition. No live billing, model result, research completion or publication is qualified by this
 prerequisite.
+
+The reference-manifest service resolves each held evidence handle through the authoritative D1/R2
+resolver, compares the exact evidence and current scope/grant, and compiles an AllowedReferenceManifest
+with the existing policy context compiler. It deduplicates source references while retaining distinct
+handles from that source. Migration `0034_research_reference_manifests.sql` stores immutable scope,
+owner, credential, pack, trace and stage bindings. WORK R2 stores bounded canonical manifest bytes;
+readback independently checks residency, the canonical key, ETag, size, platform metadata, both content
+and manifest digests, and scope/client/expiry coherence. Reads recheck current authority around R2 I/O.
+Stage, pack, trace and route selection remain trusted production-composition inputs.
+
+The model prompt adapter binds the call to the supplied deployment generations and persisted manifest,
+serializes compiler-admitted evidence as quoted user data, and produces a bounded canonical request
+body and digest. Trusted parameters are supplied by the server; the existing HTTP request adapter
+enforces their digest against the selected deployment. This does not configure credentials, pricing,
+consent, output/fingerprint persistence or a live provider.
 
 ## Bounds and proof ceiling
 
@@ -159,6 +174,12 @@ The held-scope suite passed four actual local Worker/D1/R2 cases on 2026-09-10. 
 imports and projects a source, holds the W1 scope, then resolves FAST_SEARCH to exact stored excerpt
 bytes and a matching evidence receipt. Replay creates no replacement scope or grant. Foreign and
 revoked unbound scopes are rejected before retrieval-profile writes.
+
+The reference-manifest suite passed two focused actual local Worker/D1/R2 cases on 2026-09-10:
+two distinct same-source excerpts, exact manifest write/read/replay, no committed receipt after an R2
+failure, and currentness rejection before a read and after an in-flight grant revocation. The prompt
+adapter's two pure unit cases passed with a controlled manifest-service stub; those cases verify request
+preparation, not storage or live model quality. Both suites retain explicit controlled stage/route inputs.
 
 The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
