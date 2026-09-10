@@ -70,10 +70,10 @@ try {
 
 assert.throws(
   () => executeLocal(["-e", "process.stdout.write('x'.repeat(6000)); process.stderr.write('y'.repeat(6000) + ' SQLITE_NOMEM'); process.exit(1)"], {
-    capture: true, diagnosticContext: { binding: "SEARCH_DB", phase: "d1-migrations" },
+    capture: true, diagnosticContext: { binding: "SEARCH_DB", phase: "d1-migrations-verify" },
   }),
   (error) => {
-    assert.match(error.message, /migration=SEARCH_DB\/d1-migrations; runtime=SQLITE_NOMEM/u);
+    assert.match(error.message, /migration=SEARCH_DB\/d1-migrations-verify; runtime=SQLITE_NOMEM/u);
     assert.equal(error.cause.migration.runtime_code, "SQLITE_NOMEM");
     assert.equal(Object.hasOwn(error.cause, "stdout"), false);
     assert.equal(Object.hasOwn(error.cause, "stderr"), false);

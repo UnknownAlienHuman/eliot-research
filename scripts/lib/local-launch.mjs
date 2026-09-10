@@ -90,10 +90,10 @@ const LOCAL_RUNTIME_ERROR_CODES = new Set([
   "SQLITE_IOERR", "SQLITE_LOCKED", "SQLITE_MISUSE", "SQLITE_NOMEM", "SQLITE_READONLY",
   "EAGAIN", "EBUSY", "ENOMEM", "EPERM", "ETIMEDOUT", "UNKNOWN",
 ]);
-const LOCAL_MIGRATION_BINDINGS = new Set(["CORE_DB", "SEARCH_DB"]);
+const LOCAL_MIGRATION_PHASES = new Set(["d1-migrations", "d1-migrations-verify"]);
 
 function normalizeMigrationDiagnostic(context) {
-  if (!context || context.phase !== "d1-migrations" || !LOCAL_MIGRATION_BINDINGS.has(context.binding)) return null;
+  if (!context || !LOCAL_MIGRATION_PHASES.has(context.phase) || !["CORE_DB", "SEARCH_DB"].includes(context.binding)) return null;
   return { binding: context.binding, phase: context.phase };
 }
 
