@@ -5558,6 +5558,8 @@ export async function runOwnerE2E() {
         "e2e-import-1/browser-revisions",
         "e2e-raw-upload/post",
         "e2e-raw-upload/recovery",
+        "e2e-raw-upload/markdown",
+        "e2e-raw-upload/admission",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
@@ -5598,9 +5600,9 @@ export async function runOwnerE2E() {
         }
       }
       const ingestEntries = ledger.entries.filter((entry) => entry.path.startsWith("/api/v1/ingest/"));
-      assert.equal(ingestEntries.length, imported.artifactPaths.length + 3,
-        "ingest ledger must hold the normalized lifecycle, DUPLICATE replay and raw POST/readback");
-      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay + raw capture/recovery, all browser-origin, exact status/ordering/correlation)`;
+      assert.equal(ingestEntries.length, imported.artifactPaths.length + 5,
+        "ingest ledger must hold the normalized lifecycle, DUPLICATE replay, raw capture/recovery, conversion and admission");
+      receipt.artifact_ledger = `PASS (${imported.artifactPaths.length} lifecycle + 1 DUPLICATE replay + raw capture/recovery/conversion/admission, all browser-origin, exact status/ordering/correlation)`;
       receipt.cross_client_ledger = `PASS (${structural.entries} entries, gapless, no JWT material)`;
     }
     receipt.worker_ports = `PASS (${workerPortEvidence.join(", ")})`;
