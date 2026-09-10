@@ -81,9 +81,17 @@ async function signedBinding(overrides: Record<string, unknown> = {}): Promise<R
 }
 
 function current(overrides: Partial<ModelProfileCurrentAuthority> = {}): ModelProfileCurrentAuthority {
+  return currentFor(stage, scope, overrides);
+}
+
+function currentFor(
+  stageValue: ModelProfileStageAuthority,
+  scopeValue: ScopeSnapshot,
+  overrides: Partial<ModelProfileCurrentAuthority> = {},
+): ModelProfileCurrentAuthority {
   return Object.freeze({
-    ...stage,
-    scope_snapshot: scope,
+    ...stageValue,
+    scope_snapshot: scopeValue,
     policy_state: "ACTIVE",
     deployment_state: "ACTIVE",
     state: "ACTIVE",
@@ -143,5 +151,57 @@ describe("model profile binding producer", () => {
     await expect(producer({ ...signed, unexpected: true }).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
     await expect(producer(await signedBinding({ max_context_bytes: 0 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
     await expect(producer(await signedBinding({ max_context_bytes: Number.MAX_SAFE_INTEGER + 1 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
+  });
+
+  it("keeps one stable definition while deriving a distinct binding for each current scope", async () => {
+    const scopeTwo: ScopeSnapshot = Object.freeze({
+      ...scope,
+      snapshot_id: "scope-2",
+      resolved_scope_expression: { kind: "SELECTED_SOURCES" as const, source_ids: ["source-2"] },
+      member_source_revision_refs: ["source-2:1"],
+      source_owner_generations: { "source-2": "owner-gen-2" },
+      policy_authority_ref: "policy-authority-2",
+      digest: "d".repeat(64),
+    });
+    const stageTwo: ModelProfileStageAuthority = {
+      ...stage,
+      policy_authority_ref: scopeTwo.policy_authority_ref,
+      scope_snapshot_ref: { id: scopeTwo.snapshot_id, revision: scopeTwo.revision },
+      scope_snapshot_digest: scopeTwo.digest,
+    };
+    const signed = await signedBinding();
+    const authorities = [currentFor(stage, scope), currentFor(stage, scope), currentFor(stageTwo, scopeTwo), currentFor(stageTwo, scopeTwo)];
+    const fallbackAuthority = authorities[authorities.length - 1];
+    if (fallbackAuthority === undefined) throw new Error("fixture authority sequence is empty");
+    let authorityIndex = 0;
+    const instance = createModelProfileBindingProducer({
+      source: { provenance_ref: provenanceRef, read: async () => signed },
+      readCurrentAuthority: async () => authorities[authorityIndex++] ?? fallbackAuthority,
+      routeAuthority: { resolve: async () => deployment },
+      now: () => NOW,
+    });
+    const first = await instance.resolve(stage);
+    const second = await instance.resolve(stageTwo);
+    expect(first.binding.definition_ref).toEqual(second.binding.definition_ref);
+    expect(first.binding.definition_sha256).toBe(second.binding.definition_sha256);
+    expect(first.binding.binding_ref).not.toEqual(second.binding.binding_ref);
+    expect(first.binding.scope_snapshot_ref).toEqual({ id: scope.snapshot_id, revision: scope.revision });
+    expect(second.binding.scope_snapshot_ref).toEqual({ id: scopeTwo.snapshot_id, revision: scopeTwo.revision });
+    expect(first.binding.binding_sha256).not.toBe(second.binding.binding_sha256);
+  });
+
+  it("refuses a definition that expires during awaited route resolution while its scope remains live", async () => {
+    const expiry = "2026-09-10T17:00:00.000Z";
+    const liveScope: ScopeSnapshot = Object.freeze({ ...scope, expires_at: "2026-09-10T18:00:00.000Z" });
+    const livePolicy = { ...policy, expires_at: expiry };
+    const signed = await signedBinding({ expires_at: expiry, policy: livePolicy });
+    let clock = NOW;
+    const instance = createModelProfileBindingProducer({
+      source: { provenance_ref: provenanceRef, read: async () => signed },
+      readCurrentAuthority: async () => currentFor(stage, liveScope),
+      routeAuthority: { resolve: async () => { clock = Date.parse("2026-09-10T17:30:00.000Z"); return deployment; } },
+      now: () => clock,
+    });
+    await expect(instance.resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
   });
 });
