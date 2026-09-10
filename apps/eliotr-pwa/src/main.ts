@@ -54,11 +54,19 @@ function googleConnectorLabel(transport: GoogleExternalTransport | undefined): s
 
 function healthSummary(health: SystemHealth | null): string {
   if (health === null) return "Checking current deployment…";
-  if (health.ready) return "Ready · authenticated owner surface";
+  if (health.ready) return "Workspace connected. Owner API available.";
   if (health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE")) {
     return "Workspace connection unavailable. Retry to reconnect.";
   }
   return "Workspace unavailable. Retry to check again.";
+}
+
+function healthDetails(health: SystemHealth | null): string {
+  if (health === null) return "Health check pending.";
+  const reasons = health.blocking_reason_codes.length === 0
+    ? "None"
+    : health.blocking_reason_codes.map((code) => escapeHtml(code)).join(", ");
+  return `<span>Generation: ${displayText(health.deployment_generation, "Unknown")}</span><span>Codes: ${reasons}</span><span>Checked: ${displayText(health.checked_at, "Unknown")}</span>`;
 }
 
 function renderGoogleConnector(health: SystemHealth | null): void {
@@ -93,6 +101,7 @@ function render(health: SystemHealth | null): void {
       <span class="health-dot" aria-hidden="true"></span><strong>Owner API</strong>
       <span id="health-summary">Checking current deployment…</span>
       <span class="health-generation">${displayText(health?.deployment_generation, "generation pending")}</span>
+      <details class="health-details"><summary>Details</summary><div id="health-details" class="health-details-content">${healthDetails(health)}</div></details>
     </div>
     <main class="workspace">
       <aside class="panel panel--corpus" aria-label="Research navigation">
@@ -255,6 +264,8 @@ function updateHealth(health: SystemHealth): void {
   if (badge) badge.innerHTML = healthBadge(health);
   const summary = app.querySelector("#health-summary");
   if (summary) summary.textContent = healthSummary(health);
+  const details = app.querySelector("#health-details");
+  if (details) details.innerHTML = healthDetails(health);
   const refresh = app.querySelector<HTMLButtonElement>("[data-refresh]");
   if (refresh) refresh.textContent = health.ready ? "Refresh" : "Retry connection";
   const dot = app.querySelector(".health-dot");

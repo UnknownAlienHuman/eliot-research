@@ -681,7 +681,7 @@ function contentType(path) {
 async function startFixture() {
   const raw = { mode: "lost", postCount: 0, getCount: 0, conversionCount: 0, conversionMode: "unknown", conversionLossPending: false,
     admissionMode: "lost", admissionLossPending: false, admissionStatusNonterminalPending: false, admissionCount: 0, admissionStatusCount: 0, capture: undefined, headers: undefined,
-    release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [], admissionStatusRequests: [] };
+    release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [], admissionStatusRequests: [], healthResponses: [] };
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -690,9 +690,12 @@ async function startFixture() {
         response.statusCode = status; response.setHeader("content-type", "application/json; charset=utf-8");
         response.end(JSON.stringify(value));
       };
-      if (url.pathname === "/api/v1/system/health") return json(envelope({ ready: true, deployment_generation: generation,
-        core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [],
-        checked_at: new Date().toISOString() }));
+      if (url.pathname === "/api/v1/system/health") {
+        const health = raw.healthResponses.shift() ?? { ready: true, deployment_generation: generation,
+          core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [],
+          checked_at: new Date().toISOString() };
+        return json(envelope(health, health.deployment_generation));
+      }
       if (url.pathname === "/api/v1/research/catalog") return json(envelope({
         projects: [{ id: "project-1", title: "Workspace", generation: "1" }],
         sources: [{ id: "source-1", title: "Fixture source", readiness_ref: "readiness:source-1:revision-1" }],
@@ -843,12 +846,42 @@ export async function runRawFileUploadBrowser() {
     context = await browser.newContext();
     const page = await context.newPage();
     fixture.raw.mode = "delayed";
+    const unavailableHealth = {
+      ready: false, deployment_generation: "unreachable", core_schema_generation: null, search_schema_generation: null,
+      blocking_reason_codes: ["HEALTH_ENDPOINT_UNREACHABLE"], checked_at: new Date().toISOString(),
+    };
+    const readyHealth = {
+      ready: true, deployment_generation: generation, core_schema_generation: "fixture", search_schema_generation: "fixture",
+      blocking_reason_codes: [], checked_at: new Date().toISOString(),
+    };
+    fixture.raw.healthResponses.push(unavailableHealth, readyHealth);
     // The server signals after it has consumed the real browser request body.
     const waitForPost = new Promise((resolvePromise) => { fixture.raw.onPost = resolvePromise; });
     await page.goto(fixture.origin, { waitUntil: "domcontentloaded" });
     const panel = page.locator("#raw-upload");
+    const refresh = page.locator(".content-actions [data-refresh]");
+    await page.waitForFunction(() => document.querySelector("#health-summary")?.textContent?.includes("Workspace connection unavailable") === true &&
+      document.querySelector("[data-refresh]")?.textContent?.trim() === "Retry connection", null, { timeout: 15000 });
+    assert.match(await panel.locator("[data-raw-status]").textContent(), /Workspace connection unavailable/u);
+    await refresh.click();
     await page.waitForFunction(() => document.querySelector("#health-badge")?.textContent?.trim() === "ready" &&
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
+    assert.match(await page.locator("#health-summary").textContent(), /Workspace connected/u);
+    await page.evaluate(() => {
+      const app = document.querySelector("#app");
+      const events = [];
+      app?.addEventListener("eliotr:health-lost", (event) => events.push(`lost:${event.detail?.reason ?? "missing"}`));
+      app?.addEventListener("eliotr:health-updated", () => events.push("updated"));
+      window.__rawHealthEvents = events;
+    });
+    fixture.raw.healthResponses.push(unavailableHealth, readyHealth);
+    await refresh.click();
+    await page.waitForFunction(() => document.querySelector("#health-summary")?.textContent?.includes("Workspace connection unavailable") === true, null, { timeout: 15000 });
+    assert.match(await panel.locator("[data-raw-status]").textContent(), /Workspace connection lost/u);
+    await refresh.click();
+    await page.waitForFunction(() => document.querySelector("#health-summary")?.textContent?.includes("Workspace connected") === true &&
+      document.querySelector("#health-badge")?.textContent?.trim() === "ready", null, { timeout: 15000 });
+    assert.deepEqual(await page.evaluate(() => window.__rawHealthEvents), ["lost:connection-lost", "updated", "updated"]);
     const input = panel.locator("input[data-raw-file]");
     const setFile = async () => input.setInputFiles({ name: file.name, mimeType: file.type, buffer: bytes });
 
@@ -943,6 +976,13 @@ export async function runRawFileUploadBrowser() {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => document.querySelector("#health-badge")?.textContent?.trim() === "ready" &&
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
+    await page.evaluate(() => {
+      const app = document.querySelector("#app");
+      const events = [];
+      app?.addEventListener("eliotr:health-lost", (event) => events.push(`lost:${event.detail?.reason ?? "missing"}`));
+      app?.addEventListener("eliotr:health-updated", () => events.push("updated"));
+      window.__rawHealthEvents = events;
+    });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
     await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click(), "/api/v1/ingest/raw", 503);
@@ -982,11 +1022,10 @@ export async function runRawFileUploadBrowser() {
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
-    await page.evaluate(() => {
-      const app = document.querySelector("#app");
-      if (app) { app.dataset.healthGeneration = "changed-generation"; app.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true })); }
-    });
+    fixture.raw.healthResponses.push({ ...readyHealth, deployment_generation: "changed-generation" });
+    await refresh.click();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-status]")?.textContent?.includes("Application changed") === true, null, { timeout: 5000 });
+    assert.deepEqual(await page.evaluate(() => window.__rawHealthEvents), ["lost:generation-changed", "updated"]);
     assert.equal(await input.inputValue(), "");
     assert.equal(await panel.locator("[data-raw-receipt]").getAttribute("hidden"), "");
 

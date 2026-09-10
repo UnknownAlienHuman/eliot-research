@@ -90,7 +90,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let admission: RawNormalizedAdmissionResult | undefined;
   let admissionOutcomeUnknown = false;
   let admissionNeedsResume = false;
-  let lastGeneration = host.generation();
+  let lastGeneration = host.ready() ? host.generation() : undefined;
 
   const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
     receiptNode.hidden = false;
@@ -396,10 +396,10 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   };
   const healthUpdated = () => {
     const generation = host.generation();
-    if (lastGeneration !== undefined && generation !== lastGeneration) {
+    if (host.ready() && generation !== undefined && lastGeneration !== undefined && generation !== lastGeneration) {
       clear("Application changed. Private upload and processing state cleared; choose the file again.");
     }
-    lastGeneration = generation;
+    if (host.ready() && generation !== undefined) lastGeneration = generation;
     renderButtons();
   };
   const clearOnHealthLost = (event: Event): void => {
