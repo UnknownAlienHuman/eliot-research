@@ -1,0 +1,851 @@
+{
+  "date": "2026-09-10",
+  "scope": "eliot-research canonical checkout and four registered worktrees",
+  "builds": {
+    "removed_roots": 131,
+    "removed_files": 31759.0,
+    "logical_bytes": 3868906269.0,
+    "observed_volume_free_space_increase": 3792003072,
+    "all_removed_paths_absent": true,
+    "protected_state_files_verified": 20,
+    "dependencies_and_pinned_runtime_preserved": true,
+    "roots": [
+      {
+        "worktree": "eliot-research",
+        "path": "target",
+        "files": 4888,
+        "bytes": 868712953.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "target",
+        "files": 3937,
+        "bytes": 734427834.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "target",
+        "files": 3937,
+        "bytes": 734428838.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "target",
+        "files": 3937,
+        "bytes": 734464590.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "target",
+        "files": 3937,
+        "bytes": 734514729.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/policy/dist",
+        "files": 41,
+        "bytes": 111789.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "apps/eliotr-pwa/dist",
+        "files": 5,
+        "bytes": 265711.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/domain/dist",
+        "files": 93,
+        "bytes": 180275.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "apps/eliotr-core/dist",
+        "files": 271,
+        "bytes": 7757516.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/testkit/dist",
+        "files": 37,
+        "bytes": 162304.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "apps/eliotr-pwa/.astro",
+        "files": 6,
+        "bytes": 6380.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/research/dist",
+        "files": 81,
+        "bytes": 484446.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/backup-o2/dist",
+        "files": 113,
+        "bytes": 917193.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/retrieval/dist",
+        "files": 149,
+        "bytes": 780182.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/contracts/dist",
+        "files": 145,
+        "bytes": 519563.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/interfaces/dist",
+        "files": 37,
+        "bytes": 104309.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "apps/eliotr-pwa/dist-types",
+        "files": 149,
+        "bytes": 788483.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-ai/dist",
+        "files": 173,
+        "bytes": 696063.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "apps/eliotr-pwa/dist",
+        "files": 5,
+        "bytes": 265711.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/policy/dist",
+        "files": 41,
+        "bytes": 111789.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/domain/dist",
+        "files": 93,
+        "bytes": 180275.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "apps/eliotr-core/dist",
+        "files": 262,
+        "bytes": 1275704.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/testkit/dist",
+        "files": 37,
+        "bytes": 162033.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "apps/eliotr-pwa/dist",
+        "files": 5,
+        "bytes": 240672.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/policy/dist",
+        "files": 41,
+        "bytes": 111785.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/domain/dist",
+        "files": 93,
+        "bytes": 180275.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "apps/eliotr-pwa/.astro",
+        "files": 2,
+        "bytes": 5553.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/testkit/dist",
+        "files": 37,
+        "bytes": 161663.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/research/dist",
+        "files": 65,
+        "bytes": 408977.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "apps/eliotr-core/dist",
+        "files": 263,
+        "bytes": 1284227.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/policy/dist",
+        "files": 41,
+        "bytes": 105345.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/contracts/dist",
+        "files": 145,
+        "bytes": 519547.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-access/dist",
+        "files": 13,
+        "bytes": 110669.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/retrieval/dist",
+        "files": 149,
+        "bytes": 780182.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/backup-o2/dist",
+        "files": 113,
+        "bytes": 917193.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "apps/eliotr-pwa/.astro",
+        "files": 4,
+        "bytes": 5907.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/domain/dist",
+        "files": 93,
+        "bytes": 179782.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/research/dist",
+        "files": 65,
+        "bytes": 408986.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-erasure/dist",
+        "files": 89,
+        "bytes": 359207.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/testkit/dist",
+        "files": 37,
+        "bytes": 161410.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/backup-o2/dist",
+        "files": 113,
+        "bytes": 917193.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "apps/eliotr-core/dist",
+        "files": 222,
+        "bytes": 1034814.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/contracts/dist",
+        "files": 145,
+        "bytes": 519563.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/interfaces/dist",
+        "files": 37,
+        "bytes": 100388.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/retrieval/dist",
+        "files": 149,
+        "bytes": 780182.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "apps/eliotr-pwa/dist",
+        "files": 5,
+        "bytes": 258059.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-markdown/dist",
+        "files": 37,
+        "bytes": 232510.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-research/dist",
+        "files": 189,
+        "bytes": 1188971.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/platform-cloudflare/dist",
+        "files": 197,
+        "bytes": 856474.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/research/dist",
+        "files": 65,
+        "bytes": 413220.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-evidence/dist",
+        "files": 89,
+        "bytes": 459262.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/policy/dist",
+        "files": 41,
+        "bytes": 111789.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/interfaces/dist",
+        "files": 37,
+        "bytes": 104309.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/domain/dist",
+        "files": 93,
+        "bytes": 180275.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/retrieval/dist",
+        "files": 133,
+        "bytes": 699852.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "apps/eliotr-pwa/dist-types",
+        "files": 137,
+        "bytes": 689195.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/backup-o2/dist",
+        "files": 113,
+        "bytes": 916696.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-workflows/dist",
+        "files": 29,
+        "bytes": 149528.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/testkit/dist",
+        "files": 37,
+        "bytes": 162303.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-artifacts/dist",
+        "files": 29,
+        "bytes": 223504.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "apps/eliotr-core/dist",
+        "files": 270,
+        "bytes": 1298910.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/contracts/dist",
+        "files": 117,
+        "bytes": 453698.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/google-drive-exchange/dist",
+        "files": 125,
+        "bytes": 613978.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-raw-ingest/dist",
+        "files": 45,
+        "bytes": 230007.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-ai/dist",
+        "files": 181,
+        "bytes": 694007.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-projection/dist",
+        "files": 81,
+        "bytes": 435194.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/interfaces/dist",
+        "files": 33,
+        "bytes": 84346.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-navigation/dist",
+        "files": 77,
+        "bytes": 471275.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "apps/eliotr-pwa/.astro",
+        "files": 2,
+        "bytes": 5553.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "apps/eliotr-pwa/dist-types",
+        "files": 137,
+        "bytes": 689139.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/research/dist",
+        "files": 81,
+        "bytes": 484168.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-federation/dist",
+        "files": 17,
+        "bytes": 116335.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/retrieval/dist",
+        "files": 149,
+        "bytes": 780182.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/contracts/dist",
+        "files": 145,
+        "bytes": 519563.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/backup-o2/dist",
+        "files": 113,
+        "bytes": 917193.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-ai/dist",
+        "files": 169,
+        "bytes": 656889.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/interfaces/dist",
+        "files": 37,
+        "bytes": 104309.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "apps/eliotr-pwa/dist-types",
+        "files": 105,
+        "bytes": 401626.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-ai/dist",
+        "files": 165,
+        "bytes": 649974.0
+      },
+      {
+        "worktree": "eliot-research",
+        "path": "packages/cloudflare-workspace-mcp/dist",
+        "files": 45,
+        "bytes": 293517.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-access/dist",
+        "files": 13,
+        "bytes": 110542.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "apps/eliotr-pwa/dist-types",
+        "files": 149,
+        "bytes": 788463.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-erasure/dist",
+        "files": 89,
+        "bytes": 359207.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-access/dist",
+        "files": 13,
+        "bytes": 110723.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-ai/dist",
+        "files": 169,
+        "bytes": 693266.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-markdown/dist",
+        "files": 37,
+        "bytes": 232374.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-erasure/dist",
+        "files": 89,
+        "bytes": 359207.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/platform-cloudflare/dist",
+        "files": 197,
+        "bytes": 856199.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-evidence/dist",
+        "files": 89,
+        "bytes": 459262.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-research/dist",
+        "files": 185,
+        "bytes": 1147628.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-research/dist",
+        "files": 189,
+        "bytes": 1189212.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-artifacts/dist",
+        "files": 29,
+        "bytes": 221072.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/platform-cloudflare/dist",
+        "files": 197,
+        "bytes": 856199.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-workflows/dist",
+        "files": 29,
+        "bytes": 149346.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-markdown/dist",
+        "files": 37,
+        "bytes": 232655.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-evidence/dist",
+        "files": 89,
+        "bytes": 459273.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-projection/dist",
+        "files": 81,
+        "bytes": 435208.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-raw-ingest/dist",
+        "files": 45,
+        "bytes": 229739.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-workflows/dist",
+        "files": 29,
+        "bytes": 149346.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-artifacts/dist",
+        "files": 29,
+        "bytes": 223495.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-navigation/dist",
+        "files": 77,
+        "bytes": 471174.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/google-drive-exchange/dist",
+        "files": 125,
+        "bytes": 613989.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-erasure/dist",
+        "files": 85,
+        "bytes": 308699.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-federation/dist",
+        "files": 17,
+        "bytes": 116335.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-access/dist",
+        "files": 13,
+        "bytes": 110542.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-projection/dist",
+        "files": 81,
+        "bytes": 435194.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-navigation/dist",
+        "files": 77,
+        "bytes": 471275.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/google-drive-exchange/dist",
+        "files": 125,
+        "bytes": 613978.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-raw-ingest/dist",
+        "files": 45,
+        "bytes": 230007.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/platform-cloudflare/dist",
+        "files": 193,
+        "bytes": 830770.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-evidence/dist",
+        "files": 81,
+        "bytes": 401305.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-research/dist",
+        "files": 21,
+        "bytes": 115227.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-federation/dist",
+        "files": 17,
+        "bytes": 115965.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-erasure/dist",
+        "files": 89,
+        "bytes": 359207.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/platform-cloudflare/dist",
+        "files": 209,
+        "bytes": 918800.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-evidence/dist",
+        "files": 89,
+        "bytes": 459273.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-markdown/dist",
+        "files": 37,
+        "bytes": 232374.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-research/dist",
+        "files": 173,
+        "bytes": 1104771.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-federation/dist",
+        "files": 17,
+        "bytes": 115842.0
+      },
+      {
+        "worktree": "eliot-research-wt-deps",
+        "path": "packages/cloudflare-workspace-mcp/dist",
+        "files": 45,
+        "bytes": 293390.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/google-drive-exchange/dist",
+        "files": 137,
+        "bytes": 731084.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-navigation/dist",
+        "files": 57,
+        "bytes": 338564.0
+      },
+      {
+        "worktree": "eliot-research-wt-release",
+        "path": "packages/cloudflare-projection/dist",
+        "files": 81,
+        "bytes": 423217.0
+      },
+      {
+        "worktree": "eliot-research-wt-astro",
+        "path": "packages/cloudflare-workspace-mcp/dist",
+        "files": 45,
+        "bytes": 293642.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-artifacts/dist",
+        "files": 29,
+        "bytes": 221081.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/google-drive-exchange/dist",
+        "files": 125,
+        "bytes": 613978.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-navigation/dist",
+        "files": 77,
+        "bytes": 471266.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-raw-ingest/dist",
+        "files": 45,
+        "bytes": 230007.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-projection/dist",
+        "files": 81,
+        "bytes": 435192.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-federation/dist",
+        "files": 17,
+        "bytes": 116335.0
+      },
+      {
+        "worktree": "eliot-research-wt-retrieval",
+        "path": "packages/cloudflare-workspace-mcp/dist",
+        "files": 45,
+        "bytes": 293370.0
+      }
+    ]
+  },
+  "git_recovery": {
+    "objects": 861,
+    "commits": 210,
+    "trees": 511,
+    "blobs": 140,
+    "independent_commit_tips": 92,
+    "tag": "checkpoint/20260910-orphan-object-recovery",
+    "commit": "65482ad7188e1d3393645f28a223467c906593eb",
+    "launch09_tag": "checkpoint/20260910-launch09-recovered",
+    "launch09_tip": "2041363a09e4c8498b4a608f325018e6aef7805b",
+    "strict_fsck": "PASS",
+    "unreachable_objects_after_recovery": 0,
+    "stale_remote_tracking_refs_pruned": [
+      "origin/agent/checkpoint-raw-admission-integration-20260909"
+    ],
+    "stale_worktree_registrations": 0,
+    "garbage_collection_performed": false,
+    "recovery_pack_sha256": "8295D39AE5DDEFB19D9503E56FBE93AB7B254D44B22B0FA5F5951E1C3C37A38C"
+  },
+  "scratch_archive": {
+    "members_reverified": 886,
+    "sha256": "167FAE82D7FC4FC1CF0A3F64BCC250D24F868EE8AE5574F3A02CC4FE7A2CEFDF"
+  },
+  "remaining_test_directories": {
+    "count": 7,
+    "files": 17,
+    "bytes": 93700,
+    "status": "ARCHIVED_BUT_NOT_REMOVED",
+    "reason": "Automatic approval review rejected recursive and narrower file-by-file removal: blocked by policy",
+    "archive": "project-temp-20260910.zip",
+    "archive_sha256": "8A68D9D2665326627D2E401BE7933BFA194B530BDCEEAFB19C4D95A3DDA68C40",
+    "paths": [
+      "TEMP/eliotr-api-abort-repro-20260910",
+      "TEMP/eliotr-raw-file-browser-gVeA4g",
+      "TEMP/eliotr-raw-file-browser-mqFQR2",
+      "eliot-research-wt-astro/.eliotr-state/owner-e2e-decoy-66132-1788944531997-7d8d5384",
+      "eliot-research-wt-astro/.eliotr-state/smoke-decoy-66132-1788944531997-7d8d5384",
+      "eliot-research-wt-retrieval/.eliotr-state/owner-e2e-decoy-10920-1789014388202-a76af734",
+      "eliot-research-wt-retrieval/.eliotr-state/smoke-decoy-10920-1789014388202-a76af734"
+    ]
+  },
+  "unrelated_shared_temp": {
+    "pattern": "miniflare-*",
+    "count": 118,
+    "files": 354,
+    "bytes": 5321952,
+    "status": "RETAINED_UNKNOWN_PROJECT_OWNERSHIP",
+    "reason": "Shared system Temp; no repository identity found. No blanket deletion."
+  },
+  "product_acceptance": "Not established by cleanup. No builds or product tests rerun; known CI source-package limit and product gaps remain."
+}

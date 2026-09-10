@@ -59,6 +59,12 @@ Rules:
 The owner requested a main push and handoff because the account quota is ending. New work stopped.
 The full product goal remains incomplete. No Cloudflare deployment or NotebookLM comparison is claimed.
 
+The final deep cleanup audit and [continuation runbook](checkpoints/2026-09-10/README.md) include
+recovered orphan Launch 09 Rust/Wasm history and all 861 previously unreferenced Git objects, now
+preserved by GitHub recovery tags. Consult these before reimplementing missing work. The associated
+cleanup receipt records removed builds and the small test directories whose deletion was blocked;
+clean Git status does not imply complete filesystem cleanup or product readiness.
+
 ### Delivered in this checkpoint
 
 - Configured v3 source VERIFY and DRAFT readback; native Worker AI Gateway transport and explicit model profile source.

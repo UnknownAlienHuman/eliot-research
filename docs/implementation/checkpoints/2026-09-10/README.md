@@ -5,6 +5,47 @@ This directory preserves unfinished work as **inactive recovery artifacts**, not
 implementation. No snapshot here is compiled, deployed, or evidence of feature completion.
 The product remains incomplete; continue from the [gap register](../../gap-register.md).
 
+## Deep cleanup and orphan recovery
+
+The final audit went beyond clean branch status. Its [machine-readable receipt](cleanup-receipt.json)
+lists all 131 removed build roots across the five worktrees: 31,759 files and 3,868,906,269 logical
+bytes. The observed volume free-space increase was 3,792,003,072 bytes; other processes can affect
+that volume-wide measurement. An independent rescan found no remaining generated build roots or
+`.tsbuildinfo` outside the explicitly retained dependency/state/configuration directories. All 20
+protected state/configuration files were hash-checked unchanged; dependencies and pinned Node remain.
+No build was rerun to recreate the outputs.
+
+The deeper Git audit found previously orphaned work, including Launch 09 Rust/Wasm history. All 861
+objects (210 commits, 511 trees, 140 blobs, including reflog-only objects) were packed and verified
+before any reference cleanup. They are now retained on GitHub:
+
+- `checkpoint/20260910-launch09-recovered` points to `2041363a09e4c8498b4a608f325018e6aef7805b`.
+  Its ancestry contains broad historical side merges; inspect the nine Launch 09 first-parent commits
+  rather than merging the entire old tree as current implementation.
+- `checkpoint/20260910-orphan-object-recovery` points to
+  `65482ad7188e1d3393645f28a223467c906593eb`. This archival index has 92 independent historical tips as
+  parents and retains original orphan trees/blobs plus `RECOVERY-OBJECTS.json`. It is not an application
+  branch, a release, or code to merge wholesale. Fetch the tag, inspect the original commit/blob by OID,
+  and recover only the required change in a dedicated branch.
+
+The two blobs initially flagged as unknown were identified as historical navigation-persistence test
+source with one invalid UTF-8 sequence each. Source/test and credential-shape review found no actual
+credential material; names containing `token`, `auth`, or `receipt` were implementation and synthetic
+fixture names. The original bytes are preserved. Final strict Git integrity and no-reflog reachability
+checks passed with **zero unreachable objects**. The one stale remote-tracking reference was pruned;
+there were no stale worktree registrations. No source history was discarded and no GC was needed.
+
+The earlier 886-member scratch archive was reverified entry by entry. Seven additional project test
+directories (17 files, 93,700 bytes) were also archived and hash-verified, but **remain on disk**:
+automatic approval review rejected both recursive and narrower file-by-file deletion with
+`blocked by policy`. They are enumerated in the receipt. Do not claim complete deletion of these
+directories. Another 118 shared system-Temp `miniflare-*` directories (5,321,952 bytes) were retained
+because their owning project could not be established; they are outside the verified project cleanup.
+
+Local recovery evidence is under the workspace parent's `.codex-archive/`, including the checked
+pack/index, build inventory/receipt and `project-temp-20260910.zip`. Account/state metadata archives
+are intentionally local; all recovered Git source objects are retained by the GitHub recovery tag.
+
 ## Verified delivery baseline
 
 Before this documentation checkpoint, local `main`, `origin/main`, and the live GitHub
@@ -92,3 +133,70 @@ manifest and snapshot integrity checks are separate from product acceptance.
 
 This checkpoint does not claim that every draft PR or unique historical patch is merged. Patch-ID
 differences alone cannot distinguish missing implementation from integrated-and-amended work.
+
+## Next-session continuation runbook
+
+Start from a clean view of the published baseline; do not infer state from an old local branch:
+
+```text
+git fetch origin --prune --tags
+git status --short --branch
+git rev-parse HEAD
+git rev-parse origin/main
+git log --oneline -5 origin/main
+pnpm launch:code
+pnpm check:implementation-status
+```
+
+If branch hygiene has removed a WIP branch, recover its immutable checkpoint tag into a dedicated
+worktree. For example:
+
+```text
+git worktree add -b quarantine/stage15-resume ..\recovery-stage15 refs/tags/checkpoint/20260910-stage15-wip
+git -C ..\recovery-stage15 merge --no-ff origin/main
+git -C ..\recovery-stage15 show --stat --oneline HEAD
+```
+
+The equivalent tags are `checkpoint/20260910-coverage-wip`,
+`checkpoint/20260910-synthesis-wip`, and `checkpoint/20260910-legacy-drive-wip`. Inspect the exact
+tagged diff before retaining any file, and merge current `origin/main` normally in that isolated
+worktree. Never reset, force-push, or apply every recovery snapshot blindly.
+
+Also inspect `checkpoint/20260910-launch09-recovered` before repeating Rust/Wasm work: the deep audit
+found this unfinished chain outside the branch list. Use the orphan-object recovery tag for older
+stash/index snapshots only when an exact missing change is needed. The archival index itself must
+never be merged into the product branch.
+
+The next implementation order is the source-capability extraction needed to bring
+`packages/cloudflare-research` back under its 10,000-line limit, followed by the actual W4 path:
+stage14 semantic audit, stage15 citation resolution, stage16 coverage, and stage17 DRAFT
+materialization. Controlled fixtures do not close these gates. The public `research.run` composition
+and any completion claim remain after those stages and their current-authority/readback checks.
+Budgets and financial features remain deferred; do not invent prices, quotas, consent, providers, or
+deployment defaults to unblock this order.
+
+The selected external Workspace path is Google Drive through Gemini Spark Connected Apps or the
+project-local Google Antigravity MCP. It does not authorize Google Cloud, `gcloud`, Gemini CLI, a
+Vertex route, or a provider key. The older Drive Exchange work is a separate unselected profile.
+
+Keep evidence labels truthful: local D1/R2 and controlled model tests establish recorded behavior;
+`IMPLEMENTED_NOT_LIVE` still means no platform round trip. Use `LIVE_QUALIFIED` only with a retained
+live Cloudflare/provider receipt, exact deployment identity, and independent readback. Deployment
+comes only after `launch:code` and the exact-head CI gates, using the already authorized project and
+verified target/configuration. Retain live Access, D1, R2, source, and model readbacks after deployment.
+
+If the root cleanup removes ignored `dist/`, Rust `target/`, or TypeScript `.tsbuildinfo`, restore
+generated outputs with the pinned toolchain from the repository root:
+
+```text
+pnpm install --frozen-lockfile
+cargo build --workspace --target wasm32-unknown-unknown --release --locked
+pnpm exec tsc -b --pretty false
+pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+pnpm build:pwa
+pnpm cf:types
+pnpm --filter @eliotr/core deploy:dry-run
+```
+
+Run only the commands required by the affected gate, retain their exact exit codes, and do not treat
+restored generated files or a dry-run as deployment or live qualification.
