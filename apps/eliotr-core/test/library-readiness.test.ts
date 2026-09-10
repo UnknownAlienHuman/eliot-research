@@ -53,7 +53,7 @@ describe("owner active Library readiness", () => {
       ["exact_ready", "ready"], ["lexical_ready", "ready"], ["semantic_ready", "degraded"],
     ]);
     expect(readiness.readiness_basis).toBe("ACTIVE_VERIFIED");
-    expect(readiness.currentness.source_revision_ref).toBe(world.revision);
+    expect(readiness.currentness.verification).toBe("NOT_VERIFIED");
   });
 
   it("keeps exact readiness when lexical projection is absent", async () => {

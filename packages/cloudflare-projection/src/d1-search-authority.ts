@@ -247,15 +247,14 @@ function storedReasonCodes(value: unknown): readonly string[] {
 export async function readD1ManagedSemanticReadback(
   core: D1Database,
   sourceRevisionRef: string,
-  projectionGeneration: string,
   expectedInstanceId: string,
   expectedManagedGeneration: string,
 ): Promise<D1ManagedSemanticReadback> {
   const row = await core.prepare(
     "SELECT state, semantic_instance_id, semantic_generation, semantic_receipt_ref, " +
       "semantic_readback_digest, reason_codes_json FROM projection_generation " +
-      "WHERE source_revision_ref=?1 AND projection_generation=?2 LIMIT 1",
-  ).bind(sourceRevisionRef, projectionGeneration).first<ManagedSemanticRow>();
+      "WHERE source_revision_ref=?1 ORDER BY updated_at DESC, projection_generation DESC LIMIT 1",
+  ).bind(sourceRevisionRef).first<ManagedSemanticRow>();
   if (row === null) return { state: "not_requested", reason_codes: ["MANAGED_SEMANTIC_UNAVAILABLE"] };
   const reasons = storedReasonCodes(row.reason_codes_json);
   if (row.state !== "COMPLETED") {
