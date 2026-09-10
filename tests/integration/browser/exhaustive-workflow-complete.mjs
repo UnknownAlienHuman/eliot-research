@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-/* global document: readonly, HTMLButtonElement: readonly, URL: readonly */
+/* global document: readonly, HTMLButtonElement: readonly, URL: readonly, TextEncoder: readonly */
 
 const WORKFLOW_ID = /^exhaustive-workflow-[a-f0-9]{64}$/u;
 const JOB_ID = /^exhaustive-job-[a-f0-9]{48}$/u;
@@ -47,6 +47,24 @@ function sqlText(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") {
+    assert.ok(Number.isFinite(value), "persisted exhaustive JSON numbers must be finite");
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const object = objectOf(value, "persisted exhaustive JSON object");
+  const keys = Object.keys(object).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+}
+
+async function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function launchDataOf(value, expectedGeneration) {
   const envelope = exactKeys(value, ["data", "trace_id", "deployment_generation"], "launch response");
   assert.equal(envelope.deployment_generation, expectedGeneration, "launch response must retain deployment generation");
@@ -91,14 +109,18 @@ function completeDataOf(value, expectedGeneration, workflowId) {
   return { data, receipt };
 }
 
-async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotencyKey, sourceRevisionRef }) {
+async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotencyKey, sourceId, sourceRevisionRef }) {
   const rows = await d1Query(paths, "CORE_DB",
     "SELECT w.workflow_id,w.job_id,w.principal_ref,w.client_class,w.credential_generation," +
     "w.deployment_generation,w.request_identity_digest,w.state AS binding_state," +
     "j.idempotency_key,j.request_digest,j.scope_snapshot_id,j.scope_snapshot_revision," +
     "j.coverage_denominator_ref,j.denominator_shards,j.settled_shards,j.total_scanned_sections," +
-    "j.total_matches,j.result_artifact_ref,j.coverage_receipt_ref,j.state AS job_state " +
-    `FROM retrieval_exhaustive_workflow w JOIN retrieval_exhaustive_job j ON j.job_id=w.job_id WHERE w.workflow_id=${sqlText(workflowId)} LIMIT 2`);
+    "j.total_matches,j.result_artifact_ref,j.coverage_receipt_ref,j.state AS job_state," +
+    "j.denominator_shard_ids_json,s.snapshot_id,s.revision,s.member_source_revision_refs_json," +
+    "s.resolved_scope_expression_json " +
+    `FROM retrieval_exhaustive_workflow w JOIN retrieval_exhaustive_job j ON j.job_id=w.job_id ` +
+    "JOIN scope_snapshot s ON s.snapshot_id=j.scope_snapshot_id AND s.revision=j.scope_snapshot_revision " +
+    `WHERE w.workflow_id=${sqlText(workflowId)} LIMIT 2`);
   assert.equal(rows.length, 1, "D1 must retain exactly one completed workflow/job binding");
   const row = rows[0];
   assert.equal(row.workflow_id, workflowId);
@@ -115,6 +137,23 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
   assert.equal(row.job_id, receipt.job_id, "D1 job identity must match the terminal receipt");
   assert.equal(row.scope_snapshot_id, receipt.scope_snapshot_id, "D1 scope snapshot must match the receipt");
   assert.equal(row.scope_snapshot_revision, receipt.scope_snapshot_revision, "D1 scope revision must match the receipt");
+  assert.equal(row.snapshot_id, receipt.scope_snapshot_id, "joined scope snapshot must match the job ref");
+  assert.equal(row.revision, receipt.scope_snapshot_revision, "joined scope revision must match the job ref");
+  let memberRefs;
+  let resolvedExpression;
+  try {
+    memberRefs = JSON.parse(row.member_source_revision_refs_json);
+    resolvedExpression = JSON.parse(row.resolved_scope_expression_json);
+  } catch {
+    assert.fail("D1 scope snapshot JSON must be valid");
+  }
+  assert.ok(Array.isArray(memberRefs) && memberRefs.every((value) => typeof value === "string"),
+    "D1 scope snapshot members must be a string array");
+  assert.equal(new Set(memberRefs).size, memberRefs.length, "D1 scope snapshot members must be unique");
+  assert.deepEqual(memberRefs, [sourceRevisionRef], "D1 scope snapshot must contain exactly the selected raw revision");
+  const expression = exactKeys(resolvedExpression, ["kind", "source_ids"], "D1 resolved scope expression");
+  assert.equal(expression.kind, "SELECTED_SOURCES", "D1 scope snapshot must retain selected-source semantics");
+  assert.deepEqual(expression.source_ids, [sourceId], "D1 scope snapshot must retain the selected raw source");
   assert.equal(row.coverage_denominator_ref, receipt.coverage_denominator_ref, "D1 denominator must match the receipt");
   assert.equal(row.denominator_shards, receipt.denominator_shards, "D1 denominator count must match the receipt");
   assert.equal(row.settled_shards, receipt.settled_shards, "D1 settled count must match the receipt");
@@ -122,7 +161,45 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
   assert.equal(row.total_matches, receipt.total_matches, "D1 match count must match the receipt");
   assert.equal(row.result_artifact_ref, receipt.result_artifact_ref, "D1 result artifact must match the receipt");
   assert.equal(row.coverage_receipt_ref, receipt.coverage_receipt_ref, "D1 coverage receipt must match the receipt");
-  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw source revision must remain bound by the selected request");
+  let denominatorIds;
+  try { denominatorIds = JSON.parse(row.denominator_shard_ids_json); }
+  catch { assert.fail("D1 denominator shard JSON must be valid"); }
+  assert.ok(Array.isArray(denominatorIds) && denominatorIds.length > 0 && denominatorIds.every((value) => typeof value === "string"),
+    "D1 denominator shard IDs must be a non-empty string array");
+  assert.equal(new Set(denominatorIds).size, denominatorIds.length, "D1 denominator shard IDs must be unique");
+  assert.equal(denominatorIds.length, row.denominator_shards, "D1 denominator row count must match denominator_shards");
+  const shardRows = await d1Query(paths, "CORE_DB",
+    `SELECT shard_id,outcome_json,outcome_digest FROM retrieval_exhaustive_shard WHERE job_id=${sqlText(row.job_id)} ORDER BY shard_id`);
+  assert.equal(shardRows.length, row.denominator_shards, "D1 must retain one settled journal row per denominator shard");
+  const seenShards = new Set();
+  let scannedSections = 0;
+  let matches = 0;
+  for (const shard of shardRows) {
+    assert.ok(typeof shard.shard_id === "string" && denominatorIds.includes(shard.shard_id),
+      "D1 shard journal must belong to the exact denominator");
+    assert.ok(!seenShards.has(shard.shard_id), "D1 shard journal must not duplicate a denominator seat");
+    seenShards.add(shard.shard_id);
+    const outcome = objectOf(JSON.parse(shard.outcome_json), "D1 settled shard outcome");
+    assert.equal(canonicalJson(outcome), shard.outcome_json, "D1 shard outcome must retain canonical JSON");
+    assert.equal(await sha256Hex(shard.outcome_json), shard.outcome_digest, "D1 shard outcome digest must match its bytes");
+    assert.equal(outcome.shard_id, shard.shard_id, "D1 shard outcome identity must match its row");
+    assert.equal(outcome.disposition, "SETTLED", "D1 denominator rows must be terminal SETTLED outcomes");
+    boundedText(outcome.partial_result_ref, "D1 partial result ref");
+    const shardScanned = nonNegativeInteger(outcome.scanned_sections, "D1 shard scanned sections");
+    const shardMatches = nonNegativeInteger(outcome.matches, "D1 shard matches");
+    assert.ok(Array.isArray(outcome.section_outcomes) && outcome.section_outcomes.length === shardScanned,
+      "D1 shard section count must match its settled outcome");
+    const sectionMatches = outcome.section_outcomes.reduce((sum, section) => {
+      const value = objectOf(section, "D1 section outcome");
+      return sum + nonNegativeInteger(value.matches, "D1 section matches");
+    }, 0);
+    assert.equal(sectionMatches, shardMatches, "D1 shard matches must equal its section outcomes");
+    scannedSections += shardScanned;
+    matches += shardMatches;
+  }
+  assert.deepEqual([...seenShards].sort(), [...denominatorIds].sort(), "D1 settled journal must cover the exact denominator set");
+  assert.equal(scannedSections, receipt.total_scanned_sections, "D1 settled sections must match the COMPLETE receipt");
+  assert.equal(matches, receipt.total_matches, "D1 settled matches must match the COMPLETE receipt");
   return {
     workflow_id: row.workflow_id,
     job_id: row.job_id,
@@ -135,6 +212,10 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
     scope_snapshot_id: row.scope_snapshot_id,
     scope_snapshot_revision: row.scope_snapshot_revision,
     source_revision_ref: sourceRevisionRef,
+    denominator_shards: denominatorIds.length,
+    settled_journal_rows: shardRows.length,
+    total_scanned_sections: scannedSections,
+    total_matches: matches,
   };
 }
 
@@ -222,7 +303,7 @@ export async function runExhaustiveWorkflowCompleteBrowser({
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
     ?.textContent?.trim() === "COMPLETE", null, { timeout: 15000 });
   const d1 = await readCompletedD1({ paths, d1Query, workflowId, receipt: completed.receipt,
-    idempotencyKey, sourceRevisionRef });
+    idempotencyKey, sourceId, sourceRevisionRef });
   return {
     workflowId,
     jobId: completed.receipt.job_id,
