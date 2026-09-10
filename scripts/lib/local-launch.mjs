@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -102,6 +102,169 @@ export function executeLocal(args, { cwd = ROOT, env = localEnvironment(), captu
   return result.stdout ?? "";
 }
 
+function localCommandFailure({ error, status, signal, stdout = "", stderr = "", capture, diagnosticOverride } = {}) {
+  const raw = capture ? `${stdout}\n${stderr}` : "";
+  const diagnostic = diagnosticOverride ?? (capture ? classifyLocalFailure(stdout, stderr) : "");
+  const code = error?.code ?? (signal ? `signal:${signal}` : status ?? "unknown");
+  const redacted = raw.replaceAll(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, "[REDACTED_JWT]")
+    .replaceAll(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu, "[REDACTED_KEY]").slice(0, 1000);
+  const suffix = diagnostic ? ` [${diagnostic}]` : "";
+  const failure = new Error(`Local command failed (${code}); no remote deploy was requested${suffix}${redacted.trim() ? ` :: ${redacted.trim()}` : ""}`);
+  failure.cause = { code, diagnostic, stdout: String(stdout).slice(0, 4096), stderr: String(stderr).slice(0, 4096) };
+  return failure;
+}
+
+function waitForAsyncChildClose(child, timeoutMs = 5000) {
+  if (!child) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (closed) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(closed);
+    };
+    const timer = setTimeout(() => done(false), Math.max(0, timeoutMs));
+    child.once("close", () => done(true));
+  });
+}
+
+function signalAsyncChild(child, signal) {
+  if (process.platform !== "win32" && Number.isSafeInteger(child.pid) && child.pid > 0) {
+    try { process.kill(-child.pid, signal); return null; }
+    catch (error) { return error; }
+  }
+  try { child.kill(signal); return null; }
+  catch (error) { return error; }
+}
+
+function localCleanupFailure(pid, signal, cause) {
+  const failure = new Error(`Local child cleanup failed (pid ${pid ?? "unknown"}, signal ${signal})`, { cause });
+  failure.code = "ERR_LOCAL_CLEANUP";
+  return failure;
+}
+
+async function terminateAsyncChild(child, waitForClose = (timeoutMs) => waitForAsyncChildClose(child, timeoutMs)) {
+  if (!child) return;
+  const pid = Number.isSafeInteger(child.pid) && child.pid > 0 ? child.pid : null;
+  const deadline = Date.now() + 5000;
+  const remaining = () => Math.max(0, deadline - Date.now());
+  let terminationError;
+  if (process.platform === "win32" && pid !== null) {
+    let killer;
+    let taskkillSucceeded = false;
+    try {
+      killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+        shell: false, windowsHide: true, stdio: "ignore",
+      });
+      taskkillSucceeded = await new Promise((resolve) => {
+        let settled = false;
+        const finish = (success) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(success);
+        };
+        const timer = setTimeout(() => finish(false), remaining());
+        killer.once("error", (error) => { terminationError = error; finish(false); });
+        killer.once("close", (status) => finish(status === 0));
+      });
+    } catch (error) {
+      terminationError = error;
+    }
+    if (!taskkillSucceeded) {
+      const fallbackError = signalAsyncChild(child, "SIGTERM");
+      terminationError ??= fallbackError;
+    }
+    if (await waitForClose(remaining())) return;
+    const forceError = signalAsyncChild(child, "SIGKILL");
+    terminationError ??= forceError;
+    if (await waitForClose(remaining())) return;
+    throw localCleanupFailure(pid, "SIGKILL", terminationError);
+  }
+  terminationError = signalAsyncChild(child, "SIGTERM");
+  const gracefulBudget = Math.min(2500, remaining());
+  if (await waitForClose(gracefulBudget)) return;
+  const forceError = signalAsyncChild(child, "SIGKILL");
+  terminationError ??= forceError;
+  if (await waitForClose(remaining())) return;
+  throw localCleanupFailure(pid, "SIGKILL", terminationError);
+}
+
+/** Async counterpart for long local CLI work. The sync API above remains for existing callers. */
+export function executeLocalAsync(args, { cwd = ROOT, env = localEnvironment(), capture = false, timeoutMs = 180_000 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 180_000) {
+    throw new RangeError("Local command timeout must be a positive integer no greater than 180000ms");
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, args, {
+      cwd, env, shell: false, windowsHide: true,
+      detached: process.platform !== "win32",
+      stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "inherit", "inherit"],
+    });
+    const stdoutChunks = []; const stderrChunks = [];
+    let totalBytes = 0; let overflow = false; let timedOut = false; let spawnError;
+    let terminated = false; let settled = false; let terminationPromise;
+    let childClosed = false; let resolveChildClose;
+    const childClose = new Promise((resolve) => { resolveChildClose = resolve; });
+    const waitForClose = (waitMs) => childClosed ? Promise.resolve(true) : Promise.race([
+      childClose.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), Math.max(0, waitMs))),
+    ]);
+    const append = (target, chunk) => {
+      if (!capture || overflow) return target;
+      if (totalBytes + chunk.byteLength > 8 * 1024 * 1024) {
+        overflow = true;
+        requestTermination();
+        return;
+      }
+      target.push(chunk);
+      totalBytes += chunk.byteLength;
+    };
+    const requestTermination = () => {
+      if (terminationPromise) return terminationPromise;
+      terminated = true;
+      terminationPromise = terminateAsyncChild(child, waitForClose);
+      void terminationPromise.catch((error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+      return terminationPromise;
+    };
+    if (capture) {
+      child.stdout.on("data", (chunk) => { append(stdoutChunks, chunk); });
+      child.stderr.on("data", (chunk) => { append(stderrChunks, chunk); });
+    }
+    child.once("error", (error) => { spawnError = error; });
+    const timer = setTimeout(() => {
+      if (child.exitCode !== null || child.signalCode !== null || terminated) return;
+      timedOut = true;
+      requestTermination();
+    }, timeoutMs);
+    child.once("close", (status, signal) => {
+      childClosed = true;
+      resolveChildClose();
+      void (async () => {
+      clearTimeout(timer);
+      const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+      const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (terminationPromise) {
+        try { await terminationPromise; } catch { return; }
+      }
+      if (settled) return;
+      settled = true;
+      if (spawnError || status !== 0 || overflow || timedOut) {
+        reject(localCommandFailure({ error: spawnError ?? (overflow ? { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" } : timedOut ? { code: "ETIMEDOUT" } : undefined),
+          status, signal, stdout, stderr, capture, diagnosticOverride: overflow || timedOut ? "" : undefined }));
+        return;
+      }
+      resolve(capture ? stdout : "");
+      })();
+    });
+  });
+}
+
 const TRANSIENT_D1_PATTERNS = [
   /SQLITE_BUSY/i, /SQLITE_LOCKED/i, /database is locked/i, /database is busy/i,
   /database table is locked/i, /database schema is locked/i, /resource busy or locked/i,
@@ -142,6 +305,47 @@ export function executeLocalD1WithRetry(args, { execute = executeLocal, attempts
       lastError = error;
       if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > deadline) throw error;
       sleepSync(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+export async function executeLocalD1WithRetryAsync(args, {
+  execute = executeLocalAsync,
+  attempts = 6,
+  deadlineMs = 15000,
+  delayMs = 250,
+  commandTimeoutMs = 180_000,
+  hardDeadlineMs,
+} = {}) {
+  if (!Number.isSafeInteger(commandTimeoutMs) || commandTimeoutMs <= 0 || commandTimeoutMs > 180_000) {
+    throw new RangeError("Local D1 command timeout must be a positive integer no greater than 180000ms");
+  }
+  if (hardDeadlineMs !== undefined && (!Number.isSafeInteger(hardDeadlineMs) || hardDeadlineMs <= 0)) {
+    throw new RangeError("Local D1 hard deadline must be a positive integer when provided");
+  }
+  const retryDeadline = Date.now() + deadlineMs;
+  const hardDeadline = hardDeadlineMs === undefined ? undefined : Date.now() + hardDeadlineMs;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const retryRemainingMs = retryDeadline - Date.now();
+    if (attempt > 1 && retryRemainingMs <= 0) {
+      if (lastError) throw lastError;
+      throw new Error("Local D1 command deadline expired");
+    }
+    const hardRemainingMs = hardDeadline === undefined ? commandTimeoutMs : hardDeadline - Date.now();
+    if (hardRemainingMs <= 0) {
+      if (lastError) throw lastError;
+      throw new Error("Local D1 hard deadline expired");
+    }
+    try {
+      return await execute(args, { capture: true, timeoutMs: Math.min(commandTimeoutMs, hardRemainingMs) });
+    }
+    catch (error) {
+      lastError = error;
+      if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > retryDeadline ||
+          (hardDeadline !== undefined && Date.now() + delayMs > hardDeadline)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
   throw lastError;
@@ -216,9 +420,11 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   return { ...paths, generation: config.vars.DEPLOYMENT_GENERATION, config_sha256: createHash("sha256").update(JSON.stringify(config)).digest("hex") };
 }
 
-export function devArguments(paths, port = 8787) {
+export function devArguments(paths, port = 8787, { testScheduled = false } = {}) {
   if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) throw new Error("Local port must be an integer in [1024, 65535]");
   if (CHROMIUM_UNSAFE_PORTS.has(port)) throw new Error(`Local port ${port} is Chromium-unsafe (ERR_UNSAFE_PORT); refusing to bind`);
+  if (typeof testScheduled !== "boolean") throw new Error("testScheduled must be a boolean");
   return wranglerArgs(paths, ["dev", "--ip", "127.0.0.1", "--port", String(port),
-    "--inspector-port", "0", "--show-interactive-dev-session", "false"]);
+    "--inspector-port", "0", "--show-interactive-dev-session", "false",
+    ...(testScheduled ? ["--test-scheduled"] : [])]);
 }

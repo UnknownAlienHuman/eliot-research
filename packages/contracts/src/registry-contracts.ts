@@ -29,6 +29,7 @@ export const CONTRACT_SCHEMA_FAMILIES = [
   "evidence",
   "federation",
   "library",
+  "library-readiness",
   "model",
   "navigation",
   "normalized-bundle",
@@ -43,6 +44,7 @@ export const CONTRACT_SCHEMA_FAMILIES = [
   "scope",
   "security",
   "source",
+  "workspace-mcp",
 ] as const;
 
 export const ContractSchemaFamilySchema = z.enum(CONTRACT_SCHEMA_FAMILIES);

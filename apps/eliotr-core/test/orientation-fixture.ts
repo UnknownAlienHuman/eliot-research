@@ -6,7 +6,7 @@ import type { SourceAdmissionDecision } from "@eliotr/contracts";
 import type { QueryResult } from "@eliotr/interfaces";
 import type { RetrievalTrace } from "@eliotr/contracts";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
-import type { AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 

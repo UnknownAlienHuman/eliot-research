@@ -11,8 +11,7 @@ outside the paths below.
 
 ## Owned paths
 
-- `packages/platform-cloudflare/src/access.ts`
-- `packages/platform-cloudflare/src/access.test.ts`
+- `packages/cloudflare-access/**`
 - `packages/platform-cloudflare/src/observability.ts`
 - `packages/platform-cloudflare/src/observability.test.ts`
 - `packages/platform-cloudflare/src/runtime-limits.ts`
@@ -37,6 +36,11 @@ outside the paths below.
 - Enforce request/response/R2/DO/Workflow/bundle/startup budgets before allocation or publication.
 
 ## Acceptance
+
+The reusable verifier and its colocated tests live in `@eliotr/cloudflare-access`. The package uses
+the platform runtime-bound helpers and is shared by ordinary owner HTTP and Workspace MCP; neither
+transport defines a second JWT verifier. Root owns the narrow consumer import, barrel, package,
+TypeScript reference, lockfile and boundary integration for this relocation.
 
 - Security, erasure and DEEP/AUDIT/REPORT failures are sampled 100%.
 - No source/prompt/evidence content enters telemetry.

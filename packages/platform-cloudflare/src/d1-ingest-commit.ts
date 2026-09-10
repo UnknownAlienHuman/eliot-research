@@ -2,12 +2,14 @@ import {
   BundleAdmissionReceiptSchema,
   QualificationReportSchema,
   SourceAdmissionDecisionSchema,
+  SNAPSHOT_VIEW_REF_PREFIX,
   type BundleAdmissionReceipt,
   type QualificationReport,
   type SourceAdmissionDecision,
 } from "@eliotr/contracts";
 import { canonicalJson } from "./ingest-validation.js";
 import { CURRENT_INGEST_POLICY_SQL, requireCurrentIngestPolicy } from "./d1-ingest-policy.js";
+import { loadVerifiedSnapshotViewFence } from "./d1-ingest-snapshot-view.js";
 import type {
   BundlePromotionReceipt,
   CommitAdmittedBundleInput,
@@ -244,6 +246,12 @@ export async function commitAdmittedBundle(
   const readiness = readinessValues(operation, qualification, now);
   const promotionRef = promotion.promotionRef;
   const expectedHead = operation.expected_head_revision_ref;
+  // Reserved snapshot-view references are fenced by a typed, canonical witness
+  // read before the batch. The exact bytes and digest are then bound as SQL
+  // literals so an async mutation cannot substitute a self-consistent witness.
+  const snapshotFence = operation.manifest.origin.source_view_ref.startsWith(SNAPSHOT_VIEW_REF_PREFIX)
+    ? await loadVerifiedSnapshotViewFence(database, operation)
+    : null;
 
   const statements: D1PreparedStatement[] = [
     database.prepare(
@@ -380,6 +388,16 @@ export async function commitAdmittedBundle(
       operation.decision_receipt_ref,
     ),
     database.prepare(
+      "UPDATE raw_normalized_admission SET state='COMMITTED', receipt_json=?2, reason_codes_json=?4, updated_at=?3 " +
+      "WHERE ingest_operation_id=?1 AND source_view_ref=?5 AND state NOT IN ('REJECTED','QUARANTINED')",
+    ).bind(
+      operation.operation_id,
+      receiptJson,
+      now,
+      canonicalJson(receipt.reason_codes),
+      operation.manifest.origin.source_view_ref,
+    ),
+    database.prepare(
       "INSERT INTO bundle_ingest_commit_guard(operation_id, source_revision_ref, " +
       "ingest_receipt_id, ingest_receipt_revision, projection_intent_id, " +
       "projection_intent_revision, outbox_id, verified, created_at) " +
@@ -402,15 +420,50 @@ export async function commitAdmittedBundle(
       "AND r.source_id = ?9 AND r.source_owner_generation = ?12 " +
       "AND r.content_sha256 = ?13 AND r.object_residency_key_digest = ?14 " +
       "AND r.purge_state = 'LIVE') " +
-      "AND EXISTS (SELECT 1 FROM source_admission_decision d WHERE d.operation_id = ?1 " +
+       "AND EXISTS (SELECT 1 FROM source_admission_decision d WHERE d.operation_id = ?1 " +
       "AND d.decision_receipt_ref = ?15 AND d.decision = 'ADMITTED') " +
       "AND EXISTS (SELECT 1 FROM operation_receipt r WHERE r.receipt_id = ?3 " +
       "AND r.revision = 1 AND r.outcome = 'SUCCEEDED') " +
       "AND EXISTS (SELECT 1 FROM outbox o WHERE o.outbox_id = ?5 " +
       "AND o.intent_id = ?4 AND o.intent_revision = 1 " +
-      "AND o.topic = 'source.revision.admitted' AND o.payload_ref = ?2 " +
-      "AND o.payload_sha256 = ?13) " +
-      "AND (SELECT COUNT(*) FROM source_readiness sr WHERE sr.source_revision_ref = ?2 " +
+       "AND o.topic = 'source.revision.admitted' AND o.payload_ref = ?2 " +
+       "AND o.payload_sha256 = ?13) " +
+       "AND ((SELECT json_extract(manifest_json,'$.origin.source_view_ref') FROM bundle_ingest_operation WHERE operation_id=?1) NOT LIKE 'snapshot-view:v1:%' OR EXISTS (" +
+       "SELECT 1 FROM raw_normalized_admission a JOIN bundle_ingest_operation b2 ON b2.operation_id=a.ingest_operation_id WHERE a.ingest_operation_id=?1 " +
+       "AND a.admission_operation_id=?16 AND a.principal_ref=?17 AND a.capture_id=?18 " +
+       "AND a.source_revision_ref=?19 AND a.source_view_ref=?20 " +
+       "AND a.snapshot_view_json=?21 AND a.snapshot_view_sha256=?22 " +
+       "AND a.state='COMMITTED' AND a.source_revision_ref=b2.source_revision_ref " +
+       "AND a.source_view_ref=json_extract(b2.manifest_json,'$.origin.source_view_ref') " +
+       "AND a.principal_ref=b2.principal_ref " +
+       "AND a.policy_revision=b2.policy_revision AND a.policy_snapshot_sha256=b2.policy_snapshot_sha256 " +
+       "AND a.policy_snapshot_json=b2.policy_snapshot_json " +
+       "AND a.expires_at>?6 " +
+       "AND json_extract(a.snapshot_view_json,'$.protocol')='eliotr.snapshot-view.v1' " +
+       "AND json_extract(a.snapshot_view_json,'$.source_view_ref')=a.source_view_ref " +
+       "AND json_extract(a.snapshot_view_json,'$.source_revision_ref')=b2.source_revision_ref " +
+       "AND json_extract(a.snapshot_view_json,'$.source_logical_id')=json_extract(b2.manifest_json,'$.source.logical_id') " +
+       "AND json_extract(a.snapshot_view_json,'$.source_namespace_id')=b2.source_namespace_id " +
+       "AND json_extract(a.snapshot_view_json,'$.owner_system_id')=b2.owner_system_id " +
+       "AND json_extract(a.snapshot_view_json,'$.source_owner_generation')=b2.source_owner_generation " +
+       "AND json_extract(a.snapshot_view_json,'$.original_sha256')=json_extract(b2.manifest_json,'$.source.original_sha256') " +
+       "AND json_extract(a.snapshot_view_json,'$.capture_id')=a.capture_id " +
+       "AND json_extract(a.snapshot_view_json,'$.verified_principal_ref')=b2.principal_ref " +
+       "AND json_extract(a.snapshot_view_json,'$.policy_snapshot_sha256')=b2.policy_snapshot_sha256 " +
+       "AND json_extract(a.snapshot_view_json,'$.policy_revision')=b2.policy_revision " +
+       "AND json_extract(a.snapshot_view_json,'$.observed_at') IS NOT NULL " +
+       "AND EXISTS (SELECT 1 FROM raw_file_capture c WHERE c.capture_id=a.capture_id " +
+       "AND c.state='CAPTURED' AND c.principal_ref=b2.principal_ref " +
+       "AND c.owner_system_id=b2.owner_system_id AND c.source_namespace_id=b2.source_namespace_id " +
+       "AND c.source_owner_generation=b2.source_owner_generation " +
+       "AND c.source_revision_ref=b2.source_revision_ref " +
+       "AND c.content_sha256=json_extract(a.snapshot_view_json,'$.original_sha256') " +
+       "AND c.size_bytes=json_extract(a.snapshot_view_json,'$.original_size_bytes') " +
+       "AND json_extract(c.receipt_json,'$.captured_at')=json_extract(a.snapshot_view_json,'$.observed_at') " +
+       "AND json_extract(a.snapshot_view_json,'$.observation_freshness') IN ('observed_with_age','unknown') " +
+       "AND c.residency_key_digest=json_extract(a.snapshot_view_json,'$.residency_key_digest'))" +
+       ")) " +
+       "AND (SELECT COUNT(*) FROM source_readiness sr WHERE sr.source_revision_ref = ?2 " +
       "AND sr.channel IN ('captured','normalized') AND sr.state = 'ready') = 2 " +
       "THEN 1 ELSE NULL END,?6",
     ).bind(
@@ -429,6 +482,13 @@ export async function commitAdmittedBundle(
       operation.manifest.content.markdown_sha256,
       operation.residency_key_digest,
       operation.decision_receipt_ref,
+      snapshotFence?.admission_operation_id ?? null,
+      snapshotFence?.principal_ref ?? null,
+      snapshotFence?.capture_id ?? null,
+      snapshotFence?.source_revision_ref ?? null,
+      snapshotFence?.source_view_ref ?? null,
+      snapshotFence?.snapshot_view_json ?? null,
+      snapshotFence?.snapshot_view_sha256 ?? null,
     ),
   ];
 

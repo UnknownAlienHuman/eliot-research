@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
-import { createRawMarkdownConversionService } from "./raw-markdown-conversion.js";
+import { createRawMarkdownConversionService, createWorkersAiMarkdownConversionAdapter } from "./raw-markdown-conversion.js";
 import { parseRawMarkdownConversionRequest, readRawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 import type { RawMarkdownCaptureReceipt, RawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 
 type Row = Record<string, unknown>;
-function fakeDatabase(options: { readonly terminalUpdate?: "zero" | "corrupt" } = {}) {
+function fakeDatabase(options: {
+  readonly terminalUpdate?: "zero" | "corrupt";
+  readonly beforeInsert?: (call: number, args: readonly unknown[]) => Promise<void> | void;
+  readonly afterInsert?: (call: number, args: readonly unknown[]) => Promise<void> | void;
+} = {}) {
   const rows = new Map<string, Row>();
+  let insertCalls = 0;
   const database = {
     prepare(sql: string) {
       let args: unknown[] = [];
@@ -18,8 +23,11 @@ function fakeDatabase(options: { readonly terminalUpdate?: "zero" | "corrupt" } 
         async run() {
           const id = String(args[0]);
           if (sql.startsWith("INSERT")) {
+            insertCalls += 1;
+            await options.beforeInsert?.(insertCalls, args);
             if (rows.has(id)) throw new Error("UNIQUE");
             rows.set(id, { operation_id: id, principal_ref: args[1], capture_id: args[2], content_sha256: args[3], size_bytes: args[4], request_sha256: args[5], request_json: args[6], authority_sha256: args[7], attempt_id: args[8], state: "STARTED", receipt_object_key: args[9], output_object_key: args[10] });
+            await options.afterInsert?.(insertCalls, args);
             return { meta: { changes: 1 } };
           }
           const row = rows.get(id);
@@ -69,6 +77,21 @@ describe("durable raw markdown conversion", () => {
     expect(provider).not.toHaveBeenCalled();
     expect(rows.size).toBe(0);
   });
+  it("settles a new operation as a durable provider failure when the AI binding is absent", async () => {
+    const { database, rows } = fakeDatabase();
+    const contentSha = await sha256(bytes);
+    const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-no-ai", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "missing-ai.pdf", object_key: "raw/capture-no-ai", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
+    const service = createRawMarkdownConversionService({
+      database,
+      profile_generation: "profile-1",
+      adapter: createWorkersAiMarkdownConversionAdapter(undefined),
+      source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined },
+      output: { putImmutable: async () => { throw new Error("missing provider must not write output"); }, open: async () => null },
+    });
+    const result = await service.convert({ principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" }, "capture-no-ai", { idempotency_key: "no-ai", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    expect(result).toMatchObject({ state: "FAILED", failure_code: "PROVIDER_FAILED" });
+    expect([...rows.values()][0]?.state).toBe("FAILED");
+  });
   it("settles an abort after reservation as canceled without dispatching the provider", async () => {
     const { database, rows } = fakeDatabase();
     const contentSha = await sha256(bytes);
@@ -93,19 +116,34 @@ describe("durable raw markdown conversion", () => {
     expect(provider).not.toHaveBeenCalled();
   });
   it("rejects a changed request when concurrent reservation loses the insert race", async () => {
-    const { database } = fakeDatabase();
     const contentSha = await sha256(bytes);
+    const originalRequestSha = await canonicalDigest({ idempotency_key: "same-race", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    let releaseOriginalInsert: () => void = () => undefined;
+    const originalInsert = new Promise<void>((resolve) => { releaseOriginalInsert = resolve; });
+    let releaseChangedInsert: () => void = () => undefined;
+    const changedInsert = new Promise<void>((resolve) => { releaseChangedInsert = resolve; });
+    let releaseFirstCommit: () => void = () => undefined;
+    const firstCommit = new Promise<void>((resolve) => { releaseFirstCommit = resolve; });
+    const { database } = fakeDatabase({
+      beforeInsert: async (_call, args) => {
+        if (args[5] === originalRequestSha) {
+          releaseOriginalInsert();
+          await changedInsert;
+        } else {
+          releaseChangedInsert();
+          await originalInsert;
+          await firstCommit;
+        }
+      },
+      afterInsert: async (_call, args) => { if (args[5] === originalRequestSha) releaseFirstCommit(); },
+    });
     const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-race", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "race.pdf", object_key: "raw/capture-race", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
-    let reads = 0;
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
     const provider = vi.fn(async () => ({ disposition: "CONVERTED" as const, context: { operation_id: "", attempt_id: "", input_sha256: contentSha, profile_generation: "profile-1" }, provider_result_id: "provider-race", name: "race.pdf", detected_mime: "application/pdf", format: "markdown" as const, tokens: 1, data: "# Race", data_sha256: await sha256(new TextEncoder().encode("# Race")), data_bytes: 6 }));
     const output = new Map<string, Uint8Array>();
-    const service = createRawMarkdownConversionService({ database, profile_generation: "profile-1", adapter: { convert: provider }, source: { read: async () => { reads += 1; if (reads < 2) await gate; return capture; }, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined }, output: { putImmutable: async (input) => { const value = input.key.endsWith("/output.md") ? new TextEncoder().encode("# Race") : new Uint8Array(await new Response(input.body).arrayBuffer()); output.set(input.key, value); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } } });
+    const service = createRawMarkdownConversionService({ database, profile_generation: "profile-1", adapter: { convert: provider }, source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined }, output: { putImmutable: async (input) => { const value = input.key.endsWith("/output.md") ? new TextEncoder().encode("# Race") : new Uint8Array(await new Response(input.body).arrayBuffer()); output.set(input.key, value); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } } });
     const context = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" };
     const firstPromise = service.convert(context, "capture-race", { idempotency_key: "same-race", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
     const secondPromise = service.convert(context, "capture-race", { idempotency_key: "same-race", max_output_bytes: 101, max_tokens: 10, timeout_ms: 1_000 });
-    release();
     const [first, second] = await Promise.all([firstPromise, secondPromise]);
     expect(first.state).toBe("COMPLETE");
     expect(second).toMatchObject({ state: "FAILED", failure_code: "IDEMPOTENCY_CONFLICT" });
@@ -130,7 +168,13 @@ describe("durable raw markdown conversion", () => {
     const reorderedRequest: RawMarkdownConversionRequest = { timeout_ms: 1_000, max_tokens: 10, max_output_bytes: 100, idempotency_key: "conversion-1" };
     const context = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" };
     const first = await service.convert(context, "capture-1", request);
-    const second = await service.convert(context, "capture-1", reorderedRequest);
+    const second = await createRawMarkdownConversionService({
+      database,
+      profile_generation: "profile-1",
+      adapter: createWorkersAiMarkdownConversionAdapter(undefined),
+      source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined },
+      output: { putImmutable: async (input) => { const data = new TextEncoder().encode(input.key.endsWith("receipt.json") ? new TextDecoder().decode(await new Response(input.body).arrayBuffer()) : "# Note"); output.set(input.key, data); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } },
+    }).convert(context, "capture-1", reorderedRequest);
     expect(first.state).toBe("COMPLETE");
     expect(second).toEqual(first);
     expect(provider).toHaveBeenCalledTimes(1);

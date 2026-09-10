@@ -1,9 +1,8 @@
-import type { AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
 import { createPlan, validateReceipt } from "./gemini-mcp-google-sync.js";
 import type { GoogleSyncPlanInput } from "./gemini-mcp-tool-common.js";
-import type { Env } from "./env.js";
-import { handleGeminiMcp } from "./gemini-mcp.js";
+import { handleGeminiMcp, type WorkspaceMcpRuntime } from "./gemini-mcp.js";
 import {
   GEMINI_MCP_TOOL_NAMES,
   handleGeminiMcpProtocol,
@@ -213,13 +212,14 @@ describe("Gemini Spark MCP HTTP boundary", () => {
     ENVIRONMENT: "development",
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     MCP_HOSTNAME: "mcp.example",
-  } as unknown as Env;
+    readReadiness: async () => ({ ready: true, blocking_reason_codes: [] }),
+  } satisfies WorkspaceMcpRuntime;
   const executionContext = {} as ExecutionContext;
 
   it("fails closed on an unknown deployment transport", async () => {
     const response = await handleGeminiMcp(
       request({ jsonrpc: "2.0", id: 1, method: "ping" }, "2025-06-18", "https://mcp.example/mcp"),
-      { ...environment, GOOGLE_EXTERNAL_TRANSPORT: "gemini-and-drive" } as unknown as Env,
+      { ...environment, GOOGLE_EXTERNAL_TRANSPORT: "gemini-and-drive" },
       executionContext,
       { accessVerifier: { async verify() { return { authentication_method: "service_token", principal_ref: "token.access" } as never; } } },
     );
@@ -385,11 +385,16 @@ describe("Google observation contract regressions", () => {
     const input = await fixture(); input.receipt.observed_at = value;
     await expect(validate(input)).rejects.toMatchObject({ code: "INPUT_INVALID" });
   });
-  it.each(["cloud", "calendar", "gmail"] as const)("never validates an untyped %s state from a status string", async (product) => {
-    const input = await fixture({ google_product: product, ...(product === "cloud" ? { google_project_id: "project-1" } : {}) });
-    const connector = product === "cloud" ? "gcloud" : "google-workspace";
+  it.each(["calendar", "gmail"] as const)("never validates an untyped %s state from a status string", async (product) => {
+    const input = await fixture({ google_product: product });
+    const connector = "google-workspace";
     await mismatch({ ...input, receipt: { ...input.receipt, google_product: product, connector,
       google_project_id: "project-1", status: "SUCCESS" } }, "PRODUCT_STATE_UNVERIFIED");
+  });
+  it("rejects Google Cloud planning in the selected Workspace profile", async () => {
+    await expect(createPlan({ google_product: "cloud", google_project_id: "project-1", action: "read",
+      direction: "google_to_eliot_candidate" }, toolDependencies("gemini-mcp"), context))
+      .rejects.toMatchObject({ code: "GOOGLE_CLOUD_PROFILE_UNSELECTED" });
   });
   it("requires an expected payload digest instead of trusting a supplied one", async () => {
     const input = await fixture();

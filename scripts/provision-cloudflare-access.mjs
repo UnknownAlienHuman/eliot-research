@@ -7,6 +7,14 @@ import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
+import { readConfiguredTransport } from "./check-launch-code.mjs";
+import {
+  applyMcp,
+  buildMcpReceipt,
+  createMcpAccessConfig,
+  mcpPlanSummary,
+  preflightMcp,
+} from "./lib/cloudflare-access-mcp.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -145,6 +153,21 @@ if (desired.protocol !== "eliotr.cloudflare-access.v1" || desired.requirements?.
 }
 const appName = `${desired.application.name_prefix}: ${hostname}`;
 const policyName = desired.policy.name;
+const configuredGoogleTransport = process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT;
+const canonicalConfig = JSON.parse(await readFile(resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
+const googleTransport = configuredGoogleTransport ?? "disabled";
+if (!["disabled", "gemini-mcp", "drive-exchange"].includes(googleTransport)) {
+  throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be disabled, gemini-mcp, or drive-exchange");
+}
+if (configuredGoogleTransport !== undefined && googleTransport !== canonicalGoogleTransport) {
+  throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT differs from the canonical Core deployment config");
+}
+if (!checkOnly && configuredGoogleTransport === undefined && canonicalGoogleTransport !== "disabled") {
+  throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be explicit before issuing an owner-only Access receipt");
+}
+const mcpEnabled = googleTransport === "gemini-mcp";
+const mcpDesired = desired.mcp;
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 
@@ -168,6 +191,30 @@ async function request(method, path, body) {
     throw new Error(`${method} ${path} failed (${response.status}): ${JSON.stringify(payload.errors ?? payload, null, 2)}`);
   }
   return payload.result ?? payload;
+}
+
+async function createApplicationWithReconciliation(name, body) {
+  let created;
+  try {
+    created = await request("POST", `/accounts/${enc(accountId)}/access/apps`, body);
+  } catch (error) {
+    const inventory = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+    const matches = (Array.isArray(inventory) ? inventory : []).filter((app) => app.name === name);
+    if (matches.length === 1 && matches[0]?.id) return matches[0];
+    throw error;
+  }
+  if (created?.id) return created;
+  const inventory = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+  const matches = (Array.isArray(inventory) ? inventory : []).filter((app) => app.name === name);
+  if (matches.length !== 1 || !matches[0]?.id) throw new Error(`Access application ${name} creation readback lacks id`);
+  return matches[0];
+}
+
+async function freshApplication(id) {
+  const inventory = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+  const application = (Array.isArray(inventory) ? inventory : []).find((item) => item?.id === id) ?? null;
+  if (!application) throw new Error(`Access application ${id} disappeared during readback`);
+  return application;
 }
 
 function stable(value) {
@@ -257,9 +304,10 @@ async function fetchLiveTeamDomain() {
   return { teamDomain: null, source: "UNKNOWN" };
 }
 
-function resolveLiveAud(app) {
+function resolveLiveAud(app, { allowEnvironmentFallback = true } = {}) {
   const live = extractAud(app);
   if (live) return { aud: live, source: "CLOUDFLARE_READBACK" };
+  if (!allowEnvironmentFallback) return { aud: null, source: "UNKNOWN" };
   const fallbackRaw = process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "";
   if (fallbackRaw !== "" && AUD_TAG_PATTERN.test(fallbackRaw)) {
     return { aud: fallbackRaw, source: "ENVIRONMENT_FALLBACK" };
@@ -287,15 +335,10 @@ const expectedPolicy = {
   decision: desired.policy.decision,
   include: ownerEmails.map((email) => ({ email: { email } })),
 };
+const mcpConfig = createMcpAccessConfig({ enabled: mcpEnabled, environment: process.env, desired: mcpDesired, hostname, ownerEmails });
 
-// Hostname-based Access is deliberate. Worker-level Access currently rejects WebSocket upgrades, while
-// ResearchSession uses Durable Object WebSockets.
-//
-// Preflight ordering: every local validation plus every GET (apps inventory,
-// organization/team origin, and, when the exact app exists, its policies)
-// finishes before the first POST. A missing exact app is a valid CREATE plan
-// and never requires an invented AUD: the AUD is Cloudflare-generated on
-// create and read back before the receipt is persisted.
+// Hostname-based Access is deliberate because ResearchSession uses WebSockets.
+// All local validation and GET preflight completes before the first POST.
 const priorReceipt = await loadPriorReceipt();
 const applicationsResult = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
 const applications = Array.isArray(applicationsResult) ? applicationsResult : [];
@@ -320,10 +363,19 @@ function assertApplicationContour(candidate) {
 }
 
 if (application) assertApplicationContour(application);
-
+if (application && (!checkOnly || mcpConfig)) {
+  application = await freshApplication(application.id);
+  assertApplicationContour(application);
+  const freshOwnerAud = resolveLiveAud(application, { allowEnvironmentFallback: false }).aud;
+  if (!freshOwnerAud) throw new Error("existing Access application readback lacks a bounded AUD");
+  const configuredOwnerAud = process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "";
+  if (configuredOwnerAud !== "" && configuredOwnerAud !== freshOwnerAud) throw new Error("Access AUD differs from the existing application readback");
+}
 // GET-only team-origin preflight (live organization readback wins; the
 // environment fallback exists only for mocks/transition and must reconcile).
 const teamPreflight = await fetchLiveTeamDomain();
+let mcpState = null;
+if (mcpConfig) mcpState = await preflightMcp({ config: mcpConfig, applications, request, accountId, enc, teamDomain: teamPreflight.teamDomain, ordinaryApplication: application, resolveOrdinaryAud: resolveLiveAud, equal, freshApplication });
 
 function strictPlanBase(extra) {
   return {
@@ -346,6 +398,7 @@ if (!application && checkOnly) {
     aud: null,
     aud_disposition: "GENERATED_ON_CREATE",
     team_disposition: teamPreflight.teamDomain ? "VERIFY" : "READBACK_ON_APPLY",
+    ...(mcpConfig ? { mcp: mcpPlanSummary(mcpConfig, mcpState) } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
@@ -354,7 +407,7 @@ if (application || !checkOnly) {
 if (!application && !checkOnly) {
   applicationDisposition = "CREATED";
   policyDisposition = "CREATED_INLINE";
-  const created = await request("POST", `/accounts/${enc(accountId)}/access/apps`, {
+  application = await createApplicationWithReconciliation(appName, {
     type: desired.application.type,
     name: appName,
     domain: hostname,
@@ -363,16 +416,6 @@ if (!application && !checkOnly) {
     app_launcher_visible: desired.application.app_launcher_visible,
     policies: [expectedPolicy],
   });
-  if (!created?.id) {
-    // Lost-ACK reconciliation: the create may have succeeded without a usable
-    // readback, so re-list by exact name before failing.
-    const retryList = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
-    const retryExact = (Array.isArray(retryList) ? retryList : []).filter((app) => app.name === appName);
-    if (retryExact.length !== 1 || !retryExact[0]?.id) throw new Error("Access application creation readback lacks id");
-    application = retryExact[0];
-  } else {
-    application = created;
-  }
   assertApplicationContour(application);
 }
 
@@ -399,6 +442,7 @@ if (!classified.owner && checkOnly) {
     aud: liveAud.aud,
     aud_disposition: liveAud.aud ? "VERIFY" : "GENERATED_ON_CREATE",
     approved_additional_policy_count: classified.additional.length,
+    ...(mcpConfig ? { mcp: mcpPlanSummary(mcpConfig, mcpState) } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
@@ -427,23 +471,18 @@ if (checkOnly) {
     aud: liveAud.aud,
     aud_disposition: "VERIFY",
     approved_additional_policy_count: classified.additional.length,
+    ...(mcpConfig ? { mcp: mcpPlanSummary(mcpConfig, mcpState) } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
 
 if (!checkOnly) {
+if (mcpConfig) mcpState = await applyMcp({ config: mcpConfig, state: mcpState, ordinaryApplication: application, request, accountId, enc, freshApplication, createApplicationWithReconciliation, equal, resolveOrdinaryAud: resolveLiveAud });
 // Apply readback: AUD plus exact team origin are Cloudflare authority and are
 // persisted only in the ignored non-secret receipt for core config generation.
-let liveAud = resolveLiveAud(application);
-if (!liveAud.aud) {
-  const refreshList = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
-  const refreshed = (Array.isArray(refreshList) ? refreshList : []).find((app) => app?.id === application.id) ?? null;
-  if (refreshed) {
-    assertApplicationContour(refreshed);
-    application = refreshed;
-    liveAud = resolveLiveAud(application);
-  }
-}
+application = await freshApplication(application.id);
+assertApplicationContour(application);
+const liveAud = resolveLiveAud(application, { allowEnvironmentFallback: false });
 if (!liveAud.aud) throw new Error("Access application readback lacks a bounded AUD tag; refusing to persist unverified authority");
 const teamFinal = teamPreflight.teamDomain ?? (await fetchLiveTeamDomain()).teamDomain;
 if (!teamFinal) throw new Error("Access team origin is undiscoverable; refusing to persist unverified authority");
@@ -467,7 +506,15 @@ if (priorReceipt && priorReceipt.protocol === ACCESS_RECEIPT_PROTOCOL) {
   if (priorReceipt.owner_email_set_sha256 && priorReceipt.owner_email_set_sha256 !== ownerEmailSetSha256) {
     throw new Error("Access owner-set drift vs prior receipt; refusing silent broadening");
   }
+  if (mcpConfig && priorReceipt.mcp) {
+    if (priorReceipt.mcp.application?.id && priorReceipt.mcp.application.id !== mcpState.application.id) throw new Error("stale MCP receipt binds a different Access app id; review before overwrite");
+    if (priorReceipt.mcp.aud && priorReceipt.mcp.aud !== mcpState.liveAud.aud) throw new Error("MCP Access AUD drift vs prior receipt; refusing silent substitution");
+    if (priorReceipt.mcp.auth_profile && priorReceipt.mcp.auth_profile !== mcpConfig.profile) throw new Error("MCP Access auth profile drift vs prior receipt");
+    if (priorReceipt.mcp.service_token_id && priorReceipt.mcp.service_token_id !== mcpConfig.serviceTokenId) throw new Error("MCP service-token drift vs prior receipt");
+  }
 }
+
+const mcpReceipt = mcpConfig ? buildMcpReceipt({ config: mcpConfig, state: mcpState, teamFinal, sha256Hex }) : undefined;
 
 const receipt = {
   protocol: ACCESS_RECEIPT_PROTOCOL,
@@ -493,6 +540,7 @@ const receipt = {
   approved_additional_policy_ids_sha256: allowedAdditionalPolicyIdsSha256,
   worker_level_access: "PROHIBITED_FOR_RESEARCH_SESSION_WEBSOCKETS",
   created_at: new Date().toISOString(),
+  ...(mcpReceipt ? { mcp: mcpReceipt } : {}),
 };
 await mkdir(dirname(receiptPath), { recursive: true });
 const receiptTemporary = `${receiptPath}.${process.pid}.tmp`;

@@ -6,7 +6,7 @@ import type {
 } from "./gemini-mcp-protocol.js";
 import {
   GOOGLE_ACTIONS,
-  GOOGLE_PRODUCTS,
+  WORKSPACE_GOOGLE_PRODUCTS,
   STRICT_EMPTY_KEYS,
   SYNC_DIRECTIONS,
   GeminiMcpToolError,
@@ -15,11 +15,18 @@ import {
   type GeminiMcpToolDependencies,
 } from "./gemini-mcp-tool-common.js";
 import { createPlan, validateReceipt } from "./gemini-mcp-google-sync.js";
+import { createWorkspacePlan, validateWorkspaceReceipt } from "./workspace-mcp-google-sync.js";
 
 export type { GeminiMcpToolDependencies, GoogleExternalTransport } from "./gemini-mcp-tool-common.js";
 
 const readOnlyAnnotations = {
   readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+const candidateLedgerAnnotations = {
+  readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: true,
   openWorldHint: false,
@@ -54,7 +61,9 @@ export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
       additionalProperties: false,
       required: ["google_product", "action", "direction"],
       properties: {
-        google_product: { type: "string", enum: GOOGLE_PRODUCTS },
+        protocol: { type: "string", enum: ["eliotr.google-sync.plan.v2"] },
+        idempotency_key: { type: "string", maxLength: 256 },
+        google_product: { type: "string", enum: WORKSPACE_GOOGLE_PRODUCTS },
         action: { type: "string", enum: GOOGLE_ACTIONS },
         direction: { type: "string", enum: SYNC_DIRECTIONS },
         source_ref: { type: "string", maxLength: 256 },
@@ -65,7 +74,7 @@ export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
         dry_run: { const: true, default: true },
       },
     },
-    annotations: readOnlyAnnotations,
+    annotations: candidateLedgerAnnotations,
   },
   {
     name: "eliotr_validate_google_sync_receipt",
@@ -79,7 +88,7 @@ export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
         receipt: { type: "object" },
       },
     },
-    annotations: readOnlyAnnotations,
+    annotations: candidateLedgerAnnotations,
   },
 ] as const;
 
@@ -97,9 +106,13 @@ export async function callGeminiMcpTool(
       case "eliotr_catalog":
         return { structuredContent: await dependencies.catalog(decodeCatalogInput(input), context) };
       case "eliotr_create_google_sync_plan":
-        return { structuredContent: await createPlan(input, dependencies, context) };
+        return { structuredContent: await (typeof input === "object" && input !== null && (input as Record<string, unknown>).protocol === "eliotr.google-sync.plan.v2"
+          ? createWorkspacePlan(input, dependencies, context)
+          : createPlan(input, dependencies, context)) };
       case "eliotr_validate_google_sync_receipt":
-        return { structuredContent: await validateReceipt(input, dependencies, context) };
+        return { structuredContent: await (typeof input === "object" && input !== null && typeof (input as Record<string, unknown>).plan === "object" && (input as { plan: Record<string, unknown> }).plan?.protocol === "eliotr.google-sync.plan.v2"
+          ? validateWorkspaceReceipt(input, dependencies, context)
+          : validateReceipt(input, dependencies, context)) };
     }
   } catch (error) {
     if (error instanceof GeminiMcpToolError) {

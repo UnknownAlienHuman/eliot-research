@@ -1,4 +1,5 @@
-import { AccessVerificationError, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { AccessVerificationError } from "@eliotr/cloudflare-access";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { WorkersAiMarkdownBinding } from "@eliotr/cloudflare-markdown";
 
 export interface Env {
@@ -25,6 +26,8 @@ export interface Env {
   readonly MCP_HOSTNAME?: string;
   readonly MCP_ACCESS_TEAM_DOMAIN?: string;
   readonly MCP_ACCESS_AUDIENCE?: string;
+  /** Dedicated MCP authentication profile; omitted means the legacy service-token profile. */
+  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth";
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
   readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange";
   readonly GOOGLE_CLIENT_ID?: string;

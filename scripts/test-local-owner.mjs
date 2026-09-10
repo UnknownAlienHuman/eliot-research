@@ -10,6 +10,7 @@ import { loadOwnerConfig, validateOwnerConfig } from "./lib/local-owner-config.m
 
 const TOKEN = "header.private.signature";
 const config = { app: "https://research.example.com", team: "https://team.cloudflareaccess.com", audience: "audience" };
+const localOwnerSource = await readFile(resolve(process.cwd(), "scripts/local-owner.mjs"), "utf8");
 const identity = () => ({ protocol: "eliotr.owner-session.v1", principal_ref: "owner-subject", client_class: "owner_pwa",
   credential_generation: "signed-generation", expires_at: new Date(Date.now() + 3600000).toISOString() });
 let backend; let origin; const requests = []; let behavior = "normal"; let held;
@@ -49,6 +50,9 @@ const raw = (value, path, headers) => new Promise((resolve, reject) => {
 });
 
 test("Access config and CLI use only exact HTTPS origins and never shell/token arguments", async () => {
+  assert.match(localOwnerSource, /reserveMiniflareForbiddenPorts/u);
+  assert.match(localOwnerSource, /const portGuard = await reserveMiniflareForbiddenPorts\(\);[\s\S]*const paths = await prepareLocal\(\);/u);
+  assert.match(localOwnerSource, /bridge\?\.close\(\)[\s\S]*worker\?\.stop\(\)[\s\S]*portGuard\.release\(\)/u);
   assert.deepEqual(validateOwnerConfig(config), config);
   for (const app of ["http://research.example.com", "https://research.example.com/path", "https://a:b@research.example.com", "https://research.example.com:444", "https://127.0.0.1", "https://research.example.com#secret"]) {
     assert.throws(() => validateOwnerConfig({ ...config, app }));

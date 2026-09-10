@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createCloudflareAccessVerifier } from "@eliotr/platform-cloudflare";
+import { createCloudflareAccessVerifier } from "@eliotr/cloudflare-access";
 import type { Env } from "../src/env.js";
 import { handleHttp } from "../src/http.js";
 

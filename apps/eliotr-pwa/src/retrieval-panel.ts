@@ -2,9 +2,10 @@ import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { escapeHtml } from "./html.js";
 import {
-  readRetrievalTrace, retrievalBody, runRetrievalQuery,
+  assertRetrievalSelection, readRetrievalTrace, retrievalBody, runRetrievalQuery,
   type RetrievalResultView, type RetrievalTraceView,
 } from "./retrieval-api.js";
+import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
 function anchorText(anchor: Record<string, unknown>): string {
   const kind = String(anchor.kind ?? "unknown");
@@ -55,7 +56,7 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
   ].join("\n");
 }
 
-export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string): void; clearPrivate(): void } {
+export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string, context?: LibrarySelectionContext): void; clearPrivate(): void } {
   element.innerHTML = `<h2>Retrieval</h2>
     <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
     Coverage is sampled: a miss does not prove absence, and no model is called.</p>
@@ -72,21 +73,26 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   if (!form || !status || !result || !traceResult || !cancel || !sources) throw new Error("Retrieval panel is incomplete");
 
   let controller: AbortController | undefined;
+  let traceController: AbortController | undefined;
   let active = 0;
   let key = "";
   let previous = "";
   let lastTrace: RetrievalResultView["trace"] | undefined;
   let lastEvidence: RetrievalResultView["evidence"] = [];
+  let lastTraceDeploymentGeneration: string | undefined;
+  let selectedContext: LibrarySelectionContext | undefined;
+  const selectedHeads = new Map<string, string>();
 
   const errorText = (error: unknown) => error instanceof ApiRequestError
     ? `${error.code}: ${error.message}${error.traceId ? ` · trace ${error.traceId}` : ""}${
       error.retryable ? " · Retry preserves the operation identity." : ""}`
     : "Unable to run retrieval. Check the inputs and session.";
 
-  const stop = () => { active += 1; controller?.abort(); cancel.disabled = true; };
+  const stop = () => { active += 1; controller?.abort(); traceController?.abort(); controller = undefined; traceController = undefined; cancel.disabled = true; };
   const clearPrivate = (): void => {
     stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
-    lastTrace = undefined; lastEvidence = [];
+    lastTrace = undefined; lastEvidence = []; lastTraceDeploymentGeneration = undefined;
+    selectedContext = undefined; selectedHeads.clear(); sources.value = ""; previous = ""; key = "";
     status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
   };
   cancel.onclick = () => {
@@ -104,12 +110,14 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     traceResult.hidden = true;
     lastTrace = undefined;
     lastEvidence = [];
+    let submittedSourceIds: readonly string[];
     element.dispatchEvent(new CustomEvent("retrieval:started", { bubbles: true }));
-    if (!navigator.onLine) { status.textContent = "Offline. Retrieval results are not cached."; return; }
+    if (!navigator.onLine) { clearPrivate(); status.textContent = "Offline. Private retrieval state cleared. Reconnect and retry."; return; }
     let body: string;
     try {
       const values = new FormData(form);
       const ids = String(values.get("sources") ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+      submittedSourceIds = Object.freeze([...ids]);
       body = retrievalBody(String(values.get("query") ?? ""), ids);
     } catch {
       status.textContent = "Query or source IDs are invalid.";
@@ -117,14 +125,25 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     }
     // One idempotency key per distinct input: an unchanged retry reconciles the same operation
     // instead of minting a second one, which is what the Worker's replay path expects.
+    const submittedHeads = new Map<string, string>();
+    for (const id of submittedSourceIds) {
+      const head = selectedHeads.get(id);
+      if (head !== undefined) submittedHeads.set(id, head);
+    }
+    const submittedDeploymentGeneration = selectedContext?.deploymentGeneration;
     if (body !== previous) { previous = body; key = crypto.randomUUID(); }
     cancel.disabled = false;
     status.textContent = "Running retrieval…";
-    void runRetrievalQuery(body, key, controller.signal)
-      .then((view) => {
+    void runRetrievalQuery(body, key, controller.signal, submittedDeploymentGeneration)
+      .then(async (view) => {
         if (serial !== active) return;
+        traceController = new AbortController();
+        const traceView = await readRetrievalTrace(view.trace, traceController.signal, submittedDeploymentGeneration);
+        if (serial !== active) return;
+        assertRetrievalSelection(view, traceView, [...submittedHeads.values()]);
         lastTrace = view.trace;
         lastEvidence = view.evidence;
+        lastTraceDeploymentGeneration = submittedDeploymentGeneration;
         result.innerHTML = renderRetrieval(view);
         status.textContent = `Resolved ${view.evidence.length} excerpt(s).`;
         element.dispatchEvent(new CustomEvent("retrieval:resolved",
@@ -132,6 +151,12 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
       })
       .catch((error: unknown) => {
         if (serial !== active || (error instanceof Error && error.name === "AbortError")) return;
+        if (error instanceof ApiRequestError &&
+            (error.code === "RETRIEVAL_DEPLOYMENT_CHANGED" || error.code === "RETRIEVAL_SOURCE_HEAD_CHANGED")) {
+          clearPrivate();
+          element.dispatchEvent(new CustomEvent("library:scope-changed", { bubbles: true }));
+          return;
+        }
         status.textContent = errorText(error);
       })
       .finally(() => { if (serial === active) cancel.disabled = true; });
@@ -152,7 +177,8 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
     const serial = active;
     traceResult.hidden = false;
     traceResult.textContent = "Reading trace…";
-    void readRetrievalTrace(ref)
+    traceController?.abort(); traceController = new AbortController();
+    void readRetrievalTrace(ref, traceController.signal, lastTraceDeploymentGeneration)
       .then((view) => { if (serial === active) traceResult.textContent = renderRetrievalTrace(view); })
       .catch((error: unknown) => { if (serial === active) traceResult.textContent = errorText(error); });
   });
@@ -160,10 +186,16 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   const cleanup = () => { stop(); };
   return Object.assign(cleanup, {
     clearPrivate,
-    selectSource(id: string): void {
+    selectSource(id: string, context?: LibrarySelectionContext): void {
       IdentifierSchema.parse(id);
+      stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
+      lastTrace = undefined; lastEvidence = []; lastTraceDeploymentGeneration = undefined;
+      previous = ""; key = "";
       const current = sources.value.split(",").map((value) => value.trim()).filter(Boolean);
       if (!current.includes(id)) sources.value = [...current, id].join(", ");
+      selectedContext = context;
+      if (context?.sourceRevisionRef) selectedHeads.set(id, context.sourceRevisionRef);
+      else selectedHeads.delete(id);
     },
   });
 }

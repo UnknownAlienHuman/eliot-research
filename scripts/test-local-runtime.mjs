@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { devArguments, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
 
 const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+const runtimeSource = await readFile(resolve(ROOT, "scripts/local-runtime.mjs"), "utf8");
+assert.match(runtimeSource, /reserveMiniflareForbiddenPorts/u, "local runtime must reserve the shared Fetch-forbidden port guard");
+assert.match(runtimeSource, /portGuard\.release\(\)/u, "local runtime must release the shared port guard");
 const injected = { ...canonical, account_id: "forbidden-account", routes: [{ pattern: "production.example" }],
   services: [{ binding: "REMOTE", service: "production" }], vars: { API_TOKEN: "secret" },
   d1_databases: canonical.d1_databases.map((db) => ({ ...db, remote: true, database_id: "forbidden-id" })),

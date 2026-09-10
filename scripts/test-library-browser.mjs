@@ -31,7 +31,7 @@ const evidenceText = "# Evidence\n\nPinned content.\n";
 const evidenceSha = createHash("sha256").update(evidenceText).digest("hex");
 const evidenceHandle = () => ({
   handle_ref: { id: "handle-1", revision: 1 }, source_namespace_id: "namespace-1",
-  source_owner_generation: "owner-1", source_revision_ref: "source-1",
+  source_owner_generation: "owner-1", source_revision_ref: "revision-1",
   scope_snapshot_ref: { id: "scope-1", revision: 1 }, anchor: { kind: "normalized_byte_range", start: 0, end: 28 },
   excerpt_sha256: evidenceSha, excerpt_byte_length: 28, object_residency_key_digest: "b".repeat(64),
   source_assurance_ceiling: "EXACT", materializer_assurance_ceiling: "EXACT", terminal_state: "LIVE",
@@ -44,11 +44,46 @@ const resolvedEvidence = () => ({
   scope_snapshot_digest: "b".repeat(64), instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY",
   resolved_at: "2026-09-08T00:00:00.000Z",
 });
+const queryTraceRef = { id: `query-${"b".repeat(48)}`, revision: 1 };
+const queryScope = {
+  snapshot_id: "scope-1", revision: 1,
+  resolved_scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] },
+  participant_generations: {}, member_source_revision_refs: ["revision-1"],
+  source_owner_generations: { "revision-1": "owner-1" }, policy_authority_ref: "policy-1",
+  disclosure_closure_digest: "c".repeat(64), purge_ledger_revision: 0,
+  digest: "d".repeat(64), created_at: "2026-09-08T00:00:00.000Z", expires_at: "2026-09-09T00:00:00.000Z",
+};
+const queryTraceData = () => ({
+  trace_ref: queryTraceRef, raw_query: "pinned", scope_snapshot: queryScope,
+  query_product: "FAST_SEARCH", lanes_used: ["LEX"],
+  lanes_skipped: [{ lane: "SEM", reason: "LANE_UNAVAILABLE" }], exact_probes: ["pinned"],
+  index_generations: ["projection-1"], context_expansion: 1,
+  candidates_by_lane: { IDENT: 0, EXACT: 0, LEX: 1, SEM: 0, LITERAL: 0, SOURCECARD: 0, ATLAS: 0,
+    ATOM: 0, ARGUMENT: 0, WIKI: 0, ARTIFACT: 0, STRUCTURE: 0, CODE: 0, WEB: 0, EXHAUSTIVE: 0, VERIFY: 0 },
+  expansion_refs: [], represented_source_refs: ["revision-1"], omitted_sources: [],
+  stale_or_degraded_channels: [], budget_receipt_ref: "budget-1", evidence_pack_ref: "pack-1",
+  coverage_claim: "SAMPLED",
+});
 const queryEvidence = () => envelope({ evidence_pack: {
-  pack_ref: { id: "pack-1", revision: 1 }, scope_snapshot_ref: { id: "scope-1", revision: 1 },
-  resolved_evidence: [resolvedEvidence()], omitted_candidates: [],
-  trace_ref: { id: `query-${"b".repeat(48)}`, revision: 1 }, total_utf8_bytes: 28,
-}, trace_ref: { id: `query-${"b".repeat(48)}`, revision: 1 } });
+    pack_ref: { id: "pack-1", revision: 1 }, scope_snapshot_ref: { id: "scope-1", revision: 1 },
+    resolved_evidence: [resolvedEvidence()], omitted_candidates: [],
+  trace_ref: queryTraceRef, total_utf8_bytes: 28,
+}, trace_ref: queryTraceRef });
+const readiness = () => envelope({
+  protocol: "eliotr.library-readiness.v1", source_id: "source-1", source_revision_ref: "revision-1",
+  deployment_generation: "browser-fixture", catalog_generation: "1", observed_at: "2026-09-08T00:00:00.000Z",
+  currentness: { verification: "VERIFIED", value: {
+    source_revision_ref: "revision-1", owner_system_id: "fixture-owner", source_owner_generation: "owner-1",
+    source_view_ref: "source-view-1", observation_freshness: "current_confirmed",
+    observed_at: "2026-09-08T00:00:00.000Z", gap_refs: [],
+  } },
+  quality_state: "standard", readiness_basis: "ACTIVE_VERIFIED",
+  channels: [
+    { source_revision_ref: "revision-1", channel: "exact_ready", state: "ready", generation: "projection-1", receipt_ref: "receipt-exact-1", reason_codes: [], observed_at: "2026-09-08T00:00:00.000Z" },
+    { source_revision_ref: "revision-1", channel: "lexical_ready", state: "ready", generation: "projection-1", receipt_ref: "receipt-lexical-1", reason_codes: [], observed_at: "2026-09-08T00:00:00.000Z" },
+    { source_revision_ref: "revision-1", channel: "semantic_ready", state: "degraded", reason_codes: ["MANAGED_SEMANTIC_UNAVAILABLE"], observed_at: "2026-09-08T00:00:00.000Z" },
+  ],
+});
 const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.source-revisions.v1",
   source_id: sourceId, head_revision_ref: "revision-1", readiness_basis: "RECORDED_ONLY", observed_at: "2026-09-05T12:00:00.000Z",
   revisions: [{ source_revision_ref: older ? "revision-older" : "revision-1", content_sha256: "a".repeat(64),
@@ -94,7 +129,25 @@ const server = createServer((request, response) => {
       for await (const chunk of request) { bytes += chunk.length; assert.ok(bytes < 16 * 1024); chunks.push(chunk); }
       posted.push(JSON.parse(Buffer.concat(chunks).toString("utf8"))); return json(orientation());
     }
-    if (url.pathname === "/api/v1/research/query") return json(queryEvidence());
+    if (url.pathname === "/api/v1/library/readiness") {
+      assert.equal(request.method, "GET");
+      assert.deepEqual([...url.searchParams.entries()], [["source_id", "source-1"]]);
+      return json(readiness());
+    }
+    if (url.pathname === "/api/v1/research/query") {
+      assert.equal(request.method, "POST");
+      const chunks = []; for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.deepEqual(body, { query: "pinned", product: "FAST_SEARCH",
+        scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] }, literals: [],
+        evidence_grade: "E0", budget_ref: "retrieval-fast-v1", max_results: 16 });
+      return json(queryEvidence());
+    }
+    if (url.pathname === `/api/v1/research/trace/${queryTraceRef.id}`) {
+      assert.equal(request.method, "GET");
+      assert.equal(url.search, "");
+      return json(envelope(queryTraceData()));
+    }
     if (url.pathname === "/api/v1/research/verify") {
       assert.equal(request.method, "POST");
       const chunks = []; for await (const chunk of request) chunks.push(chunk);

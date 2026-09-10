@@ -1,4 +1,5 @@
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
+import type { WorkspaceMcpCandidateStore } from "./workspace-mcp-ledger.js";
 
 export type GoogleExternalTransport = "disabled" | "gemini-mcp" | "drive-exchange";
 
@@ -25,6 +26,9 @@ export interface GeminiMcpToolDependencies {
     input: { readonly project_id?: string; readonly cursor?: string; readonly limit: number },
     context: McpToolCallContext,
   ) => Promise<unknown>;
+  /** Verified deployment context and the server-owned durable candidate ledger. */
+  readonly mcp_auth_profile?: "service-token" | "managed-oauth";
+  readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
 }
 
 export class GeminiMcpToolError extends Error {
@@ -53,6 +57,8 @@ export const GOOGLE_PRODUCTS = [
   "gmail",
   "cloud",
 ] as const;
+/** The selected ER36 profile is Workspace-only; Cloud/gcloud is a separate future profile. */
+export const WORKSPACE_GOOGLE_PRODUCTS = GOOGLE_PRODUCTS.filter((product) => product !== "cloud") as readonly Exclude<typeof GOOGLE_PRODUCTS[number], "cloud">[];
 export const GOOGLE_ACTIONS = [
   "inspect",
   "read",

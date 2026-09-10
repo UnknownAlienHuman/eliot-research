@@ -12,16 +12,18 @@ import type {
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
 import {
-  AccessVerificationError,
-  createCloudflareAccessVerifier,
   IngestAuthorityError,
   IngestStorageError,
   RUNTIME_LIMITS,
   RuntimeLimitError,
   serializeJsonWithinBytes,
+} from "@eliotr/platform-cloudflare";
+import {
+  AccessVerificationError,
+  createCloudflareAccessVerifier,
   type AccessIdentity,
   type AccessVerifier,
-} from "@eliotr/platform-cloudflare";
+} from "@eliotr/cloudflare-access";
 import {
   CapabilityUnavailableError,
   CatalogInputError,
@@ -40,6 +42,7 @@ import {
   dispatchIngestOperation,
   IngestHttpInputError,
 } from "./ingest-http.js";
+import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
 import { IngestServiceError } from "./ingest-service.js";
 import { dispatchRawCaptureOperation, RawCaptureError, RawCaptureHttpError, rawCaptureProblem } from "@eliotr/cloudflare-raw-ingest";
 import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
@@ -331,6 +334,13 @@ async function dispatch(
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
     }
+    case "library.active.readiness": {
+      const sourceId = singleQueryValue(url, "source_id");
+      if (sourceId === undefined || [...url.searchParams.keys()].some((key) => key !== "source_id")) {
+        throw new HttpRequestError("LIBRARY_READINESS_INPUT_INVALID", 400, "exactly one source_id is required");
+      }
+      return apiResult(request, env, await application.services.owner.libraryReadiness(context, { source_id: sourceId }));
+    }
     case "research.catalog": {
       return apiResult(
         request,
@@ -480,6 +490,9 @@ function mapError(request: Request, error: unknown): Response {
     );
   }
   if (error instanceof HttpRequestError || error instanceof IngestHttpInputError || error instanceof EvidenceHttpInputError || error instanceof RawCaptureHttpError) {
+    return problem(request, error.status, error.code, error.message, error.retryable);
+  }
+  if (error instanceof RawNormalizedAdmissionError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof IngestServiceError) {

@@ -33,7 +33,7 @@ describe("Library wire boundary", () => {
     value.data.sources[0] = { id: "source-1", title: '<img src=x onerror="alert(1)">', readiness_ref: "readiness:source-1:revision-1" };
     const rendered = renderLibrary(decodeLibraryPage(value));
     expect(rendered).not.toContain("<img"); expect(rendered).toContain("&lt;img");
-    expect(rendered).toContain("Search readiness not checked");
+    expect(rendered).toContain("Search readiness is checked when you select it");
     expect(rendered).toContain('data-source="0"');
   });
   it("uses only the fixed catalog path, bounded limit, credentials and no-store", async () => {

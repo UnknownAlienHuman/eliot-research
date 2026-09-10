@@ -42,6 +42,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
+- `apps/eliotr-core/src/library-readiness.ts`
+- `apps/eliotr-core/test/library-readiness.test.ts`
 - `apps/eliotr-core/src/google-token-store.ts`
 - `packages/google-drive-exchange/src/google-token-store.ts`
 - `apps/eliotr-core/test/google-token-store.test.ts`
@@ -65,6 +67,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
+
+ER-38 owns the projection runtime package. The known-length R2 stream repair is contributed through
+a reviewed ER-38 integration handoff; ER-24 retains the actual owner-loop acceptance boundary.
 
 ER-36 owns the Google transport profile selection and legacy OAuth route gating. ER-24 retains the
 underlying OAuth service and storage authority. ER-36 is also the canonical owner of the shared
@@ -90,21 +95,26 @@ request
 ```text
 POST /mcp
 → hostname Cloudflare Access
-→ signed Access JWT verification
-→ exact service-token Client ID from signed common_name
-→ internal logical principal gemini-spark
+→ explicit service-token or managed-oauth profile
+→ signed Access JWT verification with the dedicated MCP audience
+→ exact signed service-token Client ID or verified human actor
+→ profile-bound internal principal
 → MCP protocol/header/body validation
 → four-tool product allow-list
 → bounded JSON-RPC response
 ```
 
-The Access service-token name is not a signed identity. Cloudflare places the exact token Client ID in
-`common_name`; ER-36 admits that configured Client ID and only then maps it to the internal
-`gemini-spark` principal.
+The Access service-token name is not a signed identity. In the `service-token` profile, the exact
+configured Client ID must match signed `common_name` before mapping to `gemini-spark`.
+The `managed-oauth` profile instead requires a verified human JWT with a dedicated MCP audience and
+derives a domain-separated actor reference. Service-token credentials, mixed configuration and an
+ordinary owner audience cannot substitute for that profile. Deployed OAuth client qualification
+remains separate from local JWT verification.
 
-ELIOT MCP is plan/readback-validation only. Google-side effects remain in the official Google Workspace
-or gcloud extensions, require ordinary user confirmation, and must be exactly read back. A Google
-receipt never promotes itself into canonical ELIOT state.
+ELIOT MCP is plan/readback-validation only. The selected Workspace client performs Google-side actions
+through its connected Drive/Workspace tools, obtains explicit user authorization for mutations, and
+reads back the exact result. Google Cloud/gcloud is an unselected optional profile. A Google receipt
+never promotes itself into canonical ELIOT state.
 
 ## Implemented delivery contour
 
@@ -119,13 +129,17 @@ Queue delivery
 → D1 inbox fence
 → D1 intent/outbox/source authority reload
 → one durable projection job ACCEPTED receipt
+→ fenced projection execution and exact terminal readback (or retry on failure)
 → inbox settlement
 → ACK
 ```
 
-`PROJECTION_QUEUED` and `ACCEPTED` mean only that durable work exists. ER-05/06/16 must still build
-projection items, persist D1 Search state, upload/read back the managed index and update channel-specific
-readiness before projection success can be claimed.
+`PROJECTION_QUEUED` and `ACCEPTED` mean only that durable work exists. The composed executor builds
+projection items, persists and reads back D1 Search state, handles the configured managed index and
+updates channel readiness before returning a terminal receipt. Its real owner-loop qualification
+must exercise the production R2 stream boundary; a fixture that buffers a stream before `put` cannot
+prove that boundary. Already bounded projection bytes must retain their known length when converted
+to an R2 upload stream, while exact size, digest and immutable readback checks remain enforced.
 
 Full research/query execution, federation, Wiki, Drive and erasure remain
 typed unavailable or fail-closed.
@@ -140,8 +154,8 @@ authoritative normalized-section inventory and pinned section reads as injected
 ports, then delegates planning, exact verification, shard reconciliation and
 coverage to ER-07 Q7. The default Worker wiring binds those authorities to the
 owner ScopeSnapshot, admitted normalized manifest, persisted structural
-projection ranges and pinned R2 evidence ports. Missing LIVE user-loop handles remain unsettled and
-cannot earn COMPLETE. The existing ER09 `ResearchWorkflow` host accepts a
+projection ranges and pinned R2 evidence ports. Local COMPLETE requires verified persisted authority
+and evidence; post-staging receipts separately qualify LIVE. The existing ER09 `ResearchWorkflow` host accepts a
 bounded Q8 job through one `step.do` owner boundary. `research.query` launches,
 reads and cancels that durable Workflow through the existing operation, with
 the D1 binding rechecking principal, credential, deployment, request identity,
@@ -170,8 +184,9 @@ the asynchronous Workflow status read. Remote deployed Workflow and live Access 
 - missing/forged Access identity is rejected before application execution;
 - stale Core/Search schema generations block protected product routes;
 - service principals cannot cross owner-only boundaries;
-- only the configured MCP Access service-token Client ID can enter MCP dispatch;
-- the internal tool context sees only the logical `gemini-spark` principal;
+- the service-token profile admits only the configured signed Client ID; managed-oauth admits only
+  the verified human actor with the dedicated audience;
+- the internal tool context receives the profile-bound logical principal; actor identity is not caller-supplied;
 - browser-originated MCP calls are rejected;
 - Queue messages without matching D1 authority are never executed;
 - duplicate/failed receipts cannot fabricate success;

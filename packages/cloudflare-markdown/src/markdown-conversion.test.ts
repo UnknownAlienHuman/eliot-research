@@ -28,6 +28,11 @@ function binding(result: unknown): WorkersAiMarkdownBinding {
 }
 
 describe("Workers AI Markdown Conversion binding", () => {
+  it("returns a typed provider-unavailable outcome without dispatch when the binding is absent", async () => {
+    const result = await createWorkersAiMarkdownConversionAdapter(undefined).convert(input());
+    expect(result).toMatchObject({ disposition: "FAILED", code: "PROVIDER_UNAVAILABLE", dispatch_state: "NOT_STARTED", context });
+  });
+
   it("records a strict current documented result and detected MIME", async () => {
     const ai = binding({ id: "result-1", name: "source.pdf", format: "markdown", mimetype: "application/pdf", tokens: 3, data: "# Extracted\n" });
     const result = await createWorkersAiMarkdownConversionAdapter(ai).convert(input());

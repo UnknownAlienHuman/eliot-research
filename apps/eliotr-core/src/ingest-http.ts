@@ -7,6 +7,7 @@ import type {
   OwnerApi,
   PrepareBundleUploadRequest,
   UploadBundlePartRequest,
+  RawNormalizedAdmissionRequest,
 } from "@eliotr/interfaces";
 import { readRequestBodyWithinBytes } from "@eliotr/platform-cloudflare";
 
@@ -143,6 +144,21 @@ async function jsonBody(request: Request, maximumBytes: number): Promise<Record<
   return record(parsed, "request body");
 }
 
+function rawNormalizedPathParam(value: string | undefined, incomplete: boolean): string {
+  if (value === undefined) fail("RAW_NORMALIZED_INPUT_INVALID", 400, incomplete ? "admission path is incomplete" : "capture id is missing");
+  return identifier(value, incomplete ? "admission_operation_id" : "capture_id");
+}
+
+/** Browser admission command. All source, snapshot and policy authority is server-derived. */
+export async function rawNormalizedAdmissionRequest(request: Request, maximumBytes: number): Promise<RawNormalizedAdmissionRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["idempotency_key", "conversion_operation_id"], "raw normalized admission request");
+  return {
+    idempotency_key: identifier(input.idempotency_key, "idempotency_key"),
+    conversion_operation_id: identifier(input.conversion_operation_id, "conversion_operation_id"),
+  };
+}
+
 function fileHashes(value: unknown): Readonly<Record<string, string>> {
   const input = record(value, "file_hashes");
   const entries = Object.entries(input);
@@ -253,6 +269,20 @@ export async function dispatchIngestOperation(
   owner: OwnerApi,
 ): Promise<unknown> {
   switch (operation) {
+    case "ingest.raw.normalized.admit":
+      exactQuery(url, []);
+      return owner.admitRawFileToNormalized(
+        context,
+        rawNormalizedPathParam(params.capture_id, false),
+        await rawNormalizedAdmissionRequest(request, maximumBytes),
+      );
+    case "ingest.raw.normalized.status":
+      exactQuery(url, []);
+      return owner.getRawNormalizedAdmissionStatus(
+        context,
+        rawNormalizedPathParam(params.capture_id, true),
+        rawNormalizedPathParam(params.admission_operation_id, true),
+      );
     case "ingest.bundle.prepare":
       exactQuery(url, []);
       return owner.prepareBundle(context, await prepareRequest(request, maximumBytes));

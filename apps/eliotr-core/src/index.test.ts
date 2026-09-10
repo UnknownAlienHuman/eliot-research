@@ -1,4 +1,4 @@
-import { AccessVerificationError, type AccessVerifier } from "@eliotr/platform-cloudflare";
+import { AccessVerificationError, type AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
 import {
   AI_SEARCH_PRIMARY_GENERATION,
@@ -97,6 +97,46 @@ describe("worker export", () => {
     expect(typeof worker.fetch).toBe("function");
     expect(typeof worker.queue).toBe("function");
     expect(typeof worker.scheduled).toBe("function");
+  });
+
+  it.each([
+    {
+      profile: "service-token",
+      MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "00000000000000000000000000000000.access",
+    },
+    {
+      profile: "managed-oauth",
+    },
+  ])("routes /mcp through the package auth boundary for $profile", async (profile) => {
+    const fixture = databaseFixture();
+    const response = await worker.fetch(
+      new Request("https://mcp.example/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      }),
+      {
+        ...environment(fixture.database),
+        MCP_HOSTNAME: "mcp.example",
+        MCP_ACCESS_AUTH_PROFILE: profile.profile as "service-token" | "managed-oauth",
+        MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
+        MCP_ACCESS_AUDIENCE: profile.profile === "managed-oauth" ? "managed-mcp-audience" : "mcp-audience",
+        ACCESS_AUDIENCE: profile.profile === "managed-oauth" ? "ordinary-api-audience" : undefined,
+        ...(profile.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID === undefined
+          ? {}
+          : { MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: profile.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID }),
+      } as Env,
+      executionContext(),
+    );
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({
+      protocol: "eliotr.mcp.http-error.v1",
+      code: "MCP_AUTHENTICATION_FAILED",
+    });
+    expect(fixture.statements).toEqual([]);
   });
 });
 

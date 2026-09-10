@@ -4,9 +4,11 @@
 
 `IMPLEMENTED_NOT_LIVE` after deterministic protocol, authorization, setup, and negative fixtures pass.
 Live qualification is profile-specific: the selected Workspace profile requires a deployed dedicated
-Cloudflare Access service-token round trip plus real Google Workspace action/readback receipts. The
-optional Cloud profile additionally requires its gcloud action/readback receipts when explicitly
-selected; gcloud is not a Workspace readiness dependency.
+Cloudflare Access round trip plus real Google Workspace action/readback receipts. The MCP auth profile
+is selected by `MCP_ACCESS_AUTH_PROFILE` (`service-token` or `managed-oauth`); managed-oauth remains
+pending client compatibility, deployment and exact Access/readback receipts. The optional Cloud profile
+additionally requires its gcloud action/readback receipts when explicitly selected; gcloud is not a
+Workspace readiness dependency.
 
 ## Relation to the canonical ChatGPT transport
 
@@ -53,9 +55,9 @@ exact action/readback gate.
 Spark Connected App or Antigravity remote MCP client POST https://<MCP_HOSTNAME>/mcp
 → dedicated hostname Cloudflare Access application
 → dedicated MCP Access audience
-→ signed Access JWT verification
-→ exact service-token Client ID from JWT common_name
-→ internal logical principal gemini-spark
+→ signed Access JWT verification through the existing verifier
+→ service-token: exact Client ID from JWT common_name → logical principal gemini-spark
+→ managed-oauth: verified JWT subject → domain-separated SHA-256 actor principal
 → MCP protocol/version/body validation
 → authorized subset of the four-tool contract allow-list
 → bounded result
@@ -64,12 +66,16 @@ Spark Connected App or Antigravity remote MCP client POST https://<MCP_HOSTNAME>
 Cloudflare's service-token JWT uses the token Client ID as `common_name`; the human-readable service
 token name is not an authenticated principal. The Worker therefore requires the exact Client ID through
 `MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID`, verifies that signed value, and only then maps it to the internal
-logical principal `gemini-spark`.
+logical principal `gemini-spark`. The managed-oauth profile accepts only the existing verifier's
+`cloudflare_access` identity and hashes the verified issuer, dedicated audience, subject and profile under
+`eliot.mcp.managed-actor.v1`; raw subject values never enter the MCP context or result.
 
 The MCP hostname and Access audience are separate from the owner/API hostname and audience. The ordinary
 API `ACCESS_SERVICE_PRINCIPALS` must not contain the dedicated MCP Client ID; the dedicated MCP verifier
 has an exact one-Client-ID allow-list. A service token that reaches one Access application therefore
 cannot be reinterpreted as an ordinary trusted-agent credential by application routing.
+For managed-oauth, `MCP_ACCESS_AUDIENCE` must differ from `ACCESS_AUDIENCE`, service-token credentials
+are rejected, and the dedicated host/team/audience configuration is validated before JSON-RPC dispatch.
 
 Supported protocol revisions:
 
@@ -132,6 +138,10 @@ permissions; those remain independent live preconditions.
 - direct Gemini sync is rejected while Drive Exchange owns the transport;
 - digest-mismatching readback remains `OBSERVED_MISMATCH`;
 - settings/setup output cannot contain service-token values.
+- an unknown or mixed `MCP_ACCESS_AUTH_PROFILE` configuration fails closed;
+- managed-oauth rejects service-token credentials and ordinary-audience reuse;
+- distinct verified managed subjects produce distinct actor bindings without exposing raw subject PII;
+- the selected Workspace profile rejects `google_product=cloud` and never invokes gcloud.
 
 
 ### Service catalog authorization

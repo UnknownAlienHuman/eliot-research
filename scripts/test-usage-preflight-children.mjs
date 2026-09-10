@@ -169,7 +169,8 @@ const server = createServer(async (req, res) => {
         mock.sequence += 1;
         const id = `access-app-${mock.sequence}`;
         const { policies = [], ...rest } = body;
-        mock.accessApps.set(id, { id, ...structuredClone(rest) });
+        const isMcp = body.domain === `${HOSTNAME}/mcp`;
+        mock.accessApps.set(id, { id, aud: isMcp ? "mock-mcp-audience" : "mock-access-audience", ...structuredClone(rest) });
         mock.accessPolicies.set(id, policies.map((policy) => ({ id: `policy-${mock.sequence}`, ...structuredClone(policy) })));
         return json(res, success(mock.accessApps.get(id)));
       }
@@ -449,7 +450,20 @@ try {
     const env = {
       ...provisionEnv,
       ...receiptEnv(),
+      ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+      ELIOTR_MCP_ACCESS_AUTH_PROFILE: "managed-oauth",
+      ELIOTR_MCP_ACCESS_TEAM_DOMAIN: "https://mock-team-example.cloudflareaccess.com",
+      ELIOTR_MCP_ACCESS_AUDIENCE: "mock-mcp-audience",
     };
+    const access = await runScript("scripts/provision-cloudflare-access.mjs", [], env,
+      JSON.stringify(liveFixtureSnapshot()));
+    assert.equal(access.status, 0, `access fixture failed: ${access.stdout}\n${access.stderr}`);
+    const accessReceipt = JSON.parse(await readFile(join(isolatedStateDirectory, "cloudflare-access-receipt.json"), "utf8"));
+    assert.equal(accessReceipt.mcp?.auth_profile, "managed-oauth");
+    assert.equal(accessReceipt.mcp?.aud, "mock-mcp-audience");
+    assert.equal(accessReceipt.mcp?.oauth_configuration_enabled, true);
+    assert.equal(Object.hasOwn(accessReceipt.mcp ?? {}, "service_token_id"), false);
+    assert.equal(Object.hasOwn(accessReceipt.mcp ?? {}, "service_token_client_id_sha256"), false);
     const core = await runScript("scripts/provision-cloudflare-core.mjs", [], env,
       JSON.stringify(liveFixtureSnapshot()));
     assert.equal(core.status, 0, `core failed: ${core.stdout}\n${core.stderr}`);

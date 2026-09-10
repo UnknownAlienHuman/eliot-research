@@ -378,8 +378,7 @@
         "ER-13"
       ],
       "owned_paths": [
-        "packages/platform-cloudflare/src/access.ts",
-        "packages/platform-cloudflare/src/access.test.ts",
+        "packages/cloudflare-access/**",
         "packages/platform-cloudflare/src/observability.ts",
         "packages/platform-cloudflare/src/observability.test.ts",
         "packages/platform-cloudflare/src/runtime-limits.ts",
@@ -559,6 +558,8 @@
         "apps/eliotr-core/test/catalog-http.test.ts",
         "apps/eliotr-core/src/source-revisions.ts",
         "apps/eliotr-core/test/source-revisions.test.ts",
+        "apps/eliotr-core/src/library-readiness.ts",
+        "apps/eliotr-core/test/library-readiness.test.ts",
         "apps/eliotr-core/src/google-token-store.ts",
         "packages/google-drive-exchange/src/google-token-store.ts",
         "apps/eliotr-core/test/google-token-store.test.ts",
@@ -613,6 +614,10 @@
       "owned_paths": [
         "scripts/provision-cloudflare-core.mjs",
         "scripts/provision-cloudflare-access.mjs",
+        "scripts/lib/access-runtime-config.mjs",
+        "scripts/lib/cloudflare-access-mcp.mjs",
+        "scripts/test-access-runtime-config.mjs",
+        "scripts/test-cloudflare-access-mcp.mjs",
         "scripts/lib/cloudflare-mcp-oauth.mjs",
         "scripts/provision-ai-search.mjs",
         "scripts/lib/cloudflare-d1-http.mjs",
@@ -654,7 +659,8 @@
       ],
       "owned_paths": [
         "tests/integration/**",
-        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts"
+        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts",
+        "apps/eliotr-core/test/raw-normalized-admission-http.test.ts"
       ],
       "mandatory_negative_case": "Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.",
       "document": "ER-27-vertical-integration-and-live-conformance.md",

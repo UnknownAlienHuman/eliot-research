@@ -1,6 +1,6 @@
 import { createGoogleOAuthAdmission, GoogleCredentialError, importGoogleTokenKey, oauthConfiguration,
   oauthIdentifier, type GoogleOAuthAdmissionOptions, type GoogleOAuthConfiguration } from "@eliotr/google-drive-exchange";
-import type { AccessIdentity, AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessIdentity, AccessVerifier } from "@eliotr/cloudflare-access";
 import { createD1GoogleOAuthIntentStore } from "./google-oauth-store.js";
 import type { Env } from "./env.js";
 

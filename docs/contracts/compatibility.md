@@ -52,3 +52,14 @@ Every schema change must include:
 
 Transport completion and research completion remain independent. A transport state such as `COMPLETED`
 may never be added to `CompletionDispositionSchema` as a convenience mapping.
+
+## Active Library readiness and Workspace MCP publication
+
+Registry generation 3 reserves the `library-readiness` and `workspace-mcp` families for independent
+version 1 contracts. These contracts do not change the existing Library catalog or Workspace MCP v1
+wire shapes. The family-name enum is closed, so adding names is a breaking metadata change: the
+registry schema family advances to version 2, generation 1. Version 1 registry readers must retain
+their previous corpus or explicitly upgrade before consuming these families. Compatibility history
+retains all previous schema identities and digests; current registry exports supersede their previous
+entries with `BREAKING` records. The registry document protocol remains version 1 because its transport
+shape is unchanged; `registry_generation` identifies the new publication.

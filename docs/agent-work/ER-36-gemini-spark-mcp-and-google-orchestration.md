@@ -1,9 +1,17 @@
 # ER-36: Gemini Spark / Antigravity MCP and Google orchestration
 
+The internal MCP tool context must preserve the credential generation, authentication method,
+expiry and selected auth profile from successful Access verification alongside the existing actor
+and deployment identity. `gemini-mcp.ts`, `gemini-mcp-protocol.ts` and their existing package tests
+own this continuation. Caller tool arguments cannot supply or replace verified fields. This internal
+record does not grant namespace/candidate access, change public v1/v2 DTOs, or turn an MCP actor into
+`owner_pwa`; an owner-issued exact-candidate authorization remains a separate admission prerequisite.
+
 **Slice:** 0–1 bridge
 **Depends on:** ER-17, ER-18, ER-20, ER-21, ER-24, ER-26
-**Live gate:** the selected profile must have deployed Access service-token
-initialize/tools/list/tools/call plus its own exact readback receipt. The default Workspace profile
+**Live gate:** the selected authentication profile must have deployed Access
+initialize/tools/list/tools/call plus its own exact readback receipt: signed Client ID for `service-token`,
+or the managed OAuth client flow with its dedicated audience for `managed-oauth`. The default Workspace profile
 qualifies Drive/Docs/Sheets/Slides/Gmail/Calendar; Google Cloud/gcloud is an independent optional
 profile. A missing optional profile is `NOT_EXECUTED`, not a Drive blocker.
 
@@ -16,17 +24,13 @@ create a reverse authority channel and do not let a Google transport result prom
 
 ## Owned paths
 
-- `apps/eliotr-core/src/gemini-mcp.ts`
-- `apps/eliotr-core/src/gemini-mcp-protocol.ts`
-- `apps/eliotr-core/src/gemini-mcp-tool-common.ts`
-- `apps/eliotr-core/src/gemini-mcp-google-sync.ts`
-- `apps/eliotr-core/src/gemini-mcp-tools.ts`
-- `apps/eliotr-core/src/gemini-mcp.test.ts`
-- `apps/eliotr-core/src/gemini-mcp-service-token.test.ts`
+- `packages/cloudflare-workspace-mcp/**`
 - `integrations/gemini-spark/**`
 - `integrations/antigravity/**`
 - `docs/implementation/gemini-spark-mcp.md`
 - `apps/eliotr-core/src/http-special-routes.ts`
+- `apps/eliotr-core/src/workspace-mcp-candidate-store.ts`
+- `apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts`
 - `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/src/index.test.ts`
 - `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
@@ -48,9 +52,16 @@ create a reverse authority channel and do not let a Google transport result prom
 - `apps/eliotr-core/wrangler.jsonc` — ER-24
 - `package.json` — ER-00
 
+The package exposes a narrow runtime interface and receives readiness through an injected callback.
+It imports no core application module. ER-17 owns the shared `@eliotr/cloudflare-access` verifier;
+the Worker keeps the same `/mcp` route and passes its existing configuration into this library.
+Root integrates package manifests, TypeScript references, dependency boundaries, CI and lockfile.
+
 ## Acceptance
 
-- only the configured Cloudflare Access service-token Client ID reaches JSON-RPC dispatch;
+- only the configured Cloudflare Access service-token Client ID reaches JSON-RPC dispatch in the
+  `service-token` profile; the `managed-oauth` profile admits only a verified human Access identity
+  through its dedicated audience;
 - the external Client ID is mapped to the internal logical principal `gemini-spark` only after exact
   signed JWT verification;
 - a human-readable token name cannot substitute for the signed Client ID in `common_name`;
@@ -70,6 +81,9 @@ create a reverse authority channel and do not let a Google transport result prom
 - Drive Exchange and Gemini direct orchestration cannot simultaneously own the transport.
 - the validated `GOOGLE_EXTERNAL_TRANSPORT` profile selects the applicable gate; unknown, mixed and
   explicitly disabled deployment profiles fail closed, and no launch-check argument can override it;
+- `MCP_ACCESS_AUTH_PROFILE` selects `service-token` or `managed-oauth`; managed-oauth uses the existing
+  signed Access verifier, a dedicated audience and a domain-separated hashed actor binding, while
+  rejecting service-token credentials and mixed profile configuration;
 - `gemini-mcp` retains a pending authenticated Workspace candidate-admission/readback gate, while
   `drive-exchange` retains the server-owned legacy OAuth/Exchange gate; common product gates are unchanged;
 - legacy Google OAuth routes reject requests unless `GOOGLE_EXTERNAL_TRANSPORT=drive-exchange`.
@@ -85,6 +99,8 @@ Cloud project/client for this Workspace profile.
 
 ## Mandatory negative boundary
 
-Request `dry_run=false`, send a browser Origin, use an owner JWT, present the token name instead of the
-configured Client ID, and present a Google readback with a different payload digest. The server must deny
-the first four and return `OBSERVED_MISMATCH` for the last without changing canonical ELIOT state.
+For the `service-token` profile, request `dry_run=false`, send a browser Origin, use an owner JWT, present
+the token name instead of the configured Client ID, and present a Google readback with a different payload
+digest. The server must deny the first four and return `OBSERVED_MISMATCH` for the last without changing
+canonical ELIOT state. For `managed-oauth`, a valid human JWT with the dedicated audience is accepted and
+an ordinary-audience JWT or service-token JWT is denied.

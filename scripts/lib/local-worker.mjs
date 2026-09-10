@@ -61,9 +61,9 @@ function summarizeRuntimeOutput(text) {
   return [...new Set(events)].slice(-24).join(",").slice(0, 2000);
 }
 
-async function spawnOnce(paths, port) {
+async function spawnOnce(paths, port, { testScheduled = false } = {}) {
   assertChromiumSafePort(port, "local worker port");
-  const child = spawn(process.execPath, devArguments(paths, port), {
+  const child = spawn(process.execPath, devArguments(paths, port, { testScheduled }), {
     cwd: ROOT, env: localEnvironment(), stdio: ["ignore", "pipe", "pipe"], shell: false,
   });
   // Drain, but retain only a bounded redacted tail for collision classification.
@@ -100,17 +100,20 @@ async function spawnOnce(paths, port) {
       stderrTail: redactSpawnDiagnostic(stderrTail), stdoutEvents: summarizeRuntimeOutput(stdoutTail) }) };
 }
 
-export async function startLocalWorker(paths, { attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+export async function startLocalWorker(paths, {
+  attempts = CHROMIUM_SAFE_PORT_RETRIES, testScheduled = false,
+} = {}) {
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100) {
     throw new Error("Invalid local worker retry bound");
   }
+  if (typeof testScheduled !== "boolean") throw new Error("testScheduled must be a boolean");
   let lastError;
   let reserveAttempts = 0;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const reserved = await reserveChromiumSafePort();
     reserveAttempts += reserved.attempts;
     const port = reserved.port;
-    const handle = await spawnOnce(paths, port);
+    const handle = await spawnOnce(paths, port, { testScheduled });
     const origin = `http://127.0.0.1:${port}`;
     let ready = false;
     let earlyExit = false;

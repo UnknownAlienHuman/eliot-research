@@ -109,7 +109,7 @@ function render(health: SystemHealth | null): void {
           <section class="tool-card tool-card--import"><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
           <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-          <section class="tool-card tool-card--research" id="research-card"><div id="exhaustive-workflow"></div><div class="tool-divider"></div><div id="retrieval"></div></section>
+          <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></section>
         </div>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
@@ -172,7 +172,7 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); };
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); libraryPanel?.clearPrivate(); };
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", () => {
@@ -211,13 +211,15 @@ function render(health: SystemHealth | null): void {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
+  const libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
+    if (!id) { retrieval?.clearPrivate(); return; }
+    orientation?.selectSource(id);
+    retrieval?.selectSource(id, context);
+    exhaustive?.selectSource(id);
+  }) : undefined;
   const cleanups = [orientation, retrieval, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
-    library ? mountLibraryPanel(library, (id) => {
-      orientation?.selectSource(id);
-      retrieval?.selectSource(id);
-      exhaustive?.selectSource(id);
-    }) : undefined];
+    libraryPanel];
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
 }
 

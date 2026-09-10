@@ -1,13 +1,47 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { reset } from "cloudflare:test";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Q1Namespace, Q1Runtime } from "./retrieval-q1-fixture.js";
-import { importAndProject, prepareQ1Namespace } from "./retrieval-q1-fixture.js";
+import { importAndProject, prepareQ1Namespace, scopeFor } from "./retrieval-q1-fixture.js";
 import { handleHttp } from "../src/http.js";
 import { exhaustiveJobId } from "@eliotr/retrieval";
 
-const runtime = env as unknown as Q1Runtime;
+const environment = env as unknown as Q1Runtime;
+
+const TERMINAL_WORKFLOW_STATUSES = new Set(["complete", "errored", "terminated"]);
+const launchedWorkflowIds = new Set<string>();
+const originalWorkflow = environment.RESEARCH_WORKFLOW;
+const trackedWorkflow = {
+  create: async (options: Parameters<typeof originalWorkflow.create>[0]) => {
+    const instance = await originalWorkflow.create(options);
+    launchedWorkflowIds.add(instance.id);
+    return instance;
+  },
+  get: (id: string) => originalWorkflow.get(id),
+};
+const runtime = { ...environment, RESEARCH_WORKFLOW: trackedWorkflow } as unknown as Q1Runtime;
+
+/** Stop every real Workflow created by this file before clearing attached state. */
+async function disposeLaunchedWorkflows(): Promise<void> {
+  const ids = [...launchedWorkflowIds];
+  launchedWorkflowIds.clear();
+  for (const id of ids) {
+    const instance = await originalWorkflow.get(id);
+    const status = await instance.status();
+    if (!TERMINAL_WORKFLOW_STATUSES.has(status.status)) await instance.terminate({ rollback: false });
+  }
+}
+
+afterEach(async () => {
+  const errors: unknown[] = [];
+  try { await disposeLaunchedWorkflows(); } catch (error) { errors.push(error); }
+  try { await reset(); } catch (error) { errors.push(error); }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Workflow test cleanup failed");
+});
 
 async function world(owner: string): Promise<Q1Namespace> {
+  await reset();
   const value: Q1Namespace = {
     db: runtime.CORE_DB,
     searchDb: runtime.SEARCH_DB,
@@ -26,6 +60,38 @@ async function world(owner: string): Promise<Q1Namespace> {
   ).bind(value.namespace, owner, `read-${value.namespace}`, decision.allowed_use_json, decision.disclosure_ceiling,
     new Date(Date.now() + 86_400_000).toISOString(), now).run();
   return value;
+}
+
+interface FrozenScopeRow {
+  readonly snapshot_id: string;
+  readonly revision: number;
+  readonly snapshot_digest: string;
+}
+
+/** Wait for the specific durable scope required by the launched Workflow. */
+async function waitForFrozenScope(owner: string, sourceRevision: string): Promise<FrozenScopeRow> {
+  let lastAttempt = 0;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    lastAttempt = attempt;
+    const scope = await runtime.CORE_DB.prepare(
+      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' AND instr(s.member_source_revision_refs_json,?2)>0 ORDER BY s.created_at DESC LIMIT 1",
+    ).bind(owner, sourceRevision).first<FrozenScopeRow>();
+    if (scope !== null) return scope;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`frozen scope was not materialized after ${lastAttempt + 1} bounded polls`);
+}
+
+/** Wait for the Q7 row before stopping the background Workflow for mutation. */
+async function waitForExhaustiveJob(jobId: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const job = await runtime.CORE_DB.prepare(
+      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(jobId).first<{ readonly present: number }>();
+    if (job !== null) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("exhaustive job was not materialized before the controlled workflow stop");
 }
 
 function access(owner: string, credential_generation = "credential-1") {
@@ -172,11 +238,7 @@ describe("owner exhaustive workflow discovery", () => {
       access(owner),
     );
     expect(seedStatus.status).toBe(200);
-    const scope = await runtime.CORE_DB.prepare(
-      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' ORDER BY s.created_at DESC LIMIT 1",
-    ).bind(owner).first<{
-      readonly snapshot_id: string; readonly revision: number; readonly snapshot_digest: string;
-    }>();
+    const scope = await waitForFrozenScope(owner, value.revision);
     expect(scope).not.toBeNull();
     if (scope === null) return;
     const expiredKey = "jobs-discovery-expired-bound";
@@ -201,7 +263,7 @@ describe("owner exhaustive workflow discovery", () => {
     expect(page.status).toBe(200);
     const document = await page.json() as { readonly data?: { readonly items?: readonly { readonly workflow_instance_id: string }[] } };
     expect(document.data?.items?.some((item) => item.workflow_instance_id === workflowId)).toBe(false);
-  });
+  }, 20_000);
 
   it("drops a cached job when its owner grant is withdrawn during Workflow status", async () => {
     const owner = "jobs-discovery-owner";
@@ -216,21 +278,24 @@ describe("owner exhaustive workflow discovery", () => {
     ).bind(workflowId).first<{ readonly job_id: string }>();
     expect(binding).not.toBeNull();
     if (binding === null) return;
-    // Force the durable binding into its legitimate queued-before-job state so
-    // the route must observe job creation and grant withdrawal after status.
-    await runtime.CORE_DB.prepare(
-      "DELETE FROM retrieval_exhaustive_job WHERE job_id=?1",
-    ).bind(binding.job_id).run();
-    const queued = await runtime.CORE_DB.prepare(
-      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
-    ).bind(binding.job_id).first<{ readonly present: number }>();
-    expect(queued).toBeNull();
-    const scope = await runtime.CORE_DB.prepare(
-      "SELECT s.snapshot_id,s.revision,s.snapshot_digest FROM scope_snapshot s JOIN scope_access_grant g ON g.snapshot_id=s.snapshot_id AND g.snapshot_revision=s.revision WHERE g.principal_ref=?1 AND g.client_class='owner_pwa' AND g.credential_generation='credential-1' AND g.state='ACTIVE' ORDER BY s.created_at DESC LIMIT 1",
-    ).bind(owner).first<{ readonly snapshot_id: string; readonly revision: number; readonly snapshot_digest: string }>();
+    const original = runtime.RESEARCH_WORKFLOW;
+    await waitForExhaustiveJob(binding.job_id);
+    const seededWorkflow = await original.get(workflowId as string);
+    const seededBeforeStop = await seededWorkflow.status();
+    if (!TERMINAL_WORKFLOW_STATUSES.has(seededBeforeStop.status)) {
+      await seededWorkflow.terminate({ rollback: false });
+    }
+    const seededStatus = await seededWorkflow.status();
+    expect(TERMINAL_WORKFLOW_STATUSES.has(seededStatus.status)).toBe(true);
+    // The Q7 row is append-only. Keep its durable state intact so the route
+    // observes the real grant-withdrawal invalidation during Workflow status.
+    const seededJob = await runtime.CORE_DB.prepare(
+      "SELECT state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(binding.job_id).first<{ readonly state: string }>();
+    expect(seededJob).not.toBeNull();
+    const scope = await waitForFrozenScope(owner, value.revision);
     expect(scope).not.toBeNull();
     if (scope === null) return;
-    const original = runtime.RESEARCH_WORKFLOW;
     let withdrawn = false;
     const interleavingWorkflow = {
       create: (options: Parameters<typeof original.create>[0]) => original.create(options),
@@ -277,5 +342,71 @@ describe("owner exhaustive workflow discovery", () => {
     expect(invalidated).not.toBeNull();
     if (invalidated === null) return;
     expect(invalidated.state).toBe("INVALIDATED");
-  });
+  }, 20_000);
+
+  it("does not disclose a binding while its durable job appears during status", async () => {
+    const owner = "jobs-discovery-queued-owner";
+    const value = await world(owner);
+    const scope = scopeFor(value.namespace, [value.revision]);
+    const now = new Date().toISOString();
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO scope_snapshot (snapshot_id,revision,resolved_scope_expression_json,participant_generations_json,member_source_revision_refs_json,source_owner_generations_json,policy_authority_ref,disclosure_closure_digest,purge_ledger_revision,snapshot_digest,created_at,expires_at,invalidated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL)",
+    ).bind(scope.snapshot_id, scope.revision, JSON.stringify(scope.resolved_scope_expression), JSON.stringify(scope.participant_generations),
+      JSON.stringify(scope.member_source_revision_refs), JSON.stringify(scope.source_owner_generations), scope.policy_authority_ref,
+      scope.disclosure_closure_digest, scope.purge_ledger_revision, scope.digest, scope.created_at, scope.expires_at).run();
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state,expires_at,created_at) VALUES (?1,?2,?3,'owner_pwa','credential-1',?4,?5,?6,?7,'ACTIVE',?8,?9)",
+    ).bind(scope.snapshot_id, scope.revision, owner, scope.policy_authority_ref, '["research"]', "private",
+      `queued-${owner}-${scope.snapshot_id}`, scope.expires_at, now).run();
+    const key = "jobs-discovery-job-appears-during-status";
+    const jobId = await exhaustiveJobId({ principal_ref: owner, client_class: "owner_pwa", credential_generation: "credential-1" }, key);
+    const workflowId = `exhaustive-workflow-${"b".repeat(64)}`;
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO retrieval_exhaustive_workflow (workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state,created_at) VALUES (?1,?2,?3,'owner_pwa','credential-1',?4,?5,'BOUND',?6)",
+    ).bind(workflowId, jobId, owner, runtime.DEPLOYMENT_GENERATION, "c".repeat(64), now).run();
+    const before = await runtime.CORE_DB.prepare(
+      "SELECT 1 AS present FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(jobId).first<{ readonly present: number }>();
+    expect(before).toBeNull();
+    let materialized = false;
+    const queuedWorkflow = {
+      create: (options: Parameters<typeof originalWorkflow.create>[0]) => originalWorkflow.create(options),
+      async get(id: string) {
+        if (id !== workflowId) return originalWorkflow.get(id);
+        return {
+          id,
+          async status() {
+            if (!materialized) {
+              materialized = true;
+              await runtime.CORE_DB.prepare(
+                "INSERT INTO retrieval_exhaustive_job (job_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,scope_snapshot_id,scope_snapshot_revision,scope_digest,plan_id,coverage_denominator_ref,denominator_shard_ids_json,state,denominator_shards,settled_shards,total_scanned_sections,total_matches,result_artifact_ref,coverage_receipt_ref,created_at,expires_at) VALUES (?1,?2,'owner_pwa','credential-1',?3,?4,?5,?6,?7,'queued-during-status-plan','queued-during-status-denominator','[\"queued-shard\"]','PENDING',1,NULL,NULL,NULL,NULL,NULL,?8,?9)",
+              ).bind(jobId, owner, key, "d".repeat(64), scope.snapshot_id, scope.revision, scope.digest, now, scope.expires_at).run();
+              await runtime.CORE_DB.prepare(
+                "UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class='owner_pwa' AND state='ACTIVE'",
+              ).bind(scope.snapshot_id, scope.revision, owner).run();
+            }
+            return { status: "running" as const };
+          },
+          async terminate() { /* no real instance was created for this seeded binding */ },
+        };
+      },
+    } as typeof originalWorkflow;
+    const response = await handleHttp(
+      new Request("https://research.example/api/v1/research/query/jobs?limit=20"),
+      { ...runtime, RESEARCH_WORKFLOW: queuedWorkflow } as unknown as Q1Runtime,
+      {} as ExecutionContext,
+      access(owner),
+    );
+    expect(response.status).toBe(200);
+    const document = await response.json() as { readonly data?: { readonly items?: readonly { readonly workflow_instance_id: string }[] } };
+    expect(document.data?.items?.some((item) => item.workflow_instance_id === workflowId)).toBe(false);
+    const invalidated = await runtime.CORE_DB.prepare(
+      "SELECT state FROM retrieval_exhaustive_job WHERE job_id=?1 LIMIT 1",
+    ).bind(jobId).first<{ readonly state: string }>();
+    expect(invalidated?.state).toBe("INVALIDATED");
+    const grant = await runtime.CORE_DB.prepare(
+      "SELECT state FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 LIMIT 1",
+    ).bind(scope.snapshot_id, scope.revision, owner).first<{ readonly state: string }>();
+    expect(grant?.state).toBe("REVOKED");
+  }, 20_000);
 });

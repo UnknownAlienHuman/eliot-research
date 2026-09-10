@@ -341,6 +341,12 @@ export function createR2StagedBundlePort(
       });
     },
 
+    async readPromotion(sessionId) {
+      assertIdentifier(sessionId, "session_id");
+      const session = await loadSession(work, sessionId);
+      return readPromotionReceipt(work, sessionId, undefined, session);
+    },
+
     async abort(sessionId, reasonCode): Promise<void> {
       assertIdentifier(sessionId, "session_id");
       assertIdentifier(reasonCode, "reasonCode");

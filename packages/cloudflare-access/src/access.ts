@@ -1,4 +1,4 @@
-import { readResponseBodyWithinBytes, utf8ByteLength } from "./runtime-limits.js";
+import { readResponseBodyWithinBytes, utf8ByteLength } from "@eliotr/platform-cloudflare";
 
 export interface AccessIdentity {
   readonly principal_ref: string;

@@ -13,6 +13,7 @@ outside the paths below.
 
 - `tests/integration/**`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
+- `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
 ## Read only
 
@@ -48,6 +49,14 @@ observed non-terminal status, server cancellation, and terminal readback. A
 fast natural completion is rejected as unsuitable for cancellation evidence;
 the scenario remains NOT EXECUTED until the real owner-e2e passes on both CI
 operating systems.
+
+The next independent completion scenario is owned here under `tests/integration/**`:
+`tests/integration/browser/exhaustive-workflow-complete.mjs`, invoked by `owner-e2e.mjs`
+after the raw admitted/projected source passes FAST_SEARCH. It must use the actual built PWA
+EXHAUSTIVE_JOB submit and owner status route, verify earned COMPLETE plus exact D1 binding,
+denominator and output references, and account for the real browser requests/responses.
+It preserves the separate cancellation scenario. Syntax or a controlled response is not its
+acceptance; the combined actual Worker/D1/R2/Workflow/browser run must pass before qualification.
 
 The response-lifecycle regression for the raw-file leg is registered as a native
 Node test in the same `test:owner-e2e` command (`tests/integration/browser/raw-file-browser.test.mjs`).

@@ -18,6 +18,7 @@ the packets it depends on.
 - `packages/platform-cloudflare/src/d1-ingest-authority.ts`
 - `packages/platform-cloudflare/src/d1-ingest-policy.ts`
 - `packages/platform-cloudflare/src/d1-ingest-commit.ts`
+- `packages/platform-cloudflare/src/d1-ingest-snapshot-view.ts`
 - `packages/platform-cloudflare/src/d1-ingest-authority.test.ts`
 - `apps/eliotr-core/src/ingest-http.ts`
 - `apps/eliotr-core/src/ingest-promotion-authorization.ts`
@@ -25,6 +26,12 @@ the packets it depends on.
 - `apps/eliotr-core/src/ingest-service.test.ts`
 - `apps/eliotr-core/src/source-admission-service.test.ts`
 - `scripts/check-ingest-admission.mjs`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-types.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-snapshot-view.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-candidate-reader.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-admission.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts`
+- `apps/eliotr-core/src/raw-normalized-admission.ts`
 
 ## Read only
 
@@ -33,10 +40,29 @@ the packets it depends on.
 - `packages/domain/src/source-admission.ts`
 - `packages/domain/src/qualification.ts`
 - `packages/platform-cloudflare/src/ingest.ts`
-- `packages/interfaces/src/owner-api.ts`
-- `apps/eliotr-core/src/http.ts`
-- `apps/eliotr-core/src/composition-root.ts`
-- `infra/d1/core/migrations/**`
+
+## Shared integration paths
+
+The raw admission continuation has a narrow integration grant for the following existing owners.
+These paths retain their original exclusive packet claims; they are not transferred to ER-37.
+
+- ER-01: `packages/contracts/src/snapshot-view.ts` and its contract barrel export.
+- ER-00: inclusion of the raw-ingest and markdown packages in the existing CI package-test step.
+- ER-13: `infra/d1/core/migrations/0030_raw_normalized_admission.sql` and the platform barrel export.
+- ER-14: the `packages/cloudflare-raw-ingest/src/index.ts` capability exports.
+- ER-16: `packages/cloudflare-markdown/src/raw-markdown-candidate-reader.ts`, the strict durable-result
+  decoder in `raw-markdown-conversion.ts`, and their package barrel exports.
+- ER-21: the additive owner DTO and routes in `packages/interfaces/src/owner-api.ts` and `routes.ts`.
+- ER-24: the two raw-admission HTTP dispatch branches in `apps/eliotr-core/src/http.ts`.
+- ER-27: `apps/eliotr-core/test/raw-normalized-admission-http.test.ts` and the existing owner browser harness.
+- ER-36: the raw-admission service wiring in `apps/eliotr-core/src/composition-root.ts`.
+
+Root integrates these changes serially. Migration 0026 and unrelated active work remain untouched.
+
+The recovery continuation also grants the existing ER-29 `ingest-service.ts` and ER-14
+`ingest.ts`/`ingest-types.ts` readback wiring. A retry after a guarded D1 rollback reuses the strict
+persisted admission decision and existing R2 promotion receipt; it does not issue a replacement
+decision or promote the same session under a new identity.
 
 ## Authority path
 
@@ -106,6 +132,15 @@ Local fixtures, mocks, typecheck and Wrangler dry-run keep this contour at `IMPL
 Promotion to `LIVE_QUALIFIED` requires deployed Access, remote D1, real R2 multipart/promotion readback,
 and Queue duplicate/retry/DLQ receipts.
 
+The raw conversion admission continuation is owner-composed at
+`POST /api/v1/ingest/raw/:capture_id/admission` with exactly
+`{idempotency_key,conversion_operation_id}`. The server loads the authenticated durable capture,
+current owner and policy, creates the immutable snapshot-view witness, reads one COMPLETE conversion
+result and its exact bounded R2 output, then invokes the existing governed normalized ingest service.
+`GET /api/v1/ingest/raw/:capture_id/admission/:admission_operation_id` is owner-bound status/readback;
+its nested `BundleIngestStatus` appears once the normalized ingest operation is allocated. COMPLETE
+conversion remains a candidate state until the normalized operation is COMMITTED, QUARANTINED or REJECTED.
+
 ## Launch 01 continuation policy fence
 
 Extract existing owner/policy reads into `d1-ingest-policy.ts`; do not create a second policy authority.
@@ -116,4 +151,6 @@ reserved snapshot inside its existing commit guard: a same-revision policy edit 
 back the whole canonical transaction. Staged/promoted bytes alone do not establish source admission.
 ER-25 may integrate explicit same-tab continuation in the existing importer; its private checkpoint is
 only an upload optimization, never an admission or policy receipt. Existing cross-layer tests remain
-`bundle-import-http.test.ts`. No new route or schema, automatic mutation retry or remote deployment.
+`bundle-import-http.test.ts`. The raw conversion admission route and migration are the explicitly
+documented continuation under the shared integration grants above; no other route, schema, automatic mutation retry or remote deployment is
+introduced.

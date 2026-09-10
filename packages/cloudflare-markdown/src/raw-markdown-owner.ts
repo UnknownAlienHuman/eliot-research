@@ -9,7 +9,7 @@ interface OwnerInput { readonly database: D1Database; readonly bucket: R2Bucket;
 /** Core composition seam. It never exposes raw object keys or provider credentials. */
 export function createRawMarkdownOwnerConverter(input: OwnerInput) {
   return async function convert(context: OwnerContext, captureId: string, request: RawMarkdownConversionRequest): Promise<RawMarkdownResult> {
-    if (context.client_class !== "owner_pwa" || input.ai === undefined) throw new Error("raw markdown conversion requires an owner session and configured AI binding");
+    if (context.client_class !== "owner_pwa") throw new Error("raw markdown conversion requires an owner session");
     const service = createRawMarkdownConversionService({
       database: input.database,
       profile_generation: input.profile_generation,

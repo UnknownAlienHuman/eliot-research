@@ -31,6 +31,15 @@ export const CANONICAL_FIXTURE_REGISTRY =
           "2f061e1653833e7d111b901174f0fe86a8863ee39b67524a5911b3bba7f13e54",
       },
       {
+        fixture_id: "library-readiness-v1",
+        protocol: "eliotr.library-readiness.v1",
+        schema_export: "LibraryReadinessSchema",
+        fixture_path: "tests/fixtures/contracts/eliotr.library-readiness.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "88967c62c196dbb7f0babd89236830eb432e33ded20b539c1f78a3e4abce94f6",
+      },
+      {
         fixture_id: "normalized-bundle-v1",
         protocol: NORMALIZED_BUNDLE_PROTOCOL,
         schema_export: "NormalizedBundleManifestSchema",
@@ -38,6 +47,15 @@ export const CANONICAL_FIXTURE_REGISTRY =
           "tests/fixtures/contracts/eliotr.normalized.v1.yaml",
         media_type: "application/yaml",
         canonical_body_sha256: NORMALIZED_BUNDLE_CANONICAL_BODY_SHA256,
+      },
+      {
+        fixture_id: "workspace-mcp-plan-input-v2",
+        protocol: "eliotr.google-sync.plan.v2",
+        schema_export: "WorkspaceMcpPlanV2InputSchema",
+        fixture_path: "tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "3946aea772f88011d0e131b731f7d9e49875adf349efcbd27f7e49d839d61716",
       },
       {
         fixture_id: "source-owner-cutover-v1",

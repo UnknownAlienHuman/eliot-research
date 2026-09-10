@@ -76,9 +76,20 @@ checkpoint. Existing owners remain unchanged. New cross-layer tests are
 `tests/bundle-import.test.ts` and `apps/eliotr-core/test/bundle-import-http.test.ts`; PWA paths remain
 under ER-25. This integration permission does not permit parallel edits to those files.
 
-The current browser profile accepts prepared normalized bundles only (64 files, 16 MiB/file, 32 MiB
-aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
+The normalized-folder browser profile accepts bounded prepared bundles (64 files, 16 MiB/file, 32 MiB
+aggregate, 256 KiB metadata). The raw-file profile additionally captures at most 16 MiB and offers
+bounded conversion (at most 8 MiB input/output), followed by explicit Library admission. The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented for normalized folders; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this checkpoint as a
 finished Library product or upload it to Cloudflare for continued development.
+
+Raw conversion candidates now have an owner-only server admission continuation. The browser posts only
+`idempotency_key` and `conversion_operation_id` to
+`/api/v1/ingest/raw/:capture_id/admission`; capture identity, current owner/policy, residency and the
+immutable snapshot-view witness are resolved server-side. The server reads the durable COMPLETE
+conversion row and exact bounded R2 output once, then uses the existing governed normalized ingest
+prepare/upload/qualify/promote/commit path. A COMPLETE conversion is still candidate-only until the
+normalized ingest status is `COMMITTED`; the matching GET returns the durable admission envelope and
+nested `BundleIngestStatus` when that operation exists. Reserved snapshot-view refs always require their
+durable witness, including replay and final commit guard evaluation.
 
 
 ## Authorized Library checkpoint
@@ -219,3 +230,17 @@ in both Ubuntu and Windows CI. The prior local `bad port` diagnostic retained no
 the migration SQL itself has no network operation. L1 acceptance requires the actual owner-e2e to
 pass in both Ubuntu and Windows CI; full Library L6/L7 and live qualification remain separate.
 Live Access/provider qualification remains `NOT_EXECUTED`.
+
+## Current active-readiness and raw projection checkpoint
+
+Active per-channel readiness now complements the recorded revision-history view. The PWA binds it
+and FAST_SEARCH to the selected source head and deployment, reads the persisted trace and shows only
+the exact verified excerpt. Project editing and the complete populated owner lifecycle remain open.
+
+The focused local scenario on `cdb95d93acf2dc8b2bd0789a8618b72287538301` passed the actual scheduled
+outbox, Queue, R2 materialization and Chromium FAST_SEARCH path. Projection bodies use native Response
+streams with a known length; actual Workers R2 rejected the prior plain stream. Outbox was `SENT`;
+job/projection were `PARTIAL` with `MANAGED_INDEX_READBACK_FAILED`, preserving honest unavailable
+local managed indexing while exact and lexical retrieval succeeded. Only the conversion-provider
+response is recorded. This focused result does not replace the complete owner suite on Ubuntu and
+Windows, the remaining Library acceptance, or deployed provider/storage qualification.
