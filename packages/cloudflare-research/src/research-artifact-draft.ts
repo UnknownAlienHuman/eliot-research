@@ -18,6 +18,7 @@ import {
   type VersionedRef,
 } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
   createArtifactDraftStore,
@@ -60,6 +61,9 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly evidence_freeze: EvidenceFreeze;
   readonly reference_manifest: AllowedReferenceManifest;
   readonly evidence_pack: ResearchEvidencePack;
+  /** Existing current-scope authority and resolver; both perform real D1/R2 readback. */
+  readonly navigation: NavigationReadAuthority;
+  readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly synthesis_readback: CommittedResearchSynthesisOutputReadback;
   readonly section: ArtifactSectionRevision;
   readonly section_residency: ObjectResidencyKey;
@@ -137,6 +141,15 @@ function requiredObject(objects: readonly ArtifactDraftReferencedObjectInput[], 
   return matches[0] as ArtifactDraftReferencedObjectInput;
 }
 
+function sameEvidence(left: ResearchEvidencePack["resolved_evidence"][number], right: ResearchEvidencePack["resolved_evidence"][number]): boolean {
+  return canonicalEvidenceJson({ handle: left.handle, exact_excerpt: left.exact_excerpt, neighboring_text_ref: left.neighboring_text_ref,
+    source_title: left.source_title, source_revision_content_sha256: left.source_revision_content_sha256,
+    scope_snapshot_digest: left.scope_snapshot_digest, instruction_taint: left.instruction_taint, allowed_effects: left.allowed_effects }) ===
+    canonicalEvidenceJson({ handle: right.handle, exact_excerpt: right.exact_excerpt, neighboring_text_ref: right.neighboring_text_ref,
+      source_title: right.source_title, source_revision_content_sha256: right.source_revision_content_sha256,
+      scope_snapshot_digest: right.scope_snapshot_digest, instruction_taint: right.instruction_taint, allowed_effects: right.allowed_effects });
+}
+
 /** Converts one committed SYNTHESIZE output into one DRAFT section. */
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
   const readback = input.synthesis_readback;
@@ -166,8 +179,9 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   const now = input.now?.() ?? Date.now();
   if (!Number.isSafeInteger(now)) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "materialization clock is invalid");
   const scope = input.spec.scope_snapshot_ref;
+  const navigationScope = { id: input.navigation.scope.snapshot_id, revision: input.navigation.scope.revision };
   if (!sameRef(scope, input.evidence_freeze.scope_snapshot_ref) || !sameRef(scope, input.reference_manifest.scope_snapshot_ref) || !sameRef(scope, input.evidence_pack.scope_snapshot_ref) ||
-      readback.workflow_receipt.investigation_ref.id !== readback.investigation_ref.id || readback.model_attempt.authority.principal_ref !== input.intent.principal_ref ||
+      !sameRef(scope, navigationScope) || readback.workflow_receipt.investigation_ref.id !== readback.investigation_ref.id || readback.model_attempt.authority.principal_ref !== input.intent.principal_ref ||
       !sameRef(readback.model_attempt.authority.scope_snapshot_ref, scope) || readback.model_attempt.output?.output_object_ref !== readback.output.output_object_ref ||
       readback.model_attempt.output?.output_sha256 !== readback.output.output_sha256) {
     fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "SYNTHESIZE lineage is not bound to the selected authority");
@@ -183,6 +197,26 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     citedKeys.add(key);
   }
   parseEvidencePack(input.evidence_pack, scope, candidate.cited_handle_refs);
+  if (input.navigation.access.principal_ref !== input.intent.principal_ref || input.navigation.access.client_class !== "owner_pwa") {
+    fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "draft authority is not owner-bound");
+  }
+  let initialGrant;
+  try { initialGrant = await input.navigation.current(input.navigation.scope); }
+  catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "current scope authority is unavailable"); }
+  if (!initialGrant.allowed_use.includes("research")) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "current scope does not permit research");
+  for (const ref of candidate.cited_handle_refs) {
+    const expected = input.evidence_pack.resolved_evidence.find((item) => sameRef(item.handle.handle_ref, ref));
+    if (expected === undefined) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "cited evidence readback is missing");
+    let actual;
+    try {
+      actual = await input.evidence_resolver.resolveHandle({ handle_ref: ref, expected_scope_snapshot_ref: scope, access: input.navigation.access });
+    } catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "cited evidence is no longer currently resolvable"); }
+    if (!sameEvidence(expected, actual)) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "cited evidence differs from current authoritative readback");
+  }
+  let finalGrant;
+  try { finalGrant = await input.navigation.current(input.navigation.scope); }
+  catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "current scope authority changed during evidence readback"); }
+  if (canonicalEvidenceJson(initialGrant) !== canonicalEvidenceJson(finalGrant)) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "scope authority changed during evidence readback");
   const sectionBytes = new TextEncoder().encode(candidate.section_text);
   if (await evidenceSha256Bytes(sectionBytes) !== input.section.body_sha256) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "section text differs from the server-selected section revision");
   for (const evidence of input.evidence_pack.resolved_evidence) {
