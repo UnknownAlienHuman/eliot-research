@@ -75,6 +75,14 @@ validation to the existing binding producer. Missing configuration remains unava
 model or route is selected. Its eight focused binding cases passed at `c7e90d5`. App-owned Env and
 production composition remain to be wired.
 
+Private REPORT materialization has a separate admission contract. The server must supply an
+installed versioned `owner_pwa` REPORT policy whose allowed use is exactly `research`, whose
+disclosure ceiling does not exceed the current scope grant, and whose configured principal,
+policy authority and expiry match the current run. Admission re-reads the current run, W1 head,
+scope grant, policy/deployment generations and every frozen source revision before writing an
+immutable REPORT decision plus its own intent/outbox rows. A grant or workflow receipt is lineage
+only and cannot serve as `policy_decision_ref`; absent or stale REPORT policy fails closed.
+
 `createResearchArtifactMetadataProducer` derives deterministic artifact/spec/section identities and
 referenced-object bytes from the committed materialization context. It snapshots the server-owned
 report policy and explicit REPORT intent, binds the canonical exploratory output contract and
