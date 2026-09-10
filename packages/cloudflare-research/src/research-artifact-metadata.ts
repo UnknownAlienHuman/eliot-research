@@ -76,6 +76,22 @@ function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
 }
 
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  }
+  return value;
+}
+
+function immutableSnapshot<T>(value: T, label: string): T {
+  try {
+    return deepFreeze(JSON.parse(canonicalEvidenceJson(value)) as T);
+  } catch {
+    fail("RESEARCH_ARTIFACT_METADATA_INPUT_INVALID", `${label} is invalid`);
+  }
+}
+
 function residency(value: ObjectResidencyTemplate, label: string): ObjectResidencyTemplate {
   try { return ObjectResidencyKeySchema.omit({ content_digest: true }).parse(value); }
   catch { fail("RESEARCH_ARTIFACT_METADATA_INPUT_INVALID", `${label} is invalid`); }
@@ -106,8 +122,9 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
       (input.expected_draft_head_revision !== null && input.expected_draft_head_revision < 1)) {
     fail("RESEARCH_ARTIFACT_METADATA_INPUT_INVALID", "report operation authority is invalid");
   }
-  const intent = Object.freeze({ ...input.intent });
-  const policy = Object.freeze({ ...input.policy });
+  const intent = immutableSnapshot(input.intent, "server operation intent");
+  const policy = immutableSnapshot(input.policy, "report policy");
+  const expectedDraftHeadRevision = input.expected_draft_head_revision;
   return async ({ request, principal, context }) => {
     if (request.stage !== "MATERIALIZE" || principal.principal_ref !== intent.principal_ref ||
         intent.idempotency_key !== request.idempotency_key || context.operation_id !== request.operation_id ||
@@ -156,7 +173,7 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
       residency: objectResidency(policy.section_residency, ledgerDigest),
     };
     return {
-      intent, expected_draft_head_revision: input.expected_draft_head_revision, artifact_ref: artifactRef, spec, section,
+      intent, expected_draft_head_revision: expectedDraftHeadRevision, artifact_ref: artifactRef, spec, section,
       section_residency: residency(policy.section_residency, "section residency"), referenced_objects: [manifestObject, ledgerObject],
       manifest_residency: residency(policy.manifest_residency, "manifest residency"), created_at: context.freeze.frozen_at,
     };
