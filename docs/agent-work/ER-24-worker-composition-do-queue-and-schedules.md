@@ -90,21 +90,26 @@ request
 ```text
 POST /mcp
 → hostname Cloudflare Access
-→ signed Access JWT verification
-→ exact service-token Client ID from signed common_name
-→ internal logical principal gemini-spark
+→ explicit service-token or managed-oauth profile
+→ signed Access JWT verification with the dedicated MCP audience
+→ exact signed service-token Client ID or verified human actor
+→ profile-bound internal principal
 → MCP protocol/header/body validation
 → four-tool product allow-list
 → bounded JSON-RPC response
 ```
 
-The Access service-token name is not a signed identity. Cloudflare places the exact token Client ID in
-`common_name`; ER-36 admits that configured Client ID and only then maps it to the internal
-`gemini-spark` principal.
+The Access service-token name is not a signed identity. In the `service-token` profile, the exact
+configured Client ID must match signed `common_name` before mapping to `gemini-spark`.
+The `managed-oauth` profile instead requires a verified human JWT with a dedicated MCP audience and
+derives a domain-separated actor reference. Service-token credentials, mixed configuration and an
+ordinary owner audience cannot substitute for that profile. Deployed OAuth client qualification
+remains separate from local JWT verification.
 
-ELIOT MCP is plan/readback-validation only. Google-side effects remain in the official Google Workspace
-or gcloud extensions, require ordinary user confirmation, and must be exactly read back. A Google
-receipt never promotes itself into canonical ELIOT state.
+ELIOT MCP is plan/readback-validation only. The selected Workspace client performs Google-side actions
+through its connected Drive/Workspace tools, obtains explicit user authorization for mutations, and
+reads back the exact result. Google Cloud/gcloud is an unselected optional profile. A Google receipt
+never promotes itself into canonical ELIOT state.
 
 ## Implemented delivery contour
 
@@ -170,8 +175,9 @@ the asynchronous Workflow status read. Remote deployed Workflow and live Access 
 - missing/forged Access identity is rejected before application execution;
 - stale Core/Search schema generations block protected product routes;
 - service principals cannot cross owner-only boundaries;
-- only the configured MCP Access service-token Client ID can enter MCP dispatch;
-- the internal tool context sees only the logical `gemini-spark` principal;
+- the service-token profile admits only the configured signed Client ID; managed-oauth admits only
+  the verified human actor with the dedicated audience;
+- the internal tool context receives the profile-bound logical principal; actor identity is not caller-supplied;
 - browser-originated MCP calls are rejected;
 - Queue messages without matching D1 authority are never executed;
 - duplicate/failed receipts cannot fabricate success;
