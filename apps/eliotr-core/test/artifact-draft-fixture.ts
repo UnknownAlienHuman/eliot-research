@@ -1,20 +1,26 @@
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
+import type { ScopeSnapshot } from "@eliotr/contracts";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
   type ArtifactDraftSectionInput,
   type PrepareArtifactDraftInput,
 } from "@eliotr/cloudflare-research";
+import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
+import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import type { Env } from "../src/env.js";
+import { seedSource } from "./orientation-fixture.js";
 
 export const runtime = env as unknown as Env & {
   readonly CORE_MIGRATIONS: D1Migration[];
+  readonly SEARCH_MIGRATIONS: D1Migration[];
 };
 
 export async function initializeArtifactDraftRuntime(): Promise<void> {
   await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
+  await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
 }
 
 async function digest(bytes: Uint8Array): Promise<string> {
@@ -44,6 +50,8 @@ export interface DraftInputOptions {
   readonly content_tag?: string;
   readonly residency_domain?: string;
   readonly expected_head_revision?: number | null;
+  readonly scope_snapshot_id?: string;
+  readonly principal_ref?: string;
 }
 
 export async function draftInput(tag: string, options: DraftInputOptions = {}): Promise<PrepareArtifactDraftInput> {
@@ -51,11 +59,12 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
   const artifactRevision = options.artifact_revision ?? 1;
   const contentTag = options.content_tag ?? tag;
   const domain = options.residency_domain ?? tag;
+  const scopeSnapshotId = options.scope_snapshot_id ?? `scope-snapshot-${tag}`;
   const sectionBytes = bytes(`section body ${contentTag}\n`);
   const sectionSha = await digest(sectionBytes);
   const spec = {
     spec_ref: { id: `spec-${tag}`, revision: 1 }, kind: "technical_audit" as const,
-    title: `Draft ${tag}`, scope_snapshot_ref: { id: `scope-snapshot-${tag}`, revision: 1 },
+    title: `Draft ${tag}`, scope_snapshot_ref: { id: scopeSnapshotId, revision: 1 },
     inquiry_protocol_ref: { id: `inquiry-${tag}`, revision: 1 }, audience: "owner",
     language: "en", section_contracts: [{ section_id: "summary", title: "Summary", purpose: "Fixture summary",
       required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 }],
@@ -91,7 +100,7 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
   };
   return {
     intent: { intent_ref: { id: `draft-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",
-      principal_ref: `owner-${tag}`, idempotency_key: `draft-${tag}`, payload_ref: `payload-${tag}`,
+      principal_ref: options.principal_ref ?? `owner-${tag}`, idempotency_key: `draft-${tag}`, payload_ref: `payload-${tag}`,
       policy_decision_ref: `policy-${tag}`, created_at: revision.created_at },
     expected_draft_head_revision: options.expected_head_revision ?? null,
     spec, revision, sections: [section], referenced_objects: references,
@@ -101,6 +110,68 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
 
 export function createArtifactDraftRuntime(database: D1Database = runtime.CORE_DB, bucket: R2Bucket = runtime.WORK_BUCKET) {
   return createArtifactDraftStore(database, bucket);
+}
+
+export interface ArtifactDraftReadFixture {
+  readonly input: PrepareArtifactDraftInput;
+  readonly scope: ScopeSnapshot;
+  readonly access: EvidenceAccessContext;
+  readonly requireCurrent: (scope: ScopeSnapshot) => Promise<ScopeSnapshot>;
+  readonly now: () => number;
+}
+
+export async function readableArtifactDraft(tag: string): Promise<ArtifactDraftReadFixture> {
+  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const access = {
+    principal_ref: `owner-${tag}`,
+    client_class: "owner_pwa" as const,
+    credential_generation: `credential-${tag}`,
+  };
+  const scopeAuthority = {
+    resolveAtom: async () => ({ atom_generation_ref: `atom-generation-${tag}`, members: [] }),
+    resolveAuthorityClosure: async () => ({
+      policy_authority_ref: `policy-authority-${tag}`,
+      disclosure_closure_digest: "d".repeat(64),
+      purge_ledger_revision: 0,
+      client_fence_valid: true,
+      denied_source_revision_refs: [],
+    }),
+  };
+  const scopes = createD1ScopeService(runtime.CORE_DB, scopeAuthority, { now: () => now, ttl_ms: 3_600_000 });
+  const scope = await scopes.freeze({ kind: "PROJECT", project_id: `project-${tag}` }, access.credential_generation);
+  await runtime.CORE_DB.prepare(
+    "INSERT INTO scope_access_grant (snapshot_id, snapshot_revision, principal_ref, client_class, credential_generation, policy_authority_ref, allowed_use_json, disclosure_ceiling, authorization_receipt_ref, state, expires_at, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11)",
+  ).bind(scope.snapshot_id, scope.revision, access.principal_ref, access.client_class, access.credential_generation,
+    scope.policy_authority_ref, '["research"]', "private", `grant-${tag}`, scope.expires_at, scope.created_at).run();
+  return {
+    input: await draftInput(tag, { scope_snapshot_id: scope.snapshot_id }),
+    scope,
+    access,
+    requireCurrent: (requested) => scopes.requireCurrent(requested),
+    now: () => now,
+  };
+}
+
+export async function readableOwnerArtifactDraft(tag: string): Promise<ArtifactDraftReadFixture> {
+  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const access = {
+    principal_ref: "orientation-owner",
+    client_class: "owner_pwa" as const,
+    credential_generation: "credential-v1",
+  };
+  const sourceId = `artifact-reader-source-${tag}`;
+  await seedSource(sourceId);
+  const ownerAuthority = createOwnerScopeAuthority(runtime.CORE_DB, access, () => now);
+  const scopes = createD1ScopeService(runtime.CORE_DB, ownerAuthority, { now: () => now, ttl_ms: 3_600_000 });
+  const scope = await scopes.freeze({ kind: "SELECTED_SOURCES", source_ids: [sourceId] }, access.credential_generation);
+  await ownerAuthority.grant(scope);
+  return {
+    input: await draftInput(tag, { scope_snapshot_id: scope.snapshot_id, principal_ref: access.principal_ref }),
+    scope,
+    access,
+    requireCurrent: (requested) => scopes.requireCurrent(requested),
+    now: () => now,
+  };
 }
 
 export function failResidencyPut(bucket: R2Bucket, failAt: number): R2Bucket {
