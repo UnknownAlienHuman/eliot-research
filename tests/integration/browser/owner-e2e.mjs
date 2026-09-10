@@ -20,6 +20,7 @@ import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/loc
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponses } from "./raw-file-browser.mjs";
+import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -4909,6 +4910,7 @@ export async function runOwnerE2E() {
   // NOTE: the isolated state directory itself is created INSIDE the try so an
   // early failure cannot leak an unmarked directory outside the cleanup below.
   const runId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 0xffffffff).toString(16)}`;
+  const cancellationQuery = `owner-e2e-cancel-${runId}`;
   let directory;
   let paths;
   let worker;
@@ -5936,6 +5938,7 @@ export async function runOwnerE2E() {
     assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
+    await installLocalCancellationSeam(paths, { query: cancellationQuery });
     worker = await startLocalWorker(paths);
     assert.ok(isChromiumSafePort(worker.port),
       `restart Worker port must be Chromium-safe, got ${worker.port}`);
@@ -6016,7 +6019,7 @@ export async function runOwnerE2E() {
     // a naturally completed fast job fails closed instead of becoming a false
     // cancellation proof.
     exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
-      page: playwright.page, browserJson, ledger, query: "Pinned",
+      page: playwright.page, browserJson, ledger, query: cancellationQuery,
       beforeReload: async () => {
         playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
         playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",

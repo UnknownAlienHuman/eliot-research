@@ -235,7 +235,7 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   return { quote, authority, request_json: "", request_sha256: full };
 }
 
-async function validatedRequest(input: ModelAttemptReservationInput): Promise<{ quote: ModelCostQuote; authority: ModelAttemptAuthority; request_json: string; request_sha256: string }> {
+export async function validatedRequest(input: ModelAttemptReservationInput): Promise<{ quote: ModelCostQuote; authority: ModelAttemptAuthority; request_json: string; request_sha256: string }> {
   const base = validateInput(input);
   const request_sha256 = await digest(base.request_sha256);
   const request_json = boundedJson(compactRequest(input, request_sha256), "model attempt request");

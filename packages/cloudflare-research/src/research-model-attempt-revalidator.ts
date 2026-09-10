@@ -1,5 +1,6 @@
 import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelAttemptPreparationContext } from "./model-attempt-handler.js";
+import { validatedRequest } from "./model-attempt-store.js";
 import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-attempt-types.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
@@ -148,7 +149,7 @@ function integer(value: unknown, label: string): number {
 }
 
 function timestamp(value: unknown, label: string): string {
-  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) stale(`${label} is invalid`);
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(Date.parse(value)).toISOString() !== value) stale(`${label} is invalid`);
   return value;
 }
 
@@ -163,6 +164,13 @@ function canonicalStoredJson(value: unknown, label: string): string {
 function readObject(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) stale(`${label} is not an object`);
   return value as Record<string, unknown>;
+}
+
+function versionedRef(value: unknown, label: string): { readonly id: string; readonly revision: number } {
+  const record = readObject(value, label);
+  const revision = integer(record.revision, `${label}.revision`);
+  if (revision < 1) stale(`${label}.revision is invalid`);
+  return Object.freeze({ id: text(record.id, `${label}.id`), revision });
 }
 
 function requireEqual(actual: unknown, expected: unknown, label: string): void {
@@ -183,7 +191,7 @@ async function readWorkflow(
   prepared: ModelAttemptReservationInput,
 ): Promise<WorkflowRow> {
   const row = await database.prepare(
-    "SELECT r.operation_id, r.state AS workflow_state, r.principal_ref, r.credential_generation, r.deployment_generation, r.policy_generation, r.policy_authority_ref, r.authorization_receipt_ref, r.scope_snapshot_id, r.scope_snapshot_revision, r.purge_revision, r.current_revision, r.ledger_revision, r.next_stage_index, a.attempt_ref, a.request_sha256 AS stage_request_sha256, a.budget_receipt_ref, a.budget_expires_at_ms, a.state AS workflow_attempt_state, s.expires_at AS scope_expires_at, s.invalidated_at AS scope_invalidated_at, g.client_class AS grant_client_class, g.credential_generation AS grant_credential_generation, g.policy_authority_ref AS grant_policy_authority_ref, g.authorization_receipt_ref AS grant_authorization_receipt_ref, g.state AS grant_state, g.expires_at AS grant_expires_at, (SELECT p.state FROM investigation_current_policy p WHERE p.policy_generation = r.policy_generation AND p.policy_authority_ref = r.policy_authority_ref LIMIT 1) AS current_policy_state, (SELECT d.state FROM investigation_current_deployment d WHERE d.deployment_generation = r.deployment_generation LIMIT 1) AS current_deployment_state FROM research_workflow_current r JOIN research_workflow_attempt a ON a.operation_id = r.operation_id AND a.attempt_ref = ?2 AND a.request_sha256 = ?3 JOIN scope_snapshot s ON s.snapshot_id = r.scope_snapshot_id AND s.revision = r.scope_snapshot_revision JOIN scope_access_grant g ON g.snapshot_id = r.scope_snapshot_id AND g.snapshot_revision = r.scope_snapshot_revision AND g.principal_ref = r.principal_ref WHERE r.operation_id = ?1 AND r.state = 'ACTIVE' AND a.state = 'STARTED' AND g.client_class = ?4 AND g.credential_generation = r.credential_generation AND g.policy_authority_ref = r.policy_authority_ref AND g.authorization_receipt_ref = r.authorization_receipt_ref AND g.state = 'ACTIVE' LIMIT 1",
+    "SELECT r.operation_id, r.state AS workflow_state, r.principal_ref, r.credential_generation, r.deployment_generation, r.policy_generation, r.policy_authority_ref, r.authorization_receipt_ref, r.scope_snapshot_id, r.scope_snapshot_revision, r.purge_revision, r.current_revision, r.ledger_revision, r.next_stage_index, a.attempt_ref, a.request_sha256 AS stage_request_sha256, a.budget_receipt_ref, a.budget_expires_at_ms, a.state AS workflow_attempt_state, s.expires_at AS scope_expires_at, s.invalidated_at AS scope_invalidated_at, g.client_class AS grant_client_class, g.credential_generation AS grant_credential_generation, g.policy_authority_ref AS grant_policy_authority_ref, g.authorization_receipt_ref AS grant_authorization_receipt_ref, g.state AS grant_state, g.expires_at AS grant_expires_at, (SELECT p.state FROM investigation_current_policy p WHERE p.policy_generation = r.policy_generation AND p.policy_authority_ref = r.policy_authority_ref LIMIT 1) AS current_policy_state, (SELECT d.state FROM investigation_current_deployment d WHERE d.deployment_generation = r.deployment_generation LIMIT 1) AS current_deployment_state FROM research_workflow_current r JOIN research_workflow_attempt a ON a.operation_id = r.operation_id AND a.attempt_ref = ?2 AND a.request_sha256 = ?3 JOIN scope_snapshot s ON s.snapshot_id = r.scope_snapshot_id AND s.revision = r.scope_snapshot_revision JOIN scope_access_grant g ON g.snapshot_id = r.scope_snapshot_id AND g.snapshot_revision = r.scope_snapshot_revision AND g.principal_ref = r.principal_ref WHERE r.operation_id = ?1 AND r.state = 'ACTIVE' AND a.state = 'STARTED' AND g.client_class = ?4 AND g.credential_generation = r.credential_generation AND g.policy_authority_ref = r.policy_authority_ref AND g.authorization_receipt_ref = r.authorization_receipt_ref AND g.state = 'ACTIVE' AND json_type(g.allowed_use_json) = 'array' AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) u WHERE u.type = 'text' AND u.value = 'research') LIMIT 1",
   ).bind(
     input.request.operation_id,
     input.attempt_ref,
@@ -232,14 +240,14 @@ function verifyWorkflow(row: WorkflowRow, input: ModelAttemptPreparationContext,
   requireEqual(row.scope_invalidated_at, null, "scope invalidation");
   const scopeExpires = timestamp(row.scope_expires_at, "scope expiry");
   const grantExpires = timestamp(row.grant_expires_at, "grant expiry");
-  requireNotExpired(scopeExpires, nowMs, "scope");
-  requireNotExpired(grantExpires, nowMs, "grant");
+  requireAuthorityNotExpired(scopeExpires, nowMs, "scope");
+  requireAuthorityNotExpired(grantExpires, nowMs, "grant");
   const budgetExpires = integer(row.budget_expires_at_ms, "workflow budget expiry");
   if (budgetExpires <= nowMs) budget("workflow budget has expired");
   return text(row.authorization_receipt_ref, "workflow authorization receipt");
 }
 
-function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput, nowMs: number): void {
+async function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput, nowMs: number): Promise<void> {
   requireEqual(row.model_state, "STARTED", "model attempt state");
   requireEqual(row.operation_attempt_state, "STARTED", "operation attempt state");
   requireEqual(row.reservation_state, "RESERVED", "model reservation state");
@@ -270,12 +278,23 @@ function verifyModel(row: ModelRow, prepared: ModelAttemptReservationInput, nowM
   requireEqual(row.reservation_quote_ref, prepared.quote.quote_ref, "reservation quote");
   requireEqual(row.reservation_stage_attempt_ref, prepared.stage_attempt_ref, "reservation stage attempt");
   requireEqual(row.reservation_stage_request_sha256, prepared.stage_request_sha256, "reservation stage request");
-  if (canonicalStoredJson(row.reservation_quote_json, "stored model quote") !== canonicalJson(prepared.quote) ||
-      canonicalStoredJson(row.reservation_authority_json, "stored model authority") !== canonicalJson(prepared.authority)) {
+  let encoded: Awaited<ReturnType<typeof validatedRequest>>;
+  try { encoded = await validatedRequest(prepared); }
+  catch (cause) {
+    if (cause instanceof ModelAttemptError) stale("prepared model request failed strict revalidation", cause);
+    throw cause;
+  }
+  if (row.model_request_sha256 !== encoded.request_sha256 ||
+      canonicalStoredJson(row.model_request_json, "stored model attempt request") !== encoded.request_json ||
+      row.reservation_request_sha256 !== encoded.request_sha256 ||
+      canonicalStoredJson(row.reservation_request_json, "stored model reservation request") !== encoded.request_json ||
+      canonicalStoredJson(row.reservation_quote_json, "stored model quote") !== canonicalJson(prepared.quote) ||
+      canonicalStoredJson(row.reservation_authority_json, "stored model authority") !== canonicalJson(prepared.authority) ||
+      canonicalStoredJson(row.model_authority_json, "stored model attempt authority") !== canonicalJson(prepared.authority)) {
     stale("stored model reservation authority changed");
   }
-  const request = readObject(JSON.parse(canonicalStoredJson(row.reservation_request_json, "stored model request")), "stored model request");
-  requireEqual(request.request_sha256, row.model_request_sha256, "stored request digest");
+  const request = readObject(JSON.parse(encoded.request_json), "stored model request");
+  requireEqual(request.request_sha256, encoded.request_sha256, "stored request digest");
   requireEqual(request.principal_ref, prepared.authority.principal_ref, "stored request principal");
   requireEqual(request.idempotency_key, prepared.idempotency_key, "stored request idempotency");
   requireEqual(request.stage_attempt_ref, prepared.stage_attempt_ref, "stored request stage attempt");
@@ -298,6 +317,8 @@ function verifySpendAuthorization(
   prepared: ModelAttemptReservationInput,
   nowMs: number,
 ): ModelRouteDeployment {
+  if (authorization === null || typeof authorization !== "object" || Array.isArray(authorization)) stale("trusted spend authorization is malformed");
+  const authorizationScope = versionedRef(authorization.scope_snapshot_ref, "spend authorization scope");
   requireEqual(authorization.operation_id, request.operation_id, "spend authorization operation");
   requireEqual(authorization.principal_ref, request.principal_ref, "spend authorization principal");
   requireEqual(authorization.stage_attempt_ref, request.stage_attempt_ref, "spend authorization stage");
@@ -305,8 +326,8 @@ function verifySpendAuthorization(
   requireEqual(authorization.reservation_id, request.reservation_id, "spend authorization reservation");
   requireEqual(authorization.quote_ref, request.quote_ref, "spend authorization quote");
   requireEqual(authorization.route_ref, request.route_ref, "spend authorization route");
-  requireEqual(authorization.scope_snapshot_ref.id, request.scope_snapshot_ref.id, "spend authorization scope");
-  requireEqual(authorization.scope_snapshot_ref.revision, request.scope_snapshot_ref.revision, "spend authorization scope revision");
+  requireEqual(authorizationScope.id, request.scope_snapshot_ref.id, "spend authorization scope");
+  requireEqual(authorizationScope.revision, request.scope_snapshot_ref.revision, "spend authorization scope revision");
   requireEqual(authorization.workflow_authorization_receipt_ref, request.workflow_authorization_receipt_ref, "spend authorization workflow receipt");
   requireEqual(authorization.policy_generation, prepared.authority.policy_generation, "spend authorization policy generation");
   requireEqual(authorization.currentness_digest, prepared.authority.currentness_digest, "verified currentness digest");
@@ -314,8 +335,12 @@ function verifySpendAuthorization(
   sha(authorization.decision_digest, "spend authorization decision digest");
   sha(authorization.currentness_digest, "spend authorization currentness digest");
   requireAuthorityNotExpired(timestamp(authorization.expires_at, "spend authorization expiry"), nowMs, "spend authorization");
-  const deployment = decodeModelRouteDeployment(authorization.expected_deployment);
+  let deployment: ModelRouteDeployment;
+  try { deployment = decodeModelRouteDeployment(authorization.expected_deployment); }
+  catch (cause) { stale("trusted spend authorization deployment is malformed", cause); }
   requireEqual(deployment.route_ref, prepared.call.route_ref, "spend deployment route");
+  requireEqual(deployment.prompt_generation, prepared.call.prompt_generation, "spend deployment prompt generation");
+  requireEqual(deployment.schema_generation, prepared.call.schema_generation, "spend deployment schema generation");
   return deployment;
 }
 
@@ -325,10 +350,11 @@ export function createD1ResearchModelAttemptRevalidator(
   const now = input.now ?? (() => Date.now());
   return async (context, prepared): Promise<void> => {
     const nowMs = now();
+    if (!Number.isFinite(nowMs)) stale("model revalidation clock is invalid");
     const workflow = await readWorkflow(input.database, context, prepared);
     const workflowAuthorizationReceipt = verifyWorkflow(workflow, context, prepared, nowMs);
     const model = await readModel(input.database, prepared);
-    verifyModel(model, prepared, nowMs);
+    await verifyModel(model, prepared, nowMs);
     const spendRequest: SpendAuthorizationReadRequest = {
       operation_id: prepared.intent.intent_ref.id,
       principal_ref: prepared.authority.principal_ref,
@@ -345,7 +371,23 @@ export function createD1ResearchModelAttemptRevalidator(
     const expectedDeployment = verifySpendAuthorization(authorization, spendRequest, prepared, nowMs);
     const currentRaw = await input.routeAuthority.resolve(prepared.call.route_ref);
     if (currentRaw === null) stale("active model deployment is unavailable");
-    const currentDeployment = decodeModelRouteDeployment(currentRaw);
+    let currentDeployment: ModelRouteDeployment;
+    try { currentDeployment = decodeModelRouteDeployment(currentRaw); }
+    catch (cause) { stale("active model deployment is malformed", cause); }
     if (canonicalJson(currentDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during revalidation");
+    const finalNowMs = now();
+    if (!Number.isFinite(finalNowMs)) stale("model revalidation clock is invalid");
+    const finalWorkflow = await readWorkflow(input.database, context, prepared);
+    const finalReceipt = verifyWorkflow(finalWorkflow, context, prepared, finalNowMs);
+    const finalModel = await readModel(input.database, prepared);
+    await verifyModel(finalModel, prepared, finalNowMs);
+    if (finalReceipt !== spendRequest.workflow_authorization_receipt_ref) stale("workflow authorization changed during revalidation");
+    verifySpendAuthorization(authorization, { ...spendRequest, workflow_authorization_receipt_ref: finalReceipt }, prepared, finalNowMs);
+    const finalRaw = await input.routeAuthority.resolve(prepared.call.route_ref);
+    if (finalRaw === null) stale("active model deployment is unavailable after currentness readback");
+    let finalDeployment: ModelRouteDeployment;
+    try { finalDeployment = decodeModelRouteDeployment(finalRaw); }
+    catch (cause) { stale("active model deployment is malformed after currentness readback", cause); }
+    if (canonicalJson(finalDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during final revalidation");
   };
 }

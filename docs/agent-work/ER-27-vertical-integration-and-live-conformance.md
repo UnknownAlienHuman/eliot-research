@@ -28,6 +28,7 @@ outside the paths below.
 - `apps/eliotr-core/test/research-model-gateway-runtime.test.ts`
 - `apps/eliotr-core/test/research-model-stage-handler.test.ts`
 - `apps/eliotr-core/test/research-model-pricing-store.test.ts`
+- `apps/eliotr-core/test/research-model-attempt-revalidator.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
