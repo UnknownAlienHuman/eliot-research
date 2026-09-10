@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, win32 } from "node:path";
 import test from "node:test";
-import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
+import { filesystemImportSpecifier, installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
 
 test("cancellation seam is isolated and selects only the exact fixture query", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "eliotr-cancellation-seam-test-"));
@@ -24,6 +24,7 @@ test("cancellation seam is isolated and selects only the exact fixture query", a
     assert.match(source, /waitForEvent\(CANCELLATION_EVENT, \{ type: CANCELLATION_EVENT \}\)/u);
     assert.match(source, /export default production/u);
     assert.ok(!source.includes("idempotency-key"), "the seam must not add a public request selector");
+    assert.ok(!source.includes("file://"), "the seam must use a filesystem import, not a file URL");
 
     const wrongConfig = resolve(wrongDirectory, "wrangler.json");
     await writeFile(wrongConfig, `${JSON.stringify({ name: "eliotr-core-local", main: resolve(import.meta.dirname, "../../../apps/eliotr-core/src/not-index.ts") })}\n`);
@@ -36,4 +37,10 @@ test("cancellation seam is isolated and selects only the exact fixture query", a
     await rm(directory, { recursive: true, force: true });
     await rm(wrongDirectory, { recursive: true, force: true });
   }
+});
+
+test("cancellation seam keeps an absolute filesystem import across Windows volumes", () => {
+  assert.equal(filesystemImportSpecifier("C:\\state\\run", "D:\\repo\\apps\\eliotr-core\\src\\index.ts", {
+    relativePath: win32.relative, separator: "\\",
+  }), "D:/repo/apps/eliotr-core/src/index.ts");
 });

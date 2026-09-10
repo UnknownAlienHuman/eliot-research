@@ -5,6 +5,14 @@ import { relative, resolve, sep } from "node:path";
 const CANCELLATION_EVENT = "owner-e2e-cancellation-gate";
 const ENTRYPOINT_FILE = "owner-e2e-cancellation-entrypoint.mjs";
 
+export function filesystemImportSpecifier(directory, productionMain, {
+  relativePath = relative, separator = sep,
+} = {}) {
+  const candidate = relativePath(directory, productionMain).replaceAll(separator, "/");
+  if (candidate.startsWith(".") || candidate.startsWith("/") || /^[A-Za-z]:\//u.test(candidate)) return candidate;
+  return `./${candidate}`;
+}
+
 function wrapperSource(productionImport, cancellationQuery) {
   return `import production, { ResearchSession, ResearchWorkflow as ProductionResearchWorkflow } from ${JSON.stringify(productionImport)};
 
@@ -46,8 +54,9 @@ export async function installLocalCancellationSeam(paths, { query } = {}) {
   assert.equal(productionMain, expectedProductionMain,
     "cancellation seam must wrap the exact production Worker entrypoint");
   const entrypoint = resolve(directory, ENTRYPOINT_FILE);
-  const productionImport = relative(directory, productionMain).replaceAll(sep, "/");
-  assert.ok(productionImport.startsWith("."), "cancellation seam production import must remain filesystem-relative");
+  const productionImport = filesystemImportSpecifier(directory, productionMain);
+  assert.ok(productionImport.startsWith(".") || productionImport.startsWith("/") || /^[A-Za-z]:\//u.test(productionImport),
+    "cancellation seam production import must remain a filesystem path");
   await writeFile(entrypoint, wrapperSource(productionImport, query), { flag: "wx", mode: 0o600 });
   const nextConfig = { ...config, main: entrypoint };
   const temporary = `${paths.config}.cancellation.tmp`;
