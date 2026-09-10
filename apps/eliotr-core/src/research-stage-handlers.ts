@@ -45,6 +45,11 @@ export type ResearchStageHandlerFactoryMode =
     }
   | { readonly kind: "legacy-deterministic" };
 
+export type ResearchExploratoryStageCompositionInput = Pick<Extract<ResearchStageHandlerFactoryMode, { kind: "server-owned-exploratory" }>, "generation" | "navigation" | "ledger" | "retrieval">;
+export function createResearchExploratoryStageHandlers(input: ResearchExploratoryStageCompositionInput): MonotoneHandlerFactory {
+  return createResearchStageHandlerFactory({ kind: "server-owned-exploratory", ...input });
+}
+
 /**
  * Selects the real protocol/scope producer only for its explicit generation.
  * Legacy workflow records continue to use the deterministic handler, including

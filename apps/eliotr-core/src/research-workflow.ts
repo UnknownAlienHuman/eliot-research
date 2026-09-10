@@ -15,8 +15,7 @@ import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
 import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
 import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "./research-stage-handlers.js";
-import { createResearchExploratoryStageHandlers } from "./research-stage-composition.js";
+import { createResearchExploratoryStageHandlers, createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "./research-stage-handlers.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";

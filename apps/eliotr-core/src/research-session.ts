@@ -8,8 +8,7 @@ import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW
 import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
-import { createResearchExploratoryStageHandlers } from "./research-stage-composition.js";
+import { createResearchExploratoryStageHandlers, createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
