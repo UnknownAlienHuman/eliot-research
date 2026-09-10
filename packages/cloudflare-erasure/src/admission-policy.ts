@@ -2,6 +2,7 @@ import type { ErasureRequest, PurgeLocation, VersionedRef } from "@eliotr/contra
 import {
   assertErasureIdentifier,
   assertErasureInteger,
+  assertErasureSha256,
   assertErasureText,
   canonicalErasureJson,
   erasureFail,
@@ -102,6 +103,21 @@ interface RevisionRow {
   readonly owner_status: unknown;
 }
 
+interface AdmissionRow {
+  readonly erasure_id: unknown;
+  readonly erasure_revision: unknown;
+  readonly permission_ref: unknown;
+  readonly permission_revision: unknown;
+  readonly principal_ref: unknown;
+  readonly credential_generation: unknown;
+  readonly permission_sha256: unknown;
+  readonly request_json: unknown;
+  readonly request_sha256: unknown;
+  readonly request_identity_sha256: unknown;
+  readonly admitted_at: unknown;
+  readonly created_at: unknown;
+}
+
 function permissionRef(ref: VersionedRef): VersionedRef {
   return {
     id: assertErasureIdentifier(ref.id, "erasure permission ID"),
@@ -132,7 +148,7 @@ function policyDocument(input: ErasureAdmissionPolicyInput): Record<string, unkn
   };
 }
 
-function decodePolicy(row: PolicyRow): ErasureAdmissionPolicy {
+async function decodePolicy(row: PolicyRow): Promise<ErasureAdmissionPolicy> {
   const ref = permissionRef({
     id: assertErasureIdentifier(row.permission_ref, "stored erasure permission ID"),
     revision: assertErasureInteger(row.revision, "stored erasure permission revision", 1, Number.MAX_SAFE_INTEGER),
@@ -150,7 +166,8 @@ function decodePolicy(row: PolicyRow): ErasureAdmissionPolicy {
     expires_at: timestamp(String(row.expires_at), "stored erasure permission expiry"),
   };
   const expectedJson = canonicalErasureJson(policyDocument(policy));
-  if (row.policy_json !== expectedJson || typeof row.policy_sha256 !== "string") {
+  const storedSha = assertErasureSha256(row.policy_sha256, "stored erasure permission digest");
+  if (row.policy_json !== expectedJson || storedSha !== await erasureSha256Utf8(expectedJson)) {
     erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure permission bytes are not canonical");
   }
   if (row.state !== "ACTIVE" && row.state !== "REVOKED") {
@@ -166,7 +183,7 @@ function decodePolicy(row: PolicyRow): ErasureAdmissionPolicy {
     ...policy,
     state: row.state,
     policy_json: expectedJson,
-    policy_sha256: row.policy_sha256,
+    policy_sha256: storedSha,
     created_at: timestamp(String(row.created_at), "stored erasure permission creation time"),
     ...(revokedAt === undefined ? {} : { revoked_at: revokedAt }),
   };
@@ -183,6 +200,41 @@ function ensureTimeOrder(validFrom: string, expiresAt: string): void {
   if (Date.parse(expiresAt) <= Date.parse(validFrom)) {
     erasureFail("ERASURE_INPUT_INVALID", "erasure permission expiry must follow valid-from");
   }
+}
+
+function admissionIdentityDocument(
+  request: ErasureRequest,
+  actorValue: ErasureAdmissionActor,
+  permission: Pick<ErasureAdmissionPolicy, "permission_ref" | "policy_sha256">,
+): Record<string, unknown> {
+  return {
+    request: {
+      protocol: request.protocol,
+      erasure_ref: request.erasure_ref,
+      requested_by_principal_ref: actorValue.principal_ref,
+      exact_subject_refs: request.exact_subject_refs,
+      required_locations: ALL_LOCATIONS,
+      legal_basis_ref: request.legal_basis_ref,
+      deadline: request.deadline,
+    },
+    permission_ref: permission.permission_ref,
+    permission_sha256: permission.policy_sha256,
+    principal_ref: actorValue.principal_ref,
+    credential_generation: actorValue.credential_generation,
+  };
+}
+
+function finalAdmissionRequest(
+  request: ErasureRequest,
+  actorValue: ErasureAdmissionActor,
+  admittedAt: string,
+): ErasureRequest {
+  return {
+    ...request,
+    requested_by_principal_ref: actorValue.principal_ref,
+    admitted_at: admittedAt,
+    required_locations: [...ALL_LOCATIONS],
+  };
 }
 
 export interface ErasureAdmissionPolicyDependencies {
@@ -203,7 +255,70 @@ export function createErasureAdmissionPolicyStore(
       "state,policy_json,policy_sha256,created_at,revoked_at FROM erasure_admission_policy " +
       "WHERE permission_ref=?1 AND revision=?2 LIMIT 1",
     ).bind(key.id, key.revision).first<PolicyRow>();
-    return row === null ? null : decodePolicy(row);
+    return row === null ? null : await decodePolicy(row);
+  };
+  const readAdmission = async (ref: VersionedRef): Promise<{
+    readonly request: ErasureRequest;
+    readonly permission_ref: VersionedRef;
+    readonly principal_ref: string;
+    readonly credential_generation: string;
+    readonly permission_sha256: string;
+    readonly request_identity_sha256: string;
+  } | null> => {
+    const key = permissionRef(ref);
+    const row = await database.prepare(
+      "SELECT erasure_id,erasure_revision,permission_ref,permission_revision,principal_ref," +
+      "credential_generation,permission_sha256,request_json,request_sha256,request_identity_sha256," +
+      "admitted_at,created_at FROM erasure_admission_request WHERE erasure_id=?1 AND erasure_revision=?2 LIMIT 1",
+    ).bind(key.id, key.revision).first<AdmissionRow>();
+    if (row === null) return null;
+    const erasureId = assertErasureIdentifier(row.erasure_id, "stored erasure ID");
+    const erasureRevision = assertErasureInteger(row.erasure_revision, "stored erasure revision", 1, Number.MAX_SAFE_INTEGER);
+    if (erasureId !== key.id || erasureRevision !== key.revision || typeof row.request_json !== "string") {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure admission identity is malformed");
+    }
+    let decoded: unknown;
+    try { decoded = JSON.parse(row.request_json); }
+    catch (cause) { erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure admission request is malformed", false, cause); }
+    const validatedRequest = validateErasureRequest(decoded as ErasureRequest);
+    if (canonicalErasureJson(decoded) !== row.request_json ||
+        validatedRequest.erasure_ref.id !== key.id || validatedRequest.erasure_ref.revision !== key.revision ||
+        validatedRequest.required_locations.length !== ALL_LOCATIONS.length ||
+        ALL_LOCATIONS.some((location) => !validatedRequest.required_locations.includes(location))) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure admission request is not canonical");
+    }
+    const request = decoded as ErasureRequest;
+    const permission = permissionRef({
+      id: assertErasureIdentifier(row.permission_ref, "stored admission permission ID"),
+      revision: assertErasureInteger(row.permission_revision, "stored admission permission revision", 1, Number.MAX_SAFE_INTEGER),
+    });
+    const principalRef = assertErasureIdentifier(row.principal_ref, "stored admission principal");
+    const credentialGeneration = assertErasureIdentifier(row.credential_generation, "stored admission credential generation");
+    const permissionSha = assertErasureSha256(row.permission_sha256, "stored admission permission digest");
+    const requestSha = assertErasureSha256(row.request_sha256, "stored admission request digest");
+    const identitySha = assertErasureSha256(row.request_identity_sha256, "stored admission identity digest");
+    if (requestSha !== await erasureSha256Utf8(row.request_json) ||
+        identitySha !== await erasureSha256Utf8(canonicalErasureJson(admissionIdentityDocument(request, {
+          principal_ref: principalRef,
+          credential_generation: credentialGeneration,
+        }, {
+          permission_ref: permission,
+          policy_sha256: permissionSha,
+        })))) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure admission digest is invalid");
+    }
+    if (row.admitted_at !== request.admitted_at || row.created_at === null || row.created_at === undefined) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure admission time is invalid");
+    }
+    timestamp(String(row.created_at), "stored erasure admission creation time");
+    return {
+      request,
+      permission_ref: permission,
+      principal_ref: principalRef,
+      credential_generation: credentialGeneration,
+      permission_sha256: permissionSha,
+      request_identity_sha256: identitySha,
+    };
   };
   const currentOwner = async (namespace: string): Promise<{ owner_system_id: string; source_owner_generation: string } | null> => {
     const row = await database.prepare(
@@ -249,8 +364,9 @@ export function createErasureAdmissionPolicyStore(
     }
     return members.map((value) => {
       const ref = assertErasureIdentifier(value, "scope source revision ref");
-      if (!ref.startsWith("source-revision:")) erasureFail("ERASURE_IDENTITY_CONFLICT", "scope member is not a source revision");
-      return ref.slice("source-revision:".length);
+      return ref.startsWith("source-revision:")
+        ? assertErasureIdentifier(ref.slice("source-revision:".length), "scope source revision ref")
+        : ref;
     });
   };
   const verifyRevisions = async (
@@ -308,7 +424,7 @@ export function createErasureAdmissionPolicyStore(
       } catch (cause) {
         const existing = await readRow(ref);
         if (existing === null) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure permission write acknowledgement was lost", true, cause);
-        if (existing.policy_sha256 !== policySha || existing.policy_json !== policyJson) {
+        if (existing.policy_sha256 !== policySha || existing.policy_json !== policyJson || existing.state !== "ACTIVE") {
           admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure permission identity is already bound to different policy");
         }
         return existing;
@@ -336,25 +452,93 @@ export function createErasureAdmissionPolicyStore(
     async admit(rawActor, ref, rawRequest) {
       const subjectActor = actor(rawActor);
       const request = validateErasureRequest(rawRequest);
-      const policy = await readRow(ref);
-      if (policy === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is not installed");
-      const now = clock();
-      if (policy.state !== "ACTIVE" || Date.parse(policy.valid_from) > now || Date.parse(policy.expires_at) <= now) {
-        admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is not currently valid");
-      }
-      if (policy.principal_ref !== subjectActor.principal_ref || policy.credential_generation !== subjectActor.credential_generation ||
-          request.requested_by_principal_ref !== subjectActor.principal_ref || request.legal_basis_ref !== policy.legal_basis_ref) {
-        admissionFail("ERASURE_PERMISSION_DENIED", "erasure request is not bound to the installed permission");
-      }
-      const revisionRefs = (await Promise.all(request.exact_subject_refs.map(revisionsForSubject))).flat();
-      await verifyRevisions(revisionRefs, policy);
-      if (Date.parse(request.deadline) <= now) erasureFail("ERASURE_INPUT_INVALID", "erasure deadline has expired");
-      return {
-        ...request,
-        requested_by_principal_ref: subjectActor.principal_ref,
-        admitted_at: isoFromMs(now),
-        required_locations: [...ALL_LOCATIONS],
+      const permission = permissionRef(ref);
+      const assertAdmissible = (candidate: ErasureAdmissionPolicy, now: number): void => {
+        if (candidate.state !== "ACTIVE" || Date.parse(candidate.valid_from) > now || Date.parse(candidate.expires_at) <= now) {
+          admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is not currently valid");
+        }
+        if (candidate.principal_ref !== subjectActor.principal_ref || candidate.credential_generation !== subjectActor.credential_generation ||
+            request.requested_by_principal_ref !== subjectActor.principal_ref || request.legal_basis_ref !== candidate.legal_basis_ref) {
+          admissionFail("ERASURE_PERMISSION_DENIED", "erasure request is not bound to the installed permission");
+        }
+        if (Date.parse(request.deadline) <= now) erasureFail("ERASURE_INPUT_INVALID", "erasure deadline has expired");
       };
+      const policy = await readRow(permission);
+      if (policy === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is not installed");
+      assertAdmissible(policy, clock());
+      const revisionRefs: string[] = [];
+      const revisionSet = new Set<string>();
+      for (const subject of request.exact_subject_refs) {
+        const subjectRefs = await revisionsForSubject(subject);
+        for (const revision of subjectRefs) {
+          if (revisionSet.has(revision)) continue;
+          if (revisionSet.size >= 10000) erasureFail("ERASURE_INPUT_INVALID", "erasure subject closure is outside its bound");
+          revisionSet.add(revision);
+          revisionRefs.push(revision);
+        }
+      }
+      await verifyRevisions(revisionRefs, policy);
+      const confirmedPolicy = await readRow(permission);
+      if (confirmedPolicy === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is no longer installed");
+      assertAdmissible(confirmedPolicy, clock());
+      const owner = await currentOwner(confirmedPolicy.source_namespace_id);
+      if (owner === null || owner.owner_system_id !== confirmedPolicy.owner_system_id ||
+          owner.source_owner_generation !== confirmedPolicy.source_owner_generation) {
+        admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission owner is no longer current");
+      }
+      await verifyRevisions(revisionRefs, confirmedPolicy);
+      const identitySha = await erasureSha256Utf8(canonicalErasureJson(admissionIdentityDocument(request, subjectActor, confirmedPolicy)));
+      const existing = await readAdmission(request.erasure_ref);
+      if (existing !== null) {
+        if (existing.permission_ref.id !== confirmedPolicy.permission_ref.id || existing.permission_ref.revision !== confirmedPolicy.permission_ref.revision ||
+            existing.principal_ref !== subjectActor.principal_ref || existing.credential_generation !== subjectActor.credential_generation ||
+            existing.permission_sha256 !== confirmedPolicy.policy_sha256 || existing.request_identity_sha256 !== identitySha) {
+          admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
+        }
+        return existing.request;
+      }
+      const admittedAt = isoFromMs(clock());
+      if (Date.parse(request.deadline) <= Date.parse(admittedAt)) erasureFail("ERASURE_INPUT_INVALID", "erasure deadline has expired");
+      const admitted = finalAdmissionRequest(request, subjectActor, admittedAt);
+      const requestJson = canonicalErasureJson(admitted);
+      const requestSha = await erasureSha256Utf8(requestJson);
+      const createdAt = isoFromMs(clock());
+      try {
+        await database.prepare(
+          "INSERT INTO erasure_admission_request(erasure_id,erasure_revision,permission_ref,permission_revision," +
+          "principal_ref,credential_generation,permission_sha256,request_json,request_sha256,request_identity_sha256," +
+          "admitted_at,created_at) SELECT ?1,?2,p.permission_ref,p.revision,p.principal_ref,p.credential_generation," +
+          "p.policy_sha256,?3,?4,?5,?6,?7 FROM erasure_admission_policy p JOIN source_namespace_ownership o " +
+          "ON o.source_namespace_id=p.source_namespace_id AND o.status='ACTIVE' " +
+          "AND o.owner_system_id=p.owner_system_id AND o.source_owner_generation=p.source_owner_generation " +
+          "WHERE p.permission_ref=?8 AND p.revision=?9 AND p.state='ACTIVE' AND p.valid_from<=?10 AND p.expires_at>?10 " +
+          "AND p.principal_ref=?11 AND p.credential_generation=?12 AND p.policy_sha256=?13",
+        ).bind(admitted.erasure_ref.id, admitted.erasure_ref.revision, requestJson, requestSha, identitySha,
+          admitted.admitted_at, createdAt, confirmedPolicy.permission_ref.id, confirmedPolicy.permission_ref.revision,
+          admittedAt, subjectActor.principal_ref, subjectActor.credential_generation, confirmedPolicy.policy_sha256).run();
+      } catch (cause) {
+        const raced = await readAdmission(admitted.erasure_ref);
+        if (raced === null) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure admission write acknowledgement was lost", true, cause);
+        if (raced.permission_ref.id !== confirmedPolicy.permission_ref.id || raced.permission_ref.revision !== confirmedPolicy.permission_ref.revision ||
+            raced.principal_ref !== subjectActor.principal_ref || raced.credential_generation !== subjectActor.credential_generation ||
+            raced.permission_sha256 !== confirmedPolicy.policy_sha256 || raced.request_identity_sha256 !== identitySha) {
+          admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
+        }
+        return raced.request;
+      }
+      const stored = await readAdmission(admitted.erasure_ref);
+      if (stored === null) {
+        const latest = await readRow(permission);
+        if (latest === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission disappeared before admission");
+        assertAdmissible(latest, clock());
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure admission readback is incomplete", true);
+      }
+      if (stored.permission_ref.id !== confirmedPolicy.permission_ref.id || stored.permission_ref.revision !== confirmedPolicy.permission_ref.revision ||
+          stored.principal_ref !== subjectActor.principal_ref || stored.credential_generation !== subjectActor.credential_generation ||
+          stored.permission_sha256 !== confirmedPolicy.policy_sha256 || stored.request_identity_sha256 !== identitySha) {
+        admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
+      }
+      return stored.request;
     },
   };
 }
