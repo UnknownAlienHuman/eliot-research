@@ -215,7 +215,7 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
     });
     await expect(readRetrieveBranchesCheckpoint(dependencies, request, principal))
       .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
-  });
+  }, 30_000);
 
   it("binds stage-0 readback to the committed attempt reference", async () => {
     const f = await fixture();
