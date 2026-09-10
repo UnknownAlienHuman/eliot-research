@@ -7,6 +7,8 @@ import {
   type ModelCostQuote,
   type ModelOutputBinding,
 } from "../../../packages/cloudflare-research/src/model-attempt-store.js";
+import { createResearchModelOutputStore } from "../../../packages/cloudflare-research/src/research-model-output-store.js";
+import { createModelOutputPreparationHook } from "../../../packages/cloudflare-research/src/research-model-output-preparation.js";
 import type { GovernedModelAttemptDependencies, ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservationInput, ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import { digest, type StageRequest, type WorkflowPrincipal } from "../../../packages/cloudflare-research/src/types.js";
@@ -230,13 +232,22 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
     "SELECT attempt_ref, budget_receipt_ref FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = 0 LIMIT 1",
   ).bind(request.operation_id).first<{ readonly attempt_ref: string; readonly budget_receipt_ref: string }>();
   const store = createModelAttemptRuntime(database, () => nowValue);
+  const outputStorage = createResearchModelOutputStore({ database, work_bucket: bucket });
   let routeCalls = 0;
   const outputBytes = new TextEncoder().encode(`controlled W3 output ${tag} — результат🙂`);
   const route = {
     execute: async (call: ModelCallInput): Promise<ModelCallReceipt> => {
       routeCalls += 1;
       const outputSha256 = await digest(outputBytes);
-      await bucket.put(call.output_object_ref, outputBytes, { sha256: outputSha256 });
+      const body = new Response(outputBytes).body;
+      if (body === null) throw new Error("controlled model output body is unavailable");
+      const persisted = await outputStorage.outputs.putImmutable(call.output_object_ref, body, outputSha256) as {
+        readonly object_ref: string;
+        readonly readback_sha256: string;
+      };
+      if (persisted.object_ref !== call.output_object_ref || persisted.readback_sha256 !== outputSha256) {
+        throw new Error("controlled model output receipt is not exact");
+      }
       return {
         receipt_ref: `${tag}-route-receipt-${routeCalls}`,
         route_fingerprint_ref: `${tag}-route-fingerprint`, output_object_ref: call.output_object_ref,
@@ -255,6 +266,7 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
   };
   const dependencies: GovernedModelAttemptDependencies = {
     operation_kind: "REPORT", attempts: store, route,
+    prepareOutputBinding: createModelOutputPreparationHook(outputStorage),
     prepare: async (context: ModelAttemptPreparationContext) => {
       const reservationId = `${context.model_operation_id}-reservation`;
       const authority: ModelAttemptAuthority = {
@@ -288,11 +300,7 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
     },
     revalidate: async () => undefined,
     now: () => Date.parse(nowValue),
-    readOutput: async (binding: Pick<ModelOutputBinding, "output_object_ref" | "output_sha256">) => {
-      const object = await bucket.get(binding.output_object_ref);
-      if (object === null) throw new Error("controlled model output is missing");
-      return new Uint8Array(await object.arrayBuffer());
-    },
+    readOutput: outputStorage.readOutput,
   };
   return { request, principal, inputBytes, stageAttemptRef, dependencies, calls: () => routeCalls, requestFor, invocation };
 }
