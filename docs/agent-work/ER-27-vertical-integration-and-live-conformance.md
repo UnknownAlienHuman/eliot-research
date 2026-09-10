@@ -31,6 +31,8 @@ outside the paths below.
 - `apps/eliotr-core/test/research-model-attempt-revalidator.test.ts`
 - `apps/eliotr-core/test/research-evidence-freeze.test.ts`
 - `apps/eliotr-core/test/research-protocol-freeze.test.ts`
+- `apps/eliotr-core/test/research-protocol-fixture.ts`
+- `apps/eliotr-core/test/research-retrieve-branches.test.ts`
 - `apps/eliotr-core/test/erasure-admission-policy.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
