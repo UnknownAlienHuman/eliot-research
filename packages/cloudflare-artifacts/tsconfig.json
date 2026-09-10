@@ -12,10 +12,6 @@
     "src/**/*.ts"
   ],
   "references": [
-    { "path": "../cloudflare-artifacts" },
-    {
-      "path": "../cloudflare-ai"
-    },
     {
       "path": "../cloudflare-evidence"
     },
@@ -23,16 +19,7 @@
       "path": "../contracts"
     },
     {
-      "path": "../domain"
-    },
-    {
       "path": "../platform-cloudflare"
-    },
-    {
-      "path": "../policy"
-    },
-    {
-      "path": "../research"
     }
   ]
 }
