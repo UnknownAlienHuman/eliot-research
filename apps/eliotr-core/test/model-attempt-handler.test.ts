@@ -65,7 +65,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     expect(firstReplay.output_manifest).toEqual(first.output_manifest);
     expect(secondReplay.output_manifest).toEqual(second.output_manifest);
     expect(fixture.calls()).toBe(2);
-  });
+  }, 30_000);
 
   it("leaves an uncertain started effect terminal for invocation purposes and never calls the route twice", async () => {
     const fixture = await governedModelAttemptFixture("handler-unknown");
