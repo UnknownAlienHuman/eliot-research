@@ -8,6 +8,7 @@ const MAX_CLAIM_TEXT_CHARS = 16 * 1024;
 const MAX_HANDLES_PER_CLAIM = 512;
 
 const SpanSchema = z.object({
+  // Offsets are JavaScript UTF-16 code-unit positions, never UTF-8 byte offsets.
   start: z.number().int().nonnegative(),
   end: z.number().int().nonnegative(),
 }).strict();
@@ -51,6 +52,17 @@ function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
 }
 
+function compareUtf16(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+}
+
+function freezeRef(value: VersionedRef): VersionedRef {
+  const parsed = VersionedRefSchema.parse(value);
+  return Object.freeze({ id: parsed.id, revision: parsed.revision });
+}
+
 function parseCandidate(value: unknown): SynthesisClaimsCandidateV2 {
   const parsed = SynthesisClaimsCandidateV2Schema.safeParse(value);
   if (!parsed.success) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is invalid", parsed.error);
@@ -88,8 +100,14 @@ export interface NormalizedSynthesisClaims {
   readonly cited_handle_refs: readonly VersionedRef[];
 }
 
-async function sha256(value: unknown): Promise<string> {
+async function sha256Json(value: unknown): Promise<string> {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
+  const hash = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sha256Utf8(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
   const hash = await crypto.subtle.digest("SHA-256", bytes);
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -109,12 +127,24 @@ export async function normalizeSynthesisClaimsCandidateV2(
 ): Promise<NormalizedSynthesisClaims> {
   validateTrustedInput(input);
   const candidate = parseCandidate(input.candidate);
-  const allowed = new Set(input.allowed_handle_refs.map(refKey));
+  const trusted = Object.freeze({
+    operation_id: input.operation_id,
+    section_ref: freezeRef(input.section_ref),
+    allowed_handle_refs: Object.freeze(input.allowed_handle_refs.map(freezeRef)),
+    required_precision: input.required_precision,
+    required_source_class: input.required_source_class,
+  });
+  const allowed = new Set(trusted.allowed_handle_refs.map(refKey));
   const cited = new Map<string, VersionedRef>();
   const claims: NormalizedMaterialClaim[] = [];
 
+  const isSurrogateBoundary = (index: number): boolean => index > 0 && index < candidate.section_text.length &&
+    candidate.section_text.charCodeAt(index - 1) >= 0xd800 && candidate.section_text.charCodeAt(index - 1) <= 0xdbff &&
+    candidate.section_text.charCodeAt(index) >= 0xdc00 && candidate.section_text.charCodeAt(index) <= 0xdfff;
+
   for (const [index, material] of candidate.material_claims.entries()) {
     if (material.span.end <= material.span.start || material.span.end > candidate.section_text.length ||
+        isSurrogateBoundary(material.span.start) || isSurrogateBoundary(material.span.end) ||
         candidate.section_text.slice(material.span.start, material.span.end) !== material.text) {
       fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `material claim ${index} span does not contain its exact text`);
     }
@@ -125,24 +155,24 @@ export async function normalizeSynthesisClaimsCandidateV2(
     }
     for (const ref of refs) cited.set(refKey(ref), ref);
 
-    const support = [...material.support_handle_refs].sort((left, right) => refKey(left).localeCompare(refKey(right)));
-    const counter = [...material.counterevidence_handle_refs].sort((left, right) => refKey(left).localeCompare(refKey(right)));
-    const textDigest = await sha256({ protocol: PROTOCOL, operation_id: input.operation_id, section_ref: input.section_ref, text: material.text });
-    const claimDigest = await sha256({ protocol: PROTOCOL, operation_id: input.operation_id, section_ref: input.section_ref,
+    const support = Object.freeze([...material.support_handle_refs.map(freezeRef)].sort((left, right) => compareUtf16(refKey(left), refKey(right))));
+    const counter = Object.freeze([...material.counterevidence_handle_refs.map(freezeRef)].sort((left, right) => compareUtf16(refKey(left), refKey(right))));
+    const textDigest = await sha256Utf8(material.text);
+    const claimDigest = await sha256Json({ protocol: PROTOCOL, operation_id: trusted.operation_id, section_ref: trusted.section_ref,
       text: material.text, kind: material.kind, span: material.span, support_handle_refs: support, counterevidence_handle_refs: counter });
     claims.push(Object.freeze({
-      claim_ref: { id: `research-claim:${claimDigest}`, revision: 1 },
+      claim_ref: Object.freeze({ id: `research-claim:${claimDigest}`, revision: 1 }),
       text: material.text,
       text_digest: textDigest,
       kind: material.kind,
       support_handle_refs: support,
       counterevidence_handle_refs: counter,
-      required_precision: input.required_precision,
-      required_source_class: input.required_source_class,
+      required_precision: trusted.required_precision,
+      required_source_class: trusted.required_source_class,
       span: Object.freeze({ ...material.span }),
     }));
   }
 
-  return Object.freeze({ schema: PROTOCOL, operation_id: input.operation_id, section_ref: { ...input.section_ref },
-    section_text: candidate.section_text, claims: Object.freeze(claims), cited_handle_refs: Object.freeze([...cited.values()].sort((left, right) => refKey(left).localeCompare(refKey(right)))) });
+  return Object.freeze({ schema: PROTOCOL, operation_id: trusted.operation_id, section_ref: trusted.section_ref,
+    section_text: candidate.section_text, claims: Object.freeze(claims), cited_handle_refs: Object.freeze([...cited.values()].map(freezeRef).sort((left, right) => compareUtf16(refKey(left), refKey(right)))) });
 }
