@@ -17,7 +17,8 @@ export interface ModelAttemptPreparationContext {
   readonly input_bytes: Uint8Array;
   readonly attempt_ref: string;
   readonly budget_receipt_ref: string;
-  readonly output_object_ref: string;
+  /** Separate from the W2 `workflow/...` checkpoint object namespace. */
+  readonly model_output_object_ref: string;
   readonly stage_request_sha256: string;
   readonly model_operation_id: string;
   readonly model_idempotency_key: string;
@@ -96,6 +97,10 @@ export async function deriveModelAttemptIdentity(input: ModelAttemptIdentityInpu
   });
 }
 
+function modelOutputObjectRef(identity: ModelAttemptIdentity, attemptRef: string): string {
+  return `model-output/${identity.idempotency_key.slice("model-idempotency-".length)}/${attemptRef}`;
+}
+
 function sameScope(id: string, request: StageRequest, authority: { scope_snapshot_ref: { id: string } }): boolean {
   return authority.scope_snapshot_ref.id === id && authority.scope_snapshot_ref.id === request.input_manifest.residency.scope_domain_id;
 }
@@ -114,7 +119,7 @@ function validatePrepared(
       authority.deployment_generation !== input.principal.deployment_generation ||
       !sameScope(input.request.input_manifest.residency.scope_domain_id, input.request, authority) ||
       intent.budget_reservation_ref !== quote.reservation_id || call.budget_reservation_ref !== quote.reservation_id ||
-      call.output_object_ref !== input.output_object_ref || prepared.stage_attempt_ref !== input.attempt_ref ||
+      call.output_object_ref !== input.model_output_object_ref || prepared.stage_attempt_ref !== input.attempt_ref ||
       prepared.stage_request_sha256 !== input.stage_request_sha256) {
     uncertain("trusted model attempt preparation does not match the W2 identity");
   }
@@ -186,6 +191,7 @@ export function createGovernedModelAttemptHandler(
       stage_request_sha256: input.request_sha256, principal_ref: input.principal_ref,
       credential_generation: input.credential_generation, deployment_generation: input.deployment_generation,
     });
+    const model_output_object_ref = modelOutputObjectRef(identity, input.attempt_ref);
     const readback = await dependencies.attempts.readByIdempotency({
       principal_ref: input.principal_ref, operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
     });
@@ -193,28 +199,29 @@ export function createGovernedModelAttemptHandler(
       principal_ref: input.principal_ref, credential_generation: input.credential_generation,
       deployment_generation: input.deployment_generation, operation_id: identity.operation_id,
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
-      scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: input.output_object_ref,
+      scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256: input.request_sha256,
     });
   }
 
   async function handler(input: Parameters<WorkflowStageHandler>[0]): Promise<Uint8Array> {
     if (input.principal.signal?.aborted) throw new WorkflowCheckpointError("WORKFLOW_CANCELLED");
-    const output_object_ref = `workflow/${await digest(new TextEncoder().encode(JSON.stringify(input.request)))}/${input.attempt_ref}`;
     const stage_request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(input.request)));
     const identity = await deriveModelAttemptIdentity({
       stage_request_sha256, principal_ref: input.principal.principal_ref,
       credential_generation: input.principal.credential_generation, deployment_generation: input.principal.deployment_generation,
     });
+    const model_output_object_ref = modelOutputObjectRef(identity, input.attempt_ref);
     const preparation = Object.freeze({
       request: input.request, principal: input.principal, input_bytes: new Uint8Array(input.input_bytes),
-      attempt_ref: input.attempt_ref, budget_receipt_ref: input.budget_receipt_ref, output_object_ref, stage_request_sha256,
+      attempt_ref: input.attempt_ref, budget_receipt_ref: input.budget_receipt_ref,
+      model_output_object_ref, stage_request_sha256,
       model_operation_id: identity.operation_id, model_idempotency_key: identity.idempotency_key,
     });
     const prepared = await dependencies.prepare(preparation);
     validatePrepared(preparation, prepared, dependencies.operation_kind);
     const reservation = await dependencies.attempts.reserve(prepared);
-    if (reservation.output_object_ref !== output_object_ref || reservation.intent.intent_ref.id !== identity.operation_id ||
+    if (reservation.output_object_ref !== model_output_object_ref || reservation.intent.intent_ref.id !== identity.operation_id ||
         reservation.stage_attempt_ref !== input.attempt_ref || reservation.stage_request_sha256 !== stage_request_sha256) {
       uncertain("model reservation is bound to a different workflow output");
     }
@@ -226,7 +233,7 @@ export function createGovernedModelAttemptHandler(
         principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
         deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
         operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
-        scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref,
+        scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
         stage_attempt_ref: input.attempt_ref, stage_request_sha256,
       });
       if (recovered === null) uncertain("model attempt is not durably succeeded");
@@ -236,6 +243,7 @@ export function createGovernedModelAttemptHandler(
     const nowMs = dependencies.now?.() ?? Date.now();
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     try {
       await dependencies.revalidate(preparation, prepared);
     } catch (cause) {
@@ -243,29 +251,33 @@ export function createGovernedModelAttemptHandler(
     }
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
     catch (cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
-    if (receipt.output_object_ref !== output_object_ref) corrupt("model receipt output is bound to a different workflow object");
+    if (receipt.output_object_ref !== model_output_object_ref) corrupt("model receipt output is bound to a different model object");
     const output: ModelOutputBinding = {
-      output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,
+      output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,
     };
-    const bytes = await dependencies.readOutput({ output_object_ref, output_sha256: receipt.output_sha256 });
+    const bytes = await dependencies.readOutput({ output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256 });
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) corrupt("model output exceeds the workflow bound");
     const binding: ModelOutputBinding = { ...output, output_size_bytes: bytes.byteLength, readback_sha256: await digest(bytes) };
     if (binding.readback_sha256 !== binding.output_sha256) corrupt("model output readback digest differs from the model receipt");
-    let postFetchCode: "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_BUDGET_STOP" | undefined;
+    let postFetchCode: "WORKFLOW_CANCELLED" | "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_BUDGET_STOP" | undefined;
+    if (input.principal.signal?.aborted) postFetchCode = "WORKFLOW_CANCELLED";
+    else if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_BUDGET_STOP";
+    else if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_AUTHORITY_STALE";
     try {
       await dependencies.revalidate(preparation, prepared);
     } catch (cause) {
-      postFetchCode = revalidationCode(cause);
+      if (postFetchCode === undefined) postFetchCode = revalidationCode(cause);
     }
     const settled = await dependencies.attempts.settleAttempt({ attempt_id: started.attempt.attempt_id, state: "SUCCEEDED", receipt, output: binding });
     const settledBytes = await readSucceededAttempt(dependencies, settled, {
       principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
       deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
-      scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref,
+      scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256,
     });
     if (settledBytes === null) uncertain("model settlement readback is missing");
