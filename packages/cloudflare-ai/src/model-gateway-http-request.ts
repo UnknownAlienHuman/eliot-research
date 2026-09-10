@@ -78,7 +78,7 @@ function safeInteger(
   return value;
 }
 
-function reasoningEndpoint(baseUrl: string): string {
+export function reasoningEndpoint(baseUrl: string): string {
   let url: URL;
   try {
     url = new URL(baseUrl);
@@ -117,7 +117,7 @@ function reasoningEndpoint(baseUrl: string): string {
   return `${url.origin}/v1/${parts[1]}/eliotr-reasoning/compat/chat/completions`;
 }
 
-function gatewayToken(value: unknown): string {
+export function gatewayToken(value: unknown): string {
   if (
     typeof value !== "string" ||
     value.length < 1 ||
