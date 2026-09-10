@@ -39,7 +39,7 @@ export interface ResearchModelStageHandlerDependencies {
   readonly pricing: ModelGatewayPricingPort;
   /** Trusted W2-bound preparation and policy/currentness checks. */
   readonly prepare: GovernedModelAttemptDependencies["prepare"];
-  readonly revalidate: GovernedModelAttemptDependencies["revalidate"] | ModelAttemptDeploymentRevalidator;
+  readonly revalidate: ModelAttemptDeploymentRevalidator;
   /** TEST is an explicit server-owned fixture mode; production defaults to LIVE qualification. */
   readonly deployment_environment?: D1DynamicRouteRegistryOptions["environment"];
 }
@@ -48,7 +48,6 @@ export type ResearchModelStageHandler = GovernedModelAttemptHandler;
 
 function createRoute(
   dependencies: ResearchModelStageHandlerDependencies,
-  deployments: ModelGatewayExecutionDependencies["deployments"],
   prompts: ModelGatewayExecutionDependencies["prompts"],
   fingerprints: ModelGatewayExecutionDependencies["fingerprints"],
   outputs: ModelGatewayExecutionDependencies["outputs"],
@@ -69,16 +68,6 @@ function createRoute(
       const approved = approvedDeployment();
       if (approved === null || approved.route_ref !== input.route_ref) {
         throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "approved model deployment pin is unavailable");
-      }
-      const rawCurrent = await deployments.resolve(input.route_ref);
-      if (rawCurrent === null) {
-        throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is unavailable");
-      }
-      let current: ModelRouteDeployment;
-      try { current = decodeModelRouteDeployment(rawCurrent); }
-      catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is malformed", false, cause); }
-      if (canonicalJson(current) !== canonicalJson(approved)) {
-        throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment changed after revalidation");
       }
       const runtime = createResearchModelGatewayRuntime(signal === undefined
         ? dependencies.gateway
@@ -122,7 +111,7 @@ export function createResearchModelStageHandler(
   };
   const recovery = createGovernedModelAttemptHandler({
     ...base,
-    route: createRoute(dependencies, deployments, prompts, fingerprints, outputStorage.outputs, () => null, undefined),
+    route: createRoute(dependencies, prompts, fingerprints, outputStorage.outputs, () => null, undefined),
   });
   return Object.freeze({
     handler: async (input: Parameters<WorkflowStageHandler>[0]) => {
@@ -132,16 +121,28 @@ export function createResearchModelStageHandler(
         if (result === undefined || result === null) {
           throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation returned no approved model deployment");
         }
-        try { approved = decodeModelRouteDeployment(result); }
+        let candidate: ModelRouteDeployment;
+        try { candidate = decodeModelRouteDeployment(result); }
         catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation returned a malformed model deployment", false, cause); }
-        if (approved.route_ref !== prepared.call.route_ref || approved.prompt_generation !== prepared.call.prompt_generation || approved.schema_generation !== prepared.call.schema_generation) {
+        if (candidate.route_ref !== prepared.call.route_ref || candidate.prompt_generation !== prepared.call.prompt_generation || candidate.schema_generation !== prepared.call.schema_generation) {
           throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation deployment does not match the prepared model call");
         }
+        const rawCurrent = await deployments.resolve(candidate.route_ref);
+        if (rawCurrent === null) {
+          throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is unavailable");
+        }
+        let current: ModelRouteDeployment;
+        try { current = decodeModelRouteDeployment(rawCurrent); }
+        catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is malformed", false, cause); }
+        if (canonicalJson(current) !== canonicalJson(candidate)) {
+          throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment changed during revalidation");
+        }
+        approved = candidate;
       };
       return createGovernedModelAttemptHandler({
         ...base,
         revalidate,
-        route: createRoute(dependencies, deployments, prompts, fingerprints, outputStorage.outputs, () => approved, input.principal.signal),
+        route: createRoute(dependencies, prompts, fingerprints, outputStorage.outputs, () => approved, input.principal.signal),
       }).handler(input);
     },
     recoverStartedAttempt: recovery.recoverStartedAttempt,
