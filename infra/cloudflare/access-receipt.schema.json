@@ -47,6 +47,58 @@
         "disposition": { "enum": ["CREATED", "CREATED_INLINE", "VERIFIED"] }
       }
     },
+    "mcp": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostname", "path", "path_cookie_attribute", "team_domain", "aud", "auth_profile", "oauth_configuration_enabled", "application", "policy"],
+      "properties": {
+        "hostname": { "type": "string", "minLength": 1 },
+        "path": { "const": "/mcp" },
+        "path_cookie_attribute": { "const": true },
+        "team_domain": { "$ref": "#/$defs/teamDomain" },
+        "aud": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
+        "auth_profile": { "enum": ["service-token", "managed-oauth"] },
+        "oauth_configuration_enabled": { "type": "boolean" },
+        "service_token_id": { "type": "string", "format": "uuid" },
+        "service_token_client_id_sha256": { "$ref": "#/$defs/sha256" },
+        "application": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "destination", "disposition"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "destination": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?/mcp$" },
+            "disposition": { "enum": ["CREATED", "UNCHANGED"] }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "name", "decision", "selector", "disposition"],
+          "properties": {
+            "id": { "type": ["string", "null"] },
+            "name": { "type": "string", "minLength": 1 },
+            "decision": { "enum": ["allow", "non_identity"] },
+            "selector": { "enum": ["email", "service_token"] },
+            "service_token_id": { "type": "string", "format": "uuid" },
+            "owner_email_count": { "type": "integer", "minimum": 1 },
+            "owner_email_set_sha256": { "$ref": "#/$defs/sha256" },
+            "disposition": { "enum": ["CREATED", "UNCHANGED"] }
+          },
+          "allOf": [
+            { "if": { "properties": { "selector": { "const": "service_token" } } }, "then": { "required": ["service_token_id"] } },
+            { "if": { "properties": { "selector": { "const": "email" } } }, "then": { "required": ["owner_email_count", "owner_email_set_sha256"] } }
+          ]
+        }
+      },
+      "allOf": [
+        { "if": { "properties": { "auth_profile": { "const": "service-token" } } }, "then": { "properties": { "oauth_configuration_enabled": { "const": false } }, "required": ["service_token_client_id_sha256", "service_token_id"] } },
+        { "if": { "properties": { "auth_profile": { "const": "managed-oauth" } } }, "then": { "properties": { "oauth_configuration_enabled": { "const": true }, "service_token_client_id_sha256": false, "service_token_id": false, "policy": { "properties": { "service_token_id": false } } } } },
+        { "if": { "properties": { "auth_profile": { "const": "service-token" } } }, "then": { "properties": { "policy": { "properties": { "decision": { "const": "non_identity" }, "selector": { "const": "service_token" } } } } } },
+        { "if": { "properties": { "auth_profile": { "const": "managed-oauth" } } }, "then": { "properties": { "policy": { "properties": { "decision": { "const": "allow" }, "selector": { "const": "email" } } } } } }
+      ]
+    },
     "websocket_compatible_contour": { "const": "HOSTNAME_BASED_ACCESS" },
     "approved_additional_policy_count": { "type": "integer", "minimum": 0 },
     "approved_additional_policy_ids_sha256": { "$ref": "#/$defs/sha256" },
@@ -54,6 +106,7 @@
     "created_at": { "type": "string", "format": "date-time" }
   },
   "$defs": {
-    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "teamDomain": { "type": "string", "pattern": "^https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\.cloudflareaccess\\.com$" }
   }
 }

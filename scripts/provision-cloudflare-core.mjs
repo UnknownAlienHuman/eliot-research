@@ -3,7 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyAccessRuntimeVars, resolveAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
+import { applyAccessRuntimeVars, applyMcpRuntimeVars, resolveAccessRuntimeConfiguration,
+  resolveMcpAccessRuntimeConfiguration } from "./lib/access-runtime-config.mjs";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
@@ -268,7 +269,7 @@ function validatePublicRouteConfiguration() {
   return { accessHostname, customDomainMode };
 }
 
-function buildGeneratedConfig(d1Results, publicRoute, accessRuntime) {
+function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRuntime) {
   const generated = structuredClone(canonicalConfig);
   const ids = new Map(d1Results.map((item) => [item.spec.binding, item.existing.uuid]));
   generated.d1_databases = generated.d1_databases.map((item) => {
@@ -287,6 +288,9 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime) {
     AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning`,
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
   }, accessRuntime);
+  if (mcpAccessRuntime !== null) {
+    generated.vars = applyMcpRuntimeVars(generated.vars, mcpAccessRuntime);
+  }
 
   if (publicRoute.customDomainMode === "1") {
     generated.routes = [{ pattern: publicRoute.accessHostname, custom_domain: true }];
@@ -330,6 +334,7 @@ const accessReceipt = await loadAccessReceipt();
 const envHasAudAuthority = (process.env.ELIOTR_ACCESS_TEAM_DOMAIN?.trim() ?? "") !== "" &&
   (process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "") !== "";
 let accessRuntime = null;
+let mcpAccessRuntime = null;
 let accessDisposition = "VERIFY";
 if (accessReceipt) {
   if (typeof accessReceipt.account_id === "string" && accessReceipt.account_id !== accountId) {
@@ -343,6 +348,15 @@ if (accessReceipt) {
   accessRuntime = resolveAccessRuntimeConfiguration(process.env, null);
 } else {
   accessDisposition = "CREATE";
+}
+
+if (canonicalConfig.vars.GOOGLE_EXTERNAL_TRANSPORT === "gemini-mcp") {
+  mcpAccessRuntime = resolveMcpAccessRuntimeConfiguration(process.env, accessReceipt, {
+    ordinaryAudience: accessRuntime?.audience,
+    publicHostname: publicRoute.accessHostname,
+    checkOnly,
+    profileDefault: canonicalConfig.vars.MCP_ACCESS_AUTH_PROFILE,
+  });
 }
 
 // Inspect every existing resource before creating any missing resource. An immutable-profile drift in
@@ -395,6 +409,16 @@ if (checkOnly) {
       team_domain: accessReceipt.team_domain ?? null,
       hostname: accessReceipt.hostname ?? null,
     } : null,
+    mcp_access_runtime: mcpAccessRuntime ? {
+      source: mcpAccessRuntime.source,
+      hostname: mcpAccessRuntime.hostname,
+      path: mcpAccessRuntime.path,
+      team_domain: mcpAccessRuntime.teamDomain,
+      audience_configured: mcpAccessRuntime.audience !== null,
+      auth_profile: mcpAccessRuntime.authProfile,
+      service_token_client_id_configured: mcpAccessRuntime.serviceTokenClientIdConfigured,
+      application_id: mcpAccessRuntime.applicationId,
+    } : null,
     d1_databases: d1Plans.map((item) => ({ binding: item.spec.binding, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
     r2_buckets: r2Plans.map((item) => ({ binding: item.spec.binding, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
     queues: queuePlans.map((item) => ({ binding: item.spec.binding ?? null, name: item.spec.name, disposition: item.existing ? "VERIFY" : "CREATE" })),
@@ -414,7 +438,7 @@ for (const plan of r2Plans) r2Results.push(await createR2(plan));
 const queueResults = [];
 for (const plan of queuePlans) queueResults.push(await createQueue(plan));
 
-const generatedConfig = buildGeneratedConfig(d1Results, publicRoute, accessRuntime);
+const generatedConfig = buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRuntime);
 const generatedConfigText = `${JSON.stringify(generatedConfig, null, 2)}\n`;
 const generatedConfigSha256 = createHash("sha256").update(generatedConfigText, "utf8").digest("hex");
 await mkdir(dirname(generatedPath), { recursive: true });
