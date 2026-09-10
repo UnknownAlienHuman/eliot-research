@@ -236,7 +236,9 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
  * Submit one real PWA EXHAUSTIVE_JOB against the source selected by the raw
  * projection checkpoint, then read its server-issued COMPLETE receipt and the
  * persisted owner-bound D1 rows. The existing cancellation helper remains a
- * separate lifecycle proof and is intentionally not reused here.
+ * separate lifecycle proof and is intentionally not reused here. D1 is read
+ * through a one-shot callback after the owning Worker has stopped; the active
+ * browser phase must never open a second Wrangler runtime against its files.
  */
 export async function runExhaustiveWorkflowCompleteBrowser({
   page, browserJson, ledger, paths, d1Query, sourceId, sourceRevisionRef, expectedGeneration, credentialGeneration,
@@ -312,8 +314,13 @@ export async function runExhaustiveWorkflowCompleteBrowser({
 
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
     ?.textContent?.trim() === "COMPLETE", null, { timeout: 15000 });
-  const d1 = await readCompletedD1({ paths, d1Query, workflowId, receipt: completed.receipt,
-    idempotencyKey, sourceId, sourceRevisionRef, credentialGeneration });
+  let readback;
+  const readAfterWorkerStop = async () => {
+    if (readback !== undefined) throw new Error("Q8 D1 readback may run only once");
+    readback = await readCompletedD1({ paths, d1Query, workflowId, receipt: completed.receipt,
+      idempotencyKey, sourceId, sourceRevisionRef, credentialGeneration });
+    return readback;
+  };
   return {
     workflowId,
     jobId: completed.receipt.job_id,
@@ -323,7 +330,7 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     launchStatus: postSnapshot.status,
     status: completed.data.workflow_status,
     receipt: completed.receipt,
-    d1,
+    readAfterWorkerStop,
     api: observedApi,
     correlations: observedCorrelations,
     mutations: ["/api/v1/research/query"],
