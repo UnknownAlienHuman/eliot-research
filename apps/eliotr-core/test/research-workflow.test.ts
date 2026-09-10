@@ -6,7 +6,9 @@ import {
   createWorkflowCheckpointExecutor, decodeReceipt, digest, MAX_WORKFLOW_OUTPUT_BYTES, readWorkflowObject,
   type StageReceipt, type StageRequest,
 } from "@eliotr/cloudflare-research";
-import { faultBucket, faultDatabase, principal, workflowFixture } from "./research-workflow-fixture.js";
+import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { faultBucket, faultDatabase, principal, runtime, workflowFixture } from "./research-workflow-fixture.js";
 import type { Env } from "../src/env.js";
 
 const resultBytes = () => new TextEncoder().encode("persisted output — цитата🙂");
@@ -501,5 +503,53 @@ describe("eliotr.workflow-stage.v1 W2 monotone bounded executor — actual D1/R2
     const second = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
     expect(second).toEqual(first);
     expect(await counts(f.db)).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, ledger_events: 18 });
+  }, 30_000);
+
+  it("executes the server-owned exploratory generation only for an exploratory W1 lane", async () => {
+    const f = await workflowFixture("server-owned", "exploratory");
+    const { ResearchWorkflow } = await import("../src/research-workflow.js");
+    const env = { CORE_DB: f.db, SEARCH_DB: runtime.SEARCH_DB, WORK_BUCKET: f.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
+    const params = {
+      operation_id: f.request.operation_id,
+      investigation_ref: { ...f.request.investigation_ref },
+      idempotency_key: f.request.idempotency_key,
+      handler_generation: SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
+      initial_input_manifest: f.request.input_manifest,
+      principal_ref: principal.principal_ref,
+      credential_generation: principal.credential_generation,
+      deployment_generation: principal.deployment_generation,
+    };
+    const fakeStep = {
+      do: async (_name: string, callback: () => Promise<unknown>) => callback(),
+    };
+    const first = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
+    if (!("state" in first) || !("receipt_refs" in first)) throw new Error("expected the exploratory workflow result");
+    expect(first.state).toBe("ENGINE_COMPLETED");
+    expect(first.receipt_refs).toHaveLength(18);
+    const row = await f.db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 0")
+      .bind(f.request.operation_id).first<{ receipt_json: string }>();
+    expect(row).not.toBeNull();
+    if (row === null) throw new Error("missing exploratory stage-0 receipt");
+    const receipt = JSON.parse(row.receipt_json) as { output_manifest: { object_ref: string } };
+    const object = await f.bucket.get(receipt.output_manifest.object_ref);
+    expect(object).not.toBeNull();
+    if (object === null) throw new Error("missing exploratory stage-0 object");
+    const checkpoint = decodeProtocolScopeCheckpoint(new Uint8Array(await object.arrayBuffer()));
+    expect(checkpoint.workflow_stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
+    expect(checkpoint.protocol_profile.lane).toBe("exploratory");
+    const second = await ResearchWorkflow.prototype.run.call({ env }, { payload: params } as never, fakeStep as never);
+    expect(second).toEqual(first);
+    const typo = await workflowFixture("server-owned-typo", "exploratory");
+    const typoEnv = { CORE_DB: typo.db, SEARCH_DB: runtime.SEARCH_DB, WORK_BUCKET: typo.bucket, DEPLOYMENT_GENERATION: principal.deployment_generation } as unknown as Env;
+    await expect(ResearchWorkflow.prototype.run.call({ env: typoEnv }, { payload: {
+      operation_id: typo.request.operation_id,
+      investigation_ref: { ...typo.request.investigation_ref },
+      idempotency_key: typo.request.idempotency_key,
+      handler_generation: "controlled-handlers.v1",
+      initial_input_manifest: typo.request.input_manifest,
+      principal_ref: principal.principal_ref,
+      credential_generation: principal.credential_generation,
+      deployment_generation: principal.deployment_generation,
+    } } as never, fakeStep as never)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
   }, 30_000);
 });
