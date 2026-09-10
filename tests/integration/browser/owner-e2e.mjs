@@ -5107,6 +5107,8 @@ export async function runOwnerE2E() {
     const convertedBytes = Buffer.from(convertedObject.output ?? "", "utf8");
     assert.equal(await sha256Hex(convertedBytes), rawUpload.conversionFixture.outputSha256,
       "conversion output R2 bytes must match the recorded result digest");
+    assert.notEqual(rawUpload.conversionFixture.outputSha256, rawUpload.expected.digest,
+      "recorded conversion fixture must keep the normalized output digest distinct from the original capture digest");
     const admissionRows = d1Query(paths, "CORE_DB",
       "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,ingest_operation_id,reason_codes_json,receipt_json " +
       `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
@@ -5191,7 +5193,8 @@ export async function runOwnerE2E() {
       `FROM source_revision r WHERE r.source_revision_ref='${String(admissionRow.source_revision_ref).replaceAll("'", "''")}'`);
     assert.equal(rawRevisionRows.length, 1, "raw admission must persist one bound Library revision");
     assert.equal(rawRevisionRows[0].source_owner_generation, rawRow.source_owner_generation, "raw Library revision must retain the capture owner generation");
-    assert.equal(rawRevisionRows[0].content_sha256, rawRow.content_sha256, "raw Library revision must retain the capture digest");
+    assert.equal(rawRevisionRows[0].content_sha256, rawUpload.conversionFixture.outputSha256,
+      "raw Library revision must retain the normalized conversion output digest");
     assert.equal(rawRevisionRows[0].source_view_ref, admissionRow.source_view_ref, "raw Library revision must retain the admission witness reference");
     assert.equal(rawRevisionRows[0].object_residency_key_digest, admissionReceipt.object_residency_key_digest,
       "raw Library revision residency must match the committed admission receipt");
