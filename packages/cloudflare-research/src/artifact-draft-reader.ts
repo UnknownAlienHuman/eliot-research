@@ -177,7 +177,7 @@ interface StoredObject {
   readonly sha256: string;
   readonly size_bytes: number;
   readonly physical_key: string;
-  readonly bytes: Uint8Array;
+  readonly bytes?: Uint8Array;
 }
 
 function fail(code: ArtifactDraftReadErrorCode, status: 400 | 403 | 404 | 409 | 410 | 503, message: string, retryable = false): never {
@@ -241,7 +241,12 @@ async function digestBytes(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-async function readStoredObject(store: EvidenceObjectStore, row: ObjectRow, expected: ExpectedObject): Promise<StoredObject> {
+async function readStoredObject(
+  store: EvidenceObjectStore,
+  row: ObjectRow,
+  expected: ExpectedObject,
+  retainBytes = false,
+): Promise<StoredObject> {
   if (row.object_kind !== expected.object_kind || row.object_ref !== expected.object_ref || row.section_ordinal !== expected.section_ordinal) {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object mapping is inconsistent");
   }
@@ -273,7 +278,10 @@ async function readStoredObject(store: EvidenceObjectStore, row: ObjectRow, expe
   if (actual.byteLength !== receipt.size_bytes || await digestBytes(actual) !== sha256) {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object bytes are inconsistent");
   }
-  return { row, receipt, residency, sha256, size_bytes: actual.byteLength, physical_key: physicalKey, bytes: actual };
+  return {
+    row, receipt, residency, sha256, size_bytes: actual.byteLength, physical_key: physicalKey,
+    ...(retainBytes ? { bytes: actual } : {}),
+  };
 }
 
 function addExpected(map: Map<string, ExpectedObject>, expected: ExpectedObject): void {
@@ -408,7 +416,8 @@ async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifact
   const store = createR2EvidenceObjectStore(input.work_bucket);
   const manifestObject = await readStoredObject(store, manifestRow, {
     object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, prefix: MANIFEST_PREFIX, content_type: "application/json",
-  });
+  }, true);
+  if (manifestObject.bytes === undefined) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest bytes are unavailable");
   const parsedManifest = parseManifest(manifestObject.bytes);
   const manifestSha = await canonicalDigest({ spec: parsedManifest.spec, revision: parsedManifest.revision });
   const specSha = await canonicalDigest(parsedManifest.spec);
@@ -418,6 +427,8 @@ async function readArtifactDraftInternal(input: ArtifactDraftReadInput, artifact
       parsedManifest.revision.spec_digest !== artifact.spec_digest || parsedManifest.spec.spec_ref.id !== binding.spec_ref_id ||
       parsedManifest.spec.spec_ref.revision !== binding.spec_ref_revision || parsedManifest.spec.scope_snapshot_ref.id !== binding.scope_snapshot_id ||
       parsedManifest.spec.scope_snapshot_ref.revision !== binding.scope_snapshot_revision || artifact.kind !== parsedManifest.spec.kind ||
+      parsedManifest.revision.spec_ref.id !== parsedManifest.spec.spec_ref.id ||
+      parsedManifest.revision.spec_ref.revision !== parsedManifest.spec.spec_ref.revision ||
       artifact.evidence_freeze_id !== parsedManifest.revision.evidence_freeze_ref.id || artifact.evidence_freeze_revision !== parsedManifest.revision.evidence_freeze_ref.revision ||
       artifact.dependency_manifest_ref !== parsedManifest.revision.dependency_manifest_ref || artifact.created_at !== parsedManifest.revision.created_at) {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft manifest contract does not match durable identity");
