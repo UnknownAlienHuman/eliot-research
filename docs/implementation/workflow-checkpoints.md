@@ -5,6 +5,10 @@ W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage ex
 executable `ResearchWorkflow` binding over the same boundary. No new Worker route, model, endpoint
 or deployment is enabled. Governed model/evidence handlers (W3/W4) and live qualification remain open.
 
+The owner's current priority is composing the existing protocol, retrieval, evidence and answer
+stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
+(2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
+
 ## Execution
 
 `createWorkflowCheckpointExecutor(CORE_DB, WORK_BUCKET, ports)` exposes `execute(request, principal,
@@ -59,10 +63,42 @@ The denominator is a new canonical record in this stage output, revision `1`, wh
 scope reference and expiry are copied from the exact current `ScopeSnapshot`. It has no required source
 classes or question branches and uses the server-defined exploratory membership observation as its
 completeness-test reference. This is an exploratory scope observation, not an exhaustive-coverage claim.
-`decodeProtocolScopeCheckpoint` is the strict readback boundary for the later `FREEZE_EVIDENCE` stage; it
-accepts only the server-owned profile and canonical checkpoint shape. The bytes remain ordinary immutable
+`decodeProtocolScopeCheckpoint` checks the server-owned profile and canonical checkpoint shape.
+Authoritative consumers use `readFreezeProtocolAndScopeCheckpoint`, which also verifies the persisted
+attempt, receipt, immutable R2 bytes and current W1/scope authority. The bytes remain ordinary immutable
 W2 `WORK_BUCKET` output with the existing 64 KiB checkpoint bound and D1 receipt; no new table or public
 DTO is introduced.
+
+The shared `research-stage-handlers.ts` factory now selects this real stage for new server-owned
+exploratory runs in the HTTP service, Workflow binding and Durable Object. The generation is
+`research-handlers.exploratory.v1`; legacy confirmatory runs retain their existing deterministic path.
+Migration `0040_research_policy_authority_scope.sql` permits independent scope policy authorities,
+with one ACTIVE generation per authority. Retired rows remain retired and historical bindings remain
+unchanged. The local session fixture passed 10 cases, including independent second-source execution,
+retirement/revocation refusal, actual DO execution from unfinished W1 and duplicate-free replay.
+The other 17 stages still use deterministic metadata handlers; this does not produce a research answer.
+
+## Retrieval over the held protocol scope
+
+`apps/eliotr-core/src/research-retrieve-branches.ts` implements `RETRIEVE_BRANCHES` at canonical stage
+index 5. It reads the historical stage-0 checkpoint independently of the current `PLAN` output; W2 still
+checks the current predecessor manifest and monotone stage order. Workflow objects come from
+`WORK_BUCKET`, while exact admitted source bytes come from `EVIDENCE_BUCKET`.
+
+The handler loads the original persisted scope with `loadHeldResearchScope` and calls
+`retrieveWithHeldScope` using the server-selected retrieval profile. It creates no replacement scope or
+read grant. Its immutable output contains the EvidencePack, trace, coverage claim and protocol/denominator
+digests for subsequent stages; it does not produce an answer or an AllowedReferenceManifest.
+
+The local D1/Search/R2 fixture walks stages 0 through 5, resolves an actual indexed Q1 excerpt, checks
+stable scope/grant identities and duplicate-free replay, and refuses a revoked grant. Shared caller
+composition, evidence freeze, synthesis and live deployment remain separate acceptance items.
+
+`readRetrieveBranchesCheckpoint` reads the committed stage-5 receipt and immutable output, verifies
+strict canonical bytes, and binds the result to stage 0, the held scope, current authority and persisted
+retrieval result/trace rows. Three local Worker cases passed, including exact readback/replay and
+refusal of a substituted operation or corrupted R2 output. Subsequent stages must still resolve exact
+evidence before treating it as answer support; the reader does not mint a new evidence authority.
 
 ## W2 monotone bounded executor
 
@@ -77,8 +113,9 @@ effect; stale CAS, purge/revoke/expiry and cancel fail closed with byte-identica
 `ResearchWorkflow` (`apps/eliotr-core/src/research-workflow.ts`) is the executable Worker binding:
 one Workflow instance owns one operation, each stage runs in `step.do("w2-stage-NN-NAME")` returning
 only the checkpoint receipt (≤64 KiB), with D1-backed idempotent budget ports and principal-bound
-residency checks. The deterministic stage handler writes only a small JSON handle payload; W3/W4 must
-replace it with governed model/evidence handlers. `ENGINE_COMPLETED` remains engine state, never a
+residency checks. The shared factory writes the real protocol checkpoint for its exploratory generation;
+remaining deterministic stages write small JSON metadata payloads and still need governed model/evidence
+handlers. `ENGINE_COMPLETED` remains engine state, never a
 research disposition. Pure monotone order/bound helpers live in `packages/research/src/workflow.ts`.
 
 ## Failure and recovery

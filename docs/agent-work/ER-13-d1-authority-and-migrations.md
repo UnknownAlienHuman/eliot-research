@@ -80,6 +80,11 @@ Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE
 
 ## Additive navigation schema
 
+The ER-24 research caller correction is allocated `0040_research_policy_authority_scope.sql`.
+Independent scope policy authorities may coexist; each authority retains at most one ACTIVE policy
+generation. Existing legacy bindings are preserved, and retired generations must not be reactivated by
+a caller retry. Raw Luna owns this migration under the integrator's serialized ER-13 handoff.
+
 The ER-28 erasure admission prerequisite is allocated `0039_erasure_admission_policy.sql` for explicit,
 versioned destructive permissions and currentness/revocation readback. Source admission and read grants
 are not erasure permission. Installation is a trusted operator boundary, with no public grant route;
