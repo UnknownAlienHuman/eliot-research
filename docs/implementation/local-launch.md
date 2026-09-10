@@ -346,3 +346,17 @@ navigation, auth failure, offline and disposal; stale requests cannot refill a c
 
 This closes the metadata-history portion of #98 L4a, not active readiness assessment, project editing
 or the complete setup/import/Library/Lens browser lifecycle. No schema migration or new privilege is needed.
+
+## Exhaustive cancellation browser sequencing
+
+The owner acceptance harness settles the launch request's network events before obtaining the
+non-terminal status witness used for each cancellation. A decoded response body and a rendered
+Workflow ID can precede Playwright's terminal network callback. The existing bounded ledger drain
+runs before that status read, so its wait does not age the cancellation witness. The real PWA
+controller and strict failed-request accounting are unchanged.
+
+This ordering correction follows the Ubuntu owner failure at main `ebe6012`: the launch/cancel/
+recovery actions completed, but the phase ledger rejected an aborted launch POST. The exact run's
+other four jobs, including Windows owner acceptance, passed. Source `b8e3eb0` passed syntax, ESLint
+and diff checks; the complete owner runtime is left to subsequent exact-main CI, not reported as a
+local passing rerun. The browser event timing explanation is not a live provider or deployment receipt.
