@@ -16,6 +16,7 @@ import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exh
 import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
 import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "./research-stage-handlers.js";
+import { createResearchExploratoryStageHandlers } from "./research-stage-composition.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -223,19 +224,11 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         access,
         require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
       });
-      handlers = createResearchStageHandlerFactory({
-        kind: "server-owned-exploratory",
+      handlers = createResearchExploratoryStageHandlers({
         generation: retrievalOwned ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
-        navigation,
-        ledger,
+        navigation, ledger,
         ...(retrievalOwned ? {
-          retrieval: {
-            database: this.env.CORE_DB,
-            search_database: this.env.SEARCH_DB,
-            work_bucket: this.env.WORK_BUCKET,
-            evidence_bucket: this.env.EVIDENCE_BUCKET,
-            access,
-          },
+          retrieval: { database: this.env.CORE_DB, search_database: this.env.SEARCH_DB, work_bucket: this.env.WORK_BUCKET, evidence_bucket: this.env.EVIDENCE_BUCKET, access },
         } : {}),
       });
     } else {
