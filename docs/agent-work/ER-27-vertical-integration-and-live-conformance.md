@@ -14,6 +14,8 @@ outside the paths below.
 - `tests/integration/**`
 - `apps/eliotr-core/test/artifact-draft-store.test.ts`
 - `apps/eliotr-core/test/artifact-draft-fixture.ts`
+- `apps/eliotr-core/test/artifact-draft-reader.test.ts`
+- `apps/eliotr-core/test/artifact-draft-read-fixture.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 

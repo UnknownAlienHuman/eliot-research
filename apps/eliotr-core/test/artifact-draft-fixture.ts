@@ -1,4 +1,4 @@
-import { applyD1Migrations } from "cloudflare:test";
+import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import {
   createArtifactDraftStore,
@@ -10,7 +10,7 @@ import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import type { Env } from "../src/env.js";
 
 export const runtime = env as unknown as Env & {
-  readonly CORE_MIGRATIONS: { readonly name: string; readonly queries: readonly string[] }[];
+  readonly CORE_MIGRATIONS: D1Migration[];
 };
 
 export async function initializeArtifactDraftRuntime(): Promise<void> {
@@ -73,10 +73,12 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
     deterministic_export_refs: { markdown: `export-${tag}` }, status: "DRAFT" as const,
     created_at: "2026-09-10T00:00:00.000Z",
   };
+  const summarySection = revision.sections[0];
+  if (!summarySection) throw new Error("fixture must contain a summary section");
   const referenceValues = [
     ["DEPENDENCY_MANIFEST", revision.dependency_manifest_ref, bytes(`dependency ${contentTag}`)],
-    ["EVIDENCE_LEDGER", revision.sections[0].evidence_ledger_ref, bytes(`evidence ${contentTag}`)],
-    ["VERIFICATION_RECEIPT", revision.sections[0].verification_receipt_ref, bytes(`verification ${contentTag}`)],
+    ["EVIDENCE_LEDGER", summarySection.evidence_ledger_ref, bytes(`evidence ${contentTag}`)],
+    ["VERIFICATION_RECEIPT", summarySection.verification_receipt_ref, bytes(`verification ${contentTag}`)],
     ["EXPORT", revision.deterministic_export_refs.markdown, bytes(`export ${contentTag}`)],
   ] as const;
   const references: ArtifactDraftReferencedObjectInput[] = [];
@@ -85,7 +87,7 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
   }
   const manifestDigest = await canonicalDigest({ spec, revision });
   const section: ArtifactDraftSectionInput = {
-    section: revision.sections[0], bytes: sectionBytes, residency: residency(domain, sectionSha),
+    section: summarySection, bytes: sectionBytes, residency: residency(domain, sectionSha),
   };
   return {
     intent: { intent_ref: { id: `draft-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",

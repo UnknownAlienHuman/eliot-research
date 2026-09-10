@@ -238,6 +238,9 @@ importers:
 
   packages/cloudflare-research:
     dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
