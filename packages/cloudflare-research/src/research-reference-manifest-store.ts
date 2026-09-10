@@ -118,6 +118,12 @@ function refKey(value: VersionedRef): string {
   return `${value.id}:${value.revision}`;
 }
 
+function isNavigationScopeError(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
+  const code = (cause as { readonly code?: unknown }).code;
+  return code === "NAVIGATION_SCOPE_NOT_CURRENT" || code === "NAVIGATION_SCOPE_MISMATCH";
+}
+
 function manifestBytes(manifest: AllowedReferenceManifest): { readonly json: string; readonly bytes: Uint8Array; readonly digest: string } {
   const parsed = AllowedReferenceManifestSchema.parse(manifest);
   const json = canonicalEvidenceJson(parsed);
@@ -248,7 +254,15 @@ export function createResearchReferenceManifestStore(input: {
         input.navigation.scope.revision !== input.context.scope_snapshot_ref.revision) {
       fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest store authority context differs from navigation authority");
     }
-    const grant = await input.navigation.current();
+    let grant: Awaited<ReturnType<typeof input.navigation.current>>;
+    try {
+      grant = await input.navigation.current();
+    } catch (cause) {
+      if (isNavigationScopeError(cause)) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest navigation authority is stale or denied", true, cause);
+      }
+      throw cause;
+    }
     if (grant.authorization_receipt_ref !== input.context.authorization_receipt_ref ||
         grant.policy_authority_ref !== input.context.policy_authority_ref) {
       fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed before readback", true);
