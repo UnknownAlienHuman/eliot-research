@@ -83,7 +83,15 @@ ArtifactRevision for an exact stored revision, including a historical draft behi
 It requires the binding owner and current persisted scope/grant authority before reading WORK_BUCKET,
 verifies the manifest and every declared object's bytes, residency and durable binding, and rechecks
 authority before returning metadata. Missing, stale, denied and inconsistent records remain distinct
-typed failures. The endpoint does not return object bodies or mutate draft/published heads.
+typed failures. This metadata endpoint does not return object bodies or mutate draft/published heads.
+
+`GET /api/v1/research/artifact/:id:revision/sections/:section_id:revision` reads one exact section's
+stored bytes through the same verified historical manifest and owner authority. The response uses
+`application/octet-stream`, `no-store` and `nosniff`; artifact, section and object reference headers
+are percent-encoded and must be decoded with `decodeURIComponent`. Section selection does not bypass
+verification of the manifest's other declared objects. No artifact is attached to a Research run yet.
+The local D1/R2 reader suite passed 12 cases at source `0118208`; the subsequent Unicode-header change
+passed its one affected case at `5de069f` with the other 11 skipped.
 
 These draft transitions do not establish semantic verification or accepted publication. The artifact
 compiler, publication checks, Wiki/change products and complete report user loop remain open in the
