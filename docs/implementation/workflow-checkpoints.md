@@ -26,7 +26,8 @@ current W1/scope/grant/policy/deployment/purge + residency + bounded budget chec
 → exact persisted receipt and output readback → compact handle-only step result
 ```
 
-The handler receives a detached request, bounded input bytes, attempt identity and pinned budget receipt.
+The handler receives a detached request, the trusted principal snapshot, bounded input bytes, attempt
+identity and pinned budget receipt.
 The executor invokes it at most once per stage. W3 must supply a governed handler with at most one
 expensive provider boundary; the executor does not inspect arbitrary handler internals or qualify billing.
 Execution here is sequential. The existing 2/4/0 branch fan-out policy is unchanged; the branch scheduler
@@ -54,7 +55,19 @@ research disposition. Pure monotone order/bound helpers live in `packages/resear
 A lost reservation ACK is reconciled against the exact attempt nonce before invoking the handler.
 A lost R2/output-intent/checkpoint ACK is reconciled from persisted identity and exact bytes. `STARTED`
 without a known durable output remains `WORKFLOW_EFFECT_UNCERTAIN`; it never invokes the handler again.
-A missing or corrupted output is not regenerated. Deleting an uncertain attempt to permit a retry is forbidden.
+
+The optional trusted `recoverStartedAttempt` port may read an already persisted model result and return
+its bounded bytes. It receives the exact stage request and digest, attempt, principal and generations,
+output identity and pinned budget. The executor rechecks current authority, cancellation and budget,
+then records the output intent and performs the normal immutable R2 write/readback before checkpointing.
+This also covers an `OUTPUT_RECORDED` attempt whose R2 object is missing before its checkpoint: recovered
+bytes must match the existing output intent's digest, length and residency. A corrupt existing object is
+refused. Recovery cannot invoke a model or create a new spending reservation.
+
+After a stage receipt has committed, replay remains read-only: a missing or corrupted final output is
+not reconstructed through this port. A null or failed recovery remains uncertain. Deleting an uncertain
+attempt to permit a retry is forbidden. This extension is the W3 recovery prerequisite; a trusted callback
+and controlled fixture alone do not qualify model settlement or complete the governed model handler.
 
 Cancellation is durable and monotone. Transaction-time cancellation or authority withdrawal rolls back
 the W1 advance, stage receipt and outbox together. Late/stale output cannot become an accepted checkpoint.
@@ -93,3 +106,9 @@ Language owner: TypeScript Cloudflare I/O, SQL storage authority; deterministic 
 quality or provider settlement. W2 adds five monotone suites: 18-stage restart resume, duplicate/stale/
 concurrent single-effect, revoke/cancel rollback, lost R2/checkpoint ACK reconciliation and executable
 `step.do` binding readback. Live Cloudflare/provider qualification: `NOT_EXECUTED`.
+
+`apps/eliotr-core/test/research-workflow-recovery.test.ts` adds four focused real local D1/R2 cases:
+known durable result after a handler loses its acknowledgement, missing R2 output after the output
+intent is recorded, unknown outcome without a second handler invocation, and refusal to overwrite a
+corrupt existing object. The model result is controlled test data; these cases do not call or qualify a
+live provider.
