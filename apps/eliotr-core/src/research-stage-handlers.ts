@@ -23,13 +23,40 @@ export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   max_results: 16,
 } as const;
 
+export interface ResearchRetrieveBranchesEnvironment {
+  readonly database: D1Database;
+  readonly search_database: D1Database;
+  readonly work_bucket: R2Bucket;
+  readonly evidence_bucket: R2Bucket;
+}
+
+export interface ResearchRetrieveBranchesInput {
+  readonly environment: ResearchRetrieveBranchesEnvironment;
+  readonly access: RetrieveBranchesStageDependencies["access"];
+  readonly navigation: NavigationReadAuthority;
+  readonly ledger: Pick<InvestigationLedgerStore, "read">;
+}
+
+/** Builds the one server-owned retrieval composition shared by all callers. */
+export function createResearchRetrieveBranchesDependencies(
+  input: ResearchRetrieveBranchesInput,
+): RetrieveBranchesStageDependencies {
+  return {
+    ...input.environment,
+    access: input.access,
+    navigation: input.navigation,
+    ledger: input.ledger,
+    profile: SERVER_RETRIEVAL_SCOPE_PROFILE,
+  };
+}
+
 export type ResearchStageHandlerFactoryMode =
   | {
       readonly kind: "server-owned-exploratory";
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
-      readonly retrieval?: RetrieveBranchesStageDependencies;
+      readonly retrieval?: Omit<ResearchRetrieveBranchesInput, "navigation" | "ledger">;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -65,7 +92,11 @@ export function createResearchStageHandlerFactory(
     : undefined;
   const retrievalHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory" &&
       mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined
-    ? createRetrieveBranchesStageHandler(mode.retrieval)
+    ? createRetrieveBranchesStageHandler(createResearchRetrieveBranchesDependencies({
+      ...mode.retrieval,
+      navigation: mode.navigation,
+      ledger: mode.ledger,
+    }))
     : undefined;
 
   return (stage) => {

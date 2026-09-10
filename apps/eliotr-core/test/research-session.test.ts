@@ -206,7 +206,7 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const tag = "do-exec";
     const stub = doStub(`research-${tag}`);
     const runBinding = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ handler_generation: string }>();
-    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION);
     const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: runBinding?.handler_generation ?? "", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: "test-generation" };
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(sessionBody) }))).status).toBe(200);
     const before = await workflowCounts();
