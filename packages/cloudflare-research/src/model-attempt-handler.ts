@@ -261,7 +261,7 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
-    catch (cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
+    catch (_cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
     if (receipt.output_object_ref !== model_output_object_ref) corrupt("model receipt output is bound to a different model object");
     const output: ModelOutputBinding = {
       output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,
