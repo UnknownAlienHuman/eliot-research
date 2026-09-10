@@ -111,6 +111,7 @@ export interface ModelAttemptReadback {
   readonly request_sha256: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+  readonly workflow_budget_receipt_ref: string;
   readonly authority: ModelAttemptAuthority;
   readonly receipt: ModelCallReceipt | null;
   readonly operation_receipt: OperationReceipt | null;
