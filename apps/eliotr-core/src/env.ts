@@ -1,4 +1,5 @@
-import { AccessVerificationError, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { AccessVerificationError } from "@eliotr/cloudflare-access";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { WorkersAiMarkdownBinding } from "@eliotr/cloudflare-markdown";
 
 export interface Env {

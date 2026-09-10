@@ -12,16 +12,18 @@ import type {
 } from "@eliotr/interfaces";
 import { ROUTES } from "@eliotr/interfaces";
 import {
-  AccessVerificationError,
-  createCloudflareAccessVerifier,
   IngestAuthorityError,
   IngestStorageError,
   RUNTIME_LIMITS,
   RuntimeLimitError,
   serializeJsonWithinBytes,
+} from "@eliotr/platform-cloudflare";
+import {
+  AccessVerificationError,
+  createCloudflareAccessVerifier,
   type AccessIdentity,
   type AccessVerifier,
-} from "@eliotr/platform-cloudflare";
+} from "@eliotr/cloudflare-access";
 import {
   CapabilityUnavailableError,
   CatalogInputError,

@@ -1,5 +1,5 @@
 import { GoogleCredentialError, oauthIdentifier, tokenBinding, type GoogleTokenBinding } from "@eliotr/google-drive-exchange";
-import type { AccessIdentity, AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessIdentity, AccessVerifier } from "@eliotr/cloudflare-access";
 import type { Env } from "./env.js";
 import { apiResult, configuredAccessVerifier, HttpRequestError, problem, type HttpDependencies } from "./http.js";
 import { readStreamWithinBytes } from "@eliotr/platform-cloudflare";

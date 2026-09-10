@@ -68,7 +68,7 @@ export const OWNER_E2E_CERTS_PATH = "/cdn-cgi/access/certs";
 export const OWNER_E2E_KID = "e2e-key-1";
 
 export const CONTROLLED_ISSUER_SEAM = {
-  verifier: "packages/platform-cloudflare/src/access.ts:createCloudflareAccessVerifier (unchanged, ER-17 reviewed)",
+  verifier: "packages/cloudflare-access/src/access.ts:createCloudflareAccessVerifier (unchanged, ER-17 reviewed)",
   seam: "apps/eliotr-core/src/env.ts:resolveOwnerE2ETestFetch + apps/eliotr-core/src/http.ts:configuredAccessVerifier (ER-24, exact profile only)",
   profile: "tests/integration/browser/owner-e2e.mjs:applyOwnerE2EProfile (loopback ACCESS_TEST_JWKS_URL, controlled issuer/audience)",
   positive: "apps/eliotr-core/test/owner-session.test.ts:real-RSA/controlled-JWKS signed session + this live-Worker owner-e2e",
@@ -4502,7 +4502,7 @@ export async function runOwnerE2E() {
       // No whitespace-padded case: HTTP header optional whitespace is stripped
       // by the transport before verification, so the verifier receives the
       // trimmed token by construction. The verifier's own trim check
-      // (packages/platform-cloudflare/src/access.ts) still guards non-header
+      // (packages/cloudflare-access/src/access.ts) still guards non-header
       // transports and is covered by the malformed cases here.
       { name: "forged", token: `${(await sign()).split(".").slice(0, 2).join(".")}.AAAA`, expect: [401], code: "ACCESS_JWT_SIGNATURE_INVALID" },
       { name: "tampered-payload", token: tamperedPayloadToken, expect: [401], code: "ACCESS_JWT_SIGNATURE_INVALID" },
@@ -4571,7 +4571,7 @@ export async function runOwnerE2E() {
       assert.equal(skewFuture.data?.code, "ACCESS_JWT_ISSUED_IN_FUTURE");
       negativeEvidence.push("skew-window=200-then-401/ACCESS_JWT_ISSUED_IN_FUTURE");
       // Email contract honesty: the Access verifier admits no email claim
-      // (packages/platform-cloudflare/src/access.ts has no email field), so extra
+      // (packages/cloudflare-access/src/access.ts has no email field), so extra
       // email/email_verified claims are not load-bearing. A valid token carrying
       // attacker email still identifies the signed subject only; the identity
       // carries no email and the denial path above already rejects bad signatures.

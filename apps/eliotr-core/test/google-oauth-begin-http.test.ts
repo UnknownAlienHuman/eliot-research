@@ -298,7 +298,7 @@ describe("G1 owner-only Google OAuth begin over real HTTP/D1/crypto", () => {
       async verify() {
         calls += 1;
         if (calls > 1) {
-          const { AccessVerificationError } = await import("@eliotr/platform-cloudflare");
+          const { AccessVerificationError } = await import("@eliotr/cloudflare-access");
           throw new AccessVerificationError("ACCESS_JWT_EXPIRED", "owner session revoked", false);
         }
         return {
