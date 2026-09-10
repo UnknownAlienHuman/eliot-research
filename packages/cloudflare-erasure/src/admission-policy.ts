@@ -127,8 +127,11 @@ function permissionRef(ref: VersionedRef): VersionedRef {
 
 function timestamp(value: string, label: string): string {
   assertErasureText(value, label, 64);
-  if (!Number.isFinite(Date.parse(value))) erasureFail("ERASURE_INPUT_INVALID", `${label} is invalid`);
-  return value;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed) || Math.abs(parsed) > 8_640_000_000_000_000) {
+    erasureFail("ERASURE_INPUT_INVALID", `${label} is invalid`);
+  }
+  return new Date(parsed).toISOString();
 }
 
 function policyDocument(input: ErasureAdmissionPolicyInput): Record<string, unknown> {
@@ -478,15 +481,22 @@ export function createErasureAdmissionPolicyStore(
         }
       }
       await verifyRevisions(revisionRefs, policy);
-      const confirmedPolicy = await readRow(permission);
-      if (confirmedPolicy === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is no longer installed");
-      assertAdmissible(confirmedPolicy, clock());
-      const owner = await currentOwner(confirmedPolicy.source_namespace_id);
-      if (owner === null || owner.owner_system_id !== confirmedPolicy.owner_system_id ||
-          owner.source_owner_generation !== confirmedPolicy.source_owner_generation) {
-        admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission owner is no longer current");
-      }
-      await verifyRevisions(revisionRefs, confirmedPolicy);
+      const finalAuthorityGuard = async (expected: ErasureAdmissionPolicy): Promise<ErasureAdmissionPolicy> => {
+        const latest = await readRow(permission);
+        if (latest === null) admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission is no longer installed");
+        assertAdmissible(latest, clock());
+        if (latest.policy_sha256 !== expected.policy_sha256) {
+          admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure permission digest changed during admission");
+        }
+        const owner = await currentOwner(latest.source_namespace_id);
+        if (owner === null || owner.owner_system_id !== latest.owner_system_id ||
+            owner.source_owner_generation !== latest.source_owner_generation) {
+          admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission owner is no longer current");
+        }
+        await verifyRevisions(revisionRefs, latest);
+        return latest;
+      };
+      const confirmedPolicy = await finalAuthorityGuard(policy);
       const identitySha = await erasureSha256Utf8(canonicalErasureJson(admissionIdentityDocument(request, subjectActor, confirmedPolicy)));
       const existing = await readAdmission(request.erasure_ref);
       if (existing !== null) {
@@ -495,6 +505,7 @@ export function createErasureAdmissionPolicyStore(
             existing.permission_sha256 !== confirmedPolicy.policy_sha256 || existing.request_identity_sha256 !== identitySha) {
           admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
         }
+        await finalAuthorityGuard(confirmedPolicy);
         return existing.request;
       }
       const admittedAt = isoFromMs(clock());
@@ -524,6 +535,7 @@ export function createErasureAdmissionPolicyStore(
             raced.permission_sha256 !== confirmedPolicy.policy_sha256 || raced.request_identity_sha256 !== identitySha) {
           admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
         }
+        await finalAuthorityGuard(confirmedPolicy);
         return raced.request;
       }
       const stored = await readAdmission(admitted.erasure_ref);
@@ -538,6 +550,7 @@ export function createErasureAdmissionPolicyStore(
           stored.permission_sha256 !== confirmedPolicy.policy_sha256 || stored.request_identity_sha256 !== identitySha) {
         admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure reference is already bound to different admission");
       }
+      await finalAuthorityGuard(confirmedPolicy);
       return stored.request;
     },
   };
