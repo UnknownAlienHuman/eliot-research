@@ -118,6 +118,13 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
     let disposed = false;
     let activeReader;
     const captureLimit = 512 * 1024;
+    const cancelReader = (reader) => {
+      if (reader === undefined || typeof reader.cancel !== "function") return;
+      try {
+        const pending = reader.cancel();
+        pending?.catch?.(() => {});
+      } catch { /* cancellation cannot delay capture failure or disposal */ }
+    };
     const captureBody = async (clone) => {
       let reader;
       try {
@@ -128,12 +135,12 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
         let totalBytes = 0;
         for (;;) {
           if (disposed) {
-            try { await reader.cancel?.(); } catch { /* disposal owns the response */ }
+            cancelReader(reader);
             return;
           }
           const part = await reader.read();
           if (disposed) {
-            try { await reader.cancel?.(); } catch { /* disposal owns the response */ }
+            cancelReader(reader);
             return;
           }
           if (part?.done === true) break;
@@ -141,7 +148,7 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
           if (value === undefined || value === null || typeof value.byteLength !== "number") throw new Error("invalid body chunk");
           const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
           if (totalBytes + chunk.byteLength > captureLimit) {
-            try { await reader.cancel?.(); } catch { /* overflow still fails the capture */ }
+            cancelReader(reader);
             throw new Error("overflow");
           }
           chunks.push(chunk);
@@ -221,16 +228,14 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
     window.fetch = wrappedFetch;
     window.__eliotrRawResponseCapture = {
       state,
-      dispose: async () => {
+      dispose: () => {
         disposed = true;
         const reader = activeReader;
         activeReader = undefined;
-        if (reader !== undefined && typeof reader.cancel === "function") {
-          try { await reader.cancel(); } catch { /* disposal is best effort after page settlement */ }
-        }
         if (window.fetch === wrappedFetch) window.fetch = originalFetch;
         state.bodyBase64 = undefined;
         delete window.__eliotrRawResponseCapture;
+        cancelReader(reader);
       },
     };
   }, { method, path, expectedStatus });

@@ -138,12 +138,16 @@ test("reads clone streams incrementally, preserves split UTF-8, and cancels over
       status: 200, url: rawUrl, type: "basic", redirected: false,
       clone: () => ({ body: { getReader: () => ({
         read: async () => ({ done: false, value: oversized }),
-        cancel: async () => { cancelCalls += 1; },
+        cancel: () => { cancelCalls += 1; return new Promise(() => {}); },
       }) } }),
     }) });
     try {
-      await assert.rejects(waitForRawResponse(fixture.page, "POST", fixture.action, rawPath), /BODY_CAPTURE_FAILED/u);
+      await Promise.race([
+        assert.rejects(waitForRawResponse(fixture.page, "POST", fixture.action, rawPath), /BODY_CAPTURE_FAILED/u),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("overflow cleanup stalled")), 250)),
+      ]);
       assert.equal(cancelCalls, 1);
+      assert.equal(globalThis.window.__eliotrRawResponseCapture, undefined);
     } finally { fixture.page.restore(); }
   });
 });
