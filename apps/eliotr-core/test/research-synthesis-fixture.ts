@@ -359,7 +359,7 @@ export async function committedFreezeSynthesisFixture() {
           id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: deployment.route_ref,
           choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
-        }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled" } });
+        }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
       } },
     prompt: freezePrompt(freeze, stage_five, deployment, "freeze"), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {

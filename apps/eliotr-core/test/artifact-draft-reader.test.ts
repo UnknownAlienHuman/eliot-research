@@ -13,7 +13,6 @@ import { readWorkflowObject } from "../../../packages/cloudflare-research/src/ob
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
-import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
   createArtifactDraftRuntime,
