@@ -26,12 +26,12 @@ export interface WorkspaceMcpRuntime {
   readonly DEPLOYMENT_GENERATION: string;
   readonly ENVIRONMENT: string;
   readonly GOOGLE_EXTERNAL_TRANSPORT?: unknown;
-  readonly MCP_HOSTNAME?: string;
+  readonly MCP_HOSTNAME?: string | undefined;
   readonly MCP_ACCESS_AUTH_PROFILE?: unknown;
-  readonly MCP_ACCESS_TEAM_DOMAIN?: string;
-  readonly MCP_ACCESS_AUDIENCE?: string;
-  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
-  readonly ACCESS_AUDIENCE?: string;
+  readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
+  readonly MCP_ACCESS_AUDIENCE?: string | undefined;
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
+  readonly ACCESS_AUDIENCE?: string | undefined;
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
     readonly blocking_reason_codes: readonly string[];
