@@ -19,6 +19,8 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/ingest/raw", operation: "ingest.raw.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/ingest/raw/:capture_id", operation: "ingest.raw.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/raw/:capture_id/markdown", operation: "ingest.raw.markdown", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
+  { method: "POST", path: "/api/v1/ingest/raw/:capture_id/admission", operation: "ingest.raw.normalized.admit", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
+  { method: "GET", path: "/api/v1/ingest/raw/:capture_id/admission/:admission_operation_id", operation: "ingest.raw.normalized.status", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/bundles/prepare", operation: "ingest.bundle.prepare", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "PUT", path: "/api/v1/ingest/bundles/:operation_id/parts/:part_number", operation: "ingest.bundle.part.upload", auth: "owner_or_service", maximum_request_bytes: 8388608, response_mode: "json" },
   { method: "POST", path: "/api/v1/ingest/bundles/:operation_id/files/complete", operation: "ingest.bundle.file.complete", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },

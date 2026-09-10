@@ -80,6 +80,16 @@ The current browser profile accepts prepared normalized bundles only (64 files, 
 aggregate, 256 KiB metadata). The supported local namespace initializer is implemented. Known-operation reload recovery and exact-folder missing-ID discovery are implemented; authorized revision history and recorded channel states are implemented below; active readiness assessment and the complete populated browser loop remain unfinished. Actual IdP qualification additionally needs the account. Do not describe this merged checkpoint as a
 finished Library product or upload it to Cloudflare for continued development.
 
+Raw conversion candidates now have an owner-only server admission continuation. The browser posts only
+`idempotency_key` and `conversion_operation_id` to
+`/api/v1/ingest/raw/:capture_id/admission`; capture identity, current owner/policy, residency and the
+immutable snapshot-view witness are resolved server-side. The server reads the durable COMPLETE
+conversion row and exact bounded R2 output once, then uses the existing governed normalized ingest
+prepare/upload/qualify/promote/commit path. A COMPLETE conversion is still candidate-only until the
+normalized ingest status is `COMMITTED`; the matching GET returns the durable admission envelope and
+nested `BundleIngestStatus` when that operation exists. Reserved snapshot-view refs always require their
+durable witness, including replay and final commit guard evaluation.
+
 
 ## Authorized Library checkpoint
 

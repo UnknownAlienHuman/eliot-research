@@ -7,6 +7,7 @@ import type {
   OwnerApi,
   PrepareBundleUploadRequest,
   UploadBundlePartRequest,
+  RawNormalizedAdmissionRequest,
 } from "@eliotr/interfaces";
 import { readRequestBodyWithinBytes } from "@eliotr/platform-cloudflare";
 
@@ -141,6 +142,16 @@ async function jsonBody(request: Request, maximumBytes: number): Promise<Record<
   try { parsed = JSON.parse(text); }
   catch (cause) { fail("INGEST_BODY_INVALID", 400, `request body is not valid JSON: ${String(cause)}`); }
   return record(parsed, "request body");
+}
+
+/** Browser admission command. All source, snapshot and policy authority is server-derived. */
+export async function rawNormalizedAdmissionRequest(request: Request, maximumBytes: number): Promise<RawNormalizedAdmissionRequest> {
+  const input = await jsonBody(request, maximumBytes);
+  exactKeys(input, ["idempotency_key", "conversion_operation_id"], "raw normalized admission request");
+  return {
+    idempotency_key: identifier(input.idempotency_key, "idempotency_key"),
+    conversion_operation_id: identifier(input.conversion_operation_id, "conversion_operation_id"),
+  };
 }
 
 function fileHashes(value: unknown): Readonly<Record<string, string>> {

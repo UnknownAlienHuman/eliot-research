@@ -25,6 +25,17 @@ the packets it depends on.
 - `apps/eliotr-core/src/ingest-service.test.ts`
 - `apps/eliotr-core/src/source-admission-service.test.ts`
 - `scripts/check-ingest-admission.mjs`
+- `packages/contracts/src/snapshot-view.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-types.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-snapshot-view.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-candidate-reader.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-admission.ts`
+- `packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts`
+- `packages/cloudflare-markdown/src/raw-markdown-candidate-reader.ts`
+- `apps/eliotr-core/src/raw-normalized-admission.ts`
+- `apps/eliotr-core/src/composition-root.ts`
+- `apps/eliotr-core/src/http.ts`
+- `infra/d1/core/migrations/0030_raw_normalized_admission.sql`
 
 ## Read only
 
@@ -106,6 +117,15 @@ Local fixtures, mocks, typecheck and Wrangler dry-run keep this contour at `IMPL
 Promotion to `LIVE_QUALIFIED` requires deployed Access, remote D1, real R2 multipart/promotion readback,
 and Queue duplicate/retry/DLQ receipts.
 
+The raw conversion admission continuation is owner-composed at
+`POST /api/v1/ingest/raw/:capture_id/admission` with exactly
+`{idempotency_key,conversion_operation_id}`. The server loads the authenticated durable capture,
+current owner and policy, creates the immutable snapshot-view witness, reads one COMPLETE conversion
+result and its exact bounded R2 output, then invokes the existing governed normalized ingest service.
+`GET /api/v1/ingest/raw/:capture_id/admission/:admission_operation_id` is owner-bound status/readback;
+its nested `BundleIngestStatus` appears once the normalized ingest operation is allocated. COMPLETE
+conversion remains a candidate state until the normalized operation is COMMITTED, QUARANTINED or REJECTED.
+
 ## Launch 01 continuation policy fence
 
 Extract existing owner/policy reads into `d1-ingest-policy.ts`; do not create a second policy authority.
@@ -116,4 +136,6 @@ reserved snapshot inside its existing commit guard: a same-revision policy edit 
 back the whole canonical transaction. Staged/promoted bytes alone do not establish source admission.
 ER-25 may integrate explicit same-tab continuation in the existing importer; its private checkpoint is
 only an upload optimization, never an admission or policy receipt. Existing cross-layer tests remain
-`bundle-import-http.test.ts`. No new route or schema, automatic mutation retry or remote deployment.
+`bundle-import-http.test.ts`. The raw conversion admission route and migration are the explicitly
+documented ER-37 continuation; no other route, schema, automatic mutation retry or remote deployment is
+introduced.

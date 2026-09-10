@@ -20,3 +20,4 @@ export type { MarkdownConversionDispatchState } from "./markdown-conversion-cont
 export * from "./raw-markdown-conversion-contract.js";
 export * from "./raw-markdown-conversion.js";
 export * from "./raw-markdown-owner.js";
+export * from "./raw-markdown-candidate-reader.js";
