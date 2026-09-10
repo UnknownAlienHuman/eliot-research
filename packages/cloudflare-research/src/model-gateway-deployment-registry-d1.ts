@@ -1,10 +1,9 @@
-import type { ModelGatewayDeploymentRegistryPort } from "./model-gateway-execution-contract.js";
 import {
   decodeDynamicRouteDeploymentForProvisioning,
   dynamicRouteJsonArtifact,
+  modelGatewaySha256,
   providerDynamicRouteName,
-} from "./dynamic-route-provisioning-codec.js";
-import {
+  type ModelGatewayDeploymentRegistryPort,
   dynamicRouteProvisioningFailure,
   type DynamicRouteActiveGeneration,
   type DynamicRouteCandidate,
@@ -13,8 +12,7 @@ import {
   type DynamicRoutePromotionWriteReceipt,
   type DynamicRouteProvisioningErrorCode,
   type DynamicRouteRegistryPort,
-} from "./dynamic-route-provisioning-contract.js";
-import { modelGatewaySha256 } from "./model-gateway-request.js";
+} from "@eliotr/cloudflare-ai";
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
