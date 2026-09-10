@@ -1,11 +1,7 @@
-import type {
-  AllowedReferenceManifest,
-  EvidenceFreeze,
-} from "@eliotr/contracts";
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import type { ResearchEvidencePack } from "./research-reference-manifest.js";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import type { RunStatusAuthoritySnapshot } from "./research-run-status.js";
+import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
 import { digest as requestDigest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
 import {
   materializeResearchResult,
@@ -18,12 +14,7 @@ import {
  * from the MATERIALIZE request body.
  */
 /** The Raw reader supplies this projection from its full frozen lineage context. */
-export interface ResearchMaterializeContext {
-  readonly operation_id: string;
-  readonly freeze: EvidenceFreeze;
-  readonly manifest: AllowedReferenceManifest;
-  readonly stage_five: { readonly evidence_pack: ResearchEvidencePack };
-}
+export type ResearchMaterializeContext = EvidenceFreezeMaterializeContext;
 
 export interface ResearchMaterializeContextReader {
   read(input: {
@@ -49,7 +40,7 @@ export interface ResearchMaterializeStageDependencies {
     readonly request: StageRequest;
     readonly principal: WorkflowPrincipal;
     readonly context: ResearchMaterializeContext;
-  }) => ResearchMaterializeTrustedMetadata;
+  }) => ResearchMaterializeTrustedMetadata | Promise<ResearchMaterializeTrustedMetadata>;
 }
 
 /** Emits the stage17 W2 payload after the reader has revalidated its lineage. */
@@ -68,7 +59,7 @@ export function createResearchMaterializeStageHandler(
       recheck_authority: dependencies.recheck_authority,
     });
     if (synthesis === null) fail("WORKFLOW_OUTPUT_CORRUPT");
-    const metadata = dependencies.metadata({ request, principal, context });
+    const metadata = await dependencies.metadata({ request, principal, context });
     const stageRequestSha256 = await requestDigest(new TextEncoder().encode(JSON.stringify(request)));
     return materializeResearchResult({
       ...metadata,

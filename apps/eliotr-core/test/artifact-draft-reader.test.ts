@@ -1,13 +1,14 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
-import type { ArtifactSpec, OperationIntent } from "@eliotr/contracts";
-import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import type { OperationIntent } from "@eliotr/contracts";
+import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import type {
   ResearchMaterializeContext,
   ResearchMaterializeTrustedMetadata,
 } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
+import { createResearchArtifactMetadataProducer, type ResearchArtifactReportPolicy } from "../../../packages/cloudflare-research/src/research-artifact-metadata.js";
 import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
 import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
@@ -117,47 +118,26 @@ function residencyTemplate(scopeId: string, principalRef: string, tag: string) {
 
 async function materializeMetadata(
   context: ResearchMaterializeContext,
+  request: Parameters<ReturnType<typeof createResearchArtifactMetadataProducer>>[0]["request"],
   tag: string,
 ): Promise<ResearchMaterializeTrustedMetadata> {
-  const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(context.manifest));
-  const ledgerBytes = new TextEncoder().encode(canonicalEvidenceJson(context.stage_five.evidence_pack));
-  const manifestRef = `${context.manifest.manifest_ref.id}:${context.manifest.manifest_ref.revision}`;
-  const ledgerRef = `evidence-ledger-${tag}`;
-  const manifestSha = await evidenceSha256Bytes(manifestBytes);
-  const ledgerSha = await evidenceSha256Bytes(ledgerBytes);
   const domains = residencyTemplate(context.freeze.scope_snapshot_ref.id, freezePrincipal.principal_ref, tag);
-  const spec: ArtifactSpec = {
-    spec_ref: { id: `materialize-spec-${tag}`, revision: 1 }, kind: "research_report",
-    title: "Controlled frozen research draft", scope_snapshot_ref: context.freeze.scope_snapshot_ref,
-    inquiry_protocol_ref: { id: "materialize-protocol-v1", revision: 1 }, audience: "owner", language: "en",
-    section_contracts: [{ section_id: "summary", title: "Summary", purpose: "Frozen evidence summary",
-      required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 }],
-    citation_policy_ref: "materialize-citation-v1", verification_policy_ref: "materialize-verification-v1",
-    include_counterevidence: true, include_methodology: true, length_policy_ref: "materialize-length-v1",
-    export_formats: ["markdown"], budget_ref: "materialize-fixture-budget",
-  };
-  const section = {
-    section_ref: { id: `materialize-section-${tag}`, revision: 1 }, contract_id: "summary",
-    body_object_ref: `materialize-section-body-${tag}`, statement_labels: { claim: "UNRESOLVED" as const },
-    evidence_ledger_ref: ledgerRef,
-  };
   const intent: OperationIntent = {
     intent_ref: { id: `materialize-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",
-    principal_ref: freezePrincipal.principal_ref, idempotency_key: `materialize-idempotency-${tag}`,
+    principal_ref: freezePrincipal.principal_ref, idempotency_key: request.idempotency_key,
     payload_ref: `materialize-payload-${tag}`, policy_decision_ref: `materialize-policy-${tag}`,
     created_at: new Date().toISOString(),
   };
-  return {
-    intent, expected_draft_head_revision: null, artifact_ref: { id: `materialize-artifact-${tag}`, revision: 1 },
-    spec, section, section_residency: domains,
-    referenced_objects: [
-      { object_ref: manifestRef, object_kind: "DEPENDENCY_MANIFEST", bytes: manifestBytes,
-        residency: { ...domains, content_digest: { algorithm: "sha256", digest: manifestSha } } },
-      { object_ref: ledgerRef, object_kind: "EVIDENCE_LEDGER", bytes: ledgerBytes,
-        residency: { ...domains, content_digest: { algorithm: "sha256", digest: ledgerSha } } },
-    ],
-    manifest_residency: domains, created_at: new Date().toISOString(),
+  const policy: ResearchArtifactReportPolicy = {
+    kind: "research_report", title: "Controlled frozen research draft", audience: "owner", language: "en",
+    section_contract: { section_id: "summary", title: "Summary", purpose: "Frozen evidence summary",
+      required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 },
+    statement_labels: { claim: "UNRESOLVED" }, citation_policy_ref: "materialize-citation-v1",
+    verification_policy_ref: "materialize-verification-v1", length_policy_ref: "materialize-length-v1",
+    export_formats: ["markdown"], include_counterevidence: true, include_methodology: true,
+    budget_ref: "materialize-fixture-budget", section_residency: domains, manifest_residency: domains,
   };
+  return createResearchArtifactMetadataProducer({ intent, expected_draft_head_revision: null, policy })({ request, principal: freezePrincipal, context });
 }
 
 describe("actual D1/R2 artifact draft reader", () => {
@@ -484,7 +464,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     }, synthesis.freeze.navigation, synthesis.freeze.readers);
     const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal, input_bytes: new Uint8Array() });
     const tag = crypto.randomUUID();
-    const metadata = await materializeMetadata(materializeContext, tag);
+    const metadata = await materializeMetadata(materializeContext, materializeRequest, tag);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
     const materialize = {
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
