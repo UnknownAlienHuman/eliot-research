@@ -112,7 +112,7 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(payload.data.investigation_ref.id.startsWith("research-")).toBe(true);
     const policies = await db.prepare("SELECT COUNT(*) AS n FROM investigation_current_policy WHERE state = 'ACTIVE'").first<number>("n");
     expect(policies).toBeGreaterThanOrEqual(2);
-    const scope = await db.prepare("SELECT policy_authority_ref FROM scope_snapshot s JOIN research_workflow_run r ON r.scope_snapshot_id = s.snapshot_id AND r.scope_snapshot_revision = s.revision WHERE r.operation_id = ?1")
+    const scope = await db.prepare("SELECT s.policy_authority_ref FROM scope_snapshot s JOIN research_workflow_run r ON r.scope_snapshot_id = s.snapshot_id AND r.scope_snapshot_revision = s.revision WHERE r.operation_id = ?1")
       .bind(payload.data.workflow_instance_id).first<{ policy_authority_ref: string }>();
     expect(scope).not.toBeNull();
     if (scope === null) throw new Error("missing second-run scope policy authority");
