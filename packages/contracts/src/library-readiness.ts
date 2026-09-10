@@ -10,6 +10,22 @@ import { SourceCurrentnessSchema, SourceRevisionSchema } from "./source.js";
 
 export const LIBRARY_READINESS_PROTOCOL = "eliotr.library-readiness.v1" as const;
 
+const CurrentnessFreshnessSchema = SourceCurrentnessSchema.shape.observation_freshness;
+const VerifiedCurrentnessObservationSchema = z.object({
+  verification: z.literal("VERIFIED"),
+  value: SourceCurrentnessSchema,
+}).strict();
+const UnverifiedCurrentnessObservationSchema = z.object({
+  verification: z.literal("NOT_VERIFIED"),
+  recorded_freshness: CurrentnessFreshnessSchema,
+  reason_codes: z.array(IdentifierSchema).min(1).max(8),
+}).strict();
+export const LibraryCurrentnessObservationSchema = z.discriminatedUnion("verification", [
+  VerifiedCurrentnessObservationSchema,
+  UnverifiedCurrentnessObservationSchema,
+]);
+export type LibraryCurrentnessObservation = z.infer<typeof LibraryCurrentnessObservationSchema>;
+
 /** Owner-only observation of independently verified active Library channels. */
 export const LibraryReadinessSchema = z.object({
   protocol: z.literal(LIBRARY_READINESS_PROTOCOL),
@@ -19,7 +35,7 @@ export const LibraryReadinessSchema = z.object({
   /** String form of the catalog authority epoch captured by beginCatalogRead. */
   catalog_generation: z.string().max(16).regex(/^[1-9][0-9]*$/u),
   observed_at: IsoDateTimeSchema,
-  currentness: SourceCurrentnessSchema,
+  currentness: LibraryCurrentnessObservationSchema,
   quality_state: SourceRevisionSchema.shape.quality_state,
   readiness_basis: z.literal("ACTIVE_VERIFIED"),
   channels: z.array(ChannelReadinessSchema).length(3),
@@ -37,8 +53,9 @@ export const LibraryReadinessSchema = z.object({
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["channels", index], message: "ready channel requires generation and receipt_ref" });
     }
   }
-  if (value.currentness.source_revision_ref !== value.source_revision_ref) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["currentness", "source_revision_ref"], message: "currentness is not bound to the envelope head" });
+  if (value.currentness.verification === "VERIFIED" &&
+      value.currentness.value.source_revision_ref !== value.source_revision_ref) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["currentness", "value", "source_revision_ref"], message: "currentness is not bound to the envelope head" });
   }
 });
 export type LibraryReadiness = z.infer<typeof LibraryReadinessSchema>;

@@ -19,7 +19,7 @@ function value() {
     deployment_generation: "deployment-1",
     catalog_generation: "7",
     observed_at: "2026-09-09T00:00:00.000Z",
-    currentness,
+  currentness: { verification: "VERIFIED", value: currentness },
     quality_state: "standard",
     readiness_basis: "ACTIVE_VERIFIED",
     channels: [
@@ -36,7 +36,7 @@ describe("library active readiness contract", () => {
   });
 
   it("rejects a partial currentness object and unknown authority fields", () => {
-    expect(LibraryReadinessSchema.safeParse({ ...value(), currentness: { observation_freshness: "unknown" } }).success).toBe(false);
+    expect(LibraryReadinessSchema.safeParse({ ...value(), currentness: { verification: "NOT_VERIFIED", recorded_freshness: "unknown", reason_codes: [] } }).success).toBe(false);
     expect(LibraryReadinessSchema.safeParse({ ...value(), policy: "caller-supplied" }).success).toBe(false);
   });
 
@@ -53,5 +53,8 @@ describe("library active readiness contract", () => {
     expect(LibraryReadinessSchema.safeParse({ ...complete, channels: complete.channels.map((channel, index) => index === 0
       ? { ...channel, generation: undefined, receipt_ref: undefined }
       : channel) }).success).toBe(false);
+    expect(LibraryReadinessSchema.safeParse({ ...complete, currentness: {
+      verification: "NOT_VERIFIED", recorded_freshness: "unknown", reason_codes: ["CURRENTNESS_UNAVAILABLE"],
+    } }).success).toBe(true);
   });
 });

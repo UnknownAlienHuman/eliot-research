@@ -48,6 +48,10 @@ interface SnapshotAdmissionRow {
   readonly ingest_operation_id: unknown;
 }
 
+type ProjectionReadback = Awaited<ReturnType<typeof readD1SearchChannelReadback>> & {
+  readonly failure_code?: string;
+};
+
 interface RawCaptureRow {
   readonly capture_id: unknown;
   readonly principal_ref: unknown;
@@ -151,7 +155,8 @@ async function currentness(
     witness.residency_key_digest === capture.residency_key_digest &&
     witness.owner_system_id === revision.source_owner_system_id &&
     witness.source_namespace_id === revision.source_namespace_id &&
-    witness.source_owner_generation === revision.source_owner_generation;
+    witness.source_owner_generation === revision.source_owner_generation &&
+    witness.observation_freshness === recordedFreshness(row);
   if (!bound) return unverifiedCurrentness(row, "CURRENTNESS_SNAPSHOT_WITNESS_MISMATCH");
   const parsed = SourceCurrentnessSchema.safeParse({
     source_revision_ref: witness.source_revision_ref,
@@ -167,11 +172,15 @@ async function currentness(
 }
 
 function projectionReadiness(
-  readback: Awaited<ReturnType<typeof readD1SearchChannelReadback>>,
+  readback: ProjectionReadback,
   sourceRevisionRef: string,
   channel: "exact_ready" | "lexical_ready",
   observedAt: string,
 ): ChannelReadiness {
+  if (readback.failure_code !== undefined) {
+    return ChannelReadinessSchema.parse({ source_revision_ref: sourceRevisionRef, channel, state: "degraded",
+      reason_codes: [readback.failure_code], observed_at: observedAt });
+  }
   if (readback.pinned.length === 1 && readback.missing.length === 0 && readback.stale.length === 0) {
     const pin = readback.pinned[0];
     if (pin === undefined || pin.source_revision_ref !== sourceRevisionRef) invalid("projection pin is not bound to the current head");
@@ -199,7 +208,7 @@ async function activeProjection(
   channel: "exact" | "lexical",
   sourceRevisionRef: string,
   ownerGeneration: string,
-): Promise<Awaited<ReturnType<typeof readD1SearchChannelReadback>>> {
+): Promise<ProjectionReadback> {
   try {
     return await readD1SearchChannelReadback(search, core, channel, [sourceRevisionRef], {
       [sourceRevisionRef]: ownerGeneration,
@@ -210,7 +219,7 @@ async function activeProjection(
       ? (error as Error & { readonly code?: unknown }).code : undefined;
     return code === "SEARCH_INCOMPLETE"
       ? { channel, pinned: [], missing: [], stale: [sourceRevisionRef] }
-      : { channel, pinned: [], missing: [sourceRevisionRef], stale: [] };
+      : { channel, pinned: [], missing: [], stale: [], failure_code: "SEARCH_READBACK_FAILED" };
   }
 }
 
@@ -274,6 +283,7 @@ export async function readLibraryReadiness(
     "FROM source_revision WHERE source_revision_ref=?1 LIMIT 1",
   ).bind(head).first<CurrentnessRow>();
   if (currentnessRow === null) invalid("source currentness row is missing");
+  const currentnessObservation = await currentness(database, context, currentnessRow, head, authoritative);
   const semantic = await managedSemantic(searchDatabase, database, head, observedAt);
   const [finalExact, finalLexical] = await Promise.all([
     activeProjection(searchDatabase, database, "exact", head, authoritative.revision.source_owner_generation),
@@ -289,7 +299,7 @@ export async function readLibraryReadiness(
     deployment_generation: deploymentGeneration,
     catalog_generation: String(fence.generation),
     observed_at: observedAt,
-    currentness: await currentness(database, context, currentnessRow, head, authoritative),
+    currentness: currentnessObservation,
     quality_state: authoritative.revision.quality_state,
     readiness_basis: "ACTIVE_VERIFIED",
     channels: [finalExactChannel, lexicalChannel, semantic],
