@@ -333,12 +333,12 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
       .bind(fixture.request.operation_id).first<{ n: number }>())?.n).toBe(1);
   }, 30_000);
 
-  it("rejects revoked scope, wrong principal and substituted payload without a checkpoint", async () => {
+  it("rejects revoked scope, wrong principal and substituted payload without an unintended checkpoint", async () => {
     const fixture = await createProtocolFreezeFixture("negative");
     const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
     const revoked = await fixture.db.prepare(
-      "UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3",
-    ).bind(fixture.scope.snapshot_id, fixture.scope.revision, principal.principal_ref).run();
+      "UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5",
+    ).bind(fixture.scope.snapshot_id, fixture.scope.revision, principal.principal_ref, access.client_class, access.credential_generation).run();
     expect(revoked.meta.changes).toBe(1);
     await expect(fixture.executor.execute(fixture.request, principal, handler)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect((await fixture.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1").bind(fixture.request.operation_id).first<{ n: number }>())?.n).toBe(0);
