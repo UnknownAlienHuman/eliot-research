@@ -1422,11 +1422,26 @@ const OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES = new Set([
   "ABORT_ERR", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE",
   "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
 ]);
+const OWNER_ACCESS_DIAGNOSTIC_PROBLEM_CODES = new Set([
+  "INTERNAL_ERROR",
+  "ACCESS_CONFIG_INVALID", "ACCESS_JWT_MISSING", "ACCESS_JWT_TOO_LARGE",
+  "ACCESS_JWT_MALFORMED", "ACCESS_JWT_ALGORITHM_DENIED", "ACCESS_JWT_KEY_ID_MISSING",
+  "ACCESS_JWKS_UNAVAILABLE", "ACCESS_JWKS_INVALID", "ACCESS_JWT_KEY_UNKNOWN",
+  "ACCESS_JWT_SIGNATURE_INVALID", "ACCESS_JWT_ISSUER_INVALID", "ACCESS_JWT_AUDIENCE_INVALID",
+  "ACCESS_JWT_SUBJECT_INVALID", "ACCESS_JWT_EXPIRED", "ACCESS_JWT_NOT_YET_VALID",
+  "ACCESS_JWT_ISSUED_IN_FUTURE", "ACCESS_JWT_TYPE_INVALID", "ACCESS_SERVICE_PRINCIPAL_DENIED",
+]);
 
 function allowlistedOwnerBridgeProblemCode(value) {
   const candidate = typeof value === "string" ? value : value?.code ?? value?.data?.code;
   return typeof candidate === "string" && OWNER_BRIDGE_DIAGNOSTIC_PROBLEM_CODES.has(candidate)
     ? candidate : undefined;
+}
+
+function allowlistedOwnerAccessProblemCode(value) {
+  const candidate = typeof value === "string" ? value : value?.code ?? value?.data?.code;
+  return typeof candidate === "string" && candidate.length <= 96 &&
+    OWNER_ACCESS_DIAGNOSTIC_PROBLEM_CODES.has(candidate) ? candidate : "UNAVAILABLE";
 }
 
 function ownerBridgeProblemCodeFromMessage(error) {
@@ -5682,7 +5697,9 @@ export async function runOwnerE2E() {
           tokenLength: item.token.length,
           correlation: `e2e-jwt-matrix/${item.name}`,
         });
-        assert.equal(denied.status, item.status, `browser ${item.name} must deny with ${item.status}`);
+        const observedCode = allowlistedOwnerAccessProblemCode(denied.data);
+        assert.equal(denied.status, item.status,
+          `browser ${item.name} must deny with ${item.status} (observed_code=${observedCode})`);
         assert.equal(denied.data?.code ?? denied.data?.data?.code, item.code,
           `browser ${item.name} must carry exact code ${item.code}`);
         assert.ok(!JSON.stringify(denied.data).includes("e2e-owner") || denied.status !== 200,
