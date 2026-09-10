@@ -5,6 +5,7 @@ import { verifyAndOpenEvidence } from "./evidence-api.js";
 export interface EvidenceRailController {
   readonly clear: () => void;
   readonly select: (evidence: ResolvedEvidence, scopeSnapshotRef?: VersionedRef) => void;
+  readonly selectHandle: (scopeSnapshotRef: VersionedRef, handleRef: VersionedRef, expectedExcerptSha256?: string) => void;
   readonly dispose: () => void;
 }
 
@@ -65,11 +66,7 @@ export function mountEvidenceRail(
     status.textContent = "QUERY RESULT";
   };
 
-  const select = (evidence: ResolvedEvidence, scopeSnapshotRef?: VersionedRef): void => {
-    const selectedScope = evidence.handle.scope_snapshot_ref;
-    if (scopeSnapshotRef !== undefined && !sameRef(selectedScope, scopeSnapshotRef)) {
-      clear(); status.textContent = "SCOPE CHANGED"; return;
-    }
+  const openHandle = (selectedScope: VersionedRef, handleRef: VersionedRef, expectedExcerptSha256?: string): void => {
     clear();
     const current = ++serial;
     controller = new AbortController();
@@ -77,9 +74,10 @@ export function mountEvidenceRail(
     const pending = document.createElement("p"); pending.className = "evidence-pending";
     pending.textContent = "Verifying pinned handle and reopening source bytes…";
     detail.append(pending);
-    void verifyAndOpenEvidence(selectedScope, evidence.handle.handle_ref, controller.signal)
+    void verifyAndOpenEvidence(selectedScope, handleRef, controller.signal)
       .then((opened) => {
         if (current !== serial) return;
+        if (expectedExcerptSha256 !== undefined && opened.excerptSha256 !== expectedExcerptSha256) throw new ApiRequestError({ status: 502, code: "EVIDENCE_RESPONSE_INVALID", message: "Opened evidence does not match the cited excerpt" });
         renderVerified(detail, opened); status.textContent = "VERIFIED";
       })
       .catch((error: unknown) => {
@@ -90,5 +88,13 @@ export function mountEvidenceRail(
       });
   };
 
-  return { clear, select, dispose: clear };
+  const select = (evidence: ResolvedEvidence, scopeSnapshotRef?: VersionedRef): void => {
+    const selectedScope = evidence.handle.scope_snapshot_ref;
+    if (scopeSnapshotRef !== undefined && !sameRef(selectedScope, scopeSnapshotRef)) {
+      clear(); status.textContent = "SCOPE CHANGED"; return;
+    }
+    openHandle(selectedScope, evidence.handle.handle_ref, evidence.handle.excerpt_sha256);
+  };
+
+  return { clear, select, selectHandle: openHandle, dispose: clear };
 }

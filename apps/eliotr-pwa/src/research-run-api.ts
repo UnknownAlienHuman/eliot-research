@@ -28,6 +28,21 @@ export interface ResearchArtifactSectionView {
   readonly bytes: Uint8Array;
 }
 
+export interface ResearchArtifactSectionCitation {
+  readonly handle_ref: VersionedRef;
+  readonly excerpt_sha256: string;
+}
+
+export interface ResearchArtifactSectionCitationsView {
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly scope_snapshot_ref: VersionedRef;
+  readonly verification_receipt_ref: string;
+  readonly semantic_verification: "NOT_EXECUTED";
+  readonly cited_evidence: readonly ResearchArtifactSectionCitation[];
+  readonly deployment_generation: string;
+}
+
 const MAX_RESULTS = 16;
 const MAX_WORKFLOW_STAGE_INDEX = 18;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
@@ -182,6 +197,44 @@ export async function readResearchArtifactSection(
   const actualSha = await sha256(raw.bytes);
   if (actualSha !== returnedSha) invalid("section response digest does not match the response body");
   return { artifact_ref: returnedArtifact, section_ref: returnedSection, body_object_ref: objectRef, body_sha256: returnedSha, size_bytes: raw.bytes.byteLength, bytes: raw.bytes };
+}
+
+export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArtifact: VersionedRef, expectedSection: VersionedRef, expectedDeploymentGeneration?: string): ResearchArtifactSectionCitationsView {
+  const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
+  const data = record(parsed.data, ["protocol", "artifact_ref", "section_ref", "scope_snapshot_ref", "verification_receipt_ref", "semantic_verification", "cited_evidence"]);
+  if (data.protocol !== "eliotr.artifact-section-citations.v1" || data.semantic_verification !== "NOT_EXECUTED") invalid("research citation protocol is invalid");
+  const artifact = versionedRef(data.artifact_ref, "artifact_ref");
+  const section = versionedRef(data.section_ref, "section_ref");
+  const scope = versionedRef(data.scope_snapshot_ref, "scope_snapshot_ref");
+  if (!sameRef(artifact, expectedArtifact) || !sameRef(section, expectedSection)) invalid("research citation identity does not match the requested section");
+  const receipt = boundedString(data.verification_receipt_ref, "verification_receipt_ref");
+  if (!IdentifierSchema.safeParse(receipt).success) invalid("verification_receipt_ref is invalid");
+  if (!Array.isArray(data.cited_evidence) || data.cited_evidence.length > 128) invalid("cited evidence is invalid");
+  const seen = new Set<string>();
+  const citedEvidence = data.cited_evidence.map((value, index) => {
+    const citation = record(value, ["handle_ref", "excerpt_sha256"]);
+    const handle = versionedRef(citation.handle_ref, `cited_evidence[${index}].handle_ref`);
+    const digest = boundedString(citation.excerpt_sha256, `cited_evidence[${index}].excerpt_sha256`, 64);
+    if (!Sha256Schema.safeParse(digest).success) invalid("cited evidence digest is invalid");
+    const key = `${handle.id}:${handle.revision}`;
+    if (seen.has(key)) invalid("cited evidence contains a duplicate handle");
+    seen.add(key);
+    return { handle_ref: handle, excerpt_sha256: digest };
+  });
+  return { artifact_ref: artifact, section_ref: section, scope_snapshot_ref: scope, verification_receipt_ref: receipt, semantic_verification: "NOT_EXECUTED", cited_evidence: citedEvidence, deployment_generation: parsed.deployment_generation };
+}
+
+export async function readResearchArtifactSectionCitations(
+  artifactRef: { readonly id: string; readonly revision: number },
+  sectionRef: { readonly id: string; readonly revision: number },
+  expectedDeploymentGeneration?: string,
+  signal?: AbortSignal,
+): Promise<ResearchArtifactSectionCitationsView> {
+  const artifact = versionedRef(artifactRef, "artifact_ref");
+  const section = versionedRef(sectionRef, "section_ref");
+  const path = `/api/v1/research/artifact/${encodeURIComponent(`${artifact.id}:${artifact.revision}`)}/sections/${encodeURIComponent(`${section.id}:${section.revision}`)}/citations`;
+  const raw = await requestApi(path, signal ? { signal } : {});
+  return decodeResearchArtifactSectionCitations(raw, artifact, section, expectedDeploymentGeneration);
 }
 
 export async function startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView> {

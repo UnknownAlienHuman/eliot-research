@@ -1,6 +1,6 @@
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
@@ -148,7 +148,46 @@ export function mountResearchRunPanel(
             })
             .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
         };
-        item.append(sectionHeading, sectionTechnical, open); sections.append(item);
+        const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
+        sources.onclick = () => {
+          if (renderSerial !== serial || controller !== undefined) return;
+          const local = new AbortController(); controller = local; open.disabled = true; sources.disabled = true; status.textContent = "Reading cited sources…";
+          item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
+          void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal)
+            .then((citations) => {
+              if (renderSerial !== serial) return;
+              const list = document.createElement("div"); list.className = "research-citations";
+              const state = document.createElement("p"); state.className = "research-citation-state";
+              state.textContent = "Citations are locators; fresh source verification is required (NOT_EXECUTED).";
+              list.append(state);
+              if (citations.cited_evidence.length === 0) {
+                const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty);
+              } else {
+                const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
+                const actions = document.createElement("div"); actions.className = "research-citation-actions";
+                citations.cited_evidence.forEach((citation, citationOrdinal) => {
+                  const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal);
+                  button.onclick = () => {
+                    if (renderSerial !== serial || controller !== undefined) return;
+                    element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citations.scope_snapshot_ref, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
+                    status.textContent = "Source selected. Verify it in the Evidence rail.";
+                  };
+                  actions.append(button);
+                });
+                list.append(actions);
+              }
+              item.append(list); status.textContent = "Cited sources loaded; fresh verification is still required.";
+            })
+            .catch((error: unknown) => {
+              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409)) { clearPrivate(); return; }
+              const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
+              status.textContent = "Cited sources could not be read.";
+            })
+            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; sources.disabled = false; updateButtons(); } });
+        };
+        const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
+        item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
       });
       result.append(sections);
     } else {

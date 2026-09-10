@@ -84,6 +84,11 @@ h2 { margin-bottom: 12px; font-size: 17px; letter-spacing: -.03em; } h3 { margin
 .research-section-details { margin: 0 0 10px; }
 .research-report-section-meta { margin: 0 0 10px; color: var(--dim); font-family: var(--mono); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .research-section-body { max-width: 100%; max-height: 32rem; margin-top: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.research-report-actions, .research-citation-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.research-report-actions .button, .research-citation-actions .button { margin: 0; }
+.research-citations { margin-top: 12px; padding: 10px 12px; border-left: 2px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.55; }
+.research-citation-state { color: var(--dim); }
+.research-citation-error { color: var(--danger); }
 .workflow-progress { height: 5px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: var(--line); } .workflow-progress-bar { width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .workflow-recovery { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
 .workflow-recovery-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
