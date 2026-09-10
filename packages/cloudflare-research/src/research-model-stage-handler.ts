@@ -25,7 +25,7 @@ import { createModelOutputPreparationHook } from "./research-model-output-prepar
 import { createD1ModelGatewayFingerprintStore } from "./research-model-fingerprint-store.js";
 import {
   createResearchModelGatewayRuntime,
-  type ResearchModelGatewayRuntimeInput,
+  type ResearchModelGatewayRuntimeConfig,
 } from "./research-model-gateway-runtime.js";
 import {
   createResearchModelPromptCompiler,
@@ -37,7 +37,7 @@ export interface ResearchModelStageHandlerDependencies {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"];
-  readonly gateway: Omit<ResearchModelGatewayRuntimeInput, "signal">;
+  readonly gateway: ResearchModelGatewayRuntimeConfig;
   readonly prompt: ResearchModelPromptCompilerDependencies;
   readonly pricing: ModelGatewayPricingPort;
   /** Trusted W2-bound preparation and policy/currentness checks. */
@@ -79,8 +79,7 @@ function createRoute(
         reasoning_gateway_base_url: dependencies.gateway.reasoning_gateway_base_url,
         deployments: pinnedDeployments,
         prompts,
-        credentials: runtime.credentials,
-        transport: runtime.transport,
+        ...runtime,
         outputs,
         fingerprints,
         pricing: dependencies.pricing,

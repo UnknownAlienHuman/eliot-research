@@ -16,6 +16,52 @@ function requestInit(): RequestInit {
 }
 
 describe("research model gateway runtime", () => {
+  it("uses the account-bound Worker gateway without a token and preserves request policy", async () => {
+    let invocation: AIGatewayUniversalRequest | AIGatewayUniversalRequest[] | undefined;
+    let options: Parameters<AiGateway["run"]>[1];
+    const runtime = createResearchModelGatewayRuntime({
+      reasoning_gateway_base_url: BASE_URL,
+      ai_gateway_binding: { gateway(gatewayId) {
+        expect(gatewayId).toBe("eliotr-reasoning");
+        return { getUrl: async () => BASE_URL, async run(request, requestOptions) {
+          invocation = request; options = requestOptions;
+          return new Response('{"ok":true}', { headers: { "cf-aig-log-id": "binding-log" } });
+        } };
+      } },
+    });
+    const query = { model: "dynamic/eliotr-balanced", messages: [{ role: "user", content: "fixture" }] };
+    const response = await runtime.binding_transport.fetch(ENDPOINT, {
+      ...requestInit(), body: JSON.stringify(query),
+      headers: { "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" },
+    });
+    expect(invocation).toEqual({ provider: "compat", endpoint: "chat/completions", query,
+      headers: { "Content-Type": "application/json", Accept: "application/json" } });
+    expect(options?.extraHeaders).toEqual({ "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" });
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(runtime).not.toHaveProperty("credentials");
+    expect(response).toBeInstanceOf(Response);
+    if (!(response instanceof Response)) throw new Error("binding did not return a Response");
+    expect(await response.text()).toBe('{"ok":true}');
+    expect(response.headers.get("cf-aig-log-id")).toBe("binding-log");
+  });
+
+  it("does not invoke a binding in another account or after cancellation during account readback", async () => {
+    let calls = 0;
+    const controller = new AbortController();
+    for (const cancel of [false, true]) {
+      const runtime = createResearchModelGatewayRuntime({
+        reasoning_gateway_base_url: BASE_URL, signal: controller.signal,
+        ai_gateway_binding: { gateway: () => ({
+          getUrl: async () => { if (cancel) controller.abort(); return cancel ? BASE_URL : BASE_URL.replace(ACCOUNT_ID, "b".repeat(32)); },
+          run: async () => { calls += 1; return new Response("unexpected"); },
+        }) },
+      });
+      await expect(runtime.binding_transport.fetch(ENDPOINT, requestInit()))
+        .rejects.toMatchObject(cancel ? { name: "AbortError" } : { code: "MODEL_GATEWAY_REQUEST_INVALID" });
+    }
+    expect(calls).toBe(0);
+  });
+
   it("keeps the server credential and exact endpoint while returning a bounded response", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;
