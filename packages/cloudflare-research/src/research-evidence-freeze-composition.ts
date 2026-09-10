@@ -221,6 +221,13 @@ export interface EvidenceFreezeSynthesisReaderEnvironment {
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<EvidenceFreezeStageFiveLineage>;
 }
 
+export interface EvidenceFreezeSynthesisReaderOptions {
+  /** The current head revision to prove after the read, for a later-stage reader. */
+  readonly expected_head_revision?: number;
+  /** Materialize validates its own committed input through the stage receipt. */
+  readonly verify_input_bytes?: boolean;
+}
+
 function sameJson(left: unknown, right: unknown): boolean {
   return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
 }
@@ -312,6 +319,7 @@ export function createEvidenceFreezeSynthesisContextReader(
   environment: EvidenceFreezeSynthesisReaderEnvironment,
   navigation: NavigationReadAuthority,
   readers: EvidenceFreezeCommittedReaders,
+  options: EvidenceFreezeSynthesisReaderOptions = {},
 ): EvidenceFreezeSynthesisContextReader {
   const checkpoints = new WorkflowCheckpointStore(environment.database);
   return {
@@ -340,7 +348,7 @@ export function createEvidenceFreezeSynthesisContextReader(
           object.residency.access_domain_id !== input.principal.principal_ref)) fail("WORKFLOW_AUTHORITY_STALE");
       const stageTenBytes = await readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true);
       const stageElevenBytes = await readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true);
-      if (!sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
+      if (options.verify_input_bytes !== false && !sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
       let stageTenInput: EvidenceFreezeStageInput;
       try { stageTenInput = await decodeEvidenceFreezeStageInput(stageTenBytes); }
       catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
@@ -383,7 +391,7 @@ export function createEvidenceFreezeSynthesisContextReader(
       const after = await navigation.current();
       if (finalHead === null || !sameJson(before, after) || finalAuthorizationReceiptRef !== authorizationReceiptRef ||
           finalHead.investigation_id !== input.request.investigation_ref.id ||
-          finalHead.revision !== input.request.investigation_ref.revision ||
+          finalHead.revision !== (options.expected_head_revision ?? input.request.investigation_ref.revision) ||
           finalHead.principal_ref !== input.principal.principal_ref ||
           finalHead.deployment_generation !== input.principal.deployment_generation ||
           finalHead.scope_snapshot_id !== navigation.scope.snapshot_id ||
@@ -400,6 +408,67 @@ export function createEvidenceFreezeSynthesisContextReader(
         stage_eleven_attempt_ref: stageEleven.attempt_ref, stage_eleven_receipt: stageElevenReceipt,
         freeze, manifest, stage_five: stageFive, w1_head: finalHead,
       });
+    },
+  };
+}
+
+export interface EvidenceFreezeMaterializeContext extends EvidenceFreezeSynthesisContext {
+  readonly stage_twelve_request: StageRequest;
+  readonly stage_twelve_request_sha256: string;
+  readonly stage_twelve_attempt_ref: string;
+  readonly stage_twelve_receipt: StageReceipt;
+}
+
+export interface EvidenceFreezeMaterializeContextReader {
+  read(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly input_bytes: Uint8Array;
+  }): Promise<EvidenceFreezeMaterializeContext>;
+}
+
+export function createEvidenceFreezeMaterializeContextReader(
+  environment: EvidenceFreezeSynthesisReaderEnvironment,
+  navigation: NavigationReadAuthority,
+  readers: EvidenceFreezeCommittedReaders,
+): EvidenceFreezeMaterializeContextReader {
+  const checkpoints = new WorkflowCheckpointStore(environment.database);
+  return {
+    async read(input): Promise<EvidenceFreezeMaterializeContext> {
+      if (input.request.stage !== "MATERIALIZE") fail("WORKFLOW_INPUT_INVALID");
+      const before = await navigation.current();
+      if (navigation.access.principal_ref !== input.principal.principal_ref ||
+          navigation.access.credential_generation !== input.principal.credential_generation ||
+          input.request.input_manifest.residency.scope_domain_id !== navigation.scope.snapshot_id ||
+          input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
+      const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
+      if (stageTwelve.request.stage !== "SYNTHESIZE" ||
+          stageTwelve.request.operation_id !== input.request.operation_id ||
+          stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.stage !== "SYNTHESIZE" ||
+          stageTwelveReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
+          !sameJson(stageTwelveReceipt.output_manifest, input.request.input_manifest) ||
+          stageTwelveReceipt.input_manifest_ref !== stageTwelve.request.input_manifest.object_ref ||
+          stageTwelveReceipt.attempt_ref !== stageTwelve.attempt_ref ||
+          stageTwelveReceipt.request_sha256 !== stageTwelve.request_sha256) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      const synthesis = createEvidenceFreezeSynthesisContextReader(environment, navigation, readers, {
+        expected_head_revision: input.request.investigation_ref.revision,
+        verify_input_bytes: false,
+      });
+      const context = await synthesis.read({ request: stageTwelve.request, principal: input.principal, input_bytes: new Uint8Array() });
+      const after = await navigation.current();
+      if (!sameJson(before, after) || context.current_revision !== input.request.investigation_ref.revision) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      return Object.freeze({ ...context, current_revision: input.request.investigation_ref.revision,
+        stage_twelve_request: stageTwelve.request, stage_twelve_request_sha256: stageTwelve.request_sha256,
+        stage_twelve_attempt_ref: stageTwelve.attempt_ref, stage_twelve_receipt: stageTwelveReceipt });
     },
   };
 }

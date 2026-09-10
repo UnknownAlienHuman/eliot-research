@@ -3,6 +3,7 @@ import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { freezeFixture, principal } from "./research-evidence-freeze-fixture.js";
+import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 
 
@@ -48,5 +49,15 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
     expect(after?.n).toBe(before?.n);
     expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=11")
       .bind(f.operation_id).first<{ n: number }>()).toEqual({ n: 0 });
+  }, 30_000);
+
+  it("consumes the committed freeze through the model stage and replays its durable result", async () => {
+    const f = await committedFreezeSynthesisFixture();
+    const first = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    expect(first.stage).toBe("SYNTHESIZE");
+    expect(f.provider_calls()).toBe(1);
+    const replay = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    expect(replay.receipt_ref).toBe(first.receipt_ref);
+    expect(f.provider_calls()).toBe(1);
   }, 30_000);
 });
