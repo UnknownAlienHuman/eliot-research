@@ -57,6 +57,12 @@ describe("raw normalized admission actual Worker path", () => {
     const firstData = (await first.json() as { data: { admission_operation_id: string; state: string; status?: { state: string } } }).data;
     expect(firstData.state).toBe("COMMITTED");
     expect(firstData.status?.state).toBe("COMMITTED");
+    const firstLedger = await runtime.CORE_DB.prepare(
+      "SELECT reason_codes_json,receipt_json FROM raw_normalized_admission WHERE admission_operation_id=?1 LIMIT 1",
+    ).bind(firstData.admission_operation_id).first<{ readonly reason_codes_json: string; readonly receipt_json: string }>();
+    expect(firstLedger).not.toBeNull();
+    if (firstLedger === null) return;
+    expect(JSON.parse(firstLedger.reason_codes_json)).toEqual(JSON.parse(firstLedger.receipt_json).reason_codes);
     const replay = await handleHttp(admissionRequest(capture.capture_id, "raw-admission-key-1", conversionId), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
     expect(replay.status).toBe(200);
     expect((await replay.json() as { data: { admission_operation_id: string } }).data.admission_operation_id).toBe(firstData.admission_operation_id);

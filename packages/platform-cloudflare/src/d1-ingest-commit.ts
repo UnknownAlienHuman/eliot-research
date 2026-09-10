@@ -388,12 +388,13 @@ export async function commitAdmittedBundle(
       operation.decision_receipt_ref,
     ),
     database.prepare(
-      "UPDATE raw_normalized_admission SET state='COMMITTED', receipt_json=?2, updated_at=?3 " +
-      "WHERE ingest_operation_id=?1 AND source_view_ref=?4 AND state NOT IN ('REJECTED','QUARANTINED')",
+      "UPDATE raw_normalized_admission SET state='COMMITTED', receipt_json=?2, reason_codes_json=?4, updated_at=?3 " +
+      "WHERE ingest_operation_id=?1 AND source_view_ref=?5 AND state NOT IN ('REJECTED','QUARANTINED')",
     ).bind(
       operation.operation_id,
       receiptJson,
       now,
+      canonicalJson(receipt.reason_codes),
       operation.manifest.origin.source_view_ref,
     ),
     database.prepare(
