@@ -20,9 +20,10 @@ export default defineConfig(async () => ({
   ],
   test: {
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
-    // Bound concurrent Cloudflare pool startup and shared local D1 load on
-    // Windows while retaining file parallelism and all test timeouts.
-    maxWorkers: 4,
+    // Bound concurrent runtime startup and D1 load locally and on CI. Four
+    // runtime pools caused otherwise unchanged storage tests to miss deadlines.
+    // Keep file parallelism and the existing per-test deadlines.
+    maxWorkers: 2,
     // Windows may allocate a local Workers runtime on a WHATWG Fetch
     // forbidden port. Reserve those loopback endpoints before pool workers
     // start; the global setup owns teardown and never touches other listeners.
