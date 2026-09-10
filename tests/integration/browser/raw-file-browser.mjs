@@ -7,8 +7,8 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { resolveLocalBrowserExecutable } from "../../../scripts/lib/local-launch.mjs";
-/* global URL:readonly, Buffer:readonly, document:readonly, window:readonly, Event:readonly, MutationObserver:readonly,
-  process:readonly, console:readonly */
+/* global URL:readonly, Buffer:readonly, btoa:readonly, document:readonly, window:readonly, Event:readonly, MutationObserver:readonly,
+  Request:readonly, TextDecoder:readonly, location:readonly, process:readonly, console:readonly */
 
 const root = resolve(import.meta.dirname, "../../..");
 const dist = resolve(root, "apps/eliotr-pwa/dist");
@@ -108,6 +108,100 @@ function rawResponseTransportDiagnostic(response) {
   };
 }
 
+async function beginRawResponseCapture(page, method, path, expectedStatus) {
+  if (typeof page.evaluate !== "function") return false;
+  await page.evaluate(({ method: expectedMethod, path: expectedPath, expectedStatus: status }) => {
+    if (window.__eliotrRawResponseCapture !== undefined) throw new Error("duplicate raw response capture");
+    const originalFetch = window.fetch;
+    const state = { phase: "waiting", status: undefined, bodyBase64: undefined, errorCode: undefined };
+    let matched = false;
+    const wrappedFetch = function (...args) {
+      let requestUrl;
+      let requestMethod;
+      try {
+        const [input, init] = args;
+        requestUrl = new URL(input instanceof Request ? input.url : String(input), location.href);
+        requestMethod = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      } catch {
+        return Reflect.apply(originalFetch, this, args);
+      }
+      const matches = requestMethod === expectedMethod && requestUrl.origin === location.origin &&
+        requestUrl.pathname === expectedPath && requestUrl.search === "";
+      if (!matches) return Reflect.apply(originalFetch, this, args);
+      if (matched) {
+        state.phase = "error";
+        state.errorCode = "DUPLICATE_RAW_RESPONSE";
+        return Reflect.apply(originalFetch, this, args);
+      }
+      matched = true;
+      let responsePromise;
+      try { responsePromise = Reflect.apply(originalFetch, this, args); }
+      catch (error) {
+        state.phase = "error"; state.errorCode = "FETCH_FAILED";
+        throw error;
+      }
+      return Promise.resolve(responsePromise).then((response) => {
+        state.status = response.status;
+        let responseUrl;
+        try { responseUrl = new URL(response.url, location.href); } catch { responseUrl = undefined; }
+        if (response.redirected || response.type === "opaqueredirect" || responseUrl === undefined ||
+            responseUrl.origin !== location.origin || responseUrl.pathname !== expectedPath || responseUrl.search !== "") {
+          state.phase = "error"; state.errorCode = "RESPONSE_IDENTITY_MISMATCH"; return response;
+        }
+        state.phase = "reading";
+        let clone;
+        try { clone = response.clone(); }
+        catch { state.phase = "error"; state.errorCode = "CLONE_FAILED"; return response; }
+        void clone.arrayBuffer().then((buffer) => {
+          if (buffer.byteLength > 512 * 1024) throw new Error("overflow");
+          const bytes = new Uint8Array(buffer);
+          const bodyText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+          JSON.parse(bodyText);
+          let binary = "";
+          for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.byteLength)));
+          }
+          state.bodyBase64 = btoa(binary);
+          state.phase = "complete";
+        }).catch(() => { state.phase = "error"; state.errorCode = "BODY_CAPTURE_FAILED"; });
+        if (response.status !== status) state.errorCode = "STATUS_MISMATCH";
+        return response;
+      }, (error) => { state.phase = "error"; state.errorCode = "FETCH_FAILED"; throw error; });
+    };
+    window.fetch = wrappedFetch;
+    window.__eliotrRawResponseCapture = {
+      state,
+      dispose: () => {
+        if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+        state.bodyBase64 = undefined;
+        delete window.__eliotrRawResponseCapture;
+      },
+    };
+  }, { method, path, expectedStatus });
+  return true;
+}
+
+async function readRawResponseCapture(page, method, path, expectedStatus) {
+  if (typeof page.waitForFunction !== "function") throw new Error("raw response capture requires a browser page");
+  const handle = await page.waitForFunction(({ method: expectedMethod, path: expectedPath, expectedStatus: status }) => {
+    const capture = window.__eliotrRawResponseCapture?.state;
+    if (!capture || !["complete", "error"].includes(capture.phase)) return false;
+    return { method: expectedMethod, path: expectedPath, expectedStatus: status, ...capture };
+  }, { method, path, expectedStatus }, { timeout: 30000 });
+  const captured = await handle.jsonValue();
+  await handle.dispose?.();
+  if (captured.errorCode !== undefined) throw new Error(`raw response clone capture rejected (${captured.errorCode})`);
+  if (captured.status !== expectedStatus) throw new Error(`raw response clone status mismatch (expected=${expectedStatus} actual=${captured.status})`);
+  if (typeof captured.bodyBase64 !== "string") throw new Error("raw response clone body missing");
+  return Buffer.from(captured.bodyBase64, "base64");
+}
+
+async function finishRawResponseCapture(page) {
+  if (typeof page.evaluate !== "function") return;
+  try { await page.evaluate(() => window.__eliotrRawResponseCapture?.dispose?.()); }
+  catch { /* The page may have closed; the original response failure remains primary. */ }
+}
+
 function assertRawEnvelope(value, expectedGeneration, expected) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value), "raw capture response must be an object");
   assert.equal(value.trace_id !== undefined, true, "raw capture response must carry a trace id");
@@ -128,53 +222,68 @@ function assertRawEnvelope(value, expectedGeneration, expected) {
 
 export async function waitForRawResponse(page, method, action, path = "/api/v1/ingest/raw", expectedStatus = 200) {
   const admissionDiagnostic = await beginRawAdmissionDiagnostic(page, path);
+  const browserCapture = await beginRawResponseCapture(page, method, path, expectedStatus);
   const expectedOrigin = (() => {
     try { return new URL(page.url()).origin; } catch { return undefined; }
   })();
   const mainFrame = typeof page.mainFrame === "function" ? page.mainFrame() : undefined;
-  const responsePromise = page.waitForResponse((response) => {
-    try {
-      const request = response.request();
-      const responseUrl = new URL(response.url());
-      if (expectedOrigin !== undefined && responseUrl.origin !== expectedOrigin) return false;
-      if (mainFrame !== undefined && typeof request.frame === "function" && request.frame() !== mainFrame) return false;
-      return request.method() === method && responseUrl.pathname === path;
-    } catch { return false; }
-  }, { timeout: 30000 });
-  const snapshotPromise = responsePromise.then(async (response) => {
-    const status = response.status();
-    let body;
-    try {
-      // Start buffering before the action can navigate or trigger another
-      // lifecycle transition. Chromium may discard a response body after its
-      // document is navigated away, even though the response event already ran.
-      body = await response.body();
-    } catch (error) {
-      const ui = admissionDiagnostic ? await finishRawAdmissionDiagnostic(page) : undefined;
-      const transport = rawResponseTransportDiagnostic(response);
-      const detail = `${rawBodyDiagnostic(page, response, method, path, status, error)} content_type=${transport.content_type} content_length=${transport.content_length} request_start_ms=${transport.request_start_ms ?? "unavailable"} response_start_ms=${transport.response_start_ms ?? "unavailable"} response_end_ms=${transport.response_end_ms ?? "unavailable"}${ui ? ` ui_code=${ui.ui_code} ui_events=${ui.events.join(",") || "none"}` : ""}`;
-      throw new Error(`raw response body unavailable at settlement (${detail})`, { cause: error });
-    }
-    const requestHeaders = await response.request().allHeaders();
-    const requestBody = typeof response.request().postData === "function"
-      ? response.request().postData() ?? undefined : undefined;
-    let payload;
-    try {
-      payload = JSON.parse(body.toString("utf8"));
-    } catch (error) {
-      if (status === 200) {
-        throw new Error(`raw ${method} response must be JSON`, { cause: error });
+  try {
+    const responsePromise = page.waitForResponse((response) => {
+      try {
+        const request = response.request();
+        const responseUrl = new URL(response.url());
+        if (expectedOrigin !== undefined && responseUrl.origin !== expectedOrigin) return false;
+        if (mainFrame !== undefined && typeof request.frame === "function" && request.frame() !== mainFrame) return false;
+        return request.method() === method && responseUrl.pathname === path;
+      } catch { return false; }
+    }, { timeout: 30000 });
+    const snapshotPromise = responsePromise.then(async (response) => {
+      const status = response.status();
+      let body;
+      if (browserCapture) {
+        try {
+          body = await readRawResponseCapture(page, method, path, expectedStatus);
+        } catch (error) {
+          const ui = admissionDiagnostic ? await finishRawAdmissionDiagnostic(page) : undefined;
+          const transport = rawResponseTransportDiagnostic(response);
+          const detail = `${rawBodyDiagnostic(page, response, method, path, status, error)} capture_error=${String(error?.message ?? "unknown").slice(0, 128)} content_type=${transport.content_type} content_length=${transport.content_length} request_start_ms=${transport.request_start_ms ?? "unavailable"} response_start_ms=${transport.response_start_ms ?? "unavailable"} response_end_ms=${transport.response_end_ms ?? "unavailable"}${ui ? ` ui_code=${ui.ui_code} ui_events=${ui.events.join(",") || "none"}` : ""}`;
+          throw new Error(`raw response clone unavailable at settlement (${detail})`, { cause: error });
+        }
+      } else {
+        try {
+          // Test-only page doubles do not expose browser fetch; retain the old
+          // ordering regression there. Real pages use the clone above.
+          body = await response.body();
+        } catch (error) {
+          const ui = admissionDiagnostic ? await finishRawAdmissionDiagnostic(page) : undefined;
+          const transport = rawResponseTransportDiagnostic(response);
+          const detail = `${rawBodyDiagnostic(page, response, method, path, status, error)} content_type=${transport.content_type} content_length=${transport.content_length} request_start_ms=${transport.request_start_ms ?? "unavailable"} response_start_ms=${transport.response_start_ms ?? "unavailable"} response_end_ms=${transport.response_end_ms ?? "unavailable"}${ui ? ` ui_code=${ui.ui_code} ui_events=${ui.events.join(",") || "none"}` : ""}`;
+          throw new Error(`raw response body unavailable at settlement (${detail})`, { cause: error });
+        }
       }
+      const requestHeaders = await response.request().allHeaders();
+      const requestBody = typeof response.request().postData === "function"
+        ? response.request().postData() ?? undefined : undefined;
+      let payload;
+      try {
+        payload = JSON.parse(body.toString("utf8"));
+      } catch (error) {
+        if (status === 200) {
+          throw new Error(`raw ${method} response must be JSON`, { cause: error });
+        }
+      }
+      return { status, requestHeaders, requestBody, payload };
+    });
+    const [, snapshot] = await Promise.all([Promise.resolve().then(action), snapshotPromise]);
+    if (snapshot.status !== expectedStatus) {
+      const code = String(snapshot.payload?.code ?? snapshot.payload?.data?.code ?? snapshot.payload?.title ?? "unavailable").slice(0, 128);
+      throw new Error(`raw ${method} ${path} must answer with ${expectedStatus} through the real Worker: status=${snapshot.status} code=${code}`);
     }
+    return snapshot;
+  } finally {
     if (admissionDiagnostic) await finishRawAdmissionDiagnostic(page);
-    return { status, requestHeaders, requestBody, payload };
-  });
-  const [, snapshot] = await Promise.all([Promise.resolve().then(action), snapshotPromise]);
-  if (snapshot.status !== expectedStatus) {
-    const code = String(snapshot.payload?.code ?? snapshot.payload?.data?.code ?? snapshot.payload?.title ?? "unavailable").slice(0, 128);
-    throw new Error(`raw ${method} ${path} must answer with ${expectedStatus} through the real Worker: status=${snapshot.status} code=${code}`);
+    if (browserCapture) await finishRawResponseCapture(page);
   }
-  return snapshot;
 }
 
 /**
