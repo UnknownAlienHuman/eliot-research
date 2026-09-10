@@ -78,7 +78,7 @@ The full product goal remains incomplete. No Cloudflare deployment or NotebookLM
 
 New financial budgeting/accounting work remains deferred. Existing authorization and duplicate-provider-call protections stay in place.
 
-### Preserved local Luna work
+### Committed and published Luna work
 
 The follow-up cleanup audit saved the unfinished files as inactive artifacts in
 [the 2026-09-10 recovery checkpoint](checkpoints/2026-09-10/README.md), and pushed four annotated
@@ -86,8 +86,14 @@ recovery tags for their exact base histories. Original worktrees remain intact. 
 preserves the older six-file Drive provisioning WIP and records the verified scratch archive.
 Both `verify` and `windows-tooling` in CI34534923253 failed the same source-line limit gate.
 
+On the owner's follow-up instruction, all eight previously uncommitted files were committed exactly
+as found. The four agent branch heads are published to GitHub and retained under annotated checkpoint
+tags; the recovery checkpoint records their full SHAs. These are unfinished code commits, not product
+acceptance. No uncommitted source changes are intentionally retained in any of the five worktrees.
+
 - Raw admission / stage15: local branch agent/er24-library-active-readiness-20260909 in eliot-research-wt-deps; WIP commitdf9f814131c3cb7e033f0b56c362bea030242c8c adds research-citations-stage-handler.ts and research-citations-result.ts. ESLint/diff check passed; no runtime proof. It still needs the actual stage14 semantic batch reader. Merge current main normally to remove that worktree's stale W2 imports before building; do not recreate old ./types.js or ./store.js modules.
-- Astro / v2 decoder: local branch agent/checkpoint-raw-admission-integration-20260909 in eliot-research-wt-retrieval; one uncommitted WIP edit in packages/research/src/synthesis-candidate.ts extracts shared validation/citation-union helpers. No post-edit validation. Preserve this edit before any merge.
-- REPORT/coverage: local branch agent/er36-workspace-candidate-ledger-20260909 in eliot-research-wt-astro; uncommitted, unverified packages/cloudflare-research/src/research-coverage-result.ts. The accepted REPORT changes through933f6ba are integrated; coverage handler and actual fixture are not implemented.
+- Astro / v2 decoder: branch agent/checkpoint-raw-admission-integration-20260909 in eliot-research-wt-retrieval; WIP commit874a96de7bd7491b066d830f49b759f1ff3a66c9 in packages/research/src/synthesis-candidate.ts extracts shared validation/citation-union helpers. No post-edit runtime validation.
+- REPORT/coverage: branch agent/er36-workspace-candidate-ledger-20260909 in eliot-research-wt-astro; WIP commit1abf2fa09ee78c3daa8bb0073b42630e1cb00e8c preserves packages/cloudflare-research/src/research-coverage-result.ts. The accepted REPORT changes through933f6ba are integrated; coverage handler and actual fixture are not implemented.
+- Legacy Drive provisioning: branch agent/er18-google-provisioning-20260909 in eliot-research-wt-release; WIP commitf9443ee8c87b891583d0c93149aa26e7ecb1fad5 preserves the six-file provisioning/reconciliation change. This remains outside the selected Spark/Antigravity MCP profile.
 
 All three are native GPT Luna agents. Reuse their existing worktrees; do not reset, stash, force-push, or merge unverified WIP as completed product code.

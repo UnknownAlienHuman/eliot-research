@@ -9,8 +9,25 @@ The product remains incomplete; continue from the [gap register](../../gap-regis
 
 Before this documentation checkpoint, local `main`, `origin/main`, and the live GitHub
 `refs/heads/main` all resolved to `4d2f7d074b6d87e65e9a77ec35261a84abb7e16a`.
-The canonical working tree was clean and the shared stash was empty. Four agent worktrees remain;
-three contain unfinished source changes. No stale worktree registration was found.
+The canonical working tree was clean and the shared stash was empty. Four agent worktrees remained;
+three initially contained uncommitted source changes. The owner subsequently required every change
+to be committed and pushed; the resulting commits are recorded below.
+
+## All local changes committed
+
+The eight previously uncommitted files were committed exactly as found, without further source edits.
+All four agent branch heads and the documentation update on `main` are published together. The exact
+WIP histories also have annotated checkpoint tags, so branch-hygiene expiry cannot discard them.
+
+| Work | GitHub branch | Commit | Checkpoint tag |
+|---|---|---|---|
+| Coverage codec | `agent/er36-workspace-candidate-ledger-20260909` | `1abf2fa09ee78c3daa8bb0073b42630e1cb00e8c` | `checkpoint/20260910-coverage-wip` |
+| Synthesis validation helpers | `agent/checkpoint-raw-admission-integration-20260909` | `874a96de7bd7491b066d830f49b759f1ff3a66c9` | `checkpoint/20260910-synthesis-wip` |
+| Legacy Drive provisioning | `agent/er18-google-provisioning-20260909` | `f9443ee8c87b891583d0c93149aa26e7ecb1fad5` | `checkpoint/20260910-legacy-drive-wip` |
+| Citation stage15 | `agent/er24-library-active-readiness-20260909` | `df9f814131c3cb7e033f0b56c362bea030242c8c` | `checkpoint/20260910-stage15-wip` |
+
+These are WIP commits, not runtime acceptance. The inactive recovery snapshots remain in `main`.
+No tests were rerun for merely committing existing source; product limitations below still apply.
 
 ## Recoverable unfinished source
 
@@ -18,15 +35,15 @@ three contain unfinished source changes. No stale worktree registration was foun
 |---|---|---|
 | [stage15-citations-wip.patch](stage15-citations-wip.patch) | Commit `df9f814131c3cb7e033f0b56c362bea030242c8c`, based on `9e6cc4154e2f501bb0a0129a063faa4c94e93730`; branch `agent/er24-library-active-readiness-20260909` | Two new citation result/handler files; lint checked previously, runtime unverified. |
 | [research-committed-lineage.ts.txt](research-committed-lineage.ts.txt) | Same stage15 branch | Historical dependency needed to understand the WIP; stale W2 imports must be reconciled with the current shared workflow package before integration. |
-| [synthesis-candidate-wip.patch](synthesis-candidate-wip.patch) | Uncommitted change against `c20797a82714b43abbf34b93699c9a2676f03b6d`; branch `agent/checkpoint-raw-admission-integration-20260909` | Shared v2 span/Unicode and citation-union helpers; no post-edit validation. |
-| [research-coverage-result.ts.txt](research-coverage-result.ts.txt) | Untracked file at `933f6bafa86097b925ac2c4f9f585e5df245493e`; branch `agent/er36-workspace-candidate-ledger-20260909` | Byte-for-byte stage16 codec snapshot; handler and runtime proof absent. |
-| [legacy-drive-provisioning-wip.patch](legacy-drive-provisioning-wip.patch) | Six uncommitted files against `b36dad025f2dcc9d18783aa1fff9d19bbe86c5e4`; branch `agent/er18-google-provisioning-20260909` | Preserved older server-owned Drive Exchange work. This is not the selected Spark/Antigravity MCP profile and does not authorize Google Cloud work. |
+| [synthesis-candidate-wip.patch](synthesis-candidate-wip.patch) | Change against `c20797a82714b43abbf34b93699c9a2676f03b6d`, now committed at `874a96d` | Shared v2 span/Unicode and citation-union helpers; no post-edit validation. |
+| [research-coverage-result.ts.txt](research-coverage-result.ts.txt) | File added on `933f6bafa86097b925ac2c4f9f585e5df245493e`, now committed at `1abf2fa` | Byte-for-byte stage16 codec snapshot; handler and runtime proof absent. |
+| [legacy-drive-provisioning-wip.patch](legacy-drive-provisioning-wip.patch) | Six-file change against `b36dad025f2dcc9d18783aa1fff9d19bbe86c5e4`, now committed at `f9443ee` | Preserved older server-owned Drive Exchange work. This is not the selected Spark/Antigravity MCP profile and does not authorize Google Cloud work. |
 
 Patches were written directly by Git with full blob indexes; the coverage file was copied as bytes.
 The local `.gitattributes` prevents newline conversion of recovery artifacts. `git apply --numstat`
 parsed all three patches, and the stage15 patch passed `git apply --check` against the delivery
 baseline. These checks establish recoverability, not correctness of the unfinished implementation.
-Original worktrees remain untouched. Recover into a separate worktree based on the named source
+Original source bytes remain unchanged. Recover into a separate worktree based on the named source
 commit, then merge current `main` and review; do not apply every historical patch blindly to main.
 
 The four base histories are also preserved on GitHub by annotated recovery tags:
