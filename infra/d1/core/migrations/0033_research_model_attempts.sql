@@ -17,6 +17,8 @@ ALTER TABLE budget_reservation ADD COLUMN expected_sections INTEGER;
 ALTER TABLE budget_reservation ADD COLUMN confidence REAL;
 ALTER TABLE budget_reservation ADD COLUMN quote_json TEXT;
 ALTER TABLE budget_reservation ADD COLUMN authority_json TEXT;
+ALTER TABLE budget_reservation ADD COLUMN stage_attempt_ref TEXT;
+ALTER TABLE budget_reservation ADD COLUMN stage_request_sha256 TEXT;
 
 CREATE UNIQUE INDEX budget_reservation_model_identity_idx
   ON budget_reservation(principal_ref, operation_kind, idempotency_key)
@@ -39,6 +41,8 @@ CREATE TABLE research_model_attempt (
   schema_generation TEXT NOT NULL,
   credential_generation TEXT NOT NULL,
   deployment_generation TEXT NOT NULL,
+  stage_attempt_ref TEXT NOT NULL,
+  stage_request_sha256 TEXT NOT NULL CHECK(length(stage_request_sha256) = 64 AND stage_request_sha256 NOT GLOB '*[^0-9a-f]*'),
   state TEXT NOT NULL CHECK(state IN ('STARTED','SUCCEEDED','FAILED','CANCELLED')),
   receipt_json TEXT CHECK(receipt_json IS NULL OR (json_valid(receipt_json) AND length(CAST(receipt_json AS BLOB)) <= 65536)),
   receipt_sha256 TEXT CHECK(receipt_sha256 IS NULL OR (length(receipt_sha256) = 64 AND receipt_sha256 NOT GLOB '*[^0-9a-f]*')),
@@ -80,6 +84,8 @@ WHEN NEW.attempt_id IS NOT OLD.attempt_id
   OR NEW.schema_generation IS NOT OLD.schema_generation
   OR NEW.credential_generation IS NOT OLD.credential_generation
   OR NEW.deployment_generation IS NOT OLD.deployment_generation
+  OR NEW.stage_attempt_ref IS NOT OLD.stage_attempt_ref
+  OR NEW.stage_request_sha256 IS NOT OLD.stage_request_sha256
   OR NEW.started_at IS NOT OLD.started_at
 BEGIN SELECT RAISE(ABORT, 'MODEL_ATTEMPT_IDENTITY_CONFLICT'); END;
 

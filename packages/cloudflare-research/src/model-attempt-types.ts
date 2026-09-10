@@ -51,6 +51,9 @@ export interface ModelAttemptReservationInput {
   readonly call: ModelCallInput;
   readonly quote: ModelCostQuote;
   readonly authority: ModelAttemptAuthority;
+  /** Trusted W2 stage identity that authorizes this model boundary. */
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
 }
 
 export interface ModelAttemptReservation {
@@ -64,6 +67,8 @@ export interface ModelAttemptReservation {
   readonly route_ref: string;
   readonly prompt_generation: string;
   readonly schema_generation: string;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
 }
 
 export interface ModelAttemptStart {
@@ -101,6 +106,8 @@ export interface ModelAttemptReadback {
   readonly state: ModelAttemptReadState;
   readonly persisted_state: OperationAttempt["state"];
   readonly request_sha256: string;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
   readonly authority: ModelAttemptAuthority;
   readonly receipt: ModelCallReceipt | null;
   readonly operation_receipt: OperationReceipt | null;
@@ -111,7 +118,7 @@ export interface ModelAttemptReadback {
 
 export interface ModelAttemptStore {
   reserve(input: ModelAttemptReservationInput): Promise<ModelAttemptReservation>;
-  beginAttempt(reservation: ModelAttemptReservation, attempt_number?: number): Promise<ModelAttemptStart>;
+  beginAttempt(reservation: ModelAttemptReservation): Promise<ModelAttemptStart>;
   settleAttempt(input: ModelAttemptSettlementInput): Promise<ModelAttemptReadback>;
   readByAttempt(attempt_id: string): Promise<ModelAttemptReadback | null>;
   readByIdempotency(input: { readonly principal_ref: string; readonly operation_kind: OperationIntent["operation_kind"]; readonly idempotency_key: string }): Promise<ModelAttemptReadback | null>;
