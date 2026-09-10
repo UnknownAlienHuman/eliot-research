@@ -6,7 +6,7 @@ import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelCallInput } from "@eliotr/research";
 import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-codec.js";
 import type { DynamicRouteCandidateWriteReceipt, DynamicRouteRegistryPort } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-contract.js";
-import { createD1DynamicRouteRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
+import { createD1DynamicRouteRegistry, createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
 import type { BuildReferenceManifestInput } from "../../../packages/cloudflare-research/src/research-reference-manifest.js";
 import type { ResearchModelPromptCompilerDependencies } from "../../../packages/cloudflare-research/src/research-model-prompt.js";
@@ -25,9 +25,15 @@ const SCHEMA_GENERATION = "stage-handler-schema-v1";
 const PRICING_SNAPSHOT = "stage-handler-pricing-v1";
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`;
 
+function futureIso(): string {
+  return new Date(Date.now() + 60 * 60 * 1000).toISOString();
+}
+
 beforeAll(initializeModelAttemptRuntime);
 
 async function stageDeployment(database: D1Database): Promise<ModelRouteDeployment> {
+  const registryNow = new Date().toISOString();
+  const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
   const deployment: ModelRouteDeployment = {
     route_ref: ROUTE,
@@ -48,10 +54,10 @@ async function stageDeployment(database: D1Database): Promise<ModelRouteDeployme
     qualification_tier: "FIXTURE" as const,
     control_plane_readback_ref: "stage-handler-control-readback",
     execution_probe_ref: "stage-handler-execution-probe",
-    qualification_expires_at: "2026-09-10T13:00:00.000Z",
+    qualification_expires_at: qualificationExpiresAt,
   };
   const artifact = await dynamicRouteJsonArtifact(candidate);
-  const registry: DynamicRouteRegistryPort = createD1DynamicRouteRegistry(database, { environment: "TEST", now: () => NOW });
+  const registry: DynamicRouteRegistryPort = createD1DynamicRouteRegistry(database, { environment: "TEST", now: () => registryNow });
   const rawStaged = await registry.stageCandidate(candidate, artifact.sha256);
   const stagedRecord = typeof rawStaged === "object" && rawStaged !== null && !Array.isArray(rawStaged)
     ? rawStaged as Record<string, unknown> : null;
@@ -89,7 +95,7 @@ function promptDependencies(tag: string): ResearchModelPromptCompilerDependencie
           allowed_verifier_refs: [], permitted_anchor_and_precision_ceilings: [],
           provider_and_policy_generations: { policy: `stage-policy-${tag}` }, stale_or_revoked_entries: [],
           permitted_acquisition_or_expansion_routes: [], disclosure_ceiling: "private", allowed_use: ["research"],
-          expires_at: "2026-09-10T13:00:00.000Z", manifest_digest: "3".repeat(64),
+          expires_at: futureIso(), manifest_digest: "3".repeat(64),
         };
         return { manifest, compiled, resolved_evidence: [], source_authorities: [], manifest_ref: manifestRef };
       },
@@ -102,7 +108,7 @@ function promptDependencies(tag: string): ResearchModelPromptCompilerDependencie
         allowed_tool_definition_refs: [], allowed_verifier_refs: [], permitted_anchor_and_precision_ceilings: [],
         provider_and_policy_generations: { policy: `stage-policy-${tag}` }, stale_or_revoked_entries: [],
         permitted_acquisition_or_expansion_routes: [], disclosure_ceiling: "private", allowed_use: ["research"],
-        expires_at: "2026-09-10T13:00:00.000Z",
+        expires_at: futureIso(),
       },
       manifest_ref: { id: `stage-manifest-${tag}`, revision: 1 }, model_route_ref: deployment.route_ref, max_context_bytes: 32 * 1024,
     }),
@@ -111,7 +117,7 @@ function promptDependencies(tag: string): ResearchModelPromptCompilerDependencie
   };
 }
 
-async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION" = "TEST") {
+async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION" = "TEST", gatewayFailure = false) {
   const workflow = await workflowFixture(`stage-${tag}`);
   await workflow.executor.execute(workflow.request, principal, async ({ input_bytes }) => new Uint8Array(input_bytes));
   const base = await governedModelAttemptFixture(`stage-${tag}`, {
@@ -121,6 +127,7 @@ async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION
   let providerCalls = 0;
   let promptCalls = 0;
   let pricingCalls = 0;
+  let prepareCalls = 0;
   const gatewayResponse = {
     id: `stage-response-${tag}`, object: "chat.completion", created: 1, model: ROUTE,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: `controlled result ${tag}` } }],
@@ -139,6 +146,7 @@ async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION
     database: workflow.db, work_bucket: workflow.bucket, operation_kind: "REPORT", deployment_environment: environment,
     gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => {
       providerCalls += 1;
+      if (gatewayFailure) throw new Error("controlled unknown gateway outcome");
       return new Response(JSON.stringify(gatewayResponse), {
         status: 200,
         headers: { "content-type": "application/json", "cf-aig-provider": "controlled-provider", "cf-aig-model": "controlled-model", "cf-aig-log-id": `stage-log-${tag}` },
@@ -152,9 +160,12 @@ async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION
       },
     },
     pricing: { quote: async () => { pricingCalls += 1; return { quote_ref: `stage-price-${tag}`, pricing_snapshot_ref: PRICING_SNAPSHOT, billed_usd: 0 }; } },
-    prepare, revalidate: base.dependencies.revalidate,
+    prepare: async (context) => {
+      prepareCalls += 1;
+      return prepare(context);
+    }, revalidate: base.dependencies.revalidate,
   });
-  return { workflow, base, handler, deployment, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls };
+  return { workflow, base, handler, deployment, prepare, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
 }
 
 describe("composed research model stage handler", () => {
@@ -176,26 +187,48 @@ describe("composed research model stage handler", () => {
   it("does no fresh gateway work for a terminal replay with unusable credentials", async () => {
     const fixture = await compositionFixture("terminal-replay");
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
-    await fixture.handler.handler(input);
+    const expected = await fixture.handler.handler(input);
     const replay = createResearchModelStageHandler({
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
       gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: " bearer" }, prompt: promptDependencies("terminal-replay"),
       pricing: { quote: async () => { throw new Error("terminal replay must not price"); } },
       prepare: async () => { throw new Error("terminal replay must not prepare"); }, revalidate: async () => { throw new Error("terminal replay must not revalidate"); },
     });
-    await expect(replay.handler(input)).resolves.toEqual(expect.any(Uint8Array));
+    await expect(replay.handler(input)).resolves.toEqual(expected);
+  });
+
+  it("does no fresh preparation or gateway work when an UNKNOWN attempt is replayed", async () => {
+    const fixture = await compositionFixture("unknown-replay", "TEST", true);
+    const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
+    await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    expect(fixture.providerCalls()).toBe(1);
+    const before = { prepares: fixture.prepareCalls(), prompts: fixture.promptCalls(), prices: fixture.pricingCalls() };
+    const replay = createResearchModelStageHandler({
+      database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
+      gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: " bearer" }, prompt: promptDependencies("unknown-replay"),
+      pricing: { quote: async () => { throw new Error("UNKNOWN replay must not price"); } },
+      prepare: async () => { throw new Error("UNKNOWN replay must not prepare"); }, revalidate: async () => { throw new Error("UNKNOWN replay must not revalidate"); },
+    });
+    await expect(replay.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    expect(fixture.prepareCalls()).toBe(before.prepares);
+    expect(fixture.promptCalls()).toBe(before.prompts);
+    expect(fixture.pricingCalls()).toBe(before.prices);
+    expect(fixture.providerCalls()).toBe(1);
   });
 
   it("rejects a fixture-only route under the production default before provider execution", async () => {
     const fixture = await compositionFixture("production-gate");
+    await expect(createD1ModelGatewayDeploymentRegistry(fixture.workflow.db).resolve(ROUTE))
+      .rejects.toMatchObject({ code: "DYNAMIC_ROUTE_LIVE_GATE_REQUIRED" });
+    let productionProviderCalls = 0;
     const production = createResearchModelStageHandler({
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT",
-      gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => { throw new Error("production fixture route must not fetch"); } },
+      gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => { productionProviderCalls += 1; throw new Error("production fixture route must not fetch"); } },
       prompt: promptDependencies("production-gate"), pricing: { quote: async () => { throw new Error("production fixture route must not price"); } },
-      prepare: fixture.base.dependencies.prepare, revalidate: fixture.base.dependencies.revalidate,
+      prepare: fixture.prepare, revalidate: fixture.base.dependencies.revalidate,
     });
     await expect(production.handler(fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef)))
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
-    expect(fixture.providerCalls()).toBe(0);
+    expect(productionProviderCalls).toBe(0);
   });
 });
