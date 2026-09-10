@@ -46,3 +46,24 @@ declared through `ELIOTR_ALLOWED_ADDITIONAL_ACCESS_POLICY_IDS`.
 
 A successful deployment is not research conformance. D1/R2/Queue/DO/Workflow/AI Search/Drive live gates
 remain `NOT_EXECUTED` until the dedicated integration harness records real receipts.
+
+## MCP Access operator inputs
+
+The selected transport must be passed explicitly to the Access provisioner and must match the canonical
+Core config: `ELIOTR_GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp`. An omitted transport cannot issue an
+owner-only receipt when the canonical profile selects Gemini MCP. `drive-exchange` retains the legacy
+owner contour and does not create the MCP application.
+
+Gemini MCP uses the existing Access hostname with the exact `/mcp` path; `ELIOTR_MCP_HOSTNAME`, when
+provided, must equal `ELIOTR_ACCESS_HOSTNAME`. For `service-token`, provide
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID` (the Access policy selector UUID) and
+`ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID` (the signed verifier Client ID ending in `.access`). These
+are different identifiers; the provisioner confirms their pairing by reading the exact service-token
+record. For `managed-oauth`, set `ELIOTR_MCP_ACCESS_AUTH_PROFILE=managed-oauth`; service-token inputs
+are rejected and the dedicated app must read back `oauth_configuration.enabled=true` with
+`path_cookie_attribute=true`.
+
+MCP application and policy compatibility is checked before the owner application is created. Cloudflare
+generates the dedicated AUD during application creation; the receipt accepts it only from a fresh
+application readback and verifies that it differs from the ordinary AUD. Receipts contain IDs, digests,
+profile and contour fields, but never Client ID values, tokens, cookies or other secrets.
