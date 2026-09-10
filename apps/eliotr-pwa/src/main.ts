@@ -234,12 +234,15 @@ function render(health: SystemHealth | null): void {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
-  const libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
+  const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
     if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); return; }
-    if (!context?.sourceRevisionRef) orientation?.selectSource(id);
     retrieval?.selectSource(id, context);
     researchRun?.selectSource(id, context);
     exhaustive?.selectSource(id);
+    if (!context?.sourceRevisionRef) {
+      if (!orientation || !(await orientation.selectSource(id))) return false;
+    }
+    return true;
   }) : undefined;
   const cleanups = [orientation, retrieval, researchRun, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,

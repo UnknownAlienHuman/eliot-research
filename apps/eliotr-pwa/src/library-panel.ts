@@ -15,7 +15,7 @@ export function renderLibrary(page: LibraryPage): string {
        <button type="button" data-versions="${index}">Versions and readiness</button></article>`).join("") : "<p>No readable source heads on this page.</p>"}`;
 }
 
-export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void): (() => void) & { clearPrivate(): void } {
+export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: string, context?: LibrarySelectionContext) => void | boolean | Promise<void | boolean>): (() => void) & { clearPrivate(): void } {
   element.innerHTML = `<h2>Library</h2><p>Only sources permitted by your current read policy are shown.</p>
     <p><button type="button" data-first>All sources / refresh</button> <button type="button" data-next disabled>Next page</button></p>
     <p data-scope></p><p role="status" aria-live="polite"></p><section data-library-result></section><section data-library-versions></section>
@@ -63,9 +63,14 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
       for (const button of result.querySelectorAll<HTMLButtonElement>("[data-source]")) button.onclick = () => {
         const selected = received.sources[Number(button.dataset.source)];
         if (selected && mine === serial && !disposed) {
-          onSelectSource(selected.id, { deploymentGeneration: received.generation });
           const head = selected.readiness_ref.slice(`readiness:${selected.id}:`.length);
-          void checkReadiness(selected.id, received.generation, head, mine);
+          void (async () => {
+            let selectedForReadiness: void | boolean;
+            try { selectedForReadiness = await onSelectSource(selected.id, { deploymentGeneration: received.generation }); } catch { return; }
+            if (selectedForReadiness === false) return;
+            if (mine !== serial || disposed) return;
+            await checkReadiness(selected.id, received.generation, head, mine);
+          })();
         }
       };
     } catch (error) {
