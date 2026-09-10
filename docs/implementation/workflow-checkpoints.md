@@ -172,6 +172,14 @@ prompt preparation or pricing call. Deployment resolution defaults to PRODUCTION
 fixture-only qualifications. Trusted request preparation, currentness and pricing are required inputs;
 this factory does not supply spending approval or replace the deterministic app Workflow stages.
 
+`createD1ResearchModelPricingSnapshotStore` stores immutable canonical pricing observations in
+`0038_research_model_pricing.sql`, bound to an exact snapshot reference, route/version, provider and
+model. It admits only explicitly declared token rates, retained as decimal text with effective/expiry
+dates and trusted provenance references. Independent readback checks columns, bytes and SHA-256;
+lost insert acknowledgements reconcile only against the same contents. Historical reads remain
+available after expiry. This adapter performs no price arithmetic or current-call expiry decision;
+an approval-reference string alone is not verified spending consent or a provider invoice.
+
 ## Bounds and proof ceiling
 
 R2 input/output objects are capped at 8 MiB; larger artifacts must be represented by bounded manifests.
@@ -244,6 +252,12 @@ controlled provider attempt; and refusal of the registered FIXTURE route under t
 with zero provider calls. It uses the real prompt compiler with a controlled manifest-service result,
 controlled preparation/pricing, and injected fetch. Manifest persistence has its separate storage
 acceptance above; production quote/consent and live provider behavior are not proved by this suite.
+
+The pricing store passed six actual local Worker/D1 cases on 2026-09-10: canonical write/read/replay,
+changed-content refusal, unsupported basis/malformed decimal/extra identity fields, corrupt stored
+bytes, committed insert with lost acknowledgement and one-row reconciliation, and historical read
+after expiry. Tariffs in this fixture are controlled test values. Budget pools, owner consent, fresh-call
+pricing checks and accounting remain separate production requirements.
 
 The earlier focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
