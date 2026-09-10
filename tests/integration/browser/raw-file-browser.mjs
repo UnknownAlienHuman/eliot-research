@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { resolveLocalBrowserExecutable } from "../../../scripts/lib/local-launch.mjs";
-/* global URL:readonly, Buffer:readonly, document:readonly, window:readonly, Event:readonly,
+/* global URL:readonly, Buffer:readonly, document:readonly, window:readonly, Event:readonly, MutationObserver:readonly,
   process:readonly, console:readonly */
 
 const root = resolve(import.meta.dirname, "../../..");
