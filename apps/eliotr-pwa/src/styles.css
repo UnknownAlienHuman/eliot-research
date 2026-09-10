@@ -81,6 +81,7 @@ h2 { margin-bottom: 12px; font-size: 17px; letter-spacing: -.03em; } h3 { margin
 .research-report-sections { display: grid; gap: 12px; margin: 20px 0 0; padding: 0; list-style: none; }
 .research-report-section { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(24, 27, 34, .5); }
 .research-report-section h4 { margin: 0 0 6px; font-size: 13px; letter-spacing: -.02em; }
+.research-section-details { margin: 0 0 10px; }
 .research-report-section-meta { margin: 0 0 10px; color: var(--dim); font-family: var(--mono); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .research-section-body { max-width: 100%; max-height: 32rem; margin-top: 12px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .workflow-progress { height: 5px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: var(--line); } .workflow-progress-bar { width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }

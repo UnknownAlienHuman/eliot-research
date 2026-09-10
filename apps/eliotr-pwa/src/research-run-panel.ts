@@ -92,7 +92,7 @@ export function mountResearchRunPanel(
     result.replaceChildren();
     const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
     const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
-    result.append(heading, identity);
+    result.append(heading);
     if (view.answer.availability === "draft" && artifact !== undefined) {
       const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
       const reportTitle = document.createElement("h3"); reportTitle.textContent = "Research draft";
@@ -115,11 +115,21 @@ export function mountResearchRunPanel(
       technical.append(technicalSummary, technicalFields);
       result.append(reportHead, technical);
       const sections = document.createElement("ul"); sections.className = "research-report-sections";
-      for (const section of artifact.sections) {
+      artifact.sections.forEach((section, ordinal) => {
         const item = document.createElement("li"); item.className = "research-report-section";
-        const sectionRef = `${section.section_ref.id}:${section.section_ref.revision}`;
-        const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${sectionRef}`;
-        const label = document.createElement("p"); label.className = "research-report-section-meta"; label.append("Evidence ledger ", codeRef(section.evidence_ledger_ref));
+        const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
+        const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
+        const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";
+        const sectionTechnicalFields = document.createElement("dl"); sectionTechnicalFields.className = "research-technical-fields";
+        const sectionField = (label: string, value: string): void => {
+          const term = document.createElement("dt"); term.textContent = label;
+          const detail = document.createElement("dd"); detail.append(codeRef(value));
+          sectionTechnicalFields.append(term, detail);
+        };
+        sectionField("Section ref", `${section.section_ref.id}:${section.section_ref.revision}`);
+        sectionField("Evidence ledger", section.evidence_ledger_ref);
+        sectionField("Verification receipt", section.verification_receipt_ref);
+        sectionTechnical.append(sectionTechnicalSummary, sectionTechnicalFields);
         const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
         open.onclick = () => {
           if (renderSerial !== serial || controller !== undefined) return;
@@ -138,9 +148,11 @@ export function mountResearchRunPanel(
             })
             .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
         };
-        item.append(sectionHeading, label, open); sections.append(item);
-      }
+        item.append(sectionHeading, sectionTechnical, open); sections.append(item);
+      });
       result.append(sections);
+    } else {
+      result.append(identity);
     }
     result.hidden = false;
     status.textContent = text; refresh.disabled = false;
