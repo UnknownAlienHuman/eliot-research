@@ -31,6 +31,13 @@ function parseStringArray(value: unknown, label: string): string[] {
   return parseStringArrayValue(parsed, label);
 }
 
+export function parseWorkflowBudgetReceipt(value: string): string {
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch { fail("model request is not JSON"); }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) fail("model request is not an object");
+  return text((parsed as Record<string, unknown>).workflow_budget_receipt_ref, "workflow budget receipt");
+}
+
 function parseOperationReceipt(value: unknown): OperationReceipt | null {
   if (value === null) return null;
   if (typeof value !== "string") fail("operation receipt is invalid");
