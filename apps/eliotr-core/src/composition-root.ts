@@ -1,4 +1,5 @@
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
+import type { ArtifactRevision, ScopeSnapshot } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
   FederationApi,
@@ -34,6 +35,7 @@ import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft } from "@eliotr/cloudflare-research";
+import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -105,8 +107,13 @@ function semanticApi(env: Env): SemanticApi {
         work_bucket: env.WORK_BUCKET,
         artifact_ref: artifactRef,
         access: context,
-        require_current: (scope) => scopes.requireCurrent(scope),
+        require_current: (scope: ScopeSnapshot) => scopes.requireCurrent(scope),
         now,
+      }).then((revision: ArtifactRevision | null) => {
+        if (revision === null) {
+          throw new ArtifactReadNotFoundError();
+        }
+        return revision;
       });
     },
     proposeWiki: () => unavailable("research.wiki.propose"),

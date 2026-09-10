@@ -11,6 +11,17 @@ export class ArtifactHttpInputError extends Error {
   }
 }
 
+export class ArtifactReadNotFoundError extends Error {
+  public readonly code = "ARTIFACT_DRAFT_READ_NOT_FOUND";
+  public readonly status = 404;
+  public readonly retryable = false;
+
+  public constructor() {
+    super("artifact revision does not exist");
+    this.name = "ArtifactReadNotFoundError";
+  }
+}
+
 export function parseArtifactRef(value: string): VersionedRef {
   const separator = value.lastIndexOf(":");
   if (separator <= 0 || separator === value.length - 1) {
@@ -33,11 +44,12 @@ export function parseArtifactRef(value: string): VersionedRef {
 }
 
 const ARTIFACT_READ_CODES = new Set([
-  "ARTIFACT_NOT_FOUND",
-  "ARTIFACT_ACCESS_DENIED",
-  "ARTIFACT_SCOPE_STALE",
-  "ARTIFACT_INTEGRITY_INVALID",
-  "ARTIFACT_READ_UNAVAILABLE",
+  "ARTIFACT_DRAFT_READ_NOT_FOUND",
+  "ARTIFACT_DRAFT_READ_INVALID",
+  "ARTIFACT_DRAFT_READ_DENIED",
+  "ARTIFACT_DRAFT_READ_STALE",
+  "ARTIFACT_DRAFT_READ_INTEGRITY",
+  "ARTIFACT_DRAFT_READ_UNAVAILABLE",
 ]);
 
 export interface ArtifactReadErrorLike {
