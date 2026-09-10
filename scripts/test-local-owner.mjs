@@ -4,7 +4,8 @@ import { createServer, request as httpRequest } from "node:http";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { startOwnerBridge } from "./lib/local-owner-bridge.mjs";
+import { isChromiumSafePort, startOwnerBridge } from "./lib/local-owner-bridge.mjs";
+import { startLocalWorker, reserveChromiumSafePort } from "./lib/local-worker.mjs";
 import { loginOwner, readOwnerIdentity, validateWorkerOrigin } from "./lib/local-owner-login.mjs";
 import { loadOwnerConfig, validateOwnerConfig } from "./lib/local-owner-config.mjs";
 
@@ -64,6 +65,15 @@ test("Access config and CLI use only exact HTTPS origins and never shell/token a
   assert.deepEqual(calls.map((call) => call.args), [["access", "login", "--quiet", config.app], ["access", "token", `--app=${config.app}`]]);
   await assert.rejects(loginOwner(config, { run: async () => "reflected private token" }), (error) => !error.message.includes("reflected"));
   for (const value of ["https://127.0.0.1:8000", "http://localhost:8000", "http://attacker.invalid:8000", "http://127.0.0.1:8000/path"]) assert.throws(() => validateWorkerOrigin(value));
+});
+test("explicit Worker port rejects unsafe and occupied listeners without fallback or foreign close", async () => {
+  const occupiedPort = Number(new URL(origin).port);
+  assert.ok(isChromiumSafePort(occupiedPort), `test backend must use a Chromium-safe port, got ${occupiedPort}`);
+  assert.equal(backend.listening, true);
+  await assert.rejects(startLocalWorker({ generation: "expected" }, { port: 0 }), /Chromium-unsafe or out of range/u);
+  await assert.rejects(reserveChromiumSafePort({ port: occupiedPort }), /EADDRINUSE|address already in use/u);
+  await assert.rejects(startLocalWorker({ generation: "expected" }, { port: occupiedPort }), /EADDRINUSE|address already in use/u);
+  assert.equal(backend.listening, true, "occupied foreign listener must remain open after exact-port refusal");
 });
 test("initial settings populate only local Access vars, preserve existing settings and reject conflicts", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "eliotr-owner-config-"));
