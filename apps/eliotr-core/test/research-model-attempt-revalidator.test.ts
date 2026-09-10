@@ -134,7 +134,7 @@ function makeRevalidator(value: RevalidatorCase, overrides: {
   });
 }
 
-async function assertNoNewAttempt(value: RevalidatorCase, invoke: () => Promise<void>): Promise<void> {
+async function assertNoNewAttempt(value: RevalidatorCase, invoke: () => Promise<unknown>): Promise<void> {
   const before = await countModelRows(value.prepared.idempotency_key);
   await invoke();
   const after = await countModelRows(value.prepared.idempotency_key);

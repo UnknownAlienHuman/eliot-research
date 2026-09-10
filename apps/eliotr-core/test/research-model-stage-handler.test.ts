@@ -24,6 +24,8 @@ const PROMPT_GENERATION = "stage-handler-prompt-v1";
 const SCHEMA_GENERATION = "stage-handler-schema-v1";
 const PRICING_SNAPSHOT = "stage-handler-pricing-v1";
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`;
+type QualificationTier = "FIXTURE" | "LIVE";
+type ApprovalMode = "approved" | "missing" | "malformed";
 
 function futureIso(): string {
   return new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -31,13 +33,17 @@ function futureIso(): string {
 
 beforeAll(initializeModelAttemptRuntime);
 
-async function stageDeployment(database: D1Database): Promise<ModelRouteDeployment> {
+async function stageDeployment(database: D1Database, options: {
+  readonly routeVersion?: string;
+  readonly qualificationTier?: QualificationTier;
+  readonly expectedActiveRouteVersion?: string | null;
+} = {}): Promise<ModelRouteDeployment> {
   const registryNow = new Date().toISOString();
   const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
   const deployment: ModelRouteDeployment = {
     route_ref: ROUTE,
-    route_version: ROUTE_VERSION,
+    route_version: options.routeVersion ?? ROUTE_VERSION,
     prompt_generation: PROMPT_GENERATION,
     schema_generation: SCHEMA_GENERATION,
     parameters_digest: parametersDigest,
@@ -51,7 +57,7 @@ async function stageDeployment(database: D1Database): Promise<ModelRouteDeployme
     route_definition_sha256: "1".repeat(64),
     provider_snapshot_sha256: "2".repeat(64),
     control_plane_receipt_ref: "stage-handler-control-plane",
-    qualification_tier: "FIXTURE" as const,
+    qualification_tier: options.qualificationTier ?? "FIXTURE",
     control_plane_readback_ref: "stage-handler-control-readback",
     execution_probe_ref: "stage-handler-execution-probe",
     qualification_expires_at: qualificationExpiresAt,
@@ -67,8 +73,8 @@ async function stageDeployment(database: D1Database): Promise<ModelRouteDeployme
   const staged = stagedRecord as unknown as DynamicRouteCandidateWriteReceipt;
   await registry.promote({
     route_ref: ROUTE,
-    expected_active_route_version: null,
-    target_route_version: ROUTE_VERSION,
+    expected_active_route_version: options.expectedActiveRouteVersion ?? null,
+    target_route_version: deployment.route_version,
     candidate_ref: staged.candidate_ref,
     candidate_sha256: staged.readback_sha256,
   });
@@ -117,17 +123,26 @@ function promptDependencies(tag: string): ResearchModelPromptCompilerDependencie
   };
 }
 
-async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION" = "TEST", gatewayFailure = false) {
+async function compositionFixture(
+  tag: string,
+  environment: "TEST" | "PRODUCTION" = "TEST",
+  gatewayFailure = false,
+  qualificationTier: QualificationTier = "FIXTURE",
+  approvalMode: ApprovalMode = "approved",
+  rotateAfterFirstRevalidation = false,
+) {
   const workflow = await workflowFixture(`stage-${tag}`);
   await workflow.executor.execute(workflow.request, principal, async ({ input_bytes }) => new Uint8Array(input_bytes));
   const base = await governedModelAttemptFixture(`stage-${tag}`, {
     database: workflow.db, bucket: workflow.bucket, request: workflow.request, principal, inputBytes: workflow.bytes,
   });
-  const deployment = await stageDeployment(workflow.db);
+  const deployment = await stageDeployment(workflow.db, { qualificationTier });
   let providerCalls = 0;
   let promptCalls = 0;
   let pricingCalls = 0;
   let prepareCalls = 0;
+  let revalidateCalls = 0;
+  const attemptExpiresAt = futureIso();
   const gatewayResponse = {
     id: `stage-response-${tag}`, object: "chat.completion", created: 1, model: ROUTE,
     choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: `controlled result ${tag}` } }],
@@ -137,11 +152,23 @@ async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION
     const prepared = await base.dependencies.prepare(context);
     return {
       ...prepared,
+      authority: { ...prepared.authority, expires_at: attemptExpiresAt },
       call: { ...prepared.call, route_ref: ROUTE, prompt_generation: PROMPT_GENERATION, schema_generation: SCHEMA_GENERATION },
-      quote: { ...prepared.quote, selected_routes: [ROUTE] },
+      quote: { ...prepared.quote, selected_routes: [ROUTE], expires_at: attemptExpiresAt },
     };
   };
   const prompt = promptDependencies(tag);
+  const revalidate = async () => {
+    revalidateCalls += 1;
+    if (rotateAfterFirstRevalidation && revalidateCalls === 2) {
+      await stageDeployment(workflow.db, {
+        routeVersion: "stage-handler-rotated-v2", qualificationTier: "LIVE", expectedActiveRouteVersion: deployment.route_version,
+      });
+    }
+    if (approvalMode === "missing") return null as unknown as ModelRouteDeployment;
+    if (approvalMode === "malformed") return { ...deployment, route_ref: "dynamic/unsupported" as ModelRouteDeployment["route_ref"] };
+    return deployment;
+  };
   const handler = createResearchModelStageHandler({
     database: workflow.db, work_bucket: workflow.bucket, operation_kind: "REPORT", deployment_environment: environment,
     gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => {
@@ -163,9 +190,9 @@ async function compositionFixture(tag: string, environment: "TEST" | "PRODUCTION
     prepare: async (context) => {
       prepareCalls += 1;
       return prepare(context);
-    }, revalidate: base.dependencies.revalidate,
+    }, revalidate,
   });
-  return { workflow, base, handler, deployment, prepare, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
+  return { workflow, base, handler, deployment, prepare, revalidateCalls: () => revalidateCalls, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
 }
 
 describe("composed research model stage handler", () => {
@@ -177,6 +204,18 @@ describe("composed research model stage handler", () => {
     expect(fixture.providerCalls()).toBe(1);
     expect(fixture.promptCalls()).toBe(1);
     expect(fixture.pricingCalls()).toBe(1);
+    const fingerprint = await fixture.workflow.db.prepare(
+      "SELECT fingerprint_json FROM research_model_fingerprint WHERE route_ref = ?1 ORDER BY observation_seq DESC LIMIT 1",
+    ).bind(ROUTE).first<{ readonly fingerprint_json: string }>();
+    if (fingerprint === null) throw new Error("controlled model fingerprint was not persisted");
+    expect(JSON.parse(fingerprint.fingerprint_json)).toMatchObject({
+      route_ref: fixture.deployment.route_ref,
+      route_version: fixture.deployment.route_version,
+      prompt_generation: fixture.deployment.prompt_generation,
+      schema_generation: fixture.deployment.schema_generation,
+      parameters_digest: fixture.deployment.parameters_digest,
+      pricing_snapshot_ref: fixture.deployment.pricing_snapshot_ref,
+    });
     const replay = await fixture.handler.handler(input);
     expect(replay).toEqual(first);
     expect(fixture.providerCalls()).toBe(1);
@@ -225,10 +264,43 @@ describe("composed research model stage handler", () => {
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT",
       gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => { productionProviderCalls += 1; throw new Error("production fixture route must not fetch"); } },
       prompt: promptDependencies("production-gate"), pricing: { quote: async () => { throw new Error("production fixture route must not price"); } },
-      prepare: fixture.prepare, revalidate: fixture.base.dependencies.revalidate,
+      prepare: fixture.prepare, revalidate: async () => fixture.deployment,
     });
     await expect(production.handler(fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef)))
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(productionProviderCalls).toBe(0);
+  });
+
+  it("propagates a LIVE approved deployment through the production fetch pin", async () => {
+    const fixture = await compositionFixture("approved-live", "PRODUCTION", false, "LIVE");
+    const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
+    const result = await fixture.handler.handler(input);
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(fixture.providerCalls()).toBe(1);
+    expect(fixture.revalidateCalls()).toBe(3);
+    const fingerprint = await fixture.workflow.db.prepare(
+      "SELECT fingerprint_json FROM research_model_fingerprint WHERE route_ref = ?1 ORDER BY observation_seq DESC LIMIT 1",
+    ).bind(ROUTE).first<{ readonly fingerprint_json: string }>();
+    if (fingerprint === null) throw new Error("approved deployment fingerprint was not persisted");
+    expect(JSON.parse(fingerprint.fingerprint_json)).toMatchObject({
+      route_version: fixture.deployment.route_version,
+      parameters_digest: fixture.deployment.parameters_digest,
+      pricing_snapshot_ref: fixture.deployment.pricing_snapshot_ref,
+    });
+  });
+
+  it("refuses a registry rotation after approved revalidation before transport", async () => {
+    const fixture = await compositionFixture("approved-rotation", "PRODUCTION", false, "LIVE", "approved", true);
+    const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
+    await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    expect(fixture.revalidateCalls()).toBe(2);
+    expect(fixture.providerCalls()).toBe(0);
+  });
+
+  it.each(["missing", "malformed"] as const)("refuses %s approval before transport", async (approvalMode) => {
+    const fixture = await compositionFixture(`approval-${approvalMode}`, "PRODUCTION", false, "LIVE", approvalMode);
+    const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
+    await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(fixture.providerCalls()).toBe(0);
   });
 });
