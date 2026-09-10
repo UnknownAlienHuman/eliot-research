@@ -24,6 +24,12 @@ Its provider contracts and codecs are imported from ER-16's `@eliotr/cloudflare-
 The `0035_model_route_registry.sql` migration remains an ER-13 integration handoff; the actual D1
 fixture `apps/eliotr-core/test/model-deployment-registry.test.ts` remains an ER-27 handoff.
 
+The next internal gateway persistence adapters also belong to this package: observed model
+fingerprints and the logical-output-to-residency mapping. Their allocated ER-13 migration handoffs are
+`0036_research_model_fingerprints.sql` and `0037_research_model_outputs.sql`; ER-27 owns the corresponding
+`research-model-fingerprint-store.test.ts` and `research-model-output-store.test.ts` Worker fixtures.
+These allocations do not qualify a provider, promote a route, or create spending authority.
+
 ## Read only
 
 - `packages/research/src/ports.ts`
