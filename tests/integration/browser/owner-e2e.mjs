@@ -552,6 +552,9 @@ function rawProjectionObservation(rows, sourceRevisionRef) {
   }
   return {
     outbox_state: bounded(row?.state, 64),
+    inbox_state: bounded(row?.inbox_state, 64),
+    inbox_attempt: boundedNumberOrIdentifier(row?.inbox_attempt, 32),
+    inbox_last_error_code: bounded(row?.inbox_last_error_code, 96),
     job_state: bounded(row?.job_state, 64),
     current_stage: bounded(row?.current_stage, 96),
     projection_state: bounded(row?.projection_state, 64),
@@ -592,6 +595,9 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
   const observation = JSON.stringify(cause.last_successful_observation);
   const compactObservation = observation.length <= 900 ? observation : JSON.stringify({
     outbox_state: cause.last_successful_observation.outbox_state,
+    inbox_state: cause.last_successful_observation.inbox_state,
+    inbox_attempt: cause.last_successful_observation.inbox_attempt,
+    inbox_last_error_code: cause.last_successful_observation.inbox_last_error_code,
     job_state: cause.last_successful_observation.job_state,
     current_stage: cause.last_successful_observation.current_stage,
     projection_state: cause.last_successful_observation.projection_state,
@@ -617,10 +623,13 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
   const escapedRevision = sqlText(sourceRevisionRef);
   const query = `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
     `i.operation_kind,i.principal_ref,i.idempotency_key,j.job_id,j.state AS job_state,j.current_stage,j.terminal_receipt_ref,` +
+    `di.state AS inbox_state,di.attempt AS inbox_attempt,di.last_error_code AS inbox_last_error_code,` +
     `g.projection_generation,g.state AS projection_state,g.content_sha256,g.object_residency_key_digest,g.item_count,` +
     `g.item_set_digest,g.work_manifest_ref,g.work_manifest_sha256,g.d1_search_receipt_ref,g.d1_search_readback_digest,` +
     `g.reason_codes_json FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision ` +
     `LEFT JOIN job j ON j.intent_id=i.intent_id AND j.intent_revision=i.revision ` +
+    `LEFT JOIN delivery_inbox di ON di.message_id=o.queue_message_id AND di.topic=o.topic ` +
+    `AND di.idempotency_key=i.idempotency_key ` +
     `LEFT JOIN projection_generation g ON g.job_id=j.job_id ` +
     `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
   let latest = [];
