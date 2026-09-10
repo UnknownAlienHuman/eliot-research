@@ -85,11 +85,21 @@ describe("erasure admission policy against real D1", () => {
     expect(replay).toEqual(installed);
     const offsetPolicy = await store.install(policy({
       permission_ref: { id: "permission-offset", revision: 1 },
-      valid_from: "2026-09-01T00:00:00-04:00",
-      expires_at: "2026-10-01T00:00:00-04:00",
+      authorization_binding_ref: "operator-receipt-offset",
+      valid_from: "2026-09-10T07:00:00-05:00",
+      expires_at: "2026-09-11T07:00:00-05:00",
     }));
-    expect(offsetPolicy.valid_from).toBe("2026-09-01T04:00:00.000Z");
-    expect(offsetPolicy.expires_at).toBe("2026-10-01T04:00:00.000Z");
+    expect(offsetPolicy.valid_from).toBe("2026-09-10T12:00:00.000Z");
+    expect(offsetPolicy.expires_at).toBe("2026-09-11T12:00:00.000Z");
+    const offsetAdmission = await store.admit(
+      { principal_ref: "principal-1", credential_generation: "credential-1" },
+      offsetPolicy.permission_ref,
+      request({
+        erasure_ref: { id: "erasure-offset", revision: 1 },
+        deadline: "2026-09-10T13:00:00.000Z",
+      }),
+    );
+    expect(offsetAdmission.admitted_at).toBe(new Date(NOW).toISOString());
 
     const admitted = await store.admit(
       { principal_ref: "principal-1", credential_generation: "credential-1" },
