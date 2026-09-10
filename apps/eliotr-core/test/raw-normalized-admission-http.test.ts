@@ -102,5 +102,8 @@ describe("raw normalized admission actual Worker path", () => {
     expect(witnessAfterMutationRollback?.receipt_json).toBeNull();
     expect(JSON.parse(witnessAfterMutationRollback?.snapshot_view_json ?? "{}").observation_freshness).toBe("observed_with_age");
     expect(witnessAfterMutationRollback?.snapshot_view_sha256).not.toBe(mutatedDigest);
+    const recovered = await handleHttp(admissionRequest(thirdCapture.capture_id, "raw-admission-key-3", thirdConversionId), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
+    expect(recovered.status).toBe(200);
+    expect((await recovered.json() as { data: { state: string } }).data.state).toBe("COMMITTED");
   });
 });

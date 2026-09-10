@@ -485,7 +485,7 @@ export async function commitAdmittedBundle(
     ),
     database.prepare(
       "UPDATE raw_normalized_admission SET state='COMMITTED', receipt_json=?2, updated_at=?3 " +
-      "WHERE ingest_operation_id=?1 AND source_view_ref=?4 AND state NOT IN ('REJECTED','QUARANTINED','UNKNOWN')",
+      "WHERE ingest_operation_id=?1 AND source_view_ref=?4 AND state NOT IN ('REJECTED','QUARANTINED')",
     ).bind(
       operation.operation_id,
       receiptJson,

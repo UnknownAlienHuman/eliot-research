@@ -84,6 +84,8 @@ export interface IngestAdmissionAuthority {
   load(operationId: string): Promise<PreparedIngestOperation | null>;
   loadForPrincipal(operationId: string, principalRef: string): Promise<PreparedIngestOperation | null>;
   loadBySourceRevisionForPrincipal(sourceRevisionRef: string, principalRef: string): Promise<PreparedIngestOperation | null>;
+  /** Read the persisted decision for a recovery replay without creating a new revision. */
+  readonly loadDecision?: (operationId: string) => Promise<SourceAdmissionDecision | null>;
   recordQualificationDecision(input: RecordQualificationDecisionInput): Promise<PreparedIngestOperation>;
   finalizeNonAdmitted(operationId: string, receipt: BundleAdmissionReceipt): Promise<BundleAdmissionReceipt>;
   authorizePromotion(input: BundlePromotionAuthorization, admissionReceiptRef: string): Promise<boolean>;

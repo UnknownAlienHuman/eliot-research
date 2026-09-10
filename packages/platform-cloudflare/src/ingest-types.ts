@@ -120,6 +120,8 @@ export interface StagedBundlePort {
   ): Promise<StagedFileCompletionReceipt>;
   verifyReadback(sessionId: string): Promise<StagedBundleVerification>;
   promote(sessionId: string, admissionReceiptRef: string): Promise<BundlePromotionReceipt>;
+  /** Read an existing promotion receipt without authorizing or promoting anything. */
+  readonly readPromotion?: (sessionId: string) => Promise<BundlePromotionReceipt | null>;
   abort(sessionId: string, reasonCode: string): Promise<void>;
   cleanupExpired(limit: number): Promise<StagingCleanupReceipt>;
 }
