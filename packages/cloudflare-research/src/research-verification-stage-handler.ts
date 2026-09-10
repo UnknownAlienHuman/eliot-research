@@ -2,7 +2,7 @@ import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type Navigation
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { decodeSynthesisSectionCandidate } from "./research-artifact-draft.js";
-import type { EvidenceFreezeSynthesisContext } from "./research-evidence-freeze-composition.js";
+import type { EvidenceFreezeSynthesisContext, EvidenceFreezeVerificationContextReader } from "./research-evidence-freeze-composition.js";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import { encodeResearchVerificationResult } from "./research-verification-result.js";
 import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
@@ -15,15 +15,7 @@ export interface ResearchVerificationStageDependencies {
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly recheck_authority: Parameters<typeof readCommittedResearchSynthesisOutput>[0]["recheck_authority"];
   /** Fresh reader validates current stage13 head while loading committed stage12 context. */
-  readonly context: ResearchVerificationContextReader;
-}
-
-export interface ResearchVerificationContextReader {
-  read(input: {
-    readonly request: StageRequest;
-    readonly principal: WorkflowPrincipal;
-    readonly input_bytes: Uint8Array;
-  }): Promise<EvidenceFreezeSynthesisContext>;
+  readonly context: EvidenceFreezeVerificationContextReader;
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -60,7 +52,6 @@ function requireCandidateRefs(
 
 async function committedSynthesisInput(
   database: D1Database,
-
   request: StageRequest,
 ): Promise<{ readonly request: StageRequest; readonly request_sha256: string; readonly attempt_ref: string }> {
   const checkpoint = await new WorkflowCheckpointStore(database).readCommittedStageRequest(request.operation_id, "SYNTHESIZE");
