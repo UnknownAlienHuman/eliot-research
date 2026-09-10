@@ -31,6 +31,7 @@ outside the paths below.
 - `apps/eliotr-core/test/research-model-pricing-store.test.ts`
 - `apps/eliotr-core/test/research-model-attempt-revalidator.test.ts`
 - `apps/eliotr-core/test/research-evidence-freeze.test.ts`
+- `apps/eliotr-core/test/research-evidence-freeze-fixture.ts`
 - `apps/eliotr-core/test/research-protocol-freeze.test.ts`
 - `apps/eliotr-core/test/research-protocol-fixture.ts`
 - `apps/eliotr-core/test/research-retrieve-branches.test.ts`
