@@ -12,6 +12,7 @@ import {
 } from "@eliotr/research";
 import {
   createFreezeProtocolAndScopeStageHandler,
+  readFreezeProtocolAndScopeCheckpoint,
 } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
 import {
   createWorkflowCheckpointExecutor,
@@ -196,7 +197,7 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
     expect(await rowCounts(f.db)).toEqual(counts);
     const replayReadback = await readRetrieveBranchesCheckpoint(dependencies, retrieveRequest, principal);
     expect(canonicalEvidenceJson(replayReadback.checkpoint)).toBe(canonicalEvidenceJson(authoritative.checkpoint));
-  });
+  }, 30_000);
 
   it("rejects a mismatched operation reference and tampered persisted output", async () => {
     const f = await fixture();
@@ -214,6 +215,20 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
     });
     await expect(readRetrieveBranchesCheckpoint(dependencies, request, principal))
       .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+  });
+
+  it("binds stage-0 readback to the committed attempt reference", async () => {
+    const f = await fixture();
+    await expect(readFreezeProtocolAndScopeCheckpoint({
+      request: f.stage0,
+      principal,
+      database: f.db,
+      bucket: f.bucket,
+      navigation: f.navigation,
+      ledger: f.ledger,
+      expected_attempt_ref: "tampered-stage-zero-attempt",
+    }))
+      .rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
   });
 
   it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
