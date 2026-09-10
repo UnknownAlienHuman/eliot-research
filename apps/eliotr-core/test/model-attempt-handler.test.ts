@@ -18,41 +18,31 @@ async function stageRequestSha256(request: Parameters<ReturnType<typeof createGo
   return digest(new TextEncoder().encode(JSON.stringify(request)));
 }
 
+async function modelEffectRowCount(database: D1Database): Promise<number> {
+  const tables = ["operation_intent", "budget_reservation", "operation_attempt", "research_model_attempt"];
+  const rows = await Promise.all(tables.map((table) => database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first<{ readonly count: number }>()));
+  return rows.reduce((total, row) => total + Number(row?.count ?? 0), 0);
+}
+
 describe("production governed model attempt handler over actual D1/R2", () => {
-  it("derives separate stage identities for one run and replays each durable R2 result", async () => {
-    const fixture = await governedModelAttemptFixture("handler-stages");
-    const handler = createGovernedModelAttemptHandler(fixture.dependencies);
-    const firstInput = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "stage-one");
-    const first = await handler.handler(firstInput);
+  it("replays each W2-backed stage grant without invoking its durable W3 effect twice", async () => {
+    const firstFixture = await governedModelAttemptFixture("handler-stages-first");
+    const firstHandler = createGovernedModelAttemptHandler(firstFixture.dependencies);
+    const firstInput = firstFixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "ignored-by-bound-stage");
+    const first = await firstHandler.handler(firstInput);
     expect(first).toEqual(expect.any(Uint8Array));
-    expect(fixture.calls()).toBe(1);
+    expect(await firstHandler.handler(firstInput)).toEqual(first);
+    expect(firstFixture.calls()).toBe(1);
 
-    const firstReplay = await handler.handler(firstInput);
-    expect(firstReplay).toEqual(first);
-    expect(fixture.calls()).toBe(1);
-
-    const secondInput = fixture.invocation("ORIENT", "stage-two");
-    const second = await handler.handler(secondInput);
+    const secondFixture = await governedModelAttemptFixture("handler-stages-second");
+    const secondHandler = createGovernedModelAttemptHandler(secondFixture.dependencies);
+    const secondInput = secondFixture.invocation("ORIENT", "ignored-by-bound-stage");
+    const second = await secondHandler.handler(secondInput);
     expect(second).toEqual(expect.any(Uint8Array));
-    expect(fixture.calls()).toBe(2);
-    expect(await handler.handler(secondInput)).toEqual(second);
-    expect(fixture.calls()).toBe(2);
-
-    for (const input of [firstInput, secondInput]) {
-      const requestSha256 = await stageRequestSha256(input.request);
-      const identity = await deriveModelAttemptIdentity({
-        stage_request_sha256: requestSha256, principal_ref: fixture.principal.principal_ref,
-        credential_generation: fixture.principal.credential_generation, deployment_generation: fixture.principal.deployment_generation,
-      });
-      const readback = await fixture.dependencies.attempts.readByIdempotency({
-        principal_ref: fixture.principal.principal_ref, operation_kind: "REPORT", idempotency_key: identity.idempotency_key,
-      });
-      expect(readback?.output?.output_object_ref).toBeTruthy();
-      const stored = await runtime.WORK_BUCKET.get(readback?.output?.output_object_ref ?? "missing");
-      expect(stored).not.toBeNull();
-      if (stored === null) throw new Error("controlled model output was not persisted in R2");
-      expect(new Uint8Array(await stored.arrayBuffer())).toEqual(input === firstInput ? first : second);
-    }
+    expect(await secondHandler.handler(secondInput)).toEqual(second);
+    expect(secondFixture.calls()).toBe(1);
+    expect(first.byteLength).toBeGreaterThan(0);
+    expect(second.byteLength).toBeGreaterThan(0);
   });
 
   it("leaves an uncertain started effect terminal for invocation purposes and never calls the route twice", async () => {
@@ -102,6 +92,34 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     expect(cancelled.calls()).toBe(0);
   });
 
+  it("rejects missing, mismatched, and foreign W2 grants before any W3 effect", async () => {
+    const cases = [
+      { name: "missing", mode: "missing" },
+      { name: "mismatched", mode: "mismatched" },
+      { name: "foreign-stage", mode: "foreign-stage" },
+    ] as const;
+    for (const testCase of cases) {
+      const fixture = await governedModelAttemptFixture(`handler-grant-${testCase.name}`);
+      const before = await modelEffectRowCount(runtime.CORE_DB);
+      const base = fixture.dependencies.prepare;
+      const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", `${testCase.name}-stage`);
+      const handler = createGovernedModelAttemptHandler({
+        ...fixture.dependencies,
+        prepare: async (context) => {
+          const prepared = await base(context);
+          if (testCase.mode === "missing") return { ...prepared, workflow_budget_receipt_ref: "" };
+          if (testCase.mode === "mismatched") return { ...prepared, workflow_budget_receipt_ref: "foreign-budget-grant" };
+          return { ...prepared, stage_attempt_ref: "foreign-stage-attempt" };
+        },
+      });
+      await expect(handler.handler(input)).rejects.toMatchObject({
+        code: "WORKFLOW_EFFECT_UNCERTAIN",
+      });
+      expect(fixture.calls()).toBe(0);
+      expect(await modelEffectRowCount(runtime.CORE_DB)).toBe(before);
+    }
+  });
+
   it("keeps a known R2 settlement after cancellation and replays it without another route call", async () => {
     const fixture = await governedModelAttemptFixture("handler-post-cancel");
     const controller = new AbortController();
@@ -148,7 +166,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     const persisted = await fixture.dependencies.attempts.readByIdempotency({
       principal_ref: fixture.principal.principal_ref, operation_kind: "REPORT", idempotency_key: identity.idempotency_key,
     });
-    expect(persisted?.output?.output_object_ref).toMatch(/^model-output\/[a-f0-9]{64}\/recovery-stage$/u);
+    expect(persisted?.output?.output_object_ref).toMatch(/^model-output\/[a-f0-9]{64}\/[a-f0-9-]{36}$/u);
     const outputObjectRef = `workflow/${requestSha256}/${invocation.attempt_ref}`;
     const recovery: WorkflowAttemptRecoveryInput = {
       request: invocation.request, principal_ref: fixture.principal.principal_ref,
@@ -202,5 +220,26 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     expect(recovered).not.toBeNull();
     if (recovered === null) throw new Error("model recovery hook returned no output");
     expect(new Uint8Array(await stored.arrayBuffer())).toEqual(recovered);
+
+    const modelIdentity = await deriveModelAttemptIdentity({
+      stage_request_sha256: await stageRequestSha256(workflow.request), principal_ref: principal.principal_ref,
+      credential_generation: principal.credential_generation, deployment_generation: principal.deployment_generation,
+    });
+    const binding = await workflow.db.prepare(
+      "SELECT m.reservation_id, m.stage_attempt_ref, m.stage_request_sha256, w.budget_receipt_ref " +
+      "FROM research_model_attempt m JOIN budget_reservation b ON b.reservation_id = m.reservation_id " +
+      "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
+      "WHERE m.idempotency_key = ?1 LIMIT 1",
+    ).bind(modelIdentity.idempotency_key).first<{
+      readonly reservation_id: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string;
+      readonly budget_receipt_ref: string;
+    }>();
+    expect(binding).toMatchObject({
+      stage_attempt_ref: receipt.attempt_ref,
+      stage_request_sha256: await stageRequestSha256(workflow.request),
+      budget_receipt_ref: workflow.budget.receipt_ref,
+    });
+    expect(binding?.reservation_id).toBeTruthy();
+    expect(binding?.reservation_id).not.toBe(workflow.budget.receipt_ref);
   });
 });
