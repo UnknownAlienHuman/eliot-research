@@ -34,6 +34,7 @@ import {
   type Q1Namespace,
   type Q1Runtime,
 } from "./retrieval-q1-fixture.js";
+import { faultBucket } from "./research-workflow-fixture.js";
 
 const runtime = env as unknown as Q1Runtime;
 const access = {
@@ -306,6 +307,30 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
     expect(replayCheckpoint.protocol_profile.profile_ref).toEqual(secondCheckpoint.protocol_profile.profile_ref);
     expect(replayCheckpoint.protocol_digest).toBe(secondCheckpoint.protocol_digest);
     expect(replayCheckpoint.denominator_digest).toBe(secondCheckpoint.denominator_digest);
+  }, 30_000);
+
+  it("rejects deployment rotation during checkpoint R2 readback without changing the stored checkpoint", async () => {
+    const fixture = await createProtocolFreezeFixture("readback-rotation");
+    const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
+    await fixture.executor.execute(fixture.request, principal, handler);
+    const faultingBucket = faultBucket(fixture.bucket, {
+      beforeGet: async () => {
+        await fixture.db.prepare("UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation=?1")
+          .bind(principal.deployment_generation).run();
+      },
+    });
+    await expect(readFreezeProtocolAndScopeCheckpoint({
+      request: fixture.request,
+      principal,
+      database: fixture.db,
+      bucket: faultingBucket,
+      navigation: fixture.navigation,
+      ledger: fixture.ledger,
+    })).rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
+    expect((await fixture.db.prepare("SELECT state FROM investigation_current_deployment WHERE deployment_generation=?1")
+      .bind(principal.deployment_generation).first<{ state: string }>())?.state).toBe("RETIRED");
+    expect((await fixture.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1")
+      .bind(fixture.request.operation_id).first<{ n: number }>())?.n).toBe(1);
   }, 30_000);
 
   it("rejects revoked scope, wrong principal and substituted payload without a checkpoint", async () => {
