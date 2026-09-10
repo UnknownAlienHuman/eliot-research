@@ -22,20 +22,18 @@ import {
 } from "@eliotr/retrieval";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import {
-  readFreezeProtocolAndScopeCheckpoint,
-  type ProtocolScopeCheckpoint,
-} from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
-import {
   MAX_WORKFLOW_OUTPUT_BYTES,
+  readFreezeProtocolAndScopeCheckpoint,
+  readWorkflowObject,
   textDigest,
   WorkflowCheckpointError,
+  type ProtocolScopeCheckpoint,
   type StageRequest,
   type StageReceipt,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-research";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
-import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
@@ -169,16 +167,12 @@ async function persistedStageFive(
     if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("WORKFLOW_OUTPUT_CORRUPT");
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  if (receipt === null || receipt.stage !== "RETRIEVE_BRANCHES" || receipt.operation_id !== request.operation_id ||
-      receipt.investigation_ref.id !== request.investigation_ref.id || receipt.request_sha256 !== stored.request_sha256) {
+  if (receipt === null) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
   let bytes: Uint8Array;
   try { bytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true); }
-  catch (error) {
-    if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("WORKFLOW_OUTPUT_CORRUPT");
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
+  catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
   return { stage_request: stageRequest, receipt, checkpoint: decodeRetrieveBranchesCheckpoint(bytes) };
 }
 

@@ -25,6 +25,14 @@ export interface CommittedStageRequest {
   readonly request_sha256: string;
   readonly attempt_ref: string;
 }
+interface StoredCommittedStageRequestRow {
+  readonly operation_id: string;
+  readonly stage_index: number;
+  readonly request_json: string;
+  readonly request_sha256: string;
+  readonly attempt_ref: string;
+  readonly state: string;
+}
 function mapFailure(error: unknown): never {
   if (error instanceof WorkflowCheckpointError) throw error;
   const message = error instanceof Error ? error.message : "";
@@ -58,26 +66,19 @@ export class WorkflowCheckpointStore {
   ): Promise<CommittedStageRequest | null> {
     const stageIndex = RESEARCH_WORKFLOW_STAGES.indexOf(stage);
     if (stageIndex < 0) fail("WORKFLOW_INPUT_INVALID");
-    const row = await this.db.prepare(
-      "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, state " +
-      "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
-    ).bind(operationId, stageIndex).first<{
-      readonly operation_id: string;
-      readonly stage_index: number;
-      readonly request_json: string;
-      readonly request_sha256: string;
-      readonly attempt_ref: string;
-      readonly state: string;
-    }>();
+    let row: StoredCommittedStageRequestRow | null;
+    try {
+      row = await this.db.prepare(
+        "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, state " +
+        "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
+      ).bind(operationId, stageIndex).first<StoredCommittedStageRequestRow>();
+    } catch {
+      fail("WORKFLOW_AUTHORITY_STALE");
+    }
     if (row === null || row.state !== "COMMITTED") return null;
     let request: StageRequest;
     try { request = parseRequest(JSON.parse(row.request_json)); }
-    catch (error) {
-      if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_INPUT_INVALID") {
-        fail("WORKFLOW_OUTPUT_CORRUPT");
-      }
-      throw error;
-    }
+    catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
     if (row.operation_id !== operationId || row.stage_index !== stageIndex ||
         request.operation_id !== operationId || request.stage !== stage ||
         workflowStageIndex(request) !== stageIndex || JSON.stringify(request) !== row.request_json ||

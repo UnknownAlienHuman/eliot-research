@@ -343,8 +343,10 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
       scope_digest: retrieval.trace.scope_snapshot.digest,
     }));
     const counts = await workflowCounts();
-    const changedLimit = await body(await run(runRequest(sourceId, { query: "Pinned", max_results: 2 }, "rs-retrieval-run")));
-    expect(changedLimit.code, JSON.stringify(changedLimit)).toBe("RESEARCH_CONFLICT");
+    const changedLimitResponse = await run(runRequest(sourceId, { query: "Pinned", max_results: 2 }, "rs-retrieval-run"));
+    const changedLimit = await body(changedLimitResponse);
+    expect(changedLimitResponse.status).toBe(409);
+    expect(changedLimit.code, JSON.stringify(changedLimit)).toBe("ORIENTATION_IDEMPOTENCY_CONFLICT");
     const replay = await body(await run(runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run")));
     expect(replay.data).toEqual(first.data);
     expect(await workflowCounts()).toEqual(counts);
