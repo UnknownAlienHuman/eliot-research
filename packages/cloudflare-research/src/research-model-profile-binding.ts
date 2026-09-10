@@ -29,7 +29,7 @@ const STAGE_KEYS = new Set([
   "deployment_generation", "model_profile_ref", "policy_authority_ref", "policy_generation",
   "scope_snapshot_digest", "scope_snapshot_ref",
 ]);
-const CURRENT_KEYS = new Set([...STAGE_KEYS, "scope_snapshot", "state"]);
+const CURRENT_KEYS = new Set([...STAGE_KEYS, "deployment_state", "policy_state", "scope_snapshot", "state"]);
 
 export type ModelProfileBindingErrorCode =
   | "MODEL_PROFILE_BINDING_INPUT_INVALID"
@@ -75,6 +75,7 @@ export interface ModelProfileBindingSource {
 }
 
 export interface ModelProfileStageAuthority {
+  /** This object must be loaded from the persisted W1/stage-0 readback. */
   readonly model_profile_ref: string;
   readonly policy_generation: string;
   readonly policy_authority_ref: string;
@@ -85,6 +86,8 @@ export interface ModelProfileStageAuthority {
 
 export interface ModelProfileCurrentAuthority extends ModelProfileStageAuthority {
   readonly scope_snapshot: ScopeSnapshot;
+  readonly policy_state: "ACTIVE";
+  readonly deployment_state: "ACTIVE";
   readonly state: "ACTIVE";
 }
 
@@ -234,7 +237,7 @@ function stageFields(value: unknown, label: string, code: ModelProfileBindingErr
 
 function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
   const record = plainObject(value, CURRENT_KEYS, "current model profile authority", "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
-  if (record.state !== "ACTIVE") fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current research authority is not active");
+  if (record.state !== "ACTIVE" || record.policy_state !== "ACTIVE" || record.deployment_state !== "ACTIVE") fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current research authority is not active");
   const fields = stageFields({
     model_profile_ref: record.model_profile_ref,
     policy_generation: record.policy_generation,
@@ -245,7 +248,7 @@ function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
   }, "current model profile authority", "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
   const parsed = ScopeSnapshotSchema.safeParse(record.scope_snapshot);
   if (!parsed.success) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot is invalid");
-  return Object.freeze({ ...fields, state: "ACTIVE", scope_snapshot: parsed.data });
+  return Object.freeze({ ...fields, state: "ACTIVE", policy_state: "ACTIVE", deployment_state: "ACTIVE", scope_snapshot: parsed.data });
 }
 
 function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number): void {

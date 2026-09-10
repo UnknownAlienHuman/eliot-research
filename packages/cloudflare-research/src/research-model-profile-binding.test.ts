@@ -85,6 +85,8 @@ function current(overrides: Partial<ModelProfileCurrentAuthority> = {}): ModelPr
   return Object.freeze({
     ...stage,
     scope_snapshot: scope,
+    policy_state: "ACTIVE",
+    deployment_state: "ACTIVE",
     state: "ACTIVE",
     ...overrides,
   });
