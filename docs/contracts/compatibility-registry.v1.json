@@ -1648,6 +1648,30 @@
       "schema_id": "urn:eliotr:contracts:evidence:evidence-table-cell-anchor:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "SnapshotViewObservationFreshnessSchema",
+      "family": "source",
+      "json_schema_sha256": "1274d07195c29bf4b745ffa207bd19cdfbb24f65656d59af7c07f2495f626c56",
+      "kind": "ENUM",
+      "note": "Initial ER-01 publication; no prior generated schema generation exists.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-observation-freshness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "SnapshotViewWitnessSchema",
+      "family": "source",
+      "json_schema_sha256": "eaee429d3266b6fe2eb92dbe23e1770a45fb380c71c79dff29f015bc6a4fa059",
+      "kind": "OBJECT",
+      "note": "Initial ER-01 publication; no prior generated schema generation exists.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-witness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",

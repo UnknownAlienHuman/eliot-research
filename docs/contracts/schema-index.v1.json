@@ -1141,6 +1141,26 @@
       "structural_strictness": "NON_OBJECT"
     },
     {
+      "export_name": "SnapshotViewObservationFreshnessSchema",
+      "family": "source",
+      "json_schema_sha256": "1274d07195c29bf4b745ffa207bd19cdfbb24f65656d59af7c07f2495f626c56",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-observation-freshness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "SnapshotViewWitnessSchema",
+      "family": "source",
+      "json_schema_sha256": "eaee429d3266b6fe2eb92dbe23e1770a45fb380c71c79dff29f015bc6a4fa059",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-witness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "SourceAcquisitionCandidateSchema",
       "family": "source",
       "json_schema_sha256": "10311dfa5cb19c5df007cff1c465ee1b42921b74d814d1052f93aa24b21fc3b9",
@@ -1324,5 +1344,5 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
   "registry_generation": 2,
-  "schema_count": 132
+  "schema_count": 134
 }
