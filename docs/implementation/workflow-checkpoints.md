@@ -34,8 +34,40 @@ passed alone, proving no new manifest or stage-11 checkpoint after grant revocat
 positive case was not rerun. The missing-v3-composition factory case passed alone at `d49f9d4`.
 The profile-binding suite passed six cases at `f07a7be`, including scope-dependent bindings and
 expiry during an awaited route read. Intermediate stages and route authority are controlled fixture
-inputs. This is configured local composition, not public v3 selection, synthesis or live provider
-qualification. The public source-to-answer path remains open.
+inputs. This evidence qualified configured local freeze composition. Public v3 selection and live
+provider qualification remain open; the subsequent synthesis-to-draft proof is recorded below.
+
+## Configured synthesis and persisted draft
+
+The configured v3 factory now also selects real `SYNTHESIZE` and `MATERIALIZE` handlers. Synthesis
+reads the committed stage-0/5/10/11 lineage under current authority, compiles the prompt from its
+frozen evidence and reference manifest, and persists the gateway response through the existing
+model-output store. Materialization rereads that committed response and the current stage-16
+predecessor; it never treats a captured stage-12 context as current stage-17 authority.
+
+The materializer resolves each cited handle again, verifies its exact source/excerpt/scope identity
+and current grant, and derives section bytes, hashes, verification record and artifact manifest.
+Display annotations such as neighboring-text references are not evidence identity. Its verification
+record reports `AUTHORITATIVE_RESOLVED` source readback and `NOT_EXECUTED` semantic verification;
+statement labels remain `UNRESOLVED` and the artifact remains `DRAFT`.
+
+Only successful draft persistence emits the canonical `eliotr.research.materialize-result.v1` W2
+output. The result reader checks the committed stage-17 receipt, its stage-12 output binding and the
+exact owner-authorized draft manifest before exposing a draft reference. Low-level artifact storage
+now lives in `packages/cloudflare-artifacts`; the research package keeps compatibility exports and
+the governed materializer. D1/R2 ownership, schemas and publication heads are unchanged.
+
+At integrated source `68af889` on Node 22.23.2, the new actual local Worker/D1/R2 case passed (one
+selected, twelve unchanged cases skipped): imported Q1 source, committed freeze and synthesis,
+factory-selected stage 17, draft/section readback, owner HTTP metadata and bytes, duplicate-free
+replay with one provider invocation, and section-read denial after grant revocation. The gateway
+response and intermediate stages 13–16 are controlled. This does not prove semantic verification,
+public v3 production configuration, live model quality or NotebookLM comparison readiness.
+
+The missing-dependency factory case also passed at `68af889`. At `f42e206`, the synthesis-only case
+passed after correcting its assertion to decode the gateway request and nested prompt JSON: the
+actual provider request contains the exact stage-5 handle and excerpt, and replay invokes the
+provider only once. This assertion correction changed no production handler.
 
 ## Execution
 
@@ -148,9 +180,10 @@ Earlier unchanged reader cases remain retained evidence, not a claim that the wh
 
 `GET /api/v1/research/run/:workflow_id` reads the existing owner-bound W2 run without advancing it.
 The versioned response separates `ACTIVE`, `CANCELLED` and `ENGINE_COMPLETED` from
-`answer.availability`, which is currently always `unavailable`. It returns the investigation revision
-and next stage index, with a cancellation receipt only for a cancelled run; it never invents an
-artifact reference, a live-process status or a research completion disposition.
+`answer.availability`. Historical v1/v2 runs return `unavailable`; a configured v3 run can return
+`draft` only after committed MATERIALIZE and artifact readback. The response includes the investigation
+revision and next stage index, with a cancellation receipt only for a cancelled run. Engine completion
+alone never supplies an artifact reference or a research completion disposition.
 
 The reader checks the persisted run/current view, held scope and current owner authority before and
 after readback. Engine completion also requires the exact committed final request and checkpoint
@@ -160,11 +193,20 @@ The focused local Worker run at `5f2645b` passed both run-status and held-scope 
 including read-only repeat access, final receipt validation, cancellation and revoked access.
 The existing Astro Research card now offers explicit launch, manual refresh and recovery using a
 known Run ID. Its strict decoder binds the returned handle and deployment, refuses inconsistent
-execution state and never accepts an answer claim. Private run state clears on authority/session loss,
+execution state and requires persisted artifact identity for a draft. Private run state clears on authority/session loss,
 workspace generation change and offline events; it is not saved in browser storage. The built-PWA
 Chromium fixture at `6279b58` passed POST, ACTIVE/completed GET, known-ID recovery and explicit
 offline clearing against a controlled HTTP backend. It does not prove live Access or a deployed Worker.
-Synthesized answer persistence and an answer-result reader remain open.
+The draft consumer now reads owner-authorized metadata and opens stored section text manually. It
+checks exact identity, length and SHA-256 of the received bytes, renders with `textContent`, and
+suppresses late responses after scope/session changes. Four focused API cases and the PWA build
+passed at source `682d615`; live source-to-answer browser acceptance remains open because public
+run creation still selects v2.
+
+The built-PWA Chromium fixture passed at `78aa52b` on Node 22.23.2. It retains the legacy selected-
+source/unavailable path and checks draft metadata, manually opened exact section text, inert literal
+markup, generation/session/offline clearing and suppression of a delayed private response. Its HTTP
+backend is controlled; it is separate from the actual Worker/D1/R2 proof above.
 
 ## W2 monotone bounded executor
 
