@@ -29,7 +29,10 @@ export function renderRetrieval(view: RetrievalResultView): string {
     Each excerpt is pinned to its source revision and verified against stored bytes.</p>
     ${view.evidence.map((item, index) => `<article class="source-card evidence-result" data-evidence-index="${index}">
       <h3>${escapeHtml(item.source_title ?? item.handle.source_revision_ref)}</h3>
-      <blockquote data-excerpt>${escapeHtml(item.exact_excerpt)}</blockquote>
+      <button type="button" class="evidence-select evidence-excerpt-action" data-select-evidence="${index}"
+        aria-label="Inspect exact evidence excerpt from ${escapeHtml(item.source_title ?? item.handle.source_revision_ref)}">
+        <span data-excerpt>${escapeHtml(item.exact_excerpt)}</span>
+      </button>
       <p><code>${escapeHtml(item.handle.source_revision_ref)}</code></p>
       <p>${escapeHtml(anchorText(item.handle.anchor as unknown as Record<string, unknown>))} ·
         ${item.handle.excerpt_byte_length} bytes · ${escapeHtml(item.handle.terminal_state)}</p>
