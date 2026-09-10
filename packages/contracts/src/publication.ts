@@ -11,6 +11,7 @@ export const ArtifactKindSchema = z.enum([
   "research_report", "technical_audit", "literature_review", "architecture_report",
   "hypothesis_dossier", "comparison_report", "wiki_generation",
 ]);
+export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 
 export const ArtifactSectionContractSchema = z.object({
   section_id: IdentifierSchema,
@@ -20,6 +21,7 @@ export const ArtifactSectionContractSchema = z.object({
   required_evidence_classes: z.array(IdentifierSchema),
   maximum_utf8_bytes: z.number().int().positive().max(1_048_576),
 }).strict();
+export type ArtifactSectionContract = z.infer<typeof ArtifactSectionContractSchema>;
 
 export const ArtifactSpecSchema = z.object({
   spec_ref: VersionedRefSchema,
@@ -69,6 +71,7 @@ export const WikiPageTypeSchema = z.enum([
   "Project", "Topic", "Source", "Method", "Hypothesis", "Comparison", "Audit", "Contradiction",
   "Timeline", "Report", "FailedPath", "OpenQuestion", "Glossary",
 ]);
+export type WikiPageType = z.infer<typeof WikiPageTypeSchema>;
 export const WikiPageRevisionSchema = z.object({
   page_ref: VersionedRefSchema,
   page_type: WikiPageTypeSchema,
