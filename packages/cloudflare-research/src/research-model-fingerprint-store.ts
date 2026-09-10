@@ -209,18 +209,43 @@ export function createD1ModelGatewayFingerprintStore(
         if (observed.sha256 !== expected || observed.json !== canonical.json) fail("MODEL_FINGERPRINT_INPUT_INVALID", "fingerprint reference is bound to different bytes");
         return Object.freeze({ fingerprint_ref: ref, readback_sha256: observed.sha256 });
       }
-      let inserted: FingerprintRow | null;
+      let inserted: FingerprintRow | null = null;
+      let writeError: unknown;
       try {
         inserted = await database.prepare(
           `INSERT INTO research_model_fingerprint(fingerprint_ref, route_ref, fingerprint_sha256, fingerprint_json, observed_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(fingerprint_ref) DO NOTHING RETURNING ${select}`,
         ).bind(ref, canonical.fingerprint.route_ref, expected, canonical.json, timestamp(now(), "fingerprint observed_at")).first<FingerprintRow>();
       } catch (cause) {
-        fail("MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN", "fingerprint write is uncertain", true, cause);
+        writeError = cause;
       }
-      const observed = inserted ?? await read(ref);
-      if (observed === null) fail("MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN", "fingerprint write readback is missing", true);
+      let observed: FingerprintRow | null;
+      try {
+        observed = inserted ?? await read(ref);
+      } catch (cause) {
+        fail(
+          "MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN",
+          "fingerprint write readback is uncertain",
+          true,
+          { write_error: writeError, readback_error: cause },
+        );
+      }
+      if (observed === null) {
+        fail(
+          "MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN",
+          "fingerprint write readback is missing",
+          true,
+          writeError,
+        );
+      }
       const readback = await rowValue(observed, "MODEL_FINGERPRINT_READBACK_CORRUPT");
-      if (readback.ref !== ref || readback.sha256 !== expected || readback.json !== canonical.json) fail("MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN", "fingerprint write readback differs from requested bytes", true);
+      if (readback.ref !== ref || readback.sha256 !== expected || readback.json !== canonical.json) {
+        fail(
+          "MODEL_FINGERPRINT_PERSISTENCE_UNCERTAIN",
+          "fingerprint write readback differs from requested bytes",
+          true,
+          writeError,
+        );
+      }
       return Object.freeze({ fingerprint_ref: ref, readback_sha256: readback.sha256 });
     },
 
