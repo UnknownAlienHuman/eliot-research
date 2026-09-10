@@ -25,6 +25,7 @@ import { encodeArtifactDraftVerification } from "@eliotr/cloudflare-artifacts";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
+  type ArtifactDraftAdmissionPort,
   type PrepareArtifactDraftResult,
 } from "./artifact-draft.js";
 import type { ResearchEvidencePack } from "./research-reference-manifest.js";
@@ -58,6 +59,8 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly section_residency: ObjectResidencyTemplate;
   readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
   readonly manifest_residency: ObjectResidencyTemplate;
+  /** Optional server-only REPORT admission appended to the draft store's final batch. */
+  readonly admission?: ArtifactDraftAdmissionPort;
   readonly created_at: string;
   readonly now?: () => number;
 }
@@ -337,7 +340,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     ...input.manifest_residency,
     content_digest: { algorithm: "sha256", digest: manifestSha256 },
   };
-  return createArtifactDraftStore(input.database, input.work_bucket).prepare({
+  return createArtifactDraftStore(input.database, input.work_bucket, input.admission).prepare({
     intent: input.intent, expected_draft_head_revision: input.expected_draft_head_revision, spec: input.spec, revision,
     sections: [{ section: draftSection, bytes: sectionBytes, residency: { ...input.section_residency, content_digest: { algorithm: "sha256", digest: sectionSha256 } } }],
     referenced_objects: [dependency, ledger, verification.object], manifest_residency: manifestResidency,

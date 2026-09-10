@@ -26,7 +26,7 @@ export interface ResearchMaterializeContextReader {
 
 export type ResearchMaterializeTrustedMetadata = Pick<ResearchMaterializeResultWriterInput,
   "intent" | "expected_draft_head_revision" | "artifact_ref" | "spec" | "section" |
-  "section_residency" | "referenced_objects" | "manifest_residency" | "created_at">;
+  "section_residency" | "referenced_objects" | "manifest_residency" | "created_at" | "admission">;
 
 export interface ResearchMaterializeStageDependencies {
   readonly database: D1Database;
