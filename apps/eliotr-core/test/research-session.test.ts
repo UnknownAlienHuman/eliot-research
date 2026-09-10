@@ -116,7 +116,6 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
         .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
     }
   }, 30_000);
-  }, 30_000);
   it("rejects stale idempotency, foreign principals and unsupported profiles", async () => {
     expect((await run(runRequest("rs-shared", { query: "different" }, "rs-run-first"))).status).toBe(409);
     expect((await run(runRequest("rs-shared", {}, "rs-run-first"), verifier("stranger"))).status).toBe(403);
