@@ -205,6 +205,22 @@ describe("retrieval trace decoding", () => {
       .toThrowError(expect.objectContaining({ code: "RETRIEVAL_RESPONSE_INVALID", status: 502 }));
   });
 
+  it("rejects evidence whose handle is bound to a different scope revision", () => {
+    const view = decodeRetrievalResult(envelope(pack({
+      resolved_evidence: [{
+        ...evidence(),
+        handle: { ...handle(), scope_snapshot_ref: { id: "scope-2", revision: 1 } },
+      }],
+    })));
+    const traceView = decodeRetrievalTrace({
+      data: { ...trace, coverage_claim: "SAMPLED" },
+      trace_id: "trace-1",
+      deployment_generation: "generation-1",
+    });
+    expect(() => assertRetrievalSelection(view, traceView, ["source-1"]))
+      .toThrowError(expect.objectContaining({ code: "RETRIEVAL_SOURCE_HEAD_CHANGED", status: 409 }));
+  });
+
   it("rejects a late trace read from a deployment that no longer owns the submitted query", async () => {
     vi.stubGlobal("fetch", async () => Response.json({
       data: { ...trace, coverage_claim: "NONE" }, trace_id: "trace-1", deployment_generation: "generation-2",

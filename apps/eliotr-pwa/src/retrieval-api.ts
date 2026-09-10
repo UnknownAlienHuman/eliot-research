@@ -124,7 +124,10 @@ export function assertRetrievalSelection(view: RetrievalResultView, traceView: R
   }
   const scopeMembers = new Set(trace.scope_snapshot.member_source_revision_refs);
   if (sourceRevisionRefs.some((ref) => !scopeMembers.has(ref)) ||
-      view.evidence.some((item) => !scopeMembers.has(item.handle.source_revision_ref))) {
+      view.evidence.some((item) =>
+        !scopeMembers.has(item.handle.source_revision_ref) ||
+        item.handle.scope_snapshot_ref.id !== view.scope.id ||
+        item.handle.scope_snapshot_ref.revision !== view.scope.revision)) {
     throw new ApiRequestError({ status: 409, code: "RETRIEVAL_SOURCE_HEAD_CHANGED", message: "The selected source changed; refresh the Library", retryable: true });
   }
 }
