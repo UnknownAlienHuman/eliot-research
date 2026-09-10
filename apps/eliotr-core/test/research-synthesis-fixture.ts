@@ -130,6 +130,7 @@ export async function compositionFixture(
   approvalMode: ApprovalMode = "approved",
   rotateAfterFirstRevalidation = false,
   reserveInitialStage = true,
+  gatewayContent = `controlled result ${tag}`,
 ) {
   const workflow = await workflowFixture(`stage-${tag}`);
   const workflowStore = new WorkflowCheckpointStore(workflow.db);
@@ -149,7 +150,7 @@ export async function compositionFixture(
   const attemptExpiresAt = futureIso();
   const gatewayResponse = {
     id: `stage-response-${tag}`, object: "chat.completion", created: 1, model: ROUTE,
-    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: `controlled result ${tag}` } }],
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: gatewayContent } }],
     usage: { prompt_tokens: 4, completion_tokens: 5, total_tokens: 9 },
   };
   const prepare = async (context: ModelAttemptPreparationContext) => {
