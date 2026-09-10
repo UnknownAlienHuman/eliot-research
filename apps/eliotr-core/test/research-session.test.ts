@@ -103,14 +103,32 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     const replayed = await body(await run(runRequest("rs-shared", {}, "rs-run-first")));
     expect(replayed.data).toEqual(payload.data);
     expect(await workflowCounts()).toEqual(counts);
+  }, 30_000);
+  it("creates an independent second source run with its own current policy authority", async () => {
+    await seedSource("rs-second");
+    const response = await run(runRequest("rs-second", {}, "rs-run-second"));
+    const payload = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
+    expect(response.status, JSON.stringify(payload)).toBe(200);
+    expect(payload.data.investigation_ref.id.startsWith("research-")).toBe(true);
+    const policies = await db.prepare("SELECT COUNT(*) AS n FROM investigation_current_policy WHERE state = 'ACTIVE'").first<number>("n");
+    expect(policies).toBeGreaterThanOrEqual(2);
+  }, 30_000);
+  it("keeps revocation rejection separate from successful independent runs", async () => {
+    await seedSource("rs-revoked");
+    const first = await run(runRequest("rs-revoked", {}, "rs-run-revoked"));
+    const firstPayload = await body<{ workflow_instance_id: string }>(first);
+    expect(first.status, JSON.stringify(firstPayload)).toBe(200);
     const scope = await db.prepare("SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
-      .bind(payload.data.workflow_instance_id).first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
+      .bind(firstPayload.data.workflow_instance_id).first<{ scope_snapshot_id: string; scope_snapshot_revision: number }>();
     expect(scope).not.toBeNull();
     if (scope === null) throw new Error("missing persisted scope binding");
     await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
       .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
     try {
-      expect([403, 409]).toContain((await run(runRequest("rs-shared", {}, "rs-run-first")).then((response) => response.status)));
+      const response = await run(runRequest("rs-revoked", {}, "rs-run-revoked"));
+      const payload = await body(response);
+      expect(response.status, JSON.stringify(payload)).toBe(409);
+      expect(payload.code, JSON.stringify(payload)).toBe("SCOPE_SNAPSHOT_STALE");
     } finally {
       await db.prepare("UPDATE scope_access_grant SET state = 'ACTIVE' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
         .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
