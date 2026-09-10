@@ -263,6 +263,198 @@ async function finishRawResponseCapture(page) {
   catch { /* The page may have closed; the original response failure remains primary. */ }
 }
 
+function rawResponseTargetPath(target) {
+  if (typeof target.path === "string" && target.path.startsWith("/")) return target.path;
+  if (typeof target.pathPattern === "string" && target.pathPattern.length > 0 && target.pathPattern.length <= 160) return target.pathPattern;
+  throw new TypeError("raw response target requires a bounded path or path pattern");
+}
+
+async function beginRawResponseBatchCapture(page, targets) {
+  if (typeof page.evaluate !== "function") return false;
+  await page.evaluate((expectedTargets) => {
+    if (window.__eliotrRawResponseBatchCapture !== undefined) throw new Error("duplicate raw response batch capture");
+    const originalFetch = window.fetch;
+    const states = Object.fromEntries(expectedTargets.map((target) => [target.key, {
+      phase: "waiting", status: undefined, responsePath: undefined, bodyBase64: undefined, errorCode: undefined,
+    }]));
+    const specs = expectedTargets.map((target) => {
+      const expected = target.path === undefined ? undefined : new URL(target.path, location.href);
+      return { ...target, origin: location.origin, pathname: expected?.pathname, search: expected?.search ?? "" };
+    });
+    const matched = new Set();
+    const captureLimit = 512 * 1024;
+    const cancelReader = (reader) => {
+      if (reader === undefined || typeof reader.cancel !== "function") return;
+      try { reader.cancel()?.catch?.(() => {}); } catch { /* bounded cleanup */ }
+    };
+    let disposed = false;
+    const captureBody = async (key, clone) => {
+      let reader;
+      try {
+        reader = clone?.body?.getReader?.();
+        if (reader === undefined || typeof reader.read !== "function") throw new Error("body stream unavailable");
+        const chunks = [];
+        let totalBytes = 0;
+        for (;;) {
+          if (disposed) { cancelReader(reader); return; }
+          const part = await reader.read();
+          if (disposed) { cancelReader(reader); return; }
+          if (part?.done === true) break;
+          const value = part?.value;
+          if (value === undefined || value === null || typeof value.byteLength !== "number") throw new Error("invalid body chunk");
+          const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+          if (totalBytes + chunk.byteLength > captureLimit) throw new Error("overflow");
+          chunks.push(chunk); totalBytes += chunk.byteLength;
+        }
+        const bytes = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        JSON.parse(text);
+        let binary = "";
+        for (let chunkOffset = 0; chunkOffset < bytes.byteLength; chunkOffset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(chunkOffset, Math.min(chunkOffset + 0x8000, bytes.byteLength)));
+        }
+        if (!disposed) { states[key].bodyBase64 = btoa(binary); states[key].phase = "complete"; }
+      } catch { if (!disposed) { states[key].phase = "error"; states[key].errorCode = "BODY_CAPTURE_FAILED"; } }
+    };
+    const wrappedFetch = function (...args) {
+      if (disposed) return Reflect.apply(originalFetch, this, args);
+      let requestUrl;
+      let requestMethod;
+      try {
+        const [input, init] = args;
+        requestUrl = new URL(input instanceof Request ? input.url : String(input), location.href);
+        requestMethod = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      } catch { return Reflect.apply(originalFetch, this, args); }
+      const spec = specs.find((candidate) => {
+        if (matched.has(candidate.key) || candidate.method !== requestMethod || candidate.origin !== requestUrl.origin) return false;
+        if (candidate.pathPattern !== undefined) return requestUrl.search === "" && new RegExp(candidate.pathPattern, "u").test(requestUrl.pathname);
+        return candidate.pathname === requestUrl.pathname && candidate.search === requestUrl.search;
+      });
+      if (spec === undefined) return Reflect.apply(originalFetch, this, args);
+      matched.add(spec.key);
+      const responsePromise = Reflect.apply(originalFetch, this, args);
+      return Promise.resolve(responsePromise).then((response) => {
+        if (disposed) return response;
+        states[spec.key].status = response.status;
+        let responseUrl;
+        try { responseUrl = new URL(response.url, location.href); } catch { responseUrl = undefined; }
+        const identityMatches = responseUrl !== undefined && responseUrl.origin === spec.origin &&
+          (spec.pathPattern === undefined ? responseUrl.pathname === spec.pathname && responseUrl.search === spec.search
+            : responseUrl.search === "" && new RegExp(spec.pathPattern, "u").test(responseUrl.pathname));
+        if (response.redirected || response.type === "opaqueredirect" || !identityMatches) {
+          states[spec.key].phase = "error"; states[spec.key].errorCode = "RESPONSE_IDENTITY_MISMATCH"; return response;
+        }
+        states[spec.key].responsePath = `${responseUrl.pathname}${responseUrl.search}`;
+        let clone;
+        try { clone = response.clone(); } catch { states[spec.key].phase = "error"; states[spec.key].errorCode = "CLONE_FAILED"; return response; }
+        states[spec.key].phase = "reading";
+        void captureBody(spec.key, clone);
+        return response;
+      }, () => { states[spec.key].phase = "error"; states[spec.key].errorCode = "FETCH_FAILED"; throw new Error("raw response fetch failed"); });
+    };
+    window.fetch = wrappedFetch;
+    window.__eliotrRawResponseBatchCapture = {
+      states,
+      dispose: () => {
+        disposed = true;
+        if (window.fetch === wrappedFetch) window.fetch = originalFetch;
+        delete window.__eliotrRawResponseBatchCapture;
+      },
+    };
+  }, targets);
+  return true;
+}
+
+async function readRawResponseBatchCapture(page, targets) {
+  if (typeof page.waitForFunction !== "function") throw new Error("raw response batch capture requires a browser page");
+  const keys = targets.map((target) => target.key);
+  const handle = await page.waitForFunction((expectedKeys) => {
+    const states = window.__eliotrRawResponseBatchCapture?.states;
+    if (!states || expectedKeys.some((key) => !states[key] || !["complete", "error"].includes(states[key].phase))) return false;
+    return expectedKeys.map((key) => ({ key, ...states[key] }));
+  }, keys, { timeout: 30000 });
+  const captured = await handle.jsonValue();
+  await handle.dispose?.();
+  const result = {};
+  for (const state of captured) {
+    if (state.errorCode !== undefined) throw new Error(`raw response clone capture rejected (${state.key}:${state.errorCode})`);
+    if (typeof state.bodyBase64 !== "string") throw new Error(`raw response clone body missing (${state.key})`);
+    result[state.key] = state;
+  }
+  return result;
+}
+
+async function finishRawResponseBatchCapture(page) {
+  if (typeof page.evaluate !== "function") return;
+  try { await page.evaluate(() => window.__eliotrRawResponseBatchCapture?.dispose?.()); }
+  catch { /* Preserve the original response failure. */ }
+}
+
+/** Capture several same-page JSON responses from one UI action before navigation can discard them. */
+export async function waitForRawResponses(page, targets, action) {
+  if (!Array.isArray(targets) || targets.length < 1 || targets.length > 4) throw new TypeError("raw response batch must contain 1 to 4 targets");
+  const keys = new Set();
+  for (const target of targets) {
+    const hasPath = typeof target?.path === "string";
+    const hasPathPattern = typeof target?.pathPattern === "string";
+    if (!target || typeof target.key !== "string" || keys.has(target.key) || !/^[A-Za-z0-9_.:-]{1,64}$/u.test(target.key) ||
+        hasPath === hasPathPattern ||
+        !["GET", "POST", "PUT", "DELETE", "HEAD"].includes(target.method) || !Number.isSafeInteger(target.expectedStatus)) {
+      throw new TypeError("raw response batch target is invalid");
+    }
+    if (hasPathPattern) {
+      try { new RegExp(target.pathPattern, "u"); } catch (error) { throw new TypeError("raw response batch target pattern is invalid", { cause: error }); }
+    }
+    keys.add(target.key);
+    rawResponseTargetPath(target);
+  }
+  const browserCapture = await beginRawResponseBatchCapture(page, targets);
+  try {
+    const expectedOrigin = (() => { try { return new URL(page.url()).origin; } catch { return undefined; } })();
+    const mainFrame = typeof page.mainFrame === "function" ? page.mainFrame() : undefined;
+    const responsePromises = targets.map((target) => page.waitForResponse((response) => {
+      try {
+        const request = response.request();
+        const responseUrl = new URL(response.url());
+        if (expectedOrigin !== undefined && responseUrl.origin !== expectedOrigin) return false;
+        if (mainFrame !== undefined && typeof request.frame === "function" && request.frame() !== mainFrame) return false;
+        if (request.method() !== target.method) return false;
+        if (target.pathPattern !== undefined) return responseUrl.search === "" && new RegExp(target.pathPattern, "u").test(responseUrl.pathname);
+        const expected = new URL(target.path, responseUrl.origin);
+        return responseUrl.pathname === expected.pathname && responseUrl.search === expected.search;
+      } catch { return false; }
+    }, { timeout: 30000 }));
+    const actionPromise = Promise.resolve().then(action);
+    const responses = await Promise.all(responsePromises);
+    const captures = browserCapture ? await readRawResponseBatchCapture(page, targets) : {};
+    await actionPromise;
+    const result = {};
+    for (const [index, target] of targets.entries()) {
+      const response = responses[index];
+      const capture = captures[target.key];
+      let body = capture === undefined ? await response.body() : Buffer.from(capture.bodyBase64, "base64");
+      let payload;
+      try { payload = JSON.parse(body.toString("utf8")); } catch (error) {
+        if (response.status() === 200) throw new Error(`raw ${target.method} ${rawResponseTargetPath(target)} response must be JSON`, { cause: error });
+      }
+      const request = response.request();
+      const requestHeaders = await request.allHeaders();
+      result[target.key] = {
+        status: response.status(), requestHeaders,
+        requestBody: typeof request.postData === "function" ? request.postData() ?? undefined : undefined,
+        payload, responsePath: capture?.responsePath ?? (() => { const responseUrl = new URL(response.url()); return `${responseUrl.pathname}${responseUrl.search}`; })(),
+      };
+      if (result[target.key].status !== target.expectedStatus) {
+        const code = String(payload?.code ?? payload?.data?.code ?? payload?.title ?? "unavailable").slice(0, 128);
+        throw new Error(`raw ${target.method} ${rawResponseTargetPath(target)} must answer with ${target.expectedStatus}: status=${result[target.key].status} code=${code}`);
+      }
+    }
+    return result;
+  } finally { if (browserCapture) await finishRawResponseBatchCapture(page); }
+}
+
 function assertRawEnvelope(value, expectedGeneration, expected) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value), "raw capture response must be an object");
   assert.equal(value.trace_id !== undefined, true, "raw capture response must carry a trace id");

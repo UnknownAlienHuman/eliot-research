@@ -19,7 +19,7 @@ import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.m
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
-import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponse } from "./raw-file-browser.mjs";
+import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponses } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -839,15 +839,14 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   const rawSourceId = revision.source_id;
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
   const orientationPath = "/api/v1/research/orient";
-  const orientationRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === orientationPath, { timeout: 30000 });
-  const orientationResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === orientationPath, { timeout: 30000 });
-  const readinessResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/library/readiness", { timeout: 30000 });
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
-  await card.locator("[data-source]").click();
-  const [orientationRequestSnapshot, orientationSnapshot, readinessSnapshot] = await Promise.all([
-    orientationRequest, orientationResponse, readinessResponse,
-  ]);
-  const orientationBody = JSON.parse(orientationRequestSnapshot.postData() ?? "{}");
+  const sourceSnapshots = await waitForRawResponses(page, [
+    { key: "orientation", method: "POST", path: orientationPath, expectedStatus: 200 },
+    { key: "readiness", method: "GET", path: readinessPath, expectedStatus: 200 },
+  ], () => card.locator("[data-source]").click());
+  const orientationSnapshot = sourceSnapshots.orientation;
+  const readinessSnapshot = sourceSnapshots.readiness;
+  const orientationBody = JSON.parse(orientationSnapshot.requestBody ?? "{}");
   assert.deepEqual(orientationBody, {
     query: "",
     product: "ORIENT",
@@ -857,8 +856,10 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
     budget_ref: "orientation-metadata-v1",
     max_results: 16,
   }, "source selection must submit the exact bound orientation request");
-  assert.equal(orientationSnapshot.status(), 200);
-  const orientationJson = await orientationSnapshot.json();
+  assert.equal(orientationSnapshot.status, 200);
+  assert.equal(orientationSnapshot.requestHeaders.accept, "application/json");
+  assert.equal(orientationSnapshot.requestHeaders["content-type"], "application/json");
+  const orientationJson = orientationSnapshot.payload;
   assert.equal(orientationJson?.deployment_generation, expectedGeneration);
   assert.equal(orientationJson?.data?.evidence_pack?.resolved_evidence?.length, 0);
   assert.equal(orientationJson?.data?.evidence_pack?.omitted_candidates?.length, 0);
@@ -872,31 +873,26 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(orientationJson?.data?.evidence_pack?.trace_ref?.id, orientationJson?.data?.trace_ref?.id);
   assert.equal(orientationJson?.data?.evidence_pack?.trace_ref?.revision, orientationJson?.data?.trace_ref?.revision);
   assert.match(orientationJson?.data?.trace_ref?.id ?? "", /^orient-[0-9a-f]{64}$/u);
-  ledger.record({ client: "browser", method: "POST", path: orientationPath, status: orientationSnapshot.status(),
+  ledger.record({ client: "browser", method: "POST", path: orientationPath, status: orientationSnapshot.status,
     correlation: "e2e-raw-projection/orient", token_present: false });
-  assert.equal(readinessSnapshot.status(), 200);
-  const readinessJson = await readinessSnapshot.json();
+  assert.equal(readinessSnapshot.status, 200);
+  assert.equal(readinessSnapshot.requestHeaders.accept, "application/json");
+  const readinessJson = readinessSnapshot.payload;
   assert.equal(readinessJson?.data?.source_id, rawSourceId);
   assert.equal(readinessJson?.data?.source_revision_ref, sourceRevisionRef);
   assert.equal(readinessJson?.data?.deployment_generation, expectedGeneration);
-  ledger.record({ client: "browser", method: "GET", path: readinessPath, status: readinessSnapshot.status(),
+  ledger.record({ client: "browser", method: "GET", path: readinessPath, status: readinessSnapshot.status,
     correlation: "e2e-raw-projection/readiness", token_present: false });
   await page.waitForSelector("#library [data-library-readiness] .readiness-card", { timeout: 15000 });
 
   const retrieval = page.locator("#retrieval");
   await retrieval.locator('input[name="query"]').fill("Recorded raw owner fixture");
-  const queryRequest = page.waitForRequest((request) => {
-    try {
-      const url = new URL(request.url());
-      return request.method() === "POST" && url.origin === new URL(page.url()).origin &&
-        url.pathname === "/api/v1/research/query" && url.search === "";
-    } catch { return false; }
-  }, { timeout: 30000 });
-  const traceResponse = page.waitForResponse((response) => response.request().method() === "GET" && /^\/api\/v1\/research\/trace\/query-[0-9a-f]{48}$/u.test(new URL(response.url()).pathname), { timeout: 30000 });
-  const querySnapshot = await waitForRawResponse(page, "POST", () => retrieval.locator('button[type="submit"]').click(), "/api/v1/research/query");
-  const request = await queryRequest;
-  const body = JSON.parse(request.postData() ?? "{}");
-  assert.equal(querySnapshot.requestBody, request.postData(), "FAST_SEARCH response must pair with the exact request body");
+  const querySnapshots = await waitForRawResponses(page, [
+    { key: "query", method: "POST", path: "/api/v1/research/query", expectedStatus: 200 },
+    { key: "trace", method: "GET", pathPattern: "^/api/v1/research/trace/query-[0-9a-f]{48}$", expectedStatus: 200 },
+  ], () => retrieval.locator('button[type="submit"]').click());
+  const querySnapshot = querySnapshots.query;
+  const body = JSON.parse(querySnapshot.requestBody ?? "{}");
   assert.equal(body.product, "FAST_SEARCH");
   assert.equal(body.budget_ref, "retrieval-fast-v1");
   assert.deepEqual(body.scope_expression, { kind: "SELECTED_SOURCES", source_ids: [rawSourceId] });
@@ -909,14 +905,16 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.ok(responseJson?.data?.evidence_pack?.resolved_evidence?.some((item) => item?.handle?.source_revision_ref === sourceRevisionRef));
   ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: querySnapshot.status,
     correlation: "e2e-raw-projection/query", token_present: false });
-  const trace = await traceResponse;
-  assert.equal(trace.status(), 200);
-  const traceJson = await trace.json();
+  const trace = querySnapshots.trace;
+  assert.equal(trace.responsePath, `/api/v1/research/trace/${traceRef.id}`);
+  assert.equal(trace.status, 200);
+  assert.equal(trace.requestHeaders.accept, "application/json");
+  const traceJson = trace.payload;
   assert.equal(traceJson?.data?.query_product, "FAST_SEARCH");
   assert.ok(traceJson?.data?.lanes_used?.includes("LEX"));
   assert.ok(traceJson?.data?.scope_snapshot?.member_source_revision_refs?.includes(sourceRevisionRef));
-  const tracePath = new URL(trace.url()).pathname;
-  ledger.record({ client: "browser", method: "GET", path: tracePath, status: trace.status(),
+  const tracePath = trace.responsePath;
+  ledger.record({ client: "browser", method: "GET", path: tracePath, status: trace.status,
     correlation: "e2e-raw-projection/trace", token_present: false });
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
