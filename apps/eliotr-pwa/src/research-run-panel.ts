@@ -142,7 +142,7 @@ export function mountResearchRunPanel(
             })
             .catch((error: unknown) => {
               if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
               const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
               status.textContent = "The report section could not be opened.";
             })
@@ -153,12 +153,12 @@ export function mountResearchRunPanel(
           if (renderSerial !== serial || controller !== undefined) return;
           const local = new AbortController(); controller = local; open.disabled = true; sources.disabled = true; status.textContent = "Reading cited sources…";
           item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
-          void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal)
+          void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal, section.verification_receipt_ref)
             .then((citations) => {
               if (renderSerial !== serial) return;
               const list = document.createElement("div"); list.className = "research-citations";
               const state = document.createElement("p"); state.className = "research-citation-state";
-              state.textContent = "Citations are locators; fresh source verification is required (NOT_EXECUTED).";
+              state.textContent = "Draft claims have not been checked. Opening a source checks its current bytes.";
               list.append(state);
               if (citations.cited_evidence.length === 0) {
                 const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty);
@@ -180,7 +180,7 @@ export function mountResearchRunPanel(
             })
             .catch((error: unknown) => {
               if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
               const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
               status.textContent = "Cited sources could not be read.";
             })
