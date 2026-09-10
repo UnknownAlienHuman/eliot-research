@@ -1,6 +1,6 @@
 // IMPLEMENTED_NOT_LIVE: ER-09 durable single-stage D1/R2 checkpoints; governed handlers, public Workflow composition and live qualification remain separate.
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
-import { WorkflowCheckpointStore } from "./store.js";
+import { WorkflowCheckpointStore, type AttemptRow } from "./store.js";
 import { readWorkflowObject, writeWorkflowObject } from "./objects.js";
 import {
   digest, fail, MAX_WORKFLOW_OUTPUT_BYTES, MAX_WORKFLOW_RECEIPT_BYTES, parseRequest, snapshotPrincipal, textDigest, WorkflowCheckpointError, WorkflowObjectSchema,
@@ -72,6 +72,47 @@ export function createWorkflowCheckpointExecutor(
         receipt_ref: attempt.budget_receipt_ref, expires_at_ms: attempt.budget_expires_at_ms,
       };
       const budget = await guard(request, principal, pinned);
+      async function recoverKnownOutput(recoveryAttempt: AttemptRow, existing?: WorkflowObject): Promise<WorkflowObject> {
+        const recoverStartedAttempt = ports.recoverStartedAttempt;
+        if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
+        let recovered: Uint8Array | null;
+        try {
+          recovered = await recoverStartedAttempt(Object.freeze({
+            request, principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+            deployment_generation: principal.deployment_generation,
+            stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: recoveryAttempt.request_sha256,
+            attempt_ref: recoveryAttempt.attempt_ref, expected_revision: recoveryAttempt.expected_revision,
+            output_object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
+            budget_receipt_ref: recoveryAttempt.budget_receipt_ref,
+            budget_expires_at_ms: recoveryAttempt.budget_expires_at_ms,
+          }));
+        } catch {
+          fail("WORKFLOW_EFFECT_UNCERTAIN");
+        }
+        if (recovered === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
+        if (!(recovered instanceof Uint8Array) || recovered.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        const recoveredBytes = new Uint8Array(recovered);
+        const recoveredDigest = await digest(recoveredBytes);
+        let reconstructed: WorkflowObject;
+        try {
+          reconstructed = WorkflowObjectSchema.parse({
+            object_ref: existing?.object_ref ?? `workflow/${requestDigest}/${recoveryAttempt.attempt_ref}`,
+            sha256: recoveredDigest, byte_length: recoveredBytes.byteLength,
+            residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: recoveredDigest } },
+          });
+        } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+        if (existing !== undefined && (existing.object_ref !== reconstructed.object_ref || existing.sha256 !== reconstructed.sha256 ||
+            existing.byte_length !== reconstructed.byte_length || JSON.stringify(existing.residency) !== JSON.stringify(reconstructed.residency))) {
+          fail("WORKFLOW_OUTPUT_CORRUPT");
+        }
+        await guard(request, principal, budget);
+        await store.recordOutput(request, recoveryAttempt, reconstructed);
+        await guard(request, principal, budget);
+        await writeWorkflowObject(bucket, reconstructed, recoveredBytes);
+        return reconstructed;
+      }
       let output: WorkflowObject;
       if (attempt === null) {
         const inputBytes = await readWorkflowObject(bucket, request.input_manifest);
@@ -84,7 +125,7 @@ export function createWorkflowCheckpointExecutor(
         let bytes: Uint8Array;
         try {
           bytes = await handler({
-            request: structuredClone(request), input_bytes: inputBytes, attempt_ref: attempt.attempt_ref,
+            request: structuredClone(request), principal, input_bytes: inputBytes, attempt_ref: attempt.attempt_ref,
             budget_receipt_ref: attempt.budget_receipt_ref,
             ...(principal.signal === undefined ? {} : { signal: principal.signal }),
           });
@@ -107,11 +148,19 @@ export function createWorkflowCheckpointExecutor(
         await guard(request, principal, budget);
         await writeWorkflowObject(bucket, output, bytes);
       } else {
-        if (attempt.state === "STARTED" || attempt.output_json === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
-        try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
-        catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
-        // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
-        await readWorkflowObject(bucket, output, true);
+        if (attempt.state === "STARTED" || attempt.output_json === null) {
+          output = await recoverKnownOutput(attempt);
+        } else {
+          try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
+          catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+          // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
+          try { await readWorkflowObject(bucket, output, true); }
+          catch (error) {
+            if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_UNAVAILABLE" && ports.recoverStartedAttempt !== undefined) {
+              output = await recoverKnownOutput(attempt, output);
+            } else throw error;
+          }
+        }
       }
       await guard(request, principal, budget);
       const receipt = await store.commit(request, attempt, output);
