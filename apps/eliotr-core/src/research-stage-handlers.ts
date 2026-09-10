@@ -13,11 +13,17 @@ import {
   createRetrieveBranchesStageHandler,
   type RetrieveBranchesStageDependencies,
 } from "./research-retrieve-branches.js";
+import {
+  createEvidenceFreezeComposition,
+  type EvidenceFreezeCompositionDependencies,
+} from "./research-evidence-freeze-composition.js";
 
 /** Generation used only by the server-owned exploratory research.run path. */
 export const SERVER_OWNED_RESEARCH_HANDLER_GENERATION = "research-handlers.exploratory.v1";
 /** Generation for new exploratory runs that include the persisted retrieval stage. */
 export const SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v2";
+/** Generation for the explicit stage-10/11 evidence-freeze composition. */
+export const SERVER_OWNED_FREEZE_HANDLER_GENERATION = "research-handlers.exploratory.v3";
 export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   version: "retrieval-scope-v1",
   max_sources: 64,
@@ -29,8 +35,9 @@ export type ResearchStageHandlerFactoryMode =
       readonly kind: "server-owned-exploratory";
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
-      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
+      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
+      readonly freeze?: EvidenceFreezeCompositionDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -66,7 +73,7 @@ export function createResearchStageHandlerFactory(
     : undefined;
   let retrievalHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" &&
-      mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined) {
+      (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) && mode.retrieval !== undefined) {
     const { retrieval, navigation, ledger } = mode;
     retrievalHandler = async (input) => {
       let profile;
@@ -83,15 +90,22 @@ export function createResearchStageHandlerFactory(
       return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile })(input);
     };
   }
+  const freezeComposition = mode.kind === "server-owned-exploratory" &&
+    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.freeze !== undefined
+    ? createEvidenceFreezeComposition(mode.freeze)
+    : undefined;
 
   return (stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
       return protocolScopeHandler;
     }
     if (stage === "RETRIEVE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
-        mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION) {
+        (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION)) {
       if (retrievalHandler === undefined) return async () => fail("WORKFLOW_AUTHORITY_STALE");
       return retrievalHandler;
+    }
+    if ((stage === "RECONCILE" || stage === "FREEZE_EVIDENCE") && freezeComposition !== undefined) {
+      return stage === "RECONCILE" ? freezeComposition.reconcile : freezeComposition.freeze;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
