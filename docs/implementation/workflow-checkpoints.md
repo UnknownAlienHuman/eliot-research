@@ -59,10 +59,27 @@ The denominator is a new canonical record in this stage output, revision `1`, wh
 scope reference and expiry are copied from the exact current `ScopeSnapshot`. It has no required source
 classes or question branches and uses the server-defined exploratory membership observation as its
 completeness-test reference. This is an exploratory scope observation, not an exhaustive-coverage claim.
-`decodeProtocolScopeCheckpoint` is the strict readback boundary for the later `FREEZE_EVIDENCE` stage; it
-accepts only the server-owned profile and canonical checkpoint shape. The bytes remain ordinary immutable
+`decodeProtocolScopeCheckpoint` checks the server-owned profile and canonical checkpoint shape.
+Authoritative consumers use `readFreezeProtocolAndScopeCheckpoint`, which also verifies the persisted
+attempt, receipt, immutable R2 bytes and current W1/scope authority. The bytes remain ordinary immutable
 W2 `WORK_BUCKET` output with the existing 64 KiB checkpoint bound and D1 receipt; no new table or public
 DTO is introduced.
+
+## Retrieval over the held protocol scope
+
+`apps/eliotr-core/src/research-retrieve-branches.ts` implements `RETRIEVE_BRANCHES` at canonical stage
+index 5. It reads the historical stage-0 checkpoint independently of the current `PLAN` output; W2 still
+checks the current predecessor manifest and monotone stage order. Workflow objects come from
+`WORK_BUCKET`, while exact admitted source bytes come from `EVIDENCE_BUCKET`.
+
+The handler loads the original persisted scope with `loadHeldResearchScope` and calls
+`retrieveWithHeldScope` using the server-selected retrieval profile. It creates no replacement scope or
+read grant. Its immutable output contains the EvidencePack, trace, coverage claim and protocol/denominator
+digests for subsequent stages; it does not produce an answer or an AllowedReferenceManifest.
+
+The local D1/Search/R2 fixture walks stages 0 through 5, resolves an actual indexed Q1 excerpt, checks
+stable scope/grant identities and duplicate-free replay, and refuses a revoked grant. Shared caller
+composition, evidence freeze, synthesis and live deployment remain separate acceptance items.
 
 ## W2 monotone bounded executor
 
