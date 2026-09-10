@@ -193,9 +193,13 @@ function manifestBytes(manifest: AllowedReferenceManifest): { readonly json: str
 function validateContext(context: ReferenceManifestStorageContext): void {
   text(context.principal_ref, "principal_ref");
   text(context.credential_generation, "credential_generation");
-  ref(context.scope_snapshot_ref, "scope_snapshot_ref");
-  try { ObjectResidencyKeySchema.parse(context.manifest_residency_key); }
+  const scopeSnapshotRef = ref(context.scope_snapshot_ref, "scope_snapshot_ref");
+  let residency: ObjectResidencyKey;
+  try { residency = ObjectResidencyKeySchema.parse(context.manifest_residency_key); }
   catch (cause) { fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest residency key is invalid", false, cause); }
+  if (residency.scope_domain_id !== scopeSnapshotRef.id || residency.access_domain_id !== context.principal_ref) {
+    fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest residency is outside its scope and principal authority");
+  }
   text(context.policy_authority_ref, "policy_authority_ref");
   text(context.authorization_receipt_ref, "authorization_receipt_ref");
   sha(context.scope_snapshot_digest, "scope_snapshot_digest");
@@ -266,10 +270,30 @@ function contextMatchesRow(row: ManifestRow, context: ReferenceManifestStorageCo
     row.stage_attempt_ref === context.stage_attempt_ref && row.stage_request_sha256 === context.stage_request_sha256;
 }
 
+function validateManifestGrant(
+  manifest: AllowedReferenceManifest,
+  grant: Awaited<ReturnType<NavigationReadAuthority["current"]>>,
+  scope: NavigationReadAuthority["scope"],
+  now: string,
+): void {
+  if (manifest.allowed_use.some((use) => !grant.allowed_use.includes(use)) ||
+      manifest.disclosure_ceiling !== grant.disclosure_ceiling) {
+    fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest policy is outside current authorization", true);
+  }
+  const manifestExpiry = Date.parse(manifest.expires_at);
+  const scopeExpiry = Date.parse(scope.expires_at);
+  const grantExpiry = Date.parse(grant.expires_at);
+  const nowMs = Date.parse(now);
+  if (![manifestExpiry, scopeExpiry, grantExpiry, nowMs].every(Number.isSafeInteger) ||
+      manifestExpiry <= nowMs || manifestExpiry > scopeExpiry || manifestExpiry > grantExpiry) {
+    fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest expiry is outside current authorization", true);
+  }
+}
+
 async function readR2(
   store: ReturnType<typeof createR2EvidenceObjectStore>,
   row: ValidatedManifestRow,
-): Promise<ReferenceManifestReceipt & { readonly json: string }> {
+): Promise<ReferenceManifestReceipt & { readonly json: string; readonly manifest: AllowedReferenceManifest }> {
   let residency: ObjectResidencyKey;
   try { residency = ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)); }
   catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding is invalid", true, cause); }
@@ -306,7 +330,7 @@ async function readR2(
       parsed.client_fence_ref !== row.credential_generation || parsed.expires_at !== row.expires_at) {
     fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not canonical", true);
   }
-  return { manifest_ref: row.manifest_ref, manifest_digest: row.manifest_digest, r2_content_sha256: row.r2_content_sha256, r2_key: row.r2_key, r2_etag: row.r2_etag, r2_size_bytes: row.r2_size_bytes, existed_identically: true, json };
+  return { manifest_ref: row.manifest_ref, manifest_digest: row.manifest_digest, r2_content_sha256: row.r2_content_sha256, r2_key: row.r2_key, r2_etag: row.r2_etag, r2_size_bytes: row.r2_size_bytes, existed_identically: true, json, manifest: parsed };
 }
 
 export function createResearchReferenceManifestStore(input: {
@@ -360,6 +384,8 @@ export function createResearchReferenceManifestStore(input: {
     const readback = await readR2(store, row);
     const after = await ensureCurrent();
     if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
+    validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp());
+    validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp());
     return { manifest_ref: readback.manifest_ref, manifest_digest: readback.manifest_digest, r2_content_sha256: readback.r2_content_sha256, r2_key: readback.r2_key, r2_etag: readback.r2_etag, r2_size_bytes: readback.r2_size_bytes, existed_identically: true };
   }
 
@@ -379,6 +405,8 @@ export function createResearchReferenceManifestStore(input: {
     const { manifest_digest: _digest, ...manifestDigestPayload } = manifest;
     const computedManifestDigest = await evidenceSha256(manifestDigestPayload);
     if (computedManifestDigest !== manifest.manifest_digest) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest digest is invalid");
+    const currentGrant = await ensureCurrent();
+    validateManifestGrant(manifest, currentGrant, input.navigation.scope, input.navigation.timestamp());
     const existing = await find(manifest.manifest_ref);
     if (existing !== null) {
       const existingRow = validateRow(existing);
@@ -399,6 +427,7 @@ export function createResearchReferenceManifestStore(input: {
       if (raced === null || !sameBinding(raced, manifest, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "manifest reservation readback is not exact", true);
     }
     const beforeR2 = await ensureCurrent();
+    validateManifestGrant(manifest, beforeR2, input.navigation.scope, input.navigation.timestamp());
     const body = new ArrayBuffer(encoded.bytes.byteLength);
     new Uint8Array(body).set(encoded.bytes);
     let r2Receipt: ImmutableObjectReceipt;
@@ -417,6 +446,7 @@ export function createResearchReferenceManifestStore(input: {
     }
     const afterR2 = await ensureCurrent();
     if (canonicalEvidenceJson(beforeR2) !== canonicalEvidenceJson(afterR2)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during R2 settlement", true);
+    validateManifestGrant(manifest, afterR2, input.navigation.scope, input.navigation.timestamp());
     const settled = await database.prepare(
       "UPDATE research_reference_manifest SET r2_etag=?1, state='COMMITTED' WHERE manifest_id=?2 AND manifest_revision=?3 AND manifest_digest=?4 AND r2_key=?5 AND state='WRITING'",
     ).bind(r2Receipt.etag, manifest.manifest_ref.id, manifest.manifest_ref.revision, manifest.manifest_digest, expectedKey).run();
@@ -444,6 +474,8 @@ export function createResearchReferenceManifestStore(input: {
       const readback = await readR2(store, row);
       const after = await ensureCurrent();
       if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
+      validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp());
+      validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp());
       return AllowedReferenceManifestSchema.parse(JSON.parse(readback.json));
     },
     persist,

@@ -71,10 +71,10 @@ function request(sourceId: string, key: string): Request {
   });
 }
 
-function objectResidency(tag: string, contentDigest: string): ObjectResidencyKey {
+function objectResidency(tag: string, contentDigest: string, scopeDomainId: string, accessDomainId: string): ObjectResidencyKey {
   return {
-    scope_domain_id: `manifest-scope-${tag}`,
-    access_domain_id: `manifest-access-${tag}`,
+    scope_domain_id: scopeDomainId,
+    access_domain_id: accessDomainId,
     confidentiality_domain_id: `manifest-confidential-${tag}`,
     encryption_key_domain_id: `manifest-key-${tag}`,
     retention_domain_id: `manifest-retention-${tag}`,
@@ -203,7 +203,7 @@ describe("research reference manifest over real D1/R2", () => {
     expect(new Set(built.manifest.allowed_evidence_handle_refs.map((ref) => `${ref.id}:${ref.revision}`)).size).toBe(2);
     expect(built.resolved_evidence.map((item) => item.handle.source_revision_ref)).toEqual([sourceRef, sourceRef]);
     const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(built.manifest));
-    const manifestResidency = objectResidency("success", await evidenceSha256Bytes(manifestBytes));
+    const manifestResidency = objectResidency("success", await evidenceSha256Bytes(manifestBytes), held.scope_snapshot_ref.id, access.principal_ref);
     const context: ReferenceManifestStorageContext = {
       principal_ref: access.principal_ref,
       credential_generation: access.credential_generation,
@@ -232,9 +232,33 @@ describe("research reference manifest over real D1/R2", () => {
     expect(replay).toMatchObject({ ...first, existed_identically: true });
     expect(await db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE manifest_id = ?1 AND manifest_revision = 1").bind(built.manifest.manifest_ref.id).first<{ readonly n: number }>()).toEqual({ n: 1 });
 
+    const foreignContext = {
+      ...context,
+      manifest_residency_key: { ...context.manifest_residency_key, scope_domain_id: "foreign-scope" },
+    };
+    expect(() => createResearchReferenceManifestStore({ database: db, work_bucket: runtime.WORK_BUCKET, context: foreignContext, navigation }))
+      .toThrow(/residency is outside its scope and principal authority/);
+
+    const restricted = await build("reference-manifest-restricted");
+    const originalGrant = await db.prepare(
+      "SELECT allowed_use_json, disclosure_ceiling FROM scope_access_grant WHERE authorization_receipt_ref = ?1",
+    ).bind(held.authorization_receipt_ref).first<{ readonly allowed_use_json: string; readonly disclosure_ceiling: string }>();
+    if (originalGrant === null) throw new Error("Missing manifest grant for restriction proof");
+    const restrictedBytes = new TextEncoder().encode(canonicalEvidenceJson(restricted.manifest));
+    const restrictedContext = {
+      ...context,
+      manifest_residency_key: objectResidency("restricted", await evidenceSha256Bytes(restrictedBytes), held.scope_snapshot_ref.id, access.principal_ref),
+    };
+    const restrictedStore = createResearchReferenceManifestStore({ database: db, work_bucket: runtime.WORK_BUCKET, context: restrictedContext, navigation });
+    await db.prepare("UPDATE scope_access_grant SET disclosure_ceiling = 'restricted' WHERE authorization_receipt_ref = ?1").bind(held.authorization_receipt_ref).run();
+    await expect(restrictedStore.persist(restricted.manifest)).rejects.toMatchObject({ code: "REFERENCE_MANIFEST_SCOPE_STALE" });
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE manifest_id = ?1").bind(restricted.manifest.manifest_ref.id).first<{ readonly n: number }>()).toEqual({ n: 0 });
+    await db.prepare("UPDATE scope_access_grant SET allowed_use_json = ?1, disclosure_ceiling = ?2 WHERE authorization_receipt_ref = ?3")
+      .bind(originalGrant.allowed_use_json, originalGrant.disclosure_ceiling, held.authorization_receipt_ref).run();
+
     const failed = await build("reference-manifest-failure");
     const failedBytes = new TextEncoder().encode(canonicalEvidenceJson(failed.manifest));
-    const failedContext = { ...context, manifest_residency_key: objectResidency("failure", await evidenceSha256Bytes(failedBytes)) };
+    const failedContext = { ...context, manifest_residency_key: objectResidency("failure", await evidenceSha256Bytes(failedBytes), held.scope_snapshot_ref.id, access.principal_ref) };
     const failedStore = createResearchReferenceManifestStore({ database: db, work_bucket: failureBucket(runtime.WORK_BUCKET), context: failedContext, navigation });
     await expect(failedStore.persist(failed.manifest)).rejects.toMatchObject({ code: "REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN" });
     expect(await failedStore.readReceipt(failed.manifest.manifest_ref)).toBeNull();
@@ -254,7 +278,7 @@ describe("research reference manifest over real D1/R2", () => {
     const bytes = new TextEncoder().encode(canonicalEvidenceJson(built.manifest));
     const context: ReferenceManifestStorageContext = {
       principal_ref: access.principal_ref, credential_generation: access.credential_generation,
-      scope_snapshot_ref: held.scope_snapshot_ref, manifest_residency_key: objectResidency("currentness", await evidenceSha256Bytes(bytes)),
+      scope_snapshot_ref: held.scope_snapshot_ref, manifest_residency_key: objectResidency("currentness", await evidenceSha256Bytes(bytes), held.scope_snapshot_ref.id, access.principal_ref),
       policy_authority_ref: held.policy_authority_ref, authorization_receipt_ref: held.authorization_receipt_ref,
       scope_snapshot_digest: held.scope_snapshot.digest, pack_ref: evidencePack.pack_ref, trace_ref: evidencePack.trace_ref,
       stage_attempt_ref: "w3-currentness-stage", stage_request_sha256: "d".repeat(64), created_at: new Date().toISOString(),
