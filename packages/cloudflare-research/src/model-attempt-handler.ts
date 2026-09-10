@@ -184,19 +184,30 @@ function validateReadbackIdentity(
   readback: ModelAttemptReadback,
   input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly workflow_budget_receipt_ref: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
 ): ModelOutputBinding {
-  const workflowBudgetReceipt = (readback as Partial<WorkflowBudgetBoundReadback>).workflow_budget_receipt_ref;
+  validateReadbackBinding(readback, input);
   if (readback.state !== "SUCCEEDED" || readback.persisted_state !== "SUCCEEDED" || readback.receipt === null || readback.output === null ||
-      readback.intent.operation_kind !== input.operation_kind || readback.intent.intent_ref.id !== input.operation_id ||
+      readback.receipt.output_object_ref !== input.output_object_ref || readback.output.output_object_ref !== input.output_object_ref ||
+      readback.receipt.output_sha256 !== readback.output.output_sha256 || readback.output.readback_sha256 !== readback.output.output_sha256) {
+    uncertain("durable model attempt readback is not the requested succeeded effect");
+  }
+  return readback.output;
+}
+
+function validateReadbackBinding(
+  readback: ModelAttemptReadback,
+  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly workflow_budget_receipt_ref: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
+): void {
+  const workflowBudgetReceipt = (readback as Partial<WorkflowBudgetBoundReadback>).workflow_budget_receipt_ref;
+  if (readback.intent.operation_kind !== input.operation_kind || readback.intent.intent_ref.id !== input.operation_id ||
       readback.intent.principal_ref !== input.principal_ref || readback.intent.idempotency_key !== input.idempotency_key ||
       readback.authority.principal_ref !== input.principal_ref || readback.authority.credential_generation !== input.credential_generation ||
       readback.authority.deployment_generation !== input.deployment_generation || readback.authority.scope_snapshot_ref.id !== input.scope_id ||
       workflowBudgetReceipt !== input.workflow_budget_receipt_ref ||
       readback.stage_attempt_ref !== input.stage_attempt_ref || readback.stage_request_sha256 !== input.stage_request_sha256 ||
-      readback.output.output_object_ref !== input.output_object_ref || readback.receipt.output_object_ref !== input.output_object_ref ||
-      readback.receipt.output_sha256 !== readback.output.output_sha256 || readback.output.readback_sha256 !== readback.output.output_sha256) {
-    uncertain("durable model attempt readback is not the requested succeeded effect");
+      (readback.output !== null && readback.output.output_object_ref !== input.output_object_ref) ||
+      (readback.receipt !== null && readback.receipt.output_object_ref !== input.output_object_ref)) {
+    uncertain("durable model attempt readback is not bound to the requested workflow identity");
   }
-  return readback.output;
 }
 
 async function readSucceededAttempt(
@@ -271,6 +282,33 @@ export function createGovernedModelAttemptHandler(
       credential_generation: input.principal.credential_generation, deployment_generation: input.principal.deployment_generation,
     });
     const model_output_object_ref = modelOutputObjectRef(identity, input.attempt_ref);
+    const replayInput = {
+      principal_ref: input.principal.principal_ref,
+      credential_generation: input.principal.credential_generation,
+      deployment_generation: input.principal.deployment_generation,
+      workflow_budget_receipt_ref: input.budget_receipt_ref,
+      operation_id: identity.operation_id,
+      operation_kind: dependencies.operation_kind,
+      idempotency_key: identity.idempotency_key,
+      scope_id: input.request.input_manifest.residency.scope_domain_id,
+      output_object_ref: model_output_object_ref,
+      stage_attempt_ref: input.attempt_ref,
+      stage_request_sha256,
+    };
+    const existing = await dependencies.attempts.readByIdempotency({
+      principal_ref: input.principal.principal_ref,
+      operation_kind: dependencies.operation_kind,
+      idempotency_key: identity.idempotency_key,
+    });
+    if (existing !== null) {
+      validateReadbackBinding(existing, replayInput);
+      if (existing.state !== "SUCCEEDED" || existing.persisted_state !== "SUCCEEDED") {
+        uncertain("existing model attempt is not a succeeded replay");
+      }
+      const recovered = await readSucceededAttempt(dependencies, existing, replayInput);
+      if (recovered === null) uncertain("existing model attempt replay has no durable output");
+      return recovered;
+    }
     const preparation = Object.freeze({
       request: input.request, principal: input.principal, input_bytes: new Uint8Array(input.input_bytes),
       attempt_ref: input.attempt_ref, budget_receipt_ref: input.budget_receipt_ref,
