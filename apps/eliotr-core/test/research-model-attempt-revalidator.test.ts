@@ -244,4 +244,44 @@ describe("research model attempt revalidation over actual D1", () => {
     expect(revoked).toBe(true);
     expect(value.fixture.calls()).toBe(0);
   });
+
+  it("catches grant revocation performed by the final route authority read", async () => {
+    const value = await revalidatorCase("grant-revoked-during-final-route-read");
+    let resolves = 0;
+    const resolve = async () => {
+      resolves += 1;
+      if (resolves === 1) {
+        await runtime.CORE_DB.prepare(
+          "UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = 'workflow-scope' AND principal_ref = ?1",
+        ).bind(value.fixture.principal.principal_ref).run();
+      }
+      return value.deployment;
+    };
+    await expect(assertNoNewAttempt(value, () => makeRevalidator(value, { resolve })(value.context, value.prepared))).rejects.toMatchObject({
+      code: "MODEL_ATTEMPT_AUTHORITY_STALE",
+    });
+    expect(resolves).toBe(1);
+    expect(value.fixture.calls()).toBe(0);
+  });
+
+  it("catches budget expiry crossed during the final route authority read", async () => {
+    const value = await revalidatorCase("budget-expires-during-final-route-read");
+    const row = await runtime.CORE_DB.prepare(
+      "SELECT budget_expires_at_ms FROM research_workflow_attempt WHERE attempt_ref = ?1",
+    ).bind(value.fixture.stageAttemptRef).first<{ readonly budget_expires_at_ms: number }>();
+    if (row === null) throw new Error("revalidator fixture is missing its persisted W2 budget");
+    let resolves = 0;
+    let clockMs = Date.parse("2026-09-10T12:00:00.000Z");
+    const resolve = async () => {
+      resolves += 1;
+      if (resolves === 1) clockMs = Number(row.budget_expires_at_ms) + 1;
+      return value.deployment;
+    };
+    await expect(assertNoNewAttempt(value, () => makeRevalidator(value, {
+      now: () => clockMs,
+      resolve,
+    })(value.context, value.prepared))).rejects.toMatchObject({ code: "MODEL_ATTEMPT_BUDGET_EXPIRED" });
+    expect(resolves).toBe(1);
+    expect(value.fixture.calls()).toBe(0);
+  });
 });
