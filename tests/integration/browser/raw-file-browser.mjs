@@ -867,6 +867,7 @@ export async function runRawFileUploadBrowser() {
     await page.waitForFunction(() => document.querySelector("#health-badge")?.textContent?.trim() === "ready" &&
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
     assert.match(await page.locator("#health-summary").textContent(), /Workspace connected/u);
+    assert.doesNotMatch(await panel.locator("[data-raw-status]").textContent(), /Workspace connection unavailable|connection lost|Application changed/u);
     await page.evaluate(() => {
       const app = document.querySelector("#app");
       const events = [];
@@ -881,6 +882,7 @@ export async function runRawFileUploadBrowser() {
     await refresh.click();
     await page.waitForFunction(() => document.querySelector("#health-summary")?.textContent?.includes("Workspace connected") === true &&
       document.querySelector("#health-badge")?.textContent?.trim() === "ready", null, { timeout: 15000 });
+    assert.doesNotMatch(await panel.locator("[data-raw-status]").textContent(), /Workspace connection unavailable|connection lost|Application changed/u);
     assert.deepEqual(await page.evaluate(() => window.__rawHealthEvents), ["lost:connection-lost", "updated", "updated"]);
     const input = panel.locator("input[data-raw-file]");
     const setFile = async () => input.setInputFiles({ name: file.name, mimeType: file.type, buffer: bytes });
@@ -976,13 +978,6 @@ export async function runRawFileUploadBrowser() {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => document.querySelector("#health-badge")?.textContent?.trim() === "ready" &&
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
-    await page.evaluate(() => {
-      const app = document.querySelector("#app");
-      const events = [];
-      app?.addEventListener("eliotr:health-lost", (event) => events.push(`lost:${event.detail?.reason ?? "missing"}`));
-      app?.addEventListener("eliotr:health-updated", () => events.push("updated"));
-      window.__rawHealthEvents = events;
-    });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
     await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click(), "/api/v1/ingest/raw", 503);
@@ -1020,6 +1015,13 @@ export async function runRawFileUploadBrowser() {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => document.querySelector("#health-badge")?.textContent?.trim() === "ready" &&
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
+    await page.evaluate(() => {
+      const app = document.querySelector("#app");
+      const events = [];
+      app?.addEventListener("eliotr:health-lost", (event) => events.push(`lost:${event.detail?.reason ?? "missing"}`));
+      app?.addEventListener("eliotr:health-updated", () => events.push("updated"));
+      window.__rawHealthEvents = events;
+    });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
     fixture.raw.healthResponses.push({ ...readyHealth, deployment_generation: "changed-generation" });

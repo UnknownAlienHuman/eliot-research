@@ -90,6 +90,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let admission: RawNormalizedAdmissionResult | undefined;
   let admissionOutcomeUnknown = false;
   let admissionNeedsResume = false;
+  let healthLossStatus: string | undefined;
   let lastGeneration = host.ready() ? host.generation() : undefined;
 
   const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
@@ -396,19 +397,26 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   };
   const healthUpdated = () => {
     const generation = host.generation();
-    if (host.ready() && generation !== undefined && lastGeneration !== undefined && generation !== lastGeneration) {
+    const generationChanged = host.ready() && generation !== undefined && lastGeneration !== undefined && generation !== lastGeneration;
+    if (generationChanged) {
       clear("Application changed. Private upload and processing state cleared; choose the file again.");
     }
+    if (!generationChanged && host.ready() && healthLossStatus !== undefined && status.textContent === healthLossStatus) {
+      status.textContent = "Workspace reconnected. Choose a file to begin.";
+    }
+    if (host.ready()) healthLossStatus = undefined;
     if (host.ready() && generation !== undefined) lastGeneration = generation;
     renderButtons();
   };
   const clearOnHealthLost = (event: Event): void => {
     const reason = (event as CustomEvent<{ readonly reason?: HealthLossReason }>).detail?.reason;
-    clear(reason === "generation-changed"
+    const message = reason === "generation-changed"
       ? "Application changed. Private upload and processing state cleared; choose the file again."
       : reason === "connection-lost"
         ? "Workspace connection lost. Retry connection above; private upload state was cleared."
-        : "Workspace connection unavailable. Retry connection above before choosing a file.");
+        : "Workspace connection unavailable. Retry connection above before choosing a file.";
+    clear(message);
+    healthLossStatus = message;
   };
   const clearOnAuth = () => clear("Authorization changed. Private upload state cleared. Choose the file again.");
   const clearOnOffline = () => clear("Offline. Private upload state cleared; choose the file again when online.");
