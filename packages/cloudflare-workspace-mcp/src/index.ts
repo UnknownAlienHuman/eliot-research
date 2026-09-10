@@ -21,3 +21,16 @@ export {
   readGoogleExternalTransport,
   type GoogleExternalTransport,
 } from "./gemini-mcp-tool-common.js";
+export {
+  type WorkspaceMcpCandidateStore,
+  type WorkspaceMcpObservationStoreInput,
+  type WorkspaceMcpObservationStoreResult,
+  type WorkspaceMcpPlanLookup,
+  type WorkspaceMcpPlanLookupResult,
+  type WorkspaceMcpPlanStoreInput,
+  type WorkspaceMcpPlanStoreResult,
+} from "./workspace-mcp-ledger.js";
+export {
+  createWorkspacePlan,
+  validateWorkspaceReceipt,
+} from "./workspace-mcp-google-sync.js";
