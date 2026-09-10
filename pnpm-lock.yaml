@@ -256,6 +256,9 @@ importers:
       '@eliotr/cloudflare-access':
         specifier: workspace:*
         version: link:../cloudflare-access
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare

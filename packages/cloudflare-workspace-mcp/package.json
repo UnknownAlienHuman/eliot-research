@@ -9,6 +9,7 @@
   "scripts": { "build": "tsc -b", "typecheck": "tsc -b --pretty false", "test": "vitest run --root ../.. packages/cloudflare-workspace-mcp --reporter=verbose" },
   "dependencies": {
     "@eliotr/cloudflare-access": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*"
   }
 }
