@@ -26,8 +26,7 @@ import {
   type PrepareArtifactDraftResult,
 } from "./artifact-draft.js";
 import type { ResearchEvidencePack } from "./research-reference-manifest.js";
-import type { ModelAttemptReadback, ModelOutputBinding } from "./model-attempt-types.js";
-import type { StageReceipt } from "./types.js";
+import type { ResearchSynthesisOutputReadback } from "./research-synthesis-output-reader.js";
 
 const CANDIDATE_SCHEMA = "eliotr.research.synthesis-section-candidate.v1" as const;
 
@@ -35,19 +34,6 @@ export interface SynthesisSectionCandidate {
   readonly schema: typeof CANDIDATE_SCHEMA;
   readonly section_text: string;
   readonly cited_handle_refs: readonly VersionedRef[];
-}
-
-/** Structural type of the committed reader result supplied by Astro's reader. */
-export interface CommittedResearchSynthesisOutputReadback {
-  readonly operation_id: string;
-  readonly investigation_ref: VersionedRef;
-  readonly stage: "SYNTHESIZE";
-  readonly stage_attempt_ref: string;
-  readonly stage_request_sha256: string;
-  readonly workflow_receipt: StageReceipt;
-  readonly model_attempt: ModelAttemptReadback;
-  readonly output: ModelOutputBinding;
-  readonly bytes: Uint8Array;
 }
 
 export interface ResearchArtifactDraftMaterializationInput {
@@ -64,7 +50,7 @@ export interface ResearchArtifactDraftMaterializationInput {
   /** Existing current-scope authority and resolver; both perform real D1/R2 readback. */
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
-  readonly synthesis_readback: CommittedResearchSynthesisOutputReadback;
+  readonly synthesis_readback: ResearchSynthesisOutputReadback;
   readonly section: ArtifactSectionRevision;
   readonly section_residency: ObjectResidencyKey;
   readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
