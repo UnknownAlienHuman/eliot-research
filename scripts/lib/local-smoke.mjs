@@ -7,8 +7,10 @@ import { initializeLocalNamespace } from "./local-namespace.mjs";
 import { localPolicyQuery } from "./local-read-policy.mjs";
 
 
-function query(paths, binding, sql) {
-  const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { capture: true });
+function query(paths, binding, sql, phase = "local-smoke-query") {
+  const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), {
+    capture: true, diagnosticContext: { binding, phase },
+  });
   const batches = JSON.parse(output);
   assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
   return batches[0].results;
@@ -18,10 +20,10 @@ async function verifyMigrations(paths) {
   const counts = {};
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(ROOT, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
-    const rows = query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    const rows = query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name", "d1-migrations-verify");
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
-    assert.deepEqual(query(paths, binding, "PRAGMA foreign_key_check"), [], "Local schema violates foreign keys");
-    assert.deepEqual(query(paths, binding, "PRAGMA quick_check"), [{ quick_check: "ok" }]);
+    assert.deepEqual(query(paths, binding, "PRAGMA foreign_key_check", "d1-migrations-verify"), [], "Local schema violates foreign keys");
+    assert.deepEqual(query(paths, binding, "PRAGMA quick_check", "d1-migrations-verify"), [{ quick_check: "ok" }]);
     counts[binding] = expected.length;
   }
   return counts;
