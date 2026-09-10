@@ -160,6 +160,7 @@ export interface GovernedModelAttemptFixture {
   readonly request: StageRequest;
   readonly principal: WorkflowPrincipal;
   readonly inputBytes: Uint8Array;
+  readonly stageAttemptRef: string;
   readonly dependencies: GovernedModelAttemptDependencies;
   readonly calls: () => number;
   requestFor(stage: StageRequest["stage"]): StageRequest;
@@ -244,10 +245,14 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
     },
   };
   const requestFor = (stage: StageRequest["stage"]): StageRequest => Object.freeze({ ...request, stage });
-  const invocation = (_stage: StageRequest["stage"], _attemptRef: string) => ({
-    request, principal, input_bytes: new Uint8Array(inputBytes), attempt_ref: boundStage?.attempt_ref ?? "unbound-stage",
-    budget_receipt_ref: boundStage?.budget_receipt_ref ?? "unbound-budget",
-  });
+  const stageAttemptRef = boundStage?.attempt_ref ?? "unbound-stage";
+  const invocation = (stage: StageRequest["stage"], attemptRef: string) => {
+    if (boundStage === null || stage !== request.stage || attemptRef !== boundStage.attempt_ref) {
+      throw new Error("controlled fixture invocation must use its persisted W2 stage grant");
+    }
+    return { request, principal, input_bytes: new Uint8Array(inputBytes), attempt_ref: attemptRef,
+      budget_receipt_ref: boundStage.budget_receipt_ref };
+  };
   const dependencies: GovernedModelAttemptDependencies = {
     operation_kind: "REPORT", attempts: store, route,
     prepare: async (context: ModelAttemptPreparationContext) => {
@@ -289,5 +294,5 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
       return new Uint8Array(await object.arrayBuffer());
     },
   };
-  return { request, principal, inputBytes, dependencies, calls: () => routeCalls, requestFor, invocation };
+  return { request, principal, inputBytes, stageAttemptRef, dependencies, calls: () => routeCalls, requestFor, invocation };
 }
