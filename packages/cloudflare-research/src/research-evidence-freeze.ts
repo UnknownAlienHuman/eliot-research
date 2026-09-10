@@ -208,6 +208,18 @@ function resolvedKeys(evidence: readonly ResolvedEvidence[]): readonly string[] 
   return [...keys].sort();
 }
 
+function resolvedReceiptRecords(evidence: readonly ResolvedEvidence[]): readonly {
+  readonly handle_ref: VersionedRef;
+  readonly excerpt_sha256: string;
+  readonly verification_receipt_ref: string;
+}[] {
+  return [...evidence].map((item) => ({
+    handle_ref: item.handle.handle_ref,
+    excerpt_sha256: item.handle.excerpt_sha256,
+    verification_receipt_ref: item.verification_receipt_ref,
+  })).sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)));
+}
+
 function freezeBytes(freeze: EvidenceFreeze): Uint8Array {
   let parsed: EvidenceFreeze;
   try { parsed = EvidenceFreezeSchema.parse(freeze); }
@@ -238,17 +250,18 @@ export function createEvidenceFreezeStageHandler(
         manifest.client_fence_ref !== dependencies.navigation.access.credential_generation) {
       fail("EVIDENCE_FREEZE_SCOPE_STALE", "reference manifest is bound to another scope or credential");
     }
-    const observedAt = dependencies.navigation.timestamp();
-    if (!Number.isSafeInteger(Date.parse(observedAt)) || Date.parse(manifest.expires_at) <= Date.parse(observedAt)) {
-      fail("EVIDENCE_FREEZE_SCOPE_STALE", "reference manifest has expired", true);
-    }
     const authority = validateAuthority(
       await dependencies.authority.read({ request, principal, stage_input: stageInput, manifest }),
       stageInput,
       expectedScope,
     );
-  const requested = handleKeys(manifest);
-  if (requested.length === 0) fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "freeze requires at least one evidence handle");
+    if (refKey(authority.scope_snapshot_ref) !== refKey(manifest.scope_snapshot_ref)) {
+      fail("EVIDENCE_FREEZE_SCOPE_STALE", "freeze authority is bound to a different manifest scope");
+    }
+    if (refKey(manifest.manifest_ref) !== refKey(stageInput.manifest_ref)) {
+      fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "reference manifest identity differs from stage input");
+    }
+    const requested = handleKeys(manifest);
     let citation: Awaited<ReturnType<CloudflareEvidenceResolver["resolveCitationSet"]>>;
     try {
       citation = await dependencies.resolver.resolveCitationSet({
@@ -282,9 +295,29 @@ export function createEvidenceFreezeStageHandler(
         JSON.stringify(resolvedKeys(citation.resolved_evidence)) !== JSON.stringify(requested)) {
       fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "authoritative citation resolution is incomplete");
     }
+    if (canonicalEvidenceJson(citation.receipt.resolved.map((item) => ({
+      handle_ref: item.handle_ref,
+      excerpt_sha256: item.excerpt_sha256,
+      verification_receipt_ref: item.verification_receipt_ref,
+    })).sort((left, right) => refKey(left.handle_ref).localeCompare(refKey(right.handle_ref)))) !==
+        canonicalEvidenceJson(resolvedReceiptRecords(citation.resolved_evidence))) {
+      fail("EVIDENCE_FREEZE_EVIDENCE_INVALID", "citation receipt digests differ from resolved evidence");
+    }
     const after = await dependencies.navigation.current();
     if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) {
       fail("EVIDENCE_FREEZE_SCOPE_STALE", "scope authority changed during evidence freeze", true);
+    }
+    const finalAuthority = validateAuthority(
+      await dependencies.authority.read({ request, principal, stage_input: stageInput, manifest }),
+      stageInput,
+      expectedScope,
+    );
+    if (canonicalEvidenceJson(authority) !== canonicalEvidenceJson(finalAuthority)) {
+      fail("EVIDENCE_FREEZE_SCOPE_STALE", "freeze authority changed during evidence freeze", true);
+    }
+    const observedAt = dependencies.navigation.timestamp();
+    if (!Number.isSafeInteger(Date.parse(observedAt)) || Date.parse(manifest.expires_at) <= Date.parse(observedAt)) {
+      fail("EVIDENCE_FREEZE_SCOPE_STALE", "reference manifest has expired", true);
     }
     const included = citation.receipt.resolved.map((item) => ({
       handle_ref: item.handle_ref,
