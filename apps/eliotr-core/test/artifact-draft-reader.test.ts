@@ -1,5 +1,6 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
+import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
 import type { OperationIntent } from "@eliotr/contracts";
 import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
@@ -538,6 +539,25 @@ describe("actual D1/R2 artifact draft reader", () => {
     expect(await evidenceSha256Bytes(section?.body ?? new Uint8Array())).toBe(section?.body_sha256);
     expect(section?.section_ref).toEqual(metadata.section.section_ref);
     expect(metadata.section.statement_labels).toEqual({ claim: "UNRESOLVED" });
+    const persistedSection = artifact?.sections.find((candidate) =>
+      candidate.section_ref.id === metadata.section.section_ref.id && candidate.section_ref.revision === metadata.section.section_ref.revision);
+    if (persistedSection === undefined) throw new Error("persisted draft citation section is missing");
+    const citations = await readArtifactDraftSectionCitations({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      section_ref: metadata.section.section_ref, access: freezeAccess,
+      require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    });
+    if (citations === null) throw new Error("draft citation read unexpectedly absent");
+    expect(citations.artifact_ref).toEqual(result.draft.artifact_ref);
+    expect(citations.section_ref).toEqual(metadata.section.section_ref);
+    expect(citations.scope_snapshot_ref).toEqual(metadata.spec.scope_snapshot_ref);
+    expect(citations.verification_receipt_ref).toBe(persistedSection.verification_receipt_ref);
+    expect(citations.semantic_verification).toBe("NOT_EXECUTED");
+    const cited = materializeContext.stage_five.evidence_pack.resolved_evidence[0];
+    if (cited === undefined) throw new Error("stage five fixture citation is missing");
+    expect(citations.cited_evidence).toEqual([{
+      handle_ref: cited.handle.handle_ref, excerpt_sha256: cited.handle.excerpt_sha256,
+    }]);
 
     const artifactPath = `${result.draft.artifact_ref.id}:${result.draft.artifact_ref.revision}`;
     const sectionPath = `${metadata.section.section_ref.id}:${metadata.section.section_ref.revision}`;
@@ -548,6 +568,9 @@ describe("actual D1/R2 artifact draft reader", () => {
     const metadataResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}`), runtime, {} as ExecutionContext, verify);
     expect(metadataResponse.status).toBe(200);
     expect((await metadataResponse.json() as { readonly data: unknown }).data).toEqual(artifact);
+    const citationResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}/citations`), runtime, {} as ExecutionContext, verify);
+    expect(citationResponse.status).toBe(200);
+    expect((await citationResponse.json() as { readonly data: unknown }).data).toEqual(citations);
     const response = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -571,5 +594,12 @@ describe("actual D1/R2 artifact draft reader", () => {
       .bind(synthesis.freeze.scope.snapshot_id, synthesis.freeze.scope.revision, freezePrincipal.principal_ref).run();
     const revoked = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(revoked.status).toBe(403);
+    await expectReadCode(readArtifactDraftSectionCitations({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      section_ref: metadata.section.section_ref, access: freezeAccess,
+      require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    }), "ARTIFACT_DRAFT_READ_DENIED");
+    const revokedCitations = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}/citations`), runtime, {} as ExecutionContext, verify);
+    expect(revokedCitations.status).toBe(403);
   }, 30_000);
 });
