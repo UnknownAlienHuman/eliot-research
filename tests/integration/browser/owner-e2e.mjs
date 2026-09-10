@@ -1707,7 +1707,11 @@ export function roleCompat(first, second) {
 }
 
 export const NAV_TOKEN_SCOPE = "harness-navigation";
-export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 204, 304, 401, 403]);
+// A valid asynchronous launch returns 202 before Chromium may emit its
+// duplicate requestfailed net::ERR_ABORTED terminal for the same request.
+// Keep 202 in the same-response suppression set; assertPhaseNetwork still
+// requires the exact route/status pair, so this does not allow unlisted traffic.
+export const CONTRACT_RESPONSE_STATUSES = Object.freeze([200, 202, 204, 304, 401, 403]);
 
 // Chromium can expose a Service Worker main-script requestfinished event with
 // no HTTP response metadata (Playwright 1.63 forwards a nullable response).
