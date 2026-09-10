@@ -12,12 +12,12 @@ import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflar
 import type { ReferenceManifestPolicyProfile } from "./research-reference-manifest.js";
 
 const SCHEMA = "eliotr.research.model-profile-binding.v1";
+const DEFINITION_SCHEMA = "eliotr.research.model-profile-definition.v1";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const BINDING_KEYS = new Set([
-  "binding_ref", "config_provenance_ref", "deployment", "deployment_generation",
-  "expires_at", "model_profile_ref", "policy", "policy_authority_ref", "policy_generation",
-  "scope_snapshot_digest", "scope_snapshot_ref", "schema", "binding_sha256",
+const DEFINITION_KEYS = new Set([
+  "config_provenance_ref", "definition_ref", "definition_sha256", "deployment", "expires_at",
+  "model_profile_ref", "policy", "schema",
 ]);
 const POLICY_KEYS = new Set([
   "allowed_tool_definition_refs", "allowed_verifier_refs",
@@ -56,6 +56,8 @@ export interface ModelProfileBinding {
   readonly schema: typeof SCHEMA;
   readonly binding_ref: VersionedRef;
   readonly binding_sha256: string;
+  readonly definition_ref: VersionedRef;
+  readonly definition_sha256: string;
   readonly config_provenance_ref: string;
   readonly model_profile_ref: string;
   readonly policy_authority_ref: string;
@@ -68,8 +70,19 @@ export interface ModelProfileBinding {
   readonly policy: ReferenceManifestPolicyProfile;
 }
 
+export interface ModelProfileDefinition {
+  readonly schema: typeof DEFINITION_SCHEMA;
+  readonly definition_ref: VersionedRef;
+  readonly definition_sha256: string;
+  readonly config_provenance_ref: string;
+  readonly model_profile_ref: string;
+  readonly expires_at: string;
+  readonly deployment: ModelRouteDeployment;
+  readonly policy: ReferenceManifestPolicyProfile;
+}
+
 export interface ModelProfileBindingSource {
-  /** This reader must be backed by server-owned configuration, never request data. */
+  /** This reader returns stable server-owned profile definitions, never request data. */
   readonly provenance_ref: string;
   readonly read: (modelProfileRef: string) => Promise<unknown | null>;
 }
@@ -175,10 +188,23 @@ function policy(value: unknown, code: ModelProfileBindingErrorCode): ReferenceMa
   return Object.freeze(result);
 }
 
+function definitionMaterial(definition: Omit<ModelProfileDefinition, "definition_ref" | "definition_sha256">): Record<string, unknown> {
+  return {
+    schema: definition.schema,
+    config_provenance_ref: definition.config_provenance_ref,
+    model_profile_ref: definition.model_profile_ref,
+    expires_at: definition.expires_at,
+    deployment: definition.deployment,
+    policy: definition.policy,
+  };
+}
+
 function bindingMaterial(binding: Omit<ModelProfileBinding, "binding_ref" | "binding_sha256">): Record<string, unknown> {
   return {
     schema: binding.schema,
     config_provenance_ref: binding.config_provenance_ref,
+    definition_ref: binding.definition_ref,
+    definition_sha256: binding.definition_sha256,
     model_profile_ref: binding.model_profile_ref,
     policy_authority_ref: binding.policy_authority_ref,
     policy_generation: binding.policy_generation,
@@ -191,36 +217,52 @@ function bindingMaterial(binding: Omit<ModelProfileBinding, "binding_ref" | "bin
   };
 }
 
-async function decodeBinding(raw: unknown, provenanceRef: string): Promise<ModelProfileBinding> {
-  const value = plainObject(raw, BINDING_KEYS, "model profile binding", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  if (value.schema !== SCHEMA) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "model profile binding schema is unsupported");
+async function decodeDefinition(raw: unknown, provenanceRef: string): Promise<ModelProfileDefinition> {
+  const value = plainObject(raw, DEFINITION_KEYS, "model profile definition", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  if (value.schema !== DEFINITION_SCHEMA) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "model profile definition schema is unsupported");
   if (value.config_provenance_ref !== provenanceRef) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding provenance does not match the server-owned source");
-  const bindingRef = versionedRef(value.binding_ref, "binding_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  if (bindingRef.revision !== 1) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding revision is unsupported");
+  const definitionRef = versionedRef(value.definition_ref, "definition_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  if (definitionRef.revision !== 1) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "definition revision is unsupported");
   const profileRef = identifier(value.model_profile_ref, "model_profile_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  const policyAuthorityRef = identifier(value.policy_authority_ref, "policy_authority_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  const policyGeneration = identifier(value.policy_generation, "policy_generation", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  const deploymentGeneration = identifier(value.deployment_generation, "deployment_generation", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  const scopeRef = versionedRef(value.scope_snapshot_ref, "scope_snapshot_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
-  const scopeDigest = digest(value.scope_snapshot_digest, "scope_snapshot_digest", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   const expiresAt = iso(value.expires_at, "expires_at", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   let deployment: ModelRouteDeployment;
   try { deployment = decodeModelRouteDeployment(value.deployment); }
   catch (cause) { fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "model profile deployment is invalid", false, cause); }
   const bindingPolicy = policy(value.policy, "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   if (bindingPolicy.expires_at !== expiresAt) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding and policy expiry differ");
-  const material = bindingMaterial({ schema: SCHEMA, config_provenance_ref: provenanceRef, model_profile_ref: profileRef, policy_authority_ref: policyAuthorityRef, policy_generation: policyGeneration, deployment_generation: deploymentGeneration, scope_snapshot_ref: scopeRef, scope_snapshot_digest: scopeDigest, expires_at: expiresAt, deployment, policy: bindingPolicy });
-  const bindingSha = digest(value.binding_sha256, "binding_sha256", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const material = definitionMaterial({ schema: DEFINITION_SCHEMA, config_provenance_ref: provenanceRef, model_profile_ref: profileRef, expires_at: expiresAt, deployment, policy: bindingPolicy });
+  const definitionSha = digest(value.definition_sha256, "definition_sha256", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   const actualSha = await modelGatewaySha256(canonicalModelGatewayJson(material));
-  if (actualSha !== bindingSha || bindingRef.id !== `eliotr.research.model-profile-binding-${bindingSha}`) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding digest or reference does not match its canonical bytes");
-  return Object.freeze({ ...material, binding_ref: bindingRef, binding_sha256: bindingSha } as ModelProfileBinding);
+  if (actualSha !== definitionSha || definitionRef.id !== `eliotr.research.model-profile-definition-${definitionSha}`) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "definition digest or reference does not match its canonical bytes");
+  return Object.freeze({ ...material, definition_ref: definitionRef, definition_sha256: definitionSha } as ModelProfileDefinition);
 }
 
-function assertStageBinding(binding: ModelProfileBinding, stage: ModelProfileStageAuthority, code: ModelProfileBindingErrorCode): void {
-  if (stage.model_profile_ref !== binding.model_profile_ref || stage.policy_generation !== binding.policy_generation ||
-      stage.policy_authority_ref !== binding.policy_authority_ref || stage.deployment_generation !== binding.deployment_generation ||
-      stage.scope_snapshot_ref.id !== binding.scope_snapshot_ref.id || stage.scope_snapshot_ref.revision !== binding.scope_snapshot_ref.revision ||
-      stage.scope_snapshot_digest !== binding.scope_snapshot_digest) fail(code, "model profile binding differs from persisted workflow authority");
+async function resolvedBinding(definition: ModelProfileDefinition, authority: ModelProfileCurrentAuthority): Promise<ModelProfileBinding> {
+  const material = bindingMaterial({
+    schema: SCHEMA,
+    config_provenance_ref: definition.config_provenance_ref,
+    definition_ref: definition.definition_ref,
+    definition_sha256: definition.definition_sha256,
+    model_profile_ref: definition.model_profile_ref,
+    policy_authority_ref: authority.policy_authority_ref,
+    policy_generation: authority.policy_generation,
+    deployment_generation: authority.deployment_generation,
+    scope_snapshot_ref: authority.scope_snapshot_ref,
+    scope_snapshot_digest: authority.scope_snapshot_digest,
+    expires_at: definition.expires_at,
+    deployment: definition.deployment,
+    policy: definition.policy,
+  });
+  const bindingSha = await modelGatewaySha256(canonicalModelGatewayJson(material));
+  const bindingRef = { id: `eliotr.research.model-profile-binding-${bindingSha}`, revision: 1 } satisfies VersionedRef;
+  return Object.freeze({ ...material, binding_ref: Object.freeze(bindingRef), binding_sha256: bindingSha } as ModelProfileBinding);
+}
+
+function assertStageCurrent(stage: ModelProfileStageAuthority, current: ModelProfileCurrentAuthority): void {
+  if (stage.model_profile_ref !== current.model_profile_ref || stage.policy_generation !== current.policy_generation ||
+      stage.policy_authority_ref !== current.policy_authority_ref || stage.deployment_generation !== current.deployment_generation ||
+      stage.scope_snapshot_ref.id !== current.scope_snapshot_ref.id || stage.scope_snapshot_ref.revision !== current.scope_snapshot_ref.revision ||
+      stage.scope_snapshot_digest !== current.scope_snapshot_digest) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "persisted workflow authority changed before model profile resolution");
 }
 
 function stageFields(value: unknown, label: string, code: ModelProfileBindingErrorCode): ModelProfileStageAuthority {
@@ -253,13 +295,17 @@ function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
 
 function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number): void {
   const authority = currentAuthority(current);
-  assertStageBinding(binding, authority, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
+  if (authority.model_profile_ref !== binding.model_profile_ref || authority.policy_generation !== binding.policy_generation ||
+      authority.policy_authority_ref !== binding.policy_authority_ref || authority.deployment_generation !== binding.deployment_generation ||
+      authority.scope_snapshot_ref.id !== binding.scope_snapshot_ref.id || authority.scope_snapshot_ref.revision !== binding.scope_snapshot_ref.revision ||
+      authority.scope_snapshot_digest !== binding.scope_snapshot_digest) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "model profile binding differs from current workflow authority");
   const parsed = ScopeSnapshotSchema.safeParse(authority.scope_snapshot);
   if (!parsed.success || parsed.data.snapshot_id !== binding.scope_snapshot_ref.id || parsed.data.revision !== binding.scope_snapshot_ref.revision ||
       parsed.data.digest !== binding.scope_snapshot_digest || parsed.data.policy_authority_ref !== binding.policy_authority_ref) {
     fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot does not match the binding");
   }
   if (Date.parse(parsed.data.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "scope snapshot is expired");
+  if (Date.parse(binding.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile definition is expired");
 }
 
 export function createModelProfileBindingProducer(input: ModelProfileBindingProducerInput) {
@@ -277,21 +323,25 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
       const profileRef = parsedStage.model_profile_ref;
       const raw = await input.source.read(profileRef);
       if (raw === null) fail("MODEL_PROFILE_BINDING_CONFIG_MISSING", "server-owned model profile binding is unavailable");
-      const binding = await decodeBinding(raw, input.source.provenance_ref);
-      assertStageBinding(binding, parsedStage, "MODEL_PROFILE_BINDING_AUTHORITY_STALE");
-      if (Date.parse(binding.expires_at) <= nowMs) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile binding is expired");
-      const first = await input.readCurrentAuthority();
+      const definition = await decodeDefinition(raw, input.source.provenance_ref);
+      if (definition.model_profile_ref !== parsedStage.model_profile_ref) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "model profile definition differs from persisted workflow profile");
+      const first = currentAuthority(await input.readCurrentAuthority());
+      assertStageCurrent(parsedStage, first);
+      const binding = await resolvedBinding(definition, first);
       assertCurrent(binding, first, nowMs);
       let rawDeployment: unknown | null;
-      try { rawDeployment = await input.routeAuthority.resolve(binding.deployment.route_ref); }
+      try { rawDeployment = await input.routeAuthority.resolve(definition.deployment.route_ref); }
       catch (cause) { fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING", "approved model deployment could not be read", true, cause); }
       if (rawDeployment === null) fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING", "approved model deployment is unavailable");
       let deployment: ModelRouteDeployment;
       try { deployment = decodeModelRouteDeployment(rawDeployment); }
       catch (cause) { fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISMATCH", "approved model deployment is malformed", false, cause); }
       if (canonicalModelGatewayJson(deployment) !== canonicalModelGatewayJson(binding.deployment)) fail("MODEL_PROFILE_BINDING_DEPLOYMENT_MISMATCH", "approved model deployment differs from server-owned binding");
-      const second = await input.readCurrentAuthority();
-      assertCurrent(binding, second, now());
+      const second = currentAuthority(await input.readCurrentAuthority());
+      assertStageCurrent(parsedStage, second);
+      const finalNow = now();
+      if (typeof finalNow !== "number" || !Number.isFinite(finalNow)) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
+      assertCurrent(binding, second, finalNow);
       if (canonicalModelGatewayJson(first) !== canonicalModelGatewayJson(second)) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "research authority changed during model profile resolution");
       return Object.freeze({ binding, deployment, policy: binding.policy, scope_snapshot: second.scope_snapshot });
     },
