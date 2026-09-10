@@ -180,6 +180,15 @@ lost insert acknowledgements reconcile only against the same contents. Historica
 available after expiry. This adapter performs no price arithmetic or current-call expiry decision;
 an approval-reference string alone is not verified spending consent or a provider invoice.
 
+`createD1ResearchModelAttemptRevalidator` checks the actual STARTED W2/W3 records, current
+scope/grant/policy/deployment, exact persisted request and reservation, and unexpired authorization.
+The same canonical request encoder is used for reservation and readback. Its required trusted spend
+reader binds the operation, scope, quote, reservation and exact expected model deployment. External
+spend and route reads precede a final D1 readback; the final clock is sampled after those reads, with
+no later external reader await. Known provider result settlement remains separate from fresh-call
+authorization. The production spend reader and propagation of its approved deployment pin to the
+actual gateway fetch remain open; this adapter alone does not authorize or wire live model stages.
+
 ## Bounds and proof ceiling
 
 R2 input/output objects are capped at 8 MiB; larger artifacts must be represented by bounded manifests.
@@ -258,6 +267,14 @@ changed-content refusal, unsupported basis/malformed decimal/extra identity fiel
 bytes, committed insert with lost acknowledgement and one-row reconciliation, and historical read
 after expiry. Tariffs in this fixture are controlled test values. Budget pools, owner consent, fresh-call
 pricing checks and accounting remain separate production requirements.
+
+The model-attempt revalidator passed eleven actual local Worker/D1 cases on 2026-09-10 over
+persisted STARTED W2/W3 attempts: current authority, revoked grant, retired policy/deployment, route
+rotation, expired budget, missing or mismatched spend authorization, changed prepared request, and
+revocation/expiry during awaited readers. The positive case was then strengthened and passed alone
+with an exact one-route-read assertion, excluding the former late second read. Spend/route readers
+and the opaque currentness digest are controlled fixture inputs; provider invocation, production
+spending authority and app-stage composition are not qualified by these tests.
 
 The earlier focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
