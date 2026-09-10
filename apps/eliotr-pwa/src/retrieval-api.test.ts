@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiRequestError } from "./api.js";
 import { assertRetrievalSelection, decodeRetrievalResult, decodeRetrievalTrace, readRetrievalTrace, retrievalBody } from "./retrieval-api.js";
+import { renderRetrieval } from "./retrieval-panel.js";
 
 const SHA = "a".repeat(64);
 
@@ -83,6 +84,14 @@ describe("retrieval request", () => {
 });
 
 describe("retrieval result decoding", () => {
+  it("renders each exact excerpt as an accessible evidence action", () => {
+    const markup = renderRetrieval(decodeRetrievalResult(envelope(pack())));
+    expect(markup).toContain('class="evidence-select evidence-excerpt-action" data-select-evidence="0"');
+    expect(markup).toContain('aria-label="Inspect exact evidence excerpt from source-1"');
+    expect(markup).toContain('<span data-excerpt># Evidence\n\nPinned content.\n</span>');
+    expect(markup).toContain("Open in Evidence rail");
+  });
+
   it("decodes a resolved excerpt with its pinned anchor", () => {
     const view = decodeRetrievalResult(envelope(pack()));
     expect(view.evidence).toHaveLength(1);

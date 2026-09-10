@@ -100,6 +100,11 @@ retrieval result/trace rows. Three local Worker cases passed, including exact re
 refusal of a substituted operation or corrupted R2 output. Subsequent stages must still resolve exact
 evidence before treating it as answer support; the reader does not mint a new evidence authority.
 
+The shared retrieval codec and existing `createD1RetrievalResultStore.load` now own strict result
+decoding, result/trace digests and scope/handle-reference linkage. The stage reader reuses that store
+and `createD1ScopeProfilePort.requireBinding`; it no longer duplicates their SQL. The changed
+persistence fixture passed seven cases and the actual Worker stage-reader fixture passed three.
+
 ## W2 monotone bounded executor
 
 `createMonotoneStageExecutor(CORE_DB, WORK_BUCKET, ports)` reuses `createWorkflowCheckpointExecutor`
