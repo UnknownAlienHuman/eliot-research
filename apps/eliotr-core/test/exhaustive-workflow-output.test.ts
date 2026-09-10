@@ -66,6 +66,30 @@ describe("durable exhaustive Workflow output boundary", () => {
     ).bind(workflowId).first<{ readonly job_id: string }>();
     expect(binding).not.toBeNull();
     if (binding === null) return;
+    const statusUrl = `https://research.example/api/v1/research/query/${workflowId}`;
+    await expect.poll(async () => {
+      const statusResponse = await handleHttp(
+        new Request(statusUrl, { method: "GET" }),
+        runtime,
+        {} as ExecutionContext,
+        access(owner),
+      );
+      const statusBody = await statusResponse.json() as {
+        readonly data?: {
+          readonly workflow_status?: string;
+          readonly job?: { readonly status?: string };
+        };
+      };
+      return {
+        http_status: statusResponse.status,
+        workflow_status: statusBody.data?.workflow_status,
+        job_status: statusBody.data?.job?.status,
+      };
+    }, { timeout: 15_000, interval: 50 }).toEqual({
+      http_status: 200,
+      workflow_status: "complete",
+      job_status: "COMPLETE",
+    });
     const genuine = await handleHttp(request(value, "exhaustive-output-boundary"), runtime, {} as ExecutionContext, access(owner));
     expect(genuine.status).toBe(200);
     const genuineBody = await genuine.json() as { readonly data?: { readonly job?: Record<string, unknown> } };
@@ -101,7 +125,6 @@ describe("durable exhaustive Workflow output boundary", () => {
       },
     } as typeof original;
     const fencedRuntime = { ...runtime, RESEARCH_WORKFLOW: fencedWorkflow } as unknown as Q1Runtime;
-    const statusUrl = `https://research.example/api/v1/research/query/${workflowId}`;
     const complete = await handleHttp(new Request(statusUrl, { method: "GET" }), fencedRuntime, {} as ExecutionContext, access(owner));
     expect(complete.status).toBe(200);
     expect((await complete.json() as { readonly data?: { readonly job?: unknown } }).data?.job).toBeUndefined();
