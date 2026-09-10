@@ -157,12 +157,13 @@ export function utf8ProjectionLength(value: string): number {
 }
 
 export function projectionByteStream(value: Uint8Array): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      controller.enqueue(value);
-      controller.close();
-    },
-  });
+  const bytes = new Uint8Array(new ArrayBuffer(value.byteLength));
+  bytes.set(value);
+  const body = new Response(bytes).body;
+  if (body === null) {
+    projectionFail("PROJECTION_INPUT_INVALID", "projection bytes did not produce a response body");
+  }
+  return body;
 }
 
 export function projectionReceiptRef(id: string, revision = 1): string {
