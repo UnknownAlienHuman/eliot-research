@@ -783,6 +783,8 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(readinessJson?.data?.source_id, rawSourceId);
   assert.equal(readinessJson?.data?.source_revision_ref, sourceRevisionRef);
   assert.equal(readinessJson?.data?.deployment_generation, expectedGeneration);
+  ledger.record({ client: "browser", method: "GET", path: readinessPath, status: readinessSnapshot.status(),
+    correlation: "e2e-raw-projection/readiness", token_present: false });
   await page.waitForSelector("#library [data-library-readiness] .readiness-card", { timeout: 15000 });
 
   const retrieval = page.locator("#retrieval");
@@ -802,12 +804,17 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   const traceRef = responseJson?.data?.trace_ref;
   assert.match(traceRef?.id ?? "", /^query-[0-9a-f]{48}$/u);
   assert.ok(responseJson?.data?.evidence_pack?.resolved_evidence?.some((item) => item?.handle?.source_revision_ref === sourceRevisionRef));
+  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: response.status(),
+    correlation: "e2e-raw-projection/query", token_present: false });
   const trace = await traceResponse;
   assert.equal(trace.status(), 200);
   const traceJson = await trace.json();
   assert.equal(traceJson?.data?.query_product, "FAST_SEARCH");
   assert.ok(traceJson?.data?.lanes_used?.includes("LEX"));
   assert.ok(traceJson?.data?.scope_snapshot?.member_source_revision_refs?.includes(sourceRevisionRef));
+  const tracePath = new URL(trace.url()).pathname;
+  ledger.record({ client: "browser", method: "GET", path: tracePath, status: trace.status(),
+    correlation: "e2e-raw-projection/trace", token_present: false });
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
   assert.equal(excerpt, "# Recorded raw owner fixture\n");
@@ -5982,6 +5989,9 @@ export async function runOwnerE2E() {
         "e2e-raw-upload/markdown",
         "e2e-raw-upload/admission",
         "e2e-raw-projection/scheduled",
+        "e2e-raw-projection/readiness",
+        "e2e-raw-projection/query",
+        "e2e-raw-projection/trace",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
