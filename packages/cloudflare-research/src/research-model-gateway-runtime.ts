@@ -4,29 +4,44 @@ import {
   validateModelGatewayToken,
   type ModelGatewayCredentialPort,
   type ModelGatewayFetchPort,
+  type ModelGatewayBindingTransport,
+  type ModelGatewayTokenTransport,
 } from "@eliotr/cloudflare-ai";
+import { createResearchModelGatewayBindingFetch, type ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 
 const REQUEST_TIMEOUT_HEADER = "cf-aig-request-timeout";
 const MAX_REQUEST_TIMEOUT_MS = 300_000;
 const MAX_SUCCESS_BODY_BYTES = 256 * 1024;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
-export interface ResearchModelGatewayRuntimeInput {
+interface ResearchModelGatewayRuntimeOptions {
   /** The configured server-owned reasoning gateway base URL. */
   readonly reasoning_gateway_base_url: string;
-  /** The server-held AI Gateway credential; caller input is never consulted. */
-  readonly gateway_token: unknown;
   /** A request-context signal for one invocation; do not retain it globally. */
   readonly signal?: AbortSignal;
-  /** An injected fetch is for controlled tests; production uses Worker fetch. */
-  readonly fetch?: typeof globalThis.fetch;
 }
 
-export interface ResearchModelGatewayRuntime {
-  readonly endpoint: string;
-  readonly credentials: ModelGatewayCredentialPort;
-  readonly transport: ModelGatewayFetchPort;
+export interface ResearchModelGatewayHttpRuntimeInput extends ResearchModelGatewayRuntimeOptions {
+  /** The server-held AI Gateway credential; caller input is never consulted. */
+  readonly gateway_token: unknown;
+  /** An injected fetch is for controlled tests; production uses Worker fetch. */
+  readonly fetch?: typeof globalThis.fetch;
+  readonly ai_gateway_binding?: never;
 }
+
+export interface ResearchModelGatewayBindingRuntimeInput extends ResearchModelGatewayRuntimeOptions {
+  readonly ai_gateway_binding: ResearchModelGatewayBinding;
+  readonly gateway_token?: never;
+  readonly fetch?: never;
+}
+
+export type ResearchModelGatewayRuntimeInput = ResearchModelGatewayHttpRuntimeInput | ResearchModelGatewayBindingRuntimeInput;
+export type ResearchModelGatewayRuntimeConfig = Omit<ResearchModelGatewayHttpRuntimeInput, "signal"> | Omit<ResearchModelGatewayBindingRuntimeInput, "signal">;
+export interface ResearchModelGatewayHttpRuntime extends ModelGatewayTokenTransport {
+  readonly endpoint: string;
+}
+export interface ResearchModelGatewayBindingRuntime extends ModelGatewayBindingTransport { readonly endpoint: string; }
+export type ResearchModelGatewayRuntime = ResearchModelGatewayHttpRuntime | ResearchModelGatewayBindingRuntime;
 
 interface RequestLifecycle {
   readonly signal: AbortSignal;
@@ -227,6 +242,7 @@ async function readResponseWithDeadline(
   response: Response,
   lifecycle: RequestLifecycle,
   endpoint: string,
+  bindingBase?: string,
 ): Promise<Response> {
   const deadlineExceeded = Date.now() >= lifecycle.deadlineAt;
   if (lifecycle.signal.aborted || deadlineExceeded) {
@@ -237,7 +253,8 @@ async function readResponseWithDeadline(
     cancelResponseBody(response, error);
     throw error;
   }
-  if (response.redirected || (response.url !== "" && response.url !== endpoint)) {
+  const boundResponse = bindingBase !== undefined && (response.url === bindingBase || response.url === `${bindingBase}/`);
+  if (response.redirected || (response.url !== "" && response.url !== endpoint && !boundResponse)) {
     const error = abortError("model gateway response was redirected");
     lifecycle.abort(error);
     cancelResponseBody(response, error);
@@ -257,6 +274,9 @@ async function readResponseWithDeadline(
   });
 }
 
+export function createResearchModelGatewayRuntime(input: ResearchModelGatewayHttpRuntimeInput): ResearchModelGatewayHttpRuntime;
+export function createResearchModelGatewayRuntime(input: ResearchModelGatewayBindingRuntimeInput): ResearchModelGatewayBindingRuntime;
+export function createResearchModelGatewayRuntime(input: ResearchModelGatewayRuntimeInput): ResearchModelGatewayRuntime;
 export function createResearchModelGatewayRuntime(
   input: ResearchModelGatewayRuntimeInput,
 ): ResearchModelGatewayRuntime {
@@ -264,13 +284,15 @@ export function createResearchModelGatewayRuntime(
     requestInvalid("injected model gateway fetch must be callable");
   }
   const endpoint = resolveModelGatewayReasoningEndpoint(input.reasoning_gateway_base_url);
-  const token = validateModelGatewayToken(input.gateway_token);
-  const fetchImpl = input.fetch ?? globalThis.fetch.bind(globalThis);
-  const credentials: ModelGatewayCredentialPort = Object.freeze({
-    async readGatewayToken(): Promise<unknown> {
-      return token;
-    },
-  });
+  const binding = input.ai_gateway_binding;
+  if (binding !== undefined && (input.gateway_token !== undefined || input.fetch !== undefined)) {
+    requestInvalid("Worker gateway binding cannot be combined with a token or HTTP transport");
+  }
+  const token = binding === undefined ? validateModelGatewayToken(input.gateway_token) : undefined;
+  const fetchImpl = binding === undefined
+    ? input.fetch ?? globalThis.fetch.bind(globalThis)
+    : createResearchModelGatewayBindingFetch(binding, endpoint);
+  const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -"/compat/chat/completions".length);
   const transport: ModelGatewayFetchPort = Object.freeze({
     async fetch(url: string, init: RequestInit): Promise<Response> {
       if (url !== endpoint) requestInvalid("model gateway transport destination differs from configured reasoning gateway");
@@ -299,12 +321,14 @@ export function createResearchModelGatewayRuntime(
       try {
         const response = await Promise.race([fetchPromise, lifecycle.abortPromise]);
         if (!(response instanceof Response)) requestInvalid("model gateway transport returned a non-Response value");
-        return await readResponseWithDeadline(response, lifecycle, endpoint);
+        return await readResponseWithDeadline(response, lifecycle, endpoint, bindingBase);
       } catch (cause) {
         lifecycle.abort(cause instanceof Error ? cause : abortError("model gateway transport failed"));
         throw cause;
       }
     },
   });
+  if (binding !== undefined) return Object.freeze({ endpoint, binding_transport: transport });
+  const credentials: ModelGatewayCredentialPort = Object.freeze({ async readGatewayToken(): Promise<unknown> { return token; } });
   return Object.freeze({ endpoint, credentials, transport });
 }

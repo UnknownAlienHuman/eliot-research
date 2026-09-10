@@ -120,16 +120,29 @@ export interface ModelGatewayPricingPort {
   quote(input: ModelGatewayPricingQuoteInput): Promise<unknown>;
 }
 
-export interface ModelGatewayExecutionDependencies {
+export interface ModelGatewayTokenTransport {
+  readonly credentials: ModelGatewayCredentialPort;
+  readonly transport: ModelGatewayFetchPort;
+  readonly binding_transport?: never;
+}
+
+export interface ModelGatewayBindingTransport {
+  /** A server-owned Worker AI Gateway binding; no caller token or HTTP fallback. */
+  readonly binding_transport: ModelGatewayFetchPort;
+  readonly credentials?: never;
+  readonly transport?: never;
+}
+
+export type ModelGatewayTransportDependencies = ModelGatewayTokenTransport | ModelGatewayBindingTransport;
+
+export type ModelGatewayExecutionDependencies = ModelGatewayTransportDependencies & {
   readonly reasoning_gateway_base_url: string;
   readonly deployments: ModelGatewayDeploymentRegistryPort;
   readonly prompts: ModelGatewayPromptCompilerPort;
-  readonly credentials: ModelGatewayCredentialPort;
-  readonly transport: ModelGatewayFetchPort;
   readonly outputs: ModelGatewayOutputStorePort;
   readonly fingerprints: ModelGatewayFingerprintStorePort;
   readonly pricing: ModelGatewayPricingPort;
-}
+};
 
 export interface PreparedModelGatewayHttpRequest {
   readonly url: string;

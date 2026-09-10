@@ -16,7 +16,7 @@ import {
   type ModelGatewayExecutionObservation,
   type ModelGatewayPricingQuote,
 } from "./model-gateway-execution-contract.js";
-import { prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
+import { prepareModelGatewayBindingRequest, prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
 import { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 import {
   canonicalModelGatewayJson,
@@ -431,27 +431,32 @@ async function executeObservedModelGatewayCall(
   }
   const compiled = decodeCompiledPrompt(rawCompiled);
 
+  const binding = dependencies.binding_transport;
   let token: unknown;
-  try {
-    token = await dependencies.credentials.readGatewayToken();
-  } catch (cause) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_CREDENTIAL_INVALID",
-      "reasoning gateway credential could not be read",
-      { cause },
-    );
+  if (binding === undefined) {
+    try {
+      token = await dependencies.credentials.readGatewayToken();
+    } catch (cause) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_CREDENTIAL_INVALID",
+        "reasoning gateway credential could not be read",
+        { cause },
+      );
+    }
   }
-  const request = await prepareModelGatewayHttpRequest(
+  const request = binding === undefined ? await prepareModelGatewayHttpRequest(
     input,
     deployment,
     compiled,
     dependencies.reasoning_gateway_base_url,
     token,
-  );
+  ) : await prepareModelGatewayBindingRequest(input, deployment, compiled, dependencies.reasoning_gateway_base_url);
 
   let rawResponse: unknown;
   try {
-    rawResponse = await dependencies.transport.fetch(request.url, {
+    const transport = binding ?? dependencies.transport;
+    if (transport === undefined) modelGatewayExecutionFailure("MODEL_GATEWAY_CREDENTIAL_INVALID", "model gateway transport is unavailable");
+    rawResponse = await transport.fetch(request.url, {
       method: request.method,
       headers: request.headers,
       body: request.body,

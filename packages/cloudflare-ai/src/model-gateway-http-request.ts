@@ -164,12 +164,11 @@ function validatePolicy(policy: ModelGatewayCallPolicy): void {
   }
 }
 
-export async function prepareModelGatewayHttpRequest(
+export async function prepareModelGatewayBindingRequest(
   input: ModelCallInput,
   deployment: ModelRouteDeployment,
   compiled: CompiledModelGatewayPrompt,
   baseUrl: string,
-  rawToken: unknown,
 ): Promise<PreparedModelGatewayHttpRequest> {
   let policy: ModelGatewayCallPolicy;
   try {
@@ -225,14 +224,12 @@ export async function prepareModelGatewayHttpRequest(
     1,
     300_000,
   );
-  const token = gatewayToken(rawToken);
   return Object.freeze({
     url: reasoningEndpoint(baseUrl),
     method: "POST",
     headers: Object.freeze({
       Accept: "application/json",
       "Content-Type": "application/json",
-      "cf-aig-authorization": `Bearer ${token}`,
       ...policy.headers,
       "cf-aig-request-timeout": String(requestTimeout),
       "cf-aig-max-attempts": "1",
@@ -242,4 +239,16 @@ export async function prepareModelGatewayHttpRequest(
     parameters_sha256: validated.parameters_sha256,
     request_timeout_ms: requestTimeout,
   });
+}
+
+export async function prepareModelGatewayHttpRequest(
+  input: ModelCallInput,
+  deployment: ModelRouteDeployment,
+  compiled: CompiledModelGatewayPrompt,
+  baseUrl: string,
+  rawToken: unknown,
+): Promise<PreparedModelGatewayHttpRequest> {
+  const request = await prepareModelGatewayBindingRequest(input, deployment, compiled, baseUrl);
+  const token = gatewayToken(rawToken);
+  return Object.freeze({ ...request, headers: Object.freeze({ ...request.headers, "cf-aig-authorization": `Bearer ${token}` }) });
 }
