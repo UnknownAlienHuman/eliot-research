@@ -10,6 +10,10 @@ import type {
   ModelAttemptStore,
   ModelOutputBinding,
 } from "./model-attempt-types.js";
+import {
+  residencyDomainsForRequest,
+  type ModelOutputPreparationHook,
+} from "./research-model-output-preparation.js";
 
 export interface ModelAttemptPreparationContext {
   readonly request: StageRequest;
@@ -44,6 +48,8 @@ export interface GovernedModelAttemptDependencies {
   prepare(input: ModelAttemptPreparationContext): Promise<ModelAttemptReservationInput>;
   /** Rechecks trusted policy, currentness and budget immediately around the paid call. */
   revalidate(input: ModelAttemptPreparationContext, prepared: ModelAttemptReservationInput): Promise<void>;
+  /** Required production seam: persists the output binding after STARTED and before the paid call. */
+  readonly prepareOutputBinding: ModelOutputPreparationHook;
   /** Injectable wall clock for deterministic expiry checks. */
   readonly now?: () => number;
   /** Reads the gateway's immutable output and verifies it against this binding's digest. */
@@ -92,6 +98,24 @@ function revalidationCode(cause: unknown): "WORKFLOW_AUTHORITY_STALE" | "WORKFLO
 function quoteExpired(expiresAt: string, nowMs: number): boolean {
   const expiry = Date.parse(expiresAt);
   return !Number.isFinite(expiry) || expiry <= nowMs;
+}
+
+function outputPreparationAuthorityCode(cause: unknown): "WORKFLOW_AUTHORITY_STALE" | null {
+  if (cause instanceof WorkflowCheckpointError && cause.code === "WORKFLOW_AUTHORITY_STALE") return cause.code;
+  if (cause !== null && typeof cause === "object" && "code" in cause && cause.code === "MODEL_OUTPUT_AUTHORITY_STALE") {
+    return "WORKFLOW_AUTHORITY_STALE";
+  }
+  return null;
+}
+
+function outputPreparationReason(cause: unknown): string {
+  if (cause !== null && typeof cause === "object" && "code" in cause && typeof cause.code === "string") {
+    const code = cause.code;
+    if (code === "MODEL_OUTPUT_INPUT_INVALID" || code === "MODEL_OUTPUT_BINDING_MISSING" ||
+        code === "MODEL_OUTPUT_AUTHORITY_STALE" || code === "MODEL_OUTPUT_CONFLICT" ||
+        code === "MODEL_OUTPUT_INTEGRITY" || code === "MODEL_OUTPUT_UNCERTAIN") return code;
+  }
+  return "MODEL_OUTPUT_PREPARATION_FAILED";
 }
 
 export async function deriveModelAttemptIdentity(input: ModelAttemptIdentityInput): Promise<ModelAttemptIdentity> {
@@ -200,6 +224,26 @@ export function createGovernedModelAttemptHandler(
     throw new WorkflowCheckpointError(code);
   }
 
+  async function settleOutputPreparationFailure(attemptId: string, cause: unknown): Promise<never> {
+    const authorityCode = outputPreparationAuthorityCode(cause);
+    if (authorityCode !== null) return settleBeforeProvider(attemptId, authorityCode);
+    try {
+      const settled = await dependencies.attempts.settleAttempt({
+        attempt_id: attemptId,
+        state: "FAILED",
+        error_code: "MODEL_OUTPUT_PREPARATION_FAILED",
+        reason_codes: [outputPreparationReason(cause)],
+      });
+      if (settled.state !== "FAILED" || settled.persisted_state !== "FAILED" ||
+          settled.error_code !== "MODEL_OUTPUT_PREPARATION_FAILED") {
+        uncertain("model output preparation failure was not durably recorded");
+      }
+    } catch {
+      uncertain("model output preparation failure could not be durably recorded");
+    }
+    throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_UNAVAILABLE");
+  }
+
   async function recoverStartedAttempt(input: WorkflowAttemptRecoveryInput): Promise<Uint8Array | null> {
     const identity = await deriveModelAttemptIdentity({
       stage_request_sha256: input.request_sha256, principal_ref: input.principal_ref,
@@ -274,6 +318,24 @@ export function createGovernedModelAttemptHandler(
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
+    try {
+      await dependencies.prepareOutputBinding({
+        reservation,
+        attempt_id: started.attempt.attempt_id,
+        started_at: started.attempt.started_at,
+        residency_domains: residencyDomainsForRequest(preparation.request),
+      });
+    } catch (cause) {
+      return settleOutputPreparationFailure(started.attempt.attempt_id, cause);
+    }
+    if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
+    if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
+    try {
+      await dependencies.revalidate(preparation, prepared);
+    } catch (cause) {
+      return settleBeforeProvider(started.attempt.attempt_id, revalidationCode(cause));
+    }
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
     catch (_cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
