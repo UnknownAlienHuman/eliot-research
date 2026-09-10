@@ -14,6 +14,7 @@ import { createD1InvestigationLedgerStore, createInvestigationLedgerService, typ
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import {
   createModelProfileBindingProducer,
+  createModelProfileBindingConfigSource,
   createResearchReferenceManifestStore,
   createWorkflowCheckpointExecutor,
   createFreezeProtocolAndScopeStageHandler,
@@ -184,7 +185,10 @@ export async function freezeFixture(): Promise<FreezeFixture> {
   if (current === null) throw new Error("missing current W1 head");
   const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation);
   const deployment = definition.deployment;
-  const profileDefinitionSource = { provenance_ref: definition.config_provenance_ref, read: async () => definition };
+  const profileDefinitionSource = createModelProfileBindingConfigSource({
+    raw: JSON.stringify(definition),
+    provenance_ref: definition.config_provenance_ref,
+  });
   const profileProducer = createModelProfileBindingProducer({ source: profileDefinitionSource,
     readCurrentAuthority: async () => {
       const value = await ledgerStore.read(investigationId);
