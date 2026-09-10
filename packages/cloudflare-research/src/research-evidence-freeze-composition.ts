@@ -333,6 +333,11 @@ export function createEvidenceFreezeSynthesisContextReader(
         input.request.operation_id, input.request.investigation_ref.id, input.principal,
       );
       if (authorizationReceiptRef === null) fail("WORKFLOW_AUTHORITY_STALE");
+      const stageZero = await readers.read_stage_zero({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
+      const predecessorObjects = [stageTen.request.input_manifest, stageTenReceipt.output_manifest,
+        stageEleven.request.input_manifest, stageElevenReceipt.output_manifest, input.request.input_manifest];
+      if (predecessorObjects.some((object) => object.residency.scope_domain_id !== navigation.scope.snapshot_id ||
+          object.residency.access_domain_id !== input.principal.principal_ref)) fail("WORKFLOW_AUTHORITY_STALE");
       const stageTenBytes = await readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true);
       const stageElevenBytes = await readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true);
       if (!sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -340,7 +345,6 @@ export function createEvidenceFreezeSynthesisContextReader(
       try { stageTenInput = await decodeEvidenceFreezeStageInput(stageTenBytes); }
       catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
       const freeze = parseCommittedFreeze(stageElevenBytes);
-      const stageZero = await readers.read_stage_zero({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
       const stageFive = await environment.read_stage_five({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
       let manifest: AllowedReferenceManifest | null;
       try { manifest = await environment.manifest_store.get(stageTenInput.manifest_ref); }
