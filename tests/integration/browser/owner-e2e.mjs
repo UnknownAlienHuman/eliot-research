@@ -5567,6 +5567,7 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
+    await settleLedger(playwright.page, playwright);
     // Capture the exact replay baseline while the Worker is offline. The
     // duplicate prepare below is browser-only; raw capture uses separate
     // tables and must not alter either this source count or the imported
