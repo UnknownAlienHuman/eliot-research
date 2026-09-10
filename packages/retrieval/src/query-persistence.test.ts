@@ -317,6 +317,39 @@ describe("Q3 D1 query persistence over migration 0021", () => {
     expect(trace.trace_digest).toBe(await shaHex(trace.trace_json));
   });
 
+  it("rejects a replay whose result digest no longer matches its stored bytes", async () => {
+    const { raw, d1 } = openDatabase();
+    const scope = scopeFixture();
+    seedAuthority(raw, scope, true);
+    await createRetrievalQueryService(portsFor(d1, scope)).query({
+      request: requestFor(scope), idempotency_key: "digest-drift-1",
+    });
+    const tampered: RetrievalQueryD1 = {
+      prepare(sql) {
+        const original = d1.prepare(sql);
+        return {
+          bind(...values: unknown[]) {
+            const bound = original.bind(...values);
+            return {
+              async first<T>() {
+                const row = await bound.first<T>();
+                if (row !== null && sql.startsWith("SELECT request_digest, result_json, result_digest")) {
+                  return { ...(row as T & { readonly result_digest: string }), result_digest: "0".repeat(64) } as T;
+                }
+                return row;
+              },
+              all: <T>() => bound.all<T>(),
+              run: () => bound.run(),
+            };
+          },
+        };
+      },
+    };
+    const error = await queryError(createD1RetrievalResultStore(tampered, ACCESS).load("digest-drift-1"));
+    expect(error.code).toBe("RETRIEVAL_RESOLUTION_UNCERTAIN");
+    expect(error.retryable).toBe(true);
+  });
+
   it("replays the same retry without duplicate rows and conflicts on changed input", async () => {
     const { raw, d1 } = openDatabase();
     const scope = scopeFixture();
