@@ -92,7 +92,20 @@ scope and pricing authority. It rechecks cancellation and expiry before the paid
 provider results are settled durably even if later authorization prevents Workflow publication. Model
 objects use `model-output/...`; the executor separately owns `workflow/...` checkpoint objects.
 
-These adapters do not supply production prices or grant spending authority. The deployed
+The W2 execution-grant receipt and W3 model cost reservation have separate identities. The internal
+`workflow_budget_receipt_ref` binds model preparation, reservation and readback to the exact persisted
+W2 stage attempt, request digest, principal and authority generations. The store checks that binding
+before inserting the model intent or reservation. It does not treat the W2 receipt as a price quote,
+spending consent or replacement for the model reservation.
+
+`loadHeldResearchScope` loads the exact scope pinned by `research_workflow_current` and rechecks its
+owner and currentness. `retrieveWithHeldScope` shares the public query's resolver, lanes and durable
+trace/result stores. It validates the existing scope and grant before writing an immutable server-selected
+retrieval-profile binding, enforces the profile bounds, and never creates a replacement scope or grant.
+The public query retains its replay-before-freeze ordering. These internal preparation paths do not yet
+connect the production research stages to model execution.
+
+These adapters do not supply production prices or grant spending authority. The existing
 `ResearchWorkflow` composition still uses the deterministic handle-producing stage handler. Full W3
 requires the actual run's resolved EvidencePack, persisted AllowedReferenceManifest and context compiler,
 current route/pricing resolution, pre-call quote and budget/consent policy, and their production
@@ -133,3 +146,10 @@ known durable result after a handler loses its acknowledgement, missing R2 outpu
 intent is recorded, unknown outcome without a second handler invocation, and refusal to overwrite a
 corrupt existing object. The model result is controlled test data; these cases do not call or qualify a
 live provider.
+
+The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
+cases and six handler cases. The composed recovery case uses the production model handler and
+Workflow executor, loses the acknowledgement after model settlement but before the Workflow output
+record, then resumes from the stored result. The controlled model route is invoked exactly once;
+the resumed checkpoint contains the exact saved bytes. This qualifies local recovery behavior,
+not live provider execution or the complete W3 production composition.
