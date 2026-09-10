@@ -8,5 +8,10 @@ export * from "./registry.js";
 export * from "./citation-registry.js";
 export * from "./scope-store.js";
 export * from "./navigation-store.js";
-export { loadSourceAuthorities } from "./authority-load.js";
+export { loadScopeAuthority, loadSourceAuthorities } from "./authority-load.js";
+export {
+  createNavigationReadAuthority,
+  type D1NavigationStoreInput,
+  type NavigationReadAuthority,
+} from "./navigation-storage-authority.js";
 export * from "./exhaustive-manifest.js";
