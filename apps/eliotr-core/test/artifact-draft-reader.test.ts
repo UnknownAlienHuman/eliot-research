@@ -500,7 +500,11 @@ describe("actual D1/R2 artifact draft reader", () => {
       kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
       navigation: synthesis.freeze.navigation, ledger: synthesis.freeze.ledger, materialize,
     })("MATERIALIZE");
-    const first = await synthesis.freeze.executor.execute(materializeRequest, freezePrincipal, handler);
+    let handlerFailure: unknown;
+    const first = await synthesis.freeze.executor.execute(materializeRequest, freezePrincipal, async (input) => {
+      try { return await handler(input); }
+      catch (error) { handlerFailure = error; throw error; }
+    }).catch((error: unknown) => { throw handlerFailure ?? error; });
     expect(first.stage).toBe("MATERIALIZE");
     expect(synthesis.provider_calls()).toBe(1);
     const resultBytes = await readWorkflowObject(synthesis.freeze.bucket, first.output_manifest, true);
