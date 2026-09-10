@@ -11,13 +11,7 @@
       "ER-26"
     ],
     "owned_paths": [
-      "apps/eliotr-core/src/gemini-mcp.ts",
-      "apps/eliotr-core/src/gemini-mcp-protocol.ts",
-      "apps/eliotr-core/src/gemini-mcp-tool-common.ts",
-      "apps/eliotr-core/src/gemini-mcp-google-sync.ts",
-      "apps/eliotr-core/src/gemini-mcp-tools.ts",
-      "apps/eliotr-core/src/gemini-mcp.test.ts",
-      "apps/eliotr-core/src/gemini-mcp-service-token.test.ts",
+      "packages/cloudflare-workspace-mcp/**",
       "integrations/gemini-spark/**",
       "integrations/antigravity/**",
       "docs/implementation/gemini-spark-mcp.md",

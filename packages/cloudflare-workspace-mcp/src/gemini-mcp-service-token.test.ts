@@ -1,7 +1,6 @@
-import { createCloudflareAccessVerifier, type AccessVerifier } from "@eliotr/platform-cloudflare";
+import { createCloudflareAccessVerifier, type AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
-import type { Env } from "./env.js";
-import { handleGeminiMcp } from "./gemini-mcp.js";
+import { handleGeminiMcp, type WorkspaceMcpRuntime } from "./gemini-mcp.js";
 
 const CLIENT_ID = "00000000000000000000000000000000.access";
 const TEAM_DOMAIN = "https://team-example.cloudflareaccess.com";
@@ -42,7 +41,7 @@ function signedVerifier(publicJwk: JsonWebKey, audience: string, allowedServiceN
   });
 }
 
-function environment(clientId: string = CLIENT_ID): Env {
+function environment(clientId: string = CLIENT_ID): WorkspaceMcpRuntime {
   return {
     ENVIRONMENT: "development",
     DEPLOYMENT_GENERATION: "generation-1",
@@ -51,10 +50,11 @@ function environment(clientId: string = CLIENT_ID): Env {
     MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     MCP_ACCESS_AUDIENCE: "mcp-audience",
     MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: clientId,
-  } as unknown as Env;
+    readReadiness: async () => ({ ready: true, blocking_reason_codes: [] }),
+  };
 }
 
-function managedEnvironment(audience = "managed-mcp-audience"): Env {
+function managedEnvironment(audience = "managed-mcp-audience"): WorkspaceMcpRuntime {
   return {
     ENVIRONMENT: "development",
     DEPLOYMENT_GENERATION: "generation-1",
@@ -64,7 +64,8 @@ function managedEnvironment(audience = "managed-mcp-audience"): Env {
     MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
     MCP_ACCESS_AUDIENCE: audience,
     ACCESS_AUDIENCE: "ordinary-api-audience",
-  } as unknown as Env;
+    readReadiness: async () => ({ ready: true, blocking_reason_codes: [] }),
+  };
 }
 
 function request(): Request {
@@ -298,13 +299,13 @@ describe("Gemini MCP managed-oauth profile", () => {
     const mixed = await handleGeminiMcp(request(), {
       ...managedEnvironment(),
       MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: CLIENT_ID,
-    } as unknown as Env, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
+    }, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
     expect(mixed.status).toBe(503);
     expect(await body(mixed)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
 
     const unknown = await handleGeminiMcp(request(), {
       ...managedEnvironment(), MCP_ACCESS_AUTH_PROFILE: "hybrid",
-    } as unknown as Env, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
+    }, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
     expect(unknown.status).toBe(503);
     expect(await body(unknown)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
   });
@@ -321,7 +322,7 @@ describe("Gemini MCP managed-oauth profile", () => {
     for (const team of [" https://team-example.cloudflareaccess.com", "https://team-example.cloudflareaccess.com:8443"]) {
       const response = await handleGeminiMcp(request(), {
         ...managedEnvironment(), MCP_ACCESS_TEAM_DOMAIN: team,
-      } as unknown as Env, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
+      }, {} as ExecutionContext, { accessVerifier: managedVerifier("alice") });
       expect(response.status).toBe(503);
       expect(await body(response)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
     }

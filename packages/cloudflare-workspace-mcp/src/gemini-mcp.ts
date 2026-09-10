@@ -1,17 +1,18 @@
 // IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.
 import {
   AccessVerificationError,
-  createCloudflareAccessVerifier,
   type AccessIdentity,
   type AccessVerifier,
+} from "@eliotr/cloudflare-access";
+import {
+  createCloudflareAccessVerifier,
 } from "@eliotr/platform-cloudflare";
 import {
   GeminiMcpToolError,
-  readGoogleExternalTransport,
+  readGoogleExternalTransport as readGoogleExternalTransportValue,
   sha256,
   stable,
 } from "./gemini-mcp-tool-common.js";
-import type { Env } from "./env.js";
 import {
   handleGeminiMcpProtocol,
   type GeminiMcpServerDependencies,
@@ -22,7 +23,22 @@ import {
   GEMINI_MCP_TOOLS,
   type GoogleExternalTransport,
 } from "./gemini-mcp-tools.js";
-import { readReadiness } from "./readiness.js";
+
+export interface WorkspaceMcpRuntime {
+  readonly DEPLOYMENT_GENERATION: string;
+  readonly ENVIRONMENT: string;
+  readonly GOOGLE_EXTERNAL_TRANSPORT?: unknown;
+  readonly MCP_HOSTNAME?: string;
+  readonly MCP_ACCESS_AUTH_PROFILE?: unknown;
+  readonly MCP_ACCESS_TEAM_DOMAIN?: string;
+  readonly MCP_ACCESS_AUDIENCE?: string;
+  readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string;
+  readonly ACCESS_AUDIENCE?: string;
+  readonly readReadiness: () => Promise<{
+    readonly ready: boolean;
+    readonly blocking_reason_codes: readonly string[];
+  }>;
+}
 
 const MCP_LOGICAL_PRINCIPAL = "gemini-spark";
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -157,7 +173,7 @@ function requiredAccessAudience(raw: string | undefined, ordinary: string | unde
 }
 
 function configuredVerifier(
-  env: Env,
+  env: WorkspaceMcpRuntime,
   profile: McpAccessAuthProfile,
   serviceTokenClientId: string,
 ): AccessVerifier {
@@ -181,8 +197,8 @@ function configuredVerifier(
   return verifier;
 }
 
-function googleTransport(env: Env): GoogleExternalTransport {
-  return readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT);
+function googleTransport(env: WorkspaceMcpRuntime): GoogleExternalTransport {
+  return readGoogleExternalTransportValue(env.GOOGLE_EXTERNAL_TRANSPORT);
 }
 
 async function authenticatedContext(
@@ -232,7 +248,7 @@ async function authenticatedContext(
 }
 
 function serverDependencies(
-  env: Env,
+  env: WorkspaceMcpRuntime,
   profile: McpAccessAuthProfile,
   now: () => number,
 ): GeminiMcpServerDependencies {
@@ -240,7 +256,7 @@ function serverDependencies(
     google_transport: googleTransport(env),
     now,
     async systemStatus(): Promise<Record<string, unknown>> {
-      const readiness = await readReadiness(env);
+      const readiness = await env.readReadiness();
       return {
         protocol: "eliotr.mcp.system-status.v1",
         environment: env.ENVIRONMENT,
@@ -275,7 +291,7 @@ function serverDependencies(
 
 export async function handleGeminiMcp(
   request: Request,
-  env: Env,
+  env: WorkspaceMcpRuntime,
   _executionContext: ExecutionContext,
   dependencies: GeminiMcpHttpDependencies = {},
 ): Promise<Response> {
