@@ -774,10 +774,42 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
 
   const rawSourceId = revision.source_id;
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
+  const orientationPath = "/api/v1/research/orient";
+  const orientationRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === orientationPath, { timeout: 30000 });
+  const orientationResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === orientationPath, { timeout: 30000 });
   const readinessResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/library/readiness", { timeout: 30000 });
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
   await card.locator("[data-source]").click();
-  const readinessSnapshot = await readinessResponse;
+  const [orientationRequestSnapshot, orientationSnapshot, readinessSnapshot] = await Promise.all([
+    orientationRequest, orientationResponse, readinessResponse,
+  ]);
+  const orientationBody = JSON.parse(orientationRequestSnapshot.postData() ?? "{}");
+  assert.deepEqual(orientationBody, {
+    query: "",
+    product: "ORIENT",
+    scope_expression: { kind: "SELECTED_SOURCES", source_ids: [rawSourceId] },
+    literals: [],
+    evidence_grade: "E0",
+    budget_ref: "orientation-metadata-v1",
+    max_results: 16,
+  }, "source selection must submit the exact bound orientation request");
+  assert.equal(orientationSnapshot.status(), 200);
+  const orientationJson = await orientationSnapshot.json();
+  assert.equal(orientationJson?.deployment_generation, expectedGeneration);
+  assert.equal(orientationJson?.data?.evidence_pack?.resolved_evidence?.length, 0);
+  assert.equal(orientationJson?.data?.evidence_pack?.omitted_candidates?.length, 0);
+  assert.equal(orientationJson?.data?.evidence_pack?.total_utf8_bytes, 0);
+  assert.equal(orientationJson?.data?.navigation?.navigation_authority, "NAVIGATION_ONLY");
+  assert.equal(orientationJson?.data?.navigation?.coverage_method, "frozen_scope_order");
+  assert.ok(orientationJson?.data?.navigation?.represented_source_revision_refs?.includes(sourceRevisionRef),
+    "orientation response must retain the selected source revision binding");
+  assert.ok(!orientationJson?.data?.navigation?.omitted_source_revision_refs?.includes(sourceRevisionRef),
+    "orientation response must not omit the selected source revision");
+  assert.equal(orientationJson?.data?.evidence_pack?.trace_ref?.id, orientationJson?.data?.trace_ref?.id);
+  assert.equal(orientationJson?.data?.evidence_pack?.trace_ref?.revision, orientationJson?.data?.trace_ref?.revision);
+  assert.match(orientationJson?.data?.trace_ref?.id ?? "", /^orient-[0-9a-f]{64}$/u);
+  ledger.record({ client: "browser", method: "POST", path: orientationPath, status: orientationSnapshot.status(),
+    correlation: "e2e-raw-projection/orient", token_present: false });
   assert.equal(readinessSnapshot.status(), 200);
   const readinessJson = await readinessSnapshot.json();
   assert.equal(readinessJson?.data?.source_id, rawSourceId);
@@ -818,7 +850,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
   assert.equal(excerpt, "# Recorded raw owner fixture\n");
-  return { scheduledPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
+  return { scheduledPath, orientationPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
     queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
 }
 
@@ -5358,6 +5390,7 @@ export async function runOwnerE2E() {
         { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/markdown`, status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
+        { method: "POST", path: rawProjectionFastSearch.orientationPath, status: 200 },
         { method: "GET", path: rawProjectionFastSearch.readinessPath, status: 200 },
         { method: "POST", path: "/api/v1/research/query", status: 200 },
         { method: "GET", path: `/api/v1/research/trace/${rawProjectionFastSearch.traceRef}`, status: 200 },
