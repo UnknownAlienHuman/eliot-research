@@ -8,6 +8,7 @@ import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dy
 import type { DynamicRouteCandidateWriteReceipt, DynamicRouteRegistryPort } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-contract.js";
 import { createD1DynamicRouteRegistry, createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
+import { readCommittedResearchSynthesisOutput } from "../../../packages/cloudflare-research/src/research-synthesis-output-reader.js";
 import type {
   SpendAuthorizationReadRequest,
   SpendAuthorizationReadback,
@@ -17,7 +18,8 @@ import type { ResearchModelPromptCompilerDependencies } from "../../../packages/
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservationInput } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
-import { digest } from "../../../packages/cloudflare-research/src/types.js";
+import { digest, type StageReceipt } from "../../../packages/cloudflare-research/src/types.js";
+import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,
@@ -137,12 +139,13 @@ async function compositionFixture(
   qualificationTier: QualificationTier = "FIXTURE",
   approvalMode: ApprovalMode = "approved",
   rotateAfterFirstRevalidation = false,
+  reserveInitialStage = true,
 ) {
   const workflow = await workflowFixture(`stage-${tag}`);
   const workflowStore = new WorkflowCheckpointStore(workflow.db);
   const stageRequestSha256 = await digest(new TextEncoder().encode(JSON.stringify(workflow.request)));
   await workflowStore.ensureRun(workflow.request, principal);
-  await workflowStore.reserve(workflow.request, stageRequestSha256, crypto.randomUUID(), workflow.budget);
+  if (reserveInitialStage) await workflowStore.reserve(workflow.request, stageRequestSha256, crypto.randomUUID(), workflow.budget);
   const base = await governedModelAttemptFixture(`stage-${tag}`, {
     database: workflow.db, bucket: workflow.bucket, request: workflow.request, principal, inputBytes: workflow.bytes,
   });
@@ -249,7 +252,68 @@ async function expectPreProviderSettlement(
   expect(row.outcome).toBe("CANCELLED");
 }
 
+async function executeThroughSynthesis(fixture: Awaited<ReturnType<typeof compositionFixture>>): Promise<StageReceipt> {
+  let previous: StageReceipt | null = null;
+  for (let index = 0; index <= RESEARCH_WORKFLOW_STAGES.indexOf("SYNTHESIZE"); index += 1) {
+    const stage = RESEARCH_WORKFLOW_STAGES[index];
+    if (stage === undefined) throw new Error("synthesis stage is not registered");
+    const request = index === 0
+      ? fixture.workflow.request
+      : {
+          ...fixture.workflow.request,
+          stage,
+          investigation_ref: previous?.investigation_ref ?? fixture.workflow.request.investigation_ref,
+          input_manifest: previous?.output_manifest ?? fixture.workflow.request.input_manifest,
+        };
+    previous = await fixture.workflow.executor.execute(request, principal, async (input) => {
+      if (stage === "SYNTHESIZE") return fixture.handler.handler(input);
+      return new Uint8Array(input.input_bytes);
+    });
+  }
+  if (previous === null) throw new Error("synthesis checkpoint did not execute");
+  return previous;
+}
+
 describe("composed research model stage handler", () => {
+  it("reads the committed SYNTHESIZE output from its W2 stage binding and replays exactly", async () => {
+    const fixture = await compositionFixture("synthesis-output", "TEST", false, "FIXTURE", "approved", false, false);
+    const scopeId = fixture.workflow.request.input_manifest.residency.scope_domain_id;
+    const authority = async () => ({
+      investigation_id: fixture.workflow.request.investigation_ref.id,
+      scope_snapshot_id: scopeId,
+      scope_snapshot_revision: 1,
+    });
+    const readInput = {
+      database: fixture.workflow.db,
+      work_bucket: fixture.workflow.bucket,
+      operation_id: fixture.workflow.request.operation_id,
+      principal,
+      recheck_authority: authority,
+    } as const;
+    await expect(readCommittedResearchSynthesisOutput(readInput)).resolves.toBeNull();
+    const synthesisReceipt = await executeThroughSynthesis(fixture);
+    const first = await readCommittedResearchSynthesisOutput(readInput);
+    if (first === null) throw new Error("committed synthesis output was not readable");
+    expect(first.stage).toBe("SYNTHESIZE");
+    expect(first.workflow_receipt).toEqual(synthesisReceipt);
+    expect(first.stage_attempt_ref).toBe(synthesisReceipt.attempt_ref);
+    expect(first.stage_request_sha256).toBe(synthesisReceipt.request_sha256);
+    expect(await digest(first.bytes)).toBe(first.output.output_sha256);
+    expect(first.model_attempt.output?.output_object_ref).toBe(first.output.output_object_ref);
+    expect(first.model_attempt.authority.scope_snapshot_ref).toEqual({ id: scopeId, revision: 1 });
+    const replay = await readCommittedResearchSynthesisOutput(readInput);
+    expect(replay).toEqual(first);
+    expect(fixture.providerCalls()).toBe(1);
+    await expect(readCommittedResearchSynthesisOutput({
+      ...readInput,
+      principal: { ...principal, credential_generation: "stale-credential" },
+    })).rejects.toMatchObject({ code: "SYNTHESIS_OUTPUT_AUTHORITY_STALE" });
+    await expect(readCommittedResearchSynthesisOutput({
+      ...readInput,
+      operation_id: "missing-synthesis-operation",
+    })).resolves.toBeNull();
+  });
+
   it("executes through real deployment, prompt, output, fingerprint, and pricing seams and replays durably", async () => {
     const fixture = await compositionFixture("success");
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
