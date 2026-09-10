@@ -1,7 +1,7 @@
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
-import { createD1ScopeProfilePort, type ScopeProfileBinding } from "@eliotr/retrieval";
+import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import {
   createFreezeProtocolAndScopeStageHandler,
   digest,
@@ -23,24 +23,6 @@ export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   max_sources: 64,
   max_results: 16,
 } as const;
-
-async function readPersistedRetrievalProfile(
-  database: D1Database,
-  scope: NavigationReadAuthority["scope"],
-): Promise<RetrieveBranchesStageDependencies["profile"]> {
-  let binding: ScopeProfileBinding;
-  try {
-    binding = await createD1ScopeProfilePort(database).loadBinding(scope);
-  } catch {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
-  if (binding.version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
-      !Number.isSafeInteger(binding.max_sources) || binding.max_sources > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
-      !Number.isSafeInteger(binding.max_results) || binding.max_results > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
-  return binding;
-}
 
 export type ResearchStageHandlerFactoryMode =
   | {
@@ -85,11 +67,19 @@ export function createResearchStageHandlerFactory(
   let retrievalHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" &&
       mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined) {
-    const retrieval = mode.retrieval;
-    const navigation = mode.navigation;
-    const ledger = mode.ledger;
+    const { retrieval, navigation, ledger } = mode;
     retrievalHandler = async (input) => {
-      const profile = await readPersistedRetrievalProfile(retrieval.database, navigation.scope);
+      let profile;
+      try {
+        profile = await createD1ScopeProfilePort(retrieval.database).loadBinding(navigation.scope);
+      } catch {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      if (profile.version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
+          !Number.isSafeInteger(profile.max_sources) || profile.max_sources > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
+          !Number.isSafeInteger(profile.max_results) || profile.max_results > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
       return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile })(input);
     };
   }
