@@ -30,6 +30,12 @@ fingerprints and the logical-output-to-residency mapping. Their allocated ER-13 
 `research-model-fingerprint-store.test.ts` and `research-model-output-store.test.ts` Worker fixtures.
 These allocations do not qualify a provider, promote a route, or create spending authority.
 
+The gateway runtime adapter and durable pre-invocation output binding remain ER-09 internal
+composition in `cloudflare-research`. ER-16 supplies the existing gateway ports and codecs;
+ER-27 owns the actual Worker gateway-runtime fixture and the existing model-handler/output fixtures.
+Gateway credentials are explicit server-owned inputs, separate from control-plane API credentials.
+Timeout/cancellation and output preparation must not permit a repeated uncertain model invocation.
+
 ## Read only
 
 - `packages/research/src/ports.ts`

@@ -25,6 +25,7 @@ outside the paths below.
 - `apps/eliotr-core/test/model-deployment-registry.test.ts`
 - `apps/eliotr-core/test/research-model-output-store.test.ts`
 - `apps/eliotr-core/test/research-model-fingerprint-store.test.ts`
+- `apps/eliotr-core/test/research-model-gateway-runtime.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
