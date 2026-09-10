@@ -980,8 +980,13 @@ export async function runRawFileUploadBrowser() {
       document.querySelector("#raw-upload [data-raw-submit]") !== null, null, { timeout: 15000 });
     await setFile();
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-submit]")?.disabled === false, null, { timeout: 15000 });
-    await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-submit]").click(), "/api/v1/ingest/raw", 503);
-    await waitForRawResponse(page, "GET", () => Promise.resolve(), "/api/v1/ingest/raw");
+    const reloadCaptureResponses = await waitForRawResponses(page, [
+      { key: "reload-capture", method: "POST", path: "/api/v1/ingest/raw", expectedStatus: 503 },
+      { key: "reload-capture-readback", method: "GET", path: "/api/v1/ingest/raw", expectedStatus: 200 },
+    ], () => panel.locator("[data-raw-submit]").click());
+    assert.equal(reloadCaptureResponses["reload-capture"].status, 503);
+    assert.equal(reloadCaptureResponses["reload-capture-readback"].status, 200);
+    assert.equal(reloadCaptureResponses["reload-capture-readback"].payload.data.idempotency_key, firstKey);
     await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-receipt]")?.hidden === false, null, { timeout: 15000 });
     assert.equal(fixture.raw.postCount, 3); assert.equal(fixture.raw.getCount, 2);
     assert.equal(fixture.raw.capture?.key, firstKey, "same file after reload must reuse its deterministic identity");
