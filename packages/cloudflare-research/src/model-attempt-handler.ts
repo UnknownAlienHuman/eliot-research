@@ -236,6 +236,7 @@ export function createGovernedModelAttemptHandler(
     const nowMs = dependencies.now?.() ?? Date.now();
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     try {
       await dependencies.revalidate(preparation, prepared);
     } catch (cause) {
@@ -243,6 +244,7 @@ export function createGovernedModelAttemptHandler(
     }
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
+    if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
     catch (cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
@@ -254,11 +256,14 @@ export function createGovernedModelAttemptHandler(
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) corrupt("model output exceeds the workflow bound");
     const binding: ModelOutputBinding = { ...output, output_size_bytes: bytes.byteLength, readback_sha256: await digest(bytes) };
     if (binding.readback_sha256 !== binding.output_sha256) corrupt("model output readback digest differs from the model receipt");
-    let postFetchCode: "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_BUDGET_STOP" | undefined;
+    let postFetchCode: "WORKFLOW_CANCELLED" | "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_BUDGET_STOP" | undefined;
+    if (input.principal.signal?.aborted) postFetchCode = "WORKFLOW_CANCELLED";
+    else if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_BUDGET_STOP";
+    else if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_AUTHORITY_STALE";
     try {
       await dependencies.revalidate(preparation, prepared);
     } catch (cause) {
-      postFetchCode = revalidationCode(cause);
+      if (postFetchCode === undefined) postFetchCode = revalidationCode(cause);
     }
     const settled = await dependencies.attempts.settleAttempt({ attempt_id: started.attempt.attempt_id, state: "SUCCEEDED", receipt, output: binding });
     const settledBytes = await readSucceededAttempt(dependencies, settled, {
