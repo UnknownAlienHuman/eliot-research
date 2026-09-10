@@ -16,6 +16,10 @@ outside the paths below.
 - `apps/eliotr-core/test/artifact-draft-fixture.ts`
 - `apps/eliotr-core/test/artifact-draft-reader.test.ts`
 - `apps/eliotr-core/test/artifact-draft-read-fixture.ts`
+- `apps/eliotr-core/test/model-attempt-store.test.ts`
+- `apps/eliotr-core/test/model-attempt-handler.test.ts`
+- `apps/eliotr-core/test/model-attempt-fixture.ts`
+- `apps/eliotr-core/test/research-workflow-recovery.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
