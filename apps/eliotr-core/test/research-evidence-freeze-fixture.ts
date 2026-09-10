@@ -122,7 +122,7 @@ export async function freezeFixture(): Promise<FreezeFixture> {
 
   const operationId = "freeze-workflow-operation";
   const investigationId = "freeze-workflow-investigation";
-  const payload = { investigation_id: investigationId, operation_id: operationId, query: "What evidence is present in the admitted source?",
+  const payload = { investigation_id: investigationId, operation_id: operationId, query: "Pinned",
     scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, evidence_grade: "E0" as const, principal_ref: principal.principal_ref };
   const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
   const payloadKey = "freeze-workflow-input";
