@@ -1,4 +1,5 @@
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
+import type { ArtifactDraftAdmissionPort } from "@eliotr/cloudflare-artifacts";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import type { RunStatusAuthoritySnapshot } from "./research-run-status.js";
 import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
@@ -26,13 +27,15 @@ export interface ResearchMaterializeContextReader {
 
 export type ResearchMaterializeTrustedMetadata = Pick<ResearchMaterializeResultWriterInput,
   "intent" | "expected_draft_head_revision" | "artifact_ref" | "spec" | "section" |
-  "section_residency" | "referenced_objects" | "manifest_residency" | "created_at" | "admission">;
+  "section_residency" | "referenced_objects" | "manifest_residency" | "created_at">;
 
 export interface ResearchMaterializeStageDependencies {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
+  /** Server-composed REPORT admission; metadata cannot provide authority. */
+  readonly admission?: ArtifactDraftAdmissionPort;
   readonly recheck_authority: () => Promise<RunStatusAuthoritySnapshot>;
   readonly context: ResearchMaterializeContextReader;
   /** Server-owned artifact metadata only; it cannot supply lineage or output identity. */
@@ -73,6 +76,7 @@ export function createResearchMaterializeStageHandler(
       evidence_pack: context.stage_five.evidence_pack,
       navigation: dependencies.navigation,
       evidence_resolver: dependencies.evidence_resolver,
+      ...(dependencies.admission === undefined ? {} : { admission: dependencies.admission }),
       synthesis_readback: synthesis,
     });
   };

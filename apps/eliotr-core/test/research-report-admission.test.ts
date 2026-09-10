@@ -41,6 +41,25 @@ async function advanceToMaterialize(synthesis: Awaited<ReturnType<typeof committ
     investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest } };
 }
 
+async function reportAdmissionInput(
+  synthesis: Awaited<ReturnType<typeof committedFreezeSynthesisFixture>>,
+  request: Awaited<ReturnType<typeof advanceToMaterialize>>["request"],
+): Promise<ResearchReportAdmissionInput> {
+  const run = await synthesis.freeze.db.prepare(
+    "SELECT policy_generation,policy_authority_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
+  ).bind(synthesis.freeze.operation_id).first<{ readonly policy_generation: string; readonly policy_authority_ref: string }>();
+  if (run === null) throw new Error("REPORT fixture run is missing");
+  const expiresAt = synthesis.freeze.scope.expires_at;
+  const policySource: ResearchReportAdmissionInput["policy_source"] = {
+    provenance_ref: "server-report-policy-fixture-v1",
+    read: async () => ({ schema: "eliotr.research.report-admission.v1", policy_ref: "report-policy-v1", policy_revision: 1,
+      config_provenance_ref: "server-report-policy-fixture-v1", principal_ref: principal.principal_ref, client_class: "owner_pwa",
+      policy_generation: run.policy_generation, policy_authority_ref: run.policy_authority_ref, allowed_use: ["research"],
+      disclosure_ceiling: "owner-only", requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at: expiresAt }),
+  };
+  return { database: synthesis.freeze.db, navigation: synthesis.freeze.navigation, request, principal, policy_source: policySource };
+}
+
 describe("server-owned REPORT admission and artifact commit", () => {
   beforeAll(async () => {
     await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
@@ -48,32 +67,21 @@ describe("server-owned REPORT admission and artifact commit", () => {
   });
 
   it("admits through the native materializer, replays immutably, and fails closed", async () => {
+    const revokedSynthesis = await committedFreezeSynthesisFixture();
+    const revoked = await advanceToMaterialize(revokedSynthesis);
+    const revokedInput = await reportAdmissionInput(revokedSynthesis, revoked.request);
+    await revokedSynthesis.freeze.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
+      .bind(revokedSynthesis.freeze.scope.snapshot_id, revokedSynthesis.freeze.scope.revision, principal.principal_ref).run();
+    await expect(prepareResearchReportAdmission(revokedInput)).rejects.toMatchObject({ code: "REPORT_ADMISSION_AUTHORITY_STALE" });
+    expect((await revokedSynthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(0);
+
     const synthesis = await committedFreezeSynthesisFixture();
     const { stageTwelve, request } = await advanceToMaterialize(synthesis);
-    const run = await synthesis.freeze.db.prepare(
-      "SELECT policy_generation,policy_authority_ref FROM research_workflow_run WHERE operation_id=?1 LIMIT 1",
-    ).bind(synthesis.freeze.operation_id).first<{ readonly policy_generation: string; readonly policy_authority_ref: string }>();
-    if (run === null) throw new Error("REPORT fixture run is missing");
-    const expiresAt = synthesis.freeze.scope.expires_at;
-    const policySource: ResearchReportAdmissionInput["policy_source"] = {
-      provenance_ref: "server-report-policy-fixture-v1",
-      read: async () => ({ schema: "eliotr.research.report-admission.v1", policy_ref: "report-policy-v1", policy_revision: 1,
-        config_provenance_ref: "server-report-policy-fixture-v1", principal_ref: principal.principal_ref, client_class: "owner_pwa",
-        policy_generation: run.policy_generation, policy_authority_ref: run.policy_authority_ref, allowed_use: ["research"],
-        disclosure_ceiling: "owner-only", requested_output_class: "private-draft", purpose: "research-report-materialization", expires_at: expiresAt }),
-    };
-    const admissionInput = { database: synthesis.freeze.db, navigation: synthesis.freeze.navigation, request,
-      principal, policy_source: policySource } satisfies ResearchReportAdmissionInput;
+    const admissionInput = await reportAdmissionInput(synthesis, request);
+    const policySource = admissionInput.policy_source;
     const missingPolicy = { ...admissionInput, policy_source: { provenance_ref: policySource.provenance_ref, read: async () => null } } satisfies ResearchReportAdmissionInput;
     await expect(prepareResearchReportAdmission(missingPolicy)).rejects.toMatchObject({ code: "REPORT_ADMISSION_POLICY_MISSING" });
     expect((await synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(0);
-
-    await synthesis.freeze.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
-      .bind(synthesis.freeze.scope.snapshot_id, synthesis.freeze.scope.revision, principal.principal_ref).run();
-    await expect(prepareResearchReportAdmission(admissionInput)).rejects.toMatchObject({ code: "REPORT_ADMISSION_AUTHORITY_STALE" });
-    expect((await synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(0);
-    await synthesis.freeze.db.prepare("UPDATE scope_access_grant SET state='ACTIVE' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
-      .bind(synthesis.freeze.scope.snapshot_id, synthesis.freeze.scope.revision, principal.principal_ref).run();
 
     const admission = await prepareResearchReportAdmission(admissionInput);
     const metadataPolicy = reportPolicy(synthesis.freeze.scope.snapshot_id, principal.principal_ref);
@@ -83,12 +91,20 @@ describe("server-owned REPORT admission and artifact commit", () => {
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
     const handler = createNativeMaterializeHandler({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver, context,
+      admission: admission.admission,
       recheck_authority: async () => {
         const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, principal);
         if (status === null) throw new Error("REPORT fixture status is missing");
         return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id, scope_snapshot_revision: status.scope_snapshot_revision };
-      }, metadata: async (input) => ({ ...await metadata(input), admission: admission.admission }) });
-    const first = await synthesis.freeze.executor.execute(request, principal, handler);
+      }, metadata });
+    let handlerError: unknown;
+    const observedHandler = async (input: Parameters<typeof handler>[0]) => {
+      try { return await handler(input); }
+      catch (error) { handlerError = error; throw error; }
+    };
+    const first = await synthesis.freeze.executor.execute(request, principal, observedHandler).catch((error: unknown) => {
+      throw handlerError ?? error;
+    });
     expect(first.stage).toBe("MATERIALIZE");
     const admissionRow = await synthesis.freeze.db.prepare(
       "SELECT decision_id,intent_id,outbox_id,created_at FROM research_report_admission WHERE operation_id=?1 LIMIT 1",
@@ -103,7 +119,7 @@ describe("server-owned REPORT admission and artifact commit", () => {
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_draft_object").first<{ readonly n: number }>(),
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=?1").bind(admission.intent.intent_ref.id).first<{ readonly n: number }>(),
     ]);
-    const replay = await synthesis.freeze.executor.execute(request, principal, handler);
+    const replay = await synthesis.freeze.executor.execute(request, principal, observedHandler);
     expect(replay.receipt_ref).toBe(first.receipt_ref);
     const afterReplay = await Promise.all([
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>(),

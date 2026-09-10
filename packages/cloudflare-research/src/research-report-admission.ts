@@ -522,7 +522,18 @@ export async function prepareResearchReportAdmission(input: ResearchReportAdmiss
       const inputJson = canonicalEvidenceJson(inputMaterial);
       const inputSha = await canonicalDigest(inputMaterial);
       const existing = await readAdmission(input.database, current.run.operation_id, current.run.principal_ref, intent.idempotency_key);
-      const readback = () => assertAdmissionReadback({ database: input.database, authority: current, policy: currentPolicy, decision, decision_sha256: decisionSha, intent, outbox_id: outboxId, payload_sha256: payload, input_json: inputJson, input_sha256: inputSha });
+      const readback = async () => {
+        // The final D1/R2 batch can complete after the preflight reads. Re-read
+        // every authority input before accepting the durable admission.
+        const freshPolicyRaw = await input.policy_source.read();
+        const freshPolicy = validatePolicySource(freshPolicyRaw, input.policy_source);
+        if (!sameJson(freshPolicy, policy)) fail("REPORT_ADMISSION_AUTHORITY_STALE", "REPORT policy changed during artifact commit");
+        const freshAuthority = await readAuthority(input, freshPolicy, readClock(clock), requestSha);
+        if (await canonicalDigest(freshAuthority.material) !== authorityInputSha) {
+          fail("REPORT_ADMISSION_AUTHORITY_STALE", "REPORT authority changed during artifact commit");
+        }
+        await assertAdmissionReadback({ database: input.database, authority: freshAuthority, policy: freshPolicy, decision, decision_sha256: decisionSha, intent, outbox_id: outboxId, payload_sha256: payload, input_json: inputJson, input_sha256: inputSha });
+      };
       if (existing !== null) {
         await readback();
         return { statements: [], assertBatchResults: noAdmissionBatchChanges, readback };

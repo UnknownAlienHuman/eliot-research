@@ -64,6 +64,21 @@ WHEN NOT EXISTS (
     AND r.scope_snapshot_revision = NEW.scope_snapshot_revision
     AND s.snapshot_digest = NEW.scope_snapshot_digest
     AND julianday(s.expires_at) > julianday('now')
+    AND NEW.client_class = 'owner_pwa'
+    AND EXISTS (
+      SELECT 1
+      FROM scope_access_grant g
+      WHERE g.snapshot_id = r.scope_snapshot_id
+        AND g.snapshot_revision = r.scope_snapshot_revision
+        AND g.principal_ref = r.principal_ref
+        AND g.client_class = NEW.client_class
+        AND g.credential_generation = r.credential_generation
+        AND g.policy_authority_ref = r.policy_authority_ref
+        AND g.authorization_receipt_ref = NEW.authorization_receipt_ref
+        AND g.disclosure_ceiling = NEW.disclosure_ceiling
+        AND g.state = 'ACTIVE'
+        AND julianday(g.expires_at) > julianday('now')
+    )
     AND json(s.member_source_revision_refs_json) = json(NEW.source_revision_refs_json)
     AND NOT EXISTS (
       SELECT 1
