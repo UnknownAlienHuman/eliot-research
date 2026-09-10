@@ -4,7 +4,10 @@ import type {
   SelectionIntegrityReceipt,
   VersionedRef,
 } from "@eliotr/contracts";
-import type { ModelCallInput } from "@eliotr/cloudflare-ai";
+import {
+  modelGatewayRequestParametersSha256,
+  type ModelCallInput,
+} from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { BuiltReferenceManifest, BuildReferenceManifestInput } from "./research-reference-manifest.js";
@@ -15,7 +18,7 @@ const manifestRef: VersionedRef = { id: "manifest-1", revision: 1 };
 const packRef: VersionedRef = { id: "pack-1", revision: 1 };
 const scopeRef: VersionedRef = { id: "scope-1", revision: 1 };
 const traceRef: VersionedRef = { id: "trace-1", revision: 1 };
-const deployment: ModelRouteDeployment = {
+const deploymentTemplate: ModelRouteDeployment = {
   route_ref: "dynamic/eliotr-balanced",
   route_version: "route-1",
   prompt_generation: "prompt-1",
@@ -25,9 +28,9 @@ const deployment: ModelRouteDeployment = {
 };
 
 const input: ModelCallInput = {
-  route_ref: deployment.route_ref,
-  prompt_generation: deployment.prompt_generation,
-  schema_generation: deployment.schema_generation,
+  route_ref: deploymentTemplate.route_ref,
+  prompt_generation: deploymentTemplate.prompt_generation,
+  schema_generation: deploymentTemplate.schema_generation,
   evidence_pack: {
     pack_ref: packRef,
     scope_snapshot_ref: scopeRef,
@@ -90,7 +93,7 @@ const buildInput = {
   resolver: {} as BuildReferenceManifestInput["resolver"],
   policy: {} as BuildReferenceManifestInput["policy"],
   manifest_ref: manifestRef,
-  model_route_ref: deployment.route_ref,
+  model_route_ref: deploymentTemplate.route_ref,
   max_context_bytes: 32 * 1024,
 } satisfies BuildReferenceManifestInput;
 
@@ -98,9 +101,25 @@ function builtManifest(): BuiltReferenceManifest & { readonly manifest_ref: Vers
   return { manifest, compiled, resolved_evidence: [], source_authorities: [], manifest_ref: manifestRef };
 }
 
+async function testDeployment(): Promise<ModelRouteDeployment> {
+  return {
+    ...deploymentTemplate,
+    parameters_digest: await modelGatewayRequestParametersSha256({
+      model: deploymentTemplate.route_ref,
+      messages: [
+        { role: "system", content: "fixture instructions" },
+        { role: "user", content: "fixture evidence" },
+      ],
+      max_tokens: 32,
+      stream: false,
+    }),
+  };
+}
+
 describe("research model prompt compiler", () => {
   it("keeps admitted source text in quoted user data and returns canonical bytes", async () => {
     let persisted = 0;
+    const deployment = await testDeployment();
     const compiler = createResearchModelPromptCompiler({
       manifest_service: { buildAndPersist: async () => { persisted += 1; return builtManifest(); } },
       build_manifest_input: async () => buildInput,
@@ -127,7 +146,7 @@ describe("research model prompt compiler", () => {
       request_timeout_ms: 15_000,
     });
 
-    await expect(compiler.compile(input, { ...deployment, route_ref: "dynamic/eliotr-strong" })).rejects.toMatchObject({
+    await expect(compiler.compile(input, { ...(await testDeployment()), route_ref: "dynamic/eliotr-strong" })).rejects.toMatchObject({
       code: "MODEL_GATEWAY_PROMPT_COMPILE_FAILED",
     });
     expect(called).toBe(false);
