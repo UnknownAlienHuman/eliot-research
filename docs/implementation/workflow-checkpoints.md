@@ -9,6 +9,34 @@ The owner's current priority is composing the existing protocol, retrieval, evid
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
 (2026-09-10); existing provider authorization, cancellation and duplicate-call guards are preserved.
 
+## Configured exploratory evidence freeze
+
+The explicit `research-handlers.exploratory.v3` factory now composes stage 10 (`RECONCILE`) and
+stage 11 (`FREEZE_EVIDENCE`) over the actual committed stage-0 protocol and stage-5 retrieval
+readers. The package composition checks the current W1 head and full run authority, and the app
+adapter binds the retrieval readback to its exact committed attempt. Stage 10 persists the allowed
+reference manifest through the existing D1/R2 store. Stage 11 resolves its exact evidence handles
+again under current access and returns immutable freeze bytes to the W2 executor. Missing explicit
+freeze configuration is refused; historical v1/v2 execution and replay remain unchanged.
+
+The model-profile producer separates the stable server definition from its current scope/policy/
+deployment binding. The definition contains the approved route, provenance, expiry and explicit
+context bound; the binding is checked before and after awaited authority reads. Frozen material
+includes the full protocol definition, exploratory lane and model definition with derived identities.
+This composition currently accepts only the clean exploratory W1 state; unresolved lane obligations,
+hypotheses and debt require their real resolution paths rather than an empty fabricated result.
+
+Local evidence on 2026-09-10, Node 22.23.2: the actual Q1 import/projection → W2 stage 0 → stage 5 →
+stage 10/11 case and exact replay passed at source `f351c33`. Its accompanying revoke case reached
+the expected refusal but initially asserted the wrong error code. After that correction, its SQL
+witness used the wrong column name; source `ad59069` corrected it and the changed revoke case
+passed alone, proving no new manifest or stage-11 checkpoint after grant revocation. The unchanged
+positive case was not rerun. The missing-v3-composition factory case passed alone at `d49f9d4`.
+The profile-binding suite passed six cases at `f07a7be`, including scope-dependent bindings and
+expiry during an awaited route read. Intermediate stages and route authority are controlled fixture
+inputs. This is configured local composition, not public v3 selection, synthesis or live provider
+qualification. The public source-to-answer path remains open.
+
 ## Execution
 
 `createWorkflowCheckpointExecutor(CORE_DB, WORK_BUCKET, ports)` exposes `execute(request, principal,
