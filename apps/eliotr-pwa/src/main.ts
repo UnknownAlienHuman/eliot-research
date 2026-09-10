@@ -213,7 +213,7 @@ function render(health: SystemHealth | null): void {
   });
   const libraryPanel = library ? mountLibraryPanel(library, (id, context) => {
     if (!id) { retrieval?.clearPrivate(); return; }
-    orientation?.selectSource(id);
+    if (!context?.sourceRevisionRef) orientation?.selectSource(id);
     retrieval?.selectSource(id, context);
     exhaustive?.selectSource(id);
   }) : undefined;

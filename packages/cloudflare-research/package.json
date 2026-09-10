@@ -17,6 +17,7 @@
     "@eliotr/contracts": "workspace:*",
     "@eliotr/domain": "workspace:*",
     "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/policy": "workspace:*",
     "@eliotr/research": "workspace:*",
     "zod": "4.4.3"
   }

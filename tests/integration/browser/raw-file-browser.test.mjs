@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { waitForRawResponse } from "./raw-file-browser.mjs";
-/* global Buffer:readonly, Response:readonly, TextEncoder:readonly, setTimeout:readonly */
+import { waitForRawResponse, waitForRawResponses } from "./raw-file-browser.mjs";
+/* global Buffer:readonly, Response:readonly, TextEncoder:readonly, URL:readonly, setTimeout:readonly */
 
 const rawPath = "/api/v1/ingest/raw";
 const rawUrl = `http://127.0.0.1:4321${rawPath}`;
@@ -168,4 +168,130 @@ test("rejects a clone status mismatch and failed clone, then restores fetch stat
     try { await assert.rejects(waitForRawResponse(fixture.page, "POST", fixture.action, rawPath), /CLONE_FAILED/u); }
     finally { assert.equal(globalThis.window.__eliotrRawResponseCapture, undefined); fixture.page.restore(); }
   });
+});
+
+function batchCaptureFixture({ orientationBrowserStatus = 200, orientationPageResponse, rejectAction = false } = {}) {
+  const priorWindow = globalThis.window;
+  const priorLocation = globalThis.location;
+  const priorBtoa = globalThis.btoa;
+  const pageWindow = {};
+  const waiters = [];
+  const responseFor = (path, method, body, browserStatus = 200, pageResponse = undefined) => {
+    const response = pageResponse ?? new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    const responseUrl = `http://127.0.0.1:4321${path}`;
+    Object.defineProperty(response, "url", { configurable: true, value: responseUrl });
+    const requestBody = method === "POST" ? JSON.stringify({ product: "FAST_SEARCH", query: "fixture" }) : undefined;
+    const request = { method: () => method, allHeaders: async () => ({ accept: "application/json", ...(method === "POST" ? { "content-type": "application/json" } : {}) }), postData: () => requestBody };
+    return { pageResponse: response, browserResponse: { status: () => browserStatus, url: () => responseUrl, request: () => request } };
+  };
+  const responses = new Map([
+    ["POST /orient", responseFor("/orient", "POST", { data: { protocol: "orient.fixture" } }, orientationBrowserStatus, orientationPageResponse)],
+    ["GET /ready?source_id=source-1", responseFor("/ready?source_id=source-1", "GET", { data: { source_id: "source-1" } })],
+    ["GET /trace/query-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", responseFor("/trace/query-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "GET", { data: { query_product: "FAST_SEARCH" } })],
+  ]);
+  const originalFetch = async (input, init = {}) => {
+    const url = new URL(String(input), pageWindow.location.href);
+    const entry = responses.get(`${String(init.method ?? "GET").toUpperCase()} ${url.pathname}${url.search}`);
+    if (!entry) throw new Error("unexpected fixture request");
+    for (let index = waiters.length - 1; index >= 0; index -= 1) {
+      if (waiters[index].predicate(entry.browserResponse)) {
+        const waiter = waiters.splice(index, 1)[0];
+        waiter.resolve(entry.browserResponse);
+      }
+    }
+    return entry.pageResponse;
+  };
+  pageWindow.fetch = originalFetch;
+  pageWindow.location = { href: "http://127.0.0.1:4321/fixture", origin: "http://127.0.0.1:4321" };
+  Object.defineProperty(globalThis, "window", { configurable: true, value: pageWindow });
+  Object.defineProperty(globalThis, "location", { configurable: true, value: pageWindow.location });
+  Object.defineProperty(globalThis, "btoa", { configurable: true, value: (value) => Buffer.from(value, "binary").toString("base64") });
+  const page = {
+    url: () => pageWindow.location.href,
+    mainFrame: () => undefined,
+    evaluate: async (fn, args) => fn(args),
+    waitForResponse: (predicate) => new Promise((resolve) => { waiters.push({ predicate, resolve }); }),
+    waitForFunction: async (fn, args) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const value = await fn(args);
+        if (value) return { jsonValue: async () => value, dispose: async () => {} };
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      throw new Error("batch capture did not settle");
+    },
+  };
+  return {
+    page,
+    action: async () => {
+      if (rejectAction) throw new Error("fixture action failed");
+      await pageWindow.fetch("/orient", { method: "POST" });
+      await pageWindow.fetch("/ready?source_id=source-1", { method: "GET" });
+      await pageWindow.fetch("/trace/query-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", { method: "GET" });
+    },
+    restore: () => {
+      if (priorWindow === undefined) delete globalThis.window;
+      else Object.defineProperty(globalThis, "window", { configurable: true, value: priorWindow });
+      if (priorLocation === undefined) delete globalThis.location;
+      else Object.defineProperty(globalThis, "location", { configurable: true, value: priorLocation });
+      if (priorBtoa === undefined) delete globalThis.btoa;
+      else Object.defineProperty(globalThis, "btoa", { configurable: true, value: priorBtoa });
+    },
+  };
+}
+
+function overflowPageResponse(path, onCancel) {
+  const responseUrl = `http://127.0.0.1:4321${path}`;
+  return {
+    status: 200, url: responseUrl, type: "basic", redirected: false,
+    clone: () => ({ body: { getReader: () => ({
+      read: async () => ({ done: false, value: new Uint8Array(512 * 1024 + 1) }),
+      cancel: () => { onCancel(); return new Promise(() => {}); },
+    }) } }),
+  };
+}
+
+test("captures multiple same-page JSON responses with exact path and query binding", async () => {
+  const fixture = batchCaptureFixture();
+  try {
+    const snapshots = await waitForRawResponses(fixture.page, [
+      { key: "orientation", method: "POST", path: "/orient", expectedStatus: 200 },
+      { key: "readiness", method: "GET", path: "/ready?source_id=source-1", expectedStatus: 200 },
+      { key: "trace", method: "GET", pathPattern: "^/trace/query-[0-9a-f]{48}$", expectedStatus: 200 },
+    ], fixture.action);
+    assert.equal(snapshots.orientation.requestHeaders.accept, "application/json");
+    assert.equal(snapshots.orientation.requestHeaders["content-type"], "application/json");
+    assert.equal(snapshots.orientation.payload.data.protocol, "orient.fixture");
+    assert.equal(snapshots.readiness.responsePath, "/ready?source_id=source-1");
+    assert.equal(snapshots.readiness.payload.data.source_id, "source-1");
+    assert.equal(snapshots.trace.responsePath, "/trace/query-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert.equal(snapshots.trace.payload.data.query_product, "FAST_SEARCH");
+  } finally { fixture.restore(); }
+});
+
+test("rejects a batch when the CDP status disagrees with the captured response", async () => {
+  const fixture = batchCaptureFixture({ orientationBrowserStatus: 503 });
+  try {
+    await assert.rejects(waitForRawResponses(fixture.page, [
+      { key: "orientation", method: "POST", path: "/orient", expectedStatus: 200 },
+    ], fixture.action), /clone\/CDP identity mismatch/u);
+  } finally { fixture.restore(); }
+});
+
+test("cancels an overflowing batch reader and observes action rejection immediately", async () => {
+  let cancelCalls = 0;
+  const overflow = overflowPageResponse("/orient", () => { cancelCalls += 1; });
+  const overflowFixture = batchCaptureFixture({ orientationPageResponse: overflow });
+  try {
+    await assert.rejects(waitForRawResponses(overflowFixture.page, [
+      { key: "orientation", method: "POST", path: "/orient", expectedStatus: 200 },
+    ], overflowFixture.action), /BODY_CAPTURE_FAILED/u);
+    assert.equal(cancelCalls, 1);
+  } finally { overflowFixture.restore(); }
+
+  const rejectedFixture = batchCaptureFixture({ rejectAction: true });
+  try {
+    await assert.rejects(waitForRawResponses(rejectedFixture.page, [
+      { key: "orientation", method: "POST", path: "/orient", expectedStatus: 200 },
+    ], rejectedFixture.action), /fixture action failed/u);
+  } finally { rejectedFixture.restore(); }
 });

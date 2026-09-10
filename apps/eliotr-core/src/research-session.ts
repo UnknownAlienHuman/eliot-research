@@ -1,12 +1,8 @@
 // IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.
 import { DurableObject } from "cloudflare:workers";
 import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
-import { createCloudflareEvidenceResolver, createD1EvidenceAuthorityPort, createR2EvidenceContentPort, EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
-import { createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
-import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
-import { createD1RetrievalResultStore, createD1RetrievalTracePort, createD1ScopePorts, createD1ScopeProfilePort, createIdentLaneExecutor, createLexLaneExecutor, createSemLaneExecutor, createQueryBudgetGuard, createRetrievalQueryService as createRetrievalQueryEngine, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
-import type { RetrievalQueryPorts, RetrievalRequest } from "@eliotr/retrieval";
-import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
+import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
+import { retrieveWithHeldScope } from "./research-retrieval-composition.js";
 import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES } from "@eliotr/cloudflare-research";
 import type { StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
@@ -48,8 +44,6 @@ function mapRetrievalError(error: unknown): never {
   const code = error.code === "RETRIEVAL_INPUT_INVALID" ? "RESEARCH_INPUT_INVALID" : error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" ? "RESEARCH_SETTLEMENT_UNCERTAIN" : error.code === "RETRIEVAL_BUDGET_STOP" ? "RESEARCH_BUDGET_STOP" : error.code === "RETRIEVAL_CANCELLED" ? "RESEARCH_CANCELLED" : error.code === "RETRIEVAL_SCOPE_STALE" || error.code === "RETRIEVAL_AUTHORITY_STALE" ? "RESEARCH_AUTHORITY_STALE" : "RESEARCH_CONFLICT";
   fail(code, error.message, status, status === 503);
 }
-const OMITTED_CANDIDATE_CODES: ReadonlySet<string> = new Set(["EVIDENCE_INPUT_INVALID", "EVIDENCE_SCOPE_MISMATCH", "EVIDENCE_LOCATOR_NOT_RESOLVABLE", "EVIDENCE_PRECISION_UNSUPPORTED", "EVIDENCE_OBJECT_NOT_FOUND", "EVIDENCE_OBJECT_INTEGRITY", "EVIDENCE_RANGE_INVALID", "EVIDENCE_SOURCE_NOT_FOUND", "EVIDENCE_HANDLE_NOT_FOUND", "EVIDENCE_HANDLE_NOT_LIVE", "EVIDENCE_IDENTITY_CONFLICT"]);
-const STALE_AUTHORITY_CODES: ReadonlySet<string> = new Set(["EVIDENCE_SCOPE_NOT_FOUND", "EVIDENCE_SCOPE_INVALIDATED", "EVIDENCE_SCOPE_EXPIRED", "EVIDENCE_AUTHORIZATION_DENIED", "EVIDENCE_SOURCE_NOT_LIVE", "EVIDENCE_OWNER_GENERATION_MISMATCH"]);
 export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET"> & { readonly AI_SEARCH?: Env["AI_SEARCH"] }, options?: ResearchQueryOptions): { query(context: AuthenticatedRequestContext, request: QueryRequest): Promise<QueryResult> } {
   const profile = options?.scopeProfile ?? { version: RETRIEVAL_SCOPE_PROFILE_VERSION, max_sources: RETRIEVAL_SCOPE_MAX_SOURCES, max_results: RETRIEVAL_SCOPE_MAX_RESULTS };
   if (profile.max_sources > RETRIEVAL_SCOPE_MAX_SOURCES || profile.max_results > RETRIEVAL_SCOPE_MAX_RESULTS) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.query scope profile exceeds the metadata-Lens bound", 422);
@@ -85,47 +79,19 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
       await freezer.requireCurrent(snapshot);
       await authority.grant(snapshot);
       await scopePorts.requireCurrentScope(snapshot);
-      const resolver = createCloudflareEvidenceResolver({ authority: createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }), content: createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET }) });
-      async function resolveEvidence(candidate: LocatorCandidate, scope: ScopeSnapshot): Promise<ResolvedEvidence | null> {
-        try {
-          return await resolver.resolveCandidate({ candidate, scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, access });
-        } catch (error) {
-          if (error instanceof EvidenceRuntimeError) {
-            if (!STALE_AUTHORITY_CODES.has(error.code) && OMITTED_CANDIDATE_CODES.has(error.code)) return null;
-            if (STALE_AUTHORITY_CODES.has(error.code)) throw new RetrievalQueryError("RETRIEVAL_AUTHORITY_STALE", error.message);
-            throw new RetrievalQueryError("RETRIEVAL_RESOLUTION_UNCERTAIN", error.message, true);
-          }
-          throw new RetrievalQueryError("RETRIEVAL_RESOLUTION_UNCERTAIN", error instanceof Error ? error.message : "evidence resolution failed", true);
-        }
-      }
-      const ident = createIdentLaneExecutor(createD1SearchIdentPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
-      const lex = createLexLaneExecutor(createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
-      const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(env.SEARCH_DB, env.AI_SEARCH, { expected_namespace: AI_SEARCH_PRIMARY_NAMESPACE, max_preview_bytes: 4096, match_threshold: 0 }));
-      const lanes = { executorFor(lane: RetrievalLane) { if (lane === "IDENT") return ident; if (lane === "LEX") return lex; if (lane === "SEM") return sem; return null; } };
-      // Without a namespace binding or promoted generation, SEM degrades to SKIPPED_UNAVAILABLE.
       const deadlineMs = Date.now() + RETRIEVAL_QUERY_BUDGET_MS;
-      const ports: RetrievalQueryPorts = {
-        ...scopePorts,
-        lanes,
-        fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
-        resolveEvidence,
-        persistTrace: (trace) => createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace),
-        results: createD1RetrievalResultStore(env.CORE_DB, access),
-        checkBudget: () => createQueryBudgetGuard(deadlineMs, () => context.request.signal.aborted).checkBudget(),
-      };
-      // The service carries no grant port and no policy-evaluation input: a query never mints
-      // source grants and authority is enforced at the freeze/grant and per-lane currentness
-      // boundary instead. RetrievalRequest therefore carries only evaluated inputs.
-      const retrievalRequest: RetrievalRequest = {
+      const result = await retrieveWithHeldScope(env, {
+        access,
+        scope_snapshot: snapshot,
         raw_query: parsed.query,
         product: parsed.product,
-        scope_snapshot: snapshot,
         literals: [],
         requested_limit: parsed.max_results,
         deadline_ms: deadlineMs,
-      };
-      const engine = createRetrievalQueryEngine(ports);
-      const result = await engine.query({ request: retrievalRequest, idempotency_key: key }).catch(mapRetrievalError);
+        idempotency_key: key,
+        signal: context.request.signal,
+        profile,
+      }).catch(mapRetrievalError);
       return { evidence_pack: result.evidence_pack, trace_ref: result.trace.trace_ref };
     },
   };
