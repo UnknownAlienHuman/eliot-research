@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-/* global document: readonly, HTMLButtonElement: readonly, URL: readonly, TextEncoder: readonly */
+import { waitForRawResponse } from "./raw-file-browser.mjs";
+/* global document: readonly, HTMLButtonElement: readonly, TextEncoder: readonly */
 
 const WORKFLOW_ID = /^exhaustive-workflow-[a-f0-9]{64}$/u;
 const JOB_ID = /^exhaustive-job-[a-f0-9]{48}$/u;
@@ -247,14 +248,9 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
 
-  const postRequestPromise = page.waitForRequest((request) => request.method() === "POST" &&
-    new URL(request.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
-  const postResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" &&
-    new URL(response.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
-  await submit.click();
-  const [postRequest, postResponse] = await Promise.all([postRequestPromise, postResponsePromise]);
-  assert.ok([200, 202].includes(postResponse.status()), "Q8 PWA launch must return 200 or 202");
-  const body = JSON.parse(postRequest.postData() ?? "{}");
+  const postSnapshot = await waitForRawResponse(page, "POST", () => submit.click(), "/api/v1/research/query", 202);
+  assert.equal(postSnapshot.status, 202, "Q8 PWA launch must return the asynchronous 202 response");
+  const body = JSON.parse(postSnapshot.requestBody ?? "{}");
   assert.deepEqual(Object.keys(body).sort(), ["budget_ref", "evidence_grade", "literals", "max_results", "product", "query", "scope_expression"].sort(),
     "Q8 request must use the exact exhaustive wire shape");
   assert.equal(body.query, query);
@@ -264,14 +260,14 @@ export async function runExhaustiveWorkflowCompleteBrowser({
   assert.equal(body.evidence_grade, "E0");
   assert.equal(body.budget_ref, "exhaustive-job-v1");
   assert.equal(body.max_results, 16);
-  const idempotencyKey = postRequest.headers()["idempotency-key"];
+  const idempotencyKey = postSnapshot.requestHeaders["idempotency-key"];
   boundedText(idempotencyKey, "PWA idempotency key");
-  const launched = launchDataOf(await postResponse.json(), expectedGeneration);
+  const launched = launchDataOf(postSnapshot.payload, expectedGeneration);
   const workflowId = launched.workflow_instance_id;
   const launchCorrelation = "e2e-exhaustive-complete/launch";
-  const observedApi = [{ method: "POST", path: "/api/v1/research/query", status: postResponse.status() }];
+  const observedApi = [{ method: "POST", path: "/api/v1/research/query", status: postSnapshot.status }];
   const observedCorrelations = [launchCorrelation];
-  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: postResponse.status(),
+  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: postSnapshot.status,
     correlation: launchCorrelation, token_present: false });
 
   const deadline = Date.now() + deadlineMs;
@@ -311,7 +307,7 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     sourceId,
     sourceRevisionRef,
     idempotencyKey,
-    launchStatus: postResponse.status(),
+    launchStatus: postSnapshot.status,
     status: completed.data.workflow_status,
     receipt: completed.receipt,
     d1,
