@@ -5027,6 +5027,12 @@ export async function runOwnerE2E() {
   let exhaustiveWorkflow;
   let rawUpload;
   let rawProjectionFastSearch;
+  let rotationBefore;
+  let replayBaseline;
+  let jwtMatrixBaseline;
+  let protectedD1Counts;
+  let canonicalKey;
+  let evidenceBucket;
   let teardownError = null;
   const miniflarePortGuard = await reserveMiniflareForbiddenPorts();
   const receipt = {
@@ -5238,6 +5244,19 @@ export async function runOwnerE2E() {
     receipt.bounds = (await checkBundleLimitsSource()).state;
     receipt.authed_epoch_regression = verifyAuthedEpochRegression().state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto(privateKey, publicJwk)).state;
+    protectedD1Counts = async (phase = "owner-d1-unclassified") => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
+        { phase, commandFamily: "source-count" }))[0].n,
+      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision",
+        { phase, commandFamily: "revision-count" }))[0].n,
+      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy",
+        { phase, commandFamily: "policy-count" }))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
+        { phase, commandFamily: "operation-count" }))[0].n,
+    });
+    // The initial baseline is captured before any Worker process exists. All
+    // later active phases use browser/API observations only.
+    const d1BeforeNegatives = await protectedD1Counts("owner-d1-initial-denial");
     worker = await startLocalWorker(paths, { testScheduled: true });
     assert.ok(isChromiumSafePort(worker.port),
       `initial Worker port must be Chromium-safe, got ${worker.port}`);
@@ -5268,20 +5287,8 @@ export async function runOwnerE2E() {
     assert.equal(session.data.deployment_generation, paths.generation);
     assert.ok(!JSON.stringify(session.data).includes(token.slice(0, 16)), "session must not reflect the token");
     const oversizedToken = `${await sign()}.${"a".repeat(17000)}`;
-    // Zero-mutation baseline: no namespace/grant/source exists yet, so every
-    // negative below must leave all protected counts exactly unchanged while
-    // denying both the session route and the authorized Library view.
-    const protectedD1Counts = async (phase = "owner-d1-unclassified") => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
-        { phase, commandFamily: "source-count" }))[0].n,
-      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision",
-        { phase, commandFamily: "revision-count" }))[0].n,
-      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy",
-        { phase, commandFamily: "policy-count" }))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
-        { phase, commandFamily: "operation-count" }))[0].n,
-    });
-    const d1BeforeNegatives = await protectedD1Counts("owner-d1-initial-denial");
+    // Zero-mutation proof is reconciled at the first offline boundary below;
+    // no Wrangler/D1 process is started while these denial requests run.
     const goodForTamper = await sign();
     const tamperSegs = goodForTamper.split(".");
     const tamperedPayloadClaims = JSON.parse(decoder.decode(base64UrlDecode(tamperSegs[1])));
@@ -5345,7 +5352,8 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
     }
-    assert.deepEqual(await protectedD1Counts("owner-d1-after-denial"), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
+    // The browser/API denials above remain per-case assertions. Their durable
+    // no-mutation comparison is performed once the Worker is stopped.
     {
       const good = await sign();
       const segs = good.split(".");
@@ -5397,6 +5405,11 @@ export async function runOwnerE2E() {
       }
     }
     receipt.jwt_negatives = `PASS (${negatives.length + 1 + 2 + 1 + bridgeNegatives.length} negatives + ${dupJwksEvidence}, D1 unchanged, evidence: ${negativeEvidence.length} items)`;
+    const identityWorkerPort = worker.port;
+    await worker.stop();
+    worker = undefined;
+    assert.deepEqual(await protectedD1Counts("owner-d1-after-denial"), d1BeforeNegatives,
+      "JWT negatives must cause zero protected D1 mutation");
     const namespace = "e2e-library";
     const revisionRef = "rev-e2e-1";
     const namespaceCommand = { protocol: "eliotr.local-namespace-init.v1", namespace,
@@ -5410,10 +5423,10 @@ export async function runOwnerE2E() {
         // This controlled raw fixture has no source quality mapping; its
         // minimum mirrors the raw admission fixture while production policy stays unchanged.
         minimum_quality_state: "degraded" } };
-    // Setup/replay at the active-runtime boundary: the Worker is running for
-    // identity, so CLI D1 shares SQLite files with Miniflare. Namespace
-    // initialization is one mutation attempt; its exact readback is the only
-    // recovery path for an ambiguous acknowledgement.
+    // Setup/replay at an offline boundary: the identity was verified by the
+    // first Worker, which is now stopped before any CLI D1 mutation/readback.
+    // Namespace initialization remains one mutation attempt; its exact
+    // readback is the only recovery path for an ambiguous acknowledgement.
     const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
@@ -5435,6 +5448,12 @@ export async function runOwnerE2E() {
     assert.equal(grantReplay.policy.generation, 1, "same grant must replay without a new generation");
     const ownerGeneration = namespaceReceipt.ownership.source_owner_generation;
     const bundle = await buildBundleFiles(namespace, ownerGeneration, revisionRef);
+    // Namespace/policy writes above were completed while the first Worker was
+    // offline. Rebind the same reserved port before opening the browser so the
+    // bridge/listener lifecycle has one deliberate restart boundary.
+    worker = await startLocalWorker(paths, { testScheduled: true, port: identityWorkerPort });
+    assert.ok(isChromiumSafePort(worker.port), `namespace restart Worker port must be Chromium-safe, got ${worker.port}`);
+    workerPortEvidence.push(`namespace-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     // Browser-first lifecycle: the real Chromium launches and pairs BEFORE any
     // artifact exists, so every artifact prepare/parts/complete/commit/status
     // call below originates inside Chromium (page.evaluate, same-origin via
@@ -5518,12 +5537,6 @@ export async function runOwnerE2E() {
     // Replay where applicable: the same bearer authorizes twice identically,
     // and prepare with the same idempotency key replays DUPLICATE with the
     // same operation_id and the existing receipt instead of a second operation.
-    const d1CountsForReplay = async (phase = "owner-d1-unclassified") => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
-        { phase, commandFamily: "source-count" }))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
-        { phase, commandFamily: "operation-count" }))[0].n,
-    });
     let imported;
     try {
       imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
@@ -5539,8 +5552,8 @@ export async function runOwnerE2E() {
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
     if (catalogTransportDiagnosticEnabled) {
-      // Diagnostic-only comparison: this reaches the real admitted fixture
-      // before any synchronous Wrangler/D1 CLI readback can intervene.
+      // Diagnostic-only comparison through the active Worker API; no CLI
+      // readback is allowed to intervene in this browser phase.
       await observeCatalogTransport("direct-before-cli", () => workerJson(worker.origin,
         "/api/v1/research/catalog?limit=20", { token, phase: "catalog-probe-before-cli", worker }), worker,
       catalogTransportProbeRecords);
@@ -5554,7 +5567,32 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
-    const countsBeforePrepareReplay = await d1CountsForReplay("owner-d1-replay-before");
+    await settleLedger(playwright.page, playwright);
+    // Capture the exact replay baseline while the Worker is offline. The
+    // duplicate prepare below is browser-only; raw capture uses separate
+    // tables and must not alter either this source count or the imported
+    // operation identity before the baseline is reconciled.
+    const replayWorkerPort = worker.port;
+    await worker.stop();
+    worker = undefined;
+    const replaySourceCountBefore = await d1Query(paths, "CORE_DB",
+      "SELECT COUNT(*) AS n FROM source", { phase: "owner-d1-replay-before", commandFamily: "source-count" });
+    const replayOperationCountBefore = await d1Query(paths, "CORE_DB",
+      "SELECT COUNT(*) AS n FROM bundle_ingest_operation", { phase: "owner-d1-replay-before", commandFamily: "operation-count" });
+    const replayOperationIdentityBefore = await d1Query(paths, "CORE_DB",
+      `SELECT operation_id,principal_ref,idempotency_key,input_fingerprint,source_revision_ref,source_id,state FROM bundle_ingest_operation WHERE operation_id='${imported.operationId.replaceAll("'", "''")}'`,
+      { phase: "owner-d1-replay-before", commandFamily: "bundle-replay-count" });
+    assert.equal(replaySourceCountBefore.length, 1, "replay baseline source count must return one row");
+    assert.equal(replayOperationCountBefore.length, 1, "replay baseline operation count must return one row");
+    assert.equal(replayOperationIdentityBefore.length, 1, "replay baseline must find the imported operation identity");
+    replayBaseline = {
+      sourceCount: replaySourceCountBefore[0].n,
+      operationCount: replayOperationCountBefore[0].n,
+      operationIdentity: replayOperationIdentityBefore[0],
+    };
+    worker = await startLocalWorker(paths, { testScheduled: true, port: replayWorkerPort });
+    assert.equal(worker.port, replayWorkerPort, "replay baseline restart must preserve the paired Worker port");
+    workerPortEvidence.push(`replay-baseline-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -5565,25 +5603,31 @@ export async function runOwnerE2E() {
     assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
     assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
     assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
-    assert.deepEqual(await d1CountsForReplay("owner-d1-replay-after"), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    // The duplicate receipt is the active-phase proof. Its durable
+    // source/operation cardinality is reconciled after Worker stop.
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
-    const sourceRows = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
-    assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist");
-    const sourceId = sourceRows[0].source_id;
-    const revisionRows = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
-    assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
-    const policyRows = await d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
-    assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
-    // Freeze every pre-raw authority row so the new admission cannot rewrite
-    // the original source, owner, admission policy, or read grant.
-    const ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
-    const admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
-    const readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
-    assert.equal(ownerRowsBeforeRaw.length, 1, "authoritative owner row must exist before raw admission");
-    assert.equal(admissionPolicyRowsBeforeRaw.length, 1, "authoritative admission policy row must exist before raw admission");
-    assert.equal(readPolicyRowsBeforeRaw.length, 1, "explicit read policy row must exist before raw admission");
+    // Resolve the pre-raw source identity through the authenticated Worker
+    // route. The old CLI snapshot was a second runtime against live SQLite.
+    const preRawCatalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20",
+      { token, phase: "pre-raw-catalog", worker });
+    assert.equal(preRawCatalog.status, 200, "pre-raw catalog must resolve the imported source through the Worker");
+    const preRawSources = (preRawCatalog.data?.data?.sources ?? []).filter((entry) =>
+      typeof entry.id === "string" && entry.readiness_ref === `readiness:${entry.id}:${revisionRef}`);
+    assert.equal(preRawSources.length, 1, "pre-raw catalog must expose exactly one imported source head");
+    const sourceId = preRawSources[0].id;
+    const preRawRevisions = await workerJson(worker.origin,
+      `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`,
+      { token, phase: "pre-raw-revisions", worker });
+    assert.equal(preRawRevisions.status, 200, "pre-raw revisions must resolve through the Worker");
+    assert.ok(JSON.stringify(preRawRevisions.data).includes(revisionRef),
+      "pre-raw revision route must expose the imported revision");
+    let ownerRowsBeforeRaw;
+    let admissionPolicyRowsBeforeRaw;
+    let readPolicyRowsBeforeRaw;
+    let sourceRows;
+    let revisionRows;
     // Real raw-file owner flow: the PWA selects a UTF-8 filename and sends the
     // file through the paired browser session to the live Worker. Recovery is
     // completed after the existing authenticated reload below, so this phase
@@ -5592,12 +5636,52 @@ export async function runOwnerE2E() {
     rawUpload = await runRawFileUploadOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, ledger,
     });
+    await settleLedger(playwright.page, playwright);
+    const rawFixtureWorkerPort = worker.port;
+    // The browser bridge stays bound across this deliberate offline pause;
+    // Auth's exact-port Worker restart keeps its origin/listener unchanged.
+    await worker.stop();
+    worker = undefined;
+    // This is the true pre-raw source/authority baseline: the capture has
+    // settled, but no conversion seed or normalized admission has run yet.
+    // Keep full rows so the later post-admission comparison proves identity
+    // preservation rather than comparing two post-change snapshots.
+    ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
+    admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
+    readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
+    sourceRows = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    revisionRows = await d1Query(paths, "CORE_DB",
+      `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    assert.equal(sourceRows.length, 1, "pre-raw source baseline must contain the imported source only");
+    assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef),
+      "pre-raw revision baseline must contain the imported revision");
+    if (replayBaseline !== undefined) {
+      const replaySourceCountAfter = await d1Query(paths, "CORE_DB",
+        "SELECT COUNT(*) AS n FROM source", { phase: "owner-d1-replay-after", commandFamily: "source-count" });
+      const replayOperationCountAfter = await d1Query(paths, "CORE_DB",
+        "SELECT COUNT(*) AS n FROM bundle_ingest_operation", { phase: "owner-d1-replay-after", commandFamily: "operation-count" });
+      const replayOperationIdentityAfter = await d1Query(paths, "CORE_DB",
+        `SELECT operation_id,principal_ref,idempotency_key,input_fingerprint,source_revision_ref,source_id,state FROM bundle_ingest_operation WHERE operation_id='${imported.operationId.replaceAll("'", "''")}'`,
+        { phase: "owner-d1-replay-after", commandFamily: "bundle-replay-count" });
+      assert.deepEqual({ sourceCount: replaySourceCountAfter[0]?.n, operationCount: replayOperationCountAfter[0]?.n },
+        { sourceCount: replayBaseline.sourceCount, operationCount: replayBaseline.operationCount },
+        "duplicate prepare must not add a source or ingest operation before raw seed");
+      assert.deepEqual(replayOperationIdentityAfter, [replayBaseline.operationIdentity],
+        "duplicate prepare must preserve the exact imported operation identity");
+    }
     const rawConversionFixture = await seedRawMarkdownConversionFixture(paths, {
       captureId: rawUpload.captureId, contentSha256: rawUpload.expected.digest,
       contentType: rawUpload.expected.type, sizeBytes: rawUpload.expected.bytes.length,
       credentialGeneration: identity.credential_generation, expectedGeneration: paths.generation,
       sourceOwnerGeneration: ownerGeneration,
     });
+    worker = await startLocalWorker(paths, { testScheduled: true, port: rawFixtureWorkerPort });
+    assert.equal(worker.port, rawFixtureWorkerPort, "offline raw fixture restart must preserve the paired Worker port");
+    workerPortEvidence.push(`raw-fixture-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     const rawProcessed = await processRawFileOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
       captureId: rawUpload.captureId, conversionOperationId: rawConversionFixture.operationId, ledger,
@@ -5617,8 +5701,7 @@ export async function runOwnerE2E() {
       sourceRevisionRef: rawProjectionFastSearch.sourceRevisionRef,
       expectedGeneration: paths.generation, credentialGeneration: identity.credential_generation,
     });
-    receipt.exhaustive_workflow_complete = `PASS (PWA EXHAUSTIVE_JOB ${exhaustiveWorkflowComplete.workflowId} reached COMPLETE with settled denominator and owner D1 readback)`;
-    receipt.exhaustive_workflow_complete_d1 = `PASS (workflow ${exhaustiveWorkflowComplete.d1.workflow_id}, job ${exhaustiveWorkflowComplete.d1.job_id}, source revision ${exhaustiveWorkflowComplete.d1.source_revision_ref})`;
+    receipt.exhaustive_workflow_complete = `PASS (PWA EXHAUSTIVE_JOB ${exhaustiveWorkflowComplete.workflowId} reached COMPLETE with settled denominator; D1 readback deferred until Worker stop)`;
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -5654,56 +5737,20 @@ export async function runOwnerE2E() {
     const revisions = await workerJson(worker.origin, `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, { token, phase: "authorized-library-revisions", worker });
     assert.equal(revisions.status, 200, "authorized revision history must succeed");
     assert.ok(JSON.stringify(revisions.data).includes(revisionRef), "revision history must include the admitted revision");
-    const canonicalKey = imported.receipt.normalized_artifact_ref;
+    canonicalKey = imported.receipt.normalized_artifact_ref;
     assert.ok(typeof canonicalKey === "string" && canonicalKey.startsWith("normalized/"),
       "commit receipt must name the canonical immutable EVIDENCE_BUCKET key");
     assert.ok(!canonicalKey.includes("..") && !canonicalKey.includes("//") && canonicalKey.length < 1024,
       "canonical key must stay bounded and traversal-free");
-    const evidenceBucket = await resolveEvidenceBucket(paths);
+    evidenceBucket = await resolveEvidenceBucket(paths);
     const workBucket = await resolveWorkBucket(paths);
     assert.ok(evidenceBucket.includes("evidence"), "evidence bucket name must identify the immutable store");
     assert.ok(workBucket.includes("work"), "work bucket name must identify staging");
     assert.ok(evidenceBucket !== workBucket, "evidence and work buckets must differ");
-    const revisionDetail = await d1Query(paths, "CORE_DB",
-      `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
-      `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
-      `WHERE s.source_namespace_id='${namespace}'`);
-    assert.ok(revisionDetail.some((row) => row.normalized_artifact_ref === canonicalKey &&
-      row.source_revision_ref === revisionRef && row.source_namespace_id === namespace &&
-      row.source_owner_generation === ownerGeneration), "D1 revision must bind the canonical key to owner/namespace/generation");
-    assert.equal(imported.receipt.object_residency_key_digest,
-      revisionDetail.find((row) => row.source_revision_ref === revisionRef)?.object_residency_key_digest,
-      "commit receipt residency digest must match D1");
-    const operationRows = await d1Query(paths, "CORE_DB",
-      `SELECT state, decision_receipt_ref, promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${imported.operationId}'`);
-    assert.equal(operationRows.length, 1, "authoritative ingest operation must exist");
-    assert.equal(operationRows[0].state, "COMMITTED", "operation must be COMMITTED");
-    assert.ok(typeof operationRows[0].decision_receipt_ref === "string" && operationRows[0].decision_receipt_ref.length > 0,
-      "admission receipt ref must exist");
-    assert.ok(typeof operationRows[0].promotion_receipt_ref === "string" && operationRows[0].promotion_receipt_ref.length > 0,
-      "promotion receipt ref must exist");
     const expectedManifestBytes = bundle.files["manifest.json"];
     assert.ok(expectedManifestBytes && expectedManifestBytes.length > 0, "expected manifest bytes must exist");
     const expectedManifestSha = bundle.hashes["manifest.json"];
-    const evidenceGet = await tryR2ObjectGet(paths, evidenceBucket, canonicalKey);
-    assert.equal(evidenceGet.ok, true, `exact EVIDENCE_BUCKET object must be readable: ${canonicalKey}`);
-    const evidenceBytes = Buffer.from(evidenceGet.output ?? "", "utf8");
-    assert.ok(evidenceBytes.length > 0, "EVIDENCE_BUCKET object body must be non-empty");
-    assert.equal(evidenceBytes.length, expectedManifestBytes.length, "EVIDENCE_BUCKET size must match admitted manifest size");
-    assert.equal(await sha256Hex(evidenceBytes), expectedManifestSha, "EVIDENCE_BUCKET byte digest must match admitted manifest sha");
-    assert.equal(JSON.parse(decoder.decode(evidenceBytes)).protocol, "eliotr.normalized.v1",
-      "EVIDENCE_BUCKET manifest must carry the normalized protocol");
-    const workGet = await tryR2ObjectGet(paths, workBucket, canonicalKey);
-    assert.equal(workGet.ok, false, "canonical immutable key must not exist in WORK_BUCKET staging");
-    const canonicalKeyForReceipt = canonicalKey;
-    const evidenceMeta = {
-      bucket: evidenceBucket, key: canonicalKeyForReceipt, sha256: expectedManifestSha,
-      size_bytes: evidenceBytes.length, content_type: "application/json; charset=utf-8",
-      source_namespace_id: namespace, source_owner_generation: ownerGeneration,
-      admission_receipt_ref: operationRows[0].decision_receipt_ref,
-      promotion_receipt_ref: operationRows[0].promotion_receipt_ref,
-    };
-    receipt.evidence_readback = "PASS";
+    let evidenceMeta;
     receipt.authorized_library = "PASS";
     // Post-import retrieval through the real browser: reload the paired PWA so
     // its same-origin catalog fetch (closed over by the phase ledger below)
@@ -5771,6 +5818,22 @@ export async function runOwnerE2E() {
     }
     receipt.network_ledger_phases.authed = summarizePhaseLedger(playwright);
     playwright.resetLedger();
+    // Establish the JWT matrix no-mutation baseline only after all positive
+    // admission/retrieval work is complete. The matrix runs through the real
+    // browser after an exact-port restart; its post-matrix stop compares the
+    // same protected rows and admitted evidence object before reconciliation.
+    const jwtMatrixWorkerPort = worker.port;
+    await worker.stop();
+    worker = undefined;
+    jwtMatrixBaseline = {
+      protected: await protectedD1Counts("owner-d1-jwt-matrix-baseline"),
+      evidence: await tryR2ObjectGet(paths, evidenceBucket, canonicalKey),
+    };
+    assert.equal(jwtMatrixBaseline.evidence.ok, true,
+      "JWT matrix baseline must prove the admitted evidence object is present");
+    worker = await startLocalWorker(paths, { testScheduled: true, port: jwtMatrixWorkerPort });
+    assert.equal(worker.port, jwtMatrixWorkerPort, "JWT matrix restart must preserve the paired Worker port");
+    workerPortEvidence.push(`jwt-matrix-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     // Browser-driven JWT matrix: expired, wrong audience, wrong issuer,
     // invalid signature, tampered payload and unknown kid, each driven through
     // Chromium page.evaluate fetch same-origin at the Worker with exact HTTP
@@ -5779,9 +5842,6 @@ export async function runOwnerE2E() {
     // never values. Replay is covered above (identical bearer + DUPLICATE
     // prepare replay with zero new rows).
     {
-      const matrixBefore = await protectedD1Counts("owner-d1-jwt-matrix-baseline");
-      const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
-      assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
       playwright.registerOp({ kind: "harness-navigation", cause: "goto", scope: "document",
         sourceDoc: playwright.currentDocId(), targetDoc: playwright.currentDocId() + 1,
@@ -5820,12 +5880,8 @@ export async function runOwnerE2E() {
         assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
         assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
           `browser ${item.name} must leak no catalog rows`);
-        assert.deepEqual(await protectedD1Counts("owner-d1-jwt-matrix-after-denial"), matrixBefore,
-          `browser ${item.name} must cause zero protected D1 mutation`);
         matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
       }
-      assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
-        "browser JWT matrix must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
       {
         const matrixSpec = unauthNetworkSpec(worker.origin);
@@ -5834,17 +5890,70 @@ export async function runOwnerE2E() {
           { ...matrixSpec, workerOrigins: trackOrigin(worker.origin) });
       }
       receipt.network_ledger_phases.jwt_matrix = summarizePhaseLedger(playwright);
-      receipt.browser_jwt_matrix = `PASS (${matrixCases.length} browser cases, D1/R2 unchanged, evidence: ${matrixEvidence.join(",")})`;
+      receipt.browser_jwt_matrix = `PASS (${matrixCases.length} browser cases, D1/R2 unchanged by post-stop reconciliation, evidence: ${matrixEvidence.join(",")})`;
       playwright.resetLedger();
     }
-    // Raw FAST_SEARCH and Q8 can legitimately append scope snapshots. Freeze
-    // the complete ordered table only after those stages and before stopping
-    // the Worker; restart must preserve this exact persisted set byte-for-byte.
-    const scopeSnapshotRowsBeforeRestart = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
+    // Raw FAST_SEARCH and Q8 can legitimately append scope snapshots. The full
+    // table is captured immediately after this Worker stops and compared again
+    // at the existing rotation stop, preserving the real restart boundary.
     const stoppedOrigin = worker.origin;
     const stoppedGeneration = paths.generation;
     await worker.stop();
     worker = undefined;
+    if (jwtMatrixBaseline !== undefined) {
+      assert.deepEqual(await protectedD1Counts("owner-d1-jwt-matrix-after-denial"), jwtMatrixBaseline.protected,
+        "JWT matrix denials must not mutate protected D1 rows");
+      const jwtMatrixEvidenceAfter = await tryR2ObjectGet(paths, evidenceBucket, canonicalKey);
+      assert.equal(jwtMatrixEvidenceAfter.ok, true,
+        "JWT matrix denials must preserve the admitted evidence object");
+    }
+    // All authoritative CLI/R2 reconciliation starts only after the owning
+    // Worker has closed. This is also the exact pre-restart snapshot boundary.
+    const scopeSnapshotRowsBeforeRestart = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
+    const exhaustiveD1 = await exhaustiveWorkflowComplete.readAfterWorkerStop();
+    receipt.exhaustive_workflow_complete_d1 = `PASS (workflow ${exhaustiveD1.workflow_id}, job ${exhaustiveD1.job_id}, source revision ${exhaustiveD1.source_revision_ref})`;
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
+      ownerRowsBeforeRaw, "offline readback must preserve the exact namespace owner row");
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
+      admissionPolicyRowsBeforeRaw, "offline readback must preserve the exact admission policy snapshot");
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
+      readPolicyRowsBeforeRaw, "offline readback must preserve the exact explicit read grant");
+    const revisionDetail = await d1Query(paths, "CORE_DB",
+      `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
+      `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
+      `WHERE s.source_namespace_id='${namespace}'`);
+    assert.ok(revisionDetail.some((row) => row.normalized_artifact_ref === canonicalKey &&
+      row.source_revision_ref === revisionRef && row.source_namespace_id === namespace &&
+      row.source_owner_generation === ownerGeneration), "D1 revision must bind the canonical key to owner/namespace/generation");
+    assert.equal(imported.receipt.object_residency_key_digest,
+      revisionDetail.find((row) => row.source_revision_ref === revisionRef)?.object_residency_key_digest,
+      "commit receipt residency digest must match D1");
+    const operationRows = await d1Query(paths, "CORE_DB",
+      `SELECT state, decision_receipt_ref, promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${imported.operationId}'`);
+    assert.equal(operationRows.length, 1, "authoritative ingest operation must exist after offline replay readback");
+    assert.equal(operationRows[0].state, "COMMITTED", "operation must be COMMITTED");
+    assert.ok(typeof operationRows[0].decision_receipt_ref === "string" && operationRows[0].decision_receipt_ref.length > 0,
+      "admission receipt ref must exist");
+    assert.ok(typeof operationRows[0].promotion_receipt_ref === "string" && operationRows[0].promotion_receipt_ref.length > 0,
+      "promotion receipt ref must exist");
+    const evidenceGet = await tryR2ObjectGet(paths, evidenceBucket, canonicalKey);
+    assert.equal(evidenceGet.ok, true, `exact EVIDENCE_BUCKET object must be readable after Worker stop: ${canonicalKey}`);
+    const evidenceBytes = Buffer.from(evidenceGet.output ?? "", "utf8");
+    assert.ok(evidenceBytes.length > 0, "EVIDENCE_BUCKET object body must be non-empty");
+    assert.equal(evidenceBytes.length, expectedManifestBytes.length, "EVIDENCE_BUCKET size must match admitted manifest size");
+    assert.equal(await sha256Hex(evidenceBytes), expectedManifestSha, "EVIDENCE_BUCKET byte digest must match admitted manifest sha");
+    assert.equal(JSON.parse(decoder.decode(evidenceBytes)).protocol, "eliotr.normalized.v1",
+      "EVIDENCE_BUCKET manifest must carry the normalized protocol");
+    const workGet = await tryR2ObjectGet(paths, workBucket, canonicalKey);
+    assert.equal(workGet.ok, false, "canonical immutable key must not exist in WORK_BUCKET staging");
+    evidenceMeta = {
+      bucket: evidenceBucket, key: canonicalKey, sha256: expectedManifestSha,
+      size_bytes: evidenceBytes.length, content_type: "application/json; charset=utf-8",
+      source_namespace_id: namespace, source_owner_generation: ownerGeneration,
+      admission_receipt_ref: operationRows[0].decision_receipt_ref,
+      promotion_receipt_ref: operationRows[0].promotion_receipt_ref,
+    };
+    receipt.evidence_readback = "PASS";
     await assert.rejects(fetchWorkerResponseWithDiagnostics(globalThis.fetch, stoppedOrigin, "/healthz",
       { phase: "post-restart-stopped-probe", timeoutMs: 5000 }),
       /fetch failed|ECONNREFUSED|aborted/, "stopped Worker port must be closed (owned process removed)");
@@ -5858,14 +5967,6 @@ export async function runOwnerE2E() {
     assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
-    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
-      ownerRowsBeforeRaw, "restart must preserve the exact namespace owner row");
-    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
-      admissionPolicyRowsBeforeRaw, "restart must preserve the exact admission policy snapshot");
-    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
-      readPolicyRowsBeforeRaw, "restart must preserve the exact explicit read grant");
-    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
-      scopeSnapshotRowsBeforeRestart, "restart must preserve the exact scope snapshots");
     const sourceRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
     const revisionRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.deepEqual(sourceRowsAfterRaw.filter((row) => sourceRows.some((original) => original.source_id === row.source_id)),
@@ -6221,7 +6322,6 @@ export async function runOwnerE2E() {
     // token is allowed, and Chromium itself re-pairs with the v2 identity and
     // retrieves the admitted Library source. Zero protected mutation throughout.
     {
-      const rotationBefore = await protectedD1Counts("owner-d1-rotation-baseline");
       const ROTATION_KID = "e2e-key-2";
       const v2keys = await createOwnerE2EKey();
       const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
@@ -6235,6 +6335,9 @@ export async function runOwnerE2E() {
       bridge = undefined;
       await worker.stop();
       worker = undefined;
+      rotationBefore = await protectedD1Counts("owner-d1-rotation-baseline");
+      assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
+        scopeSnapshotRowsBeforeRestart, "restart must preserve the exact scope snapshots");
       await prepareLocal({ stateDirectory: directory, log: () => {} });
       await applyOwnerE2EProfile(paths, jwks.url);
       worker = await startLocalWorker(paths);
@@ -6257,7 +6360,6 @@ export async function runOwnerE2E() {
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
-      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
@@ -6317,9 +6419,6 @@ export async function runOwnerE2E() {
         { correlation: "e2e-rotation/v2-revisions-browser" });
       assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
-      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation re-pairing must cause zero D1 drift");
-      assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
-        "rotation must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
       {
         const rotationOrigins = [worker.origin, bridge.origin];
@@ -6595,6 +6694,14 @@ export async function runOwnerE2E() {
         const readback = assertWorkflowJobReadback(bindings, jobs);
         receipt.exhaustive_workflow_d1 = `PASS (${readback.bindingCount} browser workflow bindings, ${readback.jobRowCount} canonical retrieval job rows, owner identity and CANCEL_REQUESTED read back after Worker stop)`;
       } catch (error) { fail(`workflow D1 readback: ${error?.message ?? error}`); }
+      if (rotationBefore !== undefined) {
+        try {
+          assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore,
+            "rotation denial/allowance must cause zero protected D1 drift");
+          assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
+            "rotation must not disturb the admitted evidence object");
+        } catch (error) { fail(`rotation offline readback: ${error?.message ?? error}`); }
+      }
     });
     await runStep("playwright.close", async () => { try { await playwright?.close(); } catch (error) { fail(`playwright.close: ${error?.message ?? error}`); } });
     await runStep("jwks.close", async () => {
