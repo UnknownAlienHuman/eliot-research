@@ -282,6 +282,11 @@ async function parseInput(bytes: Uint8Array): Promise<EvidenceFreezeStageInput> 
     model_profile_definition: modelProfileDefinition });
 }
 
+/** Decode a committed RECONCILE payload at a later read-only stage. */
+export async function decodeEvidenceFreezeStageInput(bytes: Uint8Array): Promise<EvidenceFreezeStageInput> {
+  return parseInput(bytes);
+}
+
 function refKey(value: VersionedRef): string {
   return `${value.id}:${value.revision}`;
 }

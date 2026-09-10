@@ -7,6 +7,7 @@ import {
   fail,
   type MonotoneHandlerFactory,
   type WorkflowStageHandler,
+  createEvidenceFreezeSynthesisHandler,
 } from "@eliotr/cloudflare-research";
 import {
   createRetrieveBranchesStageHandler,
@@ -37,6 +38,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
+      readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -90,6 +92,9 @@ export function createResearchStageHandlerFactory(
     if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION &&
         (stage === "RECONCILE" || stage === "FREEZE_EVIDENCE")) {
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
+    }
+    if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      return mode.synthesis === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createEvidenceFreezeSynthesisHandler(mode.synthesis).handler;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
