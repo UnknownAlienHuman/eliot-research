@@ -425,7 +425,7 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-async function d1Query(paths, binding, sql, { deadlineMs = 15000 } = {}) {
+async function d1Query(paths, binding, sql, { deadlineMs = 15000, hardDeadlineMs } = {}) {
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -433,7 +433,9 @@ async function d1Query(paths, binding, sql, { deadlineMs = 15000 } = {}) {
   // While the Worker is running, Worker/API readback (catalog/revisions/
   // session) is the primary active-runtime signal; CLI reads below reconcile
   // the same durable state and must replay exactly after restart.
-  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocalAsync, deadlineMs });
+  const retryOptions = { execute: executeLocalAsync, deadlineMs };
+  if (hardDeadlineMs !== undefined) retryOptions.hardDeadlineMs = hardDeadlineMs;
+  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
   let batches;
   try {
     batches = JSON.parse(output);
@@ -579,12 +581,13 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
     deadline_ms: deadlineMs,
     last_successful_observation: rawProjectionObservation(latest, sourceRevisionRef),
     original_error: originalError ? {
-      name: typeof originalError.name === "string" ? originalError.name.slice(0, 64) : "Error",
+      name: "LocalD1CommandTimeout",
       code: String(originalError?.cause?.code ?? originalError?.code ?? "unknown").slice(0, 64),
       message: "D1 CLI readback command timed out",
     } : null,
   };
-  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms)`, { cause });
+  const observation = JSON.stringify(cause.last_successful_observation).slice(0, 900);
+  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); phase=${phase}; observation=${observation}`, { cause });
   error.code = "RAW_PROJECTION_DEADLINE_EXCEEDED";
   return error;
 }
@@ -607,7 +610,7 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
       latest = await readbackWithBoundedRetry("raw-projection-state", () => {
         const remainingMs = deadlineMs - (Date.now() - startedAt);
         if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
-        return d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) });
+        return d1Query(paths, "CORE_DB", query, { deadlineMs: remainingMs, hardDeadlineMs: remainingMs });
       }, {
         attempts: 2, delayMs: 100,
       });
@@ -647,6 +650,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(preRows[0].payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
   assert.equal(preRows[0].principal_ref, "e2e-owner");
   const rawProjectionPhase = "raw-projection-scheduled-and-polling";
+  process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
   const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
   const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
     { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
