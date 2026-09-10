@@ -530,7 +530,67 @@ export async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayM
   throw lastError;
 }
 
-async function waitForRawProjectionTerminal(paths, sourceRevisionRef, { deadlineMs = 20000, intervalMs = 250 } = {}) {
+function rawProjectionObservation(rows, sourceRevisionRef) {
+  const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : undefined;
+  const bounded = (value, max = 256) => {
+    if (typeof value !== "string" || value.length === 0 || value.length > max || !/^[A-Za-z0-9._:@/-]+$/u.test(value)) return null;
+    return value;
+  };
+  const boundedNumberOrIdentifier = (value, max = 256) => Number.isSafeInteger(value) ? value : bounded(value, max);
+  let reasonCodes = null;
+  if (row?.reason_codes_json !== undefined && row?.reason_codes_json !== null) {
+    try {
+      const parsed = JSON.parse(String(row.reason_codes_json));
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+        reasonCodes = parsed.slice(0, 16).map((value) => bounded(value, 96)).filter((value) => value !== null);
+      }
+    } catch {
+      reasonCodes = null;
+    }
+  }
+  return {
+    source_revision_ref: bounded(sourceRevisionRef),
+    row_count: Array.isArray(rows) ? Math.min(rows.length, 2) : 0,
+    outbox_id: bounded(row?.outbox_id),
+    intent_id: bounded(row?.intent_id),
+    intent_revision: boundedNumberOrIdentifier(row?.intent_revision, 64),
+    job_id: bounded(row?.job_id),
+    projection_generation: boundedNumberOrIdentifier(row?.projection_generation, 64),
+    terminal_receipt_ref: bounded(row?.terminal_receipt_ref),
+    outbox_state: bounded(row?.state, 64),
+    job_state: bounded(row?.job_state, 64),
+    current_stage: bounded(row?.current_stage, 96),
+    projection_state: bounded(row?.projection_state, 64),
+    reason_codes: reasonCodes,
+  };
+}
+
+function isRawProjectionD1Timeout(error) {
+  const code = error?.cause?.code ?? error?.code;
+  return code === "ETIMEDOUT" || error?.message === "Local D1 command deadline expired" ||
+    error?.message === "raw projection polling deadline expired before D1 readback";
+}
+
+function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError }) {
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const cause = {
+    phase,
+    elapsed_ms: elapsedMs,
+    deadline_ms: deadlineMs,
+    last_successful_observation: rawProjectionObservation(latest, sourceRevisionRef),
+    original_error: originalError ? {
+      name: typeof originalError.name === "string" ? originalError.name.slice(0, 64) : "Error",
+      code: String(originalError?.cause?.code ?? originalError?.code ?? "unknown").slice(0, 64),
+      message: "D1 CLI readback command timed out",
+    } : null,
+  };
+  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms)`, { cause });
+  error.code = "RAW_PROJECTION_DEADLINE_EXCEEDED";
+  return error;
+}
+
+async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
+  { deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling" } = {}) {
   const startedAt = Date.now();
   const escapedRevision = sqlText(sourceRevisionRef);
   const query = `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
@@ -543,13 +603,20 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef, { deadline
     `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
   let latest = [];
   while (Date.now() - startedAt < deadlineMs) {
-    latest = await readbackWithBoundedRetry("raw-projection-state", () => {
-      const remainingMs = deadlineMs - (Date.now() - startedAt);
-      if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
-      return d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) });
-    }, {
-      attempts: 2, delayMs: 100,
-    });
+    try {
+      latest = await readbackWithBoundedRetry("raw-projection-state", () => {
+        const remainingMs = deadlineMs - (Date.now() - startedAt);
+        if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
+        return d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) });
+      }, {
+        attempts: 2, delayMs: 100,
+      });
+    } catch (error) {
+      if (isRawProjectionD1Timeout(error) && Date.now() - startedAt >= deadlineMs) {
+        throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError: error });
+      }
+      throw error;
+    }
     if (latest.length !== 1) {
       throw new Error(`raw projection must retain one projection outbox identity, got ${latest.length}`);
     }
@@ -562,7 +629,7 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef, { deadline
     }
     await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
   }
-  throw new Error(`raw projection did not reach terminal state within ${deadlineMs}ms: ${JSON.stringify(latest).slice(0, 1200)}`);
+  throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest });
 }
 
 async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, sourceRevisionRef, expectedGeneration }) {
@@ -579,13 +646,14 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(preRows[0].payload_ref, sourceRevisionRef);
   assert.equal(preRows[0].payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
   assert.equal(preRows[0].principal_ref, "e2e-owner");
+  const rawProjectionPhase = "raw-projection-scheduled-and-polling";
   const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
   const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
-    { phase: "raw-projection-scheduled", worker, timeoutMs: 5000 });
+    { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
   assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
   ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
     correlation: "e2e-raw-projection/scheduled", token_present: false });
-  const terminal = await waitForRawProjectionTerminal(paths, sourceRevisionRef);
+  const terminal = await waitForRawProjectionTerminal(paths, sourceRevisionRef, { phase: rawProjectionPhase });
   assert.equal(terminal.state, "SENT", "raw projection outbox must retain SENT after Queue delivery");
   assert.equal(terminal.outbox_id, preRows[0].outbox_id, "Queue delivery must retain the same outbox identity");
   assert.equal(terminal.intent_id, preRows[0].intent_id, "Queue delivery must retain the same projection intent");
