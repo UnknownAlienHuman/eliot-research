@@ -11,6 +11,7 @@ import type { RetrievalRequest } from "./ports.js";
 import {
   canonicalRetrievalJson,
   createD1RetrievalResultStore,
+  createD1ScopeProfilePort,
   createD1RetrievalTracePort,
   createD1ScopePorts,
   type RetrievalQueryAccess,
@@ -315,6 +316,43 @@ describe("Q3 D1 query persistence over migration 0021", () => {
     ).get() as { trace_json: string; trace_digest: string };
     expect(trace.trace_json).toBe(canonicalRetrievalJson(result.trace));
     expect(trace.trace_digest).toBe(await shaHex(trace.trace_json));
+  });
+
+  it("loads a persisted scope profile and refuses absent or malformed readback", async () => {
+    const { d1, raw } = openDatabase();
+    const scope = scopeFixture();
+    seedAuthority(raw, scope, true);
+    const profile = { version: "retrieval-scope-v1", max_sources: 64, max_results: 16 } as const;
+    const port = createD1ScopeProfilePort(d1, () => CREATED);
+    await port.recordBinding(scope, profile);
+    await expect(port.loadBinding(scope)).resolves.toEqual(profile);
+
+    const absent = await queryError(port.loadBinding(scopeFixture({ snapshot_id: "profile-absent" })));
+    expect(absent.code).toBe("RETRIEVAL_RESOLUTION_UNCERTAIN");
+    const malformed: RetrievalQueryD1 = {
+      prepare(sql) {
+        const original = d1.prepare(sql);
+        return {
+          bind(...values: unknown[]) {
+            const bound = original.bind(...values);
+            return {
+              async first<T>() {
+                const row = await bound.first<T>();
+                if (row !== null && sql.startsWith("SELECT profile_version")) {
+                  return { ...(row as T & { readonly max_results: number }), max_results: 0 } as T;
+                }
+                return row;
+              },
+              all: <T>() => bound.all<T>(),
+              run: () => bound.run(),
+            };
+          },
+        };
+      },
+    };
+    const corrupt = await queryError(createD1ScopeProfilePort(malformed).loadBinding(scope));
+    expect(corrupt.code).toBe("RETRIEVAL_RESOLUTION_UNCERTAIN");
+    expect(corrupt.retryable).toBe(true);
   });
 
   it("rejects a replay whose result digest no longer matches its stored bytes", async () => {
