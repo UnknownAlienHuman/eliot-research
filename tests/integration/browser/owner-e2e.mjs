@@ -5126,7 +5126,6 @@ export async function runOwnerE2E() {
     assert.equal(paths.directory, directory, "isolated state must use the fresh directory");
     assert.ok(paths.persist.startsWith(directory), "persisted D1/R2 state must live under the isolated directory");
     await applyOwnerE2EProfile(paths, jwks.url);
-    await installLocalCancellationSeam(paths, { query: cancellationQuery });
     const ledgers = await verifyMigrationLedgers(paths);
     assert.ok(ledgers.CORE_DB > 0 && ledgers.SEARCH_DB > 0, "both migration streams must be applied");
     receipt.isolated_setup = "PASS";
@@ -5939,6 +5938,7 @@ export async function runOwnerE2E() {
     assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
+    await installLocalCancellationSeam(paths, { query: cancellationQuery });
     worker = await startLocalWorker(paths);
     assert.ok(isChromiumSafePort(worker.port),
       `restart Worker port must be Chromium-safe, got ${worker.port}`);

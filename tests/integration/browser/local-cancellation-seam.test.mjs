@@ -7,6 +7,7 @@ import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
 
 test("cancellation seam is isolated and selects only the exact fixture query", async () => {
   const directory = await mkdtemp(resolve(tmpdir(), "eliotr-cancellation-seam-test-"));
+  const wrongDirectory = await mkdtemp(resolve(tmpdir(), "eliotr-cancellation-seam-wrong-"));
   try {
     const productionMain = resolve(import.meta.dirname, "../../../apps/eliotr-core/src/index.ts");
     const configPath = resolve(directory, "wrangler.json");
@@ -23,7 +24,16 @@ test("cancellation seam is isolated and selects only the exact fixture query", a
     assert.match(source, /waitForEvent\(CANCELLATION_EVENT, \{ type: CANCELLATION_EVENT \}\)/u);
     assert.match(source, /export default production/u);
     assert.ok(!source.includes("idempotency-key"), "the seam must not add a public request selector");
+
+    const wrongConfig = resolve(wrongDirectory, "wrangler.json");
+    await writeFile(wrongConfig, `${JSON.stringify({ name: "eliotr-core-local", main: resolve(import.meta.dirname, "../../../apps/eliotr-core/src/not-index.ts") })}\n`);
+    await assert.rejects(
+      installLocalCancellationSeam({ config: wrongConfig, directory: wrongDirectory }, { query }),
+      /exact production Worker entrypoint/u,
+      "a noncanonical config must be rejected before generating a wrapper",
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
+    await rm(wrongDirectory, { recursive: true, force: true });
   }
 });
