@@ -115,7 +115,61 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
     const originalFetch = window.fetch;
     const state = { phase: "waiting", status: undefined, bodyBase64: undefined, errorCode: undefined };
     let matched = false;
+    let disposed = false;
+    let activeReader;
+    const captureLimit = 512 * 1024;
+    const captureBody = async (clone) => {
+      let reader;
+      try {
+        reader = clone?.body?.getReader?.();
+        if (reader === undefined || typeof reader.read !== "function") throw new Error("body stream unavailable");
+        activeReader = reader;
+        const chunks = [];
+        let totalBytes = 0;
+        for (;;) {
+          if (disposed) {
+            try { await reader.cancel?.(); } catch { /* disposal owns the response */ }
+            return;
+          }
+          const part = await reader.read();
+          if (disposed) {
+            try { await reader.cancel?.(); } catch { /* disposal owns the response */ }
+            return;
+          }
+          if (part?.done === true) break;
+          const value = part?.value;
+          if (value === undefined || value === null || typeof value.byteLength !== "number") throw new Error("invalid body chunk");
+          const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+          if (totalBytes + chunk.byteLength > captureLimit) {
+            try { await reader.cancel?.(); } catch { /* overflow still fails the capture */ }
+            throw new Error("overflow");
+          }
+          chunks.push(chunk);
+          totalBytes += chunk.byteLength;
+        }
+        activeReader = undefined;
+        if (disposed) return;
+        const bytes = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        if (disposed) return;
+        const bodyText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        JSON.parse(bodyText);
+        if (disposed) return;
+        let binary = "";
+        for (let chunkOffset = 0; chunkOffset < bytes.byteLength; chunkOffset += 0x8000) {
+          binary += String.fromCharCode(...bytes.subarray(chunkOffset, Math.min(chunkOffset + 0x8000, bytes.byteLength)));
+        }
+        if (disposed) return;
+        state.bodyBase64 = btoa(binary);
+        state.phase = "complete";
+      } catch {
+        activeReader = undefined;
+        if (!disposed) { state.phase = "error"; state.errorCode = "BODY_CAPTURE_FAILED"; }
+      }
+    };
     const wrappedFetch = function (...args) {
+      if (disposed) return Reflect.apply(originalFetch, this, args);
       let requestUrl;
       let requestMethod;
       try {
@@ -129,49 +183,51 @@ async function beginRawResponseCapture(page, method, path, expectedStatus) {
         requestUrl.pathname === expectedPath && requestUrl.search === "";
       if (!matches) return Reflect.apply(originalFetch, this, args);
       if (matched) {
-        state.phase = "error";
-        state.errorCode = "DUPLICATE_RAW_RESPONSE";
+        if (!disposed) {
+          state.phase = "error";
+          state.errorCode = "DUPLICATE_RAW_RESPONSE";
+        }
         return Reflect.apply(originalFetch, this, args);
       }
       matched = true;
       let responsePromise;
       try { responsePromise = Reflect.apply(originalFetch, this, args); }
       catch (error) {
-        state.phase = "error"; state.errorCode = "FETCH_FAILED";
+        if (!disposed) { state.phase = "error"; state.errorCode = "FETCH_FAILED"; }
         throw error;
       }
       return Promise.resolve(responsePromise).then((response) => {
+        if (disposed) return response;
         state.status = response.status;
         let responseUrl;
         try { responseUrl = new URL(response.url, location.href); } catch { responseUrl = undefined; }
         if (response.redirected || response.type === "opaqueredirect" || responseUrl === undefined ||
             responseUrl.origin !== location.origin || responseUrl.pathname !== expectedPath || responseUrl.search !== "") {
-          state.phase = "error"; state.errorCode = "RESPONSE_IDENTITY_MISMATCH"; return response;
+          if (!disposed) { state.phase = "error"; state.errorCode = "RESPONSE_IDENTITY_MISMATCH"; }
+          return response;
         }
         state.phase = "reading";
         let clone;
         try { clone = response.clone(); }
         catch { state.phase = "error"; state.errorCode = "CLONE_FAILED"; return response; }
-        void clone.arrayBuffer().then((buffer) => {
-          if (buffer.byteLength > 512 * 1024) throw new Error("overflow");
-          const bytes = new Uint8Array(buffer);
-          const bodyText = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-          JSON.parse(bodyText);
-          let binary = "";
-          for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
-            binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.byteLength)));
-          }
-          state.bodyBase64 = btoa(binary);
-          state.phase = "complete";
-        }).catch(() => { state.phase = "error"; state.errorCode = "BODY_CAPTURE_FAILED"; });
-        if (response.status !== status) state.errorCode = "STATUS_MISMATCH";
+        void captureBody(clone);
+        if (!disposed && response.status !== status) state.errorCode = "STATUS_MISMATCH";
         return response;
-      }, (error) => { state.phase = "error"; state.errorCode = "FETCH_FAILED"; throw error; });
+      }, (error) => {
+        if (!disposed) { state.phase = "error"; state.errorCode = "FETCH_FAILED"; }
+        throw error;
+      });
     };
     window.fetch = wrappedFetch;
     window.__eliotrRawResponseCapture = {
       state,
-      dispose: () => {
+      dispose: async () => {
+        disposed = true;
+        const reader = activeReader;
+        activeReader = undefined;
+        if (reader !== undefined && typeof reader.cancel === "function") {
+          try { await reader.cancel(); } catch { /* disposal is best effort after page settlement */ }
+        }
         if (window.fetch === wrappedFetch) window.fetch = originalFetch;
         state.bodyBase64 = undefined;
         delete window.__eliotrRawResponseCapture;
@@ -222,19 +278,20 @@ function assertRawEnvelope(value, expectedGeneration, expected) {
 
 export async function waitForRawResponse(page, method, action, path = "/api/v1/ingest/raw", expectedStatus = 200) {
   const admissionDiagnostic = await beginRawAdmissionDiagnostic(page, path);
-  const browserCapture = await beginRawResponseCapture(page, method, path, expectedStatus);
-  const expectedOrigin = (() => {
-    try { return new URL(page.url()).origin; } catch { return undefined; }
-  })();
-  const mainFrame = typeof page.mainFrame === "function" ? page.mainFrame() : undefined;
+  let browserCapture = false;
   try {
+    browserCapture = await beginRawResponseCapture(page, method, path, expectedStatus);
+    const expectedOrigin = (() => {
+      try { return new URL(page.url()).origin; } catch { return undefined; }
+    })();
+    const mainFrame = typeof page.mainFrame === "function" ? page.mainFrame() : undefined;
     const responsePromise = page.waitForResponse((response) => {
       try {
         const request = response.request();
         const responseUrl = new URL(response.url());
         if (expectedOrigin !== undefined && responseUrl.origin !== expectedOrigin) return false;
         if (mainFrame !== undefined && typeof request.frame === "function" && request.frame() !== mainFrame) return false;
-        return request.method() === method && responseUrl.pathname === path;
+        return request.method() === method && responseUrl.pathname === path && responseUrl.search === "";
       } catch { return false; }
     }, { timeout: 30000 });
     const snapshotPromise = responsePromise.then(async (response) => {

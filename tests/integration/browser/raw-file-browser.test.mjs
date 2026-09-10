@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { waitForRawResponse } from "./raw-file-browser.mjs";
-/* global Buffer:readonly, Response:readonly, setTimeout:readonly */
+/* global Buffer:readonly, Response:readonly, TextEncoder:readonly, setTimeout:readonly */
 
 const rawPath = "/api/v1/ingest/raw";
 const rawUrl = `http://127.0.0.1:4321${rawPath}`;
@@ -108,6 +108,44 @@ test("uses the actual page-side clone when the CDP response body is unavailable"
     assert.equal(globalThis.window.seenFetch.args[0], rawPath);
     assert.equal(globalThis.window.__eliotrRawResponseCapture, undefined);
   } finally { fixture.page.restore(); }
+});
+
+test("reads clone streams incrementally, preserves split UTF-8, and cancels overflow", async (t) => {
+  await t.test("split UTF-8", async () => {
+    const body = new TextEncoder().encode(JSON.stringify({ data: { protocol: "eliotr.raw-file-capture.v1", label: "naïve" } }));
+    const splitAt = body.findIndex((value, index) => value >= 0x80 && index > 0);
+    let offset = 0;
+    const fixture = cloneCaptureFixture({ responseFactory: () => ({
+      status: 200, url: rawUrl, type: "basic", redirected: false,
+      clone: () => ({ body: { getReader: () => ({
+        read: async () => {
+          if (offset === 0) { const value = body.subarray(0, splitAt + 1); offset = splitAt + 1; return { done: false, value }; }
+          if (offset < body.byteLength) { const value = body.subarray(offset); offset = body.byteLength; return { done: false, value }; }
+          return { done: true, value: undefined };
+        },
+        cancel: async () => {},
+      }) } }),
+    }) });
+    try {
+      const snapshot = await waitForRawResponse(fixture.page, "POST", fixture.action, rawPath);
+      assert.equal(snapshot.payload.data.label, "naïve");
+    } finally { fixture.page.restore(); }
+  });
+  await t.test("overflow cancels the reader", async () => {
+    const oversized = new Uint8Array(512 * 1024 + 1);
+    let cancelCalls = 0;
+    const fixture = cloneCaptureFixture({ responseFactory: () => ({
+      status: 200, url: rawUrl, type: "basic", redirected: false,
+      clone: () => ({ body: { getReader: () => ({
+        read: async () => ({ done: false, value: oversized }),
+        cancel: async () => { cancelCalls += 1; },
+      }) } }),
+    }) });
+    try {
+      await assert.rejects(waitForRawResponse(fixture.page, "POST", fixture.action, rawPath), /BODY_CAPTURE_FAILED/u);
+      assert.equal(cancelCalls, 1);
+    } finally { fixture.page.restore(); }
+  });
 });
 
 test("rejects a clone status mismatch and failed clone, then restores fetch state", async (t) => {
