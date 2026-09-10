@@ -4,12 +4,11 @@ import type { OperationIntent } from "@eliotr/contracts";
 import {
   createModelAttemptStore,
   type ModelAttemptAuthority,
-  type ModelAttemptReservationInput,
   type ModelCostQuote,
   type ModelOutputBinding,
 } from "../../../packages/cloudflare-research/src/model-attempt-store.js";
 import type { GovernedModelAttemptDependencies, ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
-import type { ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
+import type { ModelAttemptReservationInput, ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import { digest, type StageRequest, type WorkflowPrincipal } from "../../../packages/cloudflare-research/src/types.js";
 import type { ModelCallInput, ModelCallReceipt } from "@eliotr/research";
 import type { EvidencePack } from "@eliotr/retrieval";
@@ -51,21 +50,26 @@ export function createModelAttemptRuntime(database: D1Database = runtime.CORE_DB
   return createModelAttemptStore(database, now);
 }
 
-export function modelAttemptFixture(tag: string, options: { readonly now?: string; readonly scopeRevision?: number } = {}): ModelAttemptFixture {
+export function modelAttemptFixture(tag: string, options: {
+  readonly now?: string;
+  readonly scopeRevision?: number;
+  readonly workflow?: ModelAttemptWorkflowBinding;
+} = {}): ModelAttemptFixture {
   const nowValue = options.now ?? "2026-09-10T12:00:00.000Z";
   const now = () => nowValue;
-  const principal = identifier(tag, "principal");
+  const principal = options.workflow?.principal_ref ?? identifier(tag, "principal");
   const operationKind: OperationIntent["operation_kind"] = "REPORT";
   const reservationId = identifier(tag, "reservation");
   const idempotencyKey = identifier(tag, "idempotency");
   const scopeRevision = options.scopeRevision ?? 1;
+  const scopeId = options.workflow?.scope_snapshot_id ?? identifier(tag, "scope");
   const authority: ModelAttemptAuthority = {
     principal_ref: principal,
     client_class: "owner_pwa",
     policy_decision_ref: identifier(tag, "policy-decision"),
-    scope_snapshot_ref: { id: identifier(tag, "scope"), revision: scopeRevision },
-    credential_generation: identifier(tag, "credential"),
-    deployment_generation: identifier(tag, "deployment"),
+    scope_snapshot_ref: { id: scopeId, revision: scopeRevision },
+    credential_generation: options.workflow?.credential_generation ?? identifier(tag, "credential"),
+    deployment_generation: options.workflow?.deployment_generation ?? identifier(tag, "deployment"),
     policy_generation: identifier(tag, "policy"),
     currentness_digest: "a".repeat(64),
     expires_at: "2026-09-10T13:00:00.000Z",
@@ -86,7 +90,7 @@ export function modelAttemptFixture(tag: string, options: { readonly now?: strin
     route_ref: "dynamic/eliotr-report-section",
     prompt_generation: identifier(tag, "prompt"),
     schema_generation: identifier(tag, "schema"),
-    evidence_pack: evidencePack(tag, scopeRevision),
+    evidence_pack: evidencePack(tag, scopeRevision, scopeId),
     output_object_ref: identifier(tag, "output"),
     max_input_bytes: 64 * 1024,
     max_output_bytes: 64 * 1024,
@@ -136,8 +140,9 @@ export function modelAttemptFixture(tag: string, options: { readonly now?: strin
       call,
       quote,
       authority,
-      stage_attempt_ref: identifier(tag, "stage-attempt"),
-      stage_request_sha256: "c".repeat(64),
+      stage_attempt_ref: options.workflow?.stage_attempt_ref ?? identifier(tag, "stage-attempt"),
+      stage_request_sha256: options.workflow?.stage_request_sha256 ?? "c".repeat(64),
+      workflow_budget_receipt_ref: options.workflow?.budget_receipt_ref ?? identifier(tag, "budget"),
     },
     receipt,
     output,
@@ -169,6 +174,16 @@ export interface GovernedModelAttemptFixtureOptions {
   readonly request?: StageRequest;
   readonly principal?: WorkflowPrincipal;
   readonly inputBytes?: Uint8Array;
+}
+
+export interface ModelAttemptWorkflowBinding {
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
+  readonly scope_snapshot_id: string;
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+  readonly budget_receipt_ref: string;
 }
 
 /** Production handler fixture: the route is controlled, but its output is persisted in real local R2. */
@@ -219,7 +234,7 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
   });
   const dependencies: GovernedModelAttemptDependencies = {
     operation_kind: "REPORT", attempts: store, route,
-    prepare: async (context: ModelAttemptPreparationContext): Promise<ModelAttemptReservationInput> => {
+    prepare: async (context: ModelAttemptPreparationContext) => {
       const reservationId = `${context.model_operation_id}-reservation`;
       const authority: ModelAttemptAuthority = {
         principal_ref: context.principal.principal_ref, client_class: "owner_pwa",
@@ -247,7 +262,8 @@ export async function governedModelAttemptFixture(tag: string, options: Governed
         expires_at: authority.expires_at,
       };
       return { intent, idempotency_key: context.model_idempotency_key, call, quote, authority,
-        stage_attempt_ref: context.attempt_ref, stage_request_sha256: context.stage_request_sha256 };
+        stage_attempt_ref: context.attempt_ref, stage_request_sha256: context.stage_request_sha256,
+        workflow_budget_receipt_ref: context.budget_receipt_ref };
     },
     revalidate: async () => undefined,
     now: () => Date.parse(nowValue),
