@@ -1,4 +1,11 @@
 import type { D1Database } from "@cloudflare/workers-types";
+import {
+  WorkspaceMcpObservationV2Schema,
+  WorkspaceMcpPlanV2InputSchema,
+  WorkspaceMcpPlanV2Schema,
+  WorkspaceMcpReceiptV2Schema,
+} from "@eliotr/contracts";
+import { canonicalDigest, canonicalJson } from "@eliotr/platform-cloudflare";
 import type {
   WorkspaceMcpCandidateStore,
   WorkspaceMcpObservationStoreInput,
@@ -35,6 +42,7 @@ interface ObservationRow {
   readonly observation_json: string;
   readonly receipt_json: string;
   readonly disposition: string;
+  readonly reason_codes_json: string;
 }
 
 function decodeJson(raw: string): unknown | undefined {
@@ -47,25 +55,46 @@ function samePlanIdentity(row: PlanRow, input: WorkspaceMcpPlanStoreInput): bool
     row.google_transport === input.google_transport && row.idempotency_key === input.idempotency_key;
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, canonical(child)]));
-  }
-  return value;
-}
-
 function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+  return canonicalJson(left) === canonicalJson(right);
 }
 
-function readPlan(row: PlanRow, state: "COMMITTED" | "REPLAY" = "REPLAY"): WorkspaceMcpPlanStoreResult {
+function planInput(value: Record<string, unknown>): unknown {
+  const input = Object.fromEntries([
+    "protocol", "idempotency_key", "google_product", "action", "direction",
+    "source_ref", "target_ref", "expected_revision", "payload_sha256", "dry_run",
+  ].filter((key) => value[key] !== undefined).map((key) => [key, value[key]]));
+  const parsed = WorkspaceMcpPlanV2InputSchema.safeParse(input);
+  return parsed.success ? parsed.data : undefined;
+}
+
+function planWithoutDigest(value: Record<string, unknown>): Record<string, unknown> {
+  const { plan_sha256: _ignored, ...rest } = value;
+  return rest;
+}
+
+async function readPlan(row: PlanRow, state: "COMMITTED" | "REPLAY" = "REPLAY"): Promise<WorkspaceMcpPlanStoreResult> {
   const plan = decodeJson(row.plan_json);
   if (plan === undefined || typeof plan !== "object" || plan === null) {
     return { state: "UNKNOWN", plan_id: row.plan_id, plan_sha256: row.plan_sha256 };
   }
   const value = plan as Record<string, unknown>;
+  const parsed = WorkspaceMcpPlanV2Schema.safeParse(value);
+  const input = planInput(value);
+  if (!parsed.success || input === undefined) {
+    return { state: "UNKNOWN", plan_id: row.plan_id, plan_sha256: row.plan_sha256 };
+  }
+  const [inputFingerprint, planSha256, expectedPlanId] = await Promise.all([
+    canonicalDigest(input),
+    canonicalDigest(planWithoutDigest(value)),
+    canonicalDigest([
+      "eliotr.workspace-mcp.plan-id.v2", row.principal_ref, row.deployment_generation,
+      row.auth_profile, row.google_transport, row.idempotency_key,
+    ]),
+  ]);
   if (value.plan_id !== row.plan_id || value.input_fingerprint !== row.input_fingerprint ||
+      value.input_fingerprint !== inputFingerprint || value.plan_sha256 !== row.plan_sha256 ||
+      value.plan_sha256 !== planSha256 || row.plan_id !== `workspace-mcp-plan-${expectedPlanId}` ||
       value.plan_sha256 !== row.plan_sha256 || value.idempotency_key !== row.idempotency_key ||
       value.deployment_generation !== row.deployment_generation || value.auth_profile !== row.auth_profile ||
       value.google_transport !== row.google_transport || value.candidate_ledger_mutation !== "ISSUED") {
@@ -74,24 +103,38 @@ function readPlan(row: PlanRow, state: "COMMITTED" | "REPLAY" = "REPLAY"): Works
   return { state, plan };
 }
 
-function readIssuedPlan(row: PlanRow, input: WorkspaceMcpPlanStoreInput, state: "COMMITTED" | "REPLAY"): WorkspaceMcpPlanStoreResult {
+async function readIssuedPlan(row: PlanRow, input: WorkspaceMcpPlanStoreInput, state: "COMMITTED" | "REPLAY"): Promise<WorkspaceMcpPlanStoreResult> {
   return !samePlanIdentity(row, input) || row.input_fingerprint !== input.input_fingerprint
     ? { state: "UNKNOWN", plan_id: row.plan_id, plan_sha256: row.plan_sha256 }
-    : readPlan(row, state);
+    : await readPlan(row, state);
 }
 
-function readObservation(row: ObservationRow, input: WorkspaceMcpObservationStoreInput, state: "COMMITTED" | "REPLAY"): WorkspaceMcpObservationStoreResult {
+async function readObservation(row: ObservationRow, input: WorkspaceMcpObservationStoreInput, state: "COMMITTED" | "REPLAY"): Promise<WorkspaceMcpObservationStoreResult> {
   const observation = decodeJson(row.observation_json);
   const receipt = decodeJson(row.receipt_json);
-  if (observation === undefined || receipt === undefined || row.observation_id !== input.observation_id ||
+  const reasonCodes = decodeJson(row.reason_codes_json);
+  const checkedObservation = WorkspaceMcpObservationV2Schema.safeParse(observation);
+  const checkedReceipt = WorkspaceMcpReceiptV2Schema.safeParse(receipt);
+  if (observation === undefined || receipt === undefined || !checkedObservation.success || !checkedReceipt.success ||
+      !Array.isArray(reasonCodes) || row.observation_id !== input.observation_id ||
       row.plan_id !== input.plan_id || row.principal_ref !== input.principal_ref ||
       row.deployment_generation !== input.deployment_generation || row.auth_profile !== input.auth_profile ||
       row.google_transport !== input.google_transport || row.idempotency_key !== input.idempotency_key ||
-      row.receipt_sha256 !== input.receipt_sha256 || row.observation_sha256 !== input.observation_sha256 ||
-      row.disposition !== input.disposition || !sameJson(receipt, input.receipt) || !sameJson(observation, input.observation)) {
+      row.receipt_sha256 !== input.receipt_sha256 ||
+      row.disposition !== checkedObservation.data.disposition ||
+      checkedObservation.data.observation_id !== row.observation_id ||
+      checkedObservation.data.plan_id !== row.plan_id ||
+      checkedObservation.data.idempotency_key !== row.idempotency_key ||
+      checkedObservation.data.plan_sha256 !== input.plan_sha256 ||
+      checkedObservation.data.receipt_sha256 !== row.receipt_sha256 ||
+      !sameJson(reasonCodes, checkedObservation.data.reason_codes) ||
+      !sameJson(receipt, checkedReceipt.data) || !sameJson(receipt, input.receipt) ||
+      await canonicalDigest(checkedReceipt.data) !== row.receipt_sha256 ||
+      await canonicalDigest(checkedObservation.data) !== row.observation_sha256 ||
+      `workspace-mcp-observation-${await canonicalDigest(["eliotr.workspace-mcp.observation-id.v2", row.plan_id, row.receipt_sha256])}` !== row.observation_id) {
     return { state: "UNKNOWN" };
   }
-  return { state, observation };
+  return { state, observation: checkedObservation.data };
 }
 
 export function createD1WorkspaceMcpCandidateStore(database: D1Database): WorkspaceMcpCandidateStore {
@@ -109,7 +152,7 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
         return { state: "CONFLICT", code: "IDEMPOTENCY_CONFLICT" };
       }
       if (Date.parse(input.issued_at) >= Date.parse(row.expires_at)) return { state: "CONFLICT", code: "PLAN_EXPIRED" };
-      return readIssuedPlan(row, input, "REPLAY");
+      return await readIssuedPlan(row, input, "REPLAY");
     }
     try {
       await database.prepare(
@@ -123,12 +166,12 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
           ? { state: "CONFLICT", code: "PLAN_EXPIRED" }
           : { state: "CONFLICT", code: "IDEMPOTENCY_CONFLICT" };
       }
-      return readIssuedPlan(row, input, "REPLAY");
+      return await readIssuedPlan(row, input, "REPLAY");
     }
     try {
       row = await database.prepare("SELECT plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,input_fingerprint,plan_sha256,plan_json,expires_at FROM workspace_mcp_plan WHERE plan_id=?1 LIMIT 1").bind(input.plan_id).first<PlanRow>() ?? null;
     } catch { return { state: "UNKNOWN", plan_id: input.plan_id, plan_sha256: input.plan_sha256 }; }
-    return row === null ? { state: "UNKNOWN", plan_id: input.plan_id, plan_sha256: input.plan_sha256 } : readIssuedPlan(row, input, "COMMITTED");
+    return row === null ? { state: "UNKNOWN", plan_id: input.plan_id, plan_sha256: input.plan_sha256 } : await readIssuedPlan(row, input, "COMMITTED");
   }
 
   async function loadPlan(input: WorkspaceMcpPlanLookup): Promise<WorkspaceMcpPlanLookupResult> {
@@ -137,7 +180,7 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
         "SELECT plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,input_fingerprint,plan_sha256,plan_json,expires_at FROM workspace_mcp_plan WHERE plan_id=?1 AND principal_ref=?2 AND deployment_generation=?3 AND auth_profile=?4 AND google_transport=?5 AND idempotency_key=?6 LIMIT 1",
       ).bind(input.plan_id, input.principal_ref, input.deployment_generation, input.auth_profile, input.google_transport, input.idempotency_key).first<PlanRow>();
       if (row === null || row === undefined) return { state: "NOT_FOUND" };
-      const checked = readPlan(row);
+      const checked = await readPlan(row);
       return checked.state === "COMMITTED" || checked.state === "REPLAY"
         ? { state: "FOUND", plan: checked.plan }
         : { state: "UNKNOWN" };
@@ -147,21 +190,23 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
   async function recordObservation(input: WorkspaceMcpObservationStoreInput): Promise<WorkspaceMcpObservationStoreResult> {
     try {
       const owner = await database.prepare(
-        "SELECT plan_id FROM workspace_mcp_plan WHERE plan_id=?1 AND principal_ref=?2 AND deployment_generation=?3 AND auth_profile=?4 AND google_transport=?5 AND idempotency_key=?6 AND plan_sha256=?7 LIMIT 1",
-      ).bind(input.plan_id, input.principal_ref, input.deployment_generation, input.auth_profile, input.google_transport, input.idempotency_key, input.plan_sha256).first<{ plan_id: string }>();
+        "SELECT plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,input_fingerprint,plan_sha256,plan_json,expires_at FROM workspace_mcp_plan WHERE plan_id=?1 AND principal_ref=?2 AND deployment_generation=?3 AND auth_profile=?4 AND google_transport=?5 AND idempotency_key=?6 AND plan_sha256=?7 LIMIT 1",
+      ).bind(input.plan_id, input.principal_ref, input.deployment_generation, input.auth_profile, input.google_transport, input.idempotency_key, input.plan_sha256).first<PlanRow>();
       if (owner === null || owner === undefined) return { state: "UNKNOWN" };
-      const previous = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition FROM workspace_mcp_observation WHERE plan_id=?1 AND receipt_sha256=?2 LIMIT 1").bind(input.plan_id, input.receipt_sha256).first<ObservationRow>();
+      const ownerPlan = await readPlan(owner);
+      if (ownerPlan.state !== "REPLAY" && ownerPlan.state !== "COMMITTED") return { state: "UNKNOWN" };
+      const previous = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition,reason_codes_json FROM workspace_mcp_observation WHERE plan_id=?1 AND receipt_sha256=?2 LIMIT 1").bind(input.plan_id, input.receipt_sha256).first<ObservationRow>();
       if (previous !== null && previous !== undefined) {
         return readObservation(previous, input, "REPLAY");
       }
       await database.prepare(
         "INSERT INTO workspace_mcp_observation(observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,receipt_json,observation_json,observation_sha256,disposition,reason_codes_json,observed_at,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14)",
       ).bind(input.observation_id, input.plan_id, input.principal_ref, input.deployment_generation, input.auth_profile, input.google_transport, input.idempotency_key, input.receipt_sha256, JSON.stringify(input.receipt), JSON.stringify(input.observation), input.observation_sha256, input.disposition, JSON.stringify(input.reason_codes), input.observed_at).run();
-      const stored = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition FROM workspace_mcp_observation WHERE observation_id=?1 AND plan_id=?2 AND receipt_sha256=?3 LIMIT 1").bind(input.observation_id, input.plan_id, input.receipt_sha256).first<ObservationRow>();
+      const stored = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition,reason_codes_json FROM workspace_mcp_observation WHERE observation_id=?1 AND plan_id=?2 AND receipt_sha256=?3 LIMIT 1").bind(input.observation_id, input.plan_id, input.receipt_sha256).first<ObservationRow>();
       return stored === null || stored === undefined ? { state: "UNKNOWN" } : readObservation(stored, input, "COMMITTED");
     } catch {
       try {
-        const stored = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition FROM workspace_mcp_observation WHERE plan_id=?1 AND receipt_sha256=?2 LIMIT 1").bind(input.plan_id, input.receipt_sha256).first<ObservationRow>();
+        const stored = await database.prepare("SELECT observation_id,plan_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,receipt_sha256,observation_sha256,receipt_json,observation_json,disposition,reason_codes_json FROM workspace_mcp_observation WHERE plan_id=?1 AND receipt_sha256=?2 LIMIT 1").bind(input.plan_id, input.receipt_sha256).first<ObservationRow>();
         return stored === null || stored === undefined ? { state: "UNKNOWN" } : readObservation(stored, input, "REPLAY");
       } catch { return { state: "UNKNOWN" }; }
     }
