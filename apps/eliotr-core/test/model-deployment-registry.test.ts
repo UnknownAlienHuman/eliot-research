@@ -1,6 +1,12 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import type { ApplicationModelRoute } from "@eliotr/platform-cloudflare";
+import type {
+  DynamicRouteCandidateWriteReceipt,
+  DynamicRoutePromotionWriteReceipt,
+  DynamicRouteRegistryPort,
+} from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-contract.js";
 import {
   createD1DynamicRouteRegistry,
   createD1ModelGatewayDeploymentRegistry,
@@ -20,10 +26,7 @@ async function prepareDatabase(): Promise<void> {
 
 function candidate(
   version: string,
-  routeRef:
-    | "dynamic/eliotr-balanced"
-    | "dynamic/eliotr-strong"
-    | "dynamic/eliotr-audit-writer" = "dynamic/eliotr-balanced",
+  routeRef: ApplicationModelRoute = "dynamic/eliotr-balanced",
   expiresAt = "2026-09-10T13:00:00.000Z",
   promptGeneration = "prompt-v1",
 ) {
@@ -49,6 +52,50 @@ function candidate(
   };
 }
 
+async function stage(
+  registry: DynamicRouteRegistryPort,
+  value: ReturnType<typeof candidate>,
+  digest: string,
+): Promise<DynamicRouteCandidateWriteReceipt> {
+  const raw = await registry.stageCandidate(value, digest);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("invalid candidate stage receipt");
+  }
+  const receipt = raw as Record<string, unknown>;
+  if (typeof receipt.candidate_ref !== "string" || typeof receipt.readback_sha256 !== "string") {
+    throw new Error("invalid candidate stage receipt");
+  }
+  return { candidate_ref: receipt.candidate_ref, readback_sha256: receipt.readback_sha256 };
+}
+
+async function promote(
+  registry: DynamicRouteRegistryPort,
+  command: Parameters<DynamicRouteRegistryPort["promote"]>[0],
+): Promise<DynamicRoutePromotionWriteReceipt> {
+  const raw = await registry.promote(command);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error("invalid promotion receipt");
+  }
+  const receipt = raw as Record<string, unknown>;
+  const active = receipt.active;
+  if (typeof receipt.promotion_ref !== "string" || typeof active !== "object" || active === null || Array.isArray(active)) {
+    throw new Error("invalid promotion receipt");
+  }
+  const value = active as Record<string, unknown>;
+  if (typeof value.route_ref !== "string" || typeof value.route_version !== "string" || typeof value.candidate_ref !== "string" || typeof value.candidate_sha256 !== "string") {
+    throw new Error("invalid promotion receipt");
+  }
+  return {
+    promotion_ref: receipt.promotion_ref,
+    active: {
+      route_ref: value.route_ref,
+      route_version: value.route_version,
+      candidate_ref: value.candidate_ref,
+      candidate_sha256: value.candidate_sha256,
+    },
+  };
+}
+
 describe("D1 model gateway deployment registry", () => {
   it("stages, replays, promotes, and resolves one exact active candidate", async () => {
     await prepareDatabase();
@@ -57,12 +104,12 @@ describe("D1 model gateway deployment registry", () => {
     const first = candidate("route-registry-v1");
     const artifact = await dynamicRouteJsonArtifact(first);
 
-    const staged = await registry.stageCandidate(first, artifact.sha256);
+    const staged = await stage(registry, first, artifact.sha256);
     expect(staged.readback_sha256).toBe(artifact.sha256);
     expect(await registry.stageCandidate(first, artifact.sha256)).toEqual(staged);
     expect(await registry.getActive(first.deployment.route_ref)).toBeNull();
 
-    const promoted = await registry.promote({
+    const promoted = await promote(registry, {
       route_ref: first.deployment.route_ref,
       expected_active_route_version: null,
       target_route_version: first.deployment.route_version,
@@ -75,7 +122,7 @@ describe("D1 model gateway deployment registry", () => {
       candidate_ref: staged.candidate_ref,
       candidate_sha256: artifact.sha256,
     });
-    expect(await registry.promote({
+    expect(await promote(registry, {
       route_ref: first.deployment.route_ref,
       expected_active_route_version: null,
       target_route_version: first.deployment.route_version,
@@ -96,16 +143,16 @@ describe("D1 model gateway deployment registry", () => {
     const second = candidate("route-registry-v3", "dynamic/eliotr-strong");
     const firstDigest = (await dynamicRouteJsonArtifact(first)).sha256;
     const secondDigest = (await dynamicRouteJsonArtifact(second)).sha256;
-    const firstStage = await registry.stageCandidate(first, firstDigest);
-    const secondStage = await registry.stageCandidate(second, secondDigest);
-    await registry.promote({
+    const firstStage = await stage(registry, first, firstDigest);
+    const secondStage = await stage(registry, second, secondDigest);
+    await promote(registry, {
       route_ref: first.deployment.route_ref,
       expected_active_route_version: null,
       target_route_version: first.deployment.route_version,
       candidate_ref: firstStage.candidate_ref,
       candidate_sha256: firstDigest,
     });
-    await expect(registry.promote({
+    await expect(promote(registry, {
       route_ref: second.deployment.route_ref,
       expected_active_route_version: "route-registry-v1",
       target_route_version: second.deployment.route_version,
@@ -116,8 +163,8 @@ describe("D1 model gateway deployment registry", () => {
 
     const updated = candidate("route-registry-v4", "dynamic/eliotr-strong");
     const updatedDigest = (await dynamicRouteJsonArtifact(updated)).sha256;
-    const updatedStage = await registry.stageCandidate(updated, updatedDigest);
-    await expect(registry.promote({
+    const updatedStage = await stage(registry, updated, updatedDigest);
+    await expect(promote(registry, {
       route_ref: updated.deployment.route_ref,
       expected_active_route_version: first.deployment.route_version,
       target_route_version: updated.deployment.route_version,
@@ -127,7 +174,7 @@ describe("D1 model gateway deployment registry", () => {
 
     const conflict = candidate("route-registry-v2", "dynamic/eliotr-strong", "2026-09-10T13:00:00.000Z", "prompt-v2");
     const conflictDigest = (await dynamicRouteJsonArtifact(conflict)).sha256;
-    await expect(registry.stageCandidate(conflict, conflictDigest)).rejects.toMatchObject({ code: "DYNAMIC_ROUTE_REGISTRY_STAGE_FAILED" });
+    await expect(stage(registry, conflict, conflictDigest)).rejects.toMatchObject({ code: "DYNAMIC_ROUTE_REGISTRY_STAGE_FAILED" });
   });
 
   it("rejects expired qualifications and corrupted stored candidate bindings", async () => {
@@ -136,8 +183,8 @@ describe("D1 model gateway deployment registry", () => {
     const registry = createD1DynamicRouteRegistry(database, { now: () => NOW, environment: "TEST" });
     const expired = candidate("route-registry-expired", "dynamic/eliotr-audit-writer", "2026-09-10T11:59:00.000Z");
     const expiredDigest = (await dynamicRouteJsonArtifact(expired)).sha256;
-    const expiredStage = await registry.stageCandidate(expired, expiredDigest);
-    await expect(registry.promote({
+    const expiredStage = await stage(registry, expired, expiredDigest);
+    await expect(promote(registry, {
       route_ref: expired.deployment.route_ref,
       expected_active_route_version: null,
       target_route_version: expired.deployment.route_version,
