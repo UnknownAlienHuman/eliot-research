@@ -171,6 +171,15 @@ actual RSA signatures with controlled JWKS for the real Access verifier and sess
 existing `local:smoke` still boots the actual Worker and built PWA twice. These are not a real identity
 provider login, production Access revocation measurement or graphical browser-automation receipt.
 
+The full owner browser suite passed on both Ubuntu and Windows for `f2bcb2f` in
+[CI run 34492346676](https://github.com/UnknownAlienHuman/eliot-research/actions/runs/34492346676).
+The subsequent raw-projection readback change (`462c2ca`) passed one local Node 22.23.2
+`pnpm test:owner-e2e` run: 21 passed, zero failed, including teardown. While the Worker runs,
+the browser and authenticated readiness API verify the exact raw source and projection generation;
+after it stops, D1/R2 readback verifies the matching outbox, receipts, index and WORK manifest.
+Conversion uses a recorded provider response; these receipts do not qualify live conversion or
+deployment, and do not establish the internal cause of earlier intermittent Miniflare CLI failures.
+
 CLI protocol reference, checked 2026-09-05: Cloudflare, “Connect through Cloudflare Access using a CLI”
 (updated 2026-04-17), https://developers.cloudflare.com/cloudflare-one/tutorials/cli/ ; CLI flag source:
 https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/access/cmd.go .

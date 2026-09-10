@@ -689,7 +689,7 @@
         "tests/library-readiness.test.ts and apps/eliotr-pwa/src/retrieval-api.test.ts: selected head/deployment validation and strict FAST_SEARCH request profile",
         "Controlled browser source-selection/readiness/search/excerpt verification is retained separately from actual D1/R2 tests; it is not a remote or raw outbox-to-projection receipt",
         "tests/integration/browser/owner-e2e.mjs: focused cdb95d93 actual local scheduled outbox, Queue, R2 projection and Chromium FAST_SEARCH passed with exact raw-source evidence; outbox SENT and projection PARTIAL with MANAGED_INDEX_READBACK_FAILED honestly reflect unavailable local managed indexing; the conversion-provider response is recorded, while storage, application routing and browser behavior are real",
-        "Deployed Access and remote projection/currentness qualification remain NOT_EXECUTED; the complete owner suite on both operating systems remains separate acceptance"
+        "Full owner browser suite passed on Ubuntu and Windows at f2bcb2f (CI34492346676); subsequent raw-projection HTTP readiness and post-stop D1/R2 readback change462c2ca passed one local Node22.23.2 owner suite,21 passed/0 failed with teardown. Deployed Access and remote projection/currentness qualification remain NOT_EXECUTED"
       ]
     },
     {
@@ -703,7 +703,7 @@
         "packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts: strict candidate, source witness and output identity checks",
         "apps/eliotr-core/test/raw-normalized-admission-http.test.ts: actual local HTTP/D1/R2 admission and replay with different original and normalized bytes, changed-key-payload rejection, transactional witness deletion/mutation rollback and same-key recovery using the persisted decision and R2 promotion receipt",
         "infra/d1/core/migrations/0030_raw_normalized_admission.sql: durable admission, witness, policy and receipt binding",
-        "tests/integration/browser/owner-e2e.mjs: built PWA conversion/admission scenario with an explicitly recorded local conversion fixture; combined browser and both operating-system CI results must be retained for acceptance",
+        "tests/integration/browser/owner-e2e.mjs: built PWA conversion/admission scenario with an explicitly recorded local conversion fixture; full Ubuntu/Windows owner suites passed at f2bcb2f in CI34492346676; changed raw-projection readback462c2ca passed a local Node22.23.2 owner suite,21 passed/0 failed",
         "Live Workers AI, deployed Access/D1/R2/Queue, remote active-index qualification and source-map qualification remain separate and NOT_EXECUTED"
       ]
     }
