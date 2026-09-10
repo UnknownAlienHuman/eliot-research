@@ -282,6 +282,7 @@ async function beginRawResponseBatchCapture(page, targets) {
       return { ...target, origin: location.origin, pathname: expected?.pathname, search: expected?.search ?? "" };
     });
     const matched = new Set();
+    const activeReaders = new Set();
     const captureLimit = 512 * 1024;
     const cancelReader = (reader) => {
       if (reader === undefined || typeof reader.cancel !== "function") return;
@@ -293,6 +294,7 @@ async function beginRawResponseBatchCapture(page, targets) {
       try {
         reader = clone?.body?.getReader?.();
         if (reader === undefined || typeof reader.read !== "function") throw new Error("body stream unavailable");
+        activeReaders.add(reader);
         const chunks = [];
         let totalBytes = 0;
         for (;;) {
@@ -315,8 +317,11 @@ async function beginRawResponseBatchCapture(page, targets) {
         for (let chunkOffset = 0; chunkOffset < bytes.byteLength; chunkOffset += 0x8000) {
           binary += String.fromCharCode(...bytes.subarray(chunkOffset, Math.min(chunkOffset + 0x8000, bytes.byteLength)));
         }
-        if (!disposed) { states[key].bodyBase64 = btoa(binary); states[key].phase = "complete"; }
-      } catch { if (!disposed) { states[key].phase = "error"; states[key].errorCode = "BODY_CAPTURE_FAILED"; } }
+        if (!disposed && states[key].phase !== "error") { states[key].bodyBase64 = btoa(binary); states[key].phase = "complete"; }
+      } catch {
+        cancelReader(reader);
+        if (!disposed) { states[key].phase = "error"; states[key].errorCode = "BODY_CAPTURE_FAILED"; }
+      } finally { if (reader !== undefined) activeReaders.delete(reader); }
     };
     const wrappedFetch = function (...args) {
       if (disposed) return Reflect.apply(originalFetch, this, args);
@@ -328,11 +333,15 @@ async function beginRawResponseBatchCapture(page, targets) {
         requestMethod = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
       } catch { return Reflect.apply(originalFetch, this, args); }
       const spec = specs.find((candidate) => {
-        if (matched.has(candidate.key) || candidate.method !== requestMethod || candidate.origin !== requestUrl.origin) return false;
+        if (candidate.method !== requestMethod || candidate.origin !== requestUrl.origin) return false;
         if (candidate.pathPattern !== undefined) return requestUrl.search === "" && new RegExp(candidate.pathPattern, "u").test(requestUrl.pathname);
         return candidate.pathname === requestUrl.pathname && candidate.search === requestUrl.search;
       });
       if (spec === undefined) return Reflect.apply(originalFetch, this, args);
+      if (matched.has(spec.key)) {
+        states[spec.key].phase = "error"; states[spec.key].errorCode = "DUPLICATE_REQUEST";
+        return Reflect.apply(originalFetch, this, args);
+      }
       matched.add(spec.key);
       const responsePromise = Reflect.apply(originalFetch, this, args);
       return Promise.resolve(responsePromise).then((response) => {
@@ -359,6 +368,7 @@ async function beginRawResponseBatchCapture(page, targets) {
       states,
       dispose: () => {
         disposed = true;
+        for (const reader of activeReaders) cancelReader(reader);
         if (window.fetch === wrappedFetch) window.fetch = originalFetch;
         delete window.__eliotrRawResponseBatchCapture;
       },
@@ -427,13 +437,21 @@ export async function waitForRawResponses(page, targets, action) {
       } catch { return false; }
     }, { timeout: 30000 }));
     const actionPromise = Promise.resolve().then(action);
-    const responses = await Promise.all(responsePromises);
+    const responsesPromise = Promise.all(responsePromises);
+    const [responses] = await Promise.all([responsesPromise, actionPromise]);
     const captures = browserCapture ? await readRawResponseBatchCapture(page, targets) : {};
     await actionPromise;
     const result = {};
     for (const [index, target] of targets.entries()) {
       const response = responses[index];
       const capture = captures[target.key];
+      if (capture !== undefined) {
+        const responseUrl = new URL(response.url());
+        const responsePath = `${responseUrl.pathname}${responseUrl.search}`;
+        if (capture.status !== response.status() || capture.responsePath !== responsePath) {
+          throw new Error(`raw response clone/CDP identity mismatch (${target.key})`);
+        }
+      }
       let body = capture === undefined ? await response.body() : Buffer.from(capture.bodyBase64, "base64");
       let payload;
       try { payload = JSON.parse(body.toString("utf8")); } catch (error) {
