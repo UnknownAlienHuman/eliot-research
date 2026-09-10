@@ -172,6 +172,7 @@ async function fixture(): Promise<FreezeFixture> {
     evidence_bucket: runtime.EVIDENCE_BUCKET, access, navigation, ledger: ledgerStore, profile: retrievalProfile };
   const retrieveRequest: StageRequest = { ...stage_zero, stage: "RETRIEVE_BRANCHES", investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
   const stage_five = await executor.execute(retrieveRequest, principal, createRetrieveBranchesStageHandler(retrieve));
+  previous = stage_five;
   for (const stage of ["ACQUIRE_AND_CAPTURE", "READ_AND_EXTRACT", "ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const) {
     previous = await executor.execute({ ...stage_zero, stage, investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest }, principal,
       async ({ request, input_bytes }) => new TextEncoder().encode(JSON.stringify({ stage: request.stage, input_sha: await digest(input_bytes) })));
