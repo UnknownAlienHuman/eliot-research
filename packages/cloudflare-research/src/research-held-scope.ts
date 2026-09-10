@@ -40,7 +40,7 @@ interface StoredRunScopeRow {
 function stale(): never { throw new ResearchHeldScopeError("RESEARCH_HELD_SCOPE_STALE"); }
 function unavailable(): never { throw new ResearchHeldScopeError("RESEARCH_HELD_SCOPE_UNAVAILABLE"); }
 function requiredString(value: unknown): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > 256) unavailable();
+  if (typeof value !== "string" || value.length === 0) unavailable();
   return value;
 }
 function positiveRevision(value: unknown): number {
@@ -59,7 +59,6 @@ export async function readHeldResearchScope(input: {
   readonly deployment_generation: string;
   readonly require_current_scope: (scope: ScopeSnapshot) => Promise<unknown>;
 }): Promise<HeldResearchScope> {
-  requiredString(input.operation_id);
   requiredString(input.deployment_generation);
   let row: StoredRunScopeRow | null;
   try {
