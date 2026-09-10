@@ -118,6 +118,19 @@ function refKey(value: VersionedRef): string {
   return `${value.id}:${value.revision}`;
 }
 
+function canonicalResidencyJson(value: unknown, label: string): string {
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 4096) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not bounded canonical JSON`, true);
+  }
+  let parsed: ObjectResidencyKey;
+  try { parsed = ObjectResidencyKeySchema.parse(JSON.parse(value)); }
+  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not a valid residency key`, true, cause); }
+  if (canonicalEvidenceJson(parsed) !== value) {
+    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", `${label} is not canonical JSON`, true);
+  }
+  return value;
+}
+
 function isNavigationScopeError(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
   const code = (cause as { readonly code?: unknown }).code;
@@ -162,7 +175,7 @@ function validateRow(row: ManifestRow): {
   const manifestRef = { id: text(row.manifest_id, "stored manifest id"), revision: revision(row.manifest_revision, "stored manifest revision") };
   const digest = sha(row.manifest_digest, "stored manifest digest");
   const contentDigest = sha(row.r2_content_sha256, "stored manifest R2 digest");
-  const residencyJson = text(row.r2_residency_key_json, "stored manifest residency key");
+  const residencyJson = canonicalResidencyJson(row.r2_residency_key_json, "stored manifest residency key");
   const residencyDigest = sha(row.r2_residency_key_digest, "stored manifest residency digest");
   const r2Key = text(row.r2_key, "stored manifest R2 key");
   const etag = text(row.r2_etag, "stored manifest ETag");
