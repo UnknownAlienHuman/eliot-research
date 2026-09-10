@@ -144,7 +144,14 @@ async function assertNoNewAttempt(value: RevalidatorCase, invoke: () => Promise<
 describe("research model attempt revalidation over actual D1", () => {
   it("accepts a real STARTED W2-bound attempt with opaque trusted currentness", async () => {
     const value = await revalidatorCase("positive");
-    await makeRevalidator(value)(value.context, value.prepared);
+    let resolves = 0;
+    await makeRevalidator(value, {
+      resolve: async () => {
+        resolves += 1;
+        return value.deployment;
+      },
+    })(value.context, value.prepared);
+    expect(resolves).toBe(1);
     expect(await countModelRows(value.prepared.idempotency_key)).toBe(1);
     expect(value.fixture.calls()).toBe(0);
   });
