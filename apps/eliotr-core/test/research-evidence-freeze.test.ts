@@ -61,9 +61,21 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
     const evidence = f.stage_five.evidence_pack.resolved_evidence[0];
     if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
     expect(f.request_bodies()).toHaveLength(1);
-    expect(f.request_bodies()[0]).toContain(evidence.handle.handle_ref.id);
-    expect(f.request_bodies()[0]).toContain(evidence.exact_excerpt);
-    expect(f.request_bodies()[0]).toContain("eliotr.research.synthesis-section-candidate.v1");
+    const request = JSON.parse(f.request_bodies()[0] ?? "") as {
+      readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[];
+    };
+    const userMessage = request.messages?.find((message) => message.role === "user");
+    if (userMessage === undefined || typeof userMessage.content !== "string") {
+      throw new Error("gateway request has no user message");
+    }
+    const compiled = JSON.parse(userMessage.content) as {
+      readonly evidence?: readonly { readonly evidence_handle_ref?: unknown; readonly quoted_content?: unknown }[];
+      readonly prompt?: unknown;
+    };
+    expect(compiled.prompt).toContain("eliotr.research.synthesis-section-candidate.v1");
+    expect(compiled.evidence).toHaveLength(1);
+    expect(compiled.evidence?.[0]?.evidence_handle_ref).toEqual(evidence.handle.handle_ref);
+    expect(compiled.evidence?.[0]?.quoted_content).toBe(evidence.exact_excerpt);
     const replay = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
     expect(replay.receipt_ref).toBe(first.receipt_ref);
     expect(f.provider_calls()).toBe(1);
