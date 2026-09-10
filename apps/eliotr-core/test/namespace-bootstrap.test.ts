@@ -1,7 +1,8 @@
 import { applyD1Migrations } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it } from "vitest";
-import { createCloudflareAccessVerifier, sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { createCloudflareAccessVerifier } from "@eliotr/cloudflare-access";
+import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { SourceNamespaceOwnershipSchema } from "@eliotr/contracts";
 import { decodePolicyRow, type AdmissionPolicyRow } from "../../../packages/platform-cloudflare/src/d1-ingest-validation.js";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";

@@ -1,5 +1,5 @@
 import { GoogleCredentialError } from "@eliotr/google-drive-exchange";
-import type { AccessIdentity, AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessIdentity, AccessVerifier } from "@eliotr/cloudflare-access";
 import type { Env } from "./env.js";
 import {
   configuredAccessVerifier,

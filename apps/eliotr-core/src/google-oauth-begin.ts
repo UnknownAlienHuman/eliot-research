@@ -5,8 +5,8 @@ import {
 } from "@eliotr/google-drive-exchange";
 import {
   readStreamWithinBytes,
-  type AccessIdentity,
 } from "@eliotr/platform-cloudflare";
+import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import {
   createGoogleOAuthAdmissionForOwner,
 } from "./google-oauth-service.js";

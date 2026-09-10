@@ -1,4 +1,4 @@
-import { AccessVerificationError, type AccessVerifier } from "@eliotr/platform-cloudflare";
+import { AccessVerificationError, type AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
 import {
   AI_SEARCH_PRIMARY_GENERATION,

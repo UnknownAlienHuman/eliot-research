@@ -1,5 +1,5 @@
 import type { AuthenticatedRequestContext, RouteDefinition } from "@eliotr/interfaces";
-import type { AccessIdentity } from "@eliotr/platform-cloudflare";
+import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
