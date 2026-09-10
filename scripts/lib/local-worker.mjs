@@ -25,8 +25,22 @@ function listenHolder(candidate) {
 // closed after reserving so the port can be handed to `wrangler dev`; the
 // residual probe-to-bind race is closed by the bounded reselect/retry in
 // startLocalWorker below, never by skipping or by an unbounded sleep-loop.
-export async function reserveChromiumSafePort({ attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
-  const bound = await bindChromiumSafeListener(listenHolder, { port: 0, attempts });
+export async function reserveChromiumSafePort({ port: requestedPort = 0, attempts = CHROMIUM_SAFE_PORT_RETRIES } = {}) {
+  if (!Number.isSafeInteger(requestedPort) || requestedPort < 0 || requestedPort > 65535) throw new Error("Invalid local worker port");
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100) {
+    throw new Error("Invalid local worker retry bound");
+  }
+  if (requestedPort !== 0) {
+    assertChromiumSafePort(requestedPort, "requested local worker port");
+    // An explicit port is an operator-selected origin. It must fail closed on
+    // collision instead of silently selecting another listener.
+    attempts = 1;
+  }
+  const bound = await bindChromiumSafeListener(listenHolder, { port: requestedPort, attempts });
+  if (requestedPort !== 0 && bound.port !== requestedPort) {
+    await new Promise((resolve, reject) => bound.server.close((error) => error ? reject(error) : resolve()));
+    throw new Error(`Requested local worker port ${requestedPort} was not reserved exactly`);
+  }
   const port = bound.port;
   const bindAttempts = bound.attempts;
   await new Promise((resolve, reject) => bound.server.close((error) => error ? reject(error) : resolve()));
@@ -101,16 +115,19 @@ async function spawnOnce(paths, port, { testScheduled = false } = {}) {
 }
 
 export async function startLocalWorker(paths, {
-  attempts = CHROMIUM_SAFE_PORT_RETRIES, testScheduled = false,
+  attempts = CHROMIUM_SAFE_PORT_RETRIES, testScheduled = false, port: requestedPort,
 } = {}) {
   if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 100) {
     throw new Error("Invalid local worker retry bound");
   }
   if (typeof testScheduled !== "boolean") throw new Error("testScheduled must be a boolean");
+  const explicitPort = requestedPort !== undefined;
+  if (explicitPort) assertChromiumSafePort(requestedPort, "requested local worker port");
   let lastError;
   let reserveAttempts = 0;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const reserved = await reserveChromiumSafePort();
+  const maxAttempts = explicitPort ? 1 : attempts;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const reserved = await reserveChromiumSafePort(explicitPort ? { port: requestedPort, attempts: 1 } : {});
     reserveAttempts += reserved.attempts;
     const port = reserved.port;
     const handle = await spawnOnce(paths, port, { testScheduled });
@@ -139,6 +156,9 @@ export async function startLocalWorker(paths, {
     const diagnostic = `${handle.spawnError()?.message ?? ""}\n${handle.spawnError()?.code ?? ""}\n${handle.stderrTail()}`;
     await handle.stop();
     if ((earlyExit || handle.child.exitCode !== null) && isPortCollisionMessage(diagnostic)) {
+      if (explicitPort) {
+        throw new Error(`Local Worker requested port ${requestedPort} collided/refused; refusing fallback :: ${handle.stderrTail().slice(0, 300)}`);
+      }
       lastError = new Error(`Local Worker port ${port} collided/refused (attempt ${attempt}/${attempts}); reselecting a fresh Chromium-safe port :: ${handle.stderrTail().slice(0, 300)}`);
       continue;
     }
