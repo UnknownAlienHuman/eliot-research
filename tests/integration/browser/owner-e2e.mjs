@@ -5333,11 +5333,10 @@ export async function runOwnerE2E() {
     const policyRows = await d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
     // Freeze every pre-raw authority row so the new admission cannot rewrite
-    // the original source, owner, admission policy, read grant, or scope view.
+    // the original source, owner, admission policy, or read grant.
     const ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
     const admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
     const readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
-    const scopeSnapshotRowsBeforeRaw = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
     assert.equal(ownerRowsBeforeRaw.length, 1, "authoritative owner row must exist before raw admission");
     assert.equal(admissionPolicyRowsBeforeRaw.length, 1, "authoritative admission policy row must exist before raw admission");
     assert.equal(readPolicyRowsBeforeRaw.length, 1, "explicit read policy row must exist before raw admission");
@@ -5592,6 +5591,10 @@ export async function runOwnerE2E() {
       receipt.browser_jwt_matrix = `PASS (${matrixCases.length} browser cases, D1/R2 unchanged, evidence: ${matrixEvidence.join(",")})`;
       playwright.resetLedger();
     }
+    // Raw FAST_SEARCH and Q8 can legitimately append scope snapshots. Freeze
+    // the complete ordered table only after those stages and before stopping
+    // the Worker; restart must preserve this exact persisted set byte-for-byte.
+    const scopeSnapshotRowsBeforeRestart = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
     const stoppedOrigin = worker.origin;
     const stoppedGeneration = paths.generation;
     await worker.stop();
@@ -5616,7 +5619,7 @@ export async function runOwnerE2E() {
     assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
       readPolicyRowsBeforeRaw, "restart must preserve the exact explicit read grant");
     assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
-      scopeSnapshotRowsBeforeRaw, "restart must preserve the exact scope snapshots");
+      scopeSnapshotRowsBeforeRestart, "restart must preserve the exact scope snapshots");
     const sourceRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
     const revisionRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.deepEqual(sourceRowsAfterRaw.filter((row) => sourceRows.some((original) => original.source_id === row.source_id)),
