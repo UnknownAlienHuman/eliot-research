@@ -1,4 +1,5 @@
 export * from "./types.js";
+export { WorkflowCheckpointStore, type WorkflowRunStatus } from "./store.js";
 export * from "./objects.js";
 export * from "./executor.js";
 export * from "./artifact-draft.js";

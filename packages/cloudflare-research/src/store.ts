@@ -11,6 +11,7 @@ import {
 interface RunRow {
   operation_id: string; investigation_id: string; initial_revision: number; current_revision: number;
   principal_ref: string; credential_generation: string; deployment_generation: string;
+  scope_snapshot_id: string; scope_snapshot_revision: number;
   idempotency_key: string; handler_generation: string; initial_manifest_json: string;
   next_stage_index: number; state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   cancellation_receipt_ref: string | null; ledger_revision?: number;
@@ -19,6 +20,22 @@ export interface AttemptRow {
   operation_id: string; stage_index: number; request_json: string; request_sha256: string;
   attempt_ref: string; expected_revision: number; budget_receipt_ref: string; budget_expires_at_ms: number;
   state: "STARTED" | "OUTPUT_RECORDED" | "COMMITTED"; output_json: string | null;
+}
+export interface WorkflowRunStatus {
+  readonly operation_id: string;
+  readonly investigation_id: string;
+  readonly initial_revision: number;
+  readonly current_revision: number;
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly next_stage_index: number;
+  readonly state: RunRow["state"];
+  readonly cancellation_receipt_ref: string | null;
+  readonly current_attempt: Readonly<Pick<AttemptRow, "stage_index" | "attempt_ref" | "request_sha256" | "state">> | null;
+  readonly final_receipt: StageReceipt | null;
 }
 export interface CommittedStageRequest {
   readonly request: StageRequest;
@@ -32,6 +49,13 @@ interface StoredCommittedStageRequestRow {
   readonly request_sha256: string;
   readonly attempt_ref: string;
   readonly state: string;
+}
+interface StoredCurrentRunRow {
+  readonly operation_id: string;
+  readonly state: RunRow["state"];
+  readonly current_revision: number;
+  readonly next_stage_index: number;
+  readonly ledger_revision: number;
 }
 function mapFailure(error: unknown): never {
   if (error instanceof WorkflowCheckpointError) throw error;
@@ -58,6 +82,122 @@ export class WorkflowCheckpointStore {
   private samePrincipal(run: RunRow, principal: WorkflowPrincipal): void {
     if (run.principal_ref !== principal.principal_ref || run.credential_generation !== principal.credential_generation ||
         run.deployment_generation !== principal.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  /**
+   * Read the owner-bound durable run state. This deliberately does not call
+   * current(), because cancelled and engine-completed runs remain readable.
+   */
+  async readRunStatus(operationId: string, principal: WorkflowPrincipal): Promise<WorkflowRunStatus | null> {
+    let run: RunRow | null;
+    try {
+      run = await this.db.prepare(
+        "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
+        "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
+        "next_stage_index, state, cancellation_receipt_ref, handler_generation, idempotency_key, " +
+        "policy_generation, policy_authority_ref, authorization_receipt_ref, purge_revision, initial_manifest_json " +
+        "FROM research_workflow_run WHERE operation_id = ?1 AND principal_ref = ?2 LIMIT 1",
+      ).bind(operationId, principal.principal_ref).first<RunRow>();
+    } catch {
+      fail("WORKFLOW_EFFECT_UNCERTAIN");
+    }
+    if (run === null) return null;
+    const requiredStrings: readonly unknown[] = [run.operation_id, run.investigation_id, run.principal_ref,
+      run.credential_generation, run.deployment_generation, run.scope_snapshot_id];
+    if (requiredStrings.some((value) => typeof value !== "string" || value.length < 1 || value.length > 256) ||
+        (run.state !== "ACTIVE" && run.state !== "CANCELLED" && run.state !== "ENGINE_COMPLETED") ||
+        run.operation_id !== operationId || !Number.isSafeInteger(run.initial_revision) || run.initial_revision < 1 ||
+        !Number.isSafeInteger(run.current_revision) || run.current_revision < run.initial_revision ||
+        !Number.isSafeInteger(run.next_stage_index) || run.next_stage_index < 0 || run.next_stage_index > RESEARCH_WORKFLOW_STAGES.length ||
+        !Number.isSafeInteger(run.scope_snapshot_revision) || run.scope_snapshot_revision < 1 ||
+        run.current_revision !== run.initial_revision + run.next_stage_index ||
+        (run.state === "CANCELLED") !== (run.cancellation_receipt_ref !== null) ||
+        (run.state !== "CANCELLED" && run.cancellation_receipt_ref !== null) ||
+        (run.cancellation_receipt_ref !== null && run.cancellation_receipt_ref !== `workflow-cancelled:${operationId}`)) {
+      fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
+    if (run.credential_generation === principal.credential_generation &&
+        run.deployment_generation === principal.deployment_generation) {
+      let current: StoredCurrentRunRow | null;
+      try {
+        current = await this.db.prepare(
+          "SELECT operation_id, state, current_revision, next_stage_index, ledger_revision " +
+          "FROM research_workflow_current WHERE operation_id = ?1 LIMIT 1",
+        ).bind(operationId).first<StoredCurrentRunRow>();
+      } catch {
+        fail("WORKFLOW_EFFECT_UNCERTAIN");
+      }
+      if (current === null || current.operation_id !== operationId || current.state !== run.state ||
+          current.current_revision !== run.current_revision || current.next_stage_index !== run.next_stage_index ||
+          current.ledger_revision !== run.current_revision) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+    }
+    let currentAttempt: AttemptRow | null = null;
+    if (run.next_stage_index < RESEARCH_WORKFLOW_STAGES.length) {
+      try {
+        currentAttempt = await this.db.prepare(
+          "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, expected_revision, " +
+          "budget_receipt_ref, budget_expires_at_ms, state, output_json, created_at " +
+          "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
+        ).bind(operationId, run.next_stage_index).first<AttemptRow>();
+      } catch {
+        fail("WORKFLOW_EFFECT_UNCERTAIN");
+      }
+      if (currentAttempt !== null && (currentAttempt.operation_id !== operationId ||
+          currentAttempt.stage_index !== run.next_stage_index || currentAttempt.expected_revision !== run.current_revision ||
+          typeof currentAttempt.attempt_ref !== "string" || currentAttempt.attempt_ref.length < 1 ||
+          typeof currentAttempt.request_sha256 !== "string" || currentAttempt.request_sha256.length !== 64 ||
+          (currentAttempt.state !== "STARTED" && currentAttempt.state !== "OUTPUT_RECORDED") ||
+          (currentAttempt.state === "STARTED") !== (currentAttempt.output_json === null) ||
+          (currentAttempt.state !== "STARTED" && currentAttempt.output_json === null))) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+    }
+    if (run.state === "ENGINE_COMPLETED") {
+      if (run.next_stage_index !== RESEARCH_WORKFLOW_STAGES.length) fail("WORKFLOW_OUTPUT_CORRUPT");
+      let finalAttempt: AttemptRow | null;
+      try {
+        finalAttempt = await this.db.prepare(
+          "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, expected_revision, " +
+          "budget_receipt_ref, budget_expires_at_ms, state, output_json, created_at " +
+          "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
+        ).bind(operationId, RESEARCH_WORKFLOW_STAGES.length - 1).first<AttemptRow>();
+      } catch {
+        fail("WORKFLOW_EFFECT_UNCERTAIN");
+      }
+      if (finalAttempt === null || finalAttempt.state !== "COMMITTED" || finalAttempt.output_json === null) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      let request: StageRequest;
+      try { request = parseRequest(JSON.parse(finalAttempt.request_json)); }
+      catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
+      const finalReceipt = await this.receipt(request, finalAttempt.request_sha256);
+      if (finalReceipt === null || finalReceipt.engine_state !== "ENGINE_COMPLETED" ||
+          finalReceipt.stage !== "MATERIALIZE" || finalReceipt.investigation_ref.revision !== run.current_revision ||
+          finalReceipt.investigation_ref.id !== run.investigation_id) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      return Object.freeze({
+        operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
+        current_revision: run.current_revision, principal_ref: run.principal_ref,
+        credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
+        scope_snapshot_id: run.scope_snapshot_id, scope_snapshot_revision: run.scope_snapshot_revision,
+        next_stage_index: run.next_stage_index, state: run.state,
+        cancellation_receipt_ref: run.cancellation_receipt_ref, current_attempt: null, final_receipt: finalReceipt,
+      });
+    }
+    return Object.freeze({
+      operation_id: run.operation_id, investigation_id: run.investigation_id, initial_revision: run.initial_revision,
+      current_revision: run.current_revision, principal_ref: run.principal_ref,
+      credential_generation: run.credential_generation, deployment_generation: run.deployment_generation,
+      scope_snapshot_id: run.scope_snapshot_id, scope_snapshot_revision: run.scope_snapshot_revision,
+      next_stage_index: run.next_stage_index, state: run.state,
+      cancellation_receipt_ref: run.cancellation_receipt_ref,
+      current_attempt: currentAttempt === null ? null : Object.freeze({
+        stage_index: currentAttempt.stage_index, attempt_ref: currentAttempt.attempt_ref,
+        request_sha256: currentAttempt.request_sha256, state: currentAttempt.state,
+      }), final_receipt: null,
+    });
   }
   /** Read one committed stage request with its immutable attempt binding and no effects. */
   async readCommittedStageRequest(
