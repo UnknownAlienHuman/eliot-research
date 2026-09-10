@@ -279,6 +279,8 @@
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "generation-fenced exact dependency closure quarantines subjects, verifies absence across every requested location, records non-revealing purge ledger entries, invalidates dependents, and blocks rather than claiming subset completion",
       "completion_evidence": [
+        "packages/cloudflare-erasure/src/admission-policy.ts and additive migration 0039: separate operator-installed erasure permission, exact owner/principal/credential/legal-basis binding, canonical policy digest, immutable admission request and stable replay timestamp; admission rechecks current authority and expands to all required locations. This producer is not yet wired to a public erasure route or coordinator; ERASURE remains disabled.",
+        "apps/eliotr-core/test/erasure-admission-policy.test.ts: five actual local D1 cases cover stable admission replay, normalized offset-time admission, actor/legal-basis/owner drift, revocation, expiry, scope-member resolution and corrupt policy digest refusal; production permission installation and deletion NOT_EXECUTED.",
         "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
         "apps/eliotr-core/src/erasure-coordinator.test.ts exact completion and absence-negative cases",
         "packages/cloudflare-erasure location-adapter and authority tests",
