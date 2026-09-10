@@ -234,7 +234,7 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
     await f.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
       .bind(f.scope.snapshot_id, f.scope.revision, principal.principal_ref).run();
     await expect(f.executor.execute(stage11, principal, f.composition.freeze))
-      .rejects.toMatchObject({ code: "NAVIGATION_SCOPE_NOT_CURRENT" });
+      .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
     const after = await f.db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE state='COMMITTED'").first<{ n: number }>();
     expect(after?.n).toBe(before?.n);
     expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage='FREEZE_EVIDENCE'")
