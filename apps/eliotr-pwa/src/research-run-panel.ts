@@ -36,6 +36,7 @@ export function mountResearchRunPanel(
     <p class="workflow-status" role="status" aria-live="polite">${healthReady() ? "Ready when the current owner session is available." : "Waiting for the current owner session."}</p>
     <section data-run-result hidden></section>`;
   const form = element.querySelector<HTMLFormElement>("form");
+  const badge = element.querySelector<HTMLElement>("[data-run-badge]");
   const query = element.querySelector<HTMLInputElement>('input[name="query"]');
   const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
   const selectedOption = scope?.querySelector<HTMLOptionElement>('option[value="selected"]');
@@ -45,7 +46,7 @@ export function mountResearchRunPanel(
   const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
   const status = element.querySelector<HTMLElement>('[role="status"]');
   const result = element.querySelector<HTMLElement>("[data-run-result]");
-  if (!form || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result) throw new Error("Research run panel is incomplete");
+  if (!form || !badge || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result) throw new Error("Research run panel is incomplete");
 
   let serial = 0;
   let controller: AbortController | undefined;
@@ -68,9 +69,10 @@ export function mountResearchRunPanel(
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
     updateButtons(); status.textContent = "Private research state cleared. Reconnect before starting or loading a run.";
   };
-  const onHealthUpdated = (event: Event): void => {
-    const ready = (event as CustomEvent<{ ready?: unknown }>).detail?.ready;
-    if (ready === false) clearPrivate(); else updateButtons();
+  const onHealthUpdated = (): void => {
+    const ready = healthReady();
+    badge.textContent = ready ? "READY" : "WAITING";
+    if (!ready) clearPrivate(); else updateButtons();
   };
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
   updateButtons();
