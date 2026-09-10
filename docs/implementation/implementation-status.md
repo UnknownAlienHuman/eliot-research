@@ -78,9 +78,16 @@ before R2 writes, verifies actual object readback, then commits the DRAFT revisi
 intent/outbox together through a guarded D1 transaction. Finalized replay reads the original receipt
 even after a later draft revision; missing stored evidence fails without rewriting objects.
 
-This storage transition leaves the published `artifact_head` unchanged. It does not establish semantic
-verification, accepted publication or caller authorization. The versioned owner artifact-read API,
-compiler/publication checks and the complete Wiki/report user loop remain open in the launch plan.
+The owner endpoint `GET /api/v1/research/artifact/:id:revision` returns the canonical DRAFT
+ArtifactRevision for an exact stored revision, including a historical draft behind a later draft head.
+It requires the binding owner and current persisted scope/grant authority before reading WORK_BUCKET,
+verifies the manifest and every declared object's bytes, residency and durable binding, and rechecks
+authority before returning metadata. Missing, stale, denied and inconsistent records remain distinct
+typed failures. The endpoint does not return object bodies or mutate draft/published heads.
+
+These draft transitions do not establish semantic verification or accepted publication. The artifact
+compiler, publication checks, Wiki/change products and complete report user loop remain open in the
+launch plan. Local D1/R2 and HTTP acceptance is separate from deployed Access/storage qualification.
 
 ## Evidence must match the claim
 
