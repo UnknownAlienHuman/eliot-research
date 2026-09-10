@@ -109,6 +109,11 @@ export async function committedFreezeSynthesisFixture() {
   }, freeze.navigation, freeze.readers);
   const stage_five = await freeze.readers.read_stage_five({ operation_id: freeze.operation_id,
     investigation_id: freeze.investigation_id, principal });
+  const evidence = stage_five.evidence_pack.resolved_evidence[0];
+  if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
+  const candidate = JSON.stringify({ schema: "synthesis-section-candidate.v1", sections: [{
+    text: evidence.exact_excerpt, evidence_handle_refs: [evidence.handle.handle_ref],
+  }] });
   let prepared: ModelAttemptReservationInput | null = null;
   let provider_calls = 0;
   const request_bodies: string[] = [];
@@ -120,7 +125,7 @@ export async function committedFreezeSynthesisFixture() {
         if (typeof init?.body === "string") request_bodies.push(init.body);
         return new Response(JSON.stringify({
           id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: ROUTE,
-          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "frozen synthesis" } }],
+          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
         }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled" } });
       } },
@@ -134,7 +139,7 @@ export async function committedFreezeSynthesisFixture() {
         route_ref: request.route_ref, scope_snapshot_ref: request.scope_snapshot_ref,
         workflow_authorization_receipt_ref: request.workflow_authorization_receipt_ref,
         policy_generation: prepared.authority.policy_generation, currentness_digest: prepared.authority.currentness_digest,
-        expires_at: "2026-09-10T13:00:00.000Z", expected_deployment: deployment,
+        expires_at: freeze.profile_definition.expires_at, expected_deployment: deployment,
       };
     } },
     prepare: async (input: ModelAttemptPreparationContext, frozen) => {
