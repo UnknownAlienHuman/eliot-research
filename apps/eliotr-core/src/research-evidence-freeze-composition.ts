@@ -80,6 +80,7 @@ export function createEvidenceFreezeComposition(
         w1_head: predecessor.w1_head,
         model_binding: binding,
         scope_snapshot_digest: dependencies.navigation.scope.digest,
+        current_investigation_ref: input.request.investigation_ref,
         stage_input: input.stage_input,
       });
     },

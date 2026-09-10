@@ -11,7 +11,20 @@ import {
   type CloudflareEvidenceResolver,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
+import { decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ReferenceManifestStore } from "@eliotr/policy";
+import type { EvidenceFreezeModelDefinition } from "./research-evidence-freeze-preparation.js";
+import type { ReferenceManifestPolicyProfile } from "./research-reference-manifest.js";
+import {
+  CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
+  type ProtocolScopeCheckpoint,
+} from "./research-protocol-freeze.js";
+import type {
+  EvidenceFreezeLaneMaterial,
+  EvidenceFreezeProtocolDefinition,
+} from "./research-evidence-freeze-preparation.js";
+import { InquiryProtocolProfileSchema } from "@eliotr/contracts";
 import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "./types.js";
 
 const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2" as const;
@@ -23,6 +36,9 @@ export interface EvidenceFreezeStageInput {
   readonly freeze_ref: VersionedRef;
   readonly manifest_ref: VersionedRef;
   readonly coverage_denominator_ref: VersionedRef;
+  readonly protocol_profile: ProtocolScopeCheckpoint["protocol_profile"];
+  readonly protocol_definition: EvidenceFreezeProtocolDefinition;
+  readonly lane_material: EvidenceFreezeLaneMaterial;
   readonly protocol_digest: string;
   readonly contract_protocol_digest: string;
   readonly lane_digest: string;
@@ -30,6 +46,7 @@ export interface EvidenceFreezeStageInput {
   readonly stage_five_attempt_ref: string;
   readonly stage_five_request_sha256: string;
   readonly model_profile_binding_ref: VersionedRef;
+  readonly model_profile_definition: EvidenceFreezeModelDefinition;
 }
 
 /**
@@ -47,6 +64,10 @@ export interface EvidenceFreezeAuthorityBinding {
   readonly stage_five_attempt_ref: string;
   readonly stage_five_request_sha256: string;
   readonly model_profile_binding_ref: VersionedRef;
+  readonly model_profile_definition: EvidenceFreezeModelDefinition;
+  readonly protocol_profile: ProtocolScopeCheckpoint["protocol_profile"];
+  readonly protocol_definition: EvidenceFreezeProtocolDefinition;
+  readonly lane_material: EvidenceFreezeLaneMaterial;
   readonly excluded_evidence: readonly { evidence_ref: string; reason: string }[];
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
@@ -105,7 +126,94 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseInput(bytes: Uint8Array): EvidenceFreezeStageInput {
+function exactObject(value: unknown, keys: ReadonlySet<string>, label: string): Record<string, unknown> {
+  if (!isRecord(value)) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} must be a plain object`);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} must be a plain object`);
+  if (Object.keys(value).some((key) => !keys.has(key))) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} contains unsupported fields`);
+  return value;
+}
+
+function parseIdentifier(value: unknown, label: string): string {
+  if (typeof value !== "string" || !ID.test(value)) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} is invalid`);
+  return value;
+}
+
+function parseIso(value: unknown, label: string): string {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(Date.parse(value)).toISOString() !== value) {
+    fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} is invalid`);
+  }
+  return value;
+}
+
+function parseStringList(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value)) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} is invalid`);
+  const parsed = value.map((item) => parseIdentifier(item, label));
+  if (new Set(parsed).size !== parsed.length) fail("EVIDENCE_FREEZE_INPUT_INVALID", `${label} contains duplicates`);
+  return Object.freeze(parsed);
+}
+
+function parsePolicy(value: unknown): ReferenceManifestPolicyProfile {
+  const record = exactObject(value, new Set([
+    "allowed_tool_definition_refs", "allowed_verifier_refs", "permitted_anchor_and_precision_ceilings",
+    "provider_and_policy_generations", "stale_or_revoked_entries", "permitted_acquisition_or_expansion_routes",
+    "disclosure_ceiling", "allowed_use", "expires_at",
+  ]), "model profile policy");
+  const generationValue = record.provider_and_policy_generations;
+  if (!isRecord(generationValue)) fail("EVIDENCE_FREEZE_INPUT_INVALID", "policy generations are invalid");
+  const generations: Record<string, string> = {};
+  for (const [key, item] of Object.entries(generationValue)) {
+    generations[parseIdentifier(key, "policy generation key")] = parseIdentifier(item, "policy generation");
+  }
+  const stale = record.stale_or_revoked_entries === undefined ? undefined : parseStringList(record.stale_or_revoked_entries, "stale or revoked entries");
+  return Object.freeze({
+    allowed_tool_definition_refs: parseStringList(record.allowed_tool_definition_refs, "allowed tool definitions"),
+    allowed_verifier_refs: parseStringList(record.allowed_verifier_refs, "allowed verifiers"),
+    permitted_anchor_and_precision_ceilings: parseStringList(record.permitted_anchor_and_precision_ceilings, "precision ceilings"),
+    provider_and_policy_generations: Object.freeze(generations),
+    ...(stale === undefined ? {} : { stale_or_revoked_entries: stale }),
+    permitted_acquisition_or_expansion_routes: parseStringList(record.permitted_acquisition_or_expansion_routes, "acquisition routes"),
+    disclosure_ceiling: parseIdentifier(record.disclosure_ceiling, "disclosure ceiling"),
+    allowed_use: parseStringList(record.allowed_use, "allowed use"),
+    expires_at: parseIso(record.expires_at, "policy expiry"),
+  });
+}
+
+async function parseModelDefinition(value: unknown): Promise<EvidenceFreezeModelDefinition> {
+  const record = exactObject(value, new Set([
+    "schema", "definition_ref", "definition_sha256", "config_provenance_ref", "model_profile_ref",
+    "expires_at", "max_context_bytes", "deployment", "policy",
+  ]), "model profile definition");
+  if (record.schema !== "eliotr.research.model-profile-definition.v1") fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition schema is invalid");
+  let definitionRef: VersionedRef;
+  try { definitionRef = VersionedRefSchema.parse(record.definition_ref); }
+  catch (cause) { fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition reference is invalid", false, cause); }
+  const definitionSha = record.definition_sha256;
+  if (typeof definitionSha !== "string" || !SHA256.test(definitionSha)) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition digest is invalid");
+  const maxContext = record.max_context_bytes;
+  if (typeof maxContext !== "number" || !Number.isSafeInteger(maxContext) || maxContext < 1) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile context bound is invalid");
+  const deployment = decodeModelRouteDeployment(record.deployment);
+  const definition: EvidenceFreezeModelDefinition = Object.freeze({
+    schema: "eliotr.research.model-profile-definition.v1",
+    definition_ref: definitionRef,
+    definition_sha256: definitionSha,
+    config_provenance_ref: parseIdentifier(record.config_provenance_ref, "model configuration provenance"),
+    model_profile_ref: parseIdentifier(record.model_profile_ref, "model profile"),
+    expires_at: parseIso(record.expires_at, "model profile expiry"),
+    max_context_bytes: maxContext,
+    deployment,
+    policy: parsePolicy(record.policy),
+  });
+  if (definition.policy.expires_at !== definition.expires_at) fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile and policy expiry differ");
+  const { definition_ref: _ref, definition_sha256: _digest, ...material } = definition;
+  if (definitionRef.id !== `eliotr.research.model-profile-definition-${definitionSha}` ||
+      await modelGatewaySha256(canonicalModelGatewayJson(material)) !== definitionSha) {
+    fail("EVIDENCE_FREEZE_INPUT_INVALID", "model profile definition identity is invalid");
+  }
+  return definition;
+}
+
+async function parseInput(bytes: Uint8Array): Promise<EvidenceFreezeStageInput> {
   if (bytes.byteLength > 64 * 1024) fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze input exceeds the receipt bound");
   let raw: unknown;
   try {
@@ -116,18 +224,37 @@ function parseInput(bytes: Uint8Array): EvidenceFreezeStageInput {
     if (cause instanceof EvidenceFreezeStageError) throw cause;
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze input is not valid JSON", false, cause);
   }
-  if (!isRecord(raw) || Object.keys(raw).length !== 11 || raw.protocol !== INPUT_PROTOCOL) {
+  if (!isRecord(raw) || Object.keys(raw).length !== 15 || raw.protocol !== INPUT_PROTOCOL) {
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze input shape is invalid");
   }
   let freezeRef: VersionedRef;
   let manifestRef: VersionedRef;
   let denominatorRef: VersionedRef;
   let modelProfileBindingRef: VersionedRef;
+  let modelProfileDefinition: EvidenceFreezeModelDefinition;
+  let protocolProfile: ProtocolScopeCheckpoint["protocol_profile"];
+  let protocolDefinition: EvidenceFreezeProtocolDefinition;
+  let laneMaterial: EvidenceFreezeLaneMaterial;
   try {
     freezeRef = VersionedRefSchema.parse(raw.freeze_ref);
     manifestRef = VersionedRefSchema.parse(raw.manifest_ref);
     denominatorRef = VersionedRefSchema.parse(raw.coverage_denominator_ref);
     modelProfileBindingRef = VersionedRefSchema.parse(raw.model_profile_binding_ref);
+    modelProfileDefinition = await parseModelDefinition(raw.model_profile_definition);
+    protocolProfile = InquiryProtocolProfileSchema.parse(raw.protocol_profile);
+    const definition = exactObject(raw.protocol_definition, new Set([
+      "independence_policy_ref", "chronology_policy_ref", "fidelity_ceiling", "stop_rule_ref",
+      "output_contract_ref", "completeness_test_ref", "external_acquisition",
+    ]), "protocol definition");
+    if (canonicalEvidenceJson(definition) !== canonicalEvidenceJson(CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS)) {
+      fail("EVIDENCE_FREEZE_INPUT_INVALID", "protocol definition is not the server-owned definition");
+    }
+    protocolDefinition = CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS;
+    const lane = exactObject(raw.lane_material, new Set(["lane", "lane_registrations"]), "lane material");
+    if (lane.lane !== "exploratory" || !Array.isArray(lane.lane_registrations) || lane.lane_registrations.length !== 0) {
+      fail("EVIDENCE_FREEZE_INPUT_INVALID", "lane material is not eligible");
+    }
+    laneMaterial = Object.freeze({ lane: "exploratory", lane_registrations: [] });
   } catch (cause) {
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze or manifest reference is invalid", false, cause);
   }
@@ -146,9 +273,11 @@ function parseInput(bytes: Uint8Array): EvidenceFreezeStageInput {
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze provenance is invalid");
   }
   return Object.freeze({ protocol: INPUT_PROTOCOL, freeze_ref: freezeRef, manifest_ref: manifestRef, coverage_denominator_ref: denominatorRef,
+    protocol_profile: protocolProfile, protocol_definition: protocolDefinition, lane_material: laneMaterial,
     protocol_digest: protocolDigest, contract_protocol_digest: contractProtocolDigest, lane_digest: laneDigest,
     stage_zero_attempt_ref: stageZeroAttemptRef, stage_five_attempt_ref: stageFiveAttemptRef,
-    stage_five_request_sha256: stageFiveRequestSha256, model_profile_binding_ref: modelProfileBindingRef });
+    stage_five_request_sha256: stageFiveRequestSha256, model_profile_binding_ref: modelProfileBindingRef,
+    model_profile_definition: modelProfileDefinition });
 }
 
 function refKey(value: VersionedRef): string {
@@ -165,11 +294,11 @@ function validateId(value: unknown, label: string): string {
   return value;
 }
 
-function validateAuthority(
+async function validateAuthority(
   value: EvidenceFreezeAuthorityBinding,
   input: EvidenceFreezeStageInput,
   scope: NavigationReadAuthority["scope"],
-): EvidenceFreezeAuthorityBinding {
+): Promise<EvidenceFreezeAuthorityBinding> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback is malformed");
   }
@@ -178,6 +307,7 @@ function validateAuthority(
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback is not canonical", false, cause); }
   const authorityKeys = ["scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
     "stage_zero_attempt_ref", "stage_five_attempt_ref", "stage_five_request_sha256", "model_profile_binding_ref",
+    "model_profile_definition", "protocol_profile", "protocol_definition", "lane_material",
     "excluded_evidence", "unresolved_contradiction_refs", "open_research_debt_refs",
     "provider_model_prompt_tool_generations"];
   if (Object.keys(snapshot).length !== authorityKeys.length || authorityKeys.some((key) => !Object.hasOwn(snapshot, key))) {
@@ -211,10 +341,42 @@ function validateAuthority(
   validateSha(snapshot.stage_five_request_sha256, "stage five request digest");
   try { VersionedRefSchema.parse(snapshot.model_profile_binding_ref); }
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile binding reference is invalid", false, cause); }
+  let modelProfileDefinition: EvidenceFreezeModelDefinition;
+  let protocolProfile: ProtocolScopeCheckpoint["protocol_profile"];
+  let protocolDefinition: EvidenceFreezeProtocolDefinition;
+  let laneMaterial: EvidenceFreezeLaneMaterial;
+  try { modelProfileDefinition = await parseModelDefinition(snapshot.model_profile_definition); }
+  catch (cause) {
+    if (cause instanceof EvidenceFreezeStageError) throw cause;
+    fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile definition is invalid", false, cause);
+  }
+  try {
+    protocolProfile = InquiryProtocolProfileSchema.parse(snapshot.protocol_profile);
+    const definition = exactObject(snapshot.protocol_definition, new Set([
+      "independence_policy_ref", "chronology_policy_ref", "fidelity_ceiling", "stop_rule_ref",
+      "output_contract_ref", "completeness_test_ref", "external_acquisition",
+    ]), "authority protocol definition");
+    if (canonicalEvidenceJson(definition) !== canonicalEvidenceJson(CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS)) {
+      fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "authority protocol definition is not server-owned");
+    }
+    protocolDefinition = CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS;
+    const lane = exactObject(snapshot.lane_material, new Set(["lane", "lane_registrations"]), "authority lane material");
+    if (lane.lane !== "exploratory" || !Array.isArray(lane.lane_registrations) || lane.lane_registrations.length !== 0) {
+      fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "authority lane material is not eligible");
+    }
+    laneMaterial = Object.freeze({ lane: "exploratory", lane_registrations: [] });
+  } catch (cause) {
+    if (cause instanceof EvidenceFreezeStageError) throw cause;
+    fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "authority protocol material is invalid", false, cause);
+  }
   if (snapshot.protocol_digest !== input.protocol_digest || snapshot.contract_protocol_digest !== input.contract_protocol_digest ||
       snapshot.lane_digest !== input.lane_digest || snapshot.stage_zero_attempt_ref !== input.stage_zero_attempt_ref ||
       snapshot.stage_five_attempt_ref !== input.stage_five_attempt_ref || snapshot.stage_five_request_sha256 !== input.stage_five_request_sha256 ||
-      refKey(snapshot.model_profile_binding_ref) !== refKey(input.model_profile_binding_ref)) {
+      refKey(snapshot.model_profile_binding_ref) !== refKey(input.model_profile_binding_ref) ||
+      canonicalEvidenceJson(modelProfileDefinition) !== canonicalEvidenceJson(input.model_profile_definition) ||
+      canonicalEvidenceJson(protocolProfile) !== canonicalEvidenceJson(input.protocol_profile) ||
+      canonicalEvidenceJson(protocolDefinition) !== canonicalEvidenceJson(input.protocol_definition) ||
+      canonicalEvidenceJson(laneMaterial) !== canonicalEvidenceJson(input.lane_material)) {
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze provenance differs from persisted authority");
   }
   if (snapshot.provider_model_prompt_tool_generations === null ||
@@ -237,7 +399,7 @@ function validateAuthority(
     try { VersionedRefSchema.parse(debtRef); }
     catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "research debt reference is invalid", false, cause); }
   }
-  return snapshot;
+  return Object.freeze({ ...snapshot, model_profile_definition: modelProfileDefinition });
 }
 
 function handleKeys(manifest: AllowedReferenceManifest): readonly string[] {
@@ -278,7 +440,7 @@ export function createEvidenceFreezeStageHandler(
 ): WorkflowStageHandler {
   return async ({ request, principal, input_bytes }) => {
     if (request.stage !== "FREEZE_EVIDENCE") fail("EVIDENCE_FREEZE_INPUT_INVALID", "handler called for another workflow stage");
-    const stageInput = parseInput(input_bytes);
+    const stageInput = await parseInput(input_bytes);
     const expectedScope = dependencies.navigation.scope;
     const before = await dependencies.navigation.current();
     let manifest: AllowedReferenceManifest | null;
@@ -294,7 +456,7 @@ export function createEvidenceFreezeStageHandler(
         manifest.client_fence_ref !== dependencies.navigation.access.credential_generation) {
       fail("EVIDENCE_FREEZE_SCOPE_STALE", "reference manifest is bound to another scope or credential");
     }
-    const authority = validateAuthority(
+    const authority = await validateAuthority(
       await dependencies.authority.read({ request, principal, stage_input: stageInput, manifest }),
       stageInput,
       expectedScope,
@@ -351,7 +513,7 @@ export function createEvidenceFreezeStageHandler(
     if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) {
       fail("EVIDENCE_FREEZE_SCOPE_STALE", "scope authority changed during evidence freeze", true);
     }
-    const finalAuthority = validateAuthority(
+    const finalAuthority = await validateAuthority(
       await dependencies.authority.read({ request, principal, stage_input: stageInput, manifest }),
       stageInput,
       expectedScope,
