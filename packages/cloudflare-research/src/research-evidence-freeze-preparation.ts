@@ -11,6 +11,7 @@ import {
   type CloudflareEvidenceResolver,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { LedgerHead } from "@eliotr/research";
 import type { ReferenceManifestStorageContext, ResearchReferenceManifestStore } from "./research-reference-manifest-store.js";
@@ -19,6 +20,7 @@ import {
   type ReferenceManifestPolicyProfile,
   type ResearchEvidencePack,
 } from "./research-reference-manifest.js";
+import { CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS } from "./research-protocol-freeze.js";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
 import type { StageRequest, WorkflowPrincipal } from "./types.js";
 
@@ -26,14 +28,33 @@ const MAX_BYTES = 64 * 1024;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
 export interface EvidenceFreezeModelBinding {
+  readonly schema: "eliotr.research.model-profile-binding.v1";
   readonly binding_ref: VersionedRef;
+  readonly binding_sha256: string;
+  readonly definition_ref: VersionedRef;
+  readonly definition_sha256: string;
+  readonly config_provenance_ref: string;
   readonly model_profile_ref: string;
   readonly policy_authority_ref: string;
   readonly policy_generation: string;
   readonly deployment_generation: string;
   readonly scope_snapshot_ref: VersionedRef;
   readonly scope_snapshot_digest: string;
-  readonly deployment: Pick<ModelRouteDeployment, "route_ref">;
+  readonly expires_at: string;
+  readonly max_context_bytes: number;
+  readonly deployment: ModelRouteDeployment;
+  readonly policy: ReferenceManifestPolicyProfile;
+}
+
+export interface EvidenceFreezeModelDefinition {
+  readonly schema: "eliotr.research.model-profile-definition.v1";
+  readonly definition_ref: VersionedRef;
+  readonly definition_sha256: string;
+  readonly config_provenance_ref: string;
+  readonly model_profile_ref: string;
+  readonly expires_at: string;
+  readonly max_context_bytes: number;
+  readonly deployment: ModelRouteDeployment;
   readonly policy: ReferenceManifestPolicyProfile;
 }
 
@@ -48,6 +69,13 @@ export interface EvidenceFreezeStageFiveLineage {
   readonly evidence_pack: ResearchEvidencePack;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+}
+
+export type EvidenceFreezeProtocolDefinition = typeof CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS;
+
+export interface EvidenceFreezeLaneMaterial {
+  readonly lane: LedgerHead["lane"];
+  readonly lane_registrations: readonly string[];
 }
 
 export interface EvidenceFreezeManifestStoreFactory {
@@ -78,6 +106,9 @@ export interface EvidenceFreezePreparationResult {
     readonly freeze_ref: VersionedRef;
     readonly manifest_ref: VersionedRef;
     readonly coverage_denominator_ref: VersionedRef;
+    readonly protocol_profile: InquiryProtocolProfile;
+    readonly protocol_definition: EvidenceFreezeProtocolDefinition;
+    readonly lane_material: EvidenceFreezeLaneMaterial;
     readonly protocol_digest: string;
     readonly contract_protocol_digest: string;
     readonly lane_digest: string;
@@ -85,6 +116,7 @@ export interface EvidenceFreezePreparationResult {
     readonly stage_five_attempt_ref: string;
     readonly stage_five_request_sha256: string;
     readonly model_profile_binding_ref: VersionedRef;
+    readonly model_profile_definition: EvidenceFreezeModelDefinition;
   };
   readonly manifest_digest: string;
 }
@@ -101,11 +133,14 @@ function validId(value: string, label: string): void {
   if (!ID.test(value)) throw new Error(`${label} is invalid`);
 }
 
-function cleanW1(head: LedgerHead, checkpoint: ProtocolScopeCheckpoint): void {
+function cleanW1(head: LedgerHead, checkpoint: ProtocolScopeCheckpoint, currentRef?: VersionedRef): void {
   if (head.status !== "OPEN" || head.lane !== "exploratory" || head.protocol_version !== checkpoint.w1_protocol_version ||
-      head.revision !== checkpoint.w1_revision || head.principal_ref !== checkpoint.principal_ref ||
+      head.investigation_id !== checkpoint.investigation_ref.id || head.revision < checkpoint.w1_revision ||
+      (currentRef !== undefined && (head.investigation_id !== currentRef.id || head.revision !== currentRef.revision)) ||
+      head.principal_ref !== checkpoint.principal_ref || head.evidence_grade !== checkpoint.requested_evidence_grade ||
+      head.goal !== checkpoint.protocol_profile.question || head.model_profile_ref !== checkpoint.protocol_profile.model_profile_ref ||
       head.scope_snapshot_id !== checkpoint.scope_snapshot_ref.id || head.scope_snapshot_revision !== checkpoint.scope_snapshot_ref.revision ||
-      head.obligations.length !== 0 || head.hypotheses.length !== 0 || head.debt_refs.length !== 0) {
+      head.lane_registrations.length !== 0 || head.obligations.length !== 0 || head.hypotheses.length !== 0 || head.debt_refs.length !== 0) {
     throw new Error("exploratory W1 authority is not eligible for evidence freeze");
   }
 }
@@ -116,7 +151,6 @@ async function derivedDigest(domain: string, value: unknown): Promise<string> {
 
 function generationBindings(binding: EvidenceFreezeModelBinding): Readonly<Record<string, string>> {
   const result: Record<string, string> = { ...binding.policy.provider_and_policy_generations };
-  result.model_profile_ref = binding.model_profile_ref;
   result.policy_generation = binding.policy_generation;
   result.deployment_generation = binding.deployment_generation;
   if (Object.keys(result).some((key) => !ID.test(key) || !ID.test(result[key] ?? ""))) {
@@ -125,14 +159,58 @@ function generationBindings(binding: EvidenceFreezeModelBinding): Readonly<Recor
   return result;
 }
 
+async function modelDefinition(binding: EvidenceFreezeModelBinding): Promise<EvidenceFreezeModelDefinition> {
+  const bindingMaterial = {
+    schema: binding.schema,
+    config_provenance_ref: binding.config_provenance_ref,
+    definition_ref: binding.definition_ref,
+    definition_sha256: binding.definition_sha256,
+    model_profile_ref: binding.model_profile_ref,
+    policy_authority_ref: binding.policy_authority_ref,
+    policy_generation: binding.policy_generation,
+    deployment_generation: binding.deployment_generation,
+    scope_snapshot_ref: binding.scope_snapshot_ref,
+    scope_snapshot_digest: binding.scope_snapshot_digest,
+    expires_at: binding.expires_at,
+    max_context_bytes: binding.max_context_bytes,
+    deployment: binding.deployment,
+    policy: binding.policy,
+  };
+  const definition = {
+    schema: "eliotr.research.model-profile-definition.v1" as const,
+    definition_ref: binding.definition_ref,
+    definition_sha256: binding.definition_sha256,
+    config_provenance_ref: binding.config_provenance_ref,
+    model_profile_ref: binding.model_profile_ref,
+    expires_at: binding.expires_at,
+    max_context_bytes: binding.max_context_bytes,
+    deployment: binding.deployment,
+    policy: binding.policy,
+  };
+  const { definition_ref: _ref, definition_sha256: _sha, ...material } = definition;
+  if (binding.binding_ref.revision !== 1 || binding.definition_ref.revision !== 1 ||
+      binding.policy.expires_at !== binding.expires_at ||
+      await modelGatewaySha256(canonicalModelGatewayJson(bindingMaterial)) !== binding.binding_sha256 ||
+      binding.binding_ref.id !== `eliotr.research.model-profile-binding-${binding.binding_sha256}` ||
+      await modelGatewaySha256(canonicalModelGatewayJson(material)) !== definition.definition_sha256 ||
+      definition.definition_ref.id !== `eliotr.research.model-profile-definition-${definition.definition_sha256}`) {
+    throw new Error("model profile definition identity is invalid");
+  }
+  return Object.freeze(definition);
+}
+
 export async function deriveEvidenceFreezeAuthorityBinding(input: {
   readonly stage_zero: ProtocolScopeCheckpoint;
   readonly stage_five: EvidenceFreezeStageFiveLineage;
   readonly w1_head: LedgerHead;
   readonly model_binding: EvidenceFreezeModelBinding;
   readonly scope_snapshot_digest: string;
+  readonly current_investigation_ref: VersionedRef;
   readonly stage_input: {
     readonly coverage_denominator_ref: VersionedRef;
+    readonly protocol_profile: InquiryProtocolProfile;
+    readonly protocol_definition: EvidenceFreezeProtocolDefinition;
+    readonly lane_material: EvidenceFreezeLaneMaterial;
     readonly protocol_digest: string;
     readonly contract_protocol_digest: string;
     readonly lane_digest: string;
@@ -140,6 +218,7 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
     readonly stage_five_attempt_ref: string;
     readonly stage_five_request_sha256: string;
     readonly model_profile_binding_ref: VersionedRef;
+    readonly model_profile_definition: EvidenceFreezeModelDefinition;
   };
 }): Promise<{
   readonly scope_snapshot_ref: VersionedRef;
@@ -151,12 +230,16 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
   readonly stage_five_attempt_ref: string;
   readonly stage_five_request_sha256: string;
   readonly model_profile_binding_ref: VersionedRef;
+  readonly model_profile_definition: EvidenceFreezeModelDefinition;
+  readonly protocol_profile: InquiryProtocolProfile;
+  readonly protocol_definition: EvidenceFreezeProtocolDefinition;
+  readonly lane_material: EvidenceFreezeLaneMaterial;
   readonly excluded_evidence: readonly { evidence_ref: string; reason: string }[];
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
   readonly provider_model_prompt_tool_generations: Readonly<Record<string, string>>;
 }> {
-  cleanW1(input.w1_head, input.stage_zero);
+  cleanW1(input.w1_head, input.stage_zero, input.current_investigation_ref);
   if (input.stage_five.operation_id !== input.stage_zero.operation_id || input.stage_five.principal_ref !== input.stage_zero.principal_ref ||
       !sameRef(input.stage_five.scope_snapshot_ref, input.stage_zero.scope_snapshot_ref) ||
       input.stage_five.protocol_digest !== input.stage_zero.protocol_digest || input.stage_five.denominator_digest !== input.stage_zero.denominator_digest ||
@@ -168,15 +251,23 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
       input.model_binding.policy_generation !== input.w1_head.policy_generation ||
       input.model_binding.deployment_generation !== input.w1_head.deployment_generation ||
       !sameRef(input.stage_input.coverage_denominator_ref, input.stage_zero.coverage_denominator.denominator_ref) ||
+      canonicalEvidenceJson(input.stage_input.protocol_profile) !== canonicalEvidenceJson(input.stage_zero.protocol_profile) ||
+      canonicalEvidenceJson(input.stage_input.protocol_definition) !== canonicalEvidenceJson(CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS) ||
+      canonicalEvidenceJson(input.stage_input.lane_material) !== canonicalEvidenceJson({ lane: input.w1_head.lane, lane_registrations: [...input.w1_head.lane_registrations] }) ||
       input.stage_input.protocol_digest !== input.stage_zero.protocol_digest || input.stage_input.stage_zero_attempt_ref !== input.stage_zero.attempt_ref ||
       input.stage_input.stage_five_attempt_ref !== input.stage_five.stage_attempt_ref || input.stage_input.stage_five_request_sha256 !== input.stage_five.stage_request_sha256 ||
       !sameRef(input.stage_input.model_profile_binding_ref, input.model_binding.binding_ref)) {
     throw new Error("freeze authority binding differs from persisted workflow material");
   }
+  const definition = await modelDefinition(input.model_binding);
+  if (canonicalEvidenceJson(input.stage_input.model_profile_definition) !== canonicalEvidenceJson(definition)) {
+    throw new Error("model profile definition differs from persisted binding");
+  }
   const contractProtocolDigest = await derivedDigest("eliotr.evidence-freeze.contract-protocol.v1", {
     w1_protocol_version: input.w1_head.protocol_version,
     profile_definition_ref: input.stage_zero.profile_definition_ref,
     protocol_profile: input.stage_zero.protocol_profile,
+    protocol_definition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
     protocol_digest: input.stage_zero.protocol_digest,
   });
   const laneDigest = await derivedDigest("eliotr.evidence-freeze.lane.v1", {
@@ -196,6 +287,10 @@ export async function deriveEvidenceFreezeAuthorityBinding(input: {
     stage_five_attempt_ref: input.stage_five.stage_attempt_ref,
     stage_five_request_sha256: input.stage_five.stage_request_sha256,
     model_profile_binding_ref: input.model_binding.binding_ref,
+    model_profile_definition: definition,
+    protocol_profile: input.stage_zero.protocol_profile,
+    protocol_definition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
+    lane_material: { lane: input.w1_head.lane, lane_registrations: [...input.w1_head.lane_registrations] },
     excluded_evidence: input.stage_five.evidence_pack.omitted_candidates.map((candidate) => ({
       evidence_ref: candidate.candidate_id,
       reason: candidate.reason_code,
@@ -220,24 +315,27 @@ export async function prepareEvidenceFreezeInput(
       !sameRef(dependencies.stage_five.evidence_pack.scope_snapshot_ref, dependencies.stage_zero.scope_snapshot_ref)) {
     throw new Error("freeze predecessor lineage is inconsistent");
   }
-  cleanW1(dependencies.w1_head, dependencies.stage_zero);
+  cleanW1(dependencies.w1_head, dependencies.stage_zero, request.investigation_ref);
   validId(dependencies.authorization_receipt_ref, "authorization receipt");
   const scopeRef = dependencies.stage_zero.scope_snapshot_ref;
   if (dependencies.navigation.scope.snapshot_id !== scopeRef.id || dependencies.navigation.scope.revision !== scopeRef.revision ||
       dependencies.navigation.scope.digest === undefined || !sameRef(dependencies.model_binding.scope_snapshot_ref, scopeRef) ||
-      dependencies.model_binding.scope_snapshot_digest !== dependencies.navigation.scope.digest) throw new Error("freeze scope authority is inconsistent");
+      dependencies.model_binding.scope_snapshot_digest !== dependencies.navigation.scope.digest ||
+      dependencies.manifest_residency_template.scope_domain_id !== scopeRef.id ||
+      dependencies.manifest_residency_template.access_domain_id !== principal.principal_ref) throw new Error("freeze scope authority is inconsistent");
   const binding = dependencies.model_binding;
   validId(binding.model_profile_ref, "model profile");
   validId(binding.policy_authority_ref, "policy authority");
   validId(binding.policy_generation, "policy generation");
   validId(binding.deployment_generation, "deployment generation");
   validId(binding.deployment.route_ref, "model route");
-  if (!Number.isSafeInteger(dependencies.max_context_bytes) || dependencies.max_context_bytes < 1 ||
-      dependencies.max_context_bytes > 256 * 1024) throw new Error("model context bound is invalid");
+  if (!Number.isSafeInteger(binding.max_context_bytes) || binding.max_context_bytes < 1 ||
+      dependencies.max_context_bytes !== binding.max_context_bytes) throw new Error("model context bound is invalid");
   const contractProtocolDigest = await derivedDigest("eliotr.evidence-freeze.contract-protocol.v1", {
     w1_protocol_version: dependencies.w1_head.protocol_version,
     profile_definition_ref: dependencies.stage_zero.profile_definition_ref,
     protocol_profile: dependencies.stage_zero.protocol_profile,
+    protocol_definition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
     protocol_digest: dependencies.stage_zero.protocol_digest,
   });
   const laneDigest = await derivedDigest("eliotr.evidence-freeze.lane.v1", {
@@ -295,6 +393,9 @@ export async function prepareEvidenceFreezeInput(
     freeze_ref: freezeRef,
     manifest_ref: manifestRef,
     coverage_denominator_ref: dependencies.stage_zero.coverage_denominator.denominator_ref,
+    protocol_profile: dependencies.stage_zero.protocol_profile,
+    protocol_definition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS,
+    lane_material: { lane: dependencies.w1_head.lane, lane_registrations: [...dependencies.w1_head.lane_registrations] },
     protocol_digest: dependencies.stage_zero.protocol_digest,
     contract_protocol_digest: contractProtocolDigest,
     lane_digest: laneDigest,
@@ -302,6 +403,7 @@ export async function prepareEvidenceFreezeInput(
     stage_five_attempt_ref: dependencies.stage_five.stage_attempt_ref,
     stage_five_request_sha256: dependencies.stage_five.stage_request_sha256,
     model_profile_binding_ref: binding.binding_ref,
+    model_profile_definition: await modelDefinition(binding),
   };
   const inputBytes = new TextEncoder().encode(canonicalEvidenceJson(stageInput));
   if (inputBytes.byteLength > MAX_BYTES) throw new Error("freeze input exceeds the receipt bound");
