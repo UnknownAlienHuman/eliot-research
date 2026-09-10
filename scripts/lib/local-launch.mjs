@@ -310,19 +310,41 @@ export function executeLocalD1WithRetry(args, { execute = executeLocal, attempts
   throw lastError;
 }
 
-export async function executeLocalD1WithRetryAsync(args, { execute = executeLocalAsync, attempts = 6, deadlineMs = 15000, delayMs = 250 } = {}) {
-  const deadline = Date.now() + deadlineMs;
+export async function executeLocalD1WithRetryAsync(args, {
+  execute = executeLocalAsync,
+  attempts = 6,
+  deadlineMs = 15000,
+  delayMs = 250,
+  commandTimeoutMs = 180_000,
+  hardDeadlineMs,
+} = {}) {
+  if (!Number.isSafeInteger(commandTimeoutMs) || commandTimeoutMs <= 0 || commandTimeoutMs > 180_000) {
+    throw new RangeError("Local D1 command timeout must be a positive integer no greater than 180000ms");
+  }
+  if (hardDeadlineMs !== undefined && (!Number.isSafeInteger(hardDeadlineMs) || hardDeadlineMs <= 0)) {
+    throw new RangeError("Local D1 hard deadline must be a positive integer when provided");
+  }
+  const retryDeadline = Date.now() + deadlineMs;
+  const hardDeadline = hardDeadlineMs === undefined ? undefined : Date.now() + hardDeadlineMs;
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
+    const retryRemainingMs = retryDeadline - Date.now();
+    if (attempt > 1 && retryRemainingMs <= 0) {
       if (lastError) throw lastError;
       throw new Error("Local D1 command deadline expired");
     }
-    try { return await execute(args, { capture: true, timeoutMs: Math.min(180_000, remainingMs) }); }
+    const hardRemainingMs = hardDeadline === undefined ? commandTimeoutMs : hardDeadline - Date.now();
+    if (hardRemainingMs <= 0) {
+      if (lastError) throw lastError;
+      throw new Error("Local D1 hard deadline expired");
+    }
+    try {
+      return await execute(args, { capture: true, timeoutMs: Math.min(commandTimeoutMs, hardRemainingMs) });
+    }
     catch (error) {
       lastError = error;
-      if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > deadline) throw error;
+      if (!isTransientLocalD1Error(error) || attempt >= attempts || Date.now() + delayMs > retryDeadline ||
+          (hardDeadline !== undefined && Date.now() + delayMs > hardDeadline)) throw error;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }

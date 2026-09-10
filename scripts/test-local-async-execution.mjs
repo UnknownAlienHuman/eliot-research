@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeLocalAsync } from "./lib/local-launch.mjs";
+import { executeLocalAsync, executeLocalD1WithRetryAsync } from "./lib/local-launch.mjs";
 
 async function listen(server) {
   await new Promise((resolve, reject) => {
@@ -62,6 +62,45 @@ test("async local command timeout waits for child termination", async () => {
     executeLocalAsync(["-e", "setTimeout(() => process.stdout.write('late'), 500)"], { capture: true, timeoutMs: 50 }),
     (error) => error?.cause?.code === "ETIMEDOUT",
   );
+});
+
+test("async D1 retry separates command timeout, retry window, and hard budget", async () => {
+  const defaultTimeouts = [];
+  const value = await executeLocalD1WithRetryAsync(["fixture"], {
+    deadlineMs: 0,
+    execute: async (_args, options) => { defaultTimeouts.push(options.timeoutMs); return "ok"; },
+  });
+  assert.equal(value, "ok");
+  assert.deepEqual(defaultTimeouts, [180_000], "the retry window must not cap the first command timeout");
+
+  const retryWindowTimeouts = [];
+  let retryWindowAttempts = 0;
+  await assert.rejects(
+    executeLocalD1WithRetryAsync(["fixture"], {
+      deadlineMs: 0,
+      execute: async (_args, options) => {
+        retryWindowAttempts += 1;
+        retryWindowTimeouts.push(options.timeoutMs);
+        const error = new Error("database is locked");
+        error.cause = { diagnostic: "TRANSIENT_D1_LOCK" };
+        throw error;
+      },
+    }),
+    /database is locked/u,
+  );
+  assert.equal(retryWindowAttempts, 1, "an expired retry window must prevent a new attempt");
+  assert.deepEqual(retryWindowTimeouts, [180_000], "the retry window must not shorten an attempt already started");
+
+  const hardBudgetTimeouts = [];
+  const hardValue = await executeLocalD1WithRetryAsync(["fixture"], {
+    deadlineMs: 15_000,
+    hardDeadlineMs: 25,
+    execute: async (_args, options) => { hardBudgetTimeouts.push(options.timeoutMs); return "ok"; },
+  });
+  assert.equal(hardValue, "ok");
+  assert.equal(hardBudgetTimeouts.length, 1);
+  assert.ok(hardBudgetTimeouts[0] > 0 && hardBudgetTimeouts[0] <= 25,
+    "an explicit hard budget must cap the command without changing the retry window");
 });
 
 test("async local timeout cleans a child process tree before returning", async () => {
