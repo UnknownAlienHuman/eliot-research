@@ -65,7 +65,7 @@ async function waitForFreshWorkflowId(page, previousWorkflowId, label, launchAtt
  * through the owner jobs list. It proves launch, status, DELETE and recovery
  * readback without claiming projection completion from a fixture.
  */
-export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection, beforeCancel }) {
+export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection, beforeCancellationCheck }) {
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
@@ -86,6 +86,10 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   const workflowId = await panel.getAttribute("data-workflow-id");
   assert.match(workflowId, WORKFLOW_ID, "UI must retain the server workflow ID for reconciliation");
 
+  // The launch body is decoded before the ID is published, but Playwright's
+  // terminal network callback can still trail that page-side completion. Settle
+  // before the active witness so DELETE follows the freshest observed status.
+  if (beforeCancellationCheck !== undefined) await beforeCancellationCheck();
   const status = await browserJson(page, ledger, `/api/v1/research/query/${workflowId}`, {
     correlation: "e2e-exhaustive/status-before-cancel",
   });
@@ -101,7 +105,6 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
-  if (beforeCancel !== undefined) await beforeCancel();
   await cancel.click();
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
     null, { timeout: 15000 });
@@ -178,6 +181,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   const relaunchedWorkflowId = await panel.getAttribute("data-workflow-id");
   assert.match(relaunchedWorkflowId, WORKFLOW_ID, "relaunch must retain a canonical server workflow ID");
   assert.notEqual(relaunchedWorkflowId, firstWorkflowId, "terminal relaunch must not reuse the cancelled workflow identity");
+  if (beforeCancellationCheck !== undefined) await beforeCancellationCheck();
   const relaunchedStatus = await browserJson(page, ledger, `/api/v1/research/query/${relaunchedWorkflowId}`, {
     correlation: "e2e-exhaustive/relaunch-status-before-cancel",
   });
@@ -188,7 +192,6 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
-  if (beforeCancel !== undefined) await beforeCancel();
   await cancel.click();
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
     null, { timeout: 15000 });
