@@ -4,10 +4,29 @@ import {
   createModelAttemptRuntime,
   initializeModelAttemptRuntime,
   modelAttemptFixture,
+  type ModelAttemptWorkflowBinding,
   runtime,
 } from "./model-attempt-fixture.js";
+import { principal, workflowFixture } from "./research-workflow-fixture.js";
 
-beforeAll(initializeModelAttemptRuntime);
+let workflowBinding: ModelAttemptWorkflowBinding;
+
+beforeAll(async () => {
+  await initializeModelAttemptRuntime();
+  const workflow = await workflowFixture("model-attempt-store");
+  const receipt = await workflow.executor.execute(workflow.request, principal, async ({ input_bytes }) => new Uint8Array(input_bytes));
+  const row = await workflow.db.prepare(
+    "SELECT attempt_ref, request_sha256, budget_receipt_ref FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = 0 LIMIT 1",
+  ).bind(workflow.request.operation_id).first<{
+    readonly attempt_ref: string; readonly request_sha256: string; readonly budget_receipt_ref: string;
+  }>();
+  if (row === null || receipt.attempt_ref !== row.attempt_ref) throw new Error("controlled W2 store fixture did not persist its stage grant");
+  workflowBinding = {
+    principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+    deployment_generation: principal.deployment_generation, scope_snapshot_id: "workflow-scope",
+    stage_attempt_ref: row.attempt_ref, stage_request_sha256: row.request_sha256, budget_receipt_ref: row.budget_receipt_ref,
+  };
+});
 
 async function countRows(table: "operation_intent" | "budget_reservation" | "research_model_attempt", idempotencyKey: string): Promise<number> {
   const result = await runtime.CORE_DB.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE idempotency_key = ?1`).bind(idempotencyKey).first<{ count: number }>();
@@ -26,7 +45,7 @@ async function countOperationReceipts(intentId: string): Promise<number> {
 
 describe("durable model attempts over actual D1", () => {
   it("reserves and starts one attempt, then stops duplicate invocation at UNKNOWN", async () => {
-    const fixture = modelAttemptFixture("store-start");
+    const fixture = modelAttemptFixture("store-start", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     expect(reservation.reservation.state).toBe("RESERVED");
     expect(await countRows("operation_intent", fixture.input.idempotency_key)).toBe(1);
@@ -46,18 +65,18 @@ describe("durable model attempts over actual D1", () => {
   });
 
   it("refuses changed request or credential generation under an existing idempotency key", async () => {
-    const fixture = modelAttemptFixture("store-conflict");
+    const fixture = modelAttemptFixture("store-conflict", { workflow: workflowBinding });
     await fixture.store.reserve(fixture.input);
     const changedCall = { ...fixture.input.call, max_output_bytes: fixture.input.call.max_output_bytes + 1 };
     await expect(fixture.store.reserve({ ...fixture.input, call: changedCall })).rejects.toMatchObject({ code: "MODEL_ATTEMPT_IDENTITY_CONFLICT" });
     const changedAuthority = { ...fixture.input.authority, credential_generation: "credential-revoked" };
-    await expect(fixture.store.reserve({ ...fixture.input, authority: changedAuthority })).rejects.toMatchObject({ code: "MODEL_ATTEMPT_IDENTITY_CONFLICT" });
+    await expect(fixture.store.reserve({ ...fixture.input, authority: changedAuthority })).rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
     expect(await countRows("research_model_attempt", fixture.input.idempotency_key)).toBe(0);
   });
 
   it("allows separate stage identities for one principal without collapsing attempts", async () => {
-    const first = modelAttemptFixture("store-stage-one");
-    const second = modelAttemptFixture("store-stage-two");
+    const first = modelAttemptFixture("store-stage-one", { workflow: workflowBinding });
+    const second = modelAttemptFixture("store-stage-two", { workflow: workflowBinding });
     const secondInput = {
       ...second.input,
       intent: { ...second.input.intent, principal_ref: first.input.intent.principal_ref },
@@ -74,7 +93,7 @@ describe("durable model attempts over actual D1", () => {
   });
 
   it("settles a known receipt once and replays the durable receipt without invoking again", async () => {
-    const fixture = modelAttemptFixture("store-success");
+    const fixture = modelAttemptFixture("store-success", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     const started = await fixture.store.beginAttempt(reservation);
     expect(started.should_invoke).toBe(true);
@@ -101,7 +120,7 @@ describe("durable model attempts over actual D1", () => {
   });
 
   it("settles a known failure and keeps an UNKNOWN attempt from being re-invoked", async () => {
-    const fixture = modelAttemptFixture("store-failure");
+    const fixture = modelAttemptFixture("store-failure", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     const started = await fixture.store.beginAttempt(reservation);
     const failed = await fixture.store.settleAttempt({
@@ -119,14 +138,14 @@ describe("durable model attempts over actual D1", () => {
   });
 
   it("rejects a reservation when the verified budget has expired before invocation", async () => {
-    const fixture = modelAttemptFixture("store-expired");
+    const fixture = modelAttemptFixture("store-expired", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     const expiredStore = createModelAttemptRuntime(runtime.CORE_DB, () => "2026-09-10T14:00:00.000Z");
     await expect(expiredStore.beginAttempt(reservation)).rejects.toMatchObject({ code: "MODEL_ATTEMPT_BUDGET_EXPIRED" });
   });
 
   it("preserves cancellation in the durable terminal state without a provider call", async () => {
-    const fixture = modelAttemptFixture("store-cancel");
+    const fixture = modelAttemptFixture("store-cancel", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     const started = await fixture.store.beginAttempt(reservation);
     const cancelled = await fixture.store.settleAttempt({
@@ -141,7 +160,7 @@ describe("durable model attempts over actual D1", () => {
   });
 
   it("exposes typed readback corruption rather than accepting malformed receipt state", async () => {
-    const fixture = modelAttemptFixture("store-corrupt");
+    const fixture = modelAttemptFixture("store-corrupt", { workflow: workflowBinding });
     const reservation = await fixture.store.reserve(fixture.input);
     const started = await fixture.store.beginAttempt(reservation);
     await runtime.CORE_DB.prepare("UPDATE research_model_attempt SET receipt_json = ?1 WHERE attempt_id = ?2").bind(JSON.stringify(fixture.receipt), started.attempt?.attempt_id).run();
