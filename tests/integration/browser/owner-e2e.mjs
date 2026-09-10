@@ -4810,7 +4810,7 @@ export async function runOwnerE2E() {
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
-      throw new Error(`browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`);
+      throw new Error(`browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`, { cause: error });
     }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
