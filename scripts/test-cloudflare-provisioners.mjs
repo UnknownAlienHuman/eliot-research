@@ -50,6 +50,7 @@ function emptyState() {
     gateways: new Map(),
     accessApps: new Map(),
     accessPolicies: new Map(),
+    serviceTokens: new Map(),
     mutations: [],
     requests: [],
     sequence: 0,
@@ -167,7 +168,7 @@ const server = createServer(async (req, res) => {
       if (tail.length === 2 && method === "POST") {
         const id = nextId("access-app");
         const { policies = [], ...applicationBody } = body;
-        const application = { id, ...structuredClone(applicationBody) };
+        const application = { id, aud: body.aud ?? (body.destinations?.[0]?.uri?.endsWith("/mcp") ? "mcp-generated-audience" : "owner-generated-audience"), ...structuredClone(applicationBody) };
         state.accessApps.set(id, application);
         state.accessPolicies.set(id, policies.map((policy) => ({ id: nextId("access-policy"), ...structuredClone(policy), exclude: [], require: [] })));
         return json(res, success(application));
@@ -181,6 +182,13 @@ const server = createServer(async (req, res) => {
         list.push(policy);
         state.accessPolicies.set(tail[2], list);
         return json(res, success(policy));
+      }
+    }
+
+    if (tail[0] === "access" && tail[1] === "service_tokens") {
+      if (tail.length === 3 && method === "GET") {
+        const item = state.serviceTokens.get(tail[2]);
+        return json(res, item ? success(structuredClone(item)) : notFound("service token not found"));
       }
     }
 
@@ -543,6 +551,57 @@ try {
     assert.equal(mutationCount(), 0, "Access apply without admission mutated");
   }
 
+  // Selected Gemini MCP performs a complete GET-only preflight. A CREATE plan
+  // keeps Cloudflare's future MCP AUD unknown, while the service-token UUID
+  // policy selector and signed .access Client ID are checked independently.
+  reset();
+  const serviceTokenId = "123e4567-e89b-12d3-a456-426614174000";
+  state.serviceTokens.set(serviceTokenId, { id: serviceTokenId, client_id: "mcp-client.access" });
+  {
+    const plan = await run("scripts/provision-cloudflare-access.mjs", ["--check-only"], {
+      ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+      ELIOTR_MCP_ACCESS_AUTH_PROFILE: "service-token",
+      ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID: serviceTokenId,
+      ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "mcp-client.access",
+    });
+    expectPass(plan, "MCP service-token CREATE plan");
+    const parsed = JSON.parse(plan.stdout);
+    assert.equal(parsed.mcp.auth_profile, "service-token");
+    assert.equal(parsed.mcp.application.disposition, "CREATE");
+    assert.equal(parsed.mcp.aud, null, "CREATE plan invented a future MCP AUD");
+    assert.equal(mutationCount(), 0, "MCP CREATE plan mutated");
+    assert.ok(state.requests.some((item) => item.pathname.endsWith(`/access/service_tokens/${serviceTokenId}`)), "MCP preflight did not read the exact service-token record");
+  }
+
+  // A mismatched generated Client ID is rejected from the exact service-token
+  // readback before any owner or MCP POST can occur.
+  reset();
+  state.serviceTokens.set(serviceTokenId, { id: serviceTokenId, client_id: "different-client.access" });
+  const tokenMismatch = await run("scripts/provision-cloudflare-access.mjs", ["--check-only"], {
+    ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+    ELIOTR_MCP_ACCESS_AUTH_PROFILE: "service-token",
+    ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID: serviceTokenId,
+    ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "mcp-client.access",
+  });
+  expectFail(tokenMismatch, "MCP service-token readback mismatch");
+  assert.equal(mutationCount(), 0, "MCP token mismatch mutated");
+
+  // Managed OAuth is a separate profile: it enables the managed OAuth app
+  // contour and rejects service-token inputs without borrowing ordinary AUD.
+  reset();
+  {
+    const plan = await run("scripts/provision-cloudflare-access.mjs", ["--check-only"], {
+      ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+      ELIOTR_MCP_ACCESS_AUTH_PROFILE: "managed-oauth",
+    });
+    expectPass(plan, "MCP managed-oauth CREATE plan");
+    const parsed = JSON.parse(plan.stdout);
+    assert.equal(parsed.mcp.auth_profile, "managed-oauth");
+    assert.equal(parsed.mcp.oauth_configuration_enabled, true);
+    assert.equal(parsed.mcp.aud, null, "managed CREATE plan invented a future MCP AUD");
+    assert.equal(mutationCount(), 0, "managed MCP CREATE plan mutated");
+  }
+
   console.log("Cloudflare provisioner mock conformance: PASS");
   console.log("- check-only mutations: 0");
   console.log("- poisoned ambient env: SEALED BEFORE FIRST CALL, zero mutations");
@@ -555,6 +614,8 @@ try {
   console.log("- immutable AI Search drift: REJECTED BEFORE MUTATION");
   console.log("- undeclared Access policy: REJECTED BEFORE MUTATION");
   console.log("- hostname Access plan: PASS (apply gated by usage admission)");
+  console.log("- MCP service-token exact ID/Client ID readback: PASS");
+  console.log("- MCP managed-oauth CREATE plan: PASS (AUD generated on create)");
 } finally {
   await new Promise((resolveClose) => server.close(resolveClose));
   await rm(generatedConfigPath, { force: true });

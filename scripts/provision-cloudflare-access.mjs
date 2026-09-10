@@ -145,6 +145,15 @@ if (desired.protocol !== "eliotr.cloudflare-access.v1" || desired.requirements?.
 }
 const appName = `${desired.application.name_prefix}: ${hostname}`;
 const policyName = desired.policy.name;
+const googleTransport = process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT ?? "disabled";
+if (!["disabled", "gemini-mcp", "drive-exchange"].includes(googleTransport)) {
+  throw new Error("ELIOTR_GOOGLE_EXTERNAL_TRANSPORT must be disabled, gemini-mcp, or drive-exchange");
+}
+const mcpEnabled = googleTransport === "gemini-mcp";
+const mcpDesired = desired.mcp;
+if (mcpEnabled && (!mcpDesired || mcpDesired.path !== "/mcp" || mcpDesired.path_cookie_attribute !== true)) {
+  throw new Error("Access desired-state manifest lacks the exact MCP /mcp contour");
+}
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
 
@@ -267,6 +276,16 @@ function resolveLiveAud(app) {
   return { aud: null, source: "UNKNOWN" };
 }
 
+function resolveLiveMcpAud(app) {
+  const live = extractAud(app);
+  if (live) return { aud: live, source: "CLOUDFLARE_READBACK" };
+  const fallbackRaw = process.env.ELIOTR_MCP_ACCESS_AUDIENCE?.trim() ?? "";
+  if (fallbackRaw !== "" && AUD_TAG_PATTERN.test(fallbackRaw)) {
+    return { aud: fallbackRaw, source: "ENVIRONMENT_FALLBACK" };
+  }
+  return { aud: null, source: "UNKNOWN" };
+}
+
 function normalizedDestinations(app) {
   const destinations = Array.isArray(app.destinations) ? app.destinations : [];
   return destinations
@@ -287,6 +306,86 @@ const expectedPolicy = {
   decision: desired.policy.decision,
   include: ownerEmails.map((email) => ({ email: { email } })),
 };
+
+const MCP_CLIENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const mcpAppName = mcpEnabled ? `${mcpDesired.application.name_prefix}: ${hostname}/mcp` : null;
+const mcpPolicyName = mcpEnabled ? `${mcpDesired.policy.name_prefix}: ${hostname}/mcp` : null;
+const mcpProfile = mcpEnabled ? (process.env.ELIOTR_MCP_ACCESS_AUTH_PROFILE ?? "service-token") : null;
+if (mcpEnabled && !["service-token", "managed-oauth"].includes(mcpProfile)) {
+  throw new Error("ELIOTR_MCP_ACCESS_AUTH_PROFILE must be service-token or managed-oauth");
+}
+if (mcpEnabled && process.env.ELIOTR_MCP_HOSTNAME !== undefined && process.env.ELIOTR_MCP_HOSTNAME !== hostname) {
+  throw new Error("ELIOTR_MCP_HOSTNAME must equal ELIOTR_ACCESS_HOSTNAME on the one-host /mcp contour");
+}
+const mcpClientId = mcpEnabled ? process.env.ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID : undefined;
+const mcpServiceTokenId = mcpEnabled ? process.env.ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID : undefined;
+if (mcpEnabled && mcpProfile === "service-token") {
+  if (typeof mcpServiceTokenId !== "string" || !UUID_PATTERN.test(mcpServiceTokenId)) {
+    throw new Error("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID must be the exact service-token UUID");
+  }
+  if (typeof mcpClientId !== "string" || !MCP_CLIENT_ID_PATTERN.test(mcpClientId) || mcpClientId !== mcpClientId.trim()) {
+    throw new Error("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID must be the exact Cloudflare Access service-token Client ID");
+  }
+} else if (mcpEnabled && (mcpClientId !== undefined || mcpServiceTokenId !== undefined)) {
+  throw new Error("Managed OAuth MCP profile must not configure service-token identifiers");
+}
+const explicitMcpAud = mcpEnabled ? process.env.ELIOTR_MCP_ACCESS_AUDIENCE : undefined;
+if (mcpEnabled && explicitMcpAud !== undefined && (!explicitMcpAud || explicitMcpAud !== explicitMcpAud.trim() || !AUD_TAG_PATTERN.test(explicitMcpAud))) {
+  throw new Error("ELIOTR_MCP_ACCESS_AUDIENCE must be one exact bounded Cloudflare Access AUD tag");
+}
+const explicitMcpTeam = mcpEnabled ? process.env.ELIOTR_MCP_ACCESS_TEAM_DOMAIN : undefined;
+if (mcpEnabled && explicitMcpTeam !== undefined) normalizeTeamOriginStrict(explicitMcpTeam, "ELIOTR_MCP_ACCESS_TEAM_DOMAIN");
+
+function mcpExpectedDestination() { return `${hostname}/mcp`; }
+function normalizedServiceTokenId(policy) {
+  const rules = [...(Array.isArray(policy?.include) ? policy.include : []), ...(Array.isArray(policy?.require) ? policy.require : [])];
+  const match = rules.find((rule) => typeof rule?.service_token?.token_id === "string");
+  return match?.service_token.token_id ?? null;
+}
+function normalizedMcpEmailIncludes(policy) {
+  return normalizedEmailIncludes(policy);
+}
+function expectedMcpPolicy() {
+  if (mcpProfile === "service-token") {
+    return { name: mcpPolicyName, decision: mcpDesired.policy.decision, include: [{ service_token: { token_id: mcpServiceTokenId } }] };
+  }
+  return { name: mcpPolicyName, decision: mcpDesired.policy.decision, include: ownerEmails.map((email) => ({ email: { email } })) };
+}
+function assertMcpApplicationContour(candidate) {
+  const drift = [];
+  if (candidate.type !== mcpDesired.application.type) drift.push({ field: "type", expected: mcpDesired.application.type, actual: candidate.type });
+  if ((candidate.session_duration ?? "24h") !== mcpDesired.application.session_duration) drift.push({ field: "session_duration", expected: mcpDesired.application.session_duration, actual: candidate.session_duration });
+  if ((candidate.app_launcher_visible ?? false) !== mcpDesired.application.app_launcher_visible) drift.push({ field: "app_launcher_visible", expected: mcpDesired.application.app_launcher_visible, actual: candidate.app_launcher_visible });
+  if (!equal(normalizedDestinations(candidate), [{ type: "public", uri: mcpExpectedDestination() }])) drift.push({ field: "destinations", expected: [{ type: "public", uri: mcpExpectedDestination() }], actual: normalizedDestinations(candidate) });
+  if (candidate.path_cookie_attribute !== true) drift.push({ field: "path_cookie_attribute", expected: true, actual: candidate.path_cookie_attribute });
+  if (Boolean(candidate.oauth_configuration?.enabled) !== (mcpProfile === "managed-oauth")) drift.push({ field: "oauth_configuration.enabled", expected: mcpProfile === "managed-oauth", actual: candidate.oauth_configuration?.enabled });
+  if (drift.length > 0) throw new Error(`MCP Access application drift; refusing in-place mutation: ${JSON.stringify(drift, null, 2)}`);
+}
+function classifyMcpPolicies(items) {
+  const owners = items.filter((item) => item.name === mcpPolicyName);
+  if (owners.length > 1) throw new Error(`multiple Access MCP policies named ${mcpPolicyName}`);
+  const additional = items.filter((item) => item.name !== mcpPolicyName);
+  if (additional.length > 0) throw new Error(`undeclared additional MCP Access policies may broaden access: ${JSON.stringify(additional.map((item) => ({ id: item.id ?? null, name: item.name ?? null })))}`);
+  return { owner: owners[0] ?? null, additional };
+}
+function assertMcpPolicy(policy) {
+  if (!policy) throw new Error("MCP Access policy readback is missing");
+  const expected = expectedMcpPolicy();
+  const drift = [];
+  if (policy.decision !== expected.decision) drift.push({ field: "decision", expected: expected.decision, actual: policy.decision });
+  if (mcpProfile === "service-token") {
+    const includeRules = Array.isArray(policy.include) ? policy.include : [];
+    const requireRules = Array.isArray(policy.require) ? policy.require : [];
+    if (includeRules.length + requireRules.length !== 1 || normalizedServiceTokenId(policy) !== mcpServiceTokenId) {
+      drift.push({ field: "service_token.selector", expected: mcpServiceTokenId, actual: normalizedServiceTokenId(policy) });
+    }
+  } else if (!equal(normalizedMcpEmailIncludes(policy), ownerEmails) || (policy.include ?? []).length !== ownerEmails.length) {
+    drift.push({ field: "include.email", expected: ownerEmails, actual: normalizedMcpEmailIncludes(policy) });
+  }
+  if ((policy.exclude ?? []).length > 0 || (mcpProfile === "managed-oauth" && (policy.require ?? []).length > 0)) drift.push({ field: "exclude/require", expected: [], actual: { exclude: policy.exclude, require: policy.require } });
+  if (drift.length > 0) throw new Error(`MCP Access policy drift; refusing in-place mutation: ${JSON.stringify(drift, null, 2)}`);
+}
 
 // Hostname-based Access is deliberate. Worker-level Access currently rejects WebSocket upgrades, while
 // ResearchSession uses Durable Object WebSockets.
@@ -309,6 +408,13 @@ if (hostnameCollisions.length > 0) {
 let application = exactApps[0] ?? null;
 let applicationDisposition = "VERIFIED";
 let policyDisposition = "VERIFIED";
+let mcpApplication = null;
+let mcpApplicationDisposition = "UNCHANGED";
+let mcpPolicyDisposition = "UNCHANGED";
+let mcpPolicies = [];
+let mcpClassified = { owner: null, additional: [] };
+let serviceTokenRecord = null;
+let mcpLiveAud = null;
 
 function assertApplicationContour(candidate) {
   const drift = [];
@@ -321,9 +427,44 @@ function assertApplicationContour(candidate) {
 
 if (application) assertApplicationContour(application);
 
+if (mcpEnabled) {
+  const mcpExactApps = applications.filter((app) => app.name === mcpAppName);
+  if (mcpExactApps.length > 1) throw new Error(`multiple Access applications named ${mcpAppName}; refusing ambiguous MCP binding`);
+  const mcpCollisions = applications.filter((app) => app.name !== appName && app.name !== mcpAppName &&
+    normalizedDestinations(app).some((destination) => destination.uri === mcpExpectedDestination()));
+  if (mcpCollisions.length > 0) {
+    throw new Error(`wrong Access application already claims ${mcpExpectedDestination()}: ${JSON.stringify(mcpCollisions.map((app) => ({ id: app.id ?? null, name: app.name ?? null })))}`);
+  }
+  mcpApplication = mcpExactApps[0] ?? null;
+  if (mcpApplication) {
+    assertMcpApplicationContour(mcpApplication);
+    const mcpPoliciesResult = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(mcpApplication.id)}/policies?per_page=100`);
+    mcpPolicies = Array.isArray(mcpPoliciesResult) ? mcpPoliciesResult : [];
+    mcpClassified = classifyMcpPolicies(mcpPolicies);
+    if (mcpClassified.owner) assertMcpPolicy(mcpClassified.owner);
+  }
+  if (mcpProfile === "service-token") {
+    const serviceToken = await request("GET", `/accounts/${enc(accountId)}/access/service_tokens/${enc(mcpServiceTokenId)}`);
+    if (!serviceToken || serviceToken.id !== mcpServiceTokenId || typeof serviceToken.client_id !== "string" || serviceToken.client_id !== mcpClientId) {
+      throw new Error("Cloudflare service-token readback does not match the configured MCP token ID and Client ID");
+    }
+    if (!MCP_CLIENT_ID_PATTERN.test(serviceToken.client_id)) throw new Error("Cloudflare service-token readback has an invalid Client ID");
+    serviceTokenRecord = serviceToken;
+  }
+}
+
 // GET-only team-origin preflight (live organization readback wins; the
 // environment fallback exists only for mocks/transition and must reconcile).
 const teamPreflight = await fetchLiveTeamDomain();
+if (mcpEnabled && explicitMcpTeam !== undefined && normalizeTeamOriginStrict(explicitMcpTeam, "ELIOTR_MCP_ACCESS_TEAM_DOMAIN") !== teamPreflight.teamDomain && teamPreflight.teamDomain !== null) {
+  throw new Error("MCP team domain differs from the verified Access organization team domain");
+}
+if (mcpEnabled && mcpApplication) {
+  const ownerAud = resolveLiveAud(application);
+  const mcpAud = resolveLiveMcpAud(mcpApplication);
+  if (mcpAud.aud && ownerAud.aud && mcpAud.aud === ownerAud.aud) throw new Error("MCP Access audience must differ from the ordinary Access audience");
+  if (explicitMcpAud !== undefined && mcpAud.aud && explicitMcpAud !== mcpAud.aud) throw new Error("MCP Access audience differs from the existing Access application readback");
+}
 
 function strictPlanBase(extra) {
   return {
@@ -339,6 +480,23 @@ function strictPlanBase(extra) {
   };
 }
 
+function mcpPlanSummary() {
+  if (!mcpEnabled) return undefined;
+  const liveAud = mcpApplication ? resolveLiveMcpAud(mcpApplication) : { aud: null };
+  return {
+    hostname,
+    path: "/mcp",
+    path_cookie_attribute: true,
+    application: { id: mcpApplication?.id ?? null, name: mcpAppName, disposition: mcpApplication ? "VERIFY" : "CREATE" },
+    policy: { id: mcpClassified.owner?.id ?? null, name: mcpPolicyName, disposition: mcpClassified.owner ? "VERIFY" : "CREATE", selector: mcpProfile === "service-token" ? "service_token" : "email" },
+    auth_profile: mcpProfile,
+    aud: liveAud.aud,
+    aud_disposition: liveAud.aud ? "VERIFY" : "GENERATED_ON_CREATE",
+    oauth_configuration_enabled: mcpProfile === "managed-oauth",
+    service_token_id: mcpProfile === "service-token" ? mcpServiceTokenId : undefined,
+  };
+}
+
 if (!application && checkOnly) {
   console.log(JSON.stringify(strictPlanBase({
     application: { name: appName, disposition: "CREATE" },
@@ -346,6 +504,7 @@ if (!application && checkOnly) {
     aud: null,
     aud_disposition: "GENERATED_ON_CREATE",
     team_disposition: teamPreflight.teamDomain ? "VERIFY" : "READBACK_ON_APPLY",
+    ...(mcpEnabled ? { mcp: mcpPlanSummary() } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
@@ -399,6 +558,7 @@ if (!classified.owner && checkOnly) {
     aud: liveAud.aud,
     aud_disposition: liveAud.aud ? "VERIFY" : "GENERATED_ON_CREATE",
     approved_additional_policy_count: classified.additional.length,
+    ...(mcpEnabled ? { mcp: mcpPlanSummary() } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
@@ -427,11 +587,58 @@ if (checkOnly) {
     aud: liveAud.aud,
     aud_disposition: "VERIFY",
     approved_additional_policy_count: classified.additional.length,
+    ...(mcpEnabled ? { mcp: mcpPlanSummary() } : {}),
   }), null, 2));
   process.exitCode = 0;
 }
 
 if (!checkOnly) {
+if (mcpEnabled) {
+  // Resolve the ordinary AUD before creating or accepting the narrower MCP
+  // application. Cloudflare generates the MCP AUD on CREATE; no future AUD is
+  // guessed or accepted from the ordinary application.
+  const ordinaryAud = resolveLiveAud(application).aud;
+  if (!ordinaryAud) throw new Error("ordinary Access application readback lacks AUD before MCP provisioning");
+  const mcpExpected = expectedMcpPolicy();
+  if (!mcpApplication) {
+    const createBody = {
+      type: mcpDesired.application.type,
+      name: mcpAppName,
+      domain: hostname,
+      destinations: [{ type: "public", uri: mcpExpectedDestination() }],
+      session_duration: mcpDesired.application.session_duration,
+      app_launcher_visible: mcpDesired.application.app_launcher_visible,
+      path_cookie_attribute: true,
+      ...(mcpProfile === "managed-oauth" ? { oauth_configuration: { enabled: true } } : {}),
+      policies: [mcpExpected],
+    };
+    const created = await request("POST", `/accounts/${enc(accountId)}/access/apps`, createBody);
+    if (!created?.id) {
+      const retryList = await request("GET", `/accounts/${enc(accountId)}/access/apps?per_page=100`);
+      const retryExact = (Array.isArray(retryList) ? retryList : []).filter((app) => app.name === mcpAppName);
+      if (retryExact.length !== 1 || !retryExact[0]?.id) throw new Error("MCP Access application creation readback lacks id");
+      mcpApplication = retryExact[0];
+    } else {
+      mcpApplication = created;
+    }
+    mcpApplicationDisposition = "CREATED";
+    assertMcpApplicationContour(mcpApplication);
+  }
+  const mcpPoliciesResult = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(mcpApplication.id)}/policies?per_page=100`);
+  mcpPolicies = Array.isArray(mcpPoliciesResult) ? mcpPoliciesResult : [];
+  mcpClassified = classifyMcpPolicies(mcpPolicies);
+  if (!mcpClassified.owner) {
+    await request("POST", `/accounts/${enc(accountId)}/access/apps/${enc(mcpApplication.id)}/policies`, mcpExpected);
+    mcpPolicyDisposition = "CREATED";
+    const readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(mcpApplication.id)}/policies?per_page=100`);
+    mcpClassified = classifyMcpPolicies(Array.isArray(readback) ? readback : []);
+  }
+  assertMcpPolicy(mcpClassified.owner);
+  mcpLiveAud = resolveLiveMcpAud(mcpApplication).aud;
+  if (!mcpLiveAud) throw new Error("MCP Access application readback lacks a bounded dedicated AUD");
+  if (mcpLiveAud === ordinaryAud) throw new Error("MCP Access audience must differ from the ordinary Access audience");
+  if (explicitMcpAud !== undefined && explicitMcpAud !== mcpLiveAud) throw new Error("MCP Access audience differs from the created application readback");
+}
 // Apply readback: AUD plus exact team origin are Cloudflare authority and are
 // persisted only in the ignored non-secret receipt for core config generation.
 let liveAud = resolveLiveAud(application);
@@ -467,7 +674,44 @@ if (priorReceipt && priorReceipt.protocol === ACCESS_RECEIPT_PROTOCOL) {
   if (priorReceipt.owner_email_set_sha256 && priorReceipt.owner_email_set_sha256 !== ownerEmailSetSha256) {
     throw new Error("Access owner-set drift vs prior receipt; refusing silent broadening");
   }
+  if (mcpEnabled && priorReceipt.mcp) {
+    if (priorReceipt.mcp.application?.id && priorReceipt.mcp.application.id !== mcpApplication.id) throw new Error("stale MCP receipt binds a different Access app id; review before overwrite");
+    if (priorReceipt.mcp.aud && priorReceipt.mcp.aud !== mcpLiveAud) throw new Error("MCP Access AUD drift vs prior receipt; refusing silent substitution");
+    if (priorReceipt.mcp.auth_profile && priorReceipt.mcp.auth_profile !== mcpProfile) throw new Error("MCP Access auth profile drift vs prior receipt");
+    if (priorReceipt.mcp.service_token_id && priorReceipt.mcp.service_token_id !== mcpServiceTokenId) throw new Error("MCP service-token drift vs prior receipt");
+  }
 }
+
+const mcpReceipt = mcpEnabled ? {
+  hostname,
+  path: "/mcp",
+  path_cookie_attribute: true,
+  team_domain: teamFinal,
+  aud: mcpLiveAud,
+  auth_profile: mcpProfile,
+  oauth_configuration_enabled: mcpProfile === "managed-oauth",
+  application: {
+    id: mcpApplication.id,
+    name: mcpAppName,
+    destination: mcpExpectedDestination(),
+    disposition: mcpApplicationDisposition,
+  },
+  policy: {
+    id: mcpClassified.owner?.id ?? null,
+    name: mcpPolicyName,
+    decision: mcpDesired.policy.decision,
+    selector: mcpProfile === "service-token" ? "service_token" : "email",
+    ...(mcpProfile === "service-token" ? { service_token_id: mcpServiceTokenId } : {
+      owner_email_count: ownerEmails.length,
+      owner_email_set_sha256: ownerEmailSetSha256,
+    }),
+    disposition: mcpPolicyDisposition,
+  },
+  ...(mcpProfile === "service-token" ? {
+    service_token_id: mcpServiceTokenId,
+    service_token_client_id_sha256: sha256Hex(serviceTokenRecord.client_id),
+  } : {}),
+} : undefined;
 
 const receipt = {
   protocol: ACCESS_RECEIPT_PROTOCOL,
@@ -493,6 +737,7 @@ const receipt = {
   approved_additional_policy_ids_sha256: allowedAdditionalPolicyIdsSha256,
   worker_level_access: "PROHIBITED_FOR_RESEARCH_SESSION_WEBSOCKETS",
   created_at: new Date().toISOString(),
+  ...(mcpReceipt ? { mcp: mcpReceipt } : {}),
 };
 await mkdir(dirname(receiptPath), { recursive: true });
 const receiptTemporary = `${receiptPath}.${process.pid}.tmp`;
