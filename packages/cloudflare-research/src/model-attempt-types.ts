@@ -54,6 +54,8 @@ export interface ModelAttemptReservationInput {
   /** Trusted W2 stage identity that authorizes this model boundary. */
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+  /** W2 execution-grant locator; distinct from the W3 cost reservation ID. */
+  readonly workflow_budget_receipt_ref: string;
 }
 
 export interface ModelAttemptReservation {
@@ -69,6 +71,7 @@ export interface ModelAttemptReservation {
   readonly schema_generation: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
+  readonly workflow_budget_receipt_ref: string;
 }
 
 export interface ModelAttemptStart {
