@@ -158,10 +158,15 @@ BEGIN
       AND b.manifest_sha256 = json_extract(NEW.planned_objects_json, '$[0].sha256')
       AND b.manifest_size_bytes = json_extract(NEW.planned_objects_json, '$[0].size_bytes')
   ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_BINDING_GUARD') END;
-  SELECT CASE WHEN (SELECT head_revision FROM artifact_draft_head WHERE artifact_id = NEW.artifact_id) <> NEW.artifact_revision
-    OR (SELECT intent_id FROM artifact_draft_head WHERE artifact_id = NEW.artifact_id) <> NEW.intent_id
-    OR (SELECT intent_revision FROM artifact_draft_head WHERE artifact_id = NEW.artifact_id) <> NEW.intent_revision
-    THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_GUARD') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM artifact_draft_head h
+    WHERE h.artifact_id = NEW.artifact_id
+      AND h.head_revision = NEW.artifact_revision
+      AND h.manifest_r2_key = NEW.manifest_r2_key
+      AND h.intent_id = NEW.intent_id
+      AND h.intent_revision = NEW.intent_revision
+      AND h.updated_at = NEW.updated_at
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_GUARD') END;
   SELECT CASE WHEN (SELECT COUNT(*) FROM artifact_draft_object WHERE artifact_id = NEW.artifact_id AND revision = NEW.artifact_revision)
       <> json_array_length(NEW.planned_objects_json)
     OR EXISTS (
@@ -173,8 +178,10 @@ BEGIN
           AND o.object_ref = json_extract(p.value, '$.object_ref')
           AND ((o.section_ordinal = json_extract(p.value, '$.section_ordinal')) OR (o.section_ordinal IS NULL AND json_extract(p.value, '$.section_ordinal') IS NULL))
           AND o.residency_key_digest = json_extract(p.value, '$.residency_digest')
+          AND o.residency_key_json = json_extract(p.value, '$.residency')
           AND json_extract(o.receipt_json, '$.key') = json_extract(p.value, '$.key')
           AND json_extract(o.receipt_json, '$.expected_sha256') = json_extract(p.value, '$.sha256')
+          AND json_extract(o.receipt_json, '$.readback_sha256') = json_extract(p.value, '$.sha256')
           AND json_extract(o.receipt_json, '$.size_bytes') = json_extract(p.value, '$.size_bytes')
       )
     ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_OBJECT_GUARD') END;

@@ -4,12 +4,8 @@ import {
   ArtifactSpecSchema,
   ObjectResidencyKeySchema,
   OperationIntentSchema,
-  type ArtifactRevision,
-  type ArtifactSectionRevision,
-  type ArtifactSpec,
   type ObjectResidencyKey,
   type OperationIntent,
-  type VersionedRef,
 } from "@eliotr/contracts";
 import {
   RUNTIME_LIMITS,
@@ -31,172 +27,31 @@ const SECTION_PREFIX = "artifact-draft/section";
 const REFERENCE_PREFIX = "artifact-draft/reference";
 const MANIFEST_PREFIX = "artifact-draft/manifest";
 
-export type ArtifactDraftObjectKind =
-  | "MANIFEST"
-  | "SECTION_BODY"
-  | "DEPENDENCY_MANIFEST"
-  | "EVIDENCE_LEDGER"
-  | "VERIFICATION_RECEIPT"
-  | "EXPORT";
-
-export interface ArtifactDraftSectionInput {
-  readonly section: ArtifactSectionRevision;
-  readonly bytes: Uint8Array;
-  readonly residency: ObjectResidencyKey;
-}
-
-export interface ArtifactDraftReferencedObjectInput {
-  readonly object_ref: string;
-  readonly object_kind: Exclude<ArtifactDraftObjectKind, "MANIFEST" | "SECTION_BODY">;
-  readonly bytes: Uint8Array;
-  readonly residency: ObjectResidencyKey;
-}
-
-export interface PrepareArtifactDraftInput {
-  readonly intent: OperationIntent;
-  readonly topic?: string;
-  readonly expected_draft_head_revision: number | null;
-  readonly spec: ArtifactSpec;
-  readonly revision: ArtifactRevision;
-  readonly sections: readonly ArtifactDraftSectionInput[];
-  readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
-  readonly manifest_residency: ObjectResidencyKey;
-}
-
-export interface ArtifactDraftObjectReceipt {
-  readonly object_ref: string;
-  readonly object_kind: ArtifactDraftObjectKind;
-  readonly section_ordinal: number | null;
-  readonly residency: ObjectResidencyKey;
-  readonly receipt: ImmutableObjectReceipt;
-}
-
-export interface PrepareArtifactDraftResult {
-  readonly disposition: "CREATED" | "EXISTING";
-  readonly artifact_ref: VersionedRef;
-  readonly intent_ref: VersionedRef;
-  readonly outbox_id: string;
-  readonly draft_head_revision: number;
-  readonly manifest: ArtifactDraftObjectReceipt;
-  readonly objects: readonly ArtifactDraftObjectReceipt[];
-}
-
-export type ArtifactDraftErrorCode =
-  | "ARTIFACT_DRAFT_INPUT_INVALID"
-  | "ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT"
-  | "ARTIFACT_DRAFT_HEAD_CONFLICT"
-  | "ARTIFACT_DRAFT_R2_INTEGRITY"
-  | "ARTIFACT_DRAFT_EFFECT_UNCERTAIN";
-
-export class ArtifactDraftError extends Error {
-  public readonly code: ArtifactDraftErrorCode;
-  public readonly retryable: boolean;
-
-  public constructor(code: ArtifactDraftErrorCode, message: string, retryable = false, cause?: unknown) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "ArtifactDraftError";
-    this.code = code;
-    this.retryable = retryable;
-  }
-}
-
-interface PlannedObject {
-  readonly object_ref: string;
-  readonly object_kind: ArtifactDraftObjectKind;
-  readonly section_ordinal: number | null;
-  readonly bytes: Uint8Array;
-  readonly sha256: string;
-  readonly size_bytes: number;
-  readonly residency: ObjectResidencyKey;
-  readonly residency_digest: string;
-  readonly prefix: string;
-  readonly content_type: string;
-  readonly physical_key: string;
-}
-
-interface ReservationRow {
-  readonly intent_id: unknown;
-  readonly intent_revision: unknown;
-  readonly artifact_id: unknown;
-  readonly artifact_revision: unknown;
-  readonly request_sha256: unknown;
-  readonly spec_digest: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly expected_head_revision: unknown;
-  readonly spec_ref_id: unknown;
-  readonly spec_ref_revision: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly intent_json: unknown;
-  readonly principal_ref: unknown;
-  readonly idempotency_key: unknown;
-  readonly payload_ref: unknown;
-  readonly planned_objects_json: unknown;
-  readonly state: unknown;
-}
-
-interface AuthorityRow {
-  readonly intent_id: unknown;
-  readonly revision: unknown;
-  readonly operation_kind: unknown;
-  readonly principal_ref: unknown;
-  readonly idempotency_key: unknown;
-  readonly payload_ref: unknown;
-  readonly policy_decision_ref: unknown;
-  readonly budget_reservation_ref: unknown;
-  readonly cancellation_ref: unknown;
-  readonly created_at: unknown;
-  readonly outbox_id: unknown;
-  readonly topic: unknown;
-  readonly payload_sha256: unknown;
-}
-
-interface DraftBindingRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly intent_id: unknown;
-  readonly intent_revision: unknown;
-  readonly expected_head_revision: unknown;
-  readonly principal_ref: unknown;
-  readonly spec_ref_id: unknown;
-  readonly spec_ref_revision: unknown;
-  readonly scope_snapshot_id: unknown;
-  readonly scope_snapshot_revision: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly manifest_sha256: unknown;
-  readonly manifest_size_bytes: unknown;
-  readonly created_at: unknown;
-}
-
-interface DraftRevisionRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly kind: unknown;
-  readonly spec_digest: unknown;
-  readonly evidence_freeze_id: unknown;
-  readonly evidence_freeze_revision: unknown;
-  readonly manifest_r2_key: unknown;
-  readonly dependency_manifest_ref: unknown;
-  readonly status: unknown;
-  readonly created_at: unknown;
-}
-
-interface DraftHeadRow {
-  readonly artifact_id: unknown;
-  readonly head_revision: unknown;
-}
-
-interface DraftObjectRow {
-  readonly artifact_id: unknown;
-  readonly revision: unknown;
-  readonly object_kind: unknown;
-  readonly object_ref: unknown;
-  readonly section_ordinal: unknown;
-  readonly receipt_json: unknown;
-  readonly residency_key_json: unknown;
-  readonly residency_key_digest: unknown;
-}
-
+import {
+  type ArtifactDraftObjectKind,
+  type PrepareArtifactDraftInput,
+  type ArtifactDraftObjectReceipt,
+  type PrepareArtifactDraftResult,
+  type ArtifactDraftErrorCode,
+  ArtifactDraftError,
+  type PlannedObject,
+  type ReservationRow,
+  type AuthorityRow,
+  type DraftBindingRow,
+  type DraftRevisionRow,
+  type DraftHeadRow,
+  type DraftObjectRow,
+} from "./artifact-draft-types.js";
+export {
+  type ArtifactDraftObjectKind,
+  type ArtifactDraftSectionInput,
+  type ArtifactDraftReferencedObjectInput,
+  type PrepareArtifactDraftInput,
+  type ArtifactDraftObjectReceipt,
+  type PrepareArtifactDraftResult,
+  type ArtifactDraftErrorCode,
+  ArtifactDraftError,
+} from "./artifact-draft-types.js";
 function fail(code: ArtifactDraftErrorCode, message: string, retryable = false, cause?: unknown): never {
   throw new ArtifactDraftError(code, message, retryable, cause);
 }
@@ -362,6 +217,9 @@ async function buildPlan(input: PrepareArtifactDraftInput): Promise<{ readonly o
     expectRef(section.evidence_ledger_ref, "EVIDENCE_LEDGER");
     expectRef(section.verification_receipt_ref, "VERIFICATION_RECEIPT");
   }
+  if (input.referenced_objects.some((object) => object.object_ref === "manifest")) {
+    fail("ARTIFACT_DRAFT_INPUT_INVALID", "manifest is reserved as an internal object ref");
+  }
   for (const object of input.referenced_objects) {
     identifier(object.object_ref, "referenced object_ref");
     if (expected.get(object.object_ref) !== object.object_kind) {
@@ -406,6 +264,17 @@ async function readReservation(database: D1Database, intent: OperationIntent): P
   ).bind(intent.intent_ref.id, intent.intent_ref.revision).first<ReservationRow>();
 }
 
+async function readReservationByArtifactRevision(
+  database: D1Database,
+  artifactId: string,
+  revision: number,
+): Promise<ReservationRow | null> {
+  return database.prepare(
+    "SELECT intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, spec_digest, manifest_r2_key, expected_head_revision, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, intent_json, principal_ref, idempotency_key, payload_ref, planned_objects_json, state " +
+    "FROM artifact_draft_reservation WHERE artifact_id = ?1 AND artifact_revision = ?2 LIMIT 1",
+  ).bind(artifactId, revision).first<ReservationRow>();
+}
+
 function validateReservation(row: ReservationRow, input: PrepareArtifactDraftInput, request_sha256: string): void {
   if (row.intent_id !== input.intent.intent_ref.id || row.intent_revision !== input.intent.intent_ref.revision ||
       row.artifact_id !== input.revision.artifact_ref.id || row.artifact_revision !== input.revision.artifact_ref.revision) {
@@ -441,30 +310,37 @@ function resultFromRows(
   outboxId: string,
   disposition: "CREATED" | "EXISTING",
 ): PrepareArtifactDraftResult {
+  const manifestPlan = planned.find((item) => item.object_kind === "MANIFEST");
+  if (manifestPlan === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft manifest plan is missing");
   if (binding.manifest_r2_key !== revision.manifest_r2_key || revision.status !== "DRAFT" ||
       binding.artifact_id !== input.revision.artifact_ref.id || binding.revision !== input.revision.artifact_ref.revision ||
       head.artifact_id !== input.revision.artifact_ref.id || revision.kind !== input.spec.kind ||
       revision.spec_digest !== input.revision.spec_digest || revision.evidence_freeze_id !== input.revision.evidence_freeze_ref.id ||
       revision.evidence_freeze_revision !== input.revision.evidence_freeze_ref.revision ||
-      revision.dependency_manifest_ref !== input.revision.dependency_manifest_ref ||
-      binding.principal_ref !== input.intent.principal_ref || binding.spec_ref_id !== input.spec.spec_ref.id ||
-      binding.spec_ref_revision !== input.spec.spec_ref.revision || binding.scope_snapshot_id !== input.spec.scope_snapshot_ref.id ||
-      binding.scope_snapshot_revision !== input.spec.scope_snapshot_ref.revision || binding.manifest_sha256 !== planned.find((item) => item.object_kind === "MANIFEST")?.sha256 ||
-      binding.manifest_size_bytes !== planned.find((item) => item.object_kind === "MANIFEST")?.size_bytes) {
+       revision.dependency_manifest_ref !== input.revision.dependency_manifest_ref ||
+       binding.principal_ref !== input.intent.principal_ref || binding.spec_ref_id !== input.spec.spec_ref.id ||
+       binding.spec_ref_revision !== input.spec.spec_ref.revision || binding.scope_snapshot_id !== input.spec.scope_snapshot_ref.id ||
+       binding.scope_snapshot_revision !== input.spec.scope_snapshot_ref.revision || binding.manifest_sha256 !== manifestPlan.sha256 ||
+       binding.manifest_size_bytes !== manifestPlan.size_bytes || binding.created_at !== input.revision.created_at ||
+       revision.created_at !== input.revision.created_at || head.head_revision !== input.revision.artifact_ref.revision ||
+       head.manifest_r2_key !== manifestPlan.physical_key || head.intent_id !== input.intent.intent_ref.id ||
+       head.intent_revision !== input.intent.intent_ref.revision || head.updated_at !== input.revision.created_at) {
     fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft binding is inconsistent");
   }
   const byRef = new Map(rows.map((row) => [String(row.object_ref), row]));
   const receipts: ArtifactDraftObjectReceipt[] = [];
   for (const object of planned) {
     const row = byRef.get(object.object_ref);
-    if (row === undefined || row.object_kind !== object.object_kind || row.section_ordinal !== object.section_ordinal || row.residency_key_digest !== object.residency_digest) {
+    if (row === undefined || row.object_kind !== object.object_kind || row.section_ordinal !== object.section_ordinal ||
+        row.residency_key_digest !== object.residency_digest || row.residency_key_json !== canonicalJson(object.residency)) {
       fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft object mapping is incomplete");
     }
     let residency: ObjectResidencyKey;
     try { residency = ObjectResidencyKeySchema.parse(JSON.parse(String(row.residency_key_json))); }
     catch (cause) { fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft residency is malformed", false, cause); }
     const receipt = parseReceipt(row.receipt_json);
-    if (receipt.expected_sha256 !== object.sha256 || receipt.readback_sha256 !== object.sha256 || receipt.size_bytes !== object.size_bytes ||
+    if (!exactJson(residency, object.residency) || receipt.key !== object.physical_key ||
+        receipt.expected_sha256 !== object.sha256 || receipt.readback_sha256 !== object.sha256 || receipt.size_bytes !== object.size_bytes ||
         residency.content_digest.digest !== object.sha256) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft receipt does not match planned bytes");
     receipts.push({ object_ref: object.object_ref, object_kind: object.object_kind, section_ordinal: object.section_ordinal, residency, receipt });
   }
@@ -493,13 +369,18 @@ async function readExactDraft(
   plan: { readonly objects: readonly PlannedObject[]; readonly request_sha256: string; readonly manifest: PlannedObject },
   outboxId: string,
 ): Promise<PrepareArtifactDraftResult | null> {
+  const reservation = await readReservation(database, input.intent);
+  if (reservation !== null) validateReservation(reservation, input, plan.request_sha256);
   const authority = await database.prepare(
     "SELECT i.intent_id, i.revision, i.operation_kind, i.principal_ref, i.idempotency_key, i.payload_ref, " +
     "i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, i.created_at, o.outbox_id, o.topic, o.payload_sha256 " +
     "FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision " +
     "WHERE i.intent_id=?1 AND i.revision=?2 LIMIT 1",
   ).bind(input.intent.intent_ref.id, input.intent.intent_ref.revision).first<AuthorityRow>();
-  if (authority === null) return null;
+  if (authority === null) {
+    if (reservation?.state === "FINALIZED") fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "finalized draft intent is missing from durable authority");
+    return null;
+  }
   let storedIntent: OperationIntent;
   try {
     storedIntent = OperationIntentSchema.parse({
@@ -520,9 +401,7 @@ async function readExactDraft(
       authority.topic !== (input.topic ?? DEFAULT_TOPIC) || authority.payload_sha256 !== plan.manifest.sha256) {
     fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft intent or outbox is bound to different request bytes");
   }
-  const reservation = await readReservation(database, input.intent);
   if (reservation === null) return null;
-  validateReservation(reservation, input, plan.request_sha256);
   if (reservation.state !== "FINALIZED") return null;
   let plannedStored: unknown;
   try { plannedStored = JSON.parse(String(reservation.planned_objects_json)); } catch (cause) {
@@ -533,18 +412,27 @@ async function readExactDraft(
   const revision = input.revision.artifact_ref.revision;
   const binding = await database.prepare("SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id = ?1 AND revision = ?2 LIMIT 1").bind(artifactId, revision).first<DraftBindingRow>();
   const artifact = await database.prepare("SELECT artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at FROM artifact_revision WHERE artifact_id = ?1 AND revision = ?2 LIMIT 1").bind(artifactId, revision).first<DraftRevisionRow>();
-  const head = await database.prepare("SELECT artifact_id, head_revision FROM artifact_draft_head WHERE artifact_id = ?1 LIMIT 1").bind(artifactId).first<DraftHeadRow>();
+  const head = await database.prepare("SELECT artifact_id, head_revision, manifest_r2_key, intent_id, intent_revision, updated_at FROM artifact_draft_head WHERE artifact_id = ?1 LIMIT 1").bind(artifactId).first<DraftHeadRow>();
   const rows = await database.prepare("SELECT artifact_id, revision, object_kind, object_ref, section_ordinal, receipt_json, residency_key_json, residency_key_digest FROM artifact_draft_object WHERE artifact_id = ?1 AND revision = ?2 ORDER BY object_kind, object_ref").bind(artifactId, revision).all<DraftObjectRow>();
-  if (binding === null || artifact === null || head === null || rows.results === undefined) return null;
+  if (binding === null || artifact === null || head === null || rows.results === undefined) {
+    fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "finalized draft durable rows are incomplete");
+  }
   if (binding.intent_id !== input.intent.intent_ref.id || binding.intent_revision !== input.intent.intent_ref.revision) fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft revision is bound to another intent");
   for (const object of plan.objects) {
     const row = rows.results.find((candidate) => candidate.object_ref === object.object_ref);
-    if (row === undefined) return null;
+    if (row === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "finalized draft object row is missing");
     const receipt = parseReceipt(row.receipt_json);
     const expectedKey = await canonicalEvidenceObjectKey(object.residency, object.prefix, object.sha256);
     if (receipt.key !== expectedKey) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft receipt key is not canonical");
     const stored = await store.open(receipt.key);
-    if (stored === null) return null;
+    if (stored === null) fail("ARTIFACT_DRAFT_R2_INTEGRITY", "finalized draft R2 object is missing");
+    const metadata = stored.customMetadata ?? {};
+    if (stored.etag !== receipt.etag || stored.size !== object.size_bytes ||
+        stored.httpMetadata?.contentType !== object.content_type ||
+        Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== object.sha256 ||
+        metadata.eliotr_size_bytes !== String(object.size_bytes) || metadata.eliotr_immutable !== "true") {
+      fail("ARTIFACT_DRAFT_R2_INTEGRITY", "draft R2 metadata differs from durable receipt");
+    }
     const actual = await bufferBounded(stored.body, RUNTIME_LIMITS.buffered_r2_bytes);
     if (actual.byteLength !== object.size_bytes || await digestBytes(actual) !== object.sha256) fail("ARTIFACT_DRAFT_R2_INTEGRITY", "draft R2 readback differs from durable receipt");
   }
@@ -580,7 +468,7 @@ export async function prepareArtifactDraft(
   } catch (cause) {
     const raced = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
     if (raced !== null) return raced;
-    const reserved = await readReservation(database, input.intent);
+    const reserved = await readReservationByArtifactRevision(database, input.revision.artifact_ref.id, input.revision.artifact_ref.revision);
     if (reserved !== null) {
       validateReservation(reserved, input, plan.request_sha256);
     } else {
@@ -621,7 +509,10 @@ export async function prepareArtifactDraft(
     const recovered = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
     if (recovered !== null) return recovered;
     const head = await database.prepare("SELECT head_revision FROM artifact_draft_head WHERE artifact_id=?1 LIMIT 1").bind(input.revision.artifact_ref.id).first<{ readonly head_revision: unknown }>();
-    if (head !== null && input.expected_draft_head_revision !== null && head.head_revision !== input.expected_draft_head_revision) fail("ARTIFACT_DRAFT_HEAD_CONFLICT", "draft head changed before commit", false, cause);
+    if ((head === null && input.expected_draft_head_revision !== null) ||
+        (head !== null && (input.expected_draft_head_revision === null || head.head_revision !== input.expected_draft_head_revision))) {
+      fail("ARTIFACT_DRAFT_HEAD_CONFLICT", "draft head changed before commit", false, cause);
+    }
     fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch failed without exact readback", true, cause);
   }
   const final = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
