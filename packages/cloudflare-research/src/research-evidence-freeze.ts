@@ -14,7 +14,7 @@ import {
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "./types.js";
 
-const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v1" as const;
+const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
@@ -23,6 +23,13 @@ export interface EvidenceFreezeStageInput {
   readonly freeze_ref: VersionedRef;
   readonly manifest_ref: VersionedRef;
   readonly coverage_denominator_ref: VersionedRef;
+  readonly protocol_digest: string;
+  readonly contract_protocol_digest: string;
+  readonly lane_digest: string;
+  readonly stage_zero_attempt_ref: string;
+  readonly stage_five_attempt_ref: string;
+  readonly stage_five_request_sha256: string;
+  readonly model_profile_binding_ref: VersionedRef;
 }
 
 /**
@@ -33,8 +40,13 @@ export interface EvidenceFreezeStageInput {
 export interface EvidenceFreezeAuthorityBinding {
   readonly scope_snapshot_ref: VersionedRef;
   readonly coverage_denominator_ref: VersionedRef;
+  readonly protocol_digest: string;
   readonly contract_protocol_digest: string;
   readonly lane_digest: string;
+  readonly stage_zero_attempt_ref: string;
+  readonly stage_five_attempt_ref: string;
+  readonly stage_five_request_sha256: string;
+  readonly model_profile_binding_ref: VersionedRef;
   readonly excluded_evidence: readonly { evidence_ref: string; reason: string }[];
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
@@ -104,20 +116,39 @@ function parseInput(bytes: Uint8Array): EvidenceFreezeStageInput {
     if (cause instanceof EvidenceFreezeStageError) throw cause;
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze input is not valid JSON", false, cause);
   }
-  if (!isRecord(raw) || Object.keys(raw).length !== 4 || raw.protocol !== INPUT_PROTOCOL) {
+  if (!isRecord(raw) || Object.keys(raw).length !== 11 || raw.protocol !== INPUT_PROTOCOL) {
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze input shape is invalid");
   }
   let freezeRef: VersionedRef;
   let manifestRef: VersionedRef;
   let denominatorRef: VersionedRef;
+  let modelProfileBindingRef: VersionedRef;
   try {
     freezeRef = VersionedRefSchema.parse(raw.freeze_ref);
     manifestRef = VersionedRefSchema.parse(raw.manifest_ref);
     denominatorRef = VersionedRefSchema.parse(raw.coverage_denominator_ref);
+    modelProfileBindingRef = VersionedRefSchema.parse(raw.model_profile_binding_ref);
   } catch (cause) {
     fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze or manifest reference is invalid", false, cause);
   }
-  return Object.freeze({ protocol: INPUT_PROTOCOL, freeze_ref: freezeRef, manifest_ref: manifestRef, coverage_denominator_ref: denominatorRef });
+  const protocolDigest = raw.protocol_digest;
+  const contractProtocolDigest = raw.contract_protocol_digest;
+  const laneDigest = raw.lane_digest;
+  const stageFiveRequestSha256 = raw.stage_five_request_sha256;
+  const stageZeroAttemptRef = raw.stage_zero_attempt_ref;
+  const stageFiveAttemptRef = raw.stage_five_attempt_ref;
+  if (typeof protocolDigest !== "string" || !SHA256.test(protocolDigest) ||
+      typeof contractProtocolDigest !== "string" || !SHA256.test(contractProtocolDigest) ||
+      typeof laneDigest !== "string" || !SHA256.test(laneDigest) ||
+      typeof stageFiveRequestSha256 !== "string" || !SHA256.test(stageFiveRequestSha256) ||
+      typeof stageZeroAttemptRef !== "string" || !ID.test(stageZeroAttemptRef) ||
+      typeof stageFiveAttemptRef !== "string" || !ID.test(stageFiveAttemptRef)) {
+    fail("EVIDENCE_FREEZE_INPUT_INVALID", "freeze provenance is invalid");
+  }
+  return Object.freeze({ protocol: INPUT_PROTOCOL, freeze_ref: freezeRef, manifest_ref: manifestRef, coverage_denominator_ref: denominatorRef,
+    protocol_digest: protocolDigest, contract_protocol_digest: contractProtocolDigest, lane_digest: laneDigest,
+    stage_zero_attempt_ref: stageZeroAttemptRef, stage_five_attempt_ref: stageFiveAttemptRef,
+    stage_five_request_sha256: stageFiveRequestSha256, model_profile_binding_ref: modelProfileBindingRef });
 }
 
 function refKey(value: VersionedRef): string {
@@ -145,7 +176,8 @@ function validateAuthority(
   let snapshot: EvidenceFreezeAuthorityBinding;
   try { snapshot = JSON.parse(canonicalEvidenceJson(value)) as EvidenceFreezeAuthorityBinding; }
   catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority readback is not canonical", false, cause); }
-  const authorityKeys = ["scope_snapshot_ref", "coverage_denominator_ref", "contract_protocol_digest", "lane_digest",
+  const authorityKeys = ["scope_snapshot_ref", "coverage_denominator_ref", "protocol_digest", "contract_protocol_digest", "lane_digest",
+    "stage_zero_attempt_ref", "stage_five_attempt_ref", "stage_five_request_sha256", "model_profile_binding_ref",
     "excluded_evidence", "unresolved_contradiction_refs", "open_research_debt_refs",
     "provider_model_prompt_tool_generations"];
   if (Object.keys(snapshot).length !== authorityKeys.length || authorityKeys.some((key) => !Object.hasOwn(snapshot, key))) {
@@ -172,7 +204,19 @@ function validateAuthority(
     fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze authority reference is invalid");
   }
   validateSha(snapshot.contract_protocol_digest, "contract protocol digest");
+  validateSha(snapshot.protocol_digest, "protocol digest");
   validateSha(snapshot.lane_digest, "lane digest");
+  validateId(snapshot.stage_zero_attempt_ref, "stage zero attempt reference");
+  validateId(snapshot.stage_five_attempt_ref, "stage five attempt reference");
+  validateSha(snapshot.stage_five_request_sha256, "stage five request digest");
+  try { VersionedRefSchema.parse(snapshot.model_profile_binding_ref); }
+  catch (cause) { fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "model profile binding reference is invalid", false, cause); }
+  if (snapshot.protocol_digest !== input.protocol_digest || snapshot.contract_protocol_digest !== input.contract_protocol_digest ||
+      snapshot.lane_digest !== input.lane_digest || snapshot.stage_zero_attempt_ref !== input.stage_zero_attempt_ref ||
+      snapshot.stage_five_attempt_ref !== input.stage_five_attempt_ref || snapshot.stage_five_request_sha256 !== input.stage_five_request_sha256 ||
+      refKey(snapshot.model_profile_binding_ref) !== refKey(input.model_profile_binding_ref)) {
+    fail("EVIDENCE_FREEZE_AUTHORITY_INVALID", "freeze provenance differs from persisted authority");
+  }
   if (snapshot.provider_model_prompt_tool_generations === null ||
       typeof snapshot.provider_model_prompt_tool_generations !== "object" ||
       Array.isArray(snapshot.provider_model_prompt_tool_generations) ||
