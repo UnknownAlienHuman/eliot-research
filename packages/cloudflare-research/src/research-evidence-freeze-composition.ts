@@ -190,6 +190,7 @@ export interface EvidenceFreezeSynthesisContext {
   readonly principal_ref: string;
   readonly credential_generation: string;
   readonly deployment_generation: string;
+  readonly authorization_receipt_ref: string;
   readonly stage_ten_input: EvidenceFreezeStageInput;
   readonly stage_ten_request: StageRequest;
   readonly stage_ten_request_sha256: string;
@@ -289,6 +290,24 @@ function assertSynthesisLineage(
   }
 }
 
+function assertSynthesisPreparation(
+  prepared: ModelAttemptReservationInput,
+  frozen: EvidenceFreezeSynthesisContext,
+): void {
+  const deployment = frozen.stage_ten_input.model_profile_definition.deployment;
+  if (!sameJson(prepared.call.evidence_pack, frozen.stage_five.evidence_pack) ||
+      prepared.call.route_ref !== deployment.route_ref ||
+      prepared.call.prompt_generation !== deployment.prompt_generation ||
+      prepared.call.schema_generation !== deployment.schema_generation ||
+      prepared.authority.principal_ref !== frozen.principal_ref ||
+      prepared.authority.credential_generation !== frozen.credential_generation ||
+      prepared.authority.deployment_generation !== frozen.deployment_generation ||
+      !sameJson(prepared.authority.scope_snapshot_ref, frozen.stage_five.scope_snapshot_ref) ||
+      prepared.authority.policy_generation !== frozen.w1_head.policy_generation) {
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
+}
+
 export function createEvidenceFreezeSynthesisContextReader(
   environment: EvidenceFreezeSynthesisReaderEnvironment,
   navigation: NavigationReadAuthority,
@@ -310,6 +329,10 @@ export function createEvidenceFreezeSynthesisContextReader(
       const stageEleven = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "FREEZE_EVIDENCE"));
       const stageElevenReceipt = committedOrCorrupt(await checkpoints.receipt(stageEleven.request, stageEleven.request_sha256));
       assertSynthesisLineage(input.request, stageTen, stageTenReceipt, stageEleven, stageElevenReceipt);
+      const authorizationReceiptRef = await readers.read_authorization_receipt_ref(
+        input.request.operation_id, input.request.investigation_ref.id, input.principal,
+      );
+      if (authorizationReceiptRef === null) fail("WORKFLOW_AUTHORITY_STALE");
       const stageTenBytes = await readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true);
       const stageElevenBytes = await readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true);
       if (!sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -349,12 +372,16 @@ export function createEvidenceFreezeSynthesisContextReader(
           stageTenInput.stage_zero_attempt_ref.length === 0 ||
           stageTen.request.investigation_ref.id !== stageZero.investigation_ref.id ||
           stageTenInput.model_profile_definition.definition_ref.revision !== 1) fail("WORKFLOW_OUTPUT_CORRUPT");
-      const after = await navigation.current();
+      const finalAuthorizationReceiptRef = await readers.read_authorization_receipt_ref(
+        input.request.operation_id, input.request.investigation_ref.id, input.principal,
+      );
       const finalHead = await readers.read_w1_head(input.request.investigation_ref.id);
-      if (finalHead === null || !sameJson(before, after) ||
+      const after = await navigation.current();
+      if (finalHead === null || !sameJson(before, after) || finalAuthorizationReceiptRef !== authorizationReceiptRef ||
           finalHead.investigation_id !== input.request.investigation_ref.id ||
           finalHead.revision !== input.request.investigation_ref.revision ||
           finalHead.principal_ref !== input.principal.principal_ref ||
+          finalHead.deployment_generation !== input.principal.deployment_generation ||
           finalHead.scope_snapshot_id !== navigation.scope.snapshot_id ||
           finalHead.scope_snapshot_revision !== navigation.scope.revision ||
           freeze.client_fence_ref !== input.principal.credential_generation) fail("WORKFLOW_AUTHORITY_STALE");
@@ -362,6 +389,7 @@ export function createEvidenceFreezeSynthesisContextReader(
         operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id,
         current_revision: finalHead.revision, principal_ref: input.principal.principal_ref,
         credential_generation: input.principal.credential_generation, deployment_generation: input.principal.deployment_generation,
+        authorization_receipt_ref: authorizationReceiptRef,
         stage_ten_input: stageTenInput, stage_ten_request: stageTen.request, stage_ten_request_sha256: stageTen.request_sha256,
         stage_ten_attempt_ref: stageTen.attempt_ref, stage_ten_receipt: stageTenReceipt,
         stage_eleven_request: stageEleven.request, stage_eleven_request_sha256: stageEleven.request_sha256,
@@ -385,6 +413,11 @@ export function createEvidenceFreezeSynthesisHandler(input: {
 }): GovernedModelAttemptHandler {
   return createResearchModelStageHandler({
     ...input.model,
-    prepare: async (context) => input.model.prepare(context, await input.context.read(context)),
+    prepare: async (context) => {
+      const frozen = await input.context.read(context);
+      const prepared = await input.model.prepare(context, frozen);
+      assertSynthesisPreparation(prepared, frozen);
+      return prepared;
+    },
   });
 }
