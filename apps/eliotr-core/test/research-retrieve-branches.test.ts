@@ -216,6 +216,17 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
       .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
   });
 
+  it("binds stage-0 readback to the committed attempt reference", async () => {
+    const f = await fixture();
+    const { request, handler, dependencies } = await prepareRetrieveStage(f);
+    await f.executor.execute(request, principal, handler);
+    await f.db.prepare(
+      "UPDATE research_workflow_attempt SET attempt_ref = ?1 WHERE operation_id = ?2 AND stage_index = 0",
+    ).bind("tampered-stage-zero-attempt", request.operation_id).run();
+    await expect(readRetrieveBranchesCheckpoint(dependencies, request, principal))
+      .rejects.toMatchObject({ code: "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE" });
+  });
+
   it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
     const f = await fixture();
     const { request, handler } = await prepareRetrieveStage(f);
