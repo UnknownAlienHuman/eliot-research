@@ -9,7 +9,8 @@
     ],
     "owned_paths": [
       "scripts/lib/local-launch.mjs",
-      "scripts/lib/local-smoke.mjs"
+      "scripts/lib/local-smoke.mjs",
+      "scripts/test-local-async-execution.mjs"
     ],
     "mandatory_negative_case": "Inject remote bindings, account IDs and deployment variables; reject unsafe local vars before every subprocess.",
     "document": "ER-43-local-launch.md",

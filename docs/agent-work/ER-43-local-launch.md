@@ -13,6 +13,7 @@ trial. Extend the existing local-runtime entrypoint, not a second application or
 
 - `scripts/lib/local-launch.mjs`
 - `scripts/lib/local-smoke.mjs`
+- `scripts/test-local-async-execution.mjs`
 
 ## Integration permission
 
@@ -29,6 +30,9 @@ changes are preserved. The temporary local-integration-snapshot workflow is remo
 - Repeat preparation/restart preserves a sentinel and exact migration history; auth is never bypassed.
 - Smoke removes only its disposable state, never development databases; missing/forged auth stays denied.
 - Both native Windows and Linux CI run tooling negatives and the actual HTTP/restart smoke.
+- Local CLI work during browser scenarios must leave the Node event loop available to the owner bridge,
+  JWKS server and Playwright callbacks. Async execution retains the same environment isolation,
+  output bounds, child cleanup and explicit transient-error classification as the synchronous helper.
 
 ## Mandatory negative boundary
 
