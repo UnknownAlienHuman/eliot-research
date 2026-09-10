@@ -8,16 +8,18 @@ import {
   decodeModelRouteDeployment,
   type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
+import { RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { ReferenceManifestPolicyProfile } from "./research-reference-manifest.js";
 
 const SCHEMA = "eliotr.research.model-profile-binding.v1";
 const DEFINITION_SCHEMA = "eliotr.research.model-profile-definition.v1";
+const MAX_CONTEXT_BYTES = RUNTIME_LIMITS.ordinary_json_bytes;
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const DEFINITION_KEYS = new Set([
   "config_provenance_ref", "definition_ref", "definition_sha256", "deployment", "expires_at",
-  "model_profile_ref", "policy", "schema",
+  "max_context_bytes", "model_profile_ref", "policy", "schema",
 ]);
 const POLICY_KEYS = new Set([
   "allowed_tool_definition_refs", "allowed_verifier_refs",
@@ -66,6 +68,7 @@ export interface ModelProfileBinding {
   readonly scope_snapshot_ref: VersionedRef;
   readonly scope_snapshot_digest: string;
   readonly expires_at: string;
+  readonly max_context_bytes: number;
   readonly deployment: ModelRouteDeployment;
   readonly policy: ReferenceManifestPolicyProfile;
 }
@@ -77,6 +80,7 @@ export interface ModelProfileDefinition {
   readonly config_provenance_ref: string;
   readonly model_profile_ref: string;
   readonly expires_at: string;
+  readonly max_context_bytes: number;
   readonly deployment: ModelRouteDeployment;
   readonly policy: ReferenceManifestPolicyProfile;
 }
@@ -154,6 +158,13 @@ function iso(value: unknown, label: string, code: ModelProfileBindingErrorCode):
   return value;
 }
 
+function contextBytes(value: unknown, label: string, code: ModelProfileBindingErrorCode): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1 || value > MAX_CONTEXT_BYTES) {
+    fail(code, `${label} must be between 1 and ${MAX_CONTEXT_BYTES}`);
+  }
+  return value;
+}
+
 function stringList(value: unknown, label: string, code: ModelProfileBindingErrorCode): readonly string[] {
   if (!Array.isArray(value)) fail(code, `${label} must be an array`);
   const values = value.map((item) => identifier(item, label, code));
@@ -193,6 +204,7 @@ function definitionMaterial(definition: Omit<ModelProfileDefinition, "definition
     schema: definition.schema,
     config_provenance_ref: definition.config_provenance_ref,
     model_profile_ref: definition.model_profile_ref,
+    max_context_bytes: definition.max_context_bytes,
     expires_at: definition.expires_at,
     deployment: definition.deployment,
     policy: definition.policy,
@@ -212,6 +224,7 @@ function bindingMaterial(binding: Omit<ModelProfileBinding, "binding_ref" | "bin
     scope_snapshot_ref: binding.scope_snapshot_ref,
     scope_snapshot_digest: binding.scope_snapshot_digest,
     expires_at: binding.expires_at,
+    max_context_bytes: binding.max_context_bytes,
     deployment: binding.deployment,
     policy: binding.policy,
   };
@@ -224,13 +237,14 @@ async function decodeDefinition(raw: unknown, provenanceRef: string): Promise<Mo
   const definitionRef = versionedRef(value.definition_ref, "definition_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   if (definitionRef.revision !== 1) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "definition revision is unsupported");
   const profileRef = identifier(value.model_profile_ref, "model_profile_ref", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
+  const maxContextBytes = contextBytes(value.max_context_bytes, "max_context_bytes", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   const expiresAt = iso(value.expires_at, "expires_at", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   let deployment: ModelRouteDeployment;
   try { deployment = decodeModelRouteDeployment(value.deployment); }
   catch (cause) { fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "model profile deployment is invalid", false, cause); }
   const bindingPolicy = policy(value.policy, "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   if (bindingPolicy.expires_at !== expiresAt) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "binding and policy expiry differ");
-  const material = definitionMaterial({ schema: DEFINITION_SCHEMA, config_provenance_ref: provenanceRef, model_profile_ref: profileRef, expires_at: expiresAt, deployment, policy: bindingPolicy });
+  const material = definitionMaterial({ schema: DEFINITION_SCHEMA, config_provenance_ref: provenanceRef, model_profile_ref: profileRef, max_context_bytes: maxContextBytes, expires_at: expiresAt, deployment, policy: bindingPolicy });
   const definitionSha = digest(value.definition_sha256, "definition_sha256", "MODEL_PROFILE_BINDING_CONFIG_INVALID");
   const actualSha = await modelGatewaySha256(canonicalModelGatewayJson(material));
   if (actualSha !== definitionSha || definitionRef.id !== `eliotr.research.model-profile-definition-${definitionSha}`) fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "definition digest or reference does not match its canonical bytes");
@@ -244,6 +258,7 @@ async function resolvedBinding(definition: ModelProfileDefinition, authority: Mo
     definition_ref: definition.definition_ref,
     definition_sha256: definition.definition_sha256,
     model_profile_ref: definition.model_profile_ref,
+    max_context_bytes: definition.max_context_bytes,
     policy_authority_ref: authority.policy_authority_ref,
     policy_generation: authority.policy_generation,
     deployment_generation: authority.deployment_generation,
