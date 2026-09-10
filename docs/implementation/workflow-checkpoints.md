@@ -133,7 +133,7 @@ The model prompt adapter binds the call to the supplied deployment generations a
 serializes compiler-admitted evidence as quoted user data, and produces a bounded canonical request
 body and digest. Trusted parameters are supplied by the server; the existing HTTP request adapter
 enforces their digest against the selected deployment. This does not configure credentials, pricing,
-consent, output persistence or a live provider.
+consent or a live provider.
 
 `createD1ModelGatewayFingerprintStore` records canonical observed route fingerprints in the immutable
 `0036_research_model_fingerprints.sql` table. The reference contains the full canonical SHA-256;
@@ -141,6 +141,17 @@ independent readback verifies its route, bytes and digest. Latest observations a
 database-assigned sequence, so a reversed clock or replay of an older fingerprint cannot reorder
 them. An insert whose acknowledgement is lost is accepted only after exact durable readback.
 This history does not promote a route, change `model_generation`, qualify a provider or authorize spend.
+
+`createResearchModelOutputStore` binds the logical model-output reference to the actual persisted
+STARTED attempt, request, owner, W2 stage grant and scope before receiving provider bytes. Migration
+`0037_research_model_outputs.sql` stores this preparation separately from the committed physical R2
+receipt. Non-scope residency domains must be resolved by the trusted server policy/composition;
+the bridge does not derive them from caller claims. The content digest and complete physical residency
+key are computed from the bounded output after the call. Known output persistence has no new
+cancellation or expiry gate; the governed handler separately controls publication after settlement.
+Immutable R2 and D1 readback reconcile lost acknowledgements. A committed mapping with missing or
+corrupt R2 bytes is refused without repair. Production composition must still place preparation after
+durable STARTED and before invoking the provider.
 
 ## Bounds and proof ceiling
 
@@ -192,6 +203,14 @@ The fingerprint store passed four focused actual local Worker/D1 cases on 2026-0
 receipt and immutable replay, sequence ordering with a reversed clock and route isolation, invalid
 input and corrupt persisted bytes, and a committed insert whose acknowledgement is lost. The active
 route registry remains unchanged. Production gateway composition and live qualification remain open.
+
+The output store's actual local Worker/D1/R2 suite passed three cases on 2026-09-10, covering the
+logical-to-physical binding, replay without another PUT, known-result settlement, lost D1 commit
+acknowledgement, and refusal of missing or corrupt finalized objects without changing the receipt.
+A subsequent focused run passed the strengthened cancellation/expiry case: cancellation or expiry is
+injected after preparation and before the first R2 PUT, and the known bytes are still persisted and
+replayed once. The two unchanged cases were not rerun. These controlled model results do not qualify
+provider quality, authoritative prices, owner consent or live deployment.
 
 The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and

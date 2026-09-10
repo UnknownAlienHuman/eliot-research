@@ -15,3 +15,4 @@ export * from "./research-reference-manifest.js";
 export * from "./research-reference-manifest-store.js";
 export * from "./research-model-prompt.js";
 export * from "./research-model-fingerprint-store.js";
+export * from "./research-model-output-store.js";
