@@ -162,6 +162,13 @@ export async function retrieveWithHeldScope(
 ): Promise<RetrievalResult> {
   const access = input.access;
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
+  // Validate the held scope and its owner grant before creating any retrieval
+  // profile row. This keeps revoked or foreign workflow scopes read-only.
+  await scopePorts.requireCurrentScope(input.scope_snapshot);
+  if (input.scope_snapshot.member_source_revision_refs.length > input.profile.max_sources ||
+      input.requested_limit > input.profile.max_results) {
+    throw new RetrievalQueryError("RETRIEVAL_INPUT_INVALID", "retrieval request exceeds its server-selected scope profile");
+  }
   await createD1ScopeProfilePort(env.CORE_DB).recordBinding(input.scope_snapshot, input.profile);
   const resolver = createCloudflareEvidenceResolver({
     authority: createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }),
