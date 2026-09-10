@@ -10,6 +10,7 @@ import {
   createD1RetrievalResultStore,
   createD1RetrievalTracePort,
   createD1ScopePorts,
+  createD1ScopeProfilePort,
   createIdentLaneExecutor,
   createLexLaneExecutor,
   createQueryBudgetGuard,
@@ -18,6 +19,7 @@ import {
   RetrievalQueryError,
   type RetrievalQueryAccess,
   type RetrievalQueryPorts,
+  type ScopeProfileBinding,
 } from "@eliotr/retrieval";
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
@@ -37,6 +39,8 @@ export interface HeldScopeRetrievalInput {
   readonly deadline_ms: number;
   readonly idempotency_key: string;
   readonly signal: AbortSignal;
+  /** Server-selected immutable profile; never sourced from a public request. */
+  readonly profile: ScopeProfileBinding;
 }
 
 export interface HeldResearchScope {
@@ -158,6 +162,7 @@ export async function retrieveWithHeldScope(
 ): Promise<RetrievalResult> {
   const access = input.access;
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
+  await createD1ScopeProfilePort(env.CORE_DB).recordBinding(input.scope_snapshot, input.profile);
   const resolver = createCloudflareEvidenceResolver({
     authority: createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }),
     content: createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET }),
