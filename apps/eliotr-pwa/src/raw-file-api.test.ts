@@ -9,6 +9,7 @@ import {
   decodeRawNormalizedAdmissionEnvelope,
   prepareRawFileSelection,
   readRawFileByIdempotency,
+  readRawFileAdmissionStatus,
   RAW_MARKDOWN_MAX_OUTPUT_BYTES,
   RAW_MARKDOWN_MAX_TOKENS,
   type RawUploadFile,
@@ -190,5 +191,36 @@ describe("raw file capture API", () => {
       status: { operation_id: "1".repeat(64), state: "COMMITTED", source_revision_ref: "revision-1",
         expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" },
     }), "generation-1", capture, conversion)).toThrowError(ApiRequestError);
+  });
+
+  it("reads a known admission operation through its owner-bound GET route", async () => {
+    const selected = await prepareRawFileSelection(file("known.txt", "hello"));
+    const capture = {
+      protocol: "eliotr.raw-file-capture.v1", disposition: "CAPTURED", capture_id: `raw-capture-${"1".repeat(48)}`,
+      idempotency_key: selected.idempotency_key, original_file_name: selected.original_file_name, content_sha256: selected.content_sha256,
+      size_bytes: selected.size_bytes, content_type: selected.content_type, captured_at: "2026-09-09T00:00:00.000Z",
+    } as const;
+    const conversion = { protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: "2".repeat(64),
+      capture_id: capture.capture_id, content_sha256: capture.content_sha256, output_sha256: "3".repeat(64), output_bytes: 5,
+      detected_mime: "text/plain", format: "markdown", tokens: 1 } as const;
+    const admission = { protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64), capture_id: capture.capture_id,
+      conversion_operation_id: conversion.operation_id, candidate_ref: `raw-normalized-candidate:${"b".repeat(64)}`, state: "COMMITTED",
+      source_revision_ref: "revision-1", source_view_ref: `snapshot-view:v1:${"c".repeat(64)}`, conversion_state: "COMPLETE",
+      admission_receipt: { operation_id: "bundle-op-1", manifest_sha256: "4".repeat(64), source_revision_ref: "revision-1",
+        normalized_artifact_ref: "normalized/artifact", object_residency_key_digest: "5".repeat(64), decision: "DUPLICATE", reason_codes: [],
+        readback_sha256: "6".repeat(64), committed_at: "2026-09-09T00:00:00.000Z" }, reason_codes: [],
+      expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" } as const;
+    const fetchMock = vi.fn(async (path: string, init: RequestInit) => {
+      expect(path).toBe(`/api/v1/ingest/raw/${encodeURIComponent(capture.capture_id)}/admission/${"a".repeat(64)}`);
+      expect(init.method).toBe("GET");
+      expect(init.body).toBeUndefined();
+      return new Response(JSON.stringify({ data: admission, trace_id: "trace-admit-read", deployment_generation: "generation-1" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(readRawFileAdmissionStatus(capture, conversion, "a".repeat(64), "generation-1"))
+      .resolves.toMatchObject({ state: "COMMITTED", admission_operation_id: "a".repeat(64), admission_receipt: { decision: "DUPLICATE" } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

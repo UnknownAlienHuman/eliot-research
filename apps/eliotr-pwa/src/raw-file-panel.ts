@@ -6,6 +6,7 @@ import {
   admitRawFileToLibrary,
   prepareRawFileSelection,
   readRawFileByIdempotency,
+  readRawFileAdmissionStatus,
   RAW_FILE_MAX_BYTES,
   type RawFileCaptureReceipt,
   type RawFileSelection,
@@ -86,6 +87,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let processingOutcomeUnknown = false;
   let admission: RawNormalizedAdmissionResult | undefined;
   let admissionOutcomeUnknown = false;
+  let admissionNeedsResume = false;
   let lastGeneration = host.generation();
 
   const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
@@ -136,8 +138,13 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
       ? "Check processing status" : "Process file";
     admit.hidden = conversion?.state !== "COMPLETE";
     admit.disabled = busy || conversion?.state !== "COMPLETE" || !ready;
-    admit.textContent = admissionOutcomeUnknown || (admission !== undefined && admission.state !== "COMMITTED")
-      ? "Check Library status" : "Add to Library";
+    admit.textContent = admissionNeedsResume
+      ? "Resume Library add"
+      : admission?.admission_operation_id !== undefined
+        ? "Check Library status"
+        : admissionOutcomeUnknown
+          ? "Reconcile Library add"
+          : "Add to Library";
     input.disabled = busy;
     stopButton.hidden = !busy;
     stopButton.disabled = !busy;
@@ -153,6 +160,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     processingOutcomeUnknown = false;
     admission = undefined;
     admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
     input.value = "";
     receiptNode.hidden = true;
     receiptNode.replaceChildren();
@@ -256,6 +264,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     conversion = undefined;
     admission = undefined;
     admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
     renderProcessing(undefined);
     renderAdmission(undefined);
     busy = true;
@@ -301,13 +310,19 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     controller = local;
     busy = true;
     renderButtons();
-    status.textContent = admissionOutcomeUnknown ? "Checking Library status…" : "Adding the processed file to Library…";
+    const readbackOnly = admission?.admission_operation_id !== undefined && !admissionNeedsResume;
+    status.textContent = readbackOnly ? "Checking Library status…"
+      : admissionNeedsResume ? "Resuming the Library add…"
+        : admissionOutcomeUnknown ? "Reconciling the Library add…" : "Adding the processed file to Library…";
     void (async () => {
       try {
-        const result = await admitRawFileToLibrary(currentReceipt, currentConversion, generation, local.signal);
+        const result = readbackOnly
+          ? await readRawFileAdmissionStatus(currentReceipt, currentConversion, admission?.admission_operation_id ?? "", generation, local.signal)
+          : await admitRawFileToLibrary(currentReceipt, currentConversion, generation, local.signal);
         if (active !== serial || disposed) return;
         admission = result;
         admissionOutcomeUnknown = false;
+        admissionNeedsResume = result.state !== "COMMITTED";
         renderAdmission(result);
         status.textContent = admissionCopy(result);
         if (result.state === "COMMITTED") window.dispatchEvent(new Event("eliotr:raw-admission-completed"));
@@ -341,6 +356,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     processingOutcomeUnknown = false;
     admission = undefined;
     admissionOutcomeUnknown = false;
+    admissionNeedsResume = false;
     receiptNode.hidden = true;
     receiptNode.replaceChildren();
     renderProcessing(undefined);
