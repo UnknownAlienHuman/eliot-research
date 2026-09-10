@@ -279,6 +279,8 @@
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "generation-fenced exact dependency closure quarantines subjects, verifies absence across every requested location, records non-revealing purge ledger entries, invalidates dependents, and blocks rather than claiming subset completion",
       "completion_evidence": [
+        "packages/cloudflare-erasure/src/admission-policy.ts and additive migration 0039: separate operator-installed erasure permission, exact owner/principal/credential/legal-basis binding, canonical policy digest, immutable admission request and stable replay timestamp; admission rechecks current authority and expands to all required locations. This producer is not yet wired to a public erasure route or coordinator; ERASURE remains disabled.",
+        "apps/eliotr-core/test/erasure-admission-policy.test.ts: five actual local D1 cases cover stable admission replay, normalized offset-time admission, actor/legal-basis/owner drift, revocation, expiry and corrupt policy digest refusal; production permission installation and deletion NOT_EXECUTED.",
         "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
         "apps/eliotr-core/src/erasure-coordinator.test.ts exact completion and absence-negative cases",
         "packages/cloudflare-erasure location-adapter and authority tests",
@@ -485,6 +487,7 @@
       "behavior": "Executable W2a single-stage checkpoint boundary with canonical 18-stage ordering, immutable bounded R2 outputs, one durable attempt per handler, exact ACK reconciliation, currentness/cancellation/budget checks, and W1 CHECKPOINT plus outbox in one D1 batch. Engine completion never upgrades research disposition. Public Workflow, governed W3/W4 handlers, branch scheduler, notification consumer and metadata retention/erasure/restore integration remain uncomposed.",
       "completion_evidence": [
         "apps/eliotr-core/test/research-workflow.test.ts: actual local D1/R2 ordering, duplicate/lost ACK, concurrent attempts, cancellation/withdrawal rollback, exact content/residency, 8 MiB/64 KiB bounds, unknown-settlement and strict v1 vector checks.",
+        "apps/eliotr-core/src/research-retrieve-branches.ts and its Worker fixture: actual stage-0 protocol readback followed by stage-5 retrieval over the same held scope, separate WORK/EVIDENCE buckets, exact indexed Q1 excerpt, stable replay counts and revoked-grant refusal; shared factory caller wiring, AllowedReferenceManifest, evidence freeze and synthesis remain open.",
         "infra/workflows/checkpoint-vectors.v1.json; deterministic migration target eliotr-research-core, not promoted Rust authority.",
         "Live Workflow/provider/settlement/erasure/restore qualification NOT_EXECUTED; keep public scaffold and launch holds."
       ]
