@@ -15,11 +15,17 @@ outside the paths below.
 - `apps/eliotr-core/src/research-workflow.ts`
 - `infra/workflows/**`
 - `packages/cloudflare-research/**`
+- `packages/cloudflare-workflows/**`
 - `apps/eliotr-core/test/research-workflow.test.ts`
 - `apps/eliotr-core/test/research-workflow-fixture.ts`
 - `docs/implementation/workflow-checkpoints.md`
 
-The durable model-route D1 registry belongs to this package alongside model-attempt persistence.
+The `cloudflare-workflows` package owns the W2 executor, checkpoint store, object I/O, schemas and
+committed-stage lineage readback. `cloudflare-research` composes its research handlers on that runtime
+and retains the existing public exports. This extraction changes no stored protocol, migration or
+handler generation; neither package may introduce a second checkpoint authority.
+
+The durable model-route D1 registry belongs to `cloudflare-research` alongside model-attempt persistence.
 Its provider contracts and codecs are imported from ER-16's `@eliotr/cloudflare-ai` public API.
 The `0035_model_route_registry.sql` migration remains an ER-13 integration handoff; the actual D1
 fixture `apps/eliotr-core/test/model-deployment-registry.test.ts` remains an ER-27 handoff.

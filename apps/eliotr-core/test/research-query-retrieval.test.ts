@@ -29,7 +29,7 @@ import {
  * range read with `etagMatches: head.httpEtag` (S3-quoted), which the runtime
  * rejects with "Conditional ETag should not be wrapped in quotes". It now sends
  * the unquoted `head.etag` (the convention used at
- * packages/cloudflare-research/src/objects.ts:21), and the hand-written fake in
+ * packages/cloudflare-workflows/src/objects.ts:21), and the hand-written fake in
  * content-store.test.ts rejects quoted values the way the runtime does. The hit
  * test below therefore proves the full freeze -> grant -> profile -> lanes ->
  * fusion -> exact R2 resolution -> trace/result persistence path, including a

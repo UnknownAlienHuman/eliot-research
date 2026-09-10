@@ -3,7 +3,7 @@ import type { ModelCallInput, ModelCallReceipt } from "@eliotr/research";
 import { createResearchModelOutputStore, type ModelOutputStorage } from "../../../packages/cloudflare-research/src/research-model-output-store.js";
 import { createModelOutputPreparationHook } from "../../../packages/cloudflare-research/src/research-model-output-preparation.js";
 import { createGovernedModelAttemptHandler, type GovernedModelAttemptDependencies } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
-import { digest } from "../../../packages/cloudflare-research/src/types.js";
+import { digest } from "@eliotr/cloudflare-workflows";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,

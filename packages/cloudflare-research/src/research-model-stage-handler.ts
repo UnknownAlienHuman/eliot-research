@@ -5,7 +5,7 @@ import type {
 import { createModelGatewayFetchAdapter } from "@eliotr/cloudflare-ai";
 import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelRoutePort as ResearchModelRoutePort } from "@eliotr/research";
-import type { WorkflowStageHandler } from "./types.js";
+import type { WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
 import {
   createD1ModelGatewayDeploymentRegistry,
   type D1DynamicRouteRegistryOptions,

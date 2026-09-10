@@ -1,9 +1,15 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/cloudflare-artifacts" },
-    { "path": "packages/cloudflare-access" },
-    { "path": "packages/cloudflare-workspace-mcp" },
+    {
+      "path": "packages/cloudflare-artifacts"
+    },
+    {
+      "path": "packages/cloudflare-access"
+    },
+    {
+      "path": "packages/cloudflare-workspace-mcp"
+    },
     {
       "path": "packages/contracts"
     },
@@ -66,6 +72,9 @@
     },
     {
       "path": "packages/cloudflare-research"
+    },
+    {
+      "path": "packages/cloudflare-workflows"
     }
   ]
 }

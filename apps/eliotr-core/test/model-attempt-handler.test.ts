@@ -1,10 +1,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createGovernedModelAttemptHandler, deriveModelAttemptIdentity } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
-import { createWorkflowCheckpointExecutor } from "../../../packages/cloudflare-research/src/executor.js";
-import { digest } from "../../../packages/cloudflare-research/src/types.js";
+import { createWorkflowCheckpointExecutor } from "@eliotr/cloudflare-workflows";
+import { digest } from "@eliotr/cloudflare-workflows";
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelCallInput } from "@eliotr/research";
-import type { WorkflowAttemptRecoveryInput } from "../../../packages/cloudflare-research/src/types.js";
+import type { WorkflowAttemptRecoveryInput } from "@eliotr/cloudflare-workflows";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,

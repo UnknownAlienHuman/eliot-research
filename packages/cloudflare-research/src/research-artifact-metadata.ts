@@ -16,7 +16,7 @@ import type { ArtifactDraftReferencedObjectInput } from "./artifact-draft-types.
 import type { ArtifactSectionMaterializationTemplate, ObjectResidencyTemplate } from "./research-artifact-draft.js";
 import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
 import type { ResearchMaterializeTrustedMetadata } from "./research-materialize-stage-handler.js";
-import type { StageRequest, WorkflowPrincipal } from "./types.js";
+import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import { CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS } from "./research-protocol-freeze.js";
 
 export interface ResearchArtifactReportPolicy {

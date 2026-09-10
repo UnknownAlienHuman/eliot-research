@@ -12,8 +12,8 @@ import type {
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
 import { createResearchArtifactMetadataProducer, type ResearchArtifactReportPolicy } from "../../../packages/cloudflare-research/src/research-artifact-metadata.js";
 import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
-import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";

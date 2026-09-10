@@ -2,7 +2,7 @@ import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliot
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import type { RunStatusAuthoritySnapshot } from "./research-run-status.js";
 import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
-import { digest as requestDigest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
+import { digest as requestDigest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
 import {
   materializeResearchResult,
   type ResearchMaterializeResultWriterInput,
