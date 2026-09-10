@@ -52,6 +52,11 @@ export interface D1ResearchModelAttemptRevalidatorInput {
   readonly now?: () => number;
 }
 
+export type ModelAttemptDeploymentRevalidator = (
+  context: ModelAttemptPreparationContext,
+  prepared: ModelAttemptReservationInput,
+) => Promise<ModelRouteDeployment>;
+
 interface WorkflowRow {
   readonly operation_id: unknown;
   readonly workflow_state: unknown;
@@ -340,9 +345,9 @@ function verifySpendAuthorization(
 
 export function createD1ResearchModelAttemptRevalidator(
   input: D1ResearchModelAttemptRevalidatorInput,
-): (context: ModelAttemptPreparationContext, prepared: ModelAttemptReservationInput) => Promise<void> {
+): ModelAttemptDeploymentRevalidator {
   const now = input.now ?? (() => Date.now());
-  return async (context, prepared): Promise<void> => {
+  return async (context, prepared): Promise<ModelRouteDeployment> => {
     const nowMs = now();
     if (!Number.isFinite(nowMs)) stale("model revalidation clock is invalid");
     let encoded: Awaited<ReturnType<typeof validatedRequest>>;
@@ -383,5 +388,6 @@ export function createD1ResearchModelAttemptRevalidator(
     verifyModel(finalModel, prepared, finalNowMs, encoded);
     if (finalReceipt !== spendRequest.workflow_authorization_receipt_ref) stale("workflow authorization changed during revalidation");
     verifySpendAuthorization(authorization, { ...spendRequest, workflow_authorization_receipt_ref: finalReceipt }, prepared, finalNowMs);
+    return expectedDeployment;
   };
 }
