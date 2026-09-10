@@ -1,13 +1,15 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
-import type { ArtifactSpec, OperationIntent } from "@eliotr/contracts";
-import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
+import type { OperationIntent } from "@eliotr/contracts";
+import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import type {
   ResearchMaterializeContext,
   ResearchMaterializeTrustedMetadata,
 } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
+import { createResearchArtifactMetadataProducer, type ResearchArtifactReportPolicy } from "../../../packages/cloudflare-research/src/research-artifact-metadata.js";
 import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
 import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
@@ -117,47 +119,26 @@ function residencyTemplate(scopeId: string, principalRef: string, tag: string) {
 
 async function materializeMetadata(
   context: ResearchMaterializeContext,
+  request: Parameters<ReturnType<typeof createResearchArtifactMetadataProducer>>[0]["request"],
   tag: string,
 ): Promise<ResearchMaterializeTrustedMetadata> {
-  const manifestBytes = new TextEncoder().encode(canonicalEvidenceJson(context.manifest));
-  const ledgerBytes = new TextEncoder().encode(canonicalEvidenceJson(context.stage_five.evidence_pack));
-  const manifestRef = `${context.manifest.manifest_ref.id}:${context.manifest.manifest_ref.revision}`;
-  const ledgerRef = `evidence-ledger-${tag}`;
-  const manifestSha = await evidenceSha256Bytes(manifestBytes);
-  const ledgerSha = await evidenceSha256Bytes(ledgerBytes);
   const domains = residencyTemplate(context.freeze.scope_snapshot_ref.id, freezePrincipal.principal_ref, tag);
-  const spec: ArtifactSpec = {
-    spec_ref: { id: `materialize-spec-${tag}`, revision: 1 }, kind: "research_report",
-    title: "Controlled frozen research draft", scope_snapshot_ref: context.freeze.scope_snapshot_ref,
-    inquiry_protocol_ref: { id: "materialize-protocol-v1", revision: 1 }, audience: "owner", language: "en",
-    section_contracts: [{ section_id: "summary", title: "Summary", purpose: "Frozen evidence summary",
-      required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 }],
-    citation_policy_ref: "materialize-citation-v1", verification_policy_ref: "materialize-verification-v1",
-    include_counterevidence: true, include_methodology: true, length_policy_ref: "materialize-length-v1",
-    export_formats: ["markdown"], budget_ref: "materialize-fixture-budget",
-  };
-  const section = {
-    section_ref: { id: `materialize-section-${tag}`, revision: 1 }, contract_id: "summary",
-    body_object_ref: `materialize-section-body-${tag}`, statement_labels: { claim: "UNRESOLVED" as const },
-    evidence_ledger_ref: ledgerRef,
-  };
   const intent: OperationIntent = {
     intent_ref: { id: `materialize-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",
-    principal_ref: freezePrincipal.principal_ref, idempotency_key: `materialize-idempotency-${tag}`,
+    principal_ref: freezePrincipal.principal_ref, idempotency_key: request.idempotency_key,
     payload_ref: `materialize-payload-${tag}`, policy_decision_ref: `materialize-policy-${tag}`,
     created_at: new Date().toISOString(),
   };
-  return {
-    intent, expected_draft_head_revision: null, artifact_ref: { id: `materialize-artifact-${tag}`, revision: 1 },
-    spec, section, section_residency: domains,
-    referenced_objects: [
-      { object_ref: manifestRef, object_kind: "DEPENDENCY_MANIFEST", bytes: manifestBytes,
-        residency: { ...domains, content_digest: { algorithm: "sha256", digest: manifestSha } } },
-      { object_ref: ledgerRef, object_kind: "EVIDENCE_LEDGER", bytes: ledgerBytes,
-        residency: { ...domains, content_digest: { algorithm: "sha256", digest: ledgerSha } } },
-    ],
-    manifest_residency: domains, created_at: new Date().toISOString(),
+  const policy: ResearchArtifactReportPolicy = {
+    kind: "research_report", title: "Controlled frozen research draft", audience: "owner", language: "en",
+    section_contract: { section_id: "summary", title: "Summary", purpose: "Frozen evidence summary",
+      required_claim_kinds: ["claim"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 },
+    statement_labels: { claim: "UNRESOLVED" }, citation_policy_ref: "materialize-citation-v1",
+    verification_policy_ref: "materialize-verification-v1", length_policy_ref: "materialize-length-v1",
+    export_formats: ["markdown"], include_counterevidence: true, include_methodology: true,
+    budget_ref: "materialize-fixture-budget", section_residency: domains, manifest_residency: domains,
   };
+  return createResearchArtifactMetadataProducer({ intent, expected_draft_head_revision: null, policy })({ request, principal: freezePrincipal, context });
 }
 
 describe("actual D1/R2 artifact draft reader", () => {
@@ -484,7 +465,19 @@ describe("actual D1/R2 artifact draft reader", () => {
     }, synthesis.freeze.navigation, synthesis.freeze.readers);
     const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal, input_bytes: new Uint8Array() });
     const tag = crypto.randomUUID();
-    const metadata = await materializeMetadata(materializeContext, tag);
+    const beforeMetadataReject = await synthesis.freeze.db.prepare("SELECT COUNT(*) AS count FROM artifact_revision")
+      .first<{ readonly count: number }>();
+    const mismatchedProtocolContext: ResearchMaterializeContext = {
+      ...materializeContext,
+      stage_ten_input: { ...materializeContext.stage_ten_input,
+        protocol_profile: { ...materializeContext.stage_ten_input.protocol_profile, output_contract_ref: "foreign-output-contract-v1" } },
+    };
+    await expect(materializeMetadata(mismatchedProtocolContext, materializeRequest, `${tag}-protocol-mismatch`))
+      .rejects.toMatchObject({ code: "RESEARCH_ARTIFACT_METADATA_AUTHORITY_STALE" });
+    const afterMetadataReject = await synthesis.freeze.db.prepare("SELECT COUNT(*) AS count FROM artifact_revision")
+      .first<{ readonly count: number }>();
+    expect(afterMetadataReject?.count).toBe(beforeMetadataReject?.count);
+    const metadata = await materializeMetadata(materializeContext, materializeRequest, tag);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
     const materialize = {
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
@@ -546,6 +539,25 @@ describe("actual D1/R2 artifact draft reader", () => {
     expect(await evidenceSha256Bytes(section?.body ?? new Uint8Array())).toBe(section?.body_sha256);
     expect(section?.section_ref).toEqual(metadata.section.section_ref);
     expect(metadata.section.statement_labels).toEqual({ claim: "UNRESOLVED" });
+    const persistedSection = artifact?.sections.find((candidate) =>
+      candidate.section_ref.id === metadata.section.section_ref.id && candidate.section_ref.revision === metadata.section.section_ref.revision);
+    if (persistedSection === undefined) throw new Error("persisted draft citation section is missing");
+    const citations = await readArtifactDraftSectionCitations({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      section_ref: metadata.section.section_ref, access: freezeAccess,
+      require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    });
+    if (citations === null) throw new Error("draft citation read unexpectedly absent");
+    expect(citations.artifact_ref).toEqual(result.draft.artifact_ref);
+    expect(citations.section_ref).toEqual(metadata.section.section_ref);
+    expect(citations.scope_snapshot_ref).toEqual(metadata.spec.scope_snapshot_ref);
+    expect(citations.verification_receipt_ref).toBe(persistedSection.verification_receipt_ref);
+    expect(citations.semantic_verification).toBe("NOT_EXECUTED");
+    const cited = materializeContext.stage_five.evidence_pack.resolved_evidence[0];
+    if (cited === undefined) throw new Error("stage five fixture citation is missing");
+    expect(citations.cited_evidence).toEqual([{
+      handle_ref: cited.handle.handle_ref, excerpt_sha256: cited.handle.excerpt_sha256,
+    }]);
 
     const artifactPath = `${result.draft.artifact_ref.id}:${result.draft.artifact_ref.revision}`;
     const sectionPath = `${metadata.section.section_ref.id}:${metadata.section.section_ref.revision}`;
@@ -556,6 +568,11 @@ describe("actual D1/R2 artifact draft reader", () => {
     const metadataResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}`), runtime, {} as ExecutionContext, verify);
     expect(metadataResponse.status).toBe(200);
     expect((await metadataResponse.json() as { readonly data: unknown }).data).toEqual(artifact);
+    const citationResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}/citations`), runtime, {} as ExecutionContext, verify);
+    expect(citationResponse.status).toBe(200);
+    expect((await citationResponse.json() as { readonly data: unknown }).data).toEqual({
+      protocol: "eliotr.artifact-section-citations.v1", ...citations,
+    });
     const response = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
@@ -579,5 +596,12 @@ describe("actual D1/R2 artifact draft reader", () => {
       .bind(synthesis.freeze.scope.snapshot_id, synthesis.freeze.scope.revision, freezePrincipal.principal_ref).run();
     const revoked = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(revoked.status).toBe(403);
+    await expectReadCode(readArtifactDraftSectionCitations({
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket, artifact_ref: result.draft.artifact_ref,
+      section_ref: metadata.section.section_ref, access: freezeAccess,
+      require_current: async (scope) => { await synthesis.freeze.navigation.current(scope); return scope; }, now: Date.now,
+    }), "ARTIFACT_DRAFT_READ_DENIED");
+    const revokedCitations = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}/citations`), runtime, {} as ExecutionContext, verify);
+    expect(revokedCitations.status).toBe(403);
   }, 30_000);
 });
