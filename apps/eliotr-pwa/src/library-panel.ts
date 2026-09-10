@@ -64,6 +64,7 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         const selected = received.sources[Number(button.dataset.source)];
         if (selected && mine === serial && !disposed) {
           const head = selected.readiness_ref.slice(`readiness:${selected.id}:`.length);
+          clearReadiness("Updating selected source…");
           void (async () => {
             let selectedForReadiness: void | boolean;
             try { selectedForReadiness = await onSelectSource(selected.id, { deploymentGeneration: received.generation }); } catch { return; }
