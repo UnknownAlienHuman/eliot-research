@@ -36,18 +36,11 @@ async function stageDeployment(database: D1Database, options: {
   readonly routeVersion?: string;
   readonly qualificationTier?: QualificationTier;
   readonly expectedActiveRouteVersion?: string | null;
-} = {}): Promise<ModelRouteDeployment> {
+  readonly deployment?: ModelRouteDeployment;`r`n} = {}): Promise<ModelRouteDeployment> {
   const registryNow = new Date().toISOString();
   const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
-  const deployment: ModelRouteDeployment = {
-    route_ref: ROUTE,
-    route_version: options.routeVersion ?? ROUTE_VERSION,
-    prompt_generation: PROMPT_GENERATION,
-    schema_generation: SCHEMA_GENERATION,
-    parameters_digest: parametersDigest,
-    pricing_snapshot_ref: PRICING_SNAPSHOT,
-  };
+  const deployment: ModelRouteDeployment = options.deployment ?? {`r`n    route_ref: ROUTE,`r`n    route_version: options.routeVersion ?? ROUTE_VERSION,`r`n    prompt_generation: PROMPT_GENERATION,`r`n    schema_generation: SCHEMA_GENERATION,`r`n    parameters_digest: parametersDigest,`r`n    pricing_snapshot_ref: PRICING_SNAPSHOT,`r`n  };
   const candidate = {
     schema: "eliotr.dynamic-route-candidate.v1" as const,
     deployment,
@@ -334,7 +327,7 @@ export async function committedFreezeSynthesisFixture() {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
   });
-  const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE" });
+  const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE", deployment: freeze.profile_definition.deployment });
   const context = createEvidenceFreezeSynthesisContextReader({
     database: freeze.db, work_bucket: freeze.bucket, manifest_store: freeze.freeze_store,
     read_stage_five: freeze.readers.read_stage_five,
@@ -391,3 +384,4 @@ export async function committedFreezeSynthesisFixture() {
     stage_twelve: freeze.stage_twelve, provider_calls: () => provider_calls,
     request_bodies: () => [...request_bodies] };
 }
+
