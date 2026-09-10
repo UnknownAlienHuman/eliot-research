@@ -180,15 +180,17 @@
     {
       "id": "workspace-candidate-admission",
       "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
-      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate admission and exact action/readback reconciliation remain unimplemented; v1 observations stay candidate-only.",
+      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.",
       "owner_packets": ["ER-36"],
       "state": "IN_PROGRESS",
       "required_for_transports": ["gemini-mcp"],
-      "behavior": "The selected Workspace profile has bounded MCP planning and candidate receipt validation, but no authenticated ELIOT admission or canonical D1 readback authority.",
+      "behavior": "The selected Workspace MCP profile preserves v1 behavior and adds strict v2 server-issued intent plans bound to the verified actor, deployment and auth profile. Append-only D1 plans and candidate observations use canonical digests, exact readback and same-key reconciliation. A committed UNKNOWN comparison is distinct from an uncertain D1 write. The ledger does not invoke Google or admit source/evidence bytes; external connector qualification and authenticated source admission remain incomplete.",
       "completion_evidence": [
-        "A versioned authenticated admission and reconciliation contract is still required.",
-        "Real controlled HTTP and D1 action/readback fixtures are still required.",
-        "Until those receipts exist, Workspace observations remain candidate-only."
+        "packages/contracts/src/workspace-mcp.ts and workspace-mcp.test.ts: strict v2 candidate plans, external receipt input and separate comparison/write uncertainty",
+        "packages/cloudflare-workspace-mcp/src/workspace-mcp-google-sync.test.ts: server-issued plan replay, changed-intent conflict, actor binding and candidate observation behavior",
+        "apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts: actual local Worker/D1 canonical plan and observation readback, actor isolation, historical replay and append-only storage",
+        "infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql: constrained append-only plan and observation ledgers",
+        "Authenticated Workspace source-byte admission, live Google action/readback and managed OAuth client qualification remain NOT_EXECUTED; candidate observations do not establish source/evidence authority."
       ]
     },
     {
