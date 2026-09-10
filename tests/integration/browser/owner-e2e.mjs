@@ -424,7 +424,7 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-async function d1Query(paths, binding, sql) {
+async function d1Query(paths, binding, sql, { deadlineMs = 15000 } = {}) {
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -432,7 +432,7 @@ async function d1Query(paths, binding, sql) {
   // While the Worker is running, Worker/API readback (catalog/revisions/
   // session) is the primary active-runtime signal; CLI reads below reconcile
   // the same durable state and must replay exactly after restart.
-  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocalAsync });
+  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocalAsync, deadlineMs });
   let batches;
   try {
     batches = JSON.parse(output);
@@ -527,6 +527,191 @@ export async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayM
     }
   }
   throw lastError;
+}
+
+async function waitForRawProjectionTerminal(paths, sourceRevisionRef, { deadlineMs = 20000, intervalMs = 250 } = {}) {
+  const startedAt = Date.now();
+  const escapedRevision = sqlText(sourceRevisionRef);
+  const query = `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
+    `i.operation_kind,i.principal_ref,i.idempotency_key,j.job_id,j.state AS job_state,j.current_stage,j.terminal_receipt_ref,` +
+    `g.projection_generation,g.state AS projection_state,g.content_sha256,g.object_residency_key_digest,g.item_count,` +
+    `g.item_set_digest,g.work_manifest_ref,g.work_manifest_sha256,g.d1_search_receipt_ref,g.d1_search_readback_digest,` +
+    `g.reason_codes_json FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision ` +
+    `LEFT JOIN job j ON j.intent_id=i.intent_id AND j.intent_revision=i.revision ` +
+    `LEFT JOIN projection_generation g ON g.job_id=j.job_id ` +
+    `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
+  let latest = [];
+  while (Date.now() - startedAt < deadlineMs) {
+    latest = await readbackWithBoundedRetry("raw-projection-state", () => {
+      const remainingMs = deadlineMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
+      return d1Query(paths, "CORE_DB", query, { deadlineMs: Math.min(15000, remainingMs) });
+    }, {
+      attempts: 2, delayMs: 100,
+    });
+    if (latest.length !== 1) {
+      throw new Error(`raw projection must retain one projection outbox identity, got ${latest.length}`);
+    }
+    const row = latest[0];
+    if (row.outbox_id && row.job_id && row.projection_generation &&
+        ["COMPLETED", "PARTIAL"].includes(row.job_state) &&
+        ["COMPLETED", "PARTIAL"].includes(row.projection_state) &&
+        typeof row.terminal_receipt_ref === "string" && row.terminal_receipt_ref.length > 0) {
+      return row;
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
+  }
+  throw new Error(`raw projection did not reach terminal state within ${deadlineMs}ms: ${JSON.stringify(latest).slice(0, 1200)}`);
+}
+
+async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, sourceRevisionRef, expectedGeneration }) {
+  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
+  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`);
+  assert.equal(revisionRows.length, 1, "raw projection source revision must exist before Queue dispatch");
+  const revision = revisionRows[0];
+  const preRows = await d1Query(paths, "CORE_DB",
+    `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
+    `i.operation_kind,i.principal_ref,i.idempotency_key FROM operation_intent i JOIN outbox o ` +
+    `ON o.intent_id=i.intent_id AND o.intent_revision=i.revision WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${sqlText(sourceRevisionRef)}`);
+  assert.equal(preRows.length, 1, "raw admission must create exactly one projection outbox identity");
+  assert.equal(preRows[0].topic, "source.revision.admitted");
+  assert.equal(preRows[0].payload_ref, sourceRevisionRef);
+  assert.equal(preRows[0].payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
+  assert.equal(preRows[0].principal_ref, "e2e-owner");
+  const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
+  const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
+    { phase: "raw-projection-scheduled", worker, timeoutMs: 5000 });
+  assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
+  ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
+    correlation: "e2e-raw-projection/scheduled", token_present: false });
+  const terminal = await waitForRawProjectionTerminal(paths, sourceRevisionRef);
+  assert.equal(terminal.state, "SENT", "raw projection outbox must retain SENT after Queue delivery");
+  assert.equal(terminal.outbox_id, preRows[0].outbox_id, "Queue delivery must retain the same outbox identity");
+  assert.equal(terminal.intent_id, preRows[0].intent_id, "Queue delivery must retain the same projection intent");
+  assert.equal(terminal.intent_revision, preRows[0].intent_revision, "Queue delivery must retain the same intent revision");
+  assert.equal(terminal.topic, preRows[0].topic, "Queue delivery must retain the same outbox topic");
+  assert.equal(terminal.payload_ref, preRows[0].payload_ref, "Queue delivery must retain the same source revision payload");
+  assert.equal(terminal.payload_sha256, preRows[0].payload_sha256, "Queue delivery must retain the same payload digest");
+  assert.ok(terminal.attempts >= preRows[0].attempts, "Queue attempts must be monotonic for the same outbox identity");
+  assert.equal(terminal.payload_sha256, revision.content_sha256);
+  assert.ok(terminal.queue_message_id, "outbox must retain the delivered Queue identity");
+  const receipts = await d1Query(paths, "CORE_DB",
+    `SELECT receipt_id,revision,outcome,output_refs_json,readback_receipt_refs_json,reconciliation_required,reason_codes_json ` +
+    `FROM operation_receipt WHERE intent_id=${sqlText(terminal.intent_id)} AND intent_revision=${terminal.intent_revision} ORDER BY created_at`);
+  assert.ok(receipts.some((row) => row.outcome === "ACCEPTED"), "Queue delivery must persist an acceptance receipt");
+  const terminalReceipt = receipts.find((row) => row.outcome === "SUCCEEDED" || row.outcome === "PARTIAL");
+  assert.ok(terminalReceipt, "projection must persist a terminal operation receipt");
+  assert.equal(terminalReceipt.reconciliation_required, terminal.job_state === "PARTIAL" ? 1 : 0);
+  const terminalRefMatch = String(terminal.terminal_receipt_ref).match(/^receipt:([A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}):(\d+)$/u);
+  assert.ok(terminalRefMatch, "job terminal receipt ref must use the canonical projection receipt form");
+  assert.equal(terminalReceipt.receipt_id, terminalRefMatch[1]);
+  assert.equal(terminalReceipt.revision, Number(terminalRefMatch[2]));
+  const terminalGuard = await d1Query(paths, "CORE_DB",
+    `SELECT source_revision_ref,projection_generation,job_id,terminal_receipt_id,terminal_receipt_revision,outcome,verified ` +
+    `FROM projection_terminal_guard WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.deepEqual(terminalGuard, [{ source_revision_ref: sourceRevisionRef, projection_generation: terminal.projection_generation,
+    job_id: terminal.job_id, terminal_receipt_id: terminalReceipt.receipt_id, terminal_receipt_revision: terminalReceipt.revision,
+    outcome: terminalReceipt.outcome, verified: 1 }], "Core terminal guard must bind the exact job and receipt");
+  const readiness = await d1Query(paths, "CORE_DB",
+    `SELECT channel,state,generation,receipt_ref,reason_codes_json FROM source_readiness WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    "AND channel IN ('exact_ready','lexical_ready','semantic_ready') ORDER BY channel");
+  assert.equal(readiness.length, 3, "projection must persist all active readiness channels");
+  for (const channel of readiness.filter((row) => row.channel === "exact_ready" || row.channel === "lexical_ready")) {
+    assert.equal(channel.state, "ready");
+    assert.equal(channel.generation, terminal.projection_generation);
+    assert.ok(typeof channel.receipt_ref === "string" && channel.receipt_ref.length > 0);
+  }
+  const searchRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT channel,projection_generation,source_revision_ref,projected_item_count,state,readback_receipt_ref FROM projection_watermark ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)} ORDER BY channel`);
+  assert.deepEqual(searchRows.map((row) => row.channel), ["exact", "lexical"]);
+  assert.ok(searchRows.every((row) => row.state === "READY" && row.projected_item_count > 0 && row.readback_receipt_ref),
+    "exact and lexical watermarks must be READY with receipts");
+  const generationRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT state,item_count,item_set_digest,readback_digest,receipt_ref FROM projection_generation_receipt ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.equal(generationRows.length, 1);
+  assert.equal(generationRows[0].state, "READY");
+  assert.ok(generationRows[0].item_count > 0 && generationRows[0].item_set_digest && generationRows[0].readback_digest && generationRows[0].receipt_ref);
+  assert.equal(generationRows[0].item_count, terminal.item_count, "Search item count must match the Core terminal generation");
+  assert.equal(generationRows[0].item_set_digest, terminal.item_set_digest, "Search item-set digest must match Core");
+  assert.equal(generationRows[0].readback_digest, terminal.d1_search_readback_digest, "Search readback digest must match Core");
+  assert.equal(generationRows[0].receipt_ref, terminal.d1_search_receipt_ref, "Search receipt must match Core");
+  const guardRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT receipt_ref,readback_digest,item_count,verified FROM projection_activation_guard ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.deepEqual(guardRows, [{ receipt_ref: generationRows[0].receipt_ref, readback_digest: generationRows[0].readback_digest,
+    item_count: generationRows[0].item_count, verified: 1 }]);
+  const itemRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT p.item_key,p.section_text,p.content_sha256,s.normalized_start_byte,s.normalized_end_byte,s.precision_kind ` +
+    `FROM projection_item p JOIN projection_span s ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref ` +
+    `AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY p.item_key`);
+  assert.equal(itemRows.length, generationRows[0].item_count);
+  assert.ok(itemRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
+  assert.ok(itemRows.every((row) => row.precision_kind === "normalized_bytes" && row.normalized_end_byte > row.normalized_start_byte));
+  const ftsRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT f.item_key,p.source_revision_ref,p.projection_generation,f.section_text FROM section_fts f JOIN projection_item p ` +
+    `ON p.item_key=f.item_key WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY f.item_key`);
+  assert.equal(ftsRows.length, generationRows[0].item_count, "section_fts must contain every active projected item");
+  assert.ok(ftsRows.every((row) => row.source_revision_ref === sourceRevisionRef && row.projection_generation === terminal.projection_generation));
+  assert.ok(ftsRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
+  const workBucket = await resolveWorkBucket(paths);
+  assert.ok(typeof terminal.work_manifest_ref === "string" && terminal.work_manifest_ref.length > 0);
+  const workManifest = await tryR2ObjectGet(paths, workBucket, terminal.work_manifest_ref);
+  assert.equal(workManifest.ok, true, "projection Work manifest must be readable from WORK_BUCKET");
+  const workManifestBytes = Buffer.from(workManifest.output ?? "", "utf8");
+  assert.equal(await sha256Hex(workManifestBytes), terminal.work_manifest_sha256, "Work manifest bytes must match its D1 digest");
+  const workManifestJson = JSON.parse(decoder.decode(workManifestBytes));
+  assert.equal(workManifestJson.protocol, "eliotr.projection-work-manifest.v1");
+  assert.equal(workManifestJson.source_revision_ref, sourceRevisionRef);
+  assert.equal(workManifestJson.projection_generation, terminal.projection_generation);
+  assert.equal(workManifestJson.content_sha256, revision.content_sha256);
+  assert.equal(workManifestJson.item_count, generationRows[0].item_count);
+
+  const rawSourceId = revision.source_id;
+  const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
+  const readinessResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/library/readiness", { timeout: 30000 });
+  const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
+  await card.locator("[data-source]").click();
+  const readinessSnapshot = await readinessResponse;
+  assert.equal(readinessSnapshot.status(), 200);
+  const readinessJson = await readinessSnapshot.json();
+  assert.equal(readinessJson?.data?.source_id, rawSourceId);
+  assert.equal(readinessJson?.data?.source_revision_ref, sourceRevisionRef);
+  assert.equal(readinessJson?.data?.deployment_generation, expectedGeneration);
+  await page.waitForSelector("#library [data-library-readiness] .readiness-card", { timeout: 15000 });
+
+  const retrieval = page.locator("#retrieval");
+  await retrieval.locator('input[name="query"]').fill("Recorded raw owner fixture");
+  const queryRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
+  const queryResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
+  const traceResponse = page.waitForResponse((response) => response.request().method() === "GET" && /^\/api\/v1\/research\/trace\/query-[0-9a-f]{48}$/u.test(new URL(response.url()).pathname), { timeout: 30000 });
+  await retrieval.locator('button[type="submit"]').click();
+  const request = await queryRequest;
+  const body = JSON.parse(request.postData() ?? "{}");
+  assert.equal(body.product, "FAST_SEARCH");
+  assert.equal(body.budget_ref, "retrieval-fast-v1");
+  assert.deepEqual(body.scope_expression, { kind: "SELECTED_SOURCES", source_ids: [rawSourceId] });
+  const response = await queryResponse;
+  assert.equal(response.status(), 200);
+  const responseJson = await response.json();
+  const traceRef = responseJson?.data?.trace_ref;
+  assert.match(traceRef?.id ?? "", /^query-[0-9a-f]{48}$/u);
+  assert.ok(responseJson?.data?.evidence_pack?.resolved_evidence?.some((item) => item?.handle?.source_revision_ref === sourceRevisionRef));
+  const trace = await traceResponse;
+  assert.equal(trace.status(), 200);
+  const traceJson = await trace.json();
+  assert.equal(traceJson?.data?.query_product, "FAST_SEARCH");
+  assert.ok(traceJson?.data?.lanes_used?.includes("LEX"));
+  assert.ok(traceJson?.data?.scope_snapshot?.member_source_revision_refs?.includes(sourceRevisionRef));
+  await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
+  const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
+  assert.equal(excerpt, "# Recorded raw owner fixture\n");
+  return { scheduledPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
+    queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
 }
 
 export async function verifyReadbackRetryClassification() {
@@ -4319,6 +4504,7 @@ export async function runOwnerE2E() {
   let jwks;
   let exhaustiveWorkflow;
   let rawUpload;
+  let rawProjectionFastSearch;
   let teardownError = null;
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
@@ -4351,6 +4537,7 @@ export async function runOwnerE2E() {
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
     raw_file_capture: "PENDING",
+    raw_projection_fast_search: "PENDING",
     early_cleanup: "PENDING",
     catalog_transport_probe: "PENDING",
     teardown_inventory: "PENDING",
@@ -4526,7 +4713,7 @@ export async function runOwnerE2E() {
     receipt.bounds = (await checkBundleLimitsSource()).state;
     receipt.authed_epoch_regression = verifyAuthedEpochRegression().state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto(privateKey, publicJwk)).state;
-    worker = await startLocalWorker(paths);
+    worker = await startLocalWorker(paths, { testScheduled: true });
     assert.ok(isChromiumSafePort(worker.port),
       `initial Worker port must be Chromium-safe, got ${worker.port}`);
     workerPortEvidence.push(`initial=${worker.port}/startAttempts=${worker.startAttempts}`);
@@ -4888,6 +5075,12 @@ export async function runOwnerE2E() {
     rawUpload = { ...rawUpload, conversionOperationId: rawProcessed.conversionOperationId,
       admissionOperationId: rawProcessed.admissionOperationId, conversionFixture: rawConversionFixture };
     receipt.raw_file_conversion_admission = "PASS (recorded provider-boundary conversion fixture, browser COMPLETE candidate, server-composed COMMITTED admission; live Workers AI NOT_EXECUTED)";
+    rawProjectionFastSearch = await runRawProjectionFastSearchCheckpoint({
+      paths, worker, page: playwright.page, ledger,
+      sourceRevisionRef: rawProcessed.admission.source_revision_ref,
+      expectedGeneration: paths.generation,
+    });
+    receipt.raw_projection_fast_search = `PASS (scheduled -> Queue -> projection -> Chromium FAST_SEARCH ${rawProjectionFastSearch.traceRef}; semantic=${rawProjectionFastSearch.semanticState})`;
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -5023,6 +5216,9 @@ export async function runOwnerE2E() {
         { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/markdown`, status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
+        { method: "GET", path: rawProjectionFastSearch.readinessPath, status: 200 },
+        { method: "POST", path: "/api/v1/research/query", status: 200 },
+        { method: "GET", path: `/api/v1/research/trace/${rawProjectionFastSearch.traceRef}`, status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
       // a listed mutation: the exact browser artifact lifecycle paths
@@ -5650,6 +5846,7 @@ export async function runOwnerE2E() {
         "e2e-raw-upload/recovery",
         "e2e-raw-upload/markdown",
         "e2e-raw-upload/admission",
+        "e2e-raw-projection/scheduled",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
