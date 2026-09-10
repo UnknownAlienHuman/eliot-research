@@ -293,6 +293,9 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
       ...(await prepareQ1Namespace(runtime, db, runtime.SEARCH_DB, principal)),
     } satisfies Q1Namespace;
     await importAndProject(world);
+    const policyCreatedAt = new Date().toISOString();
+    await db.prepare("INSERT INTO scope_read_policy (source_namespace_id, principal_ref, client_class, policy_ref, generation, allowed_use_json, disclosure_ceiling, state, expires_at, created_at) VALUES (?1,?2,'owner_pwa',?3,1,?4,?5,'ACTIVE',?6,?7)")
+      .bind(world.namespace, principal, `q1-read-${world.namespace}`, '["research"]', "private", new Date(Date.now() + 3_600_000).toISOString(), policyCreatedAt).run();
     const sourceId = `source-${world.namespace}`;
     const request = runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run");
     const firstResponse = await run(request);
