@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
-import { createRawMarkdownConversionService } from "./raw-markdown-conversion.js";
+import { createRawMarkdownConversionService, createWorkersAiMarkdownConversionAdapter } from "./raw-markdown-conversion.js";
 import { parseRawMarkdownConversionRequest, readRawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 import type { RawMarkdownCaptureReceipt, RawMarkdownConversionRequest } from "./raw-markdown-conversion-contract.js";
 
@@ -69,6 +69,21 @@ describe("durable raw markdown conversion", () => {
     expect(provider).not.toHaveBeenCalled();
     expect(rows.size).toBe(0);
   });
+  it("settles a new operation as a durable provider failure when the AI binding is absent", async () => {
+    const { database, rows } = fakeDatabase();
+    const contentSha = await sha256(bytes);
+    const capture: RawMarkdownCaptureReceipt = { capture_id: "capture-no-ai", principal_ref: "owner-1", owner_system_id: "system-1", source_namespace_id: "namespace-1", source_revision_ref: "revision-1", source_logical_id: "logical-1", source_owner_generation: "generation-1", original_file_name: "missing-ai.pdf", object_key: "raw/capture-no-ai", content_sha256: contentSha, size_bytes: bytes.byteLength, content_type: "application/pdf" };
+    const service = createRawMarkdownConversionService({
+      database,
+      profile_generation: "profile-1",
+      adapter: createWorkersAiMarkdownConversionAdapter(undefined),
+      source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined },
+      output: { putImmutable: async () => { throw new Error("missing provider must not write output"); }, open: async () => null },
+    });
+    const result = await service.convert({ principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" }, "capture-no-ai", { idempotency_key: "no-ai", max_output_bytes: 100, max_tokens: 10, timeout_ms: 1_000 });
+    expect(result).toMatchObject({ state: "FAILED", failure_code: "PROVIDER_FAILED" });
+    expect([...rows.values()][0]?.state).toBe("FAILED");
+  });
   it("settles an abort after reservation as canceled without dispatching the provider", async () => {
     const { database, rows } = fakeDatabase();
     const contentSha = await sha256(bytes);
@@ -130,7 +145,13 @@ describe("durable raw markdown conversion", () => {
     const reorderedRequest: RawMarkdownConversionRequest = { timeout_ms: 1_000, max_tokens: 10, max_output_bytes: 100, idempotency_key: "conversion-1" };
     const context = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1", profile_generation: "profile-1" };
     const first = await service.convert(context, "capture-1", request);
-    const second = await service.convert(context, "capture-1", reorderedRequest);
+    const second = await createRawMarkdownConversionService({
+      database,
+      profile_generation: "profile-1",
+      adapter: createWorkersAiMarkdownConversionAdapter(undefined),
+      source: { read: async () => capture, open: async () => new ReadableStream({ start(c) { c.enqueue(bytes); c.close(); } }), assertCurrent: async () => undefined },
+      output: { putImmutable: async (input) => { const data = new TextEncoder().encode(input.key.endsWith("receipt.json") ? new TextDecoder().decode(await new Response(input.body).arrayBuffer()) : "# Note"); output.set(input.key, data); return { key: input.key, readback_sha256: input.expected_sha256, size_bytes: input.expected_size_bytes }; }, open: async (key) => { const value = output.get(key); return value === undefined ? null : { body: new ReadableStream({ start(c) { c.enqueue(value); c.close(); } }) } as R2ObjectBody; } },
+    }).convert(context, "capture-1", reorderedRequest);
     expect(first.state).toBe("COMPLETE");
     expect(second).toEqual(first);
     expect(provider).toHaveBeenCalledTimes(1);

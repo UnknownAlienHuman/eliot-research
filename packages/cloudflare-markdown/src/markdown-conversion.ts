@@ -208,7 +208,7 @@ async function awaitProvider(
   }
 }
 
-export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBinding): MarkdownConversionAdapter {
+export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBinding | undefined): MarkdownConversionAdapter {
   return {
     async convert(input): Promise<MarkdownConversionOutcome> {
       if (!record(input)) return failure("INPUT_INVALID");
@@ -227,6 +227,7 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
       const conversion_options = snapshotOptions(candidate.conversion_options);
       const signal = candidate.signal as AbortSignal | undefined;
       if (signal?.aborted) return failure("ABORTED", context);
+      if (ai === undefined) return failure("PROVIDER_UNAVAILABLE", context, "NOT_STARTED");
       let raw: unknown;
       let dispatched = false;
       try {
