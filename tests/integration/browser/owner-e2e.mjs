@@ -622,13 +622,6 @@ function rawProjectionObservation(rows, sourceRevisionRef) {
   };
 }
 
-function isRawProjectionD1Timeout(error) {
-  const code = error?.cause?.code ?? error?.code;
-  return code === "ETIMEDOUT" || error?.message === "Local D1 command deadline expired" ||
-    error?.message === "Local D1 hard deadline expired" ||
-    error?.message === "raw projection polling deadline expired before D1 readback";
-}
-
 function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError }) {
   const elapsedMs = Math.max(0, Date.now() - startedAt);
   const originalCode = String(originalError?.cause?.code ?? originalError?.code ?? "unknown")
@@ -671,9 +664,54 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
   return error;
 }
 
-async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
-  { deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling" } = {}) {
+async function waitForRawProjectionReadiness(worker, token, sourceId, sourceRevisionRef,
+  { expectedGeneration, deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling" } = {}) {
   const startedAt = Date.now();
+  while (Date.now() - startedAt < deadlineMs) {
+    const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(sourceId)}`;
+    const response = await workerJson(worker.origin, readinessPath, { token, phase, worker, timeoutMs: 5000 });
+    assert.equal(response.status, 200, `active Worker readiness must answer 200, got ${response.status}`);
+    const value = response.data?.data;
+    if (value?.source_revision_ref && value.source_revision_ref !== sourceRevisionRef) {
+      throw new Error(`raw projection readiness changed source revision before post-stop readback`);
+    }
+    if (value?.deployment_generation && expectedGeneration !== undefined &&
+        value.deployment_generation !== expectedGeneration) {
+      throw new Error(`raw projection readiness changed deployment generation before post-stop readback`);
+    }
+    if (value?.source_id === sourceId && value.source_revision_ref === sourceRevisionRef &&
+        value.deployment_generation === expectedGeneration &&
+        Array.isArray(value.channels) && value.channels.some((channel) =>
+          channel.channel === "exact_ready" && channel.state === "ready") &&
+        value.channels.some((channel) => channel.channel === "lexical_ready" && channel.state === "ready")) {
+      return value;
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve,
+      Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
+  }
+  throw new Error(`raw projection readiness deadline exceeded (${Date.now() - startedAt}ms/${deadlineMs}ms)`);
+}
+
+async function resolveRawProjectionSourceId(worker, token, sourceRevisionRef) {
+  const response = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", {
+    token, phase: "raw-projection-source-resolution", worker,
+  });
+  assert.equal(response.status, 200, "authenticated catalog must resolve the raw projection source");
+  const sources = response.data?.data?.sources;
+  assert.ok(Array.isArray(sources), "catalog source list must be present for raw projection source resolution");
+  const matches = sources.filter((entry) => typeof entry.id === "string" && entry.id.length > 0 &&
+    entry.readiness_ref === `readiness:${entry.id}:${sourceRevisionRef}`);
+  assert.equal(matches.length, 1, "raw projection revision must resolve to exactly one catalog source head");
+  return matches[0].id;
+}
+
+async function verifyRawProjectionAfterWorkerStop({ paths, sourceId, sourceRevisionRef, expectedProjectionGeneration }) {
+  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
+  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-revision" });
+  assert.equal(revisionRows.length, 1, "raw projection source revision must exist after Worker stop");
+  const revision = revisionRows[0];
+  assert.equal(revision.source_id, sourceId, "post-stop source revision must bind the catalog-resolved source");
   const escapedRevision = sqlText(sourceRevisionRef);
   const query = `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
     `i.operation_kind,i.principal_ref,i.idempotency_key,j.job_id,j.state AS job_state,j.current_stage,j.terminal_receipt_ref,` +
@@ -686,71 +724,24 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
     `AND di.idempotency_key=i.idempotency_key ` +
     `LEFT JOIN projection_generation g ON g.job_id=j.job_id ` +
     `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
-  let latest = [];
-  while (Date.now() - startedAt < deadlineMs) {
-    try {
-      latest = await readbackWithBoundedRetry("raw-projection-state", () => {
-        const remainingMs = deadlineMs - (Date.now() - startedAt);
-        if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
-        return d1Query(paths, "CORE_DB", query, { hardDeadlineMs: remainingMs,
-          phase: "owner-d1-raw-projection", commandFamily: "raw-projection-state" });
-      }, {
-        attempts: 2, delayMs: 100,
-      });
-    } catch (error) {
-      if (isRawProjectionD1Timeout(error) && Date.now() - startedAt >= deadlineMs) {
-        throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError: error });
-      }
-      throw error;
-    }
-    if (latest.length !== 1) {
-      throw new Error(`raw projection must retain one projection outbox identity, got ${latest.length}`);
-    }
-    const row = latest[0];
-    if (row.outbox_id && row.job_id && row.projection_generation &&
-        ["COMPLETED", "PARTIAL"].includes(row.job_state) &&
-        ["COMPLETED", "PARTIAL"].includes(row.projection_state) &&
-        typeof row.terminal_receipt_ref === "string" && row.terminal_receipt_ref.length > 0) {
-      return row;
-    }
-    await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
-  }
-  throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest });
-}
-
-async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, sourceRevisionRef, expectedGeneration }) {
-  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
-  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`,
-    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-revision" });
-  assert.equal(revisionRows.length, 1, "raw projection source revision must exist before Queue dispatch");
-  const revision = revisionRows[0];
-  const preRows = await d1Query(paths, "CORE_DB",
-    `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
-    `i.operation_kind,i.principal_ref,i.idempotency_key FROM operation_intent i JOIN outbox o ` +
-    `ON o.intent_id=i.intent_id AND o.intent_revision=i.revision WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${sqlText(sourceRevisionRef)}`,
-    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-outbox" });
-  assert.equal(preRows.length, 1, "raw admission must create exactly one projection outbox identity");
-  assert.equal(preRows[0].topic, "source.revision.admitted");
-  assert.equal(preRows[0].payload_ref, sourceRevisionRef);
-  assert.equal(preRows[0].payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
-  assert.equal(preRows[0].principal_ref, "e2e-owner");
-  const rawProjectionPhase = "raw-projection-scheduled-and-polling";
-  process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
-  const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
-  const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
-    { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
-  assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
-  ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
-    correlation: "e2e-raw-projection/scheduled", token_present: false });
-  const terminal = await waitForRawProjectionTerminal(paths, sourceRevisionRef, { phase: rawProjectionPhase });
+  const latest = await d1Query(paths, "CORE_DB", query,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-state" });
+  assert.equal(latest.length, 1, "raw projection must retain one projection outbox identity after Worker stop");
+  const terminal = latest[0];
+  assert.equal(terminal.projection_generation, expectedProjectionGeneration,
+    "post-stop projection readback must retain the active readiness generation");
+  assert.ok(terminal.outbox_id && terminal.job_id && terminal.projection_generation &&
+    ["COMPLETED", "PARTIAL"].includes(terminal.job_state) &&
+    ["COMPLETED", "PARTIAL"].includes(terminal.projection_state) &&
+    typeof terminal.terminal_receipt_ref === "string" && terminal.terminal_receipt_ref.length > 0,
+    "raw projection must be terminal before post-stop readback");
   assert.equal(terminal.state, "SENT", "raw projection outbox must retain SENT after Queue delivery");
-  assert.equal(terminal.outbox_id, preRows[0].outbox_id, "Queue delivery must retain the same outbox identity");
-  assert.equal(terminal.intent_id, preRows[0].intent_id, "Queue delivery must retain the same projection intent");
-  assert.equal(terminal.intent_revision, preRows[0].intent_revision, "Queue delivery must retain the same intent revision");
-  assert.equal(terminal.topic, preRows[0].topic, "Queue delivery must retain the same outbox topic");
-  assert.equal(terminal.payload_ref, preRows[0].payload_ref, "Queue delivery must retain the same source revision payload");
-  assert.equal(terminal.payload_sha256, preRows[0].payload_sha256, "Queue delivery must retain the same payload digest");
-  assert.ok(terminal.attempts >= preRows[0].attempts, "Queue attempts must be monotonic for the same outbox identity");
+  assert.equal(terminal.operation_kind, "PROJECTION");
+  assert.equal(terminal.principal_ref, "e2e-owner");
+  assert.equal(terminal.topic, "source.revision.admitted", "Queue delivery must retain the canonical outbox topic");
+  assert.equal(terminal.payload_ref, sourceRevisionRef, "Queue delivery must retain the source revision payload");
+  assert.equal(terminal.payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
+  assert.ok(Number.isSafeInteger(terminal.attempts) && terminal.attempts >= 1, "Queue attempts must be recorded");
   assert.equal(terminal.payload_sha256, revision.content_sha256);
   assert.ok(terminal.queue_message_id, "outbox must retain the delivered Queue identity");
   const receipts = await d1Query(paths, "CORE_DB",
@@ -837,7 +828,23 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(workManifestJson.content_sha256, revision.content_sha256);
   assert.equal(workManifestJson.item_count, generationRows[0].item_count);
 
-  const rawSourceId = revision.source_id;
+}
+
+async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, token, sourceRevisionRef, expectedGeneration }) {
+  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
+  const rawSourceId = await resolveRawProjectionSourceId(worker, token, sourceRevisionRef);
+  const rawProjectionPhase = "raw-projection-scheduled-and-polling";
+  process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
+  const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
+  const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
+    { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
+  assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
+  ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
+    correlation: "e2e-raw-projection/scheduled", token_present: false });
+  const activeReadiness = await waitForRawProjectionReadiness(worker, token, rawSourceId, sourceRevisionRef, {
+    expectedGeneration, phase: rawProjectionPhase,
+  });
+  assert.equal(activeReadiness.source_id, rawSourceId, "active readiness source must match the catalog-resolved raw source");
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
   const orientationPath = "/api/v1/research/orient";
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
@@ -920,8 +927,14 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
   assert.equal(excerpt, "# Recorded raw owner fixture\n");
-  return { scheduledPath, orientationPath, readinessPath, sourceId: rawSourceId, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
-    queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
+  const exactReadiness = activeReadiness.channels.find((channel) => channel.channel === "exact_ready");
+  assert.ok(typeof exactReadiness?.generation === "string" && exactReadiness.generation.length > 0,
+    "active readiness must expose a projection generation");
+  const verifyAfterWorkerStop = () => verifyRawProjectionAfterWorkerStop({ paths, sourceId: rawSourceId, sourceRevisionRef,
+    expectedProjectionGeneration: exactReadiness.generation });
+  return { scheduledPath, orientationPath, readinessPath, sourceId: rawSourceId, sourceRevisionRef, projectionGeneration: exactReadiness.generation,
+    queryProduct: body.product, traceRef: traceRef.id, semanticState: activeReadiness.channels.find((channel) => channel.channel === "semantic_ready")?.state ?? "unknown",
+    verifyAfterWorkerStop };
 }
 
 export async function verifyReadbackRetryClassification() {
@@ -5500,7 +5513,7 @@ export async function runOwnerE2E() {
       admissionOperationId: rawProcessed.admissionOperationId, conversionFixture: rawConversionFixture };
     receipt.raw_file_conversion_admission = "PASS (recorded provider-boundary conversion fixture, browser COMPLETE candidate, server-composed COMMITTED admission; live Workers AI NOT_EXECUTED)";
     rawProjectionFastSearch = await runRawProjectionFastSearchCheckpoint({
-      paths, worker, page: playwright.page, ledger,
+      paths, worker, page: playwright.page, ledger, token,
       sourceRevisionRef: rawProcessed.admission.source_revision_ref,
       expectedGeneration: paths.generation,
     });
@@ -6464,6 +6477,10 @@ export async function runOwnerE2E() {
       let stopped = false;
       try { await worker?.stop(); worker = undefined; stopped = true; }
       catch (error) { fail(`worker.stop: ${error?.message ?? error}`); }
+      if (stopped && rawProjectionFastSearch?.verifyAfterWorkerStop) {
+        try { await rawProjectionFastSearch.verifyAfterWorkerStop(); }
+        catch (error) { fail(`raw projection D1 readback: ${error?.message ?? error}`); }
+      }
       if (!stopped || exhaustiveWorkflow === undefined) return;
       try {
         // The Worker is stopped before this CLI readback, so SQLite is no
