@@ -52,6 +52,19 @@ function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
 }
 
+function assertWellFormedUtf16(value: string, label: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (Number.isNaN(next) || next < 0xdc00 || next > 0xdfff) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `${label} contains an unpaired surrogate`);
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `${label} contains an unpaired surrogate`);
+    }
+  }
+}
+
 function compareUtf16(left: string, right: string): number {
   if (left < right) return -1;
   if (left > right) return 1;
@@ -63,9 +76,27 @@ function freezeRef(value: VersionedRef): VersionedRef {
   return Object.freeze({ id: parsed.id, revision: parsed.revision });
 }
 
+function validateRawCandidateStrings(value: unknown): void {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return;
+  const record = value as Record<string, unknown>;
+  if (typeof record.section_text === "string") assertWellFormedUtf16(record.section_text, "section_text");
+  if (!Array.isArray(record.material_claims)) return;
+  record.material_claims.forEach((claim, index) => {
+    const text = typeof claim === "object" && claim !== null && !Array.isArray(claim)
+      ? (claim as Record<string, unknown>).text
+      : undefined;
+    if (typeof text === "string") {
+      assertWellFormedUtf16(text, `material claim ${index}.text`);
+    }
+  });
+}
+
 function parseCandidate(value: unknown): SynthesisClaimsCandidateV2 {
+  validateRawCandidateStrings(value);
   const parsed = SynthesisClaimsCandidateV2Schema.safeParse(value);
   if (!parsed.success) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is invalid", parsed.error);
+  assertWellFormedUtf16(parsed.data.section_text, "section_text");
+  parsed.data.material_claims.forEach((claim, index) => assertWellFormedUtf16(claim.text, `material claim ${index}.text`));
   return parsed.data;
 }
 
