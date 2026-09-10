@@ -43,7 +43,10 @@ payload and W1 ledger through their trusted readers, checks the principal, scope
 requested grade, and rechecks both navigation currentness and the W1 head before returning bytes.
 
 The emitted `eliotr.research.protocol-scope.v1` checkpoint contains the strict
-`InquiryProtocolProfile`, a canonical `CoverageDenominator`, and SHA-256 digests of both. The profile is
+`InquiryProtocolProfile`, a canonical `CoverageDenominator`, and SHA-256 digests of both. The family
+definition ref is fixed, while each compiled profile ref is derived from its canonical profile identity
+(question, requested grade and trusted W1 model profile); the denominator ref is likewise derived from
+its canonical scope membership identity. This keeps distinct requests from sharing an immutable ref. The profile is
 lookup-only, `corpus_only`, exploratory, and carries the requested grade as a request attribute; it does
 not claim that grade was achieved or make a confirmatory finding. Its server definitions state that source
 fragments do not become independent sources, chronology uses frozen source revisions and capture times,
