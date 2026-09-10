@@ -20,6 +20,21 @@ describe("same-origin PWA transport", () => {
     vi.stubGlobal("fetch", async () => new Response(body, { headers: { "content-type": type } }));
     await expect(requestApi("/api/v1/test")).rejects.toMatchObject({ code });
   });
+  it("leaves a completed response undisturbed after EOF", async () => {
+    let internalAborted = false;
+    let cancelled = false;
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      init.signal?.addEventListener("abort", () => { internalAborted = true; }, { once: true });
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new TextEncoder().encode("{}")); controller.close(); },
+        cancel() { cancelled = true; },
+      });
+      return new Response(body, { headers: { "content-type": "application/json" } });
+    });
+    await expect(requestApi("/api/v1/test")).resolves.toEqual({});
+    expect(internalAborted).toBe(false);
+    expect(cancelled).toBe(false);
+  });
   it("bounds stalled connection and stalled stream even when transport ignores abort", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", () => new Promise(() => {}));

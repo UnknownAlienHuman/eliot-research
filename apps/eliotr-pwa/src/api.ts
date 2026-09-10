@@ -332,6 +332,7 @@ export async function requestApiWithStatuses(
   });
   const bounded = <T>(operation: Promise<T>): Promise<T> => Promise.race([operation, cancelled]);
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
   try {
     const response = await bounded(fetch(path, { ...init, signal: controller.signal, redirect: "manual",
       credentials: "same-origin", cache: "no-store", headers: { accept: "application/json", ...init.headers } }));
@@ -368,6 +369,7 @@ export async function requestApiWithStatuses(
       throw decodeApiProblem(value, response.status);
     }
     if (!acceptedStatuses.includes(response.status)) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
+    completed = true;
     return value;
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;
@@ -376,7 +378,8 @@ export async function requestApiWithStatuses(
   } finally {
     clearTimeout(timeout); init.signal?.removeEventListener("abort", abort);
     if (rejectAbort) controller.signal.removeEventListener("abort", rejectAbort);
-    controller.abort(); if (reader) void reader.cancel().catch(() => {});
+    if (completed) reader?.releaseLock();
+    else { controller.abort(); if (reader) void reader.cancel().catch(() => {}); }
   }
 }
 
@@ -396,6 +399,7 @@ export async function requestApiText(path: string, signal?: AbortSignal,
   if (signal?.aborted) abort();
   const timeout = setTimeout(abort, 30000);
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  let completed = false;
   let rejectAbort: (() => void) | undefined;
   const cancelled = new Promise<never>((_, reject) => {
     rejectAbort = () => reject(new Error("API request cancelled"));
@@ -441,6 +445,7 @@ export async function requestApiText(path: string, signal?: AbortSignal,
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
     catch { throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Evidence response is not valid UTF-8" }); }
+    completed = true;
     return { text, headers: response.headers };
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;
@@ -449,7 +454,8 @@ export async function requestApiText(path: string, signal?: AbortSignal,
   } finally {
     clearTimeout(timeout); signal?.removeEventListener("abort", abort);
     if (rejectAbort) controller.signal.removeEventListener("abort", rejectAbort);
-    controller.abort(); if (reader) void reader.cancel().catch(() => {});
+    if (completed) reader?.releaseLock();
+    else { controller.abort(); if (reader) void reader.cancel().catch(() => {}); }
   }
 }
 
