@@ -2,11 +2,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import {
   createEvidenceFreezeMaterializeContextReader,
-  createResearchArtifactMetadataProducer,
 } from "@eliotr/cloudflare-research";
 import { prepareResearchReportAdmission, type ResearchReportAdmissionInput } from "../../../packages/cloudflare-research/src/research-report-admission.js";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
-import { createResearchMaterializeStageHandler as createNativeMaterializeHandler } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
+import { createResearchReportMaterializeStageHandler } from "../../../packages/cloudflare-research/src/research-report-materialize-stage-handler.js";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Env } from "../src/env.js";
@@ -83,20 +82,17 @@ describe("server-owned REPORT admission and artifact commit", () => {
     await expect(prepareResearchReportAdmission(missingPolicy)).rejects.toMatchObject({ code: "REPORT_ADMISSION_POLICY_MISSING" });
     expect((await synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(0);
 
-    const admission = await prepareResearchReportAdmission(admissionInput);
     const metadataPolicy = reportPolicy(synthesis.freeze.scope.snapshot_id, principal.principal_ref);
-    const metadata = createResearchArtifactMetadataProducer({ intent: admission.intent, expected_draft_head_revision: null, policy: metadataPolicy });
     const context = createEvidenceFreezeMaterializeContextReader({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       manifest_store: synthesis.freeze.freeze_store, read_stage_five: synthesis.freeze.readers.read_stage_five }, synthesis.freeze.navigation, synthesis.freeze.readers);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
-    const handler = createNativeMaterializeHandler({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+    const handler = createResearchReportMaterializeStageHandler({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver, context,
-      admission: admission.admission,
       recheck_authority: async () => {
         const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, principal);
         if (status === null) throw new Error("REPORT fixture status is missing");
         return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id, scope_snapshot_revision: status.scope_snapshot_revision };
-      }, metadata });
+      }, policy_source: policySource, report_policy: metadataPolicy });
     let handlerError: unknown;
     const observedHandler = async (input: Parameters<typeof handler>[0]) => {
       try { return await handler(input); }
@@ -109,7 +105,11 @@ describe("server-owned REPORT admission and artifact commit", () => {
     const admissionRow = await synthesis.freeze.db.prepare(
       "SELECT decision_id,intent_id,outbox_id,created_at FROM research_report_admission WHERE operation_id=?1 LIMIT 1",
     ).bind(synthesis.freeze.operation_id).first<{ readonly decision_id: string; readonly intent_id: string; readonly outbox_id: string; readonly created_at: string }>();
-    expect(admissionRow).toMatchObject({ intent_id: admission.intent.intent_ref.id, outbox_id: expect.any(String), created_at: admission.intent.created_at });
+    if (admissionRow === null) throw new Error("REPORT admission row is missing");
+    expect(admissionRow).toMatchObject({ decision_id: expect.stringMatching(/^report-decision-[a-f0-9]{64}$/u), intent_id: expect.stringMatching(/^report-intent-[a-f0-9]{64}$/u), outbox_id: expect.any(String), created_at: expect.any(String) });
+    const storedIntent = await synthesis.freeze.db.prepare("SELECT operation_kind,idempotency_key,created_at FROM operation_intent WHERE intent_id=?1 LIMIT 1")
+      .bind(admissionRow.intent_id).first<{ readonly operation_kind: string; readonly idempotency_key: string; readonly created_at: string }>();
+    expect(storedIntent).toEqual({ operation_kind: "REPORT", idempotency_key: request.idempotency_key, created_at: admissionRow.created_at });
     expect((await synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>())?.n).toBe(1);
     expect((await synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_revision WHERE artifact_id LIKE 'eliotr.research.artifact-%'").first<{ readonly n: number }>())?.n).toBe(1);
     expect(stageTwelve.stage).toBe("SYNTHESIZE");
@@ -117,14 +117,14 @@ describe("server-owned REPORT admission and artifact commit", () => {
     const beforeReplay = await Promise.all([
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>(),
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_draft_object").first<{ readonly n: number }>(),
-      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=?1").bind(admission.intent.intent_ref.id).first<{ readonly n: number }>(),
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1 LIMIT 1)").bind(synthesis.freeze.operation_id).first<{ readonly n: number }>(),
     ]);
     const replay = await synthesis.freeze.executor.execute(request, principal, observedHandler);
     expect(replay.receipt_ref).toBe(first.receipt_ref);
     const afterReplay = await Promise.all([
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM research_report_admission").first<{ readonly n: number }>(),
       synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM artifact_draft_object").first<{ readonly n: number }>(),
-      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=?1").bind(admission.intent.intent_ref.id).first<{ readonly n: number }>(),
+      synthesis.freeze.db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1 LIMIT 1)").bind(synthesis.freeze.operation_id).first<{ readonly n: number }>(),
     ]);
     expect(afterReplay).toEqual(beforeReplay);
   }, 30_000);
