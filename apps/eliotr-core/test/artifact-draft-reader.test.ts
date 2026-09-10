@@ -2,6 +2,7 @@ import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
+import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
   createArtifactDraftRuntime,
   draftInput,
@@ -228,7 +229,23 @@ describe("actual D1/R2 artifact draft reader", () => {
   });
 
   it("reads one historical section body with exact object identity and private headers", async () => {
-    const fixture = await readableOwnerArtifactDraft(`reader-section-history-${crypto.randomUUID()}`);
+    const baseFixture = await readableOwnerArtifactDraft(`reader-section-history-${crypto.randomUUID()}`);
+    const baseSection = baseFixture.input.revision.sections[0];
+    const inputSection = baseFixture.input.sections[0];
+    if (baseSection === undefined || inputSection === undefined) throw new Error("fixture section is missing");
+    const unicodeSectionRef = { id: `section-кириллица-${crypto.randomUUID()}`, revision: baseSection.section_ref.revision };
+    const unicodeSection = { ...baseSection, section_ref: unicodeSectionRef };
+    const unicodeRevision = { ...baseFixture.input.revision, sections: [unicodeSection] };
+    const unicodeManifestDigest = await canonicalDigest({ spec: baseFixture.input.spec, revision: unicodeRevision });
+    const fixture = {
+      ...baseFixture,
+      input: {
+        ...baseFixture.input,
+        revision: unicodeRevision,
+        sections: [{ ...inputSection, section: unicodeSection }],
+        manifest_residency: { ...baseFixture.input.manifest_residency, content_digest: { algorithm: "sha256" as const, digest: unicodeManifestDigest } },
+      },
+    };
     const created = await createArtifactDraftRuntime().prepare(fixture.input);
     const section = fixture.input.revision.sections[0];
     const sectionObject = created.objects.find((object) => object.object_kind === "SECTION_BODY");
@@ -265,9 +282,9 @@ describe("actual D1/R2 artifact draft reader", () => {
     expect(response.headers.get("content-length")).toBe(String(result.body.byteLength));
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(response.headers.get("x-eliotr-artifact-ref")).toBe(`${fixture.input.revision.artifact_ref.id}:1`);
-    expect(response.headers.get("x-eliotr-section-ref")).toBe(`${section.section_ref.id}:1`);
-    expect(response.headers.get("x-eliotr-section-object-ref")).toBe(section.body_object_ref);
+    expect(response.headers.get("x-eliotr-artifact-ref")).toBe(encodeURIComponent(`${fixture.input.revision.artifact_ref.id}:1`));
+    expect(response.headers.get("x-eliotr-section-ref")).toBe(encodeURIComponent(`${section.section_ref.id}:1`));
+    expect(response.headers.get("x-eliotr-section-object-ref")).toBe(encodeURIComponent(section.body_object_ref));
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(result.body);
     expect(await runtime.WORK_BUCKET.head(sectionObject.receipt.key)).not.toBeNull();
   });

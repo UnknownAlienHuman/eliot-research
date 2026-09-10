@@ -133,6 +133,7 @@ function semanticApi(env: Env): SemanticApi {
       if (section === null) throw new ArtifactReadNotFoundError("artifact section does not exist");
       const body = new ArrayBuffer(section.body.byteLength);
       new Uint8Array(body).set(section.body);
+      // These identity headers use URI-component encoding; consumers decode with decodeURIComponent.
       return new Response(body, {
         status: 200,
         headers: {
@@ -140,9 +141,9 @@ function semanticApi(env: Env): SemanticApi {
           "content-length": String(section.size_bytes),
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
-          "x-eliotr-artifact-ref": `${section.artifact_ref.id}:${section.artifact_ref.revision}`,
-          "x-eliotr-section-ref": `${section.section_ref.id}:${section.section_ref.revision}`,
-          "x-eliotr-section-object-ref": section.body_object_ref,
+          "x-eliotr-artifact-ref": encodeURIComponent(`${section.artifact_ref.id}:${section.artifact_ref.revision}`),
+          "x-eliotr-section-ref": encodeURIComponent(`${section.section_ref.id}:${section.section_ref.revision}`),
+          "x-eliotr-section-object-ref": encodeURIComponent(section.body_object_ref),
           "x-eliotr-section-sha256": section.body_sha256,
         },
       });
