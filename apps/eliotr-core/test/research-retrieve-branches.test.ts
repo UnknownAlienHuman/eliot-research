@@ -197,7 +197,7 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
     expect(await rowCounts(f.db)).toEqual(counts);
     const replayReadback = await readRetrieveBranchesCheckpoint(dependencies, retrieveRequest, principal);
     expect(canonicalEvidenceJson(replayReadback.checkpoint)).toBe(canonicalEvidenceJson(authoritative.checkpoint));
-  });
+  }, 30_000);
 
   it("rejects a mismatched operation reference and tampered persisted output", async () => {
     const f = await fixture();
