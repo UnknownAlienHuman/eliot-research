@@ -335,6 +335,7 @@ const expectedPolicy = {
   decision: desired.policy.decision,
   include: ownerEmails.map((email) => ({ email: { email } })),
 };
+const mcpConfig = createMcpAccessConfig({ enabled: mcpEnabled, environment: process.env, desired: mcpDesired, hostname, ownerEmails });
 
 // Hostname-based Access is deliberate because ResearchSession uses WebSockets.
 // All local validation and GET preflight completes before the first POST.
@@ -362,12 +363,19 @@ function assertApplicationContour(candidate) {
 }
 
 if (application) assertApplicationContour(application);
+if (application && (!checkOnly || mcpConfig)) {
+  application = await freshApplication(application.id);
+  assertApplicationContour(application);
+  const freshOwnerAud = resolveLiveAud(application, { allowEnvironmentFallback: false }).aud;
+  if (!freshOwnerAud) throw new Error("existing Access application readback lacks a bounded AUD");
+  const configuredOwnerAud = process.env.ELIOTR_ACCESS_AUDIENCE?.trim() ?? "";
+  if (configuredOwnerAud !== "" && configuredOwnerAud !== freshOwnerAud) throw new Error("Access AUD differs from the existing application readback");
+}
 // GET-only team-origin preflight (live organization readback wins; the
 // environment fallback exists only for mocks/transition and must reconcile).
 const teamPreflight = await fetchLiveTeamDomain();
-const mcpConfig = createMcpAccessConfig({ enabled: mcpEnabled, environment: process.env, desired: mcpDesired, hostname, ownerEmails });
 let mcpState = null;
-if (mcpConfig) mcpState = await preflightMcp({ config: mcpConfig, applications, request, accountId, enc, teamDomain: teamPreflight.teamDomain, ordinaryApplication: application, resolveOrdinaryAud: resolveLiveAud, equal, normalizedDestinations });
+if (mcpConfig) mcpState = await preflightMcp({ config: mcpConfig, applications, request, accountId, enc, teamDomain: teamPreflight.teamDomain, ordinaryApplication: application, resolveOrdinaryAud: resolveLiveAud, equal, freshApplication });
 
 function strictPlanBase(extra) {
   return {
@@ -469,7 +477,7 @@ if (checkOnly) {
 }
 
 if (!checkOnly) {
-if (mcpConfig) mcpState = await applyMcp({ config: mcpConfig, state: mcpState, ordinaryApplication: application, request, accountId, enc, freshApplication, createApplicationWithReconciliation, equal, normalizedDestinations, resolveOrdinaryAud: resolveLiveAud });
+if (mcpConfig) mcpState = await applyMcp({ config: mcpConfig, state: mcpState, ordinaryApplication: application, request, accountId, enc, freshApplication, createApplicationWithReconciliation, equal, resolveOrdinaryAud: resolveLiveAud });
 // Apply readback: AUD plus exact team origin are Cloudflare authority and are
 // persisted only in the ignored non-secret receipt for core config generation.
 application = await freshApplication(application.id);

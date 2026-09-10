@@ -27,7 +27,7 @@ export function createMcpAccessConfig({ enabled, environment, desired, hostname,
   const serviceTokenId = environment.ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID;
   if (profile === "service-token") {
     if (typeof serviceTokenId !== "string" || !UUID_PATTERN.test(serviceTokenId)) throw new Error("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID must be the exact service-token UUID");
-    if (typeof clientId !== "string" || clientId !== clientId.trim() || !MCP_CLIENT_ID_PATTERN.test(clientId)) throw new Error("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID must be the exact Cloudflare Access service-token Client ID");
+    if (typeof clientId !== "string" || clientId.length > 256 || clientId !== clientId.trim() || !MCP_CLIENT_ID_PATTERN.test(clientId)) throw new Error("ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID must be the exact Cloudflare Access service-token Client ID");
   } else if (clientId !== undefined || serviceTokenId !== undefined) {
     throw new Error("Managed OAuth MCP profile must not configure service-token identifiers");
   }
@@ -50,6 +50,12 @@ export function resolveMcpAud(app, explicitAudience, allowEnvironmentFallback = 
   if (live) return { aud: live, source: "CLOUDFLARE_READBACK" };
   if (allowEnvironmentFallback && explicitAudience) return { aud: explicitAudience, source: "ENVIRONMENT_FALLBACK" };
   return { aud: null, source: "UNKNOWN" };
+}
+
+function allDestinations(app) {
+  return (Array.isArray(app?.destinations) ? app.destinations : [])
+    .map((item) => ({ type: String(item?.type ?? ""), uri: String(item?.uri ?? "").replace(/^https?:\/\//, "").replace(/\/$/, "").toLowerCase() }))
+    .sort((left, right) => `${left.type}\n${left.uri}`.localeCompare(`${right.type}\n${right.uri}`));
 }
 
 function expectedPolicy(config) {
@@ -75,13 +81,14 @@ function emailIncludes(policy) {
     .flatMap((rule) => typeof rule?.email?.email === "string" ? [rule.email.email.toLowerCase()] : []).sort();
 }
 
-export function assertMcpApplication(candidate, config, normalizedDestinations) {
+export function assertMcpApplication(candidate, config) {
   const drift = [];
+  if (candidate.name !== config.appName) drift.push({ field: "name", expected: config.appName, actual: candidate.name });
   if (candidate.type !== config.desired.application.type) drift.push({ field: "type", expected: config.desired.application.type, actual: candidate.type });
   if (candidate.domain !== config.destination) drift.push({ field: "domain", expected: config.destination, actual: candidate.domain });
   if ((candidate.session_duration ?? "24h") !== config.desired.application.session_duration) drift.push({ field: "session_duration", expected: config.desired.application.session_duration, actual: candidate.session_duration });
   if ((candidate.app_launcher_visible ?? false) !== config.desired.application.app_launcher_visible) drift.push({ field: "app_launcher_visible", expected: config.desired.application.app_launcher_visible, actual: candidate.app_launcher_visible });
-  if (JSON.stringify(normalizedDestinations(candidate)) !== JSON.stringify([{ type: "public", uri: config.destination }])) drift.push({ field: "destinations", expected: [{ type: "public", uri: config.destination }], actual: normalizedDestinations(candidate) });
+  if (JSON.stringify(allDestinations(candidate)) !== JSON.stringify([{ type: "public", uri: config.destination }])) drift.push({ field: "destinations", expected: [{ type: "public", uri: config.destination }], actual: allDestinations(candidate) });
   if (candidate.path_cookie_attribute !== true) drift.push({ field: "path_cookie_attribute", expected: true, actual: candidate.path_cookie_attribute });
   if (Boolean(candidate.oauth_configuration?.enabled) !== (config.profile === "managed-oauth")) drift.push({ field: "oauth_configuration.enabled", expected: config.profile === "managed-oauth", actual: candidate.oauth_configuration?.enabled });
   if (drift.length) throw new Error(`MCP Access application drift; refusing in-place mutation: ${JSON.stringify(drift, null, 2)}`);
@@ -111,19 +118,21 @@ export function assertMcpPolicy(policy, config, equal) {
   if (drift.length) throw new Error(`MCP Access policy drift; refusing in-place mutation: ${JSON.stringify(drift, null, 2)}`);
 }
 
-export async function preflightMcp({ config, applications, request, accountId, enc, teamDomain, ordinaryApplication, resolveOrdinaryAud, equal, normalizedDestinations }) {
+export async function preflightMcp({ config, applications, request, accountId, enc, teamDomain, ordinaryApplication, resolveOrdinaryAud, equal, freshApplication }) {
   const matches = applications.filter((app) => app.name === config.appName);
   if (matches.length > 1) throw new Error(`multiple Access applications named ${config.appName}; refusing ambiguous MCP binding`);
-  const collisions = applications.filter((app) => ![config.appName].includes(app.name) && normalizedDestinations(app).some((destination) => destination.uri === config.destination));
+  const collisions = applications.filter((app) => app.name !== config.appName && allDestinations(app).some((destination) => destination.uri === config.destination));
   if (collisions.length) throw new Error(`wrong Access application already claims ${config.destination}: ${JSON.stringify(collisions.map((app) => ({ id: app.id ?? null, name: app.name ?? null })))}`);
   const state = { application: matches[0] ?? null, applicationDisposition: "UNCHANGED", policyDisposition: "UNCHANGED", classified: { owner: null, additional: [] }, liveAud: null, serviceTokenRecord: null };
   if (state.application) {
-    assertMcpApplication(state.application, config, normalizedDestinations);
+    state.application = await freshApplication(state.application.id);
+    assertMcpApplication(state.application, config);
     const result = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies?per_page=100`);
     state.classified = classifyMcpPolicies(Array.isArray(result) ? result : [], config);
     if (state.classified.owner) assertMcpPolicy(state.classified.owner, config, equal);
     const ownerAud = resolveOrdinaryAud(ordinaryApplication);
-    state.liveAud = resolveMcpAud(state.application, config.explicitAudience);
+    state.liveAud = resolveMcpAud(state.application, config.explicitAudience, false);
+    if (!state.liveAud.aud) throw new Error("existing MCP Access application readback lacks a bounded dedicated AUD");
     if (ownerAud.aud && state.liveAud.aud && ownerAud.aud === state.liveAud.aud) throw new Error("MCP Access audience must differ from the ordinary Access audience");
     if (config.explicitAudience && state.liveAud.aud && config.explicitAudience !== state.liveAud.aud) throw new Error("MCP Access audience differs from the existing Access application readback");
   }
@@ -149,7 +158,21 @@ export function mcpPlanSummary(config, state) {
   };
 }
 
-export async function applyMcp({ config, state, ordinaryApplication, request, accountId, enc, freshApplication, createApplicationWithReconciliation, equal, normalizedDestinations, resolveOrdinaryAud }) {
+async function createMcpPolicyWithReconciliation({ config, state, request, accountId, enc, policy }) {
+  let readback;
+  try {
+    await request("POST", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies`, policy);
+  } catch (error) {
+    readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies?per_page=100`);
+    state.classified = classifyMcpPolicies(Array.isArray(readback) ? readback : [], config);
+    if (!state.classified.owner) throw error;
+  }
+  state.policyDisposition = "CREATED";
+  if (readback === undefined) readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies?per_page=100`);
+  state.classified = classifyMcpPolicies(Array.isArray(readback) ? readback : [], config);
+}
+
+export async function applyMcp({ config, state, ordinaryApplication, request, accountId, enc, freshApplication, createApplicationWithReconciliation, equal, resolveOrdinaryAud }) {
   const owner = await freshApplication(ordinaryApplication.id);
   const ordinaryAud = resolveOrdinaryAud(owner, { allowEnvironmentFallback: false }).aud;
   if (!ordinaryAud) throw new Error("ordinary Access application readback lacks AUD before MCP provisioning");
@@ -164,15 +187,10 @@ export async function applyMcp({ config, state, ordinaryApplication, request, ac
     state.applicationDisposition = "CREATED";
   }
   state.application = await freshApplication(state.application.id);
-  assertMcpApplication(state.application, config, normalizedDestinations);
+  assertMcpApplication(state.application, config);
   const result = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies?per_page=100`);
   state.classified = classifyMcpPolicies(Array.isArray(result) ? result : [], config);
-  if (!state.classified.owner) {
-    await request("POST", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies`, policy);
-    state.policyDisposition = "CREATED";
-    const readback = await request("GET", `/accounts/${enc(accountId)}/access/apps/${enc(state.application.id)}/policies?per_page=100`);
-    state.classified = classifyMcpPolicies(Array.isArray(readback) ? readback : [], config);
-  }
+  if (!state.classified.owner) await createMcpPolicyWithReconciliation({ config, state, request, accountId, enc, policy });
   assertMcpPolicy(state.classified.owner, config, equal);
   state.liveAud = resolveMcpAud(state.application, config.explicitAudience, false);
   if (!state.liveAud.aud) throw new Error("MCP Access application readback lacks a bounded dedicated AUD");

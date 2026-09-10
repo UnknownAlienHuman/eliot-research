@@ -15,8 +15,8 @@ const team = "https://mcp-team-example.cloudflareaccess.com";
 const tokenId = "123e4567-e89b-12d3-a456-426614174000";
 const clientId = "mcp-client.access";
 const state = { apps: new Map(), policies: new Map(), serviceTokens: new Map(), requests: [], mutations: [], sequence: 0,
-  dropNextAppId: false, throwNextAppPost: false, omitMcpAud: false };
-function reset() { state.apps.clear(); state.policies.clear(); state.serviceTokens.clear(); state.requests.length = 0; state.mutations.length = 0; state.sequence = 0; state.dropNextAppId = false; state.throwNextAppPost = false; state.omitMcpAud = false; }
+  dropNextAppId: false, throwNextAppPost: false, throwNextPolicyPost: false, omitMcpAud: false };
+function reset() { state.apps.clear(); state.policies.clear(); state.serviceTokens.clear(); state.requests.length = 0; state.mutations.length = 0; state.sequence = 0; state.dropNextAppId = false; state.throwNextAppPost = false; state.throwNextPolicyPost = false; state.omitMcpAud = false; }
 function success(result, status = 200) { return { status, payload: { success: true, errors: [], messages: [], result } }; }
 function failure(status, message) { return { status, payload: { success: false, errors: [{ message }], result: null } }; }
 function json(res, value) { const body = JSON.stringify(value.payload); res.writeHead(value.status, { "content-type": "application/json", "content-length": Buffer.byteLength(body) }); res.end(body); }
@@ -54,7 +54,9 @@ const server = createServer(async (req, res) => {
       if (tail.length === 4 && tail[3] === "policies" && method === "GET") return json(res, success((state.policies.get(tail[2]) ?? []).map((item) => structuredClone(item))));
       if (tail.length === 4 && tail[3] === "policies" && method === "POST") {
         const policy = { id: nextId("access-policy"), ...structuredClone(body), exclude: [], require: [] };
-        const list = state.policies.get(tail[2]) ?? []; list.push(policy); state.policies.set(tail[2], list); return json(res, success(structuredClone(policy)));
+        const list = state.policies.get(tail[2]) ?? []; list.push(policy); state.policies.set(tail[2], list);
+        if (state.throwNextPolicyPost) { state.throwNextPolicyPost = false; return json(res, failure(502, "simulated lost policy acknowledgement")); }
+        return json(res, success(structuredClone(policy)));
       }
     }
     return json(res, failure(404, `${method} ${url.pathname}`));
@@ -81,6 +83,13 @@ async function run(profile = "service-token", extra = {}) {
 function pass(result, label) { assert.equal(result.status, 0, `${label}\n${result.stdout}\n${result.stderr}`); }
 function fail(result, label) { assert.notEqual(result.status, 0, `${label} unexpectedly passed`); }
 function appPosts() { return state.mutations.filter((item) => item.pathname.endsWith("/access/apps")); }
+function seedExistingContour({ extraDestination = false } = {}) {
+  const ownerApp = { id: "owner-existing", name: `Eliot Research: ${hostname}`, aud: "ordinary-aud", type: "self_hosted", domain: hostname, destinations: [{ type: "public", uri: hostname }], session_duration: "24h", app_launcher_visible: false };
+  const mcpApp = { id: "mcp-existing", name: `Eliot Research MCP: ${hostname}/mcp`, aud: "mcp-aud", type: "self_hosted", domain: `${hostname}/mcp`, destinations: [{ type: "public", uri: `${hostname}/mcp` }, ...(extraDestination ? [{ type: "private", uri: `${hostname}/mcp` }] : [])], session_duration: "24h", app_launcher_visible: false, path_cookie_attribute: true };
+  state.apps.set(ownerApp.id, ownerApp); state.policies.set(ownerApp.id, [{ id: "owner-policy", name: `Eliot Research owners`, decision: "allow", include: [{ email: { email: owner } }], exclude: [], require: [] }]);
+  state.apps.set(mcpApp.id, mcpApp); state.policies.set(mcpApp.id, [{ id: "mcp-policy", name: `Eliot Research MCP: ${hostname}/mcp`, decision: "non_identity", include: [{ service_token: { token_id: tokenId } }], exclude: [], require: [] }]);
+  state.serviceTokens.set(tokenId, { id: tokenId, client_id: clientId });
+}
 
 try {
   reset(); state.serviceTokens.set(tokenId, { id: tokenId, client_id: clientId });
@@ -96,11 +105,16 @@ try {
 
   reset(); state.serviceTokens.set(tokenId, { id: tokenId, client_id: clientId }); state.omitMcpAud = true; result = await run(); fail(result, "unknown MCP AUD"); assert.match(result.stderr, /dedicated AUD/u);
 
-  reset(); state.apps.set("existing-mcp", { id: "existing-mcp", name: "Eliot Research MCP: research.example.test/mcp", type: "self_hosted", domain: `${hostname}/wrong`, destinations: [{ type: "public", uri: `${hostname}/wrong` }], session_duration: "24h", app_launcher_visible: false, path_cookie_attribute: true }); state.policies.set("existing-mcp", []); state.serviceTokens.set(tokenId, { id: tokenId, client_id: clientId }); result = await run(); fail(result, "MCP contour drift"); assert.equal(appPosts().length, 0); assert.match(result.stderr, /application drift/u);
+  reset(); seedExistingContour({ extraDestination: true }); result = await run(); fail(result, "MCP extra destination drift"); assert.equal(appPosts().length, 0); assert.match(result.stderr, /destinations/u);
+
+  reset(); seedExistingContour(); result = await run("service-token", { ELIOTR_MCP_ACCESS_AUDIENCE: "wrong-aud" }); fail(result, "existing MCP AUD reconciliation"); assert.equal(appPosts().length, 0); assert.match(result.stderr, /existing Access application readback/u);
+
+  reset(); seedExistingContour(); state.throwNextPolicyPost = true; state.policies.set("mcp-existing", []); result = await run(); pass(result, "MCP policy lost-ACK reconciliation"); assert.equal(state.mutations.filter((item) => item.pathname.endsWith("/policies")).length, 1);
 
   reset(); state.serviceTokens.set(tokenId, { id: tokenId, client_id: clientId }); state.throwNextAppPost = true; result = await run(); pass(result, "owner lost-ACK reconciliation"); assert.equal(appPosts().length, 2); assert.equal([...state.apps.values()].filter((app) => app.name === `Eliot Research: ${hostname}`).length, 1);
 
   reset(); result = await run("managed-oauth", { ELIOTR_MCP_ACCESS_SERVICE_TOKEN_ID: tokenId }); fail(result, "managed token input refusal"); assert.equal(state.mutations.length, 0);
+  reset(); result = await run("service-token", { ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: `${"a".repeat(256)}.access` }); fail(result, "oversized Client ID refusal"); assert.equal(state.mutations.length, 0);
   reset(); result = await run("service-token", { ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: undefined }); fail(result, "implicit owner-only receipt refusal"); assert.equal(state.mutations.length, 0);
   reset(); result = await run("managed-oauth", { ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "drive-exchange" }); fail(result, "canonical transport mismatch"); assert.equal(state.mutations.length, 0);
   console.log("Cloudflare MCP Access apply fixtures: PASS");
