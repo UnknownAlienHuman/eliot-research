@@ -539,8 +539,8 @@
       "behavior": "D1-backed RetrievalQueryPorts persistence behind migration 0021 tables with no D1/R2/network/clock authority of its own and no source-grant minting: scope freeze and currentness recheck the frozen ScopeSnapshot row, caller grant, purge frontier and member liveness on every call; result store inserts COMPLETE rows with INSERT-then-exact-readback and verifies the trace linkage; trace port inserts content-addressed immutable rows bound to the live scope digest; budget guard enforces deadline and cancellation",
       "completion_evidence": [
         "infra/d1/core/migrations/0021_retrieval_query_persistence.sql: additive retrieval_query_result plus retrieval_query_trace with authority/binding/immutability/invalidation triggers; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
-        "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream inspecting persisted rows, not mock counts",
-        "Q1-lane/R2-byte composition at the app layer, ER-24 research.query wiring, scope-profile versioning, remote D1/R2 receipts and live qualification NOT_EXECUTED"
+        "packages/retrieval/src/query-persistence.test.ts: 8 node:sqlite cases passed at 886f913e, including stored result digest corruption refusal and strict persisted profile load/replay with absent or malformed binding refusal; result load verifies canonical result/trace bytes, hashes and metadata linkage",
+        "createD1ScopeProfilePort.loadBinding reuses the same strict readback as recordBinding and requireBinding; it supplies persisted profile values without writing grants or selecting defaults. App composition has separate evidence below; remote D1/R2 receipts and live qualification remain NOT_EXECUTED"
       ]
     },
     {
