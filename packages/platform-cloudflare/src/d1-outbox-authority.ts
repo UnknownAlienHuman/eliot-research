@@ -167,10 +167,21 @@ function assertExact(
   }
 }
 
-export async function appendIntentWithOutbox(
+export interface PreparedIntentWithOutboxMutation {
+  readonly intent_ref: VersionedRef;
+  readonly outbox_id: string;
+  readonly statements: readonly D1PreparedStatement[];
+  readonly assertBatchResults: (
+    results: readonly D1Result<unknown>[],
+    offset?: number,
+  ) => void;
+  readonly readback: () => Promise<AppendOutboxIntentResult | null>;
+}
+
+export async function prepareIntentWithOutboxMutation(
   database: D1Database,
   rawInput: AppendOutboxIntentInput,
-): Promise<AppendOutboxIntentResult> {
+): Promise<PreparedIntentWithOutboxMutation> {
   let intent: OperationIntent;
   try {
     intent = OperationIntentSchema.parse(rawInput.intent);
@@ -193,70 +204,85 @@ export async function appendIntentWithOutbox(
     payload_sha256: rawInput.payload_sha256,
   };
   const outboxId = await stableOutboxId(intent.intent_ref);
-  const existing = await readExistingAuthority(database, intent);
-  if (existing !== null) {
+  const nextAttemptAt = Date.parse(intent.created_at);
+  if (!Number.isSafeInteger(nextAttemptAt) || nextAttemptAt < 0) {
+    fail("DELIVERY_INPUT_INVALID", "intent created_at is invalid");
+  }
+  const statements = Object.freeze([
+    database.prepare(
+      "INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, " +
+      "idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, " +
+      "cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+    ).bind(
+      intent.intent_ref.id,
+      intent.intent_ref.revision,
+      intent.operation_kind,
+      intent.principal_ref,
+      intent.idempotency_key,
+      intent.payload_ref,
+      intent.policy_decision_ref,
+      intent.budget_reservation_ref ?? null,
+      intent.cancellation_ref ?? null,
+      intent.created_at,
+    ),
+    database.prepare(
+      "INSERT INTO outbox(outbox_id, intent_id, intent_revision, topic, payload_ref, " +
+      "payload_sha256, state, attempts, next_attempt_at, lease_generation, created_at, " +
+      "updated_at) VALUES (?1,?2,?3,?4,?5,?6,'PENDING',0,?7,0,?8,?8)",
+    ).bind(
+      outboxId,
+      intent.intent_ref.id,
+      intent.intent_ref.revision,
+      input.topic,
+      intent.payload_ref,
+      input.payload_sha256,
+      nextAttemptAt,
+      intent.created_at,
+    ),
+  ] as const);
+  const readback = async (): Promise<AppendOutboxIntentResult | null> => {
+    const existing = await readExistingAuthority(database, intent);
+    if (existing === null) return null;
     assertExact(existing, input, outboxId);
     return {
       intent_ref: existing.intent.intent_ref,
       outbox_id: existing.outbox_id,
       disposition: "EXISTING",
     };
-  }
-  const nextAttemptAt = Date.parse(intent.created_at);
-  if (!Number.isSafeInteger(nextAttemptAt) || nextAttemptAt < 0) {
-    fail("DELIVERY_INPUT_INVALID", "intent created_at is invalid");
-  }
+  };
+  return Object.freeze({
+    intent_ref: intent.intent_ref,
+    outbox_id: outboxId,
+    statements,
+    assertBatchResults(results: readonly D1Result<unknown>[], offset = 0) {
+      if (
+        (results[offset]?.meta?.changes ?? 0) !== 1 ||
+        (results[offset + 1]?.meta?.changes ?? 0) !== 1
+      ) {
+        fail(
+          "DELIVERY_SETTLEMENT_UNCERTAIN",
+          "intent/outbox batch did not mutate exactly two rows",
+          true,
+        );
+      }
+    },
+    readback,
+  });
+}
+
+export async function appendIntentWithOutbox(
+  database: D1Database,
+  rawInput: AppendOutboxIntentInput,
+): Promise<AppendOutboxIntentResult> {
+  const plan = await prepareIntentWithOutboxMutation(database, rawInput);
+  const existing = await plan.readback();
+  if (existing !== null) return existing;
   try {
-    const results = await database.batch([
-      database.prepare(
-        "INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, " +
-        "idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, " +
-        "cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-      ).bind(
-        intent.intent_ref.id,
-        intent.intent_ref.revision,
-        intent.operation_kind,
-        intent.principal_ref,
-        intent.idempotency_key,
-        intent.payload_ref,
-        intent.policy_decision_ref,
-        intent.budget_reservation_ref ?? null,
-        intent.cancellation_ref ?? null,
-        intent.created_at,
-      ),
-      database.prepare(
-        "INSERT INTO outbox(outbox_id, intent_id, intent_revision, topic, payload_ref, " +
-        "payload_sha256, state, attempts, next_attempt_at, lease_generation, created_at, " +
-        "updated_at) VALUES (?1,?2,?3,?4,?5,?6,'PENDING',0,?7,0,?8,?8)",
-      ).bind(
-        outboxId,
-        intent.intent_ref.id,
-        intent.intent_ref.revision,
-        input.topic,
-        intent.payload_ref,
-        input.payload_sha256,
-        nextAttemptAt,
-        intent.created_at,
-      ),
-    ]);
-    if ((results[0]?.meta?.changes ?? 0) !== 1 ||
-        (results[1]?.meta?.changes ?? 0) !== 1) {
-      fail(
-        "DELIVERY_SETTLEMENT_UNCERTAIN",
-        "intent/outbox batch did not mutate exactly two rows",
-        true,
-      );
-    }
+    const results = await database.batch([...plan.statements]);
+    plan.assertBatchResults(results);
   } catch (error) {
-    const raced = await readExistingAuthority(database, intent);
-    if (raced !== null) {
-      assertExact(raced, input, outboxId);
-      return {
-        intent_ref: raced.intent.intent_ref,
-        outbox_id: raced.outbox_id,
-        disposition: "EXISTING",
-      };
-    }
+    const raced = await plan.readback();
+    if (raced !== null) return raced;
     if (error instanceof DeliveryRuntimeError) throw error;
     fail(
       "DELIVERY_SETTLEMENT_UNCERTAIN",
@@ -265,13 +291,12 @@ export async function appendIntentWithOutbox(
       error,
     );
   }
-  const readback = await readExistingAuthority(database, intent);
+  const readback = await plan.readback();
   if (readback === null) {
     fail("DELIVERY_SETTLEMENT_UNCERTAIN", "intent/outbox readback is missing", true);
   }
-  assertExact(readback, input, outboxId);
   return {
-    intent_ref: readback.intent.intent_ref,
+    intent_ref: readback.intent_ref,
     outbox_id: readback.outbox_id,
     disposition: "CREATED",
   };

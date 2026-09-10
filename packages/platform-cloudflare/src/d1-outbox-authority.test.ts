@@ -1,6 +1,9 @@
 import type { OperationIntent } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
-import { appendIntentWithOutbox } from "./d1-outbox-authority.js";
+import {
+  appendIntentWithOutbox,
+  prepareIntentWithOutboxMutation,
+} from "./d1-outbox-authority.js";
 
 interface Call { readonly sql: string; readonly values: readonly unknown[]; readonly method: string }
 interface Step { readonly method: "first" | "batch"; readonly value?: unknown; readonly error?: Error }
@@ -72,6 +75,31 @@ function fixture(steps: readonly Step[]): { readonly database: D1Database; reado
 }
 
 describe("D1 intent/outbox authority", () => {
+  it("prepares without mutation so a caller can own one batch and its final guard", async () => {
+    const { database, calls } = fixture([
+      { method: "batch", error: new Error("final guard rollback") },
+      { method: "first", value: null },
+      { method: "first", value: null },
+    ]);
+    const plan = await prepareIntentWithOutboxMutation(database, {
+      intent: intent(),
+      topic: "source.revision.admitted",
+      payload_sha256: "a".repeat(64),
+    });
+    expect(calls).toHaveLength(0);
+    expect(Object.isFrozen(plan)).toBe(true);
+    expect(Object.isFrozen(plan.statements)).toBe(true);
+    const changed = { success: true, meta: { changes: 1 } } as D1Result<unknown>;
+    expect(() => plan.assertBatchResults([changed, changed, changed], 1)).not.toThrow();
+
+    const finalGuard = database.prepare("INSERT INTO artifact_commit_guard").bind();
+    await expect(database.batch([...plan.statements, finalGuard])).rejects.toThrow(
+      "final guard rollback",
+    );
+    expect(calls[0]).toMatchObject({ method: "batch", sql: "batch:3" });
+    expect(await plan.readback()).toBeNull();
+  });
+
   it("commits intent and exact digest-bound outbox in one batch then requires readback", async () => {
     const { database, calls } = fixture([
       { method: "first", value: null },
