@@ -1,14 +1,11 @@
 import {
   WORKSPACE_MCP_OBSERVATION_V2_PROTOCOL,
   WORKSPACE_MCP_PLAN_V2_PROTOCOL,
-  WorkspaceGoogleActionSchema,
-  WorkspaceGoogleProductSchema,
   WorkspaceMcpObservationV2Schema,
   WorkspaceMcpPlanV2InputSchema,
   WorkspaceMcpPlanV2Schema,
   WorkspaceMcpPlanV2ResultSchema,
   WorkspaceMcpReceiptV2Schema,
-  WorkspaceSyncDirectionSchema,
   type WorkspaceMcpObservationV2,
   type WorkspaceMcpPlanV2,
   type WorkspaceMcpPlanV2Result,
@@ -191,6 +188,7 @@ function planFromCaller(value: unknown): WorkspaceMcpPlanV2 {
 
 function reasonCodes(plan: WorkspaceMcpPlanV2, receipt: WorkspaceMcpReceiptV2, now: number): string[] {
   const reasons: string[] = [];
+  if (receipt.status === "UNKNOWN") reasons.push("OBSERVATION_DISPOSITION_UNKNOWN");
   if (Date.parse(plan.issued_at) > now) reasons.push("PLAN_NOT_YET_VALID");
   if (Date.parse(plan.expires_at) <= now) reasons.push("PLAN_EXPIRED");
   if (receipt.connector !== plan.connector) reasons.push("CONNECTOR_MISMATCH");
@@ -241,11 +239,14 @@ export async function validateWorkspaceReceipt(
     idempotency_key: issuedPlan.idempotency_key,
     plan_sha256: issuedPlan.plan_sha256,
     state: "OBSERVED" as const,
-    disposition: reasons.length === 0 ? "OBSERVED_MATCH" as const : "OBSERVED_MISMATCH" as const,
+    disposition: receipt.status === "UNKNOWN"
+      ? "UNKNOWN" as const
+      : reasons.length === 0 ? "OBSERVED_MATCH" as const : "OBSERVED_MISMATCH" as const,
     receipt_sha256: receiptSha,
     reason_codes: reasons,
     candidate_only: true as const,
     source_evidence_authority_changed: false as const,
+    candidate_ledger_mutation: "OBSERVED" as const,
     reconciliation: { idempotency_key: issuedPlan.idempotency_key, plan_id: issuedPlan.plan_id, plan_sha256: issuedPlan.plan_sha256, write_state: "COMMITTED" as const, retry: "SAME_KEY" as const },
   };
   const observation = asZod(WorkspaceMcpObservationV2Schema, observationBase, "Workspace MCP v2 observation");
@@ -261,7 +262,7 @@ export async function validateWorkspaceReceipt(
     observation_id: observationId,
     observation_sha256: observationSha,
     receipt_sha256: receiptSha,
-    disposition: observation.disposition as "OBSERVED_MATCH" | "OBSERVED_MISMATCH",
+    disposition: observation.disposition as "OBSERVED_MATCH" | "OBSERVED_MISMATCH" | "UNKNOWN",
     reason_codes: reasons,
     receipt,
     observation,
@@ -273,6 +274,7 @@ export async function validateWorkspaceReceipt(
       state: "UNKNOWN",
       disposition: "UNKNOWN",
       receipt_sha256: undefined,
+      candidate_ledger_mutation: undefined,
       reason_codes: ["OBSERVATION_WRITE_UNKNOWN"],
       reconciliation: { idempotency_key: issuedPlan.idempotency_key, plan_id: issuedPlan.plan_id, plan_sha256: issuedPlan.plan_sha256, write_state: "UNKNOWN", retry: "SAME_KEY" },
     }, "unknown Workspace MCP observation");

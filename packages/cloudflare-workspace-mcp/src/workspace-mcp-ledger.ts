@@ -49,7 +49,7 @@ export interface WorkspaceMcpObservationStoreInput {
   readonly observation_id: string;
   readonly observation_sha256: string;
   readonly receipt_sha256: string;
-  readonly disposition: "OBSERVED_MATCH" | "OBSERVED_MISMATCH";
+  readonly disposition: "OBSERVED_MATCH" | "OBSERVED_MISMATCH" | "UNKNOWN";
   readonly reason_codes: readonly string[];
   readonly receipt: WorkspaceMcpReceiptV2;
   readonly observation: WorkspaceMcpObservationV2;

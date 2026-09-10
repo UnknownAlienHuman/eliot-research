@@ -82,6 +82,12 @@ describe("Workspace MCP durable candidate dispatch", () => {
       observed_revision: "r1", observed_at: "2026-09-09T12:09:00.000Z", readback_performed: true,
     } }, dependencies(ledger), context);
     expect(observed).toMatchObject({ state: "OBSERVED", disposition: "OBSERVED_MATCH", reconciliation: { write_state: "COMMITTED" } });
+    const indeterminate = await validateWorkspaceReceipt({ plan: issued, receipt: {
+      connector: "google-workspace", google_product: "drive", action: "read", resource_id: "file-a",
+      observed_revision: "r1", observed_at: "2026-09-09T12:09:00.000Z", readback_performed: true, status: "UNKNOWN",
+    } }, dependencies(ledger), context);
+    expect(indeterminate).toMatchObject({ state: "OBSERVED", disposition: "UNKNOWN", reconciliation: { write_state: "COMMITTED" } });
+    expect(indeterminate.receipt_sha256).toMatch(/^[a-f0-9]{64}$/u);
     const uncertain: WorkspaceMcpCandidateStore = { ...ledger, async recordObservation() { return { state: "UNKNOWN" }; } };
     const unknown = await validateWorkspaceReceipt({ plan: issued, receipt: {
       connector: "google-workspace", google_product: "drive", action: "read", resource_id: "file-a",

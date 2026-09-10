@@ -5,9 +5,9 @@ import { IdentifierSchema, IsoDateTimeSchema, Sha256Schema } from "./common.js";
 export const WORKSPACE_MCP_PLAN_V2_PROTOCOL = "eliotr.google-sync.plan.v2" as const;
 export const WORKSPACE_MCP_OBSERVATION_V2_PROTOCOL = "eliotr.google-sync.observation.v2" as const;
 export const WORKSPACE_MCP_TRANSPORT = "gemini-mcp" as const;
-export const WorkspaceGoogleProductSchema = z.enum(["drive", "docs", "sheets", "slides", "calendar", "gmail"]);
-export const WorkspaceGoogleActionSchema = z.enum(["inspect", "read", "search", "create", "append", "update", "export"]);
-export const WorkspaceSyncDirectionSchema = z.enum([
+const WorkspaceGoogleProductSchema = z.enum(["drive", "docs", "sheets", "slides", "calendar", "gmail"]);
+const WorkspaceGoogleActionSchema = z.enum(["inspect", "read", "search", "create", "append", "update", "export"]);
+const WorkspaceSyncDirectionSchema = z.enum([
   "google_to_eliot_candidate",
   "eliot_to_google",
   "bidirectional_candidate",
@@ -76,6 +76,7 @@ export const WorkspaceMcpObservationV2Schema = z.object({
   reason_codes: z.array(IdentifierSchema).max(64),
   candidate_only: z.literal(true),
   source_evidence_authority_changed: z.literal(false),
+  candidate_ledger_mutation: z.literal("OBSERVED").optional(),
   reconciliation: z.object({
     idempotency_key: IdentifierSchema,
     plan_id: IdentifierSchema.optional(),
@@ -84,19 +85,19 @@ export const WorkspaceMcpObservationV2Schema = z.object({
     retry: z.literal("SAME_KEY"),
   }).strict(),
 }).strict().superRefine((value, context) => {
-  if (value.state === "OBSERVED" && (value.receipt_sha256 === undefined || value.disposition === "UNKNOWN" || value.reconciliation.write_state !== "COMMITTED")) {
+  if (value.state === "OBSERVED" && (value.receipt_sha256 === undefined || value.reconciliation.write_state !== "COMMITTED" || value.candidate_ledger_mutation !== "OBSERVED")) {
     context.addIssue({ code: "custom", path: ["receipt_sha256"], message: "OBSERVED requires a committed server receipt digest" });
   }
-  if (value.state === "UNKNOWN" && (value.disposition !== "UNKNOWN" || value.receipt_sha256 !== undefined || value.reconciliation.write_state !== "UNKNOWN")) {
+  if (value.state === "UNKNOWN" && (value.disposition !== "UNKNOWN" || value.receipt_sha256 !== undefined || value.reconciliation.write_state !== "UNKNOWN" || value.candidate_ledger_mutation !== undefined)) {
     context.addIssue({ code: "custom", path: ["state"], message: "UNKNOWN cannot claim a durable comparison" });
   }
 });
 export type WorkspaceMcpObservationV2 = z.infer<typeof WorkspaceMcpObservationV2Schema>;
 
-export const WorkspaceMcpPlanV2IssuedResultSchema = WorkspaceMcpPlanV2Schema.extend({
+const WorkspaceMcpPlanV2IssuedResultSchema = WorkspaceMcpPlanV2Schema.extend({
   state: z.literal("ISSUED"),
 }).strict();
-export const WorkspaceMcpPlanV2UnknownResultSchema = z.object({
+const WorkspaceMcpPlanV2UnknownResultSchema = z.object({
   protocol: z.literal(WORKSPACE_MCP_PLAN_V2_PROTOCOL),
   state: z.literal("UNKNOWN"),
   idempotency_key: IdentifierSchema,

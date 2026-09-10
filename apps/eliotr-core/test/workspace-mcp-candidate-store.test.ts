@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { WorkspaceMcpObservationV2Schema, WorkspaceMcpPlanV2Schema, WorkspaceMcpReceiptV2Schema } from "@eliotr/contracts";
 import type { WorkspaceMcpObservationV2, WorkspaceMcpReceiptV2 } from "@eliotr/contracts";
 import { createD1WorkspaceMcpCandidateStore } from "../src/workspace-mcp-candidate-store.js";
@@ -23,7 +23,7 @@ const OBSERVATION: WorkspaceMcpObservationV2 = WorkspaceMcpObservationV2Schema.p
   protocol: "eliotr.google-sync.observation.v2", observation_id: `workspace-mcp-observation-${DIGEST}`,
   plan_id: PLAN.plan_id, idempotency_key: PLAN.idempotency_key, plan_sha256: PLAN.plan_sha256, state: "OBSERVED",
   disposition: "OBSERVED_MATCH", receipt_sha256: DIGEST, reason_codes: [], candidate_only: true,
-  source_evidence_authority_changed: false, reconciliation: { idempotency_key: PLAN.idempotency_key, plan_id: PLAN.plan_id,
+  source_evidence_authority_changed: false, candidate_ledger_mutation: "OBSERVED", reconciliation: { idempotency_key: PLAN.idempotency_key, plan_id: PLAN.plan_id,
     plan_sha256: PLAN.plan_sha256, write_state: "COMMITTED", retry: "SAME_KEY" },
 });
 
@@ -34,11 +34,6 @@ function input(principal_ref = "actor-a", fingerprint = DIGEST) {
     plan_id: plan.plan_id, plan_sha256: plan.plan_sha256, issued_at: plan.issued_at, expires_at: plan.expires_at, plan };
 }
 
-beforeEach(async () => {
-  await database.prepare("DELETE FROM workspace_mcp_observation").run();
-  await database.prepare("DELETE FROM workspace_mcp_plan").run();
-});
-
 describe("Workspace MCP candidate ledger on local D1", () => {
   it("replays exact plans, conflicts changed keys, and isolates verified actors", async () => {
     const candidate = store();
@@ -46,7 +41,7 @@ describe("Workspace MCP candidate ledger on local D1", () => {
     expect((await candidate.issuePlan(input())).state).toBe("REPLAY");
     expect((await candidate.issuePlan(input("actor-a", "b".repeat(64)))).state).toBe("CONFLICT");
     expect((await candidate.issuePlan(input("actor-b"))).state).toBe("COMMITTED");
-    expect(await database.prepare("SELECT COUNT(*) AS n FROM workspace_mcp_plan").first("n")).toBe(2);
+    expect(await database.prepare("SELECT COUNT(*) AS n FROM workspace_mcp_plan WHERE idempotency_key='key-1'").first("n")).toBe(2);
   });
 
   it("round-trips an exact readback observation and replays it by receipt digest", async () => {
@@ -61,5 +56,12 @@ describe("Workspace MCP candidate ledger on local D1", () => {
       observation: OBSERVATION, observed_at: RECEIPT.observed_at });
     expect(replay.state).toBe("REPLAY");
     expect(await database.prepare("SELECT COUNT(*) AS n FROM workspace_mcp_observation").first("n")).toBe(1);
+  });
+
+  it("rejects attempts to mutate the append-only rows", async () => {
+    const candidate = store();
+    await expect(database.prepare("UPDATE workspace_mcp_plan SET state='ISSUED' WHERE plan_id=?1").bind(PLAN.plan_id).run()).rejects.toThrow();
+    await expect(database.prepare("DELETE FROM workspace_mcp_plan WHERE plan_id=?1").bind(PLAN.plan_id).run()).rejects.toThrow();
+    void candidate;
   });
 });

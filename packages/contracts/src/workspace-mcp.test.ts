@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WorkspaceMcpPlanV2InputSchema, WorkspaceMcpReceiptV2Schema } from "./workspace-mcp.js";
+import { WorkspaceMcpObservationV2Schema, WorkspaceMcpPlanV2InputSchema, WorkspaceMcpReceiptV2Schema } from "./workspace-mcp.js";
 
 const valid = {
   protocol: "eliotr.google-sync.plan.v2",
@@ -29,5 +29,17 @@ describe("Workspace MCP v2 contract", () => {
       connector: "gcloud", google_product: "cloud", action: "deploy", resource_id: "x",
       observed_revision: "r1", observed_at: "2026-09-09T12:00:00.000Z", readback_performed: true,
     }).success).toBe(false);
+  });
+
+  it("distinguishes committed indeterminate observations from uncertain writes", () => {
+    const committedUnknown = {
+      protocol: "eliotr.google-sync.observation.v2", observation_id: "observation-1", plan_id: "plan-1",
+      idempotency_key: "key-1", plan_sha256: "a".repeat(64), state: "OBSERVED", disposition: "UNKNOWN",
+      receipt_sha256: "b".repeat(64), reason_codes: ["OBSERVATION_DISPOSITION_UNKNOWN"], candidate_only: true,
+      source_evidence_authority_changed: false, candidate_ledger_mutation: "OBSERVED",
+      reconciliation: { idempotency_key: "key-1", plan_id: "plan-1", plan_sha256: "a".repeat(64), write_state: "COMMITTED", retry: "SAME_KEY" },
+    };
+    expect(WorkspaceMcpObservationV2Schema.safeParse(committedUnknown).success).toBe(true);
+    expect(WorkspaceMcpObservationV2Schema.safeParse({ ...committedUnknown, state: "UNKNOWN", receipt_sha256: undefined, candidate_ledger_mutation: undefined, reconciliation: { ...committedUnknown.reconciliation, write_state: "UNKNOWN" } }).success).toBe(true);
   });
 });

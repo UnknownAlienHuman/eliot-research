@@ -33,7 +33,7 @@ CREATE TABLE workspace_mcp_observation (
   receipt_json TEXT NOT NULL CHECK(json_valid(receipt_json) AND length(receipt_json) <= 32768),
   observation_json TEXT NOT NULL CHECK(json_valid(observation_json) AND length(observation_json) <= 65536),
   observation_sha256 TEXT NOT NULL CHECK(length(observation_sha256)=64 AND observation_sha256 NOT GLOB '*[^0-9a-f]*'),
-  disposition TEXT NOT NULL CHECK(disposition IN ('OBSERVED_MATCH','OBSERVED_MISMATCH')),
+  disposition TEXT NOT NULL CHECK(disposition IN ('OBSERVED_MATCH','OBSERVED_MISMATCH','UNKNOWN')),
   reason_codes_json TEXT NOT NULL CHECK(json_valid(reason_codes_json) AND length(reason_codes_json) <= 16384),
   observed_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -43,3 +43,24 @@ CREATE TABLE workspace_mcp_observation (
 
 CREATE INDEX workspace_mcp_observation_plan_idx
   ON workspace_mcp_observation(plan_id, observed_at DESC);
+
+CREATE TRIGGER workspace_mcp_plan_append_only_update
+BEFORE UPDATE ON workspace_mcp_plan
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_mcp_plan is append-only');
+END;
+CREATE TRIGGER workspace_mcp_plan_append_only_delete
+BEFORE DELETE ON workspace_mcp_plan
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_mcp_plan is append-only');
+END;
+CREATE TRIGGER workspace_mcp_observation_append_only_update
+BEFORE UPDATE ON workspace_mcp_observation
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_mcp_observation is append-only');
+END;
+CREATE TRIGGER workspace_mcp_observation_append_only_delete
+BEFORE DELETE ON workspace_mcp_observation
+BEGIN
+  SELECT RAISE(ABORT, 'workspace_mcp_observation is append-only');
+END;
