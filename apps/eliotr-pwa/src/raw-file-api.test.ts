@@ -158,6 +158,8 @@ describe("raw file capture API", () => {
     const admission = { protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64),
       capture_id: capture.capture_id, conversion_operation_id: conversion.operation_id, candidate_ref: `raw-normalized-candidate:${"b".repeat(64)}`,
       state: "COMMITTED", source_revision_ref: "revision-1", source_view_ref: `snapshot-view:v1:${"c".repeat(64)}`, conversion_state: "COMPLETE",
+      status: { operation_id: receipt.operation_id, state: "COMMITTED", source_revision_ref: "revision-1", receipt,
+        expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" },
       admission_receipt: receipt, reason_codes: [], expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" };
     const fetchMock = vi.fn(async (_path: string, init: RequestInit) => {
       expect(JSON.parse(String(init.body))).toEqual({ idempotency_key: expect.stringMatching(/^raw-admission-[a-f0-9]{64}$/u), conversion_operation_id: conversion.operation_id });
@@ -166,7 +168,7 @@ describe("raw file capture API", () => {
       });
     });
     vi.stubGlobal("fetch", fetchMock);
-    await expect(admitRawFileToLibrary(capture, conversion, "generation-1")).resolves.toMatchObject({ state: "COMMITTED", admission_receipt: receipt });
+    await expect(admitRawFileToLibrary(capture, conversion, "generation-1")).resolves.toMatchObject({ state: "COMMITTED", admission_receipt: receipt, status: { operation_id: receipt.operation_id } });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
@@ -184,5 +186,9 @@ describe("raw file capture API", () => {
     const envelope = (data: unknown) => ({ data, trace_id: "trace-admit", deployment_generation: "generation-1" });
     expect(() => decodeRawNormalizedAdmissionEnvelope(envelope(result), "generation-1", capture, conversion)).toThrowError(ApiRequestError);
     expect(() => decodeRawNormalizedAdmissionEnvelope(envelope({ ...result, caller_policy: "allow" }), "generation-1", capture, conversion)).toThrowError(ApiRequestError);
+    expect(() => decodeRawNormalizedAdmissionEnvelope(envelope({ ...result,
+      status: { operation_id: "1".repeat(64), state: "COMMITTED", source_revision_ref: "revision-1",
+        expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" },
+    }), "generation-1", capture, conversion)).toThrowError(ApiRequestError);
   });
 });
