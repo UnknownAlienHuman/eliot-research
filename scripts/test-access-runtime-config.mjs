@@ -66,6 +66,9 @@ assert.equal(mcpRuntime.source, "RECEIPT");
 assert.equal(mcpRuntime.hostname, "research.example.test");
 assert.equal(mcpRuntime.path, "/mcp");
 assert.equal(mcpRuntime.audience, "mcp-audience");
+assert.throws(() => resolveMcpAccessRuntimeConfiguration({
+  ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "mcp-client",
+}, mcpReceipt, { ordinaryAudience: valid.audience, publicHostname: "research.example.test" }), /exact Cloudflare Access service-token Client ID/u);
 assert.deepEqual(applyMcpRuntimeVars({ MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "placeholder" }, mcpRuntime), {
   MCP_HOSTNAME: "research.example.test",
   MCP_ACCESS_TEAM_DOMAIN: valid.teamDomain,

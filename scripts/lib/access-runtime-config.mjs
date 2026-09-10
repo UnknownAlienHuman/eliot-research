@@ -189,7 +189,7 @@ function strictMcpProfile(value, label = "ELIOTR_MCP_ACCESS_AUTH_PROFILE") {
 
 function strictMcpClientId(value, label = "ELIOTR_MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID") {
   if (typeof value !== "string" || value === "" || value !== value.trim() ||
-      value.length > 256 || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value)) {
+      value.length > 256 || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}\.access$/u.test(value)) {
     throw new Error(`${label} must be the exact Cloudflare Access service-token Client ID`);
   }
   return value;
