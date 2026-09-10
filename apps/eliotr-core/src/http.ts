@@ -39,6 +39,12 @@ import {
   parseVerifyEvidenceRequest,
 } from "./evidence-http.js";
 import {
+  ArtifactHttpInputError,
+  ArtifactReadNotFoundError,
+  isArtifactReadError,
+  parseArtifactRef,
+} from "./artifact-draft-http.js";
+import {
   dispatchIngestOperation,
   IngestHttpInputError,
 } from "./ingest-http.js";
@@ -359,6 +365,12 @@ async function dispatch(
       if (ref === undefined) throw new OrientationError("ORIENTATION_TRACE_INVALID", 400);
       return apiResult(request, env, await application.services.semantic.trace(context, { id: ref, revision: 1 }));
     }
+    case "research.artifact": {
+      requireNoQuery(url);
+      const ref = match.params.ref;
+      if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
+      return apiResult(request, env, await application.services.semantic.artifact(context, parseArtifactRef(ref)));
+    }
     case "research.verify": {
       return apiResult(
         request,
@@ -489,8 +501,23 @@ function mapError(request: Request, error: unknown): Response {
       { "www-authenticate": "Bearer realm=\"Cloudflare Access\"" },
     );
   }
-  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError || error instanceof EvidenceHttpInputError || error instanceof RawCaptureHttpError) {
+  if (error instanceof HttpRequestError || error instanceof IngestHttpInputError || error instanceof EvidenceHttpInputError || error instanceof ArtifactHttpInputError || error instanceof ArtifactReadNotFoundError || error instanceof RawCaptureHttpError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
+  }
+  if (isArtifactReadError(error)) {
+    const status = error.code === "ARTIFACT_DRAFT_READ_DENIED" ? 403
+      : error.code === "ARTIFACT_DRAFT_READ_NOT_FOUND" ? 404
+      : error.code === "ARTIFACT_DRAFT_READ_STALE" ? 410
+      : error.code === "ARTIFACT_DRAFT_READ_UNAVAILABLE" ? 503
+      : error.code === "ARTIFACT_DRAFT_READ_INVALID" ? 400
+      : 409;
+    const retryable = error.code === "ARTIFACT_DRAFT_READ_UNAVAILABLE";
+    return problem(request, status, error.code, status === 400 ? "Artifact reference is invalid"
+      : status === 403 ? "Artifact access is not authorized"
+      : status === 404 ? "Artifact revision does not exist"
+      : status === 410 ? "Artifact scope is no longer current"
+      : status === 503 ? "Artifact storage is temporarily unavailable"
+      : "Artifact revision integrity could not be verified", retryable);
   }
   if (error instanceof RawNormalizedAdmissionError) {
     return problem(request, error.status, error.code, error.message, error.retryable);
