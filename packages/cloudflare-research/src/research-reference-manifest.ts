@@ -145,7 +145,7 @@ function buildManifest(
   sources: readonly EvidenceSourceAuthority[],
 ): AllowedReferenceManifest {
   const scope = input.navigation.scope;
-  const sourceRefs = sortedUnique(resolved.map((item) => item.handle.source_revision_ref), "source references");
+  const sourceRefs = sortedUnique([...new Set(resolved.map((item) => item.handle.source_revision_ref))], "source references");
   const handleRefs = [...new Set(resolved.map((item) => refKey(item.handle.handle_ref)))].sort();
   if (handleRefs.length !== resolved.length) fail("REFERENCE_MANIFEST_EVIDENCE_INVALID", "held EvidencePack repeats an evidence handle");
   const sourceByRef = new Map(sources.map((source) => [source.source_revision_ref, source]));
