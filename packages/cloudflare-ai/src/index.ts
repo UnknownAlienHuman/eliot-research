@@ -45,7 +45,7 @@ export {
   type ModelGatewayUsageObservation,
   type PreparedModelGatewayHttpRequest,
 } from "./model-gateway-execution-contract.js";
-export { prepareModelGatewayHttpRequest } from "./model-gateway-http-request.js";
+export { prepareModelGatewayHttpRequest, reasoningEndpoint as resolveModelGatewayReasoningEndpoint, gatewayToken as validateModelGatewayToken } from "./model-gateway-http-request.js";
 export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
