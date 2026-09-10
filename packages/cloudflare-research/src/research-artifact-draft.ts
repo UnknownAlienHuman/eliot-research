@@ -20,6 +20,7 @@ import {
 import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
+import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
@@ -29,11 +30,6 @@ import type { ResearchEvidencePack } from "./research-reference-manifest.js";
 import type { ResearchSynthesisOutputReadback } from "./research-synthesis-output-reader.js";
 
 const CANDIDATE_SCHEMA = "eliotr.research.synthesis-section-candidate.v1" as const;
-const GATEWAY_RESPONSE_KEYS = new Set(["choices", "created", "id", "model", "object", "service_tier", "system_fingerprint", "usage"]);
-const GATEWAY_CHOICE_KEYS = new Set(["finish_reason", "index", "logprobs", "message"]);
-const GATEWAY_MESSAGE_KEYS = new Set(["annotations", "content", "refusal", "role"]);
-const GATEWAY_USAGE_KEYS = new Set(["completion_tokens", "completion_tokens_details", "prompt_tokens", "prompt_tokens_details", "total_tokens"]);
-const ASCII_IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 
 export interface SynthesisSectionCandidate {
   readonly schema: typeof CANDIDATE_SCHEMA;
@@ -99,36 +95,6 @@ function strictObject(value: unknown, keys: ReadonlySet<string>, label: string):
   const record = value as Record<string, unknown>;
   if (Object.keys(record).some((key) => !keys.has(key))) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `${label} contains an unsupported field`);
   return record;
-}
-
-function strictGatewayAssistantContent(bytes: Uint8Array): string {
-  let text: string;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-  catch { fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "SYNTHESIZE gateway output encoding is invalid"); }
-  let value: unknown;
-  try { value = JSON.parse(text) as unknown; }
-  catch { fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "SYNTHESIZE gateway output is not JSON"); }
-  const response = strictObject(value, GATEWAY_RESPONSE_KEYS, "SYNTHESIZE gateway output");
-  if (response.object !== "chat.completion" || typeof response.id !== "string" || !ASCII_IDENTIFIER.test(response.id) ||
-      typeof response.model !== "string" || !ASCII_IDENTIFIER.test(response.model) || typeof response.created !== "number" ||
-      !Number.isSafeInteger(response.created) || response.created < 0 || !Array.isArray(response.choices) || response.choices.length !== 1) {
-    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "SYNTHESIZE gateway envelope is invalid");
-  }
-  const choice = strictObject(response.choices[0], GATEWAY_CHOICE_KEYS, "SYNTHESIZE gateway choice");
-  const message = strictObject(choice.message, GATEWAY_MESSAGE_KEYS, "SYNTHESIZE gateway message");
-  const usage = strictObject(response.usage, GATEWAY_USAGE_KEYS, "SYNTHESIZE gateway usage");
-  if (choice.index !== 0 || choice.finish_reason !== "stop" || (choice.logprobs !== undefined && choice.logprobs !== null) ||
-      message.role !== "assistant" || (message.refusal !== undefined && message.refusal !== null) ||
-      (message.annotations !== undefined && (!Array.isArray(message.annotations) || message.annotations.length !== 0)) ||
-      typeof message.content !== "string" || message.content.length < 1 || new TextEncoder().encode(message.content).byteLength > 256 * 1024 ||
-      /[\u0000-\u001f\u007f]/u.test(message.content) ||
-      typeof usage.prompt_tokens !== "number" || !Number.isSafeInteger(usage.prompt_tokens) || usage.prompt_tokens < 0 ||
-      typeof usage.completion_tokens !== "number" || !Number.isSafeInteger(usage.completion_tokens) || usage.completion_tokens < 0 ||
-      typeof usage.total_tokens !== "number" || !Number.isSafeInteger(usage.total_tokens) || usage.total_tokens < 0 ||
-      usage.prompt_tokens + usage.completion_tokens !== usage.total_tokens) {
-    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "SYNTHESIZE gateway assistant content is invalid");
-  }
-  return message.content;
 }
 
 function strictCandidate(content: string): SynthesisSectionCandidate {
@@ -203,7 +169,13 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
       await evidenceSha256Bytes(readback.bytes) !== readback.output.output_sha256) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "SYNTHESIZE bytes differ from durable output digest");
   }
-  const candidate = strictCandidate(strictGatewayAssistantContent(readback.bytes));
+  let assistantContent: string;
+  try {
+    assistantContent = (await decodeModelGatewayBody(readback.bytes)).assistant_content;
+  } catch (cause) {
+    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `SYNTHESIZE gateway output is invalid: ${cause instanceof Error ? cause.message : "decode failed"}`);
+  }
+  const candidate = strictCandidate(assistantContent);
   try {
     OperationIntentSchema.parse(input.intent);
     ArtifactSpecSchema.parse(input.spec);
