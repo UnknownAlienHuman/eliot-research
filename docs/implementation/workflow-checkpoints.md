@@ -180,6 +180,15 @@ lost insert acknowledgements reconcile only against the same contents. Historica
 available after expiry. This adapter performs no price arithmetic or current-call expiry decision;
 an approval-reference string alone is not verified spending consent or a provider invoice.
 
+`createD1ResearchModelAttemptRevalidator` checks the actual STARTED W2/W3 records, current
+scope/grant/policy/deployment, exact persisted request and reservation, and unexpired authorization.
+The same canonical request encoder is used for reservation and readback. Its required trusted spend
+reader binds the operation, scope, quote, reservation and exact expected model deployment. External
+spend and route reads precede a final D1 readback; the final clock is sampled after those reads, with
+no later external reader await. Known provider result settlement remains separate from fresh-call
+authorization. The production spend reader and propagation of its approved deployment pin to the
+actual gateway fetch remain open; this adapter alone does not authorize or wire live model stages.
+
 ## Bounds and proof ceiling
 
 R2 input/output objects are capped at 8 MiB; larger artifacts must be represented by bounded manifests.
