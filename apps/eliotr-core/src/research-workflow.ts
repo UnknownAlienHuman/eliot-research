@@ -230,12 +230,10 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         ledger,
         ...(retrievalOwned ? {
           retrieval: {
-            environment: {
-              database: this.env.CORE_DB,
-              search_database: this.env.SEARCH_DB,
-              work_bucket: this.env.WORK_BUCKET,
-              evidence_bucket: this.env.EVIDENCE_BUCKET,
-            },
+            database: this.env.CORE_DB,
+            search_database: this.env.SEARCH_DB,
+            work_bucket: this.env.WORK_BUCKET,
+            evidence_bucket: this.env.EVIDENCE_BUCKET,
             access,
           },
         } : {}),

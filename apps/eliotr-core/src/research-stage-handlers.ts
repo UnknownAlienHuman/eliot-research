@@ -23,33 +23,6 @@ export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
   max_results: 16,
 } as const;
 
-export interface ResearchRetrieveBranchesEnvironment {
-  readonly database: D1Database;
-  readonly search_database: D1Database;
-  readonly work_bucket: R2Bucket;
-  readonly evidence_bucket: R2Bucket;
-}
-
-export interface ResearchRetrieveBranchesInput {
-  readonly environment: ResearchRetrieveBranchesEnvironment;
-  readonly access: RetrieveBranchesStageDependencies["access"];
-  readonly navigation: NavigationReadAuthority;
-  readonly ledger: Pick<InvestigationLedgerStore, "read">;
-}
-
-/** Builds the one server-owned retrieval composition shared by all callers. */
-export function createResearchRetrieveBranchesDependencies(
-  input: ResearchRetrieveBranchesInput,
-): RetrieveBranchesStageDependencies {
-  return {
-    ...input.environment,
-    access: input.access,
-    navigation: input.navigation,
-    ledger: input.ledger,
-    profile: SERVER_RETRIEVAL_SCOPE_PROFILE,
-  };
-}
-
 async function readPersistedRetrievalProfile(
   database: D1Database,
   scope: NavigationReadAuthority["scope"],
@@ -84,7 +57,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
-      readonly retrieval?: Omit<ResearchRetrieveBranchesInput, "navigation" | "ledger">;
+      readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -121,14 +94,12 @@ export function createResearchStageHandlerFactory(
   let retrievalHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" &&
       mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined) {
-    const base = createResearchRetrieveBranchesDependencies({
-      ...mode.retrieval,
-      navigation: mode.navigation,
-      ledger: mode.ledger,
-    });
+    const retrieval = mode.retrieval;
+    const navigation = mode.navigation;
+    const ledger = mode.ledger;
     retrievalHandler = async (input) => {
-      const profile = await readPersistedRetrievalProfile(base.database, mode.navigation.scope);
-      return createRetrieveBranchesStageHandler({ ...base, profile })(input);
+      const profile = await readPersistedRetrievalProfile(retrieval.database, navigation.scope);
+      return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile })(input);
     };
   }
 
