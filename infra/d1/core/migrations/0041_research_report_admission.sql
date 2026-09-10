@@ -50,19 +50,9 @@ CREATE TRIGGER research_report_admission_current_guard
 BEFORE INSERT ON research_report_admission
 WHEN NOT EXISTS (
   SELECT 1
-  FROM research_workflow_run r
+  FROM research_workflow_current r
   JOIN scope_snapshot s ON s.snapshot_id = r.scope_snapshot_id
     AND s.revision = r.scope_snapshot_revision
-  JOIN scope_access_grant g ON g.snapshot_id = r.scope_snapshot_id
-    AND g.snapshot_revision = r.scope_snapshot_revision
-    AND g.principal_ref = r.principal_ref
-    AND g.client_class = NEW.client_class
-    AND g.credential_generation = r.credential_generation
-    AND g.authorization_receipt_ref = r.authorization_receipt_ref
-  JOIN investigation_current_policy p ON p.policy_generation = r.policy_generation
-    AND p.policy_authority_ref = r.policy_authority_ref
-  JOIN investigation_current_deployment d ON d.deployment_generation = r.deployment_generation
-  JOIN investigation_ledger_head h ON h.investigation_id = r.investigation_id
   WHERE r.operation_id = NEW.operation_id
     AND r.state = 'ACTIVE' AND r.next_stage_index = 17
     AND r.principal_ref = NEW.principal_ref
@@ -73,21 +63,33 @@ WHEN NOT EXISTS (
     AND r.scope_snapshot_id = NEW.scope_snapshot_id
     AND r.scope_snapshot_revision = NEW.scope_snapshot_revision
     AND s.snapshot_digest = NEW.scope_snapshot_digest
-    AND s.invalidated_at IS NULL AND julianday(s.expires_at) > julianday(NEW.created_at)
-    AND g.state = 'ACTIVE' AND julianday(g.expires_at) > julianday(NEW.created_at)
-    AND json_type(g.allowed_use_json) = 'array'
-    AND EXISTS (SELECT 1 FROM json_each(g.allowed_use_json) u WHERE u.type = 'text' AND u.value = 'research')
-    AND g.policy_authority_ref = r.policy_authority_ref
-    AND g.disclosure_ceiling = NEW.disclosure_ceiling
-    AND p.state = 'ACTIVE' AND d.state = 'ACTIVE'
-    AND h.revision = r.current_revision AND h.status = 'OPEN'
-    AND h.principal_ref = r.principal_ref
-    AND h.scope_snapshot_id = r.scope_snapshot_id
-    AND h.scope_snapshot_revision = r.scope_snapshot_revision
-    AND h.policy_generation = r.policy_generation
-    AND h.policy_authority_ref = r.policy_authority_ref
-    AND h.deployment_generation = r.deployment_generation
+    AND julianday(s.expires_at) > julianday('now')
     AND json(s.member_source_revision_refs_json) = json(NEW.source_revision_refs_json)
+    AND NOT EXISTS (
+      SELECT 1
+      FROM json_each(NEW.source_revision_refs_json) wanted
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM source_revision sr
+        JOIN source src ON src.source_id = sr.source_id
+        JOIN source_namespace_ownership own
+          ON own.source_namespace_id = src.source_namespace_id
+          AND own.status = 'ACTIVE'
+          AND own.source_owner_generation = sr.source_owner_generation
+        JOIN json_each(s.source_owner_generations_json) gen
+          ON gen.key = sr.source_revision_ref
+          AND gen.value = sr.source_owner_generation
+        JOIN source_admission_decision sad
+          ON sad.source_revision_ref = sr.source_revision_ref
+          AND sad.decision = 'ADMITTED'
+        WHERE sr.source_revision_ref = wanted.value
+          AND sr.purge_state = 'LIVE'
+          AND json_type(sad.allowed_use_json) = 'array'
+          AND EXISTS (SELECT 1 FROM json_each(sad.allowed_use_json) u WHERE u.type = 'text' AND u.value = 'research')
+          AND sad.disclosure_ceiling = NEW.disclosure_ceiling
+          AND (sad.expires_at IS NULL OR julianday(sad.expires_at) > julianday('now'))
+      )
+    )
 )
 BEGIN SELECT RAISE(ABORT, 'REPORT_ADMISSION_AUTHORITY_STALE'); END;
 

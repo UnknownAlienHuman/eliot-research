@@ -40,6 +40,25 @@ export interface PrepareArtifactDraftInput {
   readonly manifest_residency: ObjectResidencyKey;
 }
 
+/**
+ * Server-only admission statement bridge. The artifact store remains the sole
+ * owner of the intent/outbox/final-artifact transaction; an admission provider
+ * may append its already-authorized decision row to that transaction.
+ */
+export interface ArtifactDraftAdmissionPort {
+  prepare(input: {
+    readonly intent: OperationIntent;
+    readonly outbox_id: string;
+    readonly payload_sha256: string;
+  }): Promise<ArtifactDraftAdmissionMutation>;
+}
+
+export interface ArtifactDraftAdmissionMutation {
+  readonly statements: readonly D1PreparedStatement[];
+  assertBatchResults(results: readonly D1Result<unknown>[], offset: number): void;
+  readback(): Promise<void>;
+}
+
 export interface ArtifactDraftObjectReceipt {
   readonly object_ref: string;
   readonly object_kind: ArtifactDraftObjectKind;

@@ -81,8 +81,12 @@ installed versioned `owner_pwa` REPORT policy whose allowed use is exactly `rese
 disclosure ceiling does not exceed the current scope grant, and whose configured principal,
 policy authority and expiry match the current run. Admission re-reads the current run, W1 head,
 scope grant, policy/deployment generations and every frozen source revision before writing an
-immutable REPORT decision plus its own intent/outbox rows. A grant or workflow receipt is lineage
-only and cannot serve as `policy_decision_ref`; absent or stale REPORT policy fails closed.
+an immutable REPORT decision. This is a read-only preflight: it emits no decision, intent, or outbox
+row. The artifact draft store supplies the final manifest digest and asks the server-only admission
+port for a prepared statement; its existing final D1 batch owns the sole atomic write of the REPORT
+decision together with the intent/outbox and draft rows. Replays reuse the persisted intent timestamp
+and exact decision/input bytes. A grant or workflow receipt is lineage only and cannot serve as
+`policy_decision_ref`; absent or stale REPORT policy fails closed.
 
 `createResearchArtifactMetadataProducer` derives deterministic artifact/spec/section identities and
 referenced-object bytes from the committed materialization context. It snapshots the server-owned

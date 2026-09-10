@@ -7,15 +7,14 @@ import {
 } from "@eliotr/contracts";
 import {
   canonicalDigest,
-  prepareIntentWithOutboxMutation,
-  type PreparedIntentWithOutboxMutation,
 } from "@eliotr/platform-cloudflare";
+import type { ArtifactDraftAdmissionMutation, ArtifactDraftAdmissionPort } from "@eliotr/cloudflare-artifacts";
 import {
   canonicalEvidenceJson,
   type EvidenceSourceAuthority,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
-import type { WorkflowPrincipal } from "./types.js";
+import type { StageRequest, WorkflowPrincipal } from "./types.js";
 
 export const RESEARCH_REPORT_ADMISSION_SCHEMA = "eliotr.research.report-admission.v1" as const;
 export const RESEARCH_REPORT_ADMISSION_TOPIC = "research.artifact-draft" as const;
@@ -43,12 +42,23 @@ export interface ResearchReportAdmissionPolicy {
 export interface ResearchReportAdmissionInput {
   readonly database: D1Database;
   readonly navigation: NavigationReadAuthority;
-  readonly operation_id: string;
+  readonly request: StageRequest;
   readonly principal: WorkflowPrincipal;
-  readonly policy: ResearchReportAdmissionPolicy | null;
-  /** Server-computed canonical draft-manifest digest for the shared REPORT outbox. */
-  readonly payload_sha256: string;
+  readonly policy_source: ResearchReportAdmissionPolicySource;
   readonly now?: () => number;
+}
+
+export interface ResearchReportAdmissionPolicySource {
+  readonly provenance_ref: string;
+  read(): Promise<ResearchReportAdmissionPolicy | null>;
+}
+
+export interface ResearchReportAdmissionPreparation {
+  readonly decision: PolicyDecision;
+  readonly decision_sha256: string;
+  readonly intent: OperationIntent;
+  readonly authority_input_sha256: string;
+  readonly admission: ArtifactDraftAdmissionPort;
 }
 
 export interface ResearchReportAdmissionResult {
@@ -114,6 +124,12 @@ function sameJson(left: unknown, right: unknown): boolean {
 function snapshot<T>(value: T, label: string): T {
   try { return Object.freeze(JSON.parse(canonicalEvidenceJson(value)) as T); }
   catch (cause) { fail("REPORT_ADMISSION_INPUT_INVALID", `${label} is not canonical`, false, cause); }
+}
+
+function readClock(clock: () => number): number {
+  const value = clock();
+  if (!Number.isSafeInteger(value) || value < 0) fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT admission clock is invalid");
+  return value;
 }
 
 function validatePolicy(policy: ResearchReportAdmissionPolicy | null): ResearchReportAdmissionPolicy {
@@ -290,62 +306,60 @@ function parseStoredDecision(row: AdmissionRow): { readonly decision: PolicyDeci
   }
 }
 
-async function exactReadback(
-  database: D1Database,
-  expected: {
-    readonly row: AdmissionRow;
-    readonly decision: PolicyDecision;
-    readonly decision_sha256: string;
-    readonly input_sha256: string;
-    readonly intent: OperationIntent;
-    readonly plan: PreparedIntentWithOutboxMutation;
-    readonly policy: ResearchReportAdmissionPolicy;
-    readonly policyJson: string;
-    readonly inputJson: string;
-    readonly run: RunAuthority;
-    readonly scopeSnapshotDigest: string;
-    readonly sourceRefsJson: string;
-    readonly disclosureCeiling: string;
-    readonly expiry: string;
-  },
-): Promise<ResearchReportAdmissionResult> {
-  const row = expected.row;
-  if (row.decision_id !== expected.decision.decision_id || row.decision_revision !== 1 || row.decision !== expected.decision.decision ||
-      row.decision_sha256 !== expected.decision_sha256 || row.input_sha256 !== expected.input_sha256 || row.policy_ref !== expected.policy.policy_ref ||
-      row.decision_json !== canonicalEvidenceJson(expected.decision) || row.policy_json !== expected.policyJson || row.input_json !== expected.inputJson ||
-      row.policy_revision !== expected.policy.policy_revision || row.policy_generation !== expected.run.policy_generation ||
-      row.policy_authority_ref !== expected.run.policy_authority_ref || row.operation_id !== expected.run.operation_id ||
-      row.intent_id !== expected.intent.intent_ref.id || row.intent_revision !== expected.intent.intent_ref.revision ||
-      row.principal_ref !== expected.intent.principal_ref || row.client_class !== "owner_pwa" || row.credential_generation !== expected.run.credential_generation ||
-      row.idempotency_key !== expected.intent.idempotency_key || row.scope_snapshot_id !== expected.run.scope_snapshot_id ||
-      row.scope_snapshot_revision !== expected.run.scope_snapshot_revision || row.scope_snapshot_digest !== expected.scopeSnapshotDigest ||
-      row.authorization_receipt_ref !== expected.run.authorization_receipt_ref || row.deployment_generation !== expected.run.deployment_generation ||
-      row.source_revision_refs_json !== expected.sourceRefsJson || row.requested_output_class !== RESEARCH_REPORT_OUTPUT_CLASS ||
-      row.purpose !== RESEARCH_REPORT_PURPOSE || row.disclosure_ceiling !== expected.disclosureCeiling ||
-      row.policy_expires_at !== expected.policy.expires_at || row.expires_at !== expected.expiry || row.intent_id !== expected.plan.intent_ref.id ||
-      row.outbox_id !== expected.plan.outbox_id) {
-    fail("REPORT_ADMISSION_CONFLICT", "stored REPORT admission differs from the current server authority");
-  }
-  const existingIntent = await expected.plan.readback();
-  if (existingIntent === null || existingIntent.intent_ref.id !== expected.intent.intent_ref.id || existingIntent.outbox_id !== expected.plan.outbox_id) {
-    fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT intent/outbox readback is missing");
-  }
-  return { decision: expected.decision, decision_sha256: expected.decision_sha256, input_sha256: expected.input_sha256, intent: expected.intent, outbox_id: expected.plan.outbox_id, disposition: "EXISTING" };
+interface AdmissionAuthority {
+  readonly run: RunAuthority;
+  readonly grant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
+  readonly sources: readonly EvidenceSourceAuthority[];
+  readonly refs: readonly string[];
+  readonly sourceRefsJson: string;
+  readonly policyJson: string;
+  readonly policyDigest: string;
+  readonly expiry: string;
+  readonly nowMs: number;
+  readonly material: Record<string, unknown>;
 }
 
-export async function admitResearchReport(input: ResearchReportAdmissionInput): Promise<ResearchReportAdmissionResult> {
-  const policy = validatePolicy(input.policy);
-  const operationId = text(input.operation_id, "operation_id");
-  const payloadSha = digest(input.payload_sha256, "payload_sha256");
-  if (input.navigation.access.principal_ref !== input.principal.principal_ref || input.navigation.access.client_class !== "owner_pwa" ||
-      input.navigation.access.credential_generation !== input.principal.credential_generation) {
-    fail("REPORT_ADMISSION_AUTHORITY_STALE", "navigation access is not bound to the authenticated owner");
+interface StoredIntentOutbox {
+  readonly intent: OperationIntent;
+  readonly outbox_id: string;
+  readonly topic: string;
+  readonly payload_sha256: string;
+}
+
+async function readStoredIntent(database: D1Database, intentRef: { readonly id: string; readonly revision: number }): Promise<OperationIntent | null> {
+  const row = await database.prepare(
+    "SELECT intent_id,revision,operation_kind,principal_ref,idempotency_key,payload_ref,policy_decision_ref," +
+    "budget_reservation_ref,cancellation_ref,created_at FROM operation_intent WHERE intent_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(intentRef.id, intentRef.revision).first<Record<string, unknown>>();
+  if (row === null) return null;
+  try {
+    return OperationIntentSchema.parse({
+      intent_ref: { id: row.intent_id, revision: row.revision }, operation_kind: row.operation_kind,
+      principal_ref: row.principal_ref, idempotency_key: row.idempotency_key, payload_ref: row.payload_ref,
+      policy_decision_ref: row.policy_decision_ref,
+      ...(row.budget_reservation_ref === null ? {} : { budget_reservation_ref: row.budget_reservation_ref }),
+      ...(row.cancellation_ref === null ? {} : { cancellation_ref: row.cancellation_ref }), created_at: row.created_at,
+    });
+  } catch (cause) {
+    fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "stored REPORT intent is malformed", false, cause);
   }
-  const clock = input.now ?? Date.now;
-  const nowMs = clock();
-  if (!Number.isSafeInteger(nowMs) || nowMs < 0) fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT admission clock is invalid");
-  const now = new Date(nowMs).toISOString();
+}
+
+function validatePolicySource(policy: ResearchReportAdmissionPolicy | null, source: ResearchReportAdmissionPolicySource): ResearchReportAdmissionPolicy {
+  const validated = validatePolicy(policy);
+  if (validated.config_provenance_ref !== source.provenance_ref) {
+    fail("REPORT_ADMISSION_DENIED", "REPORT policy provenance is not the installed server source");
+  }
+  return validated;
+}
+
+async function readAuthority(input: ResearchReportAdmissionInput, policy: ResearchReportAdmissionPolicy, nowMs: number, requestSha: string): Promise<AdmissionAuthority> {
+  if (input.request.stage !== "MATERIALIZE") fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT admission requires a MATERIALIZE request");
+  const operationId = text(input.request.operation_id, "operation_id");
   const run = await readRun(input.database, operationId, input.principal);
+  if (input.request.investigation_ref.id !== run.investigation_id || input.request.investigation_ref.revision !== run.current_revision) {
+    fail("REPORT_ADMISSION_AUTHORITY_STALE", "MATERIALIZE request is not bound to the current workflow revision");
+  }
   if (policy.principal_ref !== run.principal_ref || policy.policy_generation !== run.policy_generation || policy.policy_authority_ref !== run.policy_authority_ref) {
     fail("REPORT_ADMISSION_DENIED", "installed REPORT policy is not configured for this owner run");
   }
@@ -354,12 +368,16 @@ export async function admitResearchReport(input: ResearchReportAdmissionInput): 
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "navigation scope is not the run's frozen scope");
   }
   const grant = await input.navigation.current();
-  if (!grant.allowed_use.includes("research") || grant.disclosure_ceiling !== policy.disclosure_ceiling || Date.parse(grant.expires_at) <= nowMs || Date.parse(policy.expires_at) <= nowMs) {
+  if (grant.authorization_receipt_ref !== run.authorization_receipt_ref || !grant.allowed_use.includes("research") ||
+      grant.disclosure_ceiling !== policy.disclosure_ceiling || Date.parse(grant.expires_at) <= nowMs || Date.parse(policy.expires_at) <= nowMs) {
     fail("REPORT_ADMISSION_DENIED", "current scope grant does not permit the configured private REPORT policy");
   }
   const refs = [...input.navigation.scope.member_source_revision_refs];
   const sources = await assertExactSources(input.navigation, refs, grant);
   const afterGrant = await input.navigation.current();
+  if (afterGrant.authorization_receipt_ref !== run.authorization_receipt_ref) {
+    fail("REPORT_ADMISSION_AUTHORITY_STALE", "scope authorization changed during REPORT admission");
+  }
   const afterSources = await assertExactSources(input.navigation, refs, afterGrant);
   if (!sameJson(grant, afterGrant) || !sameJson(sources.map(sourceBinding), afterSources.map(sourceBinding))) {
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "scope or admitted source authority changed during REPORT admission");
@@ -374,71 +392,153 @@ export async function admitResearchReport(input: ResearchReportAdmissionInput): 
   const policyJson = canonicalEvidenceJson(policy);
   const policyDigest = await canonicalDigest(policy);
   const sourceRefsJson = canonicalEvidenceJson(refs);
-  const inputMaterial = {
-    schema: RESEARCH_REPORT_ADMISSION_SCHEMA, operation_id: finalRun.operation_id, investigation_id: finalRun.investigation_id,
-    workflow_revision: finalRun.current_revision, principal_ref: finalRun.principal_ref, client_class: "owner_pwa",
-    credential_generation: finalRun.credential_generation, deployment_generation: finalRun.deployment_generation,
-    policy_generation: finalRun.policy_generation, policy_authority_ref: finalRun.policy_authority_ref,
-    authorization_receipt_ref: afterGrant.authorization_receipt_ref, scope_snapshot_ref: { id: finalRun.scope_snapshot_id, revision: finalRun.scope_snapshot_revision },
-    scope_snapshot_digest: input.navigation.scope.digest, source_bindings: afterSources.map(sourceBinding), policy_ref: policy.policy_ref,
-    policy_revision: policy.policy_revision, policy_digest: policyDigest, requested_output_class: RESEARCH_REPORT_OUTPUT_CLASS,
-    purpose: RESEARCH_REPORT_PURPOSE, disclosure_ceiling: afterGrant.disclosure_ceiling, expires_at: expiry, payload_sha256: payloadSha,
+  const material = {
+    schema: RESEARCH_REPORT_ADMISSION_SCHEMA, request_sha256: requestSha, operation_id: finalRun.operation_id,
+    investigation_id: finalRun.investigation_id, workflow_revision: finalRun.current_revision,
+    principal_ref: finalRun.principal_ref, client_class: "owner_pwa", credential_generation: finalRun.credential_generation,
+    deployment_generation: finalRun.deployment_generation, policy_generation: finalRun.policy_generation,
+    policy_authority_ref: finalRun.policy_authority_ref, authorization_receipt_ref: afterGrant.authorization_receipt_ref,
+    scope_snapshot_ref: { id: finalRun.scope_snapshot_id, revision: finalRun.scope_snapshot_revision },
+    scope_snapshot_digest: input.navigation.scope.digest, source_bindings: afterSources.map(sourceBinding),
+    policy_ref: policy.policy_ref, policy_revision: policy.policy_revision, policy_digest: policyDigest,
+    requested_output_class: RESEARCH_REPORT_OUTPUT_CLASS, purpose: RESEARCH_REPORT_PURPOSE,
+    disclosure_ceiling: afterGrant.disclosure_ceiling, expires_at: expiry,
   } as const;
-  const inputJson = canonicalEvidenceJson(inputMaterial);
-  const inputSha = await canonicalDigest(inputMaterial);
-  const decisionId = `report-decision-${inputSha}`;
+  return { run: finalRun, grant: afterGrant, sources: afterSources, refs, sourceRefsJson, policyJson, policyDigest, expiry, nowMs, material };
+}
+
+async function readIntentOutbox(database: D1Database, intentRef: { readonly id: string; readonly revision: number }): Promise<StoredIntentOutbox | null> {
+  const row = await database.prepare(
+    "SELECT i.intent_id,i.revision,i.operation_kind,i.principal_ref,i.idempotency_key,i.payload_ref,i.policy_decision_ref," +
+    "i.budget_reservation_ref,i.cancellation_ref,i.created_at,o.outbox_id,o.topic,o.payload_sha256 " +
+    "FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision " +
+    "WHERE i.intent_id=?1 AND i.revision=?2 LIMIT 1",
+  ).bind(intentRef.id, intentRef.revision).first<Record<string, unknown>>();
+  if (row === null) return null;
+  try {
+    const intent = OperationIntentSchema.parse({
+      intent_ref: { id: row.intent_id, revision: row.revision }, operation_kind: row.operation_kind,
+      principal_ref: row.principal_ref, idempotency_key: row.idempotency_key, payload_ref: row.payload_ref,
+      policy_decision_ref: row.policy_decision_ref,
+      ...(row.budget_reservation_ref === null ? {} : { budget_reservation_ref: row.budget_reservation_ref }),
+      ...(row.cancellation_ref === null ? {} : { cancellation_ref: row.cancellation_ref }), created_at: row.created_at,
+    });
+    return { intent, outbox_id: text(row.outbox_id, "stored outbox_id"), topic: text(row.topic, "stored outbox topic"), payload_sha256: digest(row.payload_sha256, "stored payload_sha256") };
+  } catch (cause) {
+    fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "stored REPORT intent/outbox is malformed", false, cause);
+  }
+}
+
+async function assertAdmissionReadback(input: {
+  readonly database: D1Database;
+  readonly authority: AdmissionAuthority;
+  readonly policy: ResearchReportAdmissionPolicy;
+  readonly decision: PolicyDecision;
+  readonly decision_sha256: string;
+  readonly intent: OperationIntent;
+  readonly outbox_id: string;
+  readonly payload_sha256: string;
+  readonly input_json: string;
+  readonly input_sha256: string;
+}): Promise<void> {
+  const row = await readAdmission(input.database, input.authority.run.operation_id, input.authority.run.principal_ref, input.intent.idempotency_key);
+  if (row === null) fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT admission readback is missing");
+  const storedDecision = parseStoredDecision(row);
+  if (row.decision_id !== input.decision.decision_id || row.decision_revision !== 1 || row.decision !== input.decision.decision ||
+      row.decision_json !== canonicalEvidenceJson(input.decision) || row.decision_sha256 !== input.decision_sha256 ||
+      row.input_json !== input.input_json || row.input_sha256 !== input.input_sha256 || row.policy_json !== input.authority.policyJson ||
+      row.policy_ref !== input.policy.policy_ref || row.policy_revision !== input.policy.policy_revision ||
+      row.policy_generation !== input.authority.run.policy_generation || row.policy_authority_ref !== input.authority.run.policy_authority_ref ||
+      row.policy_expires_at !== input.policy.expires_at || row.operation_id !== input.authority.run.operation_id ||
+      row.intent_id !== input.intent.intent_ref.id || row.intent_revision !== input.intent.intent_ref.revision ||
+      row.outbox_id !== input.outbox_id || row.principal_ref !== input.intent.principal_ref || row.client_class !== "owner_pwa" ||
+      row.credential_generation !== input.authority.run.credential_generation || row.idempotency_key !== input.intent.idempotency_key ||
+      row.scope_snapshot_id !== input.authority.run.scope_snapshot_id || row.scope_snapshot_revision !== input.authority.run.scope_snapshot_revision ||
+      row.scope_snapshot_digest !== input.authority.material.scope_snapshot_digest || row.authorization_receipt_ref !== input.authority.grant.authorization_receipt_ref ||
+      row.deployment_generation !== input.authority.run.deployment_generation || row.source_revision_refs_json !== input.authority.sourceRefsJson ||
+      row.requested_output_class !== RESEARCH_REPORT_OUTPUT_CLASS || row.purpose !== RESEARCH_REPORT_PURPOSE ||
+      row.disclosure_ceiling !== input.authority.grant.disclosure_ceiling || row.expires_at !== input.authority.expiry ||
+      row.created_at !== input.intent.created_at ||
+      storedDecision.decision_sha256 !== input.decision_sha256) {
+    fail("REPORT_ADMISSION_CONFLICT", "stored REPORT admission differs from current server authority");
+  }
+  const storedIntent = await readIntentOutbox(input.database, input.intent.intent_ref);
+  if (storedIntent === null || !sameJson(storedIntent.intent, input.intent) || storedIntent.outbox_id !== input.outbox_id ||
+      storedIntent.topic !== RESEARCH_REPORT_ADMISSION_TOPIC || storedIntent.payload_sha256 !== input.payload_sha256) {
+    fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT intent/outbox readback differs from the prepared admission");
+  }
+}
+
+function noAdmissionBatchChanges(): void { /* Existing admission is read back before artifact effects. */ }
+
+export async function prepareResearchReportAdmission(input: ResearchReportAdmissionInput): Promise<ResearchReportAdmissionPreparation> {
+  if (input.navigation.access.principal_ref !== input.principal.principal_ref || input.navigation.access.client_class !== "owner_pwa" ||
+      input.navigation.access.credential_generation !== input.principal.credential_generation) {
+    fail("REPORT_ADMISSION_AUTHORITY_STALE", "navigation access is not bound to the authenticated owner");
+  }
+  const policyRaw = await input.policy_source.read();
+  const policy = validatePolicySource(policyRaw, input.policy_source);
+  const clock = input.now ?? Date.now;
+  const nowMs = readClock(clock);
+  const requestSha = await canonicalDigest(input.request);
+  const authority = await readAuthority(input, policy, nowMs, requestSha);
+  const authorityInputSha = await canonicalDigest(authority.material);
+  const decisionId = `report-decision-${authorityInputSha}`;
   const decision = PolicyDecisionSchema.parse({
     decision_id: decisionId, policy_revision: policy.policy_revision, decision: "ALLOW",
-    reason_codes: ["REPORT_PRIVATE_DRAFT_POLICY_ALLOWED"], admitted_source_revision_refs: refs,
-    denied_source_revision_refs: [], output_disclosure_ceiling: afterGrant.disclosure_ceiling, expires_at: expiry,
+    reason_codes: ["REPORT_PRIVATE_DRAFT_POLICY_ALLOWED"], admitted_source_revision_refs: authority.refs,
+    denied_source_revision_refs: [], output_disclosure_ceiling: authority.grant.disclosure_ceiling, expires_at: authority.expiry,
   });
-  const decisionJson = canonicalEvidenceJson(decision);
   const decisionSha = await canonicalDigest(decision);
-  const intent: OperationIntent = OperationIntentSchema.parse({
-    intent_ref: { id: `report-intent-${operationId}`, revision: 1 }, operation_kind: "REPORT", principal_ref: finalRun.principal_ref,
-    idempotency_key: `report-materialize-${operationId}`, payload_ref: `report-materialize-${operationId}`,
-    policy_decision_ref: decisionId, cancellation_ref: `workflow:${operationId}`, created_at: now,
+  const createdAt = new Date(nowMs).toISOString();
+  const candidateIntent: OperationIntent = OperationIntentSchema.parse({
+    intent_ref: { id: `report-intent-${requestSha}`, revision: 1 }, operation_kind: "REPORT", principal_ref: authority.run.principal_ref,
+    idempotency_key: input.request.idempotency_key, payload_ref: `report-materialize-${requestSha}`,
+    policy_decision_ref: decisionId, cancellation_ref: `workflow:${authority.run.operation_id}`, created_at: createdAt,
   });
-  const plan = await prepareIntentWithOutboxMutation(input.database, { intent, topic: RESEARCH_REPORT_ADMISSION_TOPIC, payload_sha256: payloadSha });
-  const existing = await readAdmission(input.database, finalRun.operation_id, finalRun.principal_ref, intent.idempotency_key);
-  if (existing !== null) {
-    const parsed = parseStoredDecision(existing);
-    return exactReadback(input.database, {
-      row: existing, decision: parsed.decision, decision_sha256: parsed.decision_sha256, input_sha256: parsed.input_sha256,
-      intent, plan, policy, policyJson, inputJson, run: finalRun, scopeSnapshotDigest: input.navigation.scope.digest,
-      sourceRefsJson, disclosureCeiling: afterGrant.disclosure_ceiling, expiry,
-    });
+  const storedIntent = await readStoredIntent(input.database, candidateIntent.intent_ref);
+  if (storedIntent !== null && (storedIntent.operation_kind !== candidateIntent.operation_kind ||
+      storedIntent.principal_ref !== candidateIntent.principal_ref || storedIntent.idempotency_key !== candidateIntent.idempotency_key ||
+      storedIntent.payload_ref !== candidateIntent.payload_ref || storedIntent.policy_decision_ref !== candidateIntent.policy_decision_ref ||
+      storedIntent.cancellation_ref !== candidateIntent.cancellation_ref)) {
+    fail("REPORT_ADMISSION_CONFLICT", "stored REPORT intent differs from the current request authority");
   }
-  const decisionStatement = input.database.prepare(
-    "INSERT INTO research_report_admission(decision_id,decision_revision,decision,decision_json,decision_sha256,input_json,input_sha256,policy_json,policy_ref,policy_revision,policy_generation,policy_authority_ref,policy_expires_at,operation_id,intent_id,intent_revision,outbox_id,principal_ref,client_class,credential_generation,idempotency_key,scope_snapshot_id,scope_snapshot_revision,scope_snapshot_digest,authorization_receipt_ref,deployment_generation,source_revision_refs_json,requested_output_class,purpose,disclosure_ceiling,expires_at,created_at) " +
-    "VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,?15,?16,'owner_pwa',?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
-  ).bind(decisionId, decision.decision, decisionJson, decisionSha, inputJson, inputSha, policyJson, policy.policy_ref, policy.policy_revision,
-    finalRun.policy_generation, finalRun.policy_authority_ref, policy.expires_at, finalRun.operation_id, intent.intent_ref.id, plan.outbox_id, finalRun.principal_ref,
-    finalRun.credential_generation, intent.idempotency_key, finalRun.scope_snapshot_id, finalRun.scope_snapshot_revision, input.navigation.scope.digest,
-    afterGrant.authorization_receipt_ref, finalRun.deployment_generation, sourceRefsJson, RESEARCH_REPORT_OUTPUT_CLASS, RESEARCH_REPORT_PURPOSE,
-    afterGrant.disclosure_ceiling, expiry, now);
-  try {
-    const results = await input.database.batch([...plan.statements, decisionStatement]);
-    if (results.length !== 3 || results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT admission batch did not commit exactly three rows", true);
-  } catch (cause) {
-    const raced = await readAdmission(input.database, finalRun.operation_id, finalRun.principal_ref, intent.idempotency_key);
-    if (raced !== null) {
-      const parsed = parseStoredDecision(raced);
-      return exactReadback(input.database, {
-        row: raced, decision: parsed.decision, decision_sha256: parsed.decision_sha256, input_sha256: parsed.input_sha256,
-        intent, plan, policy, policyJson, inputJson, run: finalRun, scopeSnapshotDigest: input.navigation.scope.digest,
-        sourceRefsJson, disclosureCeiling: afterGrant.disclosure_ceiling, expiry,
-      });
-    }
-    if (cause instanceof ResearchReportAdmissionError) throw cause;
-    fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT admission batch failed", true, cause);
-  }
-  const stored = await readAdmission(input.database, finalRun.operation_id, finalRun.principal_ref, intent.idempotency_key);
-  if (stored === null) fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT admission readback is missing", true);
-  const parsed = parseStoredDecision(stored);
-  return exactReadback(input.database, {
-    row: stored, decision: parsed.decision, decision_sha256: parsed.decision_sha256, input_sha256: parsed.input_sha256,
-    intent, plan, policy, policyJson, inputJson, run: finalRun, scopeSnapshotDigest: input.navigation.scope.digest,
-    sourceRefsJson, disclosureCeiling: afterGrant.disclosure_ceiling, expiry,
-  });
+  const intent = storedIntent ?? candidateIntent;
+  const admission: ArtifactDraftAdmissionPort = {
+    async prepare({ intent: requestedIntent, outbox_id: outboxId, payload_sha256: payloadSha }) : Promise<ArtifactDraftAdmissionMutation> {
+      if (!sameJson(requestedIntent, intent)) fail("REPORT_ADMISSION_CONFLICT", "artifact draft intent differs from prepared REPORT admission");
+      const currentPolicyRaw = await input.policy_source.read();
+      const currentPolicy = validatePolicySource(currentPolicyRaw, input.policy_source);
+      if (!sameJson(currentPolicy, policy)) fail("REPORT_ADMISSION_AUTHORITY_STALE", "REPORT policy changed before artifact commit");
+      const current = await readAuthority(input, currentPolicy, readClock(clock), requestSha);
+      if (await canonicalDigest(current.material) !== authorityInputSha) fail("REPORT_ADMISSION_AUTHORITY_STALE", "REPORT authority changed before artifact commit");
+      const payload = digest(payloadSha, "payload_sha256");
+      const inputMaterial = { ...current.material, payload_sha256: payload };
+      const inputJson = canonicalEvidenceJson(inputMaterial);
+      const inputSha = await canonicalDigest(inputMaterial);
+      const existing = await readAdmission(input.database, current.run.operation_id, current.run.principal_ref, intent.idempotency_key);
+      const readback = () => assertAdmissionReadback({ database: input.database, authority: current, policy: currentPolicy, decision, decision_sha256: decisionSha, intent, outbox_id: outboxId, payload_sha256: payload, input_json: inputJson, input_sha256: inputSha });
+      if (existing !== null) {
+        await readback();
+        return { statements: [], assertBatchResults: noAdmissionBatchChanges, readback };
+      }
+      const decisionJson = canonicalEvidenceJson(decision);
+      const statement = input.database.prepare(
+        "INSERT INTO research_report_admission(decision_id,decision_revision,decision,decision_json,decision_sha256,input_json,input_sha256,policy_json,policy_ref,policy_revision,policy_generation,policy_authority_ref,policy_expires_at,operation_id,intent_id,intent_revision,outbox_id,principal_ref,client_class,credential_generation,idempotency_key,scope_snapshot_id,scope_snapshot_revision,scope_snapshot_digest,authorization_receipt_ref,deployment_generation,source_revision_refs_json,requested_output_class,purpose,disclosure_ceiling,expires_at,created_at) " +
+        "VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,?15,?16,'owner_pwa',?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29)",
+      ).bind(decision.decision_id, decision.decision, decisionJson, decisionSha, inputJson, inputSha, current.policyJson, currentPolicy.policy_ref, currentPolicy.policy_revision,
+        current.run.policy_generation, current.run.policy_authority_ref, currentPolicy.expires_at, current.run.operation_id, intent.intent_ref.id, outboxId, current.run.principal_ref,
+        current.run.credential_generation, intent.idempotency_key, current.run.scope_snapshot_id, current.run.scope_snapshot_revision, current.material.scope_snapshot_digest,
+        current.grant.authorization_receipt_ref, current.run.deployment_generation, current.sourceRefsJson, RESEARCH_REPORT_OUTPUT_CLASS, RESEARCH_REPORT_PURPOSE,
+        current.grant.disclosure_ceiling, current.expiry, intent.created_at);
+      return {
+        statements: [statement],
+        assertBatchResults(results, offset) {
+          if ((results[offset]?.meta?.changes ?? 0) !== 1) fail("REPORT_ADMISSION_PERSISTENCE_UNCERTAIN", "REPORT admission statement did not mutate exactly one row", true);
+        },
+        readback,
+      };
+    },
+  };
+  return { decision, decision_sha256: decisionSha, intent, authority_input_sha256: authorityInputSha, admission };
 }

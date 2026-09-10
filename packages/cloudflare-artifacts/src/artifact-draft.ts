@@ -29,6 +29,7 @@ const MANIFEST_PREFIX = "artifact-draft/manifest";
 
 import {
   type ArtifactDraftObjectKind,
+  type ArtifactDraftAdmissionPort,
   type PrepareArtifactDraftInput,
   type ArtifactDraftObjectReceipt,
   type PrepareArtifactDraftResult,
@@ -44,6 +45,8 @@ import {
 } from "./artifact-draft-types.js";
 export {
   type ArtifactDraftObjectKind,
+  type ArtifactDraftAdmissionPort,
+  type ArtifactDraftAdmissionMutation,
   type ArtifactDraftSectionInput,
   type ArtifactDraftReferencedObjectInput,
   type PrepareArtifactDraftInput,
@@ -466,22 +469,29 @@ async function readExactDraft(
   return { ...result, outbox_id: outboxId };
 }
 
-export function createArtifactDraftStore(database: D1Database, bucket: R2Bucket) {
-  return { prepare: (input: PrepareArtifactDraftInput) => prepareArtifactDraft(database, bucket, input) };
+export function createArtifactDraftStore(database: D1Database, bucket: R2Bucket, admission?: ArtifactDraftAdmissionPort) {
+  return { prepare: (input: PrepareArtifactDraftInput) => prepareArtifactDraft(database, bucket, input, admission) };
 }
 
 export async function prepareArtifactDraft(
   database: D1Database,
   bucket: R2Bucket,
   input: PrepareArtifactDraftInput,
+  admission?: ArtifactDraftAdmissionPort,
 ): Promise<PrepareArtifactDraftResult> {
   const snapshot = snapshotInput(input);
   const plan = await buildPlan(snapshot);
   const topic = snapshot.topic ?? DEFAULT_TOPIC;
   const store = createR2EvidenceObjectStore(bucket);
   const intentPlan = await prepareIntentWithOutboxMutation(database, { intent: snapshot.intent, topic, payload_sha256: plan.manifest.sha256 });
+  const admissionMutation = admission === undefined ? undefined : await admission.prepare({
+    intent: snapshot.intent, outbox_id: intentPlan.outbox_id, payload_sha256: plan.manifest.sha256,
+  });
   const existing = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
-  if (existing !== null) return existing;
+  if (existing !== null) {
+    await admissionMutation?.readback();
+    return existing;
+  }
   const intentStatement = intentPlan.statements[0];
   if (intentStatement === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "prepared intent mutation is incomplete");
 
@@ -526,6 +536,7 @@ export async function prepareArtifactDraft(
   const statements: D1PreparedStatement[] = [
     intentStatement,
     outboxStatement,
+    ...(admissionMutation?.statements ?? []),
     database.prepare("INSERT INTO artifact_revision(artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'DRAFT',?9)").bind(snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, snapshot.spec.kind, snapshot.revision.spec_digest, snapshot.revision.evidence_freeze_ref.id, snapshot.revision.evidence_freeze_ref.revision, manifestReceipt.receipt.key, snapshot.revision.dependency_manifest_ref, snapshot.revision.created_at),
     database.prepare("INSERT INTO artifact_draft_binding(artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)").bind(snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.expected_draft_head_revision, snapshot.intent.principal_ref, snapshot.spec.spec_ref.id, snapshot.spec.spec_ref.revision, snapshot.spec.scope_snapshot_ref.id, snapshot.spec.scope_snapshot_ref.revision, manifestReceipt.receipt.key, manifestReceipt.receipt.expected_sha256, manifestReceipt.receipt.size_bytes, snapshot.revision.created_at),
   ];
@@ -539,9 +550,13 @@ export async function prepareArtifactDraft(
       fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch returned an incomplete result", true);
     }
     intentPlan.assertBatchResults(results);
+    admissionMutation?.assertBatchResults(results, 2);
   } catch (cause) {
     const recovered = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
-    if (recovered !== null) return recovered;
+    if (recovered !== null) {
+      await admissionMutation?.readback();
+      return recovered;
+    }
     const head = await database.prepare("SELECT head_revision FROM artifact_draft_head WHERE artifact_id=?1 LIMIT 1").bind(snapshot.revision.artifact_ref.id).first<{ readonly head_revision: unknown }>();
     if ((head === null && snapshot.expected_draft_head_revision !== null) ||
         (head !== null && snapshot.expected_draft_head_revision !== null &&
@@ -553,5 +568,6 @@ export async function prepareArtifactDraft(
   }
   const final = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
   if (final === null) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch readback is missing", true);
+  await admissionMutation?.readback();
   return { ...final, disposition: "CREATED" };
 }
