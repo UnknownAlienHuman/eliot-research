@@ -351,12 +351,17 @@ async function dispatch(
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       return apiResult(request, env, await application.services.semantic.artifact(context, parseArtifactRef(ref)));
     }
-    case "research.artifact.section": {
+    case "research.artifact.section":
+    case "research.artifact.section.citations": {
       requireNoQuery(url);
       const ref = match.params.ref;
       const sectionRef = match.params.section_ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       if (sectionRef === undefined) throw new ArtifactHttpInputError("section reference path parameter is missing");
+      if (match.route.operation === "research.artifact.section.citations") {
+        return apiResult(request, env, await application.services.semantic.artifactSectionCitations(
+          context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef)));
+      }
       return application.services.semantic.artifactSection(context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef));
     }
     case "research.verify": {
