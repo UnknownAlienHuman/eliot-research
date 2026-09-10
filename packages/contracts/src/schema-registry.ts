@@ -24,6 +24,7 @@ import * as scope from "./scope.js";
 import * as security from "./security.js";
 import * as snapshotView from "./snapshot-view.js";
 import * as source from "./source.js";
+import * as workspaceMcp from "./workspace-mcp.js";
 import {
   CONTRACT_JSON_SCHEMA_DIALECT,
   CONTRACT_SCHEMA_CORPUS_PROTOCOL,
@@ -84,6 +85,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "security", exports: security },
   { family: "source", exports: snapshotView },
   { family: "source", exports: source },
+  { family: "workspace-mcp", exports: workspaceMcp },
 ];
 
 const FAMILY_VERSIONS: Readonly<

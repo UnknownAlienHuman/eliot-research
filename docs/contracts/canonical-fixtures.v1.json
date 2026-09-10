@@ -25,6 +25,14 @@
       "schema_export": "NormalizedBundleManifestSchema"
     },
     {
+      "canonical_body_sha256": "3946aea772f88011d0e131b731f7d9e49875adf349efcbd27f7e49d839d61716",
+      "fixture_id": "workspace-mcp-plan-input-v2",
+      "fixture_path": "tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.google-sync.plan.v2",
+      "schema_export": "WorkspaceMcpPlanV2InputSchema"
+    },
+    {
       "canonical_body_sha256": "b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e",
       "fixture_id": "source-owner-cutover-v1",
       "fixture_path": "tests/fixtures/contracts/source.owner-cutover.v1.yaml",
