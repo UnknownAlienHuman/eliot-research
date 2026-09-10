@@ -3,6 +3,80 @@ import assert from "node:assert/strict";
 
 const WORKFLOW_ID = /^exhaustive-workflow-[a-f0-9]{64}$/u;
 const PROTOCOL = "eliotr.exhaustive-query.v1";
+const CANCELLATION_DIAGNOSTIC_CODES = new Set([
+  "INTERNAL_ERROR", "LOCAL_REQUEST_FAILED", "LOCAL_REDIRECT_DENIED",
+  "RESEARCH_AUTHORITY_STALE", "RESEARCH_BUDGET_STOP", "RESEARCH_CANCELLED",
+  "RESEARCH_CONFLICT", "RESEARCH_OWNER_REQUIRED", "RESEARCH_SETTLEMENT_UNCERTAIN",
+  "RESEARCH_WORKFLOW_NOT_FOUND", "RESEARCH_WORKFLOW_UNAVAILABLE", "RESEARCH_INPUT_INVALID",
+]);
+
+function cancellationDiagnosticCode(value) {
+  const candidate = value?.code ?? value?.data?.code;
+  return typeof candidate === "string" && candidate.length <= 96 &&
+    CANCELLATION_DIAGNOSTIC_CODES.has(candidate) ? candidate : undefined;
+}
+
+async function readCancellationResponseCode(response) {
+  try {
+    const contentLength = response.headers()["content-length"];
+    if (typeof contentLength !== "string" || !/^\d+$/u.test(contentLength) || Number(contentLength) > 64 * 1024) return undefined;
+    const text = await response.text();
+    if (text.length > 64 * 1024) return undefined;
+    return cancellationDiagnosticCode(JSON.parse(text));
+  } catch { return undefined; }
+}
+
+async function cancellationPanelState(panel) {
+  return panel.evaluate((root) => {
+    const text = (selector) => root.querySelector(selector)?.textContent?.trim().slice(0, 160) ?? null;
+    const disabled = (selector) => {
+      const button = root.querySelector(selector);
+      return button instanceof HTMLButtonElement ? button.disabled : null;
+    };
+    return {
+      workflowId: root.getAttribute("data-workflow-id"),
+      badge: text("[data-workflow-badge]"),
+      status: text(".workflow-status"),
+      cancelDisabled: disabled("[data-cancel]"),
+      refreshDisabled: disabled("[data-refresh]"),
+    };
+  }).catch(() => ({ panel: "unavailable" }));
+}
+
+async function cancelAndAssertTerminated(page, panel, workflowId, label) {
+  const responseDiagnostic = { status: null, code: undefined, bodyRead: null };
+  const expectedPath = `/api/v1/research/query/${encodeURIComponent(workflowId)}`;
+  const onResponse = (response) => {
+    try {
+      const request = response.request();
+      if (request.method() !== "DELETE" || new URL(response.url()).pathname !== expectedPath) return;
+      responseDiagnostic.status = response.status();
+      responseDiagnostic.bodyRead = readCancellationResponseCode(response).then((code) => {
+        if (code !== undefined) responseDiagnostic.code = code;
+      }).catch(() => {});
+    } catch { /* bounded diagnostics only */ }
+  };
+  page.on("response", onResponse);
+  try {
+    await panel.locator("[data-cancel]").click();
+    try {
+      await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")
+        ?.textContent?.includes("cancelled on the server") === true, null, { timeout: 15000 });
+    } catch (error) {
+      if (responseDiagnostic.bodyRead !== null) {
+        await Promise.race([responseDiagnostic.bodyRead, new Promise((resolve) => globalThis.setTimeout(resolve, 500))]);
+      }
+      const panelState = await cancellationPanelState(panel);
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`${label}: cancellation did not reach terminated UI state (${reason}); ` +
+        `delete_response_status=${responseDiagnostic.status ?? "unavailable"}; ` +
+        `delete_response_code=${responseDiagnostic.code ?? "UNAVAILABLE"}; ` +
+        `panel=${JSON.stringify(panelState)}`, { cause: error });
+    }
+  } finally {
+    page.off("response", onResponse);
+  }
+}
 
 function dataOf(outcome, label) {
   assert.ok(outcome && typeof outcome.data === "object" && outcome.data !== null,
@@ -100,14 +174,11 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   assert.ok(["queued", "running", "paused", "waiting", "waitingForPause"].includes(statusData.workflow_status),
     `cancel acceptance requires an observed non-terminal workflow, got ${statusData.workflow_status}`);
 
-  const cancel = panel.locator("[data-cancel]");
   await page.waitForFunction(() => {
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
-  await cancel.click();
-  await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
-    null, { timeout: 15000 });
+  await cancelAndAssertTerminated(page, panel, workflowId, "first cancellation");
 
   const canceled = await browserJson(page, ledger, `/api/v1/research/query/${workflowId}`, {
     correlation: "e2e-exhaustive/status-after-cancel",
@@ -192,9 +263,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
-  await cancel.click();
-  await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
-    null, { timeout: 15000 });
+  await cancelAndAssertTerminated(page, panel, relaunchedWorkflowId, "relaunch cancellation");
   const relaunchedCanceled = await browserJson(page, ledger, `/api/v1/research/query/${relaunchedWorkflowId}`, {
     correlation: "e2e-exhaustive/relaunch-status-after-cancel",
   });
