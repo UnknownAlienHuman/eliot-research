@@ -14,6 +14,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/env.ts`
 - `apps/eliotr-core/src/index.ts`
 - `apps/eliotr-core/src/http.ts`
+- `apps/eliotr-core/src/http-errors.ts`
 - `apps/eliotr-core/src/artifact-draft-http.ts`
 - `apps/eliotr-core/src/research-query-http.ts`
 - `apps/eliotr-core/src/queue.ts`
