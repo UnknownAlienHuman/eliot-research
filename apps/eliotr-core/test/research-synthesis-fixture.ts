@@ -36,11 +36,12 @@ async function stageDeployment(database: D1Database, options: {
   readonly routeVersion?: string;
   readonly qualificationTier?: QualificationTier;
   readonly expectedActiveRouteVersion?: string | null;
+  readonly deployment?: ModelRouteDeployment;
 } = {}): Promise<ModelRouteDeployment> {
   const registryNow = new Date().toISOString();
   const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
-  const deployment: ModelRouteDeployment = {
+  const deployment: ModelRouteDeployment = options.deployment ?? {
     route_ref: ROUTE,
     route_version: options.routeVersion ?? ROUTE_VERSION,
     prompt_generation: PROMPT_GENERATION,
@@ -71,7 +72,7 @@ async function stageDeployment(database: D1Database, options: {
   }
   const staged = stagedRecord as unknown as DynamicRouteCandidateWriteReceipt;
   await registry.promote({
-    route_ref: ROUTE,
+    route_ref: deployment.route_ref,
     expected_active_route_version: options.expectedActiveRouteVersion ?? null,
     target_route_version: deployment.route_version,
     candidate_ref: staged.candidate_ref,
@@ -334,7 +335,7 @@ export async function committedFreezeSynthesisFixture() {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
   });
-  const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE" });
+  const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE", deployment: freeze.profile_definition.deployment });
   const context = createEvidenceFreezeSynthesisContextReader({
     database: freeze.db, work_bucket: freeze.bucket, manifest_store: freeze.freeze_store,
     read_stage_five: freeze.readers.read_stage_five,
