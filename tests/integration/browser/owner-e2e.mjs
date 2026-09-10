@@ -786,6 +786,16 @@ function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fe
   return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
 }
 
+function boundedFailureText(value, maxLength) {
+  let text = String(value ?? "")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, "[REDACTED_JWT]")
+    .replace(/(?:authorization|cookie|cf-access-jwt-assertion|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/giu,
+      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}[REDACTED]`)
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s)]+/gu, "$1?[REDACTED_QUERY]");
+  if (text.length > maxLength) text = `${text.slice(0, maxLength)}...[TRUNCATED]`;
+  return text;
+}
+
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
   { token, method = "GET", body, contentType, headers: extraHeaders, phase, worker, timeoutMs = 15000 } = {}) {
   const headers = { Accept: "application/json", ...(extraHeaders ?? {}) };
@@ -838,7 +848,25 @@ async function workerJson(origin, path, options = {}) {
   return fetchWorkerJsonWithDiagnostics(globalThis.fetch, origin, path, options);
 }
 
+function verifyPreservedWorkerFailureOutput() {
+  const sentinel = new Error("sentinel assertion cf-access-jwt-assertion=private-token");
+  sentinel.name = "SentinelFailure";
+  sentinel.stack = "SentinelFailure: sentinel assertion\n    at sentinelCase (owner-e2e.mjs:6000:7)";
+  const wrapped = preserveWorkerFailure(sentinel, {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  });
+  assert.equal(wrapped.cause, sentinel, "the original failure must remain available as the Error cause");
+  assert.match(wrapped.message, /original_error=/u);
+  assert.match(wrapped.message, /SentinelFailure/u, "the original error name must reach the reported Error");
+  assert.match(wrapped.message, /sentinel assertion/u, "the original error message must reach the reported Error");
+  assert.match(wrapped.message, /owner-e2e\.mjs:6000:7/u, "the original error location must reach the reported Error");
+  assert.match(wrapped.message, /worker_diagnostics=.*"pid":42/u, "bounded Worker diagnostics must remain attached");
+  assert.ok(!wrapped.message.includes("private-token"), "reported failure must redact credential values");
+  return { state: "PASS" };
+}
+
 export async function verifyWorkerFetchDiagnosticRegression() {
+  verifyPreservedWorkerFailureOutput();
   const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
   let transportCalls = 0;
   await assert.rejects(
@@ -1094,6 +1122,17 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
       throw error;
     }
   };
+}
+
+function preserveWorkerFailure(error, worker) {
+  if (!worker) return error;
+  const diagnostics = workerDiagnosticSnapshot(worker);
+  const original = {
+    name: boundedFailureText(error?.name || "Error", 96),
+    message: boundedFailureText(error?.message ?? error, 2000),
+    stack: boundedFailureText(error?.stack ?? "", 4000),
+  };
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}`, { cause: error });
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
@@ -5949,8 +5988,8 @@ export async function runOwnerE2E() {
       generation: stoppedGeneration,
     };
   } catch (error) {
-    teardownError = error;
-    throw error;
+    teardownError = preserveWorkerFailure(error, worker);
+    throw teardownError;
   } finally {
     // Unconditional nested finally: EVERY owned resource is released while
     // dependent cleanup is still safe. Each step runs inside its own guard,

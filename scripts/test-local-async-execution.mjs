@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { executeLocalAsync } from "./lib/local-launch.mjs";
 
 async function listen(server) {
@@ -59,4 +62,28 @@ test("async local command timeout waits for child termination", async () => {
     executeLocalAsync(["-e", "setTimeout(() => process.stdout.write('late'), 500)"], { capture: true, timeoutMs: 50 }),
     (error) => error?.cause?.code === "ETIMEDOUT",
   );
+});
+
+test("async local timeout cleans a child process tree before returning", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "eliotr-async-cleanup-"));
+  const marker = join(directory, "late-grandchild-write");
+  const grandchildCode = [
+    `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "started");`,
+    `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 3000);`,
+  ].join("");
+  const parentCode = [
+    "const { spawn } = require(\"node:child_process\"); const fs = require(\"node:fs\");",
+    `spawn(process.execPath, ["-e", ${JSON.stringify(grandchildCode)}], { stdio: "inherit" });`,
+    `const started = Date.now(); const wait = setInterval(() => { if (fs.existsSync(${JSON.stringify(marker)})) { clearInterval(wait); process.stdout.write("grandchild-started\\n"); setTimeout(() => {}, 2000); } else if (Date.now() - started > 1000) { clearInterval(wait); process.exit(12); } }, 5);`,
+  ].join("");
+  try {
+    await assert.rejects(
+      executeLocalAsync(["-e", parentCode], { capture: true, timeoutMs: 1500 }),
+      (error) => error?.cause?.code === "ETIMEDOUT" && String(error.cause.stdout).includes("grandchild-started"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3500));
+    assert.equal(await readFile(marker, "utf8"), "started", "grandchild must not perform its delayed write after tree cleanup");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

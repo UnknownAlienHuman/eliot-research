@@ -115,65 +115,80 @@ function localCommandFailure({ error, status, signal, stdout = "", stderr = "", 
 }
 
 function waitForAsyncChildClose(child, timeoutMs = 5000) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  if (!child) return Promise.resolve(true);
   return new Promise((resolve) => {
     let settled = false;
-    const done = () => {
+    const done = (closed) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      child.removeListener("close", done);
-      resolve();
+      resolve(closed);
     };
-    const timer = setTimeout(done, timeoutMs);
-    child.once("close", done);
+    const timer = setTimeout(() => done(false), Math.max(0, timeoutMs));
+    child.once("close", () => done(true));
   });
 }
 
-async function terminateAsyncChild(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  if (process.platform === "win32" && Number.isSafeInteger(child.pid) && child.pid > 0) {
-    await new Promise((resolve) => {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve();
-      };
-      const timer = setTimeout(() => {
-        try { child.kill(); } catch { /* Already exited. */ }
-        finish();
-      }, 5000);
-      let killer;
-      try {
-        killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], {
-          shell: false, windowsHide: true, stdio: "ignore",
-        });
-      } catch {
-        try { child.kill(); } catch { /* Already exited. */ }
-        finish();
-        return;
-      }
-      killer.once("error", () => {
-        try { child.kill(); } catch { /* Already exited. */ }
-        finish();
+function signalAsyncChild(child, signal) {
+  if (process.platform !== "win32" && Number.isSafeInteger(child.pid) && child.pid > 0) {
+    try { process.kill(-child.pid, signal); return null; }
+    catch (error) { return error; }
+  }
+  try { child.kill(signal); return null; }
+  catch (error) { return error; }
+}
+
+function localCleanupFailure(pid, signal, cause) {
+  const failure = new Error(`Local child cleanup failed (pid ${pid ?? "unknown"}, signal ${signal})`, { cause });
+  failure.code = "ERR_LOCAL_CLEANUP";
+  return failure;
+}
+
+async function terminateAsyncChild(child, waitForClose = (timeoutMs) => waitForAsyncChildClose(child, timeoutMs)) {
+  if (!child) return;
+  const pid = Number.isSafeInteger(child.pid) && child.pid > 0 ? child.pid : null;
+  const deadline = Date.now() + 5000;
+  const remaining = () => Math.max(0, deadline - Date.now());
+  let terminationError;
+  if (process.platform === "win32" && pid !== null) {
+    let killer;
+    let taskkillSucceeded = false;
+    try {
+      killer = spawn("taskkill.exe", ["/PID", String(pid), "/T", "/F"], {
+        shell: false, windowsHide: true, stdio: "ignore",
       });
-      killer.once("close", finish);
-    });
-    await waitForAsyncChildClose(child);
-    if (child.exitCode === null && child.signalCode === null) {
-      try { child.kill(); } catch { /* Already exited. */ }
-      await waitForAsyncChildClose(child);
+      taskkillSucceeded = await new Promise((resolve) => {
+        let settled = false;
+        const finish = (success) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(success);
+        };
+        const timer = setTimeout(() => finish(false), remaining());
+        killer.once("error", (error) => { terminationError = error; finish(false); });
+        killer.once("close", (status) => finish(status === 0));
+      });
+    } catch (error) {
+      terminationError = error;
     }
-    return;
+    if (!taskkillSucceeded) {
+      const fallbackError = signalAsyncChild(child, "SIGTERM");
+      terminationError ??= fallbackError;
+    }
+    if (await waitForClose(remaining())) return;
+    const forceError = signalAsyncChild(child, "SIGKILL");
+    terminationError ??= forceError;
+    if (await waitForClose(remaining())) return;
+    throw localCleanupFailure(pid, "SIGKILL", terminationError);
   }
-  try { child.kill("SIGTERM"); } catch { /* Already exited. */ }
-  await waitForAsyncChildClose(child);
-  if (child.exitCode === null && child.signalCode === null) {
-    try { child.kill("SIGKILL"); } catch { /* Already exited. */ }
-    await waitForAsyncChildClose(child);
-  }
+  terminationError = signalAsyncChild(child, "SIGTERM");
+  const gracefulBudget = Math.min(2500, remaining());
+  if (await waitForClose(gracefulBudget)) return;
+  const forceError = signalAsyncChild(child, "SIGKILL");
+  terminationError ??= forceError;
+  if (await waitForClose(remaining())) return;
+  throw localCleanupFailure(pid, "SIGKILL", terminationError);
 }
 
 /** Async counterpart for long local CLI work. The sync API above remains for existing callers. */
@@ -184,11 +199,17 @@ export function executeLocalAsync(args, { cwd = ROOT, env = localEnvironment(), 
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, args, {
       cwd, env, shell: false, windowsHide: true,
+      detached: process.platform !== "win32",
       stdio: capture ? ["ignore", "pipe", "pipe"] : ["ignore", "inherit", "inherit"],
     });
     const stdoutChunks = []; const stderrChunks = [];
     let totalBytes = 0; let overflow = false; let timedOut = false; let spawnError;
-    let terminated = false;
+    let terminated = false; let settled = false; let terminationPromise;
+    let childClosed = false; let resolveChildClose;
+    const childClose = new Promise((resolve) => { resolveChildClose = resolve; });
+    const waitForClose = (waitMs) => childClosed ? Promise.resolve(true) : Promise.race([
+      childClose.then(() => true), new Promise((resolve) => setTimeout(() => resolve(false), Math.max(0, waitMs))),
+    ]);
     const append = (target, chunk) => {
       if (!capture || overflow) return target;
       if (totalBytes + chunk.byteLength > 8 * 1024 * 1024) {
@@ -200,9 +221,16 @@ export function executeLocalAsync(args, { cwd = ROOT, env = localEnvironment(), 
       totalBytes += chunk.byteLength;
     };
     const requestTermination = () => {
-      if (terminated) return;
+      if (terminationPromise) return terminationPromise;
       terminated = true;
-      void terminateAsyncChild(child).catch(() => {});
+      terminationPromise = terminateAsyncChild(child, waitForClose);
+      void terminationPromise.catch((error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      });
+      return terminationPromise;
     };
     if (capture) {
       child.stdout.on("data", (chunk) => { append(stdoutChunks, chunk); });
@@ -215,15 +243,24 @@ export function executeLocalAsync(args, { cwd = ROOT, env = localEnvironment(), 
       requestTermination();
     }, timeoutMs);
     child.once("close", (status, signal) => {
+      childClosed = true;
+      resolveChildClose();
+      void (async () => {
       clearTimeout(timer);
       const stdout = Buffer.concat(stdoutChunks).toString("utf8");
       const stderr = Buffer.concat(stderrChunks).toString("utf8");
+      if (terminationPromise) {
+        try { await terminationPromise; } catch { return; }
+      }
+      if (settled) return;
+      settled = true;
       if (spawnError || status !== 0 || overflow || timedOut) {
         reject(localCommandFailure({ error: spawnError ?? (overflow ? { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" } : timedOut ? { code: "ETIMEDOUT" } : undefined),
           status, signal, stdout, stderr, capture, diagnosticOverride: overflow || timedOut ? "" : undefined }));
         return;
       }
       resolve(capture ? stdout : "");
+      })();
     });
   });
 }
