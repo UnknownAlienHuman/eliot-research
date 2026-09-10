@@ -87,6 +87,10 @@ export function createResearchStageHandlerFactory(
     if ((stage === "RECONCILE" || stage === "FREEZE_EVIDENCE") && freezeComposition !== undefined) {
       return stage === "RECONCILE" ? freezeComposition.reconcile : freezeComposition.freeze;
     }
+    if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION &&
+        (stage === "RECONCILE" || stage === "FREEZE_EVIDENCE")) {
+      return async () => fail("WORKFLOW_AUTHORITY_STALE");
+    }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
   };
