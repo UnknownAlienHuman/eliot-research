@@ -10,6 +10,8 @@ import {
   createEvidenceFreezeSynthesisHandler,
   createResearchMaterializeStageHandler,
   type ResearchMaterializeStageDependencies,
+  createResearchReportMaterializeStageHandler,
+  type ResearchReportMaterializeStageDependencies,
   createResearchVerificationStageHandler,
   type ResearchVerificationStageDependencies,
 } from "@eliotr/cloudflare-research";
@@ -47,6 +49,7 @@ export type ResearchStageHandlerFactoryMode =
       readonly freeze?: EvidenceFreezeCompositionDependencies;
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
       readonly materialize?: ResearchMaterializeStageDependencies;
+      readonly report_materialize?: ResearchReportMaterializeStageDependencies;
       readonly verification?: ResearchVerificationStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
@@ -89,10 +92,14 @@ export function createResearchStageHandlerFactory(
     mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.freeze !== undefined
     ? createEvidenceFreezeComposition(mode.freeze)
     : undefined;
-  const materializeHandler = mode.kind === "server-owned-exploratory" &&
-    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION && mode.materialize !== undefined
-    ? createResearchMaterializeStageHandler(mode.materialize)
-    : undefined;
+  let materializeHandler: WorkflowStageHandler | undefined;
+  if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+    if (mode.report_materialize !== undefined && mode.materialize === undefined) {
+      materializeHandler = createResearchReportMaterializeStageHandler(mode.report_materialize);
+    } else if (mode.materialize !== undefined && mode.report_materialize === undefined) {
+      materializeHandler = createResearchMaterializeStageHandler(mode.materialize);
+    }
+  }
 
   return (stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {

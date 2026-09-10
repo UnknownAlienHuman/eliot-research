@@ -5,7 +5,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import { prepareResearchReportAdmission, type ResearchReportAdmissionInput } from "../../../packages/cloudflare-research/src/research-report-admission.js";
 import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
-import { createResearchReportMaterializeStageHandler } from "../../../packages/cloudflare-research/src/research-report-materialize-stage-handler.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import type { Env } from "../src/env.js";
@@ -86,13 +86,15 @@ describe("server-owned REPORT admission and artifact commit", () => {
     const context = createEvidenceFreezeMaterializeContextReader({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       manifest_store: synthesis.freeze.freeze_store, read_stage_five: synthesis.freeze.readers.read_stage_five }, synthesis.freeze.navigation, synthesis.freeze.readers);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
-    const handler = createResearchReportMaterializeStageHandler({ database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+    const handler = createResearchStageHandlerFactory({ kind: "server-owned-exploratory",
+      generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION, navigation: synthesis.freeze.navigation, ledger: synthesis.freeze.ledger,
+      report_materialize: { database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver, context,
       recheck_authority: async () => {
         const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, principal);
         if (status === null) throw new Error("REPORT fixture status is missing");
         return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id, scope_snapshot_revision: status.scope_snapshot_revision };
-      }, policy_source: policySource, report_policy: metadataPolicy });
+      }, policy_source: policySource, report_policy: metadataPolicy } })("MATERIALIZE");
     let handlerError: unknown;
     const observedHandler = async (input: Parameters<typeof handler>[0]) => {
       try { return await handler(input); }

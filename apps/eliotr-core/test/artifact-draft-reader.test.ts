@@ -489,7 +489,8 @@ describe("actual D1/R2 artifact draft reader", () => {
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       manifest_store: synthesis.freeze.freeze_store, read_stage_five: synthesis.freeze.readers.read_stage_five,
     }, synthesis.freeze.navigation, synthesis.freeze.readers);
-    const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal, input_bytes: new Uint8Array() });
+    const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal,
+      input_bytes: await readWorkflowObject(synthesis.freeze.bucket, materializeRequest.input_manifest, true) });
     const tag = crypto.randomUUID();
     const beforeMetadataReject = await synthesis.freeze.db.prepare("SELECT COUNT(*) AS count FROM artifact_revision")
       .first<{ readonly count: number }>();
