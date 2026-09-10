@@ -169,15 +169,21 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
   it("reads stage-0 authority, searches the same scope, and replays exact evidence refs", async () => {
     const f = await fixture();
     const { request: retrieveRequest, handler } = await prepareRetrieveStage(f);
+    const beforeRetrieve = await rowCounts(f.db);
     const firstReceipt = await f.executor.execute(retrieveRequest, principal, handler);
     const firstBytes = await readWorkflowObject(runtime.WORK_BUCKET, firstReceipt.output_manifest, true);
-    const first = JSON.parse(new TextDecoder().decode(firstBytes)) as { evidence_pack: { resolved_evidence: readonly { exact_excerpt: string; handle: { source_revision_ref: string; scope_snapshot_ref: { id: string; revision: number } } }[]; pack_ref: { id: string; revision: number } }; trace: { evidence_pack_ref: { id: string; revision: number } }; coverage_claim: string };
+    const first = JSON.parse(new TextDecoder().decode(firstBytes)) as { evidence_pack: { resolved_evidence: readonly { exact_excerpt: string; handle: { source_revision_ref: string; scope_snapshot_ref: { id: string; revision: number } } }[]; pack_ref: { id: string; revision: number } }; trace: { evidence_pack_ref: string }; coverage_claim: string };
     expect(first.coverage_claim, JSON.stringify(first)).toBe("SAMPLED");
     expect(first.evidence_pack.resolved_evidence).toHaveLength(1);
     expect(first.evidence_pack.resolved_evidence[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
     expect(first.evidence_pack.resolved_evidence[0]?.handle.scope_snapshot_ref).toEqual({ id: f.scope.snapshot_id, revision: f.scope.revision });
     expect(first.evidence_pack.pack_ref.id).toBe(first.trace.evidence_pack_ref);
     const counts = await rowCounts(f.db);
+    expect(counts.snapshots).toBe(beforeRetrieve.snapshots);
+    expect(counts.grants).toBe(beforeRetrieve.grants);
+    expect(counts.profiles).toBe(beforeRetrieve.profiles + 1);
+    expect(counts.results).toBe(beforeRetrieve.results + 1);
+    expect(counts.traces).toBe(beforeRetrieve.traces + 1);
     const replayReceipt = await f.executor.execute(retrieveRequest, principal, handler);
     const replayBytes = await readWorkflowObject(runtime.WORK_BUCKET, replayReceipt.output_manifest, true);
     expect(new TextDecoder().decode(replayBytes)).toBe(new TextDecoder().decode(firstBytes));
@@ -192,7 +198,7 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
       .bind(f.scope.snapshot_id, f.scope.revision, access.principal_ref).run();
     const inputBytes = await readWorkflowObject(runtime.WORK_BUCKET, request.input_manifest, true);
     await expect(handler({ request, principal, input_bytes: inputBytes, attempt_ref: "retrieve-revoked-attempt", budget_receipt_ref: "retrieve-budget" }))
-      .rejects.toMatchObject({ code: "NAVIGATION_SCOPE_NOT_CURRENT" });
+      .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
     expect(await rowCounts(f.db)).toEqual(before);
   });
 });
