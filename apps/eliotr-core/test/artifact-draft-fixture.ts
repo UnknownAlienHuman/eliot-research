@@ -8,9 +8,10 @@ import {
   type PrepareArtifactDraftInput,
 } from "@eliotr/cloudflare-research";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import type { Env } from "../src/env.js";
+import { seedSource } from "./orientation-fixture.js";
 
 export const runtime = env as unknown as Env & {
   readonly CORE_MIGRATIONS: D1Migration[];
@@ -50,6 +51,7 @@ export interface DraftInputOptions {
   readonly residency_domain?: string;
   readonly expected_head_revision?: number | null;
   readonly scope_snapshot_id?: string;
+  readonly principal_ref?: string;
 }
 
 export async function draftInput(tag: string, options: DraftInputOptions = {}): Promise<PrepareArtifactDraftInput> {
@@ -98,7 +100,7 @@ export async function draftInput(tag: string, options: DraftInputOptions = {}): 
   };
   return {
     intent: { intent_ref: { id: `draft-intent-${tag}`, revision: 1 }, operation_kind: "REPORT",
-      principal_ref: `owner-${tag}`, idempotency_key: `draft-${tag}`, payload_ref: `payload-${tag}`,
+      principal_ref: options.principal_ref ?? `owner-${tag}`, idempotency_key: `draft-${tag}`, payload_ref: `payload-${tag}`,
       policy_decision_ref: `policy-${tag}`, created_at: revision.created_at },
     expected_draft_head_revision: options.expected_head_revision ?? null,
     spec, revision, sections: [section], referenced_objects: references,
@@ -143,6 +145,28 @@ export async function readableArtifactDraft(tag: string): Promise<ArtifactDraftR
     scope.policy_authority_ref, '["research"]', "private", `grant-${tag}`, scope.expires_at, scope.created_at).run();
   return {
     input: await draftInput(tag, { scope_snapshot_id: scope.snapshot_id }),
+    scope,
+    access,
+    requireCurrent: (requested) => scopes.requireCurrent(requested),
+    now: () => now,
+  };
+}
+
+export async function readableOwnerArtifactDraft(tag: string): Promise<ArtifactDraftReadFixture> {
+  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const access = {
+    principal_ref: "orientation-owner",
+    client_class: "owner_pwa" as const,
+    credential_generation: "credential-v1",
+  };
+  const sourceId = `artifact-reader-source-${tag}`;
+  await seedSource(sourceId);
+  const ownerAuthority = createOwnerScopeAuthority(runtime.CORE_DB, access, () => now);
+  const scopes = createD1ScopeService(runtime.CORE_DB, ownerAuthority, { now: () => now, ttl_ms: 3_600_000 });
+  const scope = await scopes.freeze({ kind: "SELECTED_SOURCES", source_ids: [sourceId] }, access.credential_generation);
+  await ownerAuthority.grant(scope);
+  return {
+    input: await draftInput(tag, { scope_snapshot_id: scope.snapshot_id, principal_ref: access.principal_ref }),
     scope,
     access,
     requireCurrent: (requested) => scopes.requireCurrent(requested),

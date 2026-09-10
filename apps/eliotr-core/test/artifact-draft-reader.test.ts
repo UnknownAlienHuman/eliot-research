@@ -1,12 +1,12 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft } from "@eliotr/cloudflare-research";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createApplication } from "../src/composition-root.js";
 import { handleHttp } from "../src/http.js";
 import {
   createArtifactDraftRuntime,
   draftInput,
   initializeArtifactDraftRuntime,
+  readableOwnerArtifactDraft,
   readableArtifactDraft,
   runtime,
   type ArtifactDraftReadFixture,
@@ -209,7 +209,7 @@ describe("actual D1/R2 artifact draft reader", () => {
   });
 
   it("serves an owner draft through the real HTTP router with fixture-backed currentness", async () => {
-    const fixture = await readableArtifactDraft(`reader-http-${crypto.randomUUID()}`);
+    const fixture = await readableOwnerArtifactDraft(`reader-http-${crypto.randomUUID()}`);
     await seed(fixture);
     const response = await handleHttp(
       new Request(`https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:${fixture.input.revision.artifact_ref.revision}`),
@@ -224,34 +224,45 @@ describe("actual D1/R2 artifact draft reader", () => {
             expires_at: new Date(Date.now() + 3_600_000).toISOString(),
           };
         } },
-        applicationFactory: ({ env, executionContext }) => {
-          const application = createApplication({ env, executionContext });
-          return {
-            ...application,
-            services: {
-              ...application.services,
-              semantic: {
-                ...application.services.semantic,
-                artifact: (context: Parameters<NonNullable<typeof application.services.semantic.artifact>>[0], artifactRef: Parameters<NonNullable<typeof application.services.semantic.artifact>>[1]) =>
-                  readArtifactDraft({
-                    database: runtime.CORE_DB,
-                    work_bucket: runtime.WORK_BUCKET,
-                    artifact_ref: artifactRef,
-                    access: context,
-                    require_current: fixture.requireCurrent,
-                    now: fixture.now,
-                  }).then((revision) => {
-                    if (revision === null) throw new Error("fixture draft unexpectedly missing");
-                    return revision;
-                  }),
-              },
-            },
-          };
-        },
       },
     );
     expect(response.status).toBe(200);
     const envelope = await response.json() as { readonly data: unknown };
     expect(envelope.data).toEqual(fixture.input.revision);
+
+    const absent = await handleHttp(
+      new Request("https://research.example/api/v1/research/artifact/reader-absent:1"),
+      runtime,
+      {} as ExecutionContext,
+      { accessVerifier: { async verify() {
+        return { ...fixture.access, authentication_method: "cloudflare_access" as const,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+      } } },
+    );
+    expect(absent.status).toBe(404);
+    expect((await absent.json() as { readonly code: string }).code).toBe("ARTIFACT_DRAFT_READ_NOT_FOUND");
+
+    const invalid = await handleHttp(
+      new Request(`https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:0`),
+      runtime,
+      {} as ExecutionContext,
+      { accessVerifier: { async verify() {
+        return { ...fixture.access, authentication_method: "cloudflare_access" as const,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+      } } },
+    );
+    expect(invalid.status).toBe(400);
+    expect((await invalid.json() as { readonly code: string }).code).toBe("ARTIFACT_REF_INVALID");
+
+    const service = await handleHttp(
+      new Request(`https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:${fixture.input.revision.artifact_ref.revision}`),
+      runtime,
+      {} as ExecutionContext,
+      { accessVerifier: { async verify() {
+        return { ...fixture.access, authentication_method: "service_token" as const,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+      } } },
+    );
+    expect(service.status).toBe(403);
   });
 });
