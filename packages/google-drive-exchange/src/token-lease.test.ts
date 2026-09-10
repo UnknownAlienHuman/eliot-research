@@ -107,15 +107,24 @@ describe("one-operation OAuth refresh lease", () => {
   it("aborts hung credential reads/token headers/body and never retries or saves a late token", async () => {
     for (const stage of ["store", "headers", "body"]) {
       const test = await setup(); const abort = new AbortController(); let cancelled = false;
+      let bodyReadStartedResolve: (() => void) | undefined;
+      let bodyCancelledResolve: (() => void) | undefined;
+      const bodyReadStarted = new Promise<void>((resolve) => { bodyReadStartedResolve = resolve; });
+      const bodyCancelled = new Promise<void>((resolve) => { bodyCancelledResolve = resolve; });
       if (stage === "store") test.store.load = () => new Promise(() => {});
       if (stage === "headers") test.fetchImpl.mockImplementation(() => new Promise(() => {}));
-      if (stage === "body") test.fetchImpl.mockImplementation(async () => new Response(new ReadableStream({ cancel() { cancelled = true; } }),
+      if (stage === "body") test.fetchImpl.mockImplementation(async () => new Response(new ReadableStream({
+        pull() { bodyReadStartedResolve?.(); return new Promise(() => {}); },
+        cancel() { cancelled = true; bodyCancelledResolve?.(); },
+      }),
         { headers: { "content-type": "application/json" } }));
       const authorize = createGoogleAccessLeaseProvider(test.options); const pending = authorize(abort.signal);
-      await new Promise((resolve) => setTimeout(resolve, 10)); abort.abort();
+      if (stage === "body") await bodyReadStarted;
+      abort.abort();
       await expect(pending).rejects.toMatchObject({ code: "GOOGLE_CREDENTIAL_CANCELLED" });
       await expect(authorize(signal())).rejects.toThrow(); expect(test.saved).toHaveLength(0);
-      expect(test.fetchImpl.mock.calls.length).toBeLessThanOrEqual(1); if (stage === "body") expect(cancelled).toBe(true);
+      expect(test.fetchImpl.mock.calls.length).toBeLessThanOrEqual(1);
+      if (stage === "body") { await bodyCancelled; expect(cancelled).toBe(true); }
     }
   });
   it("enforces the absolute deadline even without caller abort", async () => {
