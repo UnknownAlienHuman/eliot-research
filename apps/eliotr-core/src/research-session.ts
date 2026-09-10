@@ -181,6 +181,9 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         receipts = await driver.executeOperation({ operation_id, investigation_id, initial_revision: 1, idempotency_key: key, handler_generation: handlerGeneration, initial_input_manifest: initialManifest }, principal, handlers);
       } catch (error) {
         const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_EFFECT_UNCERTAIN";
+        if (code === "RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", code, 400);
+        if (code === "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", code, 409);
+        if (code === "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID") fail("RESEARCH_CONFLICT", code, 409);
         if (code === "WORKFLOW_CONFLICT" || code === "WORKFLOW_STAGE_OUT_OF_ORDER" || code === "WORKFLOW_INPUT_INVALID") fail("RESEARCH_CONFLICT", code, 409);
         if (code === "WORKFLOW_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", code, 409);
         if (code === "WORKFLOW_CANCELLED") fail("RESEARCH_CANCELLED", code, 409);
