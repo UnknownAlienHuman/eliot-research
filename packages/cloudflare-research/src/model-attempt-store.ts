@@ -51,6 +51,8 @@ interface ReservationRow {
   readonly confidence: unknown;
   readonly quote_json: unknown;
   readonly authority_json: unknown;
+  readonly stage_attempt_ref: unknown;
+  readonly stage_request_sha256: unknown;
 }
 
 interface AttemptRow extends ReservationRow {
@@ -58,6 +60,7 @@ interface AttemptRow extends ReservationRow {
   readonly intent_id: unknown;
   readonly intent_revision: unknown;
   readonly attempt_number: unknown;
+  readonly attempt_request_sha256: unknown;
   readonly attempt_request_json: unknown;
   readonly attempt_authority_json: unknown;
   readonly route_ref: unknown;
@@ -65,6 +68,8 @@ interface AttemptRow extends ReservationRow {
   readonly schema_generation: unknown;
   readonly attempt_credential_generation: unknown;
   readonly attempt_deployment_generation: unknown;
+  readonly attempt_stage_attempt_ref: unknown;
+  readonly attempt_stage_request_sha256: unknown;
   readonly attempt_state: unknown;
   readonly receipt_json: unknown;
   readonly receipt_sha256: unknown;
@@ -126,6 +131,19 @@ function boundedJson(value: unknown, label: string): string {
   return result;
 }
 
+function canonicalStoredJson(value: unknown, label: string): string {
+  if (typeof value !== "string") fail("MODEL_ATTEMPT_READBACK_CORRUPT", `${label} is missing`);
+  let parsed: unknown;
+  try { parsed = JSON.parse(value); } catch (cause) { fail("MODEL_ATTEMPT_READBACK_CORRUPT", `${label} is not JSON`, false, cause); }
+  if (new TextEncoder().encode(value).byteLength > MAX_JSON_BYTES) fail("MODEL_ATTEMPT_READBACK_CORRUPT", `${label} exceeds the D1 metadata bound`);
+  if (canonicalJson(parsed) !== value) fail("MODEL_ATTEMPT_READBACK_CORRUPT", `${label} is not canonical JSON`);
+  return value;
+}
+
+function attemptIdFor(requestSha256: string): string {
+  return `model-attempt-${requestSha256.slice(0, 48)}-1`;
+}
+
 async function digest(textValue: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(textValue)));
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -182,6 +200,8 @@ function compactRequest(input: ModelAttemptReservationInput, fullDigest: string)
       ...(input.call.cancellation_ref === undefined ? {} : { cancellation_ref: input.call.cancellation_ref }),
     },
     authority: input.authority,
+    stage_attempt_ref: input.stage_attempt_ref,
+    stage_request_sha256: input.stage_request_sha256,
   };
 }
 
@@ -189,6 +209,8 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   const intent = OperationIntentSchema.parse(input.intent);
   const quote = quoteObject(input.quote);
   const authority = authorityObject(input.authority);
+  text(input.stage_attempt_ref, "stage_attempt_ref");
+  sha(input.stage_request_sha256, "stage_request_sha256");
   text(input.idempotency_key, "idempotency_key");
   if (intent.idempotency_key !== input.idempotency_key || intent.principal_ref !== authority.principal_ref || intent.policy_decision_ref !== authority.policy_decision_ref) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "intent and verified authority do not match");
   if (intent.budget_reservation_ref !== quote.reservation_id || input.call.budget_reservation_ref !== quote.reservation_id) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model call does not use the quoted reservation");
@@ -200,7 +222,7 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   text(input.call.output_object_ref, "call.output_object_ref");
   nonNegativeInteger(input.call.max_input_bytes, "call.max_input_bytes");
   nonNegativeInteger(input.call.max_output_bytes, "call.max_output_bytes");
-  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority });
+  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority, stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256 });
   return { quote, authority, request_json: "", request_sha256: full };
 }
 
@@ -302,6 +324,14 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
   });
   const state = row.attempt_state as string;
   if (!["STARTED", "SUCCEEDED", "FAILED", "CANCELLED"].includes(state)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "stored model attempt state is invalid");
+  const requestJson = canonicalStoredJson(row.attempt_request_json, "model attempt request");
+  const budgetRequestJson = canonicalStoredJson(row.request_json, "budget reservation request");
+  if (requestJson !== budgetRequestJson || row.request_sha256 !== row.attempt_request_sha256) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model request binding is inconsistent");
+  const budgetAuthorityJson = canonicalStoredJson(row.authority_json, "budget reservation authority");
+  const attemptAuthorityJson = canonicalStoredJson(row.attempt_authority_json, "model attempt authority");
+  if (budgetAuthorityJson !== attemptAuthorityJson) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model authority binding is inconsistent");
+  const authority = parseAuthority(attemptAuthorityJson);
+  if (text(row.attempt_stage_attempt_ref, "stage_attempt_ref") !== text(row.stage_attempt_ref, "stage_attempt_ref") || sha(row.attempt_stage_request_sha256, "stage_request_sha256") !== sha(row.stage_request_sha256, "stage_request_sha256")) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "workflow stage binding is inconsistent");
   const receipt = parseModelReceipt(row.receipt_json);
   if ((receipt === null) !== (row.receipt_sha256 === null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt and digest binding disagree");
   if (receipt !== null) {
@@ -318,6 +348,7 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     readback_sha256: sha(row.readback_sha256, "readback_sha256"),
   } satisfies ModelOutputBinding;
   if ((state === "SUCCEEDED") !== (output !== null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model output binding is incomplete");
+  if (row.operation_attempt_state !== state) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model and operation attempt states disagree");
   const readState = state === "STARTED" ? "UNKNOWN" : state as "SUCCEEDED" | "FAILED" | "CANCELLED";
   return Object.freeze({
     attempt_id: attempt.attempt_id,
@@ -326,7 +357,9 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     state: readState,
     persisted_state: attempt.state,
     request_sha256: sha(row.request_sha256, "request_sha256"),
-    authority: parseAuthority(row.attempt_authority_json),
+    stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"),
+    stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256"),
+    authority,
     receipt,
     operation_receipt,
     output,
@@ -336,11 +369,11 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
 }
 
 function attemptSelect(): string {
-  return "SELECT m.attempt_id, m.intent_id, m.intent_revision, m.reservation_id, m.attempt_number, m.principal_ref, m.operation_kind, m.idempotency_key, m.request_sha256, m.request_json AS attempt_request_json, m.authority_json AS attempt_authority_json, m.route_ref, m.prompt_generation, m.schema_generation, m.credential_generation AS attempt_credential_generation, m.deployment_generation AS attempt_deployment_generation, m.state AS attempt_state, m.receipt_json, m.receipt_sha256, m.output_object_ref, m.output_sha256, m.output_size_bytes, m.readback_sha256, m.error_code, m.reason_codes_json, m.started_at, m.ended_at, " +
+  return "SELECT m.attempt_id, m.intent_id, m.intent_revision, m.reservation_id, m.attempt_number, m.principal_ref, m.operation_kind, m.idempotency_key, m.request_sha256 AS attempt_request_sha256, m.request_json AS attempt_request_json, m.authority_json AS attempt_authority_json, m.route_ref, m.prompt_generation, m.schema_generation, m.credential_generation AS attempt_credential_generation, m.deployment_generation AS attempt_deployment_generation, m.stage_attempt_ref AS attempt_stage_attempt_ref, m.stage_request_sha256 AS attempt_stage_request_sha256, m.state AS attempt_state, m.receipt_json, m.receipt_sha256, m.output_object_ref, m.output_sha256, m.output_size_bytes, m.readback_sha256, m.error_code, m.reason_codes_json, m.started_at, m.ended_at, " +
     "a.state AS operation_attempt_state, a.checkpoint_ref, a.error_code AS operation_attempt_error_code, " +
     "i.revision, i.operation_kind, i.principal_ref, i.idempotency_key, i.payload_ref, i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, i.created_at AS intent_created_at, " +
     "o.receipt_id AS operation_receipt_id, o.output_refs_json AS operation_output_refs_json, o.readback_receipt_refs_json AS operation_readback_receipt_refs_json, o.reason_codes_json AS operation_reasons_json, o.created_at AS operation_receipt_created_at, " +
-    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json " +
+    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json, b.stage_attempt_ref, b.stage_request_sha256, b.request_sha256, b.request_json " +
     "FROM research_model_attempt m JOIN operation_attempt a ON a.attempt_id = m.attempt_id " +
     "JOIN operation_intent i ON i.intent_id = m.intent_id AND i.revision = m.intent_revision " +
     "JOIN budget_reservation b ON b.reservation_id = m.reservation_id " +
@@ -380,7 +413,16 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
     });
     const reservation = reservationFromRow(row);
     const authority = parseAuthority(row.authority_json);
-    return Object.freeze({ intent, reservation, request_sha256, request_json: text(row.request_json, "request_json"), attempt_identity: `model-attempt-${request_sha256.slice(0, 48)}-1`, authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation });
+    if (row.stage_attempt_ref !== input.stage_attempt_ref || row.stage_request_sha256 !== input.stage_request_sha256) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation is bound to a different workflow stage");
+    return Object.freeze({ intent, reservation, request_sha256, request_json: canonicalStoredJson(row.request_json, "request_json"), attempt_identity: attemptIdFor(request_sha256), authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation, stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"), stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256") });
+  }
+
+  async function reloadReservation(reservation: ModelAttemptReservation): Promise<void> {
+    const row = await database.prepare("SELECT * FROM budget_reservation WHERE reservation_id = ?1 LIMIT 1").bind(reservation.reservation.reservation_id).first<ReservationRow>();
+    if (row === null) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model reservation readback is missing", true);
+    const stored = reservationFromRow(row);
+    if (canonicalJson(stored) !== canonicalJson(reservation.reservation) || row.request_sha256 !== reservation.request_sha256 || row.stage_attempt_ref !== reservation.stage_attempt_ref || row.stage_request_sha256 !== reservation.stage_request_sha256 || canonicalStoredJson(row.request_json, "model reservation request") !== reservation.request_json || canonicalJson(parseAuthority(row.authority_json)) !== canonicalJson(reservation.authority)) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation changed after its authority readback");
+    if (stored.state !== "RESERVED") fail("MODEL_ATTEMPT_CONFLICT", "model reservation is no longer available for a new attempt");
   }
 
   return {
@@ -394,7 +436,7 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
       try {
         const results = await database.batch([
           database.prepare("INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)").bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.intent.operation_kind, input.intent.principal_ref, input.intent.idempotency_key, input.intent.payload_ref, input.intent.policy_decision_ref, prepared.quote.reservation_id, input.intent.cancellation_ref ?? null, input.intent.created_at),
-          database.prepare("INSERT INTO budget_reservation(reservation_id, operation_kind, project_id, platform_usd, workers_ai_usd, byok_usd, max_total_usd, workflow_steps, state, expires_at, created_at, principal_ref, idempotency_key, request_sha256, request_json, policy_decision_ref, credential_generation, deployment_generation, quote_ref, expected_sources, expected_sections, confidence, quote_json, authority_json) VALUES (?1,?2,NULL,?3,?4,?5,?6,?7,'RESERVED',?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)").bind(prepared.quote.reservation_id, input.intent.operation_kind, prepared.quote.platform_usd, prepared.quote.workers_ai_usd, prepared.quote.byok_usd, prepared.quote.max_total_usd, prepared.quote.workflow_steps, prepared.quote.expires_at, created, input.authority.principal_ref, input.idempotency_key, prepared.request_sha256, prepared.request_json, input.authority.policy_decision_ref, input.authority.credential_generation, input.authority.deployment_generation, prepared.quote.quote_ref, prepared.quote.expected_sources, prepared.quote.expected_sections, prepared.quote.confidence, quoteJson, authorityJson),
+          database.prepare("INSERT INTO budget_reservation(reservation_id, operation_kind, project_id, platform_usd, workers_ai_usd, byok_usd, max_total_usd, workflow_steps, state, expires_at, created_at, principal_ref, idempotency_key, request_sha256, request_json, policy_decision_ref, credential_generation, deployment_generation, quote_ref, expected_sources, expected_sections, confidence, quote_json, authority_json, stage_attempt_ref, stage_request_sha256) VALUES (?1,?2,NULL,?3,?4,?5,?6,?7,'RESERVED',?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25)").bind(prepared.quote.reservation_id, input.intent.operation_kind, prepared.quote.platform_usd, prepared.quote.workers_ai_usd, prepared.quote.byok_usd, prepared.quote.max_total_usd, prepared.quote.workflow_steps, prepared.quote.expires_at, created, input.authority.principal_ref, input.idempotency_key, prepared.request_sha256, prepared.request_json, input.authority.policy_decision_ref, input.authority.credential_generation, input.authority.deployment_generation, prepared.quote.quote_ref, prepared.quote.expected_sources, prepared.quote.expected_sections, prepared.quote.confidence, quoteJson, authorityJson, input.stage_attempt_ref, input.stage_request_sha256),
         ]);
         if (results.length !== 2 || results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model reservation batch did not commit exactly two rows", true);
       } catch (error) {
@@ -408,20 +450,21 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
       return reservation;
     },
 
-    async beginAttempt(reservation, attempt_number = 1): Promise<ModelAttemptStart> {
-      if (!Number.isSafeInteger(attempt_number) || attempt_number < 1) fail("MODEL_ATTEMPT_INPUT_INVALID", "attempt_number is invalid");
+    async beginAttempt(reservation): Promise<ModelAttemptStart> {
+      const attempt_number = 1;
+      await reloadReservation(reservation);
       if (Date.parse(reservation.reservation.expires_at) <= Date.parse(now())) fail("MODEL_ATTEMPT_BUDGET_EXPIRED", "model reservation has expired");
       const existing = await this.readByIdempotency({ principal_ref: reservation.authority.principal_ref, operation_kind: reservation.intent.operation_kind, idempotency_key: reservation.intent.idempotency_key });
       if (existing !== null) return Object.freeze({ reservation, attempt: existing.attempt, state: existing.state === "UNKNOWN" || existing.state === "RESERVED" ? "UNKNOWN" : existing.state, should_invoke: false });
       const startedAt = now();
-      const attemptId = `model-attempt-${reservation.request_sha256.slice(0, 48)}-${attempt_number}`;
+      const attemptId = attemptIdFor(reservation.request_sha256);
       const opAttempt: OperationAttempt = { attempt_id: attemptId, intent_ref: reservation.intent.intent_ref, attempt_number, state: "STARTED", started_at: startedAt };
       const authorityJson = boundedJson(reservation.authority, "model authority");
       const reasonJson = "[]";
       try {
         const results = await database.batch([
           database.prepare("INSERT INTO operation_attempt(attempt_id,intent_id,intent_revision,attempt_number,state,checkpoint_ref,error_code,started_at,ended_at) VALUES (?1,?2,?3,?4,'STARTED',NULL,NULL,?5,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, attempt_number, startedAt),
-          database.prepare("INSERT INTO research_model_attempt(attempt_id,intent_id,intent_revision,reservation_id,attempt_number,principal_ref,operation_kind,idempotency_key,request_sha256,request_json,authority_json,route_ref,prompt_generation,schema_generation,credential_generation,deployment_generation,state,receipt_json,receipt_sha256,output_object_ref,output_sha256,output_size_bytes,readback_sha256,error_code,reason_codes_json,started_at,ended_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,'STARTED',NULL,NULL,NULL,NULL,NULL,NULL,NULL,?17,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, reservation.reservation.reservation_id, attempt_number, reservation.authority.principal_ref, reservation.intent.operation_kind, reservation.intent.idempotency_key, reservation.request_sha256, reservation.request_json, authorityJson, reservation.route_ref, reservation.prompt_generation, reservation.schema_generation, reservation.authority.credential_generation, reservation.authority.deployment_generation, startedAt, reasonJson),
+          database.prepare("INSERT INTO research_model_attempt(attempt_id,intent_id,intent_revision,reservation_id,attempt_number,principal_ref,operation_kind,idempotency_key,request_sha256,request_json,authority_json,route_ref,prompt_generation,schema_generation,credential_generation,deployment_generation,stage_attempt_ref,stage_request_sha256,state,receipt_json,receipt_sha256,output_object_ref,output_sha256,output_size_bytes,readback_sha256,error_code,reason_codes_json,started_at,ended_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,'STARTED',NULL,NULL,NULL,NULL,NULL,NULL,NULL,?19,?20,NULL)").bind(attemptId, reservation.intent.intent_ref.id, reservation.intent.intent_ref.revision, reservation.reservation.reservation_id, attempt_number, reservation.authority.principal_ref, reservation.intent.operation_kind, reservation.intent.idempotency_key, reservation.request_sha256, reservation.request_json, authorityJson, reservation.route_ref, reservation.prompt_generation, reservation.schema_generation, reservation.authority.credential_generation, reservation.authority.deployment_generation, reservation.stage_attempt_ref, reservation.stage_request_sha256, reasonJson, startedAt),
         ]);
         if (results.length !== 2 || results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "model attempt batch did not commit exactly two rows", true);
       } catch (error) {
@@ -437,7 +480,10 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
       const current = await this.readByAttempt(input.attempt_id);
       if (current === null) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model attempt does not exist");
       if (current.state !== "UNKNOWN") {
+        if (input.state !== current.persisted_state) fail("MODEL_ATTEMPT_CONFLICT", "terminal model attempt cannot be overwritten");
         if (input.state === "SUCCEEDED" && current.receipt !== null && canonicalJson(current.receipt) !== canonicalJson(input.receipt)) fail("MODEL_ATTEMPT_CONFLICT", "terminal model receipt differs from persisted receipt");
+        if (input.state === "SUCCEEDED" && current.output !== null && canonicalJson(current.output) !== canonicalJson(input.output)) fail("MODEL_ATTEMPT_CONFLICT", "terminal model output differs from persisted output");
+        if (input.state !== "SUCCEEDED" && (input.error_code !== current.error_code || canonicalJson(input.reason_codes ?? []) !== canonicalJson(current.reason_codes))) fail("MODEL_ATTEMPT_CONFLICT", "terminal model failure differs from persisted failure");
         return current;
       }
       const endedAt = now();
