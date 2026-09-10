@@ -15,6 +15,35 @@ const dist = resolve(root, "apps/eliotr-pwa/dist");
 const generation = "browser-fixture";
 const trace = "raw-file-browser";
 const envelope = (data, deploymentGeneration = generation) => ({ data, trace_id: trace, deployment_generation: deploymentGeneration });
+const SAFE_NETWORK_FAILURES = new Set(["net::ERR_ABORTED", "net::ERR_CONNECTION_CLOSED", "net::ERR_CONNECTION_RESET", "net::ERR_CONTENT_LENGTH_MISMATCH", "net::ERR_FAILED", "net::ERR_INCOMPLETE_CHUNKED_ENCODING", "net::ERR_NETWORK_CHANGED"]);
+function rawResponsePhase(method, path) {
+  if (path.endsWith("/markdown")) return "conversion";
+  if (path.endsWith("/admission")) return "admission";
+  if (/\/admission\/[^/]+$/u.test(path)) return "status";
+  return "capture";
+}
+function rawBodyErrorKind(error) {
+  const message = String(error?.message ?? "");
+  if (/No resource with given identifier/iu.test(message)) return "NoResource";
+  if (/Response body is unavailable/iu.test(message)) return "BodyUnavailable";
+  if (/ERR_ABORTED|\baborted\b/iu.test(message)) return "RequestAborted";
+  if (/Target (?:page|closed)|browser has been closed|context has been closed/iu.test(message)) return "TargetClosed";
+  return "Other";
+}
+function rawBodyDiagnostic(page, response, method, path, status, error) {
+  const request = response.request();
+  let requestMethod = method;
+  try { requestMethod = request.method(); } catch { /* Bounded diagnostic only. */ }
+  let networkFailure = "unavailable";
+  try { const value = request.failure()?.errorText; if (SAFE_NETWORK_FAILURES.has(value)) networkFailure = value; } catch { /* Bounded diagnostic only. */ }
+  let serviceWorker = false;
+  try { serviceWorker = typeof response.fromServiceWorker === "function" && response.fromServiceWorker(); } catch { /* Bounded diagnostic only. */ }
+  let frameDetached = false;
+  try { const frame = request.frame(); frameDetached = typeof frame?.isDetached === "function" && frame.isDetached(); } catch { /* Bounded diagnostic only. */ }
+  let pageClosed = false;
+  try { pageClosed = typeof page.isClosed === "function" && page.isClosed(); } catch { /* Bounded diagnostic only. */ }
+  return `method=${requestMethod} phase=${rawResponsePhase(method, path)} status=${status} service_worker=${serviceWorker} network_failure=${networkFailure} body_error=${rawBodyErrorKind(error)} page_closed=${pageClosed} frame_detached=${frameDetached}`;
+}
 
 function assertRawEnvelope(value, expectedGeneration, expected) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value), "raw capture response must be an object");
@@ -57,7 +86,7 @@ export async function waitForRawResponse(page, method, action, path = "/api/v1/i
       // document is navigated away, even though the response event already ran.
       body = await response.body();
     } catch (error) {
-      throw new Error(`raw ${method} response body was unavailable at settlement`, { cause: error });
+      throw new Error(`raw response body unavailable at settlement (${rawBodyDiagnostic(page, response, method, path, status, error)})`, { cause: error });
     }
     const requestHeaders = await response.request().allHeaders();
     const requestBody = typeof response.request().postData === "function"
