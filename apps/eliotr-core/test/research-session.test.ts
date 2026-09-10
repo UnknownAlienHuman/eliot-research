@@ -2,8 +2,12 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 
-beforeAll(setupOrientationDatabase);
+beforeAll(async () => {
+  await setupOrientationDatabase();
+  for (const sourceId of ["rs-query", "rs-query-neg", "rs-shared", "rs-second", "rs-revoked"]) await seedSource(sourceId);
+});
 
 function queryBody(id: string, fields: Record<string, unknown> = {}) {
   return { query: "Source", product: "ORIENT", scope_expression: { kind: "SELECTED_SOURCES", source_ids: [id] }, literals: [], evidence_grade: "E0", budget_ref: ORIENTATION_PROFILE, max_results: 8, ...fields };
@@ -38,7 +42,6 @@ function sessionStartBody(tag: string, who = principal) {
 
 describe("research.query over real HTTP/D1", () => {
   it("serves retrieval (genuine no-hit NONE on unprojected seed), replays the same key without duplication and rejects stale/foreign", async () => {
-    await seedSource("rs-query");
     const first = await run(queryRequest("rs-query"));
     expect(first.status).toBe(200);
     const firstBody = await body(first);
@@ -53,7 +56,6 @@ describe("research.query over real HTTP/D1", () => {
     expect((await run(queryRequest("rs-query"), verifier("stranger"))).status).toBe(403);
   });
   it("fails closed on unknown fields, unsupported product and missing idempotency", async () => {
-    await seedSource("rs-query-neg");
     expect((await run(queryRequest("rs-query-neg", { extra: 1 }))).status).toBe(400);
     expect((await run(queryRequest("rs-query-neg", { product: "RESEARCH" }))).status).toBe(422);
     const req = queryRequest("rs-query-neg");
@@ -64,7 +66,6 @@ describe("research.query over real HTTP/D1", () => {
 
 describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () => {
   it("creates a ledger, walks 18 handle-only stages within 64KiB and resumes without duplicate effects", async () => {
-    await seedSource("rs-shared");
     const response = await run(runRequest("rs-shared", {}, "rs-run-first"));
     const payload = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(payload)).toBe(200);
@@ -105,7 +106,6 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(await workflowCounts()).toEqual(counts);
   }, 30_000);
   it("creates an independent second source run with its own current policy authority", async () => {
-    await seedSource("rs-second");
     const response = await run(runRequest("rs-second", {}, "rs-run-second"));
     const payload = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(response);
     expect(response.status, JSON.stringify(payload)).toBe(200);
@@ -133,7 +133,6 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(unaffected.status, JSON.stringify(unaffectedPayload)).toBe(200);
   }, 30_000);
   it("keeps revocation rejection separate from successful independent runs", async () => {
-    await seedSource("rs-revoked");
     const first = await run(runRequest("rs-revoked", {}, "rs-run-revoked"));
     const firstPayload = await body<{ workflow_instance_id: string }>(first);
     expect(first.status, JSON.stringify(firstPayload)).toBe(200);
@@ -147,7 +146,7 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
       const response = await run(runRequest("rs-revoked", {}, "rs-run-revoked"));
       const payload = await body(response);
       expect(response.status, JSON.stringify(payload)).toBe(409);
-      expect(payload.code, JSON.stringify(payload)).toBe("SCOPE_SNAPSHOT_STALE");
+      expect(payload.code, JSON.stringify(payload)).toBe("ORIENTATION_OPERATION_EXPIRED");
     } finally {
       await db.prepare("UPDATE scope_access_grant SET state = 'ACTIVE' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
         .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
@@ -192,7 +191,9 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(again.status).toBe(200);
   });
   it("executes W2 checkpoints for a run-created investigation and resumes without duplicate paid effects", async () => {
-    const probe = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(await run(runRequest("rs-shared", {}, "rs-run-first")));
+    const probeResponse = await run(runRequest("rs-shared", {}, "rs-run-first"));
+    const probe = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(probeResponse);
+    expect(probeResponse.status, JSON.stringify(probe)).toBe(200);
     const payload = probe.data;
     expect(payload.workflow_instance_id.startsWith("run-")).toBe(true);
     const manifestRow = await db.prepare("SELECT initial_manifest_json FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ initial_manifest_json: string }>();
@@ -201,19 +202,24 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const manifest = JSON.parse(manifestRow.initial_manifest_json);
     const tag = "do-exec";
     const stub = doStub(`research-${tag}`);
-    const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: "research-handlers.v1", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: "test-generation" };
+    const runBinding = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ handler_generation: string }>();
+    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+    const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: runBinding?.handler_generation ?? "", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: "test-generation" };
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(sessionBody) }))).status).toBe(200);
     const before = await workflowCounts();
     const first = await stub.fetch(new Request(`https://do/session/sess-${tag}/run`, { method: "POST", headers: doHeaders() }));
-    expect(first.status).toBe(200);
-    const firstJson = (await first.json()) as { state: string; receipt_refs: string[] };
-    expect(firstJson.state).toBe("ENGINE_COMPLETED");
+    const firstJson = (await first.json()) as { state?: string; receipt_refs?: string[]; code?: string };
+    expect(first.status, JSON.stringify(firstJson)).toBe(200);
+    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
+    expect(Array.isArray(firstJson.receipt_refs), JSON.stringify(firstJson)).toBe(true);
+    if (first.status !== 200 || firstJson.state !== "ENGINE_COMPLETED" || !Array.isArray(firstJson.receipt_refs)) throw new Error(`unexpected first DO response: ${JSON.stringify(firstJson)}`);
     expect(firstJson.receipt_refs).toHaveLength(18);
     for (const ref of firstJson.receipt_refs) expect(ref.length).toBeLessThanOrEqual(256);
     expect(await workflowCounts()).toEqual(before);
     const second = await stub.fetch(new Request(`https://do/session/sess-${tag}/run`, { method: "POST", headers: doHeaders() }));
-    expect(second.status).toBe(200);
-    expect(await second.json()).toEqual(firstJson);
+    const secondJson = await second.json();
+    expect(second.status, JSON.stringify(secondJson)).toBe(200);
+    expect(secondJson).toEqual(firstJson);
     expect(await workflowCounts()).toEqual(before);
   }, 30_000);
 });
