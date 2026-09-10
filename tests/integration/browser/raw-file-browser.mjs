@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { resolveLocalBrowserExecutable } from "../../../scripts/lib/local-launch.mjs";
 /* global URL:readonly, Buffer:readonly, document:readonly, window:readonly, Event:readonly,
-  process:readonly, console:readonly */
+  process:readonly, console:readonly, fetch:readonly */
 
 const root = resolve(import.meta.dirname, "../../..");
 const dist = resolve(root, "apps/eliotr-pwa/dist");
@@ -34,7 +34,7 @@ function assertRawEnvelope(value, expectedGeneration, expected) {
   return receipt;
 }
 
-export async function waitForRawResponse(page, method, action, path = "/api/v1/ingest/raw") {
+export async function waitForRawResponse(page, method, action, path = "/api/v1/ingest/raw", expectedStatus = 200) {
   const expectedOrigin = (() => {
     try { return new URL(page.url()).origin; } catch { return undefined; }
   })();
@@ -73,9 +73,9 @@ export async function waitForRawResponse(page, method, action, path = "/api/v1/i
     return { status, requestHeaders, requestBody, payload };
   });
   const [, snapshot] = await Promise.all([Promise.resolve().then(action), snapshotPromise]);
-  if (snapshot.status !== 200) {
+  if (snapshot.status !== expectedStatus) {
     const code = String(snapshot.payload?.code ?? snapshot.payload?.data?.code ?? snapshot.payload?.title ?? "unavailable").slice(0, 128);
-    throw new Error(`raw ${method} ${path} must succeed through the real Worker: status=${snapshot.status} code=${code}`);
+    throw new Error(`raw ${method} ${path} must answer with ${expectedStatus} through the real Worker: status=${snapshot.status} code=${code}`);
   }
   return snapshot;
 }
@@ -201,7 +201,7 @@ function contentType(path) {
 }
 
 async function startFixture() {
-  const raw = { mode: "lost", postCount: 0, getCount: 0, conversionCount: 0, conversionMode: "unknown", admissionCount: 0, capture: undefined, headers: undefined, release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [] };
+  const raw = { mode: "lost", postCount: 0, getCount: 0, conversionCount: 0, conversionMode: "unknown", admissionMode: "lost", admissionCount: 0, capture: undefined, headers: undefined, release: undefined, onPost: undefined, requests: [], conversionRequests: [], admissionRequests: [] };
   const server = createServer((request, response) => {
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -249,6 +249,12 @@ async function startFixture() {
         assert.deepEqual(Object.keys(body).sort(), ["conversion_operation_id", "idempotency_key"]);
         raw.admissionCount += 1;
         raw.admissionRequests.push({ captureId: decodeURIComponent(admissionMatch[1]), body });
+        if (raw.admissionMode === "lost" && raw.admissionCount === 1) {
+          response.statusCode = 503; response.setHeader("content-type", "application/json; charset=utf-8");
+          response.end(JSON.stringify({ type: "urn:eliotr:problem:raw_normalized_outcome_unknown", title: "Library admission outcome is uncertain",
+            status: 503, code: "RAW_NORMALIZED_OUTCOME_UNKNOWN", trace_id: trace, retryable: true }));
+          return;
+        }
         const state = raw.admissionCount === 1 ? "UNKNOWN" : "COMMITTED";
         const data = state === "UNKNOWN"
           ? { protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64), capture_id: decodeURIComponent(admissionMatch[1]),
@@ -263,6 +269,18 @@ async function startFixture() {
               readback_sha256: "f".repeat(64), committed_at: "2026-09-09T00:00:00.000Z" }, reason_codes: [],
             expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" };
         return json(envelope(data));
+      }
+      const admissionStatusMatch = url.pathname.match(/^\/api\/v1\/ingest\/raw\/([^/]+)\/admission\/([a-f0-9]{64})$/u);
+      if (admissionStatusMatch !== null) {
+        assert.equal(request.method, "GET");
+        assert.equal(admissionStatusMatch[2], "a".repeat(64));
+        return json(envelope({ protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: "a".repeat(64),
+          capture_id: decodeURIComponent(admissionStatusMatch[1]), conversion_operation_id: "b".repeat(64), candidate_ref: `raw-normalized-candidate:${"b".repeat(64)}`, state: "COMMITTED",
+          source_revision_ref: "revision-raw-1", source_view_ref: `snapshot-view:v1:${"c".repeat(64)}`, conversion_state: "COMPLETE",
+          admission_receipt: { operation_id: "bundle-op-raw-1", manifest_sha256: "d".repeat(64), source_revision_ref: "revision-raw-1",
+            normalized_artifact_ref: "normalized/raw-1", object_residency_key_digest: "e".repeat(64), decision: "ADMITTED", reason_codes: [],
+            readback_sha256: "f".repeat(64), committed_at: "2026-09-09T00:00:00.000Z" }, reason_codes: [],
+          expires_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-09T00:00:00.000Z" }));
       }
       if (url.pathname === "/api/v1/ingest/raw") {
         if (request.method === "POST") {
@@ -390,8 +408,8 @@ export async function runRawFileUploadBrowser() {
     assert.doesNotMatch(processingText, /admitted\s+and\s+indexed/u);
 
     const admissionPath = `/api/v1/ingest/raw/${"raw-capture-" + "a".repeat(48)}/admission`;
-    const admissionUnknown = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath);
-    assert.equal(admissionUnknown.payload.data.state, "UNKNOWN");
+    const admissionUnknown = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath, 503);
+    assert.equal(admissionUnknown.payload.code, "RAW_NORMALIZED_OUTCOME_UNKNOWN");
     assert.equal(fixture.raw.admissionCount, 1);
     const admissionKey = fixture.raw.admissionRequests[0]?.body?.idempotency_key;
     assert.match(admissionKey, /^raw-admission-[a-f0-9]{64}$/u);
@@ -402,6 +420,13 @@ export async function runRawFileUploadBrowser() {
     assert.equal(fixture.raw.admissionRequests[1]?.body?.idempotency_key, admissionKey, "Library status check must reuse the same admission idempotency key");
     assert.match(await panel.locator("[data-raw-status]").textContent(), /Added to Library/u);
     assert.match(await panel.locator("[data-raw-admission]").textContent(), /COMMITTED/u);
+    const admissionReadbackPath = `${admissionPath}/${"a".repeat(64)}`;
+    const admissionReadback = await waitForRawResponse(page, "GET", () => page.evaluate(async (path) => {
+      const response = await fetch(path); await response.arrayBuffer(); return response.status;
+    }, admissionReadbackPath), admissionReadbackPath);
+    assert.equal(admissionReadback.payload.data.state, "COMMITTED");
+    assert.equal(admissionReadback.payload.data.admission_operation_id, "a".repeat(64));
+    assert.equal(admissionReadback.payload.data.admission_receipt.decision, "ADMITTED");
 
     // pagehide clears private state; reselecting the same file starts from the
     // same deterministic identity after the page is loaded again.

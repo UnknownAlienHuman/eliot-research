@@ -85,6 +85,20 @@ export interface RawNormalizedAdmissionResult {
   readonly reason_codes: readonly string[];
   readonly expires_at: string;
   readonly updated_at: string;
+  readonly status?: RawNormalizedAdmissionStatus;
+}
+
+export interface RawNormalizedAdmissionStatus {
+  readonly operation_id: string;
+  readonly state: "PREPARING" | "UPLOAD_REQUIRED" | "VERIFIED" | "AUTHORIZED" | "PROMOTED" | "COMMITTED" | "QUARANTINED" | "REJECTED";
+  readonly source_revision_ref: string;
+  readonly staging_session_ref?: string;
+  readonly qualification_report_ref?: string;
+  readonly decision_receipt_ref?: string;
+  readonly promotion_receipt_ref?: string;
+  readonly receipt?: BundleAdmissionReceipt;
+  readonly expires_at: string;
+  readonly updated_at: string;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -403,9 +417,34 @@ function decodeRawNormalizedAdmissionResult(
   if (state === "COMMITTED" && admissionReceipt === undefined) {
     throw new ApiRequestError({ status: 502, code: "RAW_ADMISSION_RESPONSE_INVALID", message: "Committed admission has no receipt" });
   }
+  let nestedStatus: RawNormalizedAdmissionStatus | undefined;
+  if (Object.hasOwn(value, "status")) {
+    const nested = value.status as Record<string, unknown>;
+    const nestedReceiptValue = nested.receipt;
+    const parsedNestedReceipt = nestedReceiptValue === undefined ? undefined : BundleAdmissionReceiptSchema.safeParse(nestedReceiptValue);
+    if (nestedReceiptValue !== undefined && (!parsedNestedReceipt?.success || admissionReceipt === undefined)) {
+      throw new ApiRequestError({ status: 502, code: "RAW_ADMISSION_RESPONSE_INVALID", message: "Library admission nested receipt is inconsistent" });
+    }
+    if (nested.operation_id !== (admissionReceipt?.operation_id ?? nested.operation_id) ||
+        nested.source_revision_ref !== sourceRevisionRef ||
+        (parsedNestedReceipt?.success && admissionReceipt !== undefined && JSON.stringify(parsedNestedReceipt.data) !== JSON.stringify(admissionReceipt))) {
+      throw new ApiRequestError({ status: 502, code: "RAW_ADMISSION_RESPONSE_INVALID", message: "Library admission nested status does not match its receipt" });
+    }
+    nestedStatus = {
+      operation_id: nested.operation_id as string, state: nested.state as RawNormalizedAdmissionStatus["state"],
+      source_revision_ref: nested.source_revision_ref as string,
+      ...(nested.staging_session_ref === undefined ? {} : { staging_session_ref: nested.staging_session_ref as string }),
+      ...(nested.qualification_report_ref === undefined ? {} : { qualification_report_ref: nested.qualification_report_ref as string }),
+      ...(nested.decision_receipt_ref === undefined ? {} : { decision_receipt_ref: nested.decision_receipt_ref as string }),
+      ...(nested.promotion_receipt_ref === undefined ? {} : { promotion_receipt_ref: nested.promotion_receipt_ref as string }),
+      ...(parsedNestedReceipt?.success ? { receipt: parsedNestedReceipt.data } : {}),
+      expires_at: canonicalTimestamp(nested.expires_at), updated_at: canonicalTimestamp(nested.updated_at),
+    };
+  }
   return { protocol: "eliotr.raw-normalized-admission.v1", admission_operation_id: operationId, capture_id: captureId,
     conversion_operation_id: conversionOperationId, candidate_ref: candidateRef, state: state as RawNormalizedAdmissionState,
     source_revision_ref: sourceRevisionRef, source_view_ref: sourceViewRef, conversion_state: "COMPLETE",
+    ...(nestedStatus === undefined ? {} : { status: nestedStatus }),
     ...(admissionReceipt === undefined ? {} : { admission_receipt: admissionReceipt }), reason_codes: value.reason_codes as string[],
     expires_at: expiresAt, updated_at: updatedAt };
 }
