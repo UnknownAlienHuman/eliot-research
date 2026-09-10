@@ -1,13 +1,14 @@
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
-import type { ArtifactRevision, ScopeSnapshot } from "@eliotr/contracts";
+import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
+  AuthenticatedRequestContext,
   FederationApi,
   OwnerApi,
   RawFileCaptureRequest,
   SemanticApi,
 } from "@eliotr/interfaces";
-import { ROUTES } from "@eliotr/interfaces";
+import { artifactSectionResponse, ROUTES } from "@eliotr/interfaces";
 import {
   createD1IngestAdmissionAuthority,
   createR2StagedBundlePort,
@@ -34,7 +35,7 @@ import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
-import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
+import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 export interface CompositionRootInput {
   readonly env: Env;
@@ -81,6 +82,15 @@ function semanticApi(env: Env): SemanticApi {
   const researchQuery = createResearchQueryService(env);
   const exhaustiveWorkflow = createExhaustiveWorkflowService(env);
   const researchRun = createResearchRunService(env);
+  const artifactInput = (context: AuthenticatedRequestContext, artifactRef: VersionedRef) => {
+    const now = Date.now;
+    const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
+    const scopes = createD1ScopeService(env.CORE_DB, authority, { now });
+    return {
+      database: env.CORE_DB, work_bucket: env.WORK_BUCKET, artifact_ref: artifactRef, access: context,
+      require_current: (scope: ScopeSnapshot) => scopes.requireCurrent(scope), now,
+    };
+  };
   return {
     catalog: (context, request) => readCatalog(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     orient: (context, request) => orientation.orient(context, request),
@@ -99,54 +109,24 @@ function semanticApi(env: Env): SemanticApi {
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
-    artifact: (context, artifactRef) => {
-      const now = Date.now;
-      const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
-      const scopes = createD1ScopeService(env.CORE_DB, authority, { now });
-      return readArtifactDraft({
-        database: env.CORE_DB,
-        work_bucket: env.WORK_BUCKET,
-        artifact_ref: artifactRef,
-        access: context,
-        require_current: (scope: ScopeSnapshot) => scopes.requireCurrent(scope),
-        now,
-      }).then((revision: ArtifactRevision | null) => {
-        if (revision === null) {
-          throw new ArtifactReadNotFoundError();
-        }
-        return revision;
-      });
+    artifact: async (context, artifactRef) => {
+      const revision = await readArtifactDraft(artifactInput(context, artifactRef));
+      if (revision === null) throw new ArtifactReadNotFoundError();
+      return revision;
     },
     artifactSection: async (context, artifactRef, sectionRef) => {
-      const now = Date.now;
-      const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
-      const scopes = createD1ScopeService(env.CORE_DB, authority, { now });
       const section = await readArtifactDraftSection({
-        database: env.CORE_DB,
-        work_bucket: env.WORK_BUCKET,
-        artifact_ref: artifactRef,
-        section_ref: sectionRef,
-        access: context,
-        require_current: (scope: ScopeSnapshot) => scopes.requireCurrent(scope),
-        now,
+        ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
       if (section === null) throw new ArtifactReadNotFoundError("artifact section does not exist");
-      const body = new ArrayBuffer(section.body.byteLength);
-      new Uint8Array(body).set(section.body);
-      // These identity headers use URI-component encoding; consumers decode with decodeURIComponent.
-      return new Response(body, {
-        status: 200,
-        headers: {
-          "content-type": "application/octet-stream",
-          "content-length": String(section.size_bytes),
-          "cache-control": "no-store",
-          "x-content-type-options": "nosniff",
-          "x-eliotr-artifact-ref": encodeURIComponent(`${section.artifact_ref.id}:${section.artifact_ref.revision}`),
-          "x-eliotr-section-ref": encodeURIComponent(`${section.section_ref.id}:${section.section_ref.revision}`),
-          "x-eliotr-section-object-ref": encodeURIComponent(section.body_object_ref),
-          "x-eliotr-section-sha256": section.body_sha256,
-        },
+      return artifactSectionResponse(section);
+    },
+    artifactSectionCitations: async (context, artifactRef, sectionRef) => {
+      const citations = await readArtifactDraftSectionCitations({
+        ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
+      if (citations === null) throw new ArtifactReadNotFoundError("artifact section citations do not exist");
+      return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
     proposeWiki: () => unavailable("research.wiki.propose"),
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {

@@ -21,6 +21,7 @@ import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eli
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { encodeArtifactDraftVerification } from "@eliotr/cloudflare-artifacts";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
@@ -144,7 +145,7 @@ async function derivedVerificationObject(input: {
   readonly section_sha256: string;
   readonly residency_template: ObjectResidencyTemplate;
 }): Promise<{ readonly section_verification_ref: string; readonly object: ArtifactDraftReferencedObjectInput }> {
-  const record = {
+  const verification = await encodeArtifactDraftVerification({
     schema: "eliotr.research.draft-verification.v1",
     semantic_verification: "NOT_EXECUTED",
     source_readback: "AUTHORITATIVE_RESOLVED",
@@ -166,10 +167,8 @@ async function derivedVerificationObject(input: {
       credential_generation: evidence.credential_generation,
     })),
     section_sha256: input.section_sha256,
-  } as const;
-  const bytes = new TextEncoder().encode(canonicalEvidenceJson(record));
-  const digest = await evidenceSha256Bytes(bytes);
-  const ref = `verification-${digest}`;
+  });
+  const { bytes, sha256: digest, verification_receipt_ref: ref } = verification;
   const residency: ObjectResidencyKey = {
     ...input.residency_template,
     content_digest: { algorithm: "sha256", digest },
