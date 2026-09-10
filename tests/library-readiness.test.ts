@@ -44,7 +44,7 @@ describe("active Library readiness boundary", () => {
     const decoded = decodeLibraryReadiness(value, "source-1", "deploy-1", revision);
     const rendered = renderLibraryReadiness(decoded);
     expect(rendered).toContain("Freshness not verified");
-    expect(rendered).toContain("recorded freshness observed_with_age");
+    expect(rendered).toContain("Recorded freshness observed_with_age");
     expect(rendered).not.toContain("Current source verified");
   });
 
