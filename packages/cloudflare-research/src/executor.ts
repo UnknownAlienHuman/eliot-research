@@ -107,11 +107,44 @@ export function createWorkflowCheckpointExecutor(
         await guard(request, principal, budget);
         await writeWorkflowObject(bucket, output, bytes);
       } else {
-        if (attempt.state === "STARTED" || attempt.output_json === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
-        try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
-        catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
-        // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
-        await readWorkflowObject(bucket, output, true);
+        if (attempt.state === "STARTED" || attempt.output_json === null) {
+          const recoverStartedAttempt = ports.recoverStartedAttempt;
+          if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          let recovered: Uint8Array | null;
+          try {
+            recovered = await recoverStartedAttempt(Object.freeze({
+              request, stage_index: RESEARCH_WORKFLOW_STAGES.indexOf(request.stage), request_sha256: attempt.request_sha256,
+              attempt_ref: attempt.attempt_ref, expected_revision: attempt.expected_revision,
+              output_object_ref: `workflow/${requestDigest}/${attempt.attempt_ref}`,
+              budget_receipt_ref: attempt.budget_receipt_ref, budget_expires_at_ms: attempt.budget_expires_at_ms,
+            }));
+          } catch {
+            fail("WORKFLOW_EFFECT_UNCERTAIN");
+          }
+          if (recovered === null) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          if (!(recovered instanceof Uint8Array) || recovered.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
+            fail("WORKFLOW_OUTPUT_CORRUPT");
+          }
+          const recoveredBytes = new Uint8Array(recovered);
+          const recoveredDigest = await digest(recoveredBytes);
+          try {
+            output = WorkflowObjectSchema.parse({
+              object_ref: `workflow/${requestDigest}/${attempt.attempt_ref}`, sha256: recoveredDigest,
+              byte_length: recoveredBytes.byteLength,
+              residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: recoveredDigest } },
+            });
+          } catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+          await guard(request, principal, budget);
+          // Recovery returns bytes from a durably known model result; publish them through the normal immutable W2 path.
+          await store.recordOutput(request, attempt, output);
+          await guard(request, principal, budget);
+          await writeWorkflowObject(bucket, output, recoveredBytes);
+        } else {
+          try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
+          catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
+          // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
+          await readWorkflowObject(bucket, output, true);
+        }
       }
       await guard(request, principal, budget);
       const receipt = await store.commit(request, attempt, output);

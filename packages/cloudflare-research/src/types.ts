@@ -41,11 +41,27 @@ export interface WorkflowBudgetGrant {
   readonly receipt_ref: string;
   readonly expires_at_ms: number;
 }
+export interface WorkflowAttemptRecoveryInput {
+  readonly request: StageRequest;
+  readonly stage_index: number;
+  readonly request_sha256: string;
+  readonly attempt_ref: string;
+  readonly output_object_ref: string;
+  readonly expected_revision: number;
+  readonly budget_receipt_ref: string;
+  readonly budget_expires_at_ms: number;
+}
+/** Read-only recovery of a result durably produced before a worker lost its ACK. */
+export type WorkflowStartedAttemptRecovery = (
+  input: WorkflowAttemptRecoveryInput,
+) => Promise<Uint8Array | null>;
 export interface WorkflowExecutionPorts {
   /** Server-owned policy readback; never accept residency authority from a browser DTO. */
   authorizeResidency(request: StageRequest, principal: WorkflowPrincipal): Promise<void>;
   /** Idempotent reservation/currentness check. W3 owns paid-provider settlement. */
   checkBudget(request: StageRequest, principal: WorkflowPrincipal): Promise<WorkflowBudgetGrant>;
+  /** Optional W3 readback for a started attempt; it must never invoke the paid handler. */
+  readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
 }
 export type WorkflowStageHandler = (input: {
   readonly request: StageRequest;
