@@ -136,9 +136,30 @@ function makeRevalidator(value: RevalidatorCase, overrides: {
 
 async function assertNoNewAttempt(value: RevalidatorCase, invoke: () => Promise<unknown>): Promise<void> {
   const before = await countModelRows(value.prepared.idempotency_key);
-  await invoke();
-  const after = await countModelRows(value.prepared.idempotency_key);
-  expect(after).toBe(before);
+  try {
+    await invoke();
+  } finally {
+    expect(await countModelRows(value.prepared.idempotency_key)).toBe(before);
+  }
+}
+
+async function revokeGrant(value: RevalidatorCase): Promise<void> {
+  const scope = value.prepared.authority.scope_snapshot_ref;
+  const identity = [scope.id, scope.revision, value.fixture.principal.principal_ref, "owner_pwa", value.fixture.principal.credential_generation] as const;
+  const active = await runtime.CORE_DB.prepare(
+    "SELECT COUNT(*) AS count FROM scope_access_grant WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 AND client_class = ?4 AND credential_generation = ?5 AND state = 'ACTIVE'",
+  ).bind(...identity).first<{ readonly count: number }>();
+  expect(active?.count).toBe(1);
+  await runtime.CORE_DB.prepare(
+    "UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 AND client_class = ?4 AND credential_generation = ?5 AND state = 'ACTIVE'",
+  ).bind(...identity).run();
+  const changes = await runtime.CORE_DB.prepare("SELECT changes() AS count").bind().first<{ readonly count: number }>();
+  expect(changes?.count).toBe(1);
+  const row = await runtime.CORE_DB.prepare(
+    "SELECT state FROM scope_access_grant WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 AND client_class = ?4 AND credential_generation = ?5",
+  ).bind(...identity)
+    .first<{ readonly state: string }>();
+  expect(row).toEqual({ state: "REVOKED" });
 }
 
 describe("research model attempt revalidation over actual D1", () => {
@@ -158,9 +179,7 @@ describe("research model attempt revalidation over actual D1", () => {
 
   it.each([
     ["revoked grant", async (value: RevalidatorCase) => {
-      await runtime.CORE_DB.prepare(
-        "UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = 'workflow-scope' AND principal_ref = ?1",
-      ).bind(value.fixture.principal.principal_ref).run();
+      await revokeGrant(value);
     }],
     ["retired policy", async (_value: RevalidatorCase) => {
       await runtime.CORE_DB.prepare(
@@ -239,9 +258,7 @@ describe("research model attempt revalidation over actual D1", () => {
     const value = await revalidatorCase("grant-revoked-during-spend-read");
     let revoked = false;
     const read = async (request: SpendAuthorizationReadRequest) => {
-      await runtime.CORE_DB.prepare(
-        "UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = 'workflow-scope' AND principal_ref = ?1",
-      ).bind(value.fixture.principal.principal_ref).run();
+      await revokeGrant(value);
       revoked = true;
       return value.read(request);
     };
@@ -258,9 +275,7 @@ describe("research model attempt revalidation over actual D1", () => {
     const resolve = async () => {
       resolves += 1;
       if (resolves === 1) {
-        await runtime.CORE_DB.prepare(
-          "UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = 'workflow-scope' AND principal_ref = ?1",
-        ).bind(value.fixture.principal.principal_ref).run();
+        await revokeGrant(value);
       }
       return value.deployment;
     };
