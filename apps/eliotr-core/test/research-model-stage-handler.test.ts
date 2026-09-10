@@ -8,9 +8,14 @@ import { dynamicRouteJsonArtifact } from "../../../packages/cloudflare-ai/src/dy
 import type { DynamicRouteCandidateWriteReceipt, DynamicRouteRegistryPort } from "../../../packages/cloudflare-ai/src/dynamic-route-provisioning-contract.js";
 import { createD1DynamicRouteRegistry, createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
+import type {
+  SpendAuthorizationReadRequest,
+  SpendAuthorizationReadback,
+} from "../../../packages/cloudflare-research/src/research-model-attempt-revalidator.js";
 import type { BuildReferenceManifestInput } from "../../../packages/cloudflare-research/src/research-reference-manifest.js";
 import type { ResearchModelPromptCompilerDependencies } from "../../../packages/cloudflare-research/src/research-model-prompt.js";
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
+import type { ModelAttemptReservationInput } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,
@@ -142,6 +147,7 @@ async function compositionFixture(
   let pricingCalls = 0;
   let prepareCalls = 0;
   let revalidateCalls = 0;
+  let latestPrepared: ModelAttemptReservationInput | null = null;
   const attemptExpiresAt = futureIso();
   const gatewayResponse = {
     id: `stage-response-${tag}`, object: "chat.completion", created: 1, model: ROUTE,
@@ -150,24 +156,47 @@ async function compositionFixture(
   };
   const prepare = async (context: ModelAttemptPreparationContext) => {
     const prepared = await base.dependencies.prepare(context);
-    return {
+    const result: ModelAttemptReservationInput = {
       ...prepared,
-      authority: { ...prepared.authority, expires_at: attemptExpiresAt },
+      authority: { ...prepared.authority, policy_generation: "workflow-policy", expires_at: attemptExpiresAt },
       call: { ...prepared.call, route_ref: ROUTE, prompt_generation: PROMPT_GENERATION, schema_generation: SCHEMA_GENERATION },
       quote: { ...prepared.quote, selected_routes: [ROUTE], expires_at: attemptExpiresAt },
     };
+    latestPrepared = result;
+    return result;
   };
   const prompt = promptDependencies(tag);
-  const revalidate = async () => {
-    revalidateCalls += 1;
-    if (rotateAfterFirstRevalidation && revalidateCalls === 2) {
-      await stageDeployment(workflow.db, {
-        routeVersion: "stage-handler-rotated-v2", qualificationTier: "LIVE", expectedActiveRouteVersion: deployment.route_version,
-      });
-    }
-    if (approvalMode === "missing") return null as unknown as ModelRouteDeployment;
-    if (approvalMode === "malformed") return { ...deployment, route_ref: "dynamic/unsupported" as ModelRouteDeployment["route_ref"] };
-    return deployment;
+  const spend_authorization = {
+    read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback | null> => {
+      revalidateCalls += 1;
+      if (latestPrepared === null) throw new Error("spend authorization read preceded preparation");
+      if (rotateAfterFirstRevalidation && revalidateCalls === 2) {
+        await stageDeployment(workflow.db, {
+          routeVersion: "stage-handler-rotated-v2", qualificationTier: "LIVE", expectedActiveRouteVersion: deployment.route_version,
+        });
+      }
+      if (approvalMode === "missing") return null;
+      const expectedDeployment = approvalMode === "malformed"
+        ? { ...deployment, parameters_digest: "invalid" } as unknown as ModelRouteDeployment
+        : deployment;
+      return {
+        authorization_ref: `${tag}-spend-authorization`,
+        decision_digest: "b".repeat(64),
+        operation_id: request.operation_id,
+        principal_ref: request.principal_ref,
+        stage_attempt_ref: request.stage_attempt_ref,
+        stage_request_sha256: request.stage_request_sha256,
+        reservation_id: request.reservation_id,
+        quote_ref: request.quote_ref,
+        route_ref: request.route_ref,
+        scope_snapshot_ref: request.scope_snapshot_ref,
+        workflow_authorization_receipt_ref: request.workflow_authorization_receipt_ref,
+        policy_generation: latestPrepared.authority.policy_generation,
+        currentness_digest: latestPrepared.authority.currentness_digest,
+        expires_at: attemptExpiresAt,
+        expected_deployment: expectedDeployment,
+      };
+    },
   };
   const handler = createResearchModelStageHandler({
     database: workflow.db, work_bucket: workflow.bucket, operation_kind: "REPORT", deployment_environment: environment,
@@ -190,9 +219,9 @@ async function compositionFixture(
     prepare: async (context) => {
       prepareCalls += 1;
       return prepare(context);
-    }, revalidate,
+    }, spend_authorization,
   });
-  return { workflow, base, handler, deployment, prepare, revalidateCalls: () => revalidateCalls, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
+  return { workflow, base, handler, deployment, prepare, spend_authorization, revalidateCalls: () => revalidateCalls, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
 }
 
 describe("composed research model stage handler", () => {
@@ -231,7 +260,8 @@ describe("composed research model stage handler", () => {
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
       gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: " bearer" }, prompt: promptDependencies("terminal-replay"),
       pricing: { quote: async () => { throw new Error("terminal replay must not price"); } },
-      prepare: async () => { throw new Error("terminal replay must not prepare"); }, revalidate: async () => { throw new Error("terminal replay must not revalidate"); },
+      prepare: async () => { throw new Error("terminal replay must not prepare"); },
+      spend_authorization: { read: async () => { throw new Error("terminal replay must not revalidate"); } },
     });
     await expect(replay.handler(input)).resolves.toEqual(expected);
   });
@@ -246,7 +276,8 @@ describe("composed research model stage handler", () => {
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
       gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: " bearer" }, prompt: promptDependencies("unknown-replay"),
       pricing: { quote: async () => { throw new Error("UNKNOWN replay must not price"); } },
-      prepare: async () => { throw new Error("UNKNOWN replay must not prepare"); }, revalidate: async () => { throw new Error("UNKNOWN replay must not revalidate"); },
+      prepare: async () => { throw new Error("UNKNOWN replay must not prepare"); },
+      spend_authorization: { read: async () => { throw new Error("UNKNOWN replay must not revalidate"); } },
     });
     await expect(replay.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(fixture.prepareCalls()).toBe(before.prepares);
@@ -264,10 +295,10 @@ describe("composed research model stage handler", () => {
       database: fixture.workflow.db, work_bucket: fixture.workflow.bucket, operation_kind: "REPORT",
       gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-gateway-token", fetch: async () => { productionProviderCalls += 1; throw new Error("production fixture route must not fetch"); } },
       prompt: promptDependencies("production-gate"), pricing: { quote: async () => { throw new Error("production fixture route must not price"); } },
-      prepare: fixture.prepare, revalidate: async () => fixture.deployment,
+      prepare: fixture.prepare, spend_authorization: fixture.spend_authorization,
     });
     await expect(production.handler(fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef)))
-      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(productionProviderCalls).toBe(0);
   });
 
@@ -292,7 +323,7 @@ describe("composed research model stage handler", () => {
   it("refuses a registry rotation after approved revalidation before transport", async () => {
     const fixture = await compositionFixture("approved-rotation", "PRODUCTION", false, "LIVE", "approved", true);
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
-    await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.revalidateCalls()).toBe(2);
     expect(fixture.providerCalls()).toBe(0);
   });
