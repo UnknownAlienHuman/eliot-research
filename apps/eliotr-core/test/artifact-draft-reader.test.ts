@@ -464,6 +464,18 @@ describe("actual D1/R2 artifact draft reader", () => {
     }, synthesis.freeze.navigation, synthesis.freeze.readers);
     const materializeContext = await context.read({ request: materializeRequest, principal: freezePrincipal, input_bytes: new Uint8Array() });
     const tag = crypto.randomUUID();
+    const beforeMetadataReject = await synthesis.freeze.db.prepare("SELECT COUNT(*) AS count FROM artifact_revision")
+      .first<{ readonly count: number }>();
+    const mismatchedProtocolContext: ResearchMaterializeContext = {
+      ...materializeContext,
+      stage_ten_input: { ...materializeContext.stage_ten_input,
+        protocol_profile: { ...materializeContext.stage_ten_input.protocol_profile, output_contract_ref: "foreign-output-contract-v1" } },
+    };
+    await expect(materializeMetadata(mismatchedProtocolContext, materializeRequest, `${tag}-protocol-mismatch`))
+      .rejects.toMatchObject({ code: "RESEARCH_ARTIFACT_METADATA_AUTHORITY_STALE" });
+    const afterMetadataReject = await synthesis.freeze.db.prepare("SELECT COUNT(*) AS count FROM artifact_revision")
+      .first<{ readonly count: number }>();
+    expect(afterMetadataReject?.count).toBe(beforeMetadataReject?.count);
     const metadata = await materializeMetadata(materializeContext, materializeRequest, tag);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
     const materialize = {
