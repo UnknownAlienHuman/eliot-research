@@ -237,7 +237,7 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
       .rejects.toMatchObject({ code: "EVIDENCE_AUTHORIZATION_DENIED" });
     const after = await f.db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE state='COMMITTED'").first<{ n: number }>();
     expect(after?.n).toBe(before?.n);
-    expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage='FREEZE_EVIDENCE'")
+    expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=11")
       .bind(f.operation_id).first<{ n: number }>()).toEqual({ n: 0 });
   }, 30_000);
 });
