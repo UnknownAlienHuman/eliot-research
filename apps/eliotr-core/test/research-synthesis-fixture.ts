@@ -42,7 +42,7 @@ async function stageDeployment(database: D1Database, options: {
   const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
   const deployment: ModelRouteDeployment = options.deployment ?? {
-    route_ref: deployment.route_ref,
+    route_ref: ROUTE,
     route_version: options.routeVersion ?? ROUTE_VERSION,
     prompt_generation: PROMPT_GENERATION,
     schema_generation: SCHEMA_GENERATION,
@@ -392,5 +392,4 @@ export async function committedFreezeSynthesisFixture() {
     stage_twelve: freeze.stage_twelve, provider_calls: () => provider_calls,
     request_bodies: () => [...request_bodies] };
 }
-
 
