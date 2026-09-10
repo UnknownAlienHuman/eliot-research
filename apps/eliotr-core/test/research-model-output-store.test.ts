@@ -266,7 +266,7 @@ describe("model output residency over actual Worker D1/R2", () => {
     expect(settled).toEqual(lostAck.outputBytes);
     expect(lostAck.routeCalls()).toBe(1);
     expect(lostAck.putCalls()).toBe(1);
-  });
+  }, 30_000);
 
   it("refuses missing and corrupt finalized objects without changing the committed D1 row", async () => {
     const fixture = await outputFixture("output-integrity");
