@@ -2,8 +2,8 @@
 
 `@eliotr/cloudflare-research` implements the D1/R2 checkpoint boundary, not the research product.
 W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
-executable `ResearchWorkflow` binding over the same boundary. No new Worker route, model, endpoint
-or deployment is enabled. Governed model/evidence handlers (W3/W4) and live qualification remain open.
+executable `ResearchWorkflow` binding over the same boundary. Owner HTTP composition can start runs
+and read their durable status. Governed model/evidence handlers (W3/W4) and live qualification remain open.
 
 The owner's current priority is composing the existing protocol, retrieval, evidence and answer
 stages into the usable document-to-answer flow. New financial budgeting/accounting work is deferred
@@ -115,6 +115,22 @@ for stages 0 and 5. The stage-0 authoritative reader binds its checkpoint to the
 attempt; the app no longer reads and decodes the same R2 object twice. The changed expected-attempt
 refusal and HTTP v2 replay cases passed together at `aaa13fa` (two selected cases, thirteen skipped).
 Earlier unchanged reader cases remain retained evidence, not a claim that the whole suite was rerun.
+
+## Owner run-status readback
+
+`GET /api/v1/research/run/:workflow_id` reads the existing owner-bound W2 run without advancing it.
+The versioned response separates `ACTIVE`, `CANCELLED` and `ENGINE_COMPLETED` from
+`answer.availability`, which is currently always `unavailable`. It returns the investigation revision
+and next stage index, with a cancellation receipt only for a cancelled run; it never invents an
+artifact reference, a live-process status or a research completion disposition.
+
+The reader checks the persisted run/current view, held scope and current owner authority before and
+after readback. Engine completion also requires the exact committed final request and checkpoint
+receipt. Missing and foreign runs share the same 404 response; services are refused, stale authority
+returns 409 and storage read failures return 503. Unknown query parameters are refused.
+The focused local Worker run at `5f2645b` passed both run-status and held-scope fixtures (7 cases),
+including read-only repeat access, final receipt validation, cancellation and revoked access.
+PWA integration, synthesized answer persistence and an answer-result reader remain open.
 
 ## W2 monotone bounded executor
 
