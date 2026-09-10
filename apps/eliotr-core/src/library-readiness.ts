@@ -105,8 +105,9 @@ async function currentness(
   try {
     admission = await database.prepare(
       "SELECT ingest_operation_id FROM raw_normalized_admission " +
-        "WHERE source_revision_ref=?1 AND source_view_ref=?2 ORDER BY updated_at DESC LIMIT 1",
-    ).bind(sourceRevisionRef, sourceView).first<SnapshotAdmissionRow>();
+        "WHERE source_revision_ref=?1 AND source_view_ref=?2 AND principal_ref=?3 AND state='COMMITTED' " +
+        "ORDER BY updated_at DESC LIMIT 1",
+    ).bind(sourceRevisionRef, sourceView, context.principal_ref).first<SnapshotAdmissionRow>();
   } catch {
     return unverifiedCurrentness(row, "CURRENTNESS_SNAPSHOT_WITNESS_UNAVAILABLE");
   }
@@ -215,11 +216,7 @@ async function activeProjection(
     });
   } catch (error) {
     if (error instanceof CatalogInputError) throw error;
-    const code = error instanceof Error && "code" in error
-      ? (error as Error & { readonly code?: unknown }).code : undefined;
-    return code === "SEARCH_INCOMPLETE"
-      ? { channel, pinned: [], missing: [], stale: [sourceRevisionRef] }
-      : { channel, pinned: [], missing: [], stale: [], failure_code: "SEARCH_READBACK_FAILED" };
+    return { channel, pinned: [], missing: [], stale: [], failure_code: "SEARCH_READBACK_FAILED" };
   }
 }
 
