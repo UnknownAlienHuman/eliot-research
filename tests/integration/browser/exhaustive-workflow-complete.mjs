@@ -109,7 +109,7 @@ function completeDataOf(value, expectedGeneration, workflowId) {
   return { data, receipt };
 }
 
-async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotencyKey, sourceId, sourceRevisionRef }) {
+async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotencyKey, sourceId, sourceRevisionRef, credentialGeneration }) {
   const rows = await d1Query(paths, "CORE_DB",
     "SELECT w.workflow_id,w.job_id,w.principal_ref,w.client_class,w.credential_generation," +
     "w.deployment_generation,w.request_identity_digest,w.state AS binding_state," +
@@ -127,7 +127,7 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
   assert.match(boundedText(row.job_id, "D1 job id", 128), JOB_ID);
   assert.equal(row.principal_ref, "e2e-owner", "D1 binding must retain the authenticated owner");
   assert.equal(row.client_class, "owner_pwa", "D1 binding must retain the owner client class");
-  assert.equal(row.credential_generation, "credential-1", "D1 binding must retain the credential generation");
+  assert.equal(row.credential_generation, credentialGeneration, "D1 binding must retain the confirmed owner credential generation");
   assert.equal(row.deployment_generation, paths.generation, "D1 binding must retain the active deployment");
   assert.match(boundedText(row.request_identity_digest, "D1 request identity digest", 64), DIGEST);
   assert.equal(row.binding_state, "BOUND", "completed workflow binding must remain BOUND");
@@ -226,12 +226,13 @@ async function readCompletedD1({ paths, d1Query, workflowId, receipt, idempotenc
  * separate lifecycle proof and is intentionally not reused here.
  */
 export async function runExhaustiveWorkflowCompleteBrowser({
-  page, browserJson, ledger, paths, d1Query, sourceId, sourceRevisionRef, expectedGeneration,
+  page, browserJson, ledger, paths, d1Query, sourceId, sourceRevisionRef, expectedGeneration, credentialGeneration,
   query = "Recorded raw owner fixture", deadlineMs = 120_000,
 }) {
   boundedText(sourceId, "selected raw source id");
   boundedText(sourceRevisionRef, "selected raw source revision");
   boundedText(expectedGeneration, "expected deployment generation");
+  boundedText(credentialGeneration, "confirmed owner credential generation");
   assert.equal(typeof d1Query, "function", "Q8 completion must receive the existing owner D1 readback port");
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
@@ -303,7 +304,7 @@ export async function runExhaustiveWorkflowCompleteBrowser({
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
     ?.textContent?.trim() === "COMPLETE", null, { timeout: 15000 });
   const d1 = await readCompletedD1({ paths, d1Query, workflowId, receipt: completed.receipt,
-    idempotencyKey, sourceId, sourceRevisionRef });
+    idempotencyKey, sourceId, sourceRevisionRef, credentialGeneration });
   return {
     workflowId,
     jobId: completed.receipt.job_id,
