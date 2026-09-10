@@ -25,6 +25,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-stage-handlers.ts`
 - `apps/eliotr-core/src/research-retrieve-branches.ts`
 - `apps/eliotr-core/src/research-retrieval-composition.ts`
+- `apps/eliotr-core/src/research-evidence-freeze-composition.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
 - `apps/eliotr-core/test/research-query-jobs.test.ts`
@@ -73,6 +74,13 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
+
+The bounded exploratory evidence-freeze composition connects accepted stage-0/stage-5 readers to
+ER-09's RECONCILE/FREEZE_EVIDENCE handlers. Its first local fixture must execute actual W2/D1/R2
+lineage with an explicit trusted test profile. This ownership does not select a production model,
+enable a public handler generation, qualify a provider or claim that a synthesized answer exists.
+ER-27 retains the existing `research-evidence-freeze.test.ts` fixture ownership and delegates its
+bounded caller update through the same reviewed handoff.
 
 ER-38 owns the projection runtime package. The known-length R2 stream repair is contributed through
 a reviewed ER-38 integration handoff; ER-24 retains the actual owner-loop acceptance boundary.

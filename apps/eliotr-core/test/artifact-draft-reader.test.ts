@@ -1,7 +1,8 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
-import { readArtifactDraft } from "@eliotr/cloudflare-research";
+import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
+import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import {
   createArtifactDraftRuntime,
   draftInput,
@@ -58,6 +59,25 @@ async function read(
     database: runtime.CORE_DB,
     work_bucket: workBucket,
     artifact_ref: fixture.input.revision.artifact_ref,
+    access: current.access,
+    require_current: current.requireCurrent,
+    now: current.now,
+  });
+}
+
+async function readSection(
+  fixture: ArtifactDraftReadFixture,
+  sectionRef = fixture.input.revision.sections[0]?.section_ref,
+  overrides: Partial<ArtifactDraftReadFixture> = {},
+  workBucket: R2Bucket = runtime.WORK_BUCKET,
+) {
+  if (sectionRef === undefined) throw new Error("fixture section reference is missing");
+  const current = { ...fixture, ...overrides };
+  return readArtifactDraftSection({
+    database: runtime.CORE_DB,
+    work_bucket: workBucket,
+    artifact_ref: fixture.input.revision.artifact_ref,
+    section_ref: sectionRef,
     access: current.access,
     require_current: current.requireCurrent,
     now: current.now,
@@ -206,6 +226,109 @@ describe("actual D1/R2 artifact draft reader", () => {
     await runtime.WORK_BUCKET.delete(object.receipt.key);
     await expectReadCode(read(fixture), "ARTIFACT_DRAFT_READ_INTEGRITY");
     expect(await draftHead(fixture.input.revision.artifact_ref.id)).toEqual(before);
+  });
+
+  it("reads one historical section body with exact object identity and private headers", async () => {
+    const baseFixture = await readableOwnerArtifactDraft(`reader-section-history-${crypto.randomUUID()}`);
+    const baseSection = baseFixture.input.revision.sections[0];
+    const inputSection = baseFixture.input.sections[0];
+    if (baseSection === undefined || inputSection === undefined) throw new Error("fixture section is missing");
+    const unicodeSectionRef = { id: `section-кириллица-${crypto.randomUUID()}`, revision: baseSection.section_ref.revision };
+    const unicodeSection = { ...baseSection, section_ref: unicodeSectionRef };
+    const unicodeRevision = { ...baseFixture.input.revision, sections: [unicodeSection] };
+    const unicodeManifestDigest = await canonicalDigest({ spec: baseFixture.input.spec, revision: unicodeRevision });
+    const fixture = {
+      ...baseFixture,
+      input: {
+        ...baseFixture.input,
+        revision: unicodeRevision,
+        sections: [{ ...inputSection, section: unicodeSection }],
+        manifest_residency: { ...baseFixture.input.manifest_residency, content_digest: { algorithm: "sha256" as const, digest: unicodeManifestDigest } },
+      },
+    };
+    const created = await createArtifactDraftRuntime().prepare(fixture.input);
+    const section = fixture.input.revision.sections[0];
+    const sectionObject = created.objects.find((object) => object.object_kind === "SECTION_BODY");
+    if (section === undefined || sectionObject === undefined) throw new Error("fixture section receipt is missing");
+    const later = await draftInput(`reader-section-later-${crypto.randomUUID()}`, {
+      artifact_id: fixture.input.revision.artifact_ref.id,
+      artifact_revision: 2,
+      expected_head_revision: 1,
+      scope_snapshot_id: fixture.scope.snapshot_id,
+      principal_ref: fixture.access.principal_ref,
+    });
+    await createArtifactDraftRuntime().prepare(later);
+    const result = await readSection(fixture);
+    if (result === null) throw new Error("section body unexpectedly absent");
+    expect(result.artifact_ref).toEqual(fixture.input.revision.artifact_ref);
+    expect(result.section_ref).toEqual(section.section_ref);
+    expect(result.body_object_ref).toBe(section.body_object_ref);
+    expect(result.section_ordinal).toBe(0);
+    expect(result.body_sha256).toBe(section.body_sha256);
+    expect(new TextDecoder().decode(result.body)).toBe("section body " + fixture.input.revision.artifact_ref.id.replace(/^artifact-/, "") + "\n");
+    expect(result.size_bytes).toBe(result.body.byteLength);
+
+    const response = await handleHttp(
+      new Request(`https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:1/sections/${section.section_ref.id}:${section.section_ref.revision}`),
+      runtime,
+      {} as ExecutionContext,
+      { accessVerifier: { async verify() {
+        return { principal_ref: fixture.access.principal_ref, credential_generation: fixture.access.credential_generation,
+          authentication_method: "cloudflare_access" as const, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+      } } },
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("content-length")).toBe(String(result.body.byteLength));
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("x-eliotr-artifact-ref")).toBe(encodeURIComponent(`${fixture.input.revision.artifact_ref.id}:1`));
+    expect(response.headers.get("x-eliotr-section-ref")).toBe(encodeURIComponent(`${section.section_ref.id}:1`));
+    expect(response.headers.get("x-eliotr-section-object-ref")).toBe(encodeURIComponent(section.body_object_ref));
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(result.body);
+    expect(await runtime.WORK_BUCKET.head(sectionObject.receipt.key)).not.toBeNull();
+  });
+
+  it("refuses foreign, missing, and revoked section reads without exposing a body", async () => {
+    const fixture = await readableOwnerArtifactDraft(`reader-section-deny-${crypto.randomUUID()}`);
+    await seed(fixture);
+    const section = fixture.input.revision.sections[0];
+    if (section === undefined) throw new Error("fixture section reference is missing");
+    const path = `https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:1/sections/${section.section_ref.id}:1`;
+    const verify = (principal_ref: string, authentication_method: "cloudflare_access" | "service_token" = "cloudflare_access") => ({
+      accessVerifier: { async verify() {
+        return { principal_ref, credential_generation: fixture.access.credential_generation, authentication_method,
+          expires_at: new Date(Date.now() + 3_600_000).toISOString() };
+      } },
+    });
+    const foreign = await handleHttp(new Request(path), runtime, {} as ExecutionContext, verify("foreign-section-reader"));
+    expect(foreign.status).toBe(403);
+    const missing = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${fixture.input.revision.artifact_ref.id}:1/sections/missing-section:1`), runtime, {} as ExecutionContext, verify(fixture.access.principal_ref));
+    expect(missing.status).toBe(404);
+    expect((await missing.json() as { readonly code: string }).code).toBe("ARTIFACT_DRAFT_READ_NOT_FOUND");
+    const service = await handleHttp(new Request(path), runtime, {} as ExecutionContext, verify(fixture.access.principal_ref, "service_token"));
+    expect(service.status).toBe(403);
+    await runtime.CORE_DB.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2")
+      .bind(fixture.scope.snapshot_id, fixture.scope.revision).run();
+    const revoked = await handleHttp(new Request(path), runtime, {} as ExecutionContext, verify(fixture.access.principal_ref));
+    expect(revoked.status).toBe(403);
+  });
+
+  it("rejects altered section bytes and a mismatched durable section ordinal", async () => {
+    const corrupt = await readableOwnerArtifactDraft(`reader-section-corrupt-${crypto.randomUUID()}`);
+    const corruptResult = await createArtifactDraftRuntime().prepare(corrupt.input);
+    const corruptObject = corruptResult.objects.find((object) => object.object_kind === "SECTION_BODY");
+    if (corruptObject === undefined) throw new Error("fixture section receipt is missing");
+    await runtime.WORK_BUCKET.put(corruptObject.receipt.key, new TextEncoder().encode("altered section body"));
+    await expectReadCode(readSection(corrupt), "ARTIFACT_DRAFT_READ_INTEGRITY");
+
+    const mismatched = await readableOwnerArtifactDraft(`reader-section-mismatch-${crypto.randomUUID()}`);
+    await seed(mismatched);
+    const section = mismatched.input.revision.sections[0];
+    if (section === undefined) throw new Error("fixture section reference is missing");
+    await runtime.CORE_DB.prepare("UPDATE artifact_draft_object SET section_ordinal=99 WHERE artifact_id=?1 AND revision=?2 AND object_kind='SECTION_BODY' AND object_ref=?3")
+      .bind(mismatched.input.revision.artifact_ref.id, mismatched.input.revision.artifact_ref.revision, section.body_object_ref).run();
+    await expectReadCode(readSection(mismatched), "ARTIFACT_DRAFT_READ_INTEGRITY");
   });
 
   it("serves an owner draft through the real HTTP router with fixture-backed currentness", async () => {

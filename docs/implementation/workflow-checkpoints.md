@@ -130,7 +130,13 @@ receipt. Missing and foreign runs share the same 404 response; services are refu
 returns 409 and storage read failures return 503. Unknown query parameters are refused.
 The focused local Worker run at `5f2645b` passed both run-status and held-scope fixtures (7 cases),
 including read-only repeat access, final receipt validation, cancellation and revoked access.
-PWA integration, synthesized answer persistence and an answer-result reader remain open.
+The existing Astro Research card now offers explicit launch, manual refresh and recovery using a
+known Run ID. Its strict decoder binds the returned handle and deployment, refuses inconsistent
+execution state and never accepts an answer claim. Private run state clears on authority/session loss,
+workspace generation change and offline events; it is not saved in browser storage. The built-PWA
+Chromium fixture at `6279b58` passed POST, ACTIVE/completed GET, known-ID recovery and explicit
+offline clearing against a controlled HTTP backend. It does not prove live Access or a deployed Worker.
+Synthesized answer persistence and an answer-result reader remain open.
 
 ## W2 monotone bounded executor
 
