@@ -48,6 +48,7 @@ type E2EHarness = {
   verifyReadbackRetryClassification: () => Promise<{ state: string }>;
   verifyEarlyFailureCleanup: () => Promise<{ state: string }>;
   verifyWorkerFetchDiagnosticRegression: () => Promise<{ state: string }>;
+  verifyRawProjectionReadinessPollingRegression: () => Promise<{ state: string }>;
   assertWorkflowJobReadback: (bindings: readonly unknown[], jobs: readonly unknown[]) => { bindingCount: number; jobRowCount: number };
 };
 
@@ -107,6 +108,11 @@ test("L6 cleanup: marker creation failure removes its known-created directory", 
 test("L6 diagnostics: bounded Worker fetch errors preserve phase and redacted route context", async () => {
   const harness = await loadHarness();
   assert.equal((await harness.verifyWorkerFetchDiagnosticRegression()).state, "PASS");
+});
+
+test("L6 raw projection readiness: classified request timeout polls within its total deadline", async () => {
+  const harness = await loadHarness();
+  assert.equal((await harness.verifyRawProjectionReadinessPollingRegression()).state, "PASS");
 });
 
 test("L6 real-browser owner harness: isolated Worker/PWA, denial, authorized Library, persistence, logout, teardown, errors, storage, bounds", async () => {
