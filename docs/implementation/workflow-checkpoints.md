@@ -64,6 +64,11 @@ replay with one provider invocation, and section-read denial after grant revocat
 response and intermediate stages 13–16 are controlled. This does not prove semantic verification,
 public v3 production configuration, live model quality or NotebookLM comparison readiness.
 
+The missing-dependency factory case also passed at `68af889`. At `f42e206`, the synthesis-only case
+passed after correcting its assertion to decode the gateway request and nested prompt JSON: the
+actual provider request contains the exact stage-5 handle and excerpt, and replay invokes the
+provider only once. This assertion correction changed no production handler.
+
 ## Execution
 
 `createWorkflowCheckpointExecutor(CORE_DB, WORK_BUCKET, ports)` exposes `execute(request, principal,
@@ -197,6 +202,11 @@ checks exact identity, length and SHA-256 of the received bytes, renders with `t
 suppresses late responses after scope/session changes. Four focused API cases and the PWA build
 passed at source `682d615`; live source-to-answer browser acceptance remains open because public
 run creation still selects v2.
+
+The built-PWA Chromium fixture passed at `78aa52b` on Node 22.23.2. It retains the legacy selected-
+source/unavailable path and checks draft metadata, manually opened exact section text, inert literal
+markup, generation/session/offline clearing and suppression of a delayed private response. Its HTTP
+backend is controlled; it is separate from the actual Worker/D1/R2 proof above.
 
 ## W2 monotone bounded executor
 
