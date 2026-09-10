@@ -16,10 +16,13 @@ import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
 import {
   digest,
   MAX_WORKFLOW_RECEIPT_BYTES,
+  textDigest,
   type StageRequest,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "./types.js";
+import { readWorkflowObject } from "./objects.js";
+import { WorkflowCheckpointStore } from "./store.js";
 import { z } from "zod";
 
 /** The server-owned profile family for bounded corpus-only lookup. */
@@ -27,6 +30,7 @@ export const CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF = Object.freeze({
   id: "eliotr.research.profile.corpus-exploratory-lookup",
   revision: 1,
 }) satisfies VersionedRef;
+export const CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF = CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF;
 
 /**
  * These are definitions, rather than caller-provided labels.  The profile
@@ -74,9 +78,12 @@ const ProtocolScopeCheckpointSchema = z.object({
   w1_revision: z.number().int().positive(),
   requested_evidence_grade: EvidenceGradeSchema,
   external_acquisition: z.literal("none"),
+  profile_definition_ref: VersionedRefSchema,
+  profile_identity_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   protocol_profile: InquiryProtocolProfileSchema,
   protocol_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   coverage_denominator: CorpusCoverageDenominatorSchema,
+  denominator_identity_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   denominator_digest: z.string().regex(/^[a-f0-9]{64}$/u),
   observed_at: z.string().datetime({ offset: true }),
 }).strict();
@@ -160,9 +167,8 @@ function assertDefinitionSet(profile: InquiryProtocolProfile): void {
   }
 }
 
-function profileFor(question: string, grade: RunPayload["evidence_grade"], modelProfileRef: string): InquiryProtocolProfile {
-  const profile = InquiryProtocolProfileSchema.parse({
-    profile_ref: CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF,
+function profileFields(question: string, grade: RunPayload["evidence_grade"], modelProfileRef: string): Omit<InquiryProtocolProfile, "profile_ref"> {
+  return {
     question,
     intended_decision_or_artifact: "bounded corpus lookup draft with exact evidence handles",
     protocol: "lookup",
@@ -192,9 +198,18 @@ function profileFor(question: string, grade: RunPayload["evidence_grade"], model
       "A changed ScopeSnapshot requires a new W1 investigation revision.",
       "Exploratory output cannot be promoted to a confirmatory claim without a declared protocol.",
     ],
+  };
+}
+
+async function profileFor(question: string, grade: RunPayload["evidence_grade"], modelProfileRef: string): Promise<{ profile: InquiryProtocolProfile; identity_digest: string }> {
+  const fields = profileFields(question, grade, modelProfileRef);
+  const identity_digest = await evidenceSha256(fields);
+  const profile = InquiryProtocolProfileSchema.parse({
+    profile_ref: { id: `eliotr.research.compiled-profile-${identity_digest}`, revision: 1 },
+    ...fields,
   });
   assertDefinitionSet(profile);
-  return profile;
+  return { profile, identity_digest };
 }
 
 function scopeRef(scope: ScopeSnapshot): VersionedRef {
@@ -220,24 +235,21 @@ function assertHeadBinding(head: LedgerHead, payload: RunPayload, request: Stage
   }
 }
 
-function denominatorFor(scope: ScopeSnapshot): CorpusCoverageDenominator {
+async function denominatorFor(scope: ScopeSnapshot): Promise<{ denominator: CorpusCoverageDenominator; identity_digest: string }> {
   const refs = assertScopeMembers(scope);
-  const denominatorRef: VersionedRef = {
-    id: `eliotr.coverage.corpus-membership-${scope.snapshot_id}-${scope.revision}`,
-    revision: 1,
-  };
-  if (denominatorRef.id.length > 256) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "coverage denominator reference exceeds its bound");
-  return CorpusCoverageDenominatorSchema.parse({
-    denominator_ref: denominatorRef,
+  const fields: Omit<CorpusCoverageDenominator, "denominator_ref"> = {
     frozen_scope_snapshot_ref: scopeRef(scope),
-    eligible_source_revision_refs: refs,
+    eligible_source_revision_refs: [...refs],
     required_source_classes: [],
     required_question_branches: [],
     acquisition_method_generations: {},
     excluded_sources: [],
     completeness_test_ref: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.completeness_test_ref,
     expires_at: scope.expires_at,
-  });
+  };
+  const identity_digest = await evidenceSha256(fields);
+  const denominatorRef: VersionedRef = { id: `eliotr.coverage.compiled-membership-${identity_digest}`, revision: 1 };
+  return { denominator: CorpusCoverageDenominatorSchema.parse({ denominator_ref: denominatorRef, ...fields }), identity_digest };
 }
 
 function assertDenominatorDefinition(value: CorpusCoverageDenominator): void {
@@ -248,8 +260,39 @@ function assertDenominatorDefinition(value: CorpusCoverageDenominator): void {
   }
 }
 
+function assertReadbackBinding(
+  checkpoint: ProtocolScopeCheckpoint,
+  head: LedgerHead,
+  scope: ScopeSnapshot,
+  request: StageRequest,
+  principal: WorkflowPrincipal,
+): void {
+  const expectedScope = scopeRef(scope);
+  if (checkpoint.operation_id !== request.operation_id || checkpoint.workflow_stage !== request.stage ||
+      !sameRef(checkpoint.investigation_ref, request.investigation_ref) || checkpoint.principal_ref !== principal.principal_ref ||
+      !sameRef(checkpoint.scope_snapshot_ref, expectedScope) || checkpoint.w1_revision !== head.revision ||
+      checkpoint.w1_protocol_version !== head.protocol_version || checkpoint.requested_evidence_grade !== head.evidence_grade ||
+      head.status !== "OPEN" || head.lane !== "exploratory" || head.principal_ref !== principal.principal_ref ||
+      head.scope_snapshot_id !== scope.snapshot_id || head.scope_snapshot_revision !== scope.revision ||
+      head.revision !== request.investigation_ref.revision || checkpoint.protocol_profile.model_profile_ref !== head.model_profile_ref ||
+      checkpoint.coverage_denominator.frozen_scope_snapshot_ref.id !== expectedScope.id ||
+      checkpoint.coverage_denominator.frozen_scope_snapshot_ref.revision !== expectedScope.revision ||
+      checkpoint.coverage_denominator.expires_at !== scope.expires_at) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "persisted protocol scope checkpoint is not bound to current W1 authority");
+  }
+  const eligible = assertScopeMembers(scope);
+  if (canonicalEvidenceJson(checkpoint.coverage_denominator.eligible_source_revision_refs) !== canonicalEvidenceJson(eligible)) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "protocol scope denominator no longer matches the frozen scope");
+  }
+}
+
 function checkpointBytes(value: ProtocolScopeCheckpoint): Uint8Array {
   const parsed = ProtocolScopeCheckpointSchema.parse(value);
+  if (!sameRef(parsed.profile_definition_ref, CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF) ||
+      parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
+      parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}`) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint content identities do not match their definitions");
+  }
   const bytes = new TextEncoder().encode(canonicalEvidenceJson(parsed));
   if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint exceeds 64 KiB");
   return bytes;
@@ -278,10 +321,10 @@ export function createFreezeProtocolAndScopeStageHandler(
     if (initial === null) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 investigation is unavailable");
     const inputDigest = await digest(input_bytes);
     assertHeadBinding(initial.head, payload, request, principal, inputDigest, scope);
-    const profile = profileFor(payload.query, initial.head.evidence_grade, initial.head.model_profile_ref);
-    const denominator = denominatorFor(scope);
-    const protocolDigest = await evidenceSha256(profile);
-    const denominatorDigest = await evidenceSha256(denominator);
+    const profileResult = await profileFor(payload.query, initial.head.evidence_grade, initial.head.model_profile_ref);
+    const denominatorResult = await denominatorFor(scope);
+    const protocolDigest = await evidenceSha256(profileResult.profile);
+    const denominatorDigest = await evidenceSha256(denominatorResult.denominator);
     await dependencies.navigation.current();
     const final = await dependencies.ledger.read(payload.investigation_id);
     if (final === null || canonicalEvidenceJson(final.head) !== canonicalEvidenceJson(initial.head)) {
@@ -301,9 +344,12 @@ export function createFreezeProtocolAndScopeStageHandler(
       w1_revision: final.head.revision,
       requested_evidence_grade: payload.evidence_grade,
       external_acquisition: CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.external_acquisition,
-      protocol_profile: profile,
+      profile_definition_ref: CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF,
+      profile_identity_digest: profileResult.identity_digest,
+      protocol_profile: profileResult.profile,
       protocol_digest: protocolDigest,
-      coverage_denominator: denominator,
+      coverage_denominator: denominatorResult.denominator,
+      denominator_identity_digest: denominatorResult.identity_digest,
       denominator_digest: denominatorDigest,
       observed_at: observedAt,
     });
@@ -319,8 +365,10 @@ export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeC
   try {
     const parsed = ProtocolScopeCheckpointSchema.parse(value);
     if (canonicalEvidenceJson(parsed) !== new TextDecoder().decode(bytes)) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint is not canonical");
-    if (parsed.protocol_profile.profile_ref.id !== CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF.id ||
-        parsed.protocol_profile.profile_ref.revision !== CORPUS_EXPLORATORY_LOOKUP_PROFILE_REF.revision ||
+    if (!sameRef(parsed.profile_definition_ref, CORPUS_EXPLORATORY_PROFILE_DEFINITION_REF) ||
+        parsed.protocol_profile.profile_ref.revision !== 1 ||
+        parsed.protocol_profile.profile_ref.id !== `eliotr.research.compiled-profile-${parsed.profile_identity_digest}` ||
+        parsed.coverage_denominator.denominator_ref.id !== `eliotr.coverage.compiled-membership-${parsed.denominator_identity_digest}` ||
         parsed.external_acquisition !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.external_acquisition) {
       fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint is not the server-owned corpus profile");
     }
@@ -331,4 +379,72 @@ export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeC
     if (cause instanceof ResearchProtocolFreezeError) throw cause;
     fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint failed strict validation", cause);
   }
+}
+
+export interface ResearchProtocolFreezeReadbackInput {
+  readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
+  readonly database: D1Database;
+  readonly bucket: R2Bucket;
+  readonly navigation: NavigationReadAuthority;
+  readonly ledger: Pick<InvestigationLedgerStore, "read">;
+}
+
+/**
+ * Reads the already-committed stage-0 checkpoint without acquiring a budget or
+ * invoking a handler. The D1 receipt and immutable R2 object are both required;
+ * decoding bytes alone is never treated as persisted authority.
+ */
+export async function readFreezeProtocolAndScopeCheckpoint(
+  input: ResearchProtocolFreezeReadbackInput,
+): Promise<ProtocolScopeCheckpoint> {
+  if (input.request.stage !== "FREEZE_PROTOCOL_AND_SCOPE") {
+    fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "readback requested for another workflow stage");
+  }
+  const scope = ScopeSnapshotSchema.parse(input.navigation.scope);
+  if (input.request.input_manifest.residency.scope_domain_id !== scope.snapshot_id ||
+      input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "stage input residency is not bound to current navigation authority");
+  }
+  await input.navigation.current();
+  const initial = await input.ledger.read(input.request.investigation_ref.id);
+  if (initial === null) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 investigation is unavailable");
+  if (initial.head.revision !== input.request.investigation_ref.revision || initial.head.principal_ref !== input.principal.principal_ref ||
+      initial.head.scope_snapshot_id !== scope.snapshot_id || initial.head.scope_snapshot_revision !== scope.revision ||
+      initial.head.status !== "OPEN" || initial.head.lane !== "exploratory") {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 authority is not eligible for protocol scope readback");
+  }
+  const requestDigest = await textDigest(JSON.stringify(input.request));
+  const receipt = await new WorkflowCheckpointStore(input.database).receipt(input.request, requestDigest);
+  if (receipt === null || receipt.stage !== "FREEZE_PROTOCOL_AND_SCOPE" || receipt.request_sha256 !== requestDigest) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "committed stage-0 checkpoint receipt is unavailable");
+  }
+  const manifest = receipt.output_manifest;
+  if (manifest.residency.scope_domain_id !== scope.snapshot_id || manifest.residency.access_domain_id !== input.principal.principal_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "checkpoint output residency is not bound to current authority");
+  }
+  const bytes = await readWorkflowObject(input.bucket, manifest, true);
+  const checkpoint = decodeProtocolScopeCheckpoint(bytes);
+  assertReadbackBinding(checkpoint, initial.head, scope, input.request, input.principal);
+  const { profile_ref: _profileRef, ...profileIdentity } = checkpoint.protocol_profile;
+  const { denominator_ref: _denominatorRef, ...denominatorIdentity } = checkpoint.coverage_denominator;
+  if (await evidenceSha256(profileIdentity) !== checkpoint.profile_identity_digest ||
+      await evidenceSha256(denominatorIdentity) !== checkpoint.denominator_identity_digest) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint content identity digests do not match its documents");
+  }
+  const protocolDigest = await evidenceSha256(checkpoint.protocol_profile);
+  const denominatorDigest = await evidenceSha256(checkpoint.coverage_denominator);
+  if (checkpoint.protocol_digest !== protocolDigest || checkpoint.denominator_digest !== denominatorDigest) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint canonical digests do not match its decoded documents");
+  }
+  await input.navigation.current();
+  const final = await input.ledger.read(input.request.investigation_ref.id);
+  if (final === null || canonicalEvidenceJson(final.head) !== canonicalEvidenceJson(initial.head)) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "W1 authority changed during protocol scope readback");
+  }
+  const observedAt = input.navigation.timestamp();
+  if (Date.parse(checkpoint.coverage_denominator.expires_at) <= Date.parse(observedAt)) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "protocol scope denominator expired during readback");
+  }
+  return checkpoint;
 }
