@@ -111,6 +111,7 @@ interface PlannedObject {
   readonly residency_digest: string;
   readonly prefix: string;
   readonly content_type: string;
+  readonly physical_key: string;
 }
 
 interface ReservationRow {
@@ -119,6 +120,17 @@ interface ReservationRow {
   readonly artifact_id: unknown;
   readonly artifact_revision: unknown;
   readonly request_sha256: unknown;
+  readonly spec_digest: unknown;
+  readonly manifest_r2_key: unknown;
+  readonly expected_head_revision: unknown;
+  readonly spec_ref_id: unknown;
+  readonly spec_ref_revision: unknown;
+  readonly scope_snapshot_id: unknown;
+  readonly scope_snapshot_revision: unknown;
+  readonly intent_json: unknown;
+  readonly principal_ref: unknown;
+  readonly idempotency_key: unknown;
+  readonly payload_ref: unknown;
   readonly planned_objects_json: unknown;
   readonly state: unknown;
 }
@@ -228,6 +240,7 @@ function plannedShape(objects: readonly PlannedObject[]): readonly Record<string
     section_ordinal: object.section_ordinal,
     sha256: object.sha256,
     size_bytes: object.size_bytes,
+    key: object.physical_key,
     residency: object.residency,
     residency_digest: object.residency_digest,
   }));
@@ -334,7 +347,9 @@ async function buildPlan(input: PrepareArtifactDraftInput): Promise<{ readonly o
     if (sha !== section.body_sha256) fail("ARTIFACT_DRAFT_INPUT_INVALID", "section body digest differs from contract revision");
     const residency = ObjectResidencyKeySchema.parse(supplied.residency);
     if (residency.content_digest.digest !== sha) fail("ARTIFACT_DRAFT_INPUT_INVALID", "section residency digest differs from body");
-    plans.push({ object_ref: section.body_object_ref, object_kind: "SECTION_BODY", section_ordinal: ordinal, bytes, sha256: sha, size_bytes: bytes.byteLength, residency, residency_digest: await objectResidencyKeyDigest(residency), prefix: SECTION_PREFIX, content_type: "application/octet-stream" });
+    const residency_digest = await objectResidencyKeyDigest(residency);
+    const physical_key = await canonicalEvidenceObjectKey(residency, SECTION_PREFIX, sha);
+    plans.push({ object_ref: section.body_object_ref, object_kind: "SECTION_BODY", section_ordinal: ordinal, bytes, sha256: sha, size_bytes: bytes.byteLength, residency, residency_digest, prefix: SECTION_PREFIX, content_type: "application/octet-stream", physical_key });
   }
   const expected = new Map<string, ArtifactDraftObjectKind>();
   const expectRef = (ref: string, kind: ArtifactDraftObjectKind): void => {
@@ -357,11 +372,15 @@ async function buildPlan(input: PrepareArtifactDraftInput): Promise<{ readonly o
     const sha = await digestBytes(bytes);
     const residency = ObjectResidencyKeySchema.parse(object.residency);
     if (residency.content_digest.digest !== sha) fail("ARTIFACT_DRAFT_INPUT_INVALID", "referenced object residency digest differs from bytes");
-    plans.push({ object_ref: object.object_ref, object_kind: object.object_kind, section_ordinal: null, bytes, sha256: sha, size_bytes: bytes.byteLength, residency, residency_digest: await objectResidencyKeyDigest(residency), prefix: REFERENCE_PREFIX, content_type: "application/octet-stream" });
+    const residency_digest = await objectResidencyKeyDigest(residency);
+    const physical_key = await canonicalEvidenceObjectKey(residency, REFERENCE_PREFIX, sha);
+    plans.push({ object_ref: object.object_ref, object_kind: object.object_kind, section_ordinal: null, bytes, sha256: sha, size_bytes: bytes.byteLength, residency, residency_digest, prefix: REFERENCE_PREFIX, content_type: "application/octet-stream", physical_key });
   }
   if (expected.size !== 0) fail("ARTIFACT_DRAFT_INPUT_INVALID", "referenced object mapping is incomplete");
   if (seenRefs.has("manifest")) fail("ARTIFACT_DRAFT_INPUT_INVALID", "manifest is reserved as an internal object ref");
-  const manifest: PlannedObject = { object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, bytes: manifestBytes, sha256: manifestSha, size_bytes: manifestBytes.byteLength, residency: manifestResidency, residency_digest: await objectResidencyKeyDigest(manifestResidency), prefix: MANIFEST_PREFIX, content_type: "application/json" };
+  const manifest_residency_digest = await objectResidencyKeyDigest(manifestResidency);
+  const manifest_physical_key = await canonicalEvidenceObjectKey(manifestResidency, MANIFEST_PREFIX, manifestSha);
+  const manifest: PlannedObject = { object_ref: "manifest", object_kind: "MANIFEST", section_ordinal: null, bytes: manifestBytes, sha256: manifestSha, size_bytes: manifestBytes.byteLength, residency: manifestResidency, residency_digest: manifest_residency_digest, prefix: MANIFEST_PREFIX, content_type: "application/json", physical_key: manifest_physical_key };
   const request_sha256 = await canonicalDigest(requestDigestInput(input, [manifest, ...plans]));
   assertWithinBytes("artifact draft reservation", new TextEncoder().encode(canonicalJson(plannedShape([manifest, ...plans]))).byteLength, RUNTIME_LIMITS.d1_text_or_json_column_bytes);
   return { objects: [manifest, ...plans], request_sha256, manifest };
@@ -382,7 +401,7 @@ function reservationJson(objects: readonly PlannedObject[]): string {
 
 async function readReservation(database: D1Database, intent: OperationIntent): Promise<ReservationRow | null> {
   return database.prepare(
-    "SELECT intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, planned_objects_json, state " +
+    "SELECT intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, spec_digest, manifest_r2_key, expected_head_revision, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, intent_json, principal_ref, idempotency_key, payload_ref, planned_objects_json, state " +
     "FROM artifact_draft_reservation WHERE intent_id = ?1 AND intent_revision = ?2 LIMIT 1",
   ).bind(intent.intent_ref.id, intent.intent_ref.revision).first<ReservationRow>();
 }
@@ -393,6 +412,22 @@ function validateReservation(row: ReservationRow, input: PrepareArtifactDraftInp
     fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft intent is bound to another artifact revision");
   }
   if (row.request_sha256 !== request_sha256) fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft idempotency key is bound to different request bytes");
+  if (row.spec_digest !== input.revision.spec_digest || row.expected_head_revision !== input.expected_draft_head_revision) {
+    fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft reservation metadata differs from request");
+  }
+  if (row.spec_ref_id !== input.spec.spec_ref.id || row.spec_ref_revision !== input.spec.spec_ref.revision ||
+      row.scope_snapshot_id !== input.spec.scope_snapshot_ref.id || row.scope_snapshot_revision !== input.spec.scope_snapshot_ref.revision) {
+    fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft reservation scope metadata differs from request");
+  }
+  let storedIntent: unknown;
+  try { storedIntent = JSON.parse(String(row.intent_json)); } catch (cause) {
+    fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "stored draft intent is malformed", false, cause);
+  }
+  if (typeof row.intent_json !== "string" || !exactJson(storedIntent, input.intent) ||
+      row.principal_ref !== input.intent.principal_ref || row.idempotency_key !== input.intent.idempotency_key ||
+      row.payload_ref !== input.intent.payload_ref) {
+    fail("ARTIFACT_DRAFT_IDEMPOTENCY_CONFLICT", "draft reservation intent is bound to different authority");
+  }
   if (row.state !== "RESERVED" && row.state !== "FINALIZED") fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft reservation state is invalid");
 }
 
@@ -536,12 +571,12 @@ export async function prepareArtifactDraft(
   if (intentStatement === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "prepared intent mutation is incomplete");
 
   const reservationInsert = database.prepare(
-    "INSERT INTO artifact_draft_reservation(intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, planned_objects_json, state, created_at, updated_at) " +
-    "VALUES (?1,?2,?3,?4,?5,?6,'RESERVED',?7,?7)",
-  ).bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.revision.artifact_ref.id, input.revision.artifact_ref.revision, plan.request_sha256, reservationJson(plan.objects), input.revision.created_at);
+    "INSERT INTO artifact_draft_reservation(intent_id, intent_revision, artifact_id, artifact_revision, request_sha256, spec_digest, manifest_r2_key, expected_head_revision, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, intent_json, principal_ref, idempotency_key, payload_ref, topic, planned_objects_json, state, created_at, updated_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,'RESERVED',?19,?19)",
+  ).bind(input.intent.intent_ref.id, input.intent.intent_ref.revision, input.revision.artifact_ref.id, input.revision.artifact_ref.revision, plan.request_sha256, input.revision.spec_digest, plan.manifest.physical_key, input.expected_draft_head_revision, input.spec.spec_ref.id, input.spec.spec_ref.revision, input.spec.scope_snapshot_ref.id, input.spec.scope_snapshot_ref.revision, canonicalJson(input.intent), input.intent.principal_ref, input.intent.idempotency_key, input.intent.payload_ref, topic, reservationJson(plan.objects), input.revision.created_at);
   try {
-    const reservationResults = await database.batch([intentStatement, reservationInsert]);
-    if ((reservationResults[0]?.meta?.changes ?? 0) !== 1 || (reservationResults[1]?.meta?.changes ?? 0) !== 1) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft intent reservation did not mutate exactly two rows", true);
+    const reservationResults = await database.batch([reservationInsert]);
+    if ((reservationResults[0]?.meta?.changes ?? 0) !== 1) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft reservation did not mutate exactly one row", true);
   } catch (cause) {
     const raced = await readExactDraft(database, store, input, plan, intentPlan.outbox_id);
     if (raced !== null) return raced;
@@ -570,6 +605,7 @@ export async function prepareArtifactDraft(
   const outboxStatement = intentPlan.statements[1];
   if (outboxStatement === undefined) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "prepared outbox mutation is incomplete");
   const statements: D1PreparedStatement[] = [
+    intentStatement,
     outboxStatement,
     database.prepare("INSERT INTO artifact_revision(artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'DRAFT',?9)").bind(input.revision.artifact_ref.id, input.revision.artifact_ref.revision, input.spec.kind, input.revision.spec_digest, input.revision.evidence_freeze_ref.id, input.revision.evidence_freeze_ref.revision, manifestReceipt.receipt.key, input.revision.dependency_manifest_ref, input.revision.created_at),
     database.prepare("INSERT INTO artifact_draft_binding(artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)").bind(input.revision.artifact_ref.id, input.revision.artifact_ref.revision, input.intent.intent_ref.id, input.intent.intent_ref.revision, input.expected_draft_head_revision, input.intent.principal_ref, input.spec.spec_ref.id, input.spec.spec_ref.revision, input.spec.scope_snapshot_ref.id, input.spec.scope_snapshot_ref.revision, manifestReceipt.receipt.key, manifestReceipt.receipt.expected_sha256, manifestReceipt.receipt.size_bytes, input.revision.created_at),
