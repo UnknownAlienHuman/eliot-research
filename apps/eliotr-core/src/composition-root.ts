@@ -1,4 +1,4 @@
-import { createOrientationApi, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import type {
   ApplicationLifecycle,
   FederationApi,
@@ -33,6 +33,7 @@ import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
+import { readArtifactDraft } from "@eliotr/cloudflare-research";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -95,7 +96,19 @@ function semanticApi(env: Env): SemanticApi {
     open: (context, ref, range) => evidence.open(context, ref, range),
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
-    artifact: () => unavailable("research.artifact"),
+    artifact: (context, artifactRef) => {
+      const now = Date.now;
+      const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
+      const scopes = createD1ScopeService(env.CORE_DB, authority, { now });
+      return readArtifactDraft({
+        database: env.CORE_DB,
+        work_bucket: env.WORK_BUCKET,
+        artifact_ref: artifactRef,
+        access: context,
+        require_current: (scope) => scopes.requireCurrent(scope),
+        now,
+      });
+    },
     proposeWiki: () => unavailable("research.wiki.propose"),
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
       if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
