@@ -9,6 +9,14 @@
       "schema_export": "CoordinateMapSchema"
     },
     {
+      "canonical_body_sha256": "88967c62c196dbb7f0babd89236830eb432e33ded20b539c1f78a3e4abce94f6",
+      "fixture_id": "library-readiness-v1",
+      "fixture_path": "tests/fixtures/contracts/eliotr.library-readiness.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.library-readiness.v1",
+      "schema_export": "LibraryReadinessSchema"
+    },
+    {
       "canonical_body_sha256": "3a5f9fd2b254eebe574b2c4a28f9804df0da9df359e59ceee125fa7da90fef22",
       "fixture_id": "normalized-bundle-v1",
       "fixture_path": "tests/fixtures/contracts/eliotr.normalized.v1.yaml",
@@ -26,5 +34,5 @@
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 2
+  "registry_generation": 3
 }

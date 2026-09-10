@@ -5,6 +5,7 @@ import canonicalFixturesRaw from "../../../docs/contracts/canonical-fixtures.v1.
 import compatibilityRegistryRaw from "../../../docs/contracts/compatibility-registry.v1.json?raw";
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import schemaIndexRaw from "../../../docs/contracts/schema-index.v1.json?raw";
+import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -461,6 +462,16 @@ describe("ER-01 public contract registry", () => {
         canonical_body_sha256: "0".repeat(64),
       }).success,
     ).toBe(false);
+  });
+
+  it("round-trips the Library readiness canonical fixture with its published digest", async () => {
+    const fixture = CANONICAL_FIXTURE_REGISTRY.fixtures.find((item) => item.fixture_id === "library-readiness-v1");
+    if (fixture === undefined) throw new Error("Library readiness fixture is missing from the registry");
+    const value = parseJson(libraryReadinessFixtureRaw);
+    const schema = requireContractSchemaDescriptor(fixture.schema_export).schema;
+    expect(schema.parse(value)).toEqual(value);
+    expect(schema.parse(parseJson(serializeCanonicalContractJson(value)))).toEqual(value);
+    expect(await sha256(value)).toBe(fixture.canonical_body_sha256);
   });
 
   it("serializes deterministic plain JSON and rejects hidden runtime state", () => {

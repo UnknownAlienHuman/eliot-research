@@ -32,6 +32,7 @@ import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
+import { readLibraryReadiness } from "./library-readiness.js";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -155,6 +156,9 @@ function ownerApi(env: Env): OwnerApi {
     readRawFileByIdempotency: (context, idempotencyKey) => rawCapture.readRawFileByIdempotency(context, idempotencyKey),
     convertRawFileToMarkdown: (context, captureId, request) => convertRawMarkdown(context, captureId, request),
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
+    libraryReadiness: (context, request) => readLibraryReadiness(
+      env.CORE_DB, env.SEARCH_DB, context, request, env.DEPLOYMENT_GENERATION,
+    ),
     async systemHealth(): Promise<Record<string, unknown>> {
       return {
         ...await readReadiness(env),

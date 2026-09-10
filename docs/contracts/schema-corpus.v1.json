@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 2,
-  "schema_count": 134,
+  "registry_generation": 3,
+  "schema_count": 136,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -1154,7 +1154,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -1200,13 +1200,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-descriptor:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1279,7 +1279,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -1302,13 +1302,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:canonical-fixture-registry-document:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2230,7 +2230,7 @@
       "export_name": "ContractCompatibilityClassSchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-compatibility-class:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-compatibility-class:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "enum": [
           "INITIAL",
@@ -2242,13 +2242,13 @@
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-class:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-class:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -2275,6 +2275,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -2288,7 +2289,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -2337,7 +2339,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -2391,13 +2393,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-entry:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2508,6 +2510,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -2521,7 +2524,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -2548,7 +2552,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -2571,13 +2575,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-compatibility-registry:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2671,6 +2675,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -2684,7 +2689,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -2707,7 +2713,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -2738,13 +2744,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-document:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2771,6 +2777,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -2784,7 +2791,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -2819,7 +2827,7 @@
             "type": "object"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -2862,20 +2870,20 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-corpus-entry:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaExportNameSchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-schema-export-name:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-export-name:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "maxLength": 256,
         "pattern": "^[A-Z][A-Za-z0-9]*Schema$",
@@ -2883,20 +2891,20 @@
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "SCALAR",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-export-name:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-export-name:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractSchemaFamilySchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-schema-family:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-family:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "enum": [
           "backup",
@@ -2906,6 +2914,7 @@
           "evidence",
           "federation",
           "library",
+          "library-readiness",
           "model",
           "navigation",
           "normalized-bundle",
@@ -2919,26 +2928,27 @@
           "retrieval",
           "scope",
           "security",
-          "source"
+          "source",
+          "workspace-mcp"
         ],
         "title": "ContractSchemaFamily",
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-family:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-family:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractSchemaIdSchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-id:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "maxLength": 256,
         "pattern": "^urn:eliotr:contracts:[a-z0-9-]+:[a-z0-9-]+:v[1-9][0-9]*:g[1-9][0-9]*$",
@@ -2946,13 +2956,13 @@
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "SCALAR",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-id:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -2979,6 +2989,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -2992,7 +3003,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -3002,7 +3014,7 @@
             "type": "integer"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-identity:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -3033,13 +3045,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-identity:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -3130,6 +3142,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -3143,7 +3156,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -3166,7 +3180,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-index-document:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-index-document:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -3197,13 +3211,13 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-document:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -3230,6 +3244,7 @@
               "evidence",
               "federation",
               "library",
+              "library-readiness",
               "model",
               "navigation",
               "normalized-bundle",
@@ -3243,7 +3258,8 @@
               "retrieval",
               "scope",
               "security",
-              "source"
+              "source",
+              "workspace-mcp"
             ],
             "type": "string"
           },
@@ -3275,7 +3291,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -3318,20 +3334,20 @@
         "type": "object",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-index-entry:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ContractSchemaKindSchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-schema-kind:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-schema-kind:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "enum": [
           "SCALAR",
@@ -3344,20 +3360,20 @@
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-schema-kind:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-schema-kind:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ContractStructuralStrictnessSchema",
       "family": "registry",
       "json_schema": {
-        "$id": "urn:eliotr:contracts:registry:contract-structural-strictness:v1:g1",
+        "$id": "urn:eliotr:contracts:registry:contract-structural-strictness:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "enum": [
           "CLOSED_OBJECT",
@@ -3368,13 +3384,13 @@
         "type": "string",
         "x-eliotr-family": "registry",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "ENUM",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:registry:contract-structural-strictness:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:registry:contract-structural-strictness:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -7830,6 +7846,395 @@
       "schema_id": "urn:eliotr:contracts:common:json-object:v1:g1",
       "schema_version": 1,
       "structural_strictness": "EXPLICIT_MAP"
+    },
+    {
+      "export_name": "LibraryCurrentnessObservationSchema",
+      "family": "library-readiness",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema1": {
+            "enum": [
+              "current_confirmed",
+              "observed_with_age",
+              "gap_detected",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:library-readiness:library-currentness-observation:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "additionalProperties": false,
+                "properties": {
+                  "expires_at": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "gap_refs": {
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    },
+                    "type": "array"
+                  },
+                  "observation_freshness": {
+                    "$ref": "#/$defs/__schema1"
+                  },
+                  "observed_at": {
+                    "$ref": "#/$defs/__schema2"
+                  },
+                  "owner_system_id": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "source_owner_generation": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "source_revision_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "source_view_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  },
+                  "workspace_view_revision_ref": {
+                    "$ref": "#/$defs/__schema0"
+                  }
+                },
+                "required": [
+                  "source_revision_ref",
+                  "owner_system_id",
+                  "source_owner_generation",
+                  "source_view_ref",
+                  "observation_freshness",
+                  "observed_at",
+                  "gap_refs"
+                ],
+                "type": "object"
+              },
+              "verification": {
+                "const": "VERIFIED",
+                "type": "string"
+              }
+            },
+            "required": [
+              "verification",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason_codes": {
+                "items": {
+                  "$ref": "#/$defs/__schema0"
+                },
+                "maxItems": 8,
+                "minItems": 1,
+                "type": "array"
+              },
+              "recorded_freshness": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "verification": {
+                "const": "NOT_VERIFIED",
+                "type": "string"
+              }
+            },
+            "required": [
+              "verification",
+              "recorded_freshness",
+              "reason_codes"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "LibraryCurrentnessObservation",
+        "x-eliotr-family": "library-readiness",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:library-readiness:library-currentness-observation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "LibraryReadinessSchema",
+      "family": "library-readiness",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.library-readiness.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "maxLength": 16,
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          },
+          "__schema3": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema4": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "expires_at": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "gap_refs": {
+                        "items": {
+                          "$ref": "#/$defs/__schema1"
+                        },
+                        "type": "array"
+                      },
+                      "observation_freshness": {
+                        "$ref": "#/$defs/__schema5"
+                      },
+                      "observed_at": {
+                        "$ref": "#/$defs/__schema3"
+                      },
+                      "owner_system_id": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "source_owner_generation": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "source_revision_ref": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "source_view_ref": {
+                        "$ref": "#/$defs/__schema1"
+                      },
+                      "workspace_view_revision_ref": {
+                        "$ref": "#/$defs/__schema1"
+                      }
+                    },
+                    "required": [
+                      "source_revision_ref",
+                      "owner_system_id",
+                      "source_owner_generation",
+                      "source_view_ref",
+                      "observation_freshness",
+                      "observed_at",
+                      "gap_refs"
+                    ],
+                    "type": "object"
+                  },
+                  "verification": {
+                    "const": "VERIFIED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "verification",
+                  "value"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "reason_codes": {
+                    "items": {
+                      "$ref": "#/$defs/__schema1"
+                    },
+                    "maxItems": 8,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "recorded_freshness": {
+                    "$ref": "#/$defs/__schema5"
+                  },
+                  "verification": {
+                    "const": "NOT_VERIFIED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "verification",
+                  "recorded_freshness",
+                  "reason_codes"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "__schema5": {
+            "enum": [
+              "current_confirmed",
+              "observed_with_age",
+              "gap_detected",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "__schema6": {
+            "enum": [
+              "high_fidelity",
+              "standard",
+              "degraded",
+              "unqualified"
+            ],
+            "type": "string"
+          },
+          "__schema7": {
+            "const": "ACTIVE_VERIFIED",
+            "type": "string"
+          },
+          "__schema8": {
+            "items": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "__schema9": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "enum": [
+                  "captured",
+                  "normalized",
+                  "structure_qualified",
+                  "exact_ready",
+                  "lexical_ready",
+                  "semantic_ready",
+                  "sourcecard_ready",
+                  "atlas_included",
+                  "distillates_ready",
+                  "wiki_published"
+                ],
+                "type": "string"
+              },
+              "generation": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "observed_at": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "reason_codes": {
+                "items": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "type": "array"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "source_revision_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "state": {
+                "enum": [
+                  "not_requested",
+                  "queued",
+                  "running",
+                  "ready",
+                  "degraded",
+                  "failed",
+                  "stale",
+                  "redacted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_revision_ref",
+              "channel",
+              "state",
+              "reason_codes",
+              "observed_at"
+            ],
+            "type": "object"
+          }
+        },
+        "$id": "urn:eliotr:contracts:library-readiness:library-readiness:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "catalog_generation": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "channels": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "currentness": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "deployment_generation": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "observed_at": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "quality_state": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "readiness_basis": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "source_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_revision_ref": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "protocol",
+          "source_id",
+          "source_revision_ref",
+          "deployment_generation",
+          "catalog_generation",
+          "observed_at",
+          "currentness",
+          "quality_state",
+          "readiness_basis",
+          "channels"
+        ],
+        "title": "LibraryReadiness",
+        "type": "object",
+        "x-eliotr-family": "library-readiness",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:library-readiness:library-readiness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "LocatorCandidateSchema",

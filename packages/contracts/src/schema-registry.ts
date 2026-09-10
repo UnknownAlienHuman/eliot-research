@@ -8,6 +8,7 @@ import * as erasure from "./erasure.js";
 import * as evidence from "./evidence.js";
 import * as federation from "./federation.js";
 import * as library from "./library.js";
+import * as libraryReadiness from "./library-readiness.js";
 import * as model from "./model.js";
 import * as navigation from "./navigation.js";
 import * as normalizedBundle from "./normalized-bundle.js";
@@ -33,7 +34,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 2 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 3 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -67,6 +68,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "evidence", exports: evidence },
   { family: "federation", exports: federation },
   { family: "library", exports: library },
+  { family: "library-readiness", exports: libraryReadiness },
   { family: "model", exports: model },
   { family: "navigation", exports: navigation },
   { family: "normalized-bundle", exports: normalizedBundle },
@@ -97,6 +99,7 @@ const FAMILY_VERSIONS: Readonly<
   evidence: { schema_version: 1, schema_generation: 1 },
   federation: { schema_version: 1, schema_generation: 1 },
   library: { schema_version: 1, schema_generation: 1 },
+  "library-readiness": { schema_version: 1, schema_generation: 1 },
   model: { schema_version: 1, schema_generation: 1 },
   navigation: { schema_version: 1, schema_generation: 1 },
   "normalized-bundle": { schema_version: 1, schema_generation: 1 },
@@ -104,13 +107,14 @@ const FAMILY_VERSIONS: Readonly<
   "owner-cutover": { schema_version: 1, schema_generation: 1 },
   policy: { schema_version: 1, schema_generation: 1 },
   publication: { schema_version: 1, schema_generation: 1 },
-  registry: { schema_version: 1, schema_generation: 1 },
+  registry: { schema_version: 2, schema_generation: 1 },
   research: { schema_version: 1, schema_generation: 1 },
   residency: { schema_version: 1, schema_generation: 1 },
   retrieval: { schema_version: 1, schema_generation: 1 },
   scope: { schema_version: 1, schema_generation: 1 },
   security: { schema_version: 1, schema_generation: 1 },
   source: { schema_version: 1, schema_generation: 1 },
+  "workspace-mcp": { schema_version: 1, schema_generation: 1 },
 });
 
 function compareCodeUnits(left: string, right: string): number {

@@ -42,6 +42,8 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
 - `apps/eliotr-core/test/source-revisions.test.ts`
+- `apps/eliotr-core/src/library-readiness.ts`
+- `apps/eliotr-core/test/library-readiness.test.ts`
 - `apps/eliotr-core/src/google-token-store.ts`
 - `packages/google-drive-exchange/src/google-token-store.ts`
 - `apps/eliotr-core/test/google-token-store.test.ts`
