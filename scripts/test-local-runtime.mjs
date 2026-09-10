@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { devArguments, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
+import { devArguments, executeLocal, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
 
 const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
 const runtimeSource = await readFile(resolve(ROOT, "scripts/local-runtime.mjs"), "utf8");
@@ -45,7 +45,10 @@ try {
   assert.equal(calls[0].options.cwd, resolve(ROOT, "apps/eliotr-pwa"));
   assert.deepEqual(calls.slice(1).map(({ args }) => args.slice(1, 5)), [
     ["d1", "migrations", "apply", "CORE_DB"], ["d1", "migrations", "apply", "SEARCH_DB"]]);
-  for (const { args } of calls.slice(1)) assert.ok(args.includes(prepared.persist) && args.includes("--local") && !args.includes("--remote"));
+  for (const { args, options } of calls.slice(1)) {
+    assert.ok(args.includes(prepared.persist) && args.includes("--local") && !args.includes("--remote"));
+    assert.deepEqual(options, { capture: true, diagnosticContext: { binding: args[4], phase: "d1-migrations" } });
+  }
   assert.equal(await readFile(vars, "utf8"), 'ACCESS_AUDIENCE="retain-local-settings"\n');
   const first = await readFile(prepared.config, "utf8");
   await prepareLocal({ stateDirectory: directory, log: () => {}, execute: () => {} });
@@ -64,6 +67,18 @@ try {
   await prepareLocal({ stateDirectory: fresh, log: () => {}, execute: () => {} });
   assert.equal(await readFile(resolve(fresh, ".dev.vars"), "utf8"), "");
 } finally { await rm(directory, { recursive: true, force: true }); }
+
+assert.throws(
+  () => executeLocal(["-e", "console.error('out of memory: SQLITE_NOMEM'); process.exit(1)"], {
+    capture: true, diagnosticContext: { binding: "SEARCH_DB", phase: "d1-migrations" },
+  }),
+  (error) => {
+    assert.match(error.message, /migration=SEARCH_DB\/d1-migrations; runtime=SQLITE_NOMEM/u);
+    assert.equal(error.cause.migration.runtime_code, "SQLITE_NOMEM");
+    return true;
+  },
+);
+console.log("Migration failure context: PASS (bound binding/phase and allowlisted runtime code)");
 
 const child = { pid: 12345, exitCode: null, signalCode: null,
   kill: () => assert.fail("Windows must terminate the owned tree, not only its wrapper") };
