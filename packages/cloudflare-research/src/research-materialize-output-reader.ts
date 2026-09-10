@@ -1,14 +1,13 @@
-import { VersionedRefSchema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
+import { type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
 import { readArtifactDraft, ArtifactDraftReadError } from "./artifact-draft-reader.js";
+import { decodeResearchMaterializeResult, ResearchMaterializeResultError, type ResearchMaterializeResultPayload } from "./research-materialize-result.js";
 import { readCommittedResearchSynthesisOutput, ResearchSynthesisOutputError } from "./research-synthesis-output-reader.js";
 import { readResearchRunStatus, type RunStatusAuthoritySnapshot } from "./research-run-status.js";
 import { WorkflowCheckpointStore } from "./store.js";
 import { readWorkflowObject } from "./objects.js";
 import { WorkflowCheckpointError, type StageReceipt, type WorkflowPrincipal } from "./types.js";
 
-const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
-const MAX_RESULT_BYTES = 64 * 1024;
 
 export type ResearchMaterializeOutputErrorCode =
   | "MATERIALIZE_OUTPUT_INPUT_INVALID"
@@ -39,27 +38,7 @@ export interface ResearchMaterializeOutputReaderInput {
   readonly recheck_authority: () => Promise<RunStatusAuthoritySnapshot>;
 }
 
-export interface ResearchMaterializeOutput {
-  readonly protocol: "eliotr.research.materialize-result.v1";
-  readonly operation_id: string;
-  readonly stage: "MATERIALIZE";
-  readonly stage_attempt_ref: string;
-  readonly stage_request_sha256: string;
-  readonly synthesis: {
-    readonly stage_attempt_ref: string;
-    readonly stage_request_sha256: string;
-    readonly output_object_ref: string;
-    readonly output_sha256: string;
-  };
-  readonly draft: {
-    readonly artifact_ref: VersionedRef;
-    readonly manifest: {
-      readonly key: string;
-      readonly sha256: string;
-      readonly size_bytes: number;
-    };
-  };
-}
+export type ResearchMaterializeOutput = ResearchMaterializeResultPayload;
 
 export interface ResearchMaterializeOutputReadback {
   readonly operation_id: string;
@@ -84,60 +63,8 @@ function fail(code: ResearchMaterializeOutputErrorCode, message: string, cause?:
   throw new ResearchMaterializeOutputError(code, message, cause);
 }
 
-function text(value: unknown, label: string): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) fail("MATERIALIZE_OUTPUT_CORRUPT", `${label} is invalid`);
-  return value;
-}
-
-function sha(value: unknown, label: string): string {
-  if (typeof value !== "string" || !SHA256.test(value)) fail("MATERIALIZE_OUTPUT_CORRUPT", `${label} is invalid`);
-  return value;
-}
-
-function strictRecord(value: unknown, keys: readonly string[], label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) fail("MATERIALIZE_OUTPUT_CORRUPT", `${label} is invalid`);
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !keys.includes(key))) fail("MATERIALIZE_OUTPUT_CORRUPT", `${label} contains an unsupported field`);
-  if (keys.some((key) => !Object.hasOwn(record, key))) fail("MATERIALIZE_OUTPUT_CORRUPT", `${label} is incomplete`);
-  return record;
-}
-
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
   return left.id === right.id && left.revision === right.revision;
-}
-
-export function decodeResearchMaterializeOutput(bytes: Uint8Array): ResearchMaterializeOutput {
-  if (bytes.byteLength > MAX_RESULT_BYTES) fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization output is too large");
-  let parsed: unknown;
-  try { parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown; }
-  catch (cause) { fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization output is not strict UTF-8 JSON", cause); }
-  const root = strictRecord(parsed, ["protocol", "operation_id", "stage", "stage_attempt_ref", "stage_request_sha256", "synthesis", "draft"], "materialization output");
-  if (root.protocol !== "eliotr.research.materialize-result.v1" || root.stage !== "MATERIALIZE") fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization output protocol is invalid");
-  const synthesis = strictRecord(root.synthesis, ["stage_attempt_ref", "stage_request_sha256", "output_object_ref", "output_sha256"], "synthesis binding");
-  const draft = strictRecord(root.draft, ["artifact_ref", "manifest"], "draft binding");
-  const manifest = strictRecord(draft.manifest, ["key", "sha256", "size_bytes"], "draft manifest");
-  let artifactRef: VersionedRef;
-  try { artifactRef = VersionedRefSchema.parse(draft.artifact_ref); }
-  catch (cause) { fail("MATERIALIZE_OUTPUT_CORRUPT", "draft artifact reference is invalid", cause); }
-  if (!Number.isSafeInteger(manifest.size_bytes) || (manifest.size_bytes as number) < 0) fail("MATERIALIZE_OUTPUT_CORRUPT", "draft manifest size is invalid");
-  return Object.freeze({
-    protocol: "eliotr.research.materialize-result.v1",
-    operation_id: text(root.operation_id, "materialization operation_id"),
-    stage: "MATERIALIZE",
-    stage_attempt_ref: text(root.stage_attempt_ref, "materialization stage attempt"),
-    stage_request_sha256: sha(root.stage_request_sha256, "materialization stage request digest"),
-    synthesis: Object.freeze({
-      stage_attempt_ref: text(synthesis.stage_attempt_ref, "synthesis stage attempt"),
-      stage_request_sha256: sha(synthesis.stage_request_sha256, "synthesis stage request digest"),
-      output_object_ref: text(synthesis.output_object_ref, "synthesis output reference"),
-      output_sha256: sha(synthesis.output_sha256, "synthesis output digest"),
-    }),
-    draft: Object.freeze({ artifact_ref: artifactRef, manifest: Object.freeze({
-      key: text(manifest.key, "draft manifest key"),
-      sha256: sha(manifest.sha256, "draft manifest digest"),
-      size_bytes: manifest.size_bytes as number,
-    }) }),
-  });
 }
 
 function mapWorkflowFailure(error: unknown): never {
@@ -212,7 +139,12 @@ export async function readCommittedResearchMaterializeOutput(
   let bytes: Uint8Array;
   try { bytes = await readWorkflowObject(input.work_bucket, receipt.output_manifest, true); }
   catch (error) { return mapWorkflowFailure(error); }
-  const materialization = decodeResearchMaterializeOutput(bytes);
+  let materialization: ResearchMaterializeOutput;
+  try { materialization = decodeResearchMaterializeResult(bytes); }
+  catch (error) {
+    if (error instanceof ResearchMaterializeResultError) fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization result is inconsistent", error);
+    throw error;
+  }
   if (materialization.operation_id !== input.operation_id || materialization.stage_attempt_ref !== committed.attempt_ref || materialization.stage_request_sha256 !== committed.request_sha256) {
     fail("MATERIALIZE_OUTPUT_CORRUPT", "materialization output is not bound to the committed stage");
   }
