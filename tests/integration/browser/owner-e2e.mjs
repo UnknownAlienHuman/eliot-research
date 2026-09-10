@@ -5372,7 +5372,7 @@ export async function runOwnerE2E() {
       page: playwright.page, browserJson, ledger, paths, d1Query,
       sourceId: rawProjectionFastSearch.sourceId,
       sourceRevisionRef: rawProjectionFastSearch.sourceRevisionRef,
-      expectedGeneration: paths.generation,
+      expectedGeneration: paths.generation, credentialGeneration: identity.credential_generation,
     });
     receipt.exhaustive_workflow_complete = `PASS (PWA EXHAUSTIVE_JOB ${exhaustiveWorkflowComplete.workflowId} reached COMPLETE with settled denominator and owner D1 readback)`;
     receipt.exhaustive_workflow_complete_d1 = `PASS (workflow ${exhaustiveWorkflowComplete.d1.workflow_id}, job ${exhaustiveWorkflowComplete.d1.job_id}, source revision ${exhaustiveWorkflowComplete.d1.source_revision_ref})`;
