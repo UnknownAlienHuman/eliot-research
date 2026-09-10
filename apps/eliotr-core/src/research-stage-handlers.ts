@@ -50,6 +50,34 @@ export function createResearchRetrieveBranchesDependencies(
   };
 }
 
+async function readPersistedRetrievalProfile(
+  database: D1Database,
+  scope: NavigationReadAuthority["scope"],
+): Promise<RetrieveBranchesStageDependencies["profile"]> {
+  let row: { readonly profile_version: unknown; readonly max_sources: unknown; readonly max_results: unknown } | null;
+  try {
+    row = await database.prepare(
+      "SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
+    ).bind(scope.snapshot_id, scope.revision).first();
+  } catch {
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  const maxSources = row?.max_sources;
+  const maxResults = row?.max_results;
+  if (row === null || row.profile_version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
+      !Number.isSafeInteger(maxSources) || (maxSources as number) < 1 ||
+      (maxSources as number) > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
+      !Number.isSafeInteger(maxResults) || (maxResults as number) < 1 ||
+      (maxResults as number) > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  return {
+    version: SERVER_RETRIEVAL_SCOPE_PROFILE.version,
+    max_sources: maxSources as number,
+    max_results: maxResults as number,
+  };
+}
+
 export type ResearchStageHandlerFactoryMode =
   | {
       readonly kind: "server-owned-exploratory";
@@ -90,14 +118,19 @@ export function createResearchStageHandlerFactory(
   const protocolScopeHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory"
     ? createFreezeProtocolAndScopeStageHandler({ navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
-  const retrievalHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory" &&
-      mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined
-    ? createRetrieveBranchesStageHandler(createResearchRetrieveBranchesDependencies({
+  let retrievalHandler: WorkflowStageHandler | undefined;
+  if (mode.kind === "server-owned-exploratory" &&
+      mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined) {
+    const base = createResearchRetrieveBranchesDependencies({
       ...mode.retrieval,
       navigation: mode.navigation,
       ledger: mode.ledger,
-    }))
-    : undefined;
+    });
+    retrievalHandler = async (input) => {
+      const profile = await readPersistedRetrievalProfile(base.database, mode.navigation.scope);
+      return createRetrieveBranchesStageHandler({ ...base, profile })(input);
+    };
+  }
 
   return (stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
