@@ -18,9 +18,14 @@ import {
   type AiSearchGenerationRegistrySnapshot,
   type AiSearchGenerationRegistryStoreReceipt,
 } from "./ai-search-generation-registry-contract.js";
-
-const SHA256 = /^[a-f0-9]{64}$/u;
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+import {
+  aiSearchRegistryDigest,
+  aiSearchRegistryIdentifier,
+  aiSearchRegistryInteger,
+  aiSearchRegistryReadbackFailure as readbackFailure,
+  exactAiSearchRegistryObject,
+  isAiSearchRegistryIdentifier,
+} from "./ai-search-registry-validation.js";
 const MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const ARTIFACT_KEYS = new Set(["namespace", "registry", "revision", "schema"]);
 const SNAPSHOT_KEYS = new Set(["artifact", "artifact_sha256"]);
@@ -70,53 +75,6 @@ const STATES = new Set<AiSearchGenerationState>([
 ]);
 const MAX_GENERATIONS = 64;
 
-function readbackFailure(message: string, cause?: unknown): never {
-  aiSearchGenerationRegistryFailure(
-    "AI_SEARCH_REGISTRY_READBACK_INVALID",
-    message,
-    cause === undefined ? {} : { cause },
-  );
-}
-
-function exactObject(
-  value: unknown,
-  allowedKeys: ReadonlySet<string>,
-  label: string,
-): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    readbackFailure(`${label} must be a plain object`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    readbackFailure(`${label} must be a plain object`);
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    const descriptor = Object.getOwnPropertyDescriptor(record, key);
-    if (descriptor === undefined || !("value" in descriptor)) {
-      readbackFailure(`${label} cannot contain accessors`);
-    }
-    if (!allowedKeys.has(key)) {
-      readbackFailure(`${label} contains unsupported field ${key}`);
-    }
-  }
-  return record;
-}
-
-function identifier(value: unknown, label: string): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
-    readbackFailure(`${label} is not a bounded identifier`);
-  }
-  return value;
-}
-
-function digest(value: unknown, label: string): string {
-  if (typeof value !== "string" || !SHA256.test(value)) {
-    readbackFailure(`${label} is not canonical SHA-256`);
-  }
-  return value;
-}
-
 function modelToken(value: unknown, label: string): string {
   if (typeof value !== "string" || !MODEL_TOKEN.test(value)) {
     readbackFailure(`${label} is not a bounded model token`);
@@ -125,16 +83,12 @@ function modelToken(value: unknown, label: string): string {
 }
 
 function nonNegativeInteger(value: unknown, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
-    readbackFailure(`${label} must be a non-negative safe integer`);
-  }
-  return value;
+  return aiSearchRegistryInteger(value, label, 0, readbackFailure, `${label} must be a non-negative safe integer`);
 }
 
 function positiveInteger(value: unknown, label: string): number {
   const parsed = nonNegativeInteger(value, label);
-  if (parsed < 1) readbackFailure(`${label} must be positive`);
-  return parsed;
+  return aiSearchRegistryInteger(parsed, label, 1, readbackFailure, `${label} must be positive`);
 }
 
 function booleanValue(value: unknown, label: string): boolean {
@@ -148,7 +102,7 @@ function optionalIdentifier(
   label: string,
 ): string | undefined {
   if (!Object.hasOwn(source, key)) return undefined;
-  return identifier(source[key], label);
+  return aiSearchRegistryIdentifier(source[key], label, readbackFailure);
 }
 
 function optionalChoice<const T extends string>(
@@ -169,17 +123,18 @@ function optionalChoice<const T extends string>(
 }
 
 function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
-  const value = exactObject(raw, PROFILE_KEYS, label);
-  const indexMethod = exactObject(
+  const value = exactAiSearchRegistryObject(raw, PROFILE_KEYS, label, readbackFailure);
+  const indexMethod = exactAiSearchRegistryObject(
     value.index_method,
     INDEX_METHOD_KEYS,
     `${label}.index_method`,
+    readbackFailure,
   );
   if (!Array.isArray(value.metadata_fields)) {
     readbackFailure(`${label}.metadata_fields must be an array`);
   }
   const metadataFields = value.metadata_fields.map((entry, index) =>
-    identifier(entry, `${label}.metadata_fields[${index}]`),
+    aiSearchRegistryIdentifier(entry, `${label}.metadata_fields[${index}]`, readbackFailure),
   );
   const fusionMethod = optionalChoice(
     value,
@@ -203,8 +158,8 @@ function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
     ? modelToken(value.embedding_model, `${label}.embedding_model`)
     : undefined;
   const profile: AiSearchInstanceProfile = Object.freeze({
-    id: identifier(value.id, `${label}.id`),
-    generation: identifier(value.generation, `${label}.generation`),
+    id: aiSearchRegistryIdentifier(value.id, `${label}.id`, readbackFailure),
+    generation: aiSearchRegistryIdentifier(value.generation, `${label}.generation`, readbackFailure),
     index_method: Object.freeze({
       vector: booleanValue(
         indexMethod.vector,
@@ -242,7 +197,7 @@ function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
 
 function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
   const label = `registry.generations[${index}]`;
-  const value = exactObject(raw, RECORD_KEYS, label);
+  const value = exactAiSearchRegistryObject(raw, RECORD_KEYS, label, readbackFailure);
   if (
     typeof value.state !== "string" ||
     !STATES.has(value.state as AiSearchGenerationState)
@@ -271,8 +226,8 @@ function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
     `${label}.retired_at`,
   );
   return Object.freeze({
-    namespace: identifier(value.namespace, `${label}.namespace`),
-    generation: identifier(value.generation, `${label}.generation`),
+    namespace: aiSearchRegistryIdentifier(value.namespace, `${label}.namespace`, readbackFailure),
+    generation: aiSearchRegistryIdentifier(value.generation, `${label}.generation`, readbackFailure),
     profile,
     state: value.state as AiSearchGenerationState,
     expected_item_count: positiveInteger(
@@ -296,7 +251,7 @@ function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
       `${label}.mismatch_count`,
     ),
     ...(golden === undefined ? {} : { golden_set_result_ref: golden }),
-    declared_at: identifier(value.declared_at, `${label}.declared_at`),
+    declared_at: aiSearchRegistryIdentifier(value.declared_at, `${label}.declared_at`, readbackFailure),
     ...(observed === undefined ? {} : { observed_at: observed }),
     ...(activated === undefined ? {} : { activated_at: activated }),
     ...(retired === undefined ? {} : { retired_at: retired }),
@@ -307,7 +262,7 @@ function decodeRegistry(
   raw: unknown,
   namespace: string,
 ): AiSearchGenerationRegistry {
-  const value = exactObject(raw, REGISTRY_KEYS, "registry");
+  const value = exactAiSearchRegistryObject(raw, REGISTRY_KEYS, "registry", readbackFailure);
   if (
     !Array.isArray(value.generations) ||
     value.generations.length > MAX_GENERATIONS
@@ -336,9 +291,10 @@ function decodeRegistry(
   const active =
     value.active_head_generation === null
       ? null
-      : identifier(
+      : aiSearchRegistryIdentifier(
           value.active_head_generation,
           "registry.active_head_generation",
+          readbackFailure,
         );
   const registry: AiSearchGenerationRegistry = Object.freeze({
     active_head_generation: active,
@@ -396,7 +352,7 @@ export function buildAiSearchGenerationRegistryArtifact(
   registry: AiSearchGenerationRegistry,
 ): AiSearchGenerationRegistryArtifact {
   if (
-    !IDENTIFIER.test(namespace) ||
+    !isAiSearchRegistryIdentifier(namespace) ||
     !Number.isSafeInteger(revision) ||
     revision < 1
   ) {
@@ -440,22 +396,25 @@ export async function decodeAiSearchGenerationRegistrySnapshot(
   raw: unknown,
   expectedNamespace: string,
 ): Promise<AiSearchGenerationRegistrySnapshot> {
-  const value = exactObject(
+  const value = exactAiSearchRegistryObject(
     raw,
     SNAPSHOT_KEYS,
     "generation registry snapshot",
+    readbackFailure,
   );
-  const artifactValue = exactObject(
+  const artifactValue = exactAiSearchRegistryObject(
     value.artifact,
     ARTIFACT_KEYS,
     "generation registry artifact",
+    readbackFailure,
   );
   if (artifactValue.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA) {
     readbackFailure("generation registry schema is unsupported");
   }
-  const namespace = identifier(
+  const namespace = aiSearchRegistryIdentifier(
     artifactValue.namespace,
     "generation registry namespace",
+    readbackFailure,
   );
   if (namespace !== expectedNamespace) {
     readbackFailure("generation registry snapshot belongs to another namespace");
@@ -473,9 +432,10 @@ export async function decodeAiSearchGenerationRegistrySnapshot(
   } catch (cause) {
     readbackFailure("generation registry artifact is invalid", cause);
   }
-  const artifactSha256 = digest(
+  const artifactSha256 = aiSearchRegistryDigest(
     value.artifact_sha256,
     "generation registry artifact digest",
+    readbackFailure,
   );
   const computed = await aiSearchGenerationRegistryArtifactDigest(artifact);
   if (computed !== artifactSha256) {
@@ -492,10 +452,11 @@ export async function decodeAiSearchGenerationRegistrySnapshot(
 export function decodeAiSearchGenerationRegistryStoreReceipt(
   raw: unknown,
 ): AiSearchGenerationRegistryStoreReceipt {
-  const value = exactObject(
+  const value = exactAiSearchRegistryObject(
     raw,
     STORE_RECEIPT_KEYS,
     "generation registry store receipt",
+    readbackFailure,
   );
   if (
     value.outcome !== "APPLIED" &&
@@ -506,17 +467,19 @@ export function decodeAiSearchGenerationRegistryStoreReceipt(
   }
   return Object.freeze({
     outcome: value.outcome,
-    namespace: identifier(
+    namespace: aiSearchRegistryIdentifier(
       value.namespace,
       "generation registry receipt namespace",
+      readbackFailure,
     ),
     revision: positiveInteger(
       value.revision,
       "generation registry receipt revision",
     ),
-    artifact_sha256: digest(
+    artifact_sha256: aiSearchRegistryDigest(
       value.artifact_sha256,
       "generation registry receipt digest",
+      readbackFailure,
     ),
   });
 }
