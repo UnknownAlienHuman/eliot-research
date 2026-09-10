@@ -4,7 +4,7 @@ import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, create
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
+import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus } from "@eliotr/cloudflare-research";
 import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -130,33 +130,21 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     credential_generation: context.credential_generation,
     deployment_generation: env.DEPLOYMENT_GENERATION,
   };
-  const store = new WorkflowCheckpointStore(env.CORE_DB);
-  const first = await store.readRunStatus(operationId, principal).catch(mapRunStatusFailure);
-  if (first === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
-  if (first.credential_generation !== context.credential_generation ||
-      first.deployment_generation !== env.DEPLOYMENT_GENERATION) {
-    fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
-  }
-  const access = {
-    principal_ref: context.principal_ref,
-    client_class: context.client_class,
-    credential_generation: context.credential_generation,
-  } as const;
-  await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, access, operationId, env.DEPLOYMENT_GENERATION)
-    .catch(mapRunStatusFailure);
-  const status = await store.readRunStatus(operationId, principal).catch(mapRunStatusFailure);
-  if (status === null || status.investigation_id !== first.investigation_id ||
-      status.scope_snapshot_id !== first.scope_snapshot_id ||
-      status.scope_snapshot_revision !== first.scope_snapshot_revision) {
-    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run identity changed during readback", 503, true);
-  }
-  const held = await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, access, operationId, env.DEPLOYMENT_GENERATION)
-    .catch(mapRunStatusFailure);
-  if (held.investigation_id !== status.investigation_id ||
-      held.scope_snapshot_ref.id !== status.scope_snapshot_id ||
-      held.scope_snapshot_ref.revision !== status.scope_snapshot_revision) {
-    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run authority changed during readback", 503, true);
-  }
+  const recheckAuthority = async () => {
+    const held = await loadHeldResearchScope({ CORE_DB: env.CORE_DB, SEARCH_DB: env.SEARCH_DB }, {
+      principal_ref: context.principal_ref, client_class: context.client_class,
+      credential_generation: context.credential_generation,
+    } as const, operationId, env.DEPLOYMENT_GENERATION).catch(mapRunStatusFailure);
+    return {
+      investigation_id: held.investigation_id,
+      scope_snapshot_id: held.scope_snapshot_ref.id,
+      scope_snapshot_revision: held.scope_snapshot_ref.revision,
+    };
+  };
+  const status = await readStoredResearchRunStatus({
+    database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
+  }).catch(mapRunStatusFailure);
+  if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
   return {
     protocol: "eliotr.research-run-status.v1",
     workflow_instance_id: status.operation_id,
