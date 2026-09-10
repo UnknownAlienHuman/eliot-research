@@ -74,7 +74,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
       ...fixture.dependencies,
       route: { execute: async () => { failedCalls += 1; throw new Error("controlled unknown provider settlement"); } },
     });
-    const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "unknown-stage");
+    const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef);
     await expect(failing.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(failedCalls).toBe(1);
 
@@ -96,7 +96,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     const expiredHandler = createGovernedModelAttemptHandler({
       ...expired.dependencies, now: () => Date.parse("2026-09-10T14:00:00.000Z"),
     });
-    await expect(expiredHandler.handler(expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", "expired-stage")))
+    await expect(expiredHandler.handler(expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", expired.stageAttemptRef)))
       .rejects.toMatchObject({ code: "WORKFLOW_BUDGET_STOP" });
     expect(expired.calls()).toBe(0);
 
@@ -109,7 +109,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
         return cancelled.dependencies.prepare(context);
       },
     });
-    const invocation = { ...cancelled.invocation("FREEZE_PROTOCOL_AND_SCOPE", "cancelled-stage"), principal: { ...cancelled.principal, signal: controller.signal } };
+    const invocation = { ...cancelled.invocation("FREEZE_PROTOCOL_AND_SCOPE", cancelled.stageAttemptRef), principal: { ...cancelled.principal, signal: controller.signal } };
     await expect(cancelling.handler(invocation)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
     expect(cancelled.calls()).toBe(0);
   });
@@ -124,7 +124,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
       const fixture = await governedModelAttemptFixture(`handler-grant-${testCase.name}`);
       const before = await modelEffectRowCount(runtime.CORE_DB);
       const base = fixture.dependencies.prepare;
-      const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", `${testCase.name}-stage`);
+      const input = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef);
       const handler = createGovernedModelAttemptHandler({
         ...fixture.dependencies,
         prepare: async (context) => {
@@ -157,12 +157,12 @@ describe("production governed model attempt handler over actual D1/R2", () => {
         },
       },
     });
-    const input = { ...fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "post-cancel-stage"), principal: { ...fixture.principal, signal: controller.signal } };
+    const input = { ...fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef), principal: { ...fixture.principal, signal: controller.signal } };
     await expect(cancelling.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
     expect(routeCalls).toBe(1);
 
     const replay = createGovernedModelAttemptHandler(fixture.dependencies);
-    const recovered = await replay.handler(fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "post-cancel-stage"));
+    const recovered = await replay.handler(fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef));
     expect(recovered).toEqual(expect.any(Uint8Array));
     expect(fixture.calls()).toBe(1);
     expect(recovered.byteLength).toBeGreaterThan(0);
@@ -178,7 +178,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
         return fixture.dependencies.prepare(context);
       },
     });
-    const invocation = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "recovery-stage");
+    const invocation = fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.stageAttemptRef);
     const expected = await handler.handler(invocation);
     const requestSha256 = await stageRequestSha256(invocation.request);
     const identity = await deriveModelAttemptIdentity({
