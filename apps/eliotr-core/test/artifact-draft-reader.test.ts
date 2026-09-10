@@ -570,7 +570,9 @@ describe("actual D1/R2 artifact draft reader", () => {
     expect((await metadataResponse.json() as { readonly data: unknown }).data).toEqual(artifact);
     const citationResponse = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}/citations`), runtime, {} as ExecutionContext, verify);
     expect(citationResponse.status).toBe(200);
-    expect((await citationResponse.json() as { readonly data: unknown }).data).toEqual(citations);
+    expect((await citationResponse.json() as { readonly data: unknown }).data).toEqual({
+      protocol: "eliotr.artifact-section-citations.v1", ...citations,
+    });
     const response = await handleHttp(new Request(`https://research.example/api/v1/research/artifact/${artifactPath}/sections/${sectionPath}`), runtime, {} as ExecutionContext, verify);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
