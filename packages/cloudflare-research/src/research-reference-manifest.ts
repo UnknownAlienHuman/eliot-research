@@ -238,8 +238,7 @@ export async function buildAllowedReferenceManifest(input: BuildReferenceManifes
 }
 
 export interface ResearchReferenceManifestService {
-  build(input: Omit<BuildReferenceManifestInput, "resolver"> & { readonly resolver?: CloudflareEvidenceResolver }): Promise<BuiltReferenceManifest>;
-  persist(manifest: AllowedReferenceManifest): Promise<VersionedRef>;
+  buildAndPersist(input: BuildReferenceManifestInput): Promise<BuiltReferenceManifest & { readonly manifest_ref: VersionedRef }>;
 }
 
 export function createResearchReferenceManifestService(input: {
@@ -248,9 +247,14 @@ export function createResearchReferenceManifestService(input: {
   readonly store: ReferenceManifestStore;
 }): ResearchReferenceManifestService {
   return {
-    build: (request) => buildAllowedReferenceManifest({ ...request, navigation: input.navigation, resolver: request.resolver ?? input.resolver ?? fail("REFERENCE_MANIFEST_INPUT_INVALID", "evidence resolver is required") }),
-    async persist(manifest) {
-      return input.store.put(manifest);
+    async buildAndPersist(request) {
+      const built = await buildAllowedReferenceManifest({
+        ...request,
+        navigation: input.navigation,
+        resolver: request.resolver ?? input.resolver ?? fail("REFERENCE_MANIFEST_INPUT_INVALID", "evidence resolver is required"),
+      });
+      const manifestRef = await input.store.put(built.manifest);
+      return { ...built, manifest_ref: manifestRef };
     },
   };
 }
