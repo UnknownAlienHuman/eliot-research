@@ -3,10 +3,9 @@ import type { ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import {
   createEvidenceFreezeMaterializeContextReader,
   createResearchArtifactMetadataProducer,
-  prepareResearchReportAdmission,
-  type ResearchReportAdmissionInput,
 } from "@eliotr/cloudflare-research";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { prepareResearchReportAdmission, type ResearchReportAdmissionInput } from "../../../packages/cloudflare-research/src/research-report-admission.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { createResearchMaterializeStageHandler as createNativeMaterializeHandler } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { env } from "cloudflare:workers";

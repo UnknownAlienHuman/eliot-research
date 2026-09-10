@@ -14,7 +14,7 @@ import {
   type EvidenceSourceAuthority,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
-import type { StageRequest, WorkflowPrincipal } from "./types.js";
+import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 export const RESEARCH_REPORT_ADMISSION_SCHEMA = "eliotr.research.report-admission.v1" as const;
 export const RESEARCH_REPORT_ADMISSION_TOPIC = "research.artifact-draft" as const;
@@ -272,6 +272,11 @@ async function assertExactSources(
   return sources;
 }
 
+async function currentGrant(input: ResearchReportAdmissionInput): Promise<Awaited<ReturnType<NavigationReadAuthority["current"]>>> {
+  try { return await input.navigation.current(); }
+  catch (cause) { fail("REPORT_ADMISSION_AUTHORITY_STALE", "current scope grant is unavailable", false, cause); }
+}
+
 interface AdmissionRow {
   readonly decision_id: unknown; readonly decision_revision: unknown; readonly decision: unknown; readonly decision_json: unknown; readonly decision_sha256: unknown;
   readonly input_json: unknown; readonly input_sha256: unknown; readonly policy_json: unknown; readonly policy_ref: unknown; readonly policy_revision: unknown;
@@ -367,14 +372,14 @@ async function readAuthority(input: ResearchReportAdmissionInput, policy: Resear
       input.navigation.scope.policy_authority_ref !== run.policy_authority_ref) {
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "navigation scope is not the run's frozen scope");
   }
-  const grant = await input.navigation.current();
+  const grant = await currentGrant(input);
   if (grant.authorization_receipt_ref !== run.authorization_receipt_ref || !grant.allowed_use.includes("research") ||
       grant.disclosure_ceiling !== policy.disclosure_ceiling || Date.parse(grant.expires_at) <= nowMs || Date.parse(policy.expires_at) <= nowMs) {
     fail("REPORT_ADMISSION_DENIED", "current scope grant does not permit the configured private REPORT policy");
   }
   const refs = [...input.navigation.scope.member_source_revision_refs];
   const sources = await assertExactSources(input.navigation, refs, grant);
-  const afterGrant = await input.navigation.current();
+  const afterGrant = await currentGrant(input);
   if (afterGrant.authorization_receipt_ref !== run.authorization_receipt_ref) {
     fail("REPORT_ADMISSION_AUTHORITY_STALE", "scope authorization changed during REPORT admission");
   }
