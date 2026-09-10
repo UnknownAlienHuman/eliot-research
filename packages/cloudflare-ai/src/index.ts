@@ -51,6 +51,7 @@ export {
   canonicalModelGatewayJson,
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
+  validateModelGatewayRequestBody,
 } from "./model-gateway-request.js";
 export { decodeModelGatewayResponse } from "./model-gateway-response.js";
 export {
