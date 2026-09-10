@@ -34,7 +34,7 @@ import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
 import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.js";
 import { readLibraryReadiness } from "./library-readiness.js";
-import { readArtifactDraft } from "@eliotr/cloudflare-research";
+import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-research";
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 export interface CompositionRootInput {
   readonly env: Env;
@@ -115,6 +115,36 @@ function semanticApi(env: Env): SemanticApi {
           throw new ArtifactReadNotFoundError();
         }
         return revision;
+      });
+    },
+    artifactSection: async (context, artifactRef, sectionRef) => {
+      const now = Date.now;
+      const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
+      const scopes = createD1ScopeService(env.CORE_DB, authority, { now });
+      const section = await readArtifactDraftSection({
+        database: env.CORE_DB,
+        work_bucket: env.WORK_BUCKET,
+        artifact_ref: artifactRef,
+        section_ref: sectionRef,
+        access: context,
+        require_current: (scope: ScopeSnapshot) => scopes.requireCurrent(scope),
+        now,
+      });
+      if (section === null) throw new ArtifactReadNotFoundError("artifact section does not exist");
+      const body = new ArrayBuffer(section.body.byteLength);
+      new Uint8Array(body).set(section.body);
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "content-length": String(section.size_bytes),
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "x-eliotr-artifact-ref": `${section.artifact_ref.id}:${section.artifact_ref.revision}`,
+          "x-eliotr-section-ref": `${section.section_ref.id}:${section.section_ref.revision}`,
+          "x-eliotr-section-object-ref": section.body_object_ref,
+          "x-eliotr-section-sha256": section.body_sha256,
+        },
       });
     },
     proposeWiki: () => unavailable("research.wiki.propose"),

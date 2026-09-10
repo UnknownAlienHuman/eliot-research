@@ -31,6 +31,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/research/orient", operation: "research.orient", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/trace/:ref", operation: "research.trace", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/artifact/:ref", operation: "research.artifact", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/research/artifact/:ref/sections/:section_ref", operation: "research.artifact.section", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "POST", path: "/api/v1/research/query", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/jobs", operation: "research.query", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/:workflow_id", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
