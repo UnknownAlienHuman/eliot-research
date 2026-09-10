@@ -1,7 +1,7 @@
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { escapeHtml } from "./html.js";
-import { researchRunBody, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
 function message(error: unknown): string {
@@ -18,8 +18,19 @@ function statusText(view: ResearchRunStatusView): string {
   switch (view.execution_state) {
     case "ACTIVE": return "Research is still processing. Refresh status to check again.";
     case "CANCELLED": return "Research was cancelled. Answer unavailable.";
-    case "ENGINE_COMPLETED": return "Processing finished. No answer has been generated.";
+    case "ENGINE_COMPLETED": return view.answer.availability === "draft" ? "A draft report is ready for review." : "Processing finished. No answer has been generated.";
   }
+}
+
+function decodeSectionBody(bytes: Uint8Array): string {
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section is not valid UTF-8" }); }
+}
+
+function codeRef(value: string): HTMLElement {
+  const code = document.createElement("code");
+  code.textContent = value;
+  return code;
 }
 
 export function mountResearchRunPanel(
@@ -28,7 +39,7 @@ export function mountResearchRunPanel(
   healthReady: () => boolean = () => false,
 ): (() => void) & { clearPrivate(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() ? "READY" : "WAITING"}</span></div>
-    <p class="workflow-copy">Start research and check its progress. Generated answers are not available yet.</p>
+    <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
@@ -76,9 +87,41 @@ export function mountResearchRunPanel(
   };
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
   updateButtons();
-  const renderStatus = (view: ResearchRunStatusView): void => {
+  const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
     const text = statusText(view);
-    result.hidden = false; result.innerHTML = `<p><strong>${text}</strong></p><p>Run ID <code>${escapeHtml(view.workflow_instance_id)}</code> · investigation <code>${escapeHtml(view.investigation_ref.id)}</code></p>`;
+    result.replaceChildren();
+    const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
+    const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
+    result.append(heading, identity);
+    if (view.answer.availability === "draft" && artifact !== undefined) {
+      const artifactLine = document.createElement("p"); artifactLine.append("Draft artifact ", codeRef(`${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`)); result.append(artifactLine);
+      const sections = document.createElement("ul");
+      for (const section of artifact.sections) {
+        const item = document.createElement("li");
+        const label = document.createElement("span"); label.append("Section ", codeRef(`${section.section_ref.id}:${section.section_ref.revision}`), " · evidence ", codeRef(section.evidence_ledger_ref), " ");
+        const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
+        open.onclick = () => {
+          if (renderSerial !== serial || controller !== undefined) return;
+          const local = new AbortController(); controller = local; open.disabled = true; status.textContent = "Reading report section…";
+          void readResearchArtifactSection(artifact.artifact_ref, section, local.signal)
+            .then((readback) => {
+              if (renderSerial !== serial) return;
+              const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
+              item.querySelector(".research-section-body")?.remove(); item.append(body); status.textContent = "Report section opened.";
+            })
+            .catch((error: unknown) => {
+              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409)) { clearPrivate(); return; }
+              const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
+              status.textContent = "The report section could not be opened.";
+            })
+            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
+        };
+        item.append(label, open); sections.append(item);
+      }
+      result.append(sections);
+    }
+    result.hidden = false;
     status.textContent = text; refresh.disabled = false;
   };
   const readStatus = (): void => {
@@ -89,7 +132,12 @@ export function mountResearchRunPanel(
     result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
     const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
     void readResearchRunStatus(id, expectedGeneration, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view); })
+      .then(async (view) => {
+        if (active !== serial) return;
+        const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
+        if (active !== serial) return;
+        workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view, artifact);
+      })
       .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; result.replaceChildren(); result.hidden = true; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error); } else status.textContent = message(error); })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
   };

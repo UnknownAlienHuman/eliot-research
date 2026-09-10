@@ -28,7 +28,7 @@ import {
 import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
 import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
 import { SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
-import { modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
+import { modelGatewayRequestParametersSha256, modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
 const runtime = env as unknown as Q1Runtime;
@@ -56,15 +56,6 @@ export interface FreezeFixture {
   readonly investigation_id: string;
 }
 
-const deployment = Object.freeze({
-  route_ref: "dynamic/eliotr-balanced",
-  route_version: "route-v1",
-  prompt_generation: "prompt-v1",
-  schema_generation: "schema-v1",
-  parameters_digest: "a".repeat(64),
-  pricing_snapshot_ref: "pricing-v1",
-});
-
 async function signedProfile(scope: ScopeSnapshot, policyAuthorityRef: string, policyGeneration: string): Promise<EvidenceFreezeModelDefinition> {
   const expiresAt = scope.expires_at;
   const policy = Object.freeze({
@@ -73,6 +64,15 @@ async function signedProfile(scope: ScopeSnapshot, policyAuthorityRef: string, p
     provider_and_policy_generations: { policy: policyGeneration },
     permitted_acquisition_or_expansion_routes: [], disclosure_ceiling: "owner-only",
     allowed_use: ["research"], expires_at: expiresAt,
+  });
+  const parameters_digest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
+  const deployment = Object.freeze({
+    route_ref: "dynamic/eliotr-balanced",
+    route_version: "route-v1",
+    prompt_generation: "prompt-v1",
+    schema_generation: "schema-v1",
+    parameters_digest,
+    pricing_snapshot_ref: "pricing-v1",
   });
   const material = {
     schema: "eliotr.research.model-profile-definition.v1" as const,
@@ -183,6 +183,7 @@ export async function freezeFixture(): Promise<FreezeFixture> {
   const current = await ledgerStore.read(investigationId);
   if (current === null) throw new Error("missing current W1 head");
   const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation);
+  const deployment = definition.deployment;
   const profileDefinitionSource = { provenance_ref: definition.config_provenance_ref, read: async () => definition };
   const profileProducer = createModelProfileBindingProducer({ source: profileDefinitionSource,
     readCurrentAuthority: async () => {

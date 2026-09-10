@@ -32,3 +32,4 @@ export * from "./research-held-scope.js";
 export * from "./research-run-status.js";
 export * from "./research-materialize-result.js";
 export * from "./research-materialize-stage-handler.js";
+export * from "./research-materialize-output-reader.js";

@@ -273,7 +273,7 @@ import {
 import { createResearchReferenceManifestService } from "../../../packages/cloudflare-research/src/research-reference-manifest.js";
 import { createResearchReferenceManifestStore, type ReferenceManifestStorageContext } from "../../../packages/cloudflare-research/src/research-reference-manifest-store.js";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
-import { committedEvidenceFreezeFixture } from "./research-evidence-freeze-fixture.js";
+import { committedEvidenceFreezeFixture, principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
 
 function freezePrompt(
   freeze: Awaited<ReturnType<typeof committedEvidenceFreezeFixture>>,
@@ -290,10 +290,10 @@ function freezePrompt(
         const content_digest = await evidenceSha256Bytes(bytes);
         const grant = await freeze.navigation.current();
         const context: ReferenceManifestStorageContext = {
-          principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+          principal_ref: freezePrincipal.principal_ref, credential_generation: freezePrincipal.credential_generation,
           scope_snapshot_ref: { id: freeze.scope.snapshot_id, revision: freeze.scope.revision },
           manifest_residency_key: {
-            scope_domain_id: freeze.scope.snapshot_id, access_domain_id: principal.principal_ref,
+            scope_domain_id: freeze.scope.snapshot_id, access_domain_id: freezePrincipal.principal_ref,
             confidentiality_domain_id: "private", encryption_key_domain_id: "freeze-key-v1",
             retention_domain_id: "freeze-retention-v1", erasure_domain_id: "freeze-erasure-v1",
             content_digest: { algorithm: "sha256", digest: content_digest },
@@ -332,7 +332,7 @@ function freezePrompt(
 export async function committedFreezeSynthesisFixture() {
   const freeze = await committedEvidenceFreezeFixture();
   const base = await governedModelAttemptFixture("freeze-synthesis", {
-    database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal,
+    database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
   });
   const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE", deployment: freeze.profile_definition.deployment });
@@ -341,7 +341,7 @@ export async function committedFreezeSynthesisFixture() {
     read_stage_five: freeze.readers.read_stage_five,
   }, freeze.navigation, freeze.readers);
   const stage_five = await freeze.readers.read_stage_five({ operation_id: freeze.operation_id,
-    investigation_id: freeze.investigation_id, principal });
+    investigation_id: freeze.investigation_id, principal: freezePrincipal });
   const evidence = stage_five.evidence_pack.resolved_evidence[0];
   if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
   const candidate = JSON.stringify({ schema: "eliotr.research.synthesis-section-candidate.v1",
@@ -350,18 +350,18 @@ export async function committedFreezeSynthesisFixture() {
   let provider_calls = 0;
   const request_bodies: string[] = [];
   const model: EvidenceFreezeSynthesisModelDependencies = {
-    database: freeze.db, work_bucket: freeze.bucket, operation_kind: "REPORT",
+    database: freeze.db, work_bucket: freeze.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
     gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-freeze-synthesis",
       fetch: async (_input, init) => {
         provider_calls += 1;
         if (typeof init?.body === "string") request_bodies.push(init.body);
         return new Response(JSON.stringify({
-          id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: ROUTE,
+          id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: deployment.route_ref,
           choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
-        }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled" } });
+        }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
       } },
-    prompt: freezePrompt(freeze, stage_five, deployment, "freeze"), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: PRICING_SNAPSHOT, billed_usd: 0 }) },
+    prompt: freezePrompt(freeze, stage_five, deployment, "freeze"), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {
       if (prepared === null) throw new Error("spend authorization read before preparation");
       return {

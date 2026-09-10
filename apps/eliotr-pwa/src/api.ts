@@ -22,6 +22,11 @@ export interface ApiTextResponse {
   readonly headers: Headers;
 }
 
+export interface ApiBytesResponse {
+  readonly bytes: Uint8Array;
+  readonly headers: Headers;
+}
+
 export class ApiRequestError extends Error {
   public readonly status: number;
   public readonly code: string;
@@ -383,14 +388,14 @@ export async function requestApiWithStatuses(
   }
 }
 
-/** Authenticated same-origin text transport for bounded evidence bytes. */
-export async function requestApiText(path: string, signal?: AbortSignal,
-  maximumBytes = 512 * 1024): Promise<ApiTextResponse> {
+/** Authenticated same-origin binary transport for bounded owner objects. */
+export async function requestApiBytes(path: string, signal?: AbortSignal,
+  maximumBytes = 512 * 1024, expectedContentType = "application/octet-stream"): Promise<ApiBytesResponse> {
   let unchangedPath = false;
   try { unchangedPath = new URL(path, "https://local.invalid").pathname === path.split("?")[0]; }
   catch { /* The typed rejection below covers malformed URLs. */ }
   if (!path.startsWith("/api/v1/") || /[\\#\u0000-\u0020\u007f]/u.test(path) || !unchangedPath ||
-      !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 512 * 1024) {
+      !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 1024 * 1024) {
     throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
   }
   const controller = new AbortController();
@@ -410,21 +415,21 @@ export async function requestApiText(path: string, signal?: AbortSignal,
   try {
     const response = await bounded(fetch(path, {
       method: "GET", signal: controller.signal, redirect: "manual", credentials: "same-origin",
-      cache: "no-store", headers: { accept: "text/plain" },
+      cache: "no-store", headers: { accept: expectedContentType },
     }));
     const redirected = response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400);
     if ((redirected || response.status === 401 || response.status === 403) && typeof window !== "undefined") {
       window.dispatchEvent(new Event("eliotr:authorization-cleared"));
     }
     if (redirected) throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
-    if (!response.body) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected an evidence response body" });
+    if (!response.body) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected a bounded API response body" });
     reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let size = 0; let count = 0;
     while (true) {
       const next = await bounded(reader.read()); if (next.done) break;
       size += next.value.byteLength;
       if (++count > 4096 || size > maximumBytes) {
-        throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "Evidence response exceeds its byte budget" });
+        throw new ApiRequestError({ status: 502, code: "API_RESPONSE_TOO_LARGE", message: "API response exceeds its byte budget" });
       }
       chunks.push(next.value);
     }
@@ -437,26 +442,32 @@ export async function requestApiText(path: string, signal?: AbortSignal,
       throw decodeApiProblem(value, response.status);
     }
     if (response.status !== 200 && response.status !== 206) {
-      throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected evidence completion status" });
+      throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected bounded response completion status" });
     }
-    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== "text/plain") {
-      throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected a plain-text evidence response" });
+    if (response.headers.get("content-type")?.split(";")[0]?.trim() !== expectedContentType) {
+      throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: `Expected a ${expectedContentType} response` });
     }
-    let text: string;
-    try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
-    catch { throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Evidence response is not valid UTF-8" }); }
     completed = true;
-    return { text, headers: response.headers };
+    return { bytes, headers: response.headers };
   } catch (error) {
     if (error instanceof ApiRequestError) throw error;
-    throw new ApiRequestError({ status: 503, code: controller.signal.aborted ? "API_REQUEST_ABORTED" : "API_UNREACHABLE",
-      message: "Evidence read interrupted; retry with the same handle", retryable: true });
+    throw new ApiRequestError({ status: 503, code: controller.signal.aborted ? "API_REQUEST_ABORTED" : "API_UNREACHABLE", message: "Bounded API read interrupted; retry with the same inputs", retryable: true });
   } finally {
     clearTimeout(timeout); signal?.removeEventListener("abort", abort);
     if (rejectAbort) controller.signal.removeEventListener("abort", rejectAbort);
     if (completed) reader?.releaseLock();
     else { controller.abort(); if (reader) void reader.cancel().catch(() => {}); }
   }
+}
+
+/** Authenticated same-origin text transport for bounded evidence bytes. */
+export async function requestApiText(path: string, signal?: AbortSignal,
+  maximumBytes = 512 * 1024): Promise<ApiTextResponse> {
+  const response = await requestApiBytes(path, signal, maximumBytes, "text/plain");
+  let text: string;
+  try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(response.bytes); }
+  catch { throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Evidence response is not valid UTF-8" }); }
+  return { text, headers: response.headers };
 }
 
 export async function getSystemHealth(signal?: AbortSignal): Promise<SystemHealth> {

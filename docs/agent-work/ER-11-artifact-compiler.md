@@ -12,6 +12,7 @@ outside the paths below.
 ## Owned paths
 
 - `packages/research/src/artifact-compiler.ts`
+- `packages/cloudflare-artifacts/**`
 
 ## Read only
 
