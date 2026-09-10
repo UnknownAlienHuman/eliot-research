@@ -683,7 +683,8 @@
         "apps/eliotr-core/test/library-readiness.test.ts: actual local Worker/D1 channel readback, missing lexical isolation, owner fencing and raw capture/conversion/admission snapshot observation preservation",
         "tests/library-readiness.test.ts and apps/eliotr-pwa/src/retrieval-api.test.ts: selected head/deployment validation and strict FAST_SEARCH request profile",
         "Controlled browser source-selection/readiness/search/excerpt verification is retained separately from actual D1/R2 tests; it is not a remote or raw outbox-to-projection receipt",
-        "Deployed Access, remote projection/currentness qualification and the raw scheduled outbox-to-Queue-to-search owner browser proof remain NOT_EXECUTED"
+        "tests/integration/browser/owner-e2e.mjs: focused cdb95d93 actual local scheduled outbox, Queue, R2 projection and Chromium FAST_SEARCH passed with exact raw-source evidence; outbox SENT and projection PARTIAL with MANAGED_INDEX_READBACK_FAILED honestly reflect unavailable local managed indexing; the conversion-provider response is recorded, while storage, application routing and browser behavior are real",
+        "Deployed Access and remote projection/currentness qualification remain NOT_EXECUTED; the complete owner suite on both operating systems remains separate acceptance"
       ]
     },
     {
