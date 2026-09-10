@@ -70,6 +70,18 @@ byte admission and authenticated Workspace action/readback remain distinct work.
 setup is not a prerequisite for the selected Workspace path. See
 [Google transport profiles](../adr/0006-google-external-transport-profiles.md).
 
+## Artifact drafts
+
+The internal `cloudflare-research` draft store persists canonical ArtifactSpec/ArtifactRevision
+manifests, section bodies and referenced objects with explicit residency. It reserves the operation
+before R2 writes, verifies actual object readback, then commits the DRAFT revision, draft head and
+intent/outbox together through a guarded D1 transaction. Finalized replay reads the original receipt
+even after a later draft revision; missing stored evidence fails without rewriting objects.
+
+This storage transition leaves the published `artifact_head` unchanged. It does not establish semantic
+verification, accepted publication or caller authorization. The versioned owner artifact-read API,
+compiler/publication checks and the complete Wiki/report user loop remain open in the launch plan.
+
 ## Evidence must match the claim
 
 - Queue acceptance is not a durable consumer receipt or projection success.
