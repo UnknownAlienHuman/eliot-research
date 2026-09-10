@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createGovernedModelAttemptHandler, deriveModelAttemptIdentity } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
+import { createWorkflowCheckpointExecutor } from "../../../packages/cloudflare-research/src/executor.js";
 import { digest } from "../../../packages/cloudflare-research/src/types.js";
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelCallInput } from "@eliotr/research";
@@ -9,6 +10,7 @@ import {
   initializeModelAttemptRuntime,
   runtime,
 } from "./model-attempt-fixture.js";
+import { workflowFixture } from "./research-workflow-fixture.js";
 
 beforeAll(initializeModelAttemptRuntime);
 
