@@ -1,6 +1,7 @@
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
+import { createD1ScopeProfilePort, type ScopeProfileBinding } from "@eliotr/retrieval";
 import {
   createFreezeProtocolAndScopeStageHandler,
   digest,
@@ -27,28 +28,18 @@ async function readPersistedRetrievalProfile(
   database: D1Database,
   scope: NavigationReadAuthority["scope"],
 ): Promise<RetrieveBranchesStageDependencies["profile"]> {
-  let row: { readonly profile_version: unknown; readonly max_sources: unknown; readonly max_results: unknown } | null;
+  let binding: ScopeProfileBinding;
   try {
-    row = await database.prepare(
-      "SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
-    ).bind(scope.snapshot_id, scope.revision).first();
+    binding = await createD1ScopeProfilePort(database).loadBinding(scope);
   } catch {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  const maxSources = row?.max_sources;
-  const maxResults = row?.max_results;
-  if (row === null || row.profile_version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
-      !Number.isSafeInteger(maxSources) || (maxSources as number) < 1 ||
-      (maxSources as number) > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
-      !Number.isSafeInteger(maxResults) || (maxResults as number) < 1 ||
-      (maxResults as number) > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
+  if (binding.version !== SERVER_RETRIEVAL_SCOPE_PROFILE.version ||
+      !Number.isSafeInteger(binding.max_sources) || binding.max_sources > SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources ||
+      !Number.isSafeInteger(binding.max_results) || binding.max_results > SERVER_RETRIEVAL_SCOPE_PROFILE.max_results) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  return {
-    version: SERVER_RETRIEVAL_SCOPE_PROFILE.version,
-    max_sources: maxSources as number,
-    max_results: maxResults as number,
-  };
+  return binding;
 }
 
 export type ResearchStageHandlerFactoryMode =
