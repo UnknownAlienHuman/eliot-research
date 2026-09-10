@@ -183,7 +183,8 @@ async function terminateAsyncChild(child, waitForClose = (timeoutMs) => waitForA
     throw localCleanupFailure(pid, "SIGKILL", terminationError);
   }
   terminationError = signalAsyncChild(child, "SIGTERM");
-  if (await waitForClose(remaining())) return;
+  const gracefulBudget = Math.min(2500, remaining());
+  if (await waitForClose(gracefulBudget)) return;
   const forceError = signalAsyncChild(child, "SIGKILL");
   terminationError ??= forceError;
   if (await waitForClose(remaining())) return;
