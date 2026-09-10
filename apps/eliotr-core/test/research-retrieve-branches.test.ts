@@ -25,6 +25,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import {
   createRetrieveBranchesStageHandler,
+  readRetrieveBranchesCheckpoint,
   type RetrieveBranchesStageDependencies,
 } from "../src/research-retrieve-branches.js";
 import type { ScopeSnapshot } from "@eliotr/contracts";
@@ -131,6 +132,7 @@ async function fixture(): Promise<Fixture> {
 async function prepareRetrieveStage(f: Fixture): Promise<{
   readonly request: StageRequest;
   readonly handler: ReturnType<typeof createRetrieveBranchesStageHandler>;
+  readonly dependencies: RetrieveBranchesStageDependencies;
 }> {
   const deps: RetrieveBranchesStageDependencies = {
     database: f.db,
@@ -152,6 +154,7 @@ async function prepareRetrieveStage(f: Fixture): Promise<{
   return {
     request: { ...f.stage0, stage: "RETRIEVE_BRANCHES", investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest },
     handler: createRetrieveBranchesStageHandler(deps),
+    dependencies: deps,
   };
 }
 
@@ -168,9 +171,12 @@ async function rowCounts(db: D1Database): Promise<{ readonly snapshots: number; 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
   it("reads stage-0 authority, searches the same scope, and replays exact evidence refs", async () => {
     const f = await fixture();
-    const { request: retrieveRequest, handler } = await prepareRetrieveStage(f);
+    const { request: retrieveRequest, handler, dependencies } = await prepareRetrieveStage(f);
     const beforeRetrieve = await rowCounts(f.db);
     const firstReceipt = await f.executor.execute(retrieveRequest, principal, handler);
+    const authoritative = await readRetrieveBranchesCheckpoint(dependencies, retrieveRequest, principal);
+    expect(authoritative.receipt.request_sha256).toBe(firstReceipt.request_sha256);
+    expect(authoritative.checkpoint.operation_id).toBe(retrieveRequest.operation_id);
     const firstBytes = await readWorkflowObject(runtime.WORK_BUCKET, firstReceipt.output_manifest, true);
     const first = JSON.parse(new TextDecoder().decode(firstBytes)) as { evidence_pack: { resolved_evidence: readonly { exact_excerpt: string; handle: { source_revision_ref: string; scope_snapshot_ref: { id: string; revision: number } } }[]; pack_ref: { id: string; revision: number } }; trace: { evidence_pack_ref: string }; coverage_claim: string };
     expect(first.coverage_claim, JSON.stringify(first)).toBe("SAMPLED");
@@ -188,6 +194,26 @@ describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
     const replayBytes = await readWorkflowObject(runtime.WORK_BUCKET, replayReceipt.output_manifest, true);
     expect(new TextDecoder().decode(replayBytes)).toBe(new TextDecoder().decode(firstBytes));
     expect(await rowCounts(f.db)).toEqual(counts);
+    const replayReadback = await readRetrieveBranchesCheckpoint(dependencies, retrieveRequest, principal);
+    expect(canonicalEvidenceJson(replayReadback.checkpoint)).toBe(canonicalEvidenceJson(authoritative.checkpoint));
+  });
+
+  it("rejects a mismatched operation reference and tampered persisted output", async () => {
+    const f = await fixture();
+    const { request, handler, dependencies } = await prepareRetrieveStage(f);
+    const receipt = await f.executor.execute(request, principal, handler);
+    await expect(readRetrieveBranchesCheckpoint(dependencies, { ...request, operation_id: "other-operation" }, principal))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    const original = await f.bucket.head(receipt.output_manifest.object_ref);
+    expect(original).not.toBeNull();
+    const corrupted = new Uint8Array(await readWorkflowObject(f.bucket, receipt.output_manifest, true));
+    corrupted[0] = (corrupted[0] ?? 0) ^ 1;
+    await f.bucket.put(receipt.output_manifest.object_ref, corrupted, {
+      sha256: await digest(corrupted),
+      customMetadata: original?.customMetadata ?? {},
+    });
+    await expect(readRetrieveBranchesCheckpoint(dependencies, request, principal))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
   });
 
   it("refuses a revoked held grant before retrieval rows or evidence reads", async () => {
