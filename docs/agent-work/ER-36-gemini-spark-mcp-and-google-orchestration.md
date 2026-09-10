@@ -1,5 +1,12 @@
 # ER-36: Gemini Spark / Antigravity MCP and Google orchestration
 
+The internal MCP tool context must preserve the credential generation, authentication method,
+expiry and selected auth profile from successful Access verification alongside the existing actor
+and deployment identity. `gemini-mcp.ts`, `gemini-mcp-protocol.ts` and their existing package tests
+own this continuation. Caller tool arguments cannot supply or replace verified fields. This internal
+record does not grant namespace/candidate access, change public v1/v2 DTOs, or turn an MCP actor into
+`owner_pwa`; an owner-issued exact-candidate authorization remains a separate admission prerequisite.
+
 **Slice:** 0–1 bridge
 **Depends on:** ER-17, ER-18, ER-20, ER-21, ER-24, ER-26
 **Live gate:** the selected authentication profile must have deployed Access
