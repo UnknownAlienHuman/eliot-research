@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createWorkflowCheckpointExecutor, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
-import { body, run, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { body, db, run, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { workflowFixture, principal as workflowPrincipal } from "./research-workflow-fixture.js";
 
 beforeAll(async () => {
@@ -26,6 +26,12 @@ describe("research.run status over the owner-bound Worker route", () => {
     const launchedBody = await body<{ readonly workflow_instance_id: string }>(launched);
     expect(launched.status, JSON.stringify(launchedBody)).toBe(200);
     const workflowId = launchedBody.data.workflow_instance_id;
+    const beforeReads = await Promise.all([
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_run").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE topic = 'research.workflow.checkpoint.v1'").first<number>("n"),
+    ]);
     const status = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }));
     const statusBody = await body(status);
     expect(status.status, JSON.stringify(statusBody)).toBe(200);
@@ -38,9 +44,44 @@ describe("research.run status over the owner-bound Worker route", () => {
       answer: { availability: "unavailable" },
     });
     expect(statusBody.data).not.toHaveProperty("artifact_ref");
+    const repeated = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }));
+    expect(repeated.status).toBe(200);
+    const afterReads = await Promise.all([
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_run").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_attempt").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint").first<number>("n"),
+      db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE topic = 'research.workflow.checkpoint.v1'").first<number>("n"),
+    ]);
+    expect(afterReads).toEqual(beforeReads);
     expect((await run(new Request(`https://research.example/api/v1/research/run/${workflowId}?extra=1`, { method: "GET" }))).status).toBe(400);
-    expect((await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }), verifier("stranger"))).status).toBe(404);
+    const foreign = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }), verifier("stranger"));
+    expect(foreign.status).toBe(404);
+    expect((await body(foreign)).code).toBe("RESEARCH_RUN_NOT_FOUND");
+    const missing = await run(new Request("https://research.example/api/v1/research/run/run-does-not-exist", { method: "GET" }));
+    expect(missing.status).toBe(404);
+    expect((await body(missing)).code).toBe("RESEARCH_RUN_NOT_FOUND");
     expect((await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }), verifier("run-status-owner", "service_token"))).status).toBe(403);
+    const scope = await db.prepare("SELECT scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(workflowId).first<{ readonly scope_snapshot_id: string; readonly scope_snapshot_revision: number }>();
+    expect(scope).not.toBeNull();
+    if (scope === null) throw new Error("missing status scope binding");
+    try {
+      await db.prepare("UPDATE scope_access_grant SET state = 'REVOKED' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+        .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
+      const revoked = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }));
+      expect(revoked.status).toBe(409);
+      expect((await body(revoked)).code).toBe("RESEARCH_AUTHORITY_STALE");
+    } finally {
+      await db.prepare("UPDATE scope_access_grant SET state = 'ACTIVE' WHERE snapshot_id = ?1 AND snapshot_revision = ?2")
+        .bind(scope.scope_snapshot_id, scope.scope_snapshot_revision).run();
+    }
+    const staleCredential = await run(new Request(`https://research.example/api/v1/research/run/${workflowId}`, { method: "GET" }), {
+      async verify() {
+        return { principal_ref: "orientation-owner", credential_generation: "credential-v2", authentication_method: "cloudflare_access", expires_at: new Date(Date.now() + 60_000).toISOString() };
+      },
+    });
+    expect(staleCredential.status).toBe(409);
+    expect((await body(staleCredential)).code).toBe("RESEARCH_AUTHORITY_STALE");
   }, 30_000);
 
   it("reads a durably cancelled run without treating it as engine completion", async () => {
@@ -59,5 +100,27 @@ describe("research.run status over the owner-bound Worker route", () => {
       cancellation_receipt_ref: cancellationRef,
       final_receipt: null,
     });
+  });
+
+  it("rejects a mismatched current-view read as corrupt durable state", async () => {
+    const runRow = {
+      operation_id: "run-corrupt", investigation_id: "investigation", initial_revision: 1, current_revision: 1,
+      principal_ref: "owner", credential_generation: "credential", deployment_generation: "deployment",
+      scope_snapshot_id: "scope", scope_snapshot_revision: 1, next_stage_index: 0, state: "ACTIVE",
+      cancellation_receipt_ref: null,
+    };
+    const fake = {
+      prepare(sql: string) {
+        return {
+          bind: (..._values: unknown[]) => ({
+            first: async () => sql.includes("research_workflow_run") ? runRow
+              : sql.includes("research_workflow_current") ? { ...runRow, ledger_revision: 2 } : null,
+          }),
+        };
+      },
+    } as unknown as D1Database;
+    await expect(new WorkflowCheckpointStore(fake).readRunStatus("run-corrupt", {
+      principal_ref: "owner", credential_generation: "credential", deployment_generation: "deployment",
+    })).rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
   });
 });

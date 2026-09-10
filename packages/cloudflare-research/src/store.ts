@@ -126,11 +126,10 @@ export class WorkflowCheckpointStore {
       } catch {
         fail("WORKFLOW_EFFECT_UNCERTAIN");
       }
-      if (current === null || current.operation_id !== operationId || current.state !== run.state ||
+      if (current === null) fail("WORKFLOW_AUTHORITY_STALE");
+      if (current.operation_id !== operationId || current.state !== run.state ||
           current.current_revision !== run.current_revision || current.next_stage_index !== run.next_stage_index ||
-          current.ledger_revision !== run.current_revision) {
-        fail("WORKFLOW_AUTHORITY_STALE");
-      }
+          current.ledger_revision !== run.current_revision) fail("WORKFLOW_OUTPUT_CORRUPT");
     }
     let currentAttempt: AttemptRow | null = null;
     if (run.next_stage_index < RESEARCH_WORKFLOW_STAGES.length) {
@@ -155,24 +154,10 @@ export class WorkflowCheckpointStore {
     }
     if (run.state === "ENGINE_COMPLETED") {
       if (run.next_stage_index !== RESEARCH_WORKFLOW_STAGES.length) fail("WORKFLOW_OUTPUT_CORRUPT");
-      let finalAttempt: AttemptRow | null;
-      try {
-        finalAttempt = await this.db.prepare(
-          "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, expected_revision, " +
-          "budget_receipt_ref, budget_expires_at_ms, state, output_json, created_at " +
-          "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
-        ).bind(operationId, RESEARCH_WORKFLOW_STAGES.length - 1).first<AttemptRow>();
-      } catch {
-        fail("WORKFLOW_EFFECT_UNCERTAIN");
-      }
-      if (finalAttempt === null || finalAttempt.state !== "COMMITTED" || finalAttempt.output_json === null) {
-        fail("WORKFLOW_OUTPUT_CORRUPT");
-      }
-      let request: StageRequest;
-      try { request = parseRequest(JSON.parse(finalAttempt.request_json)); }
-      catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
+      const committed = await this.readCommittedStageRequest(operationId, "MATERIALIZE");
+      if (committed === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       let finalReceipt: StageReceipt | null;
-      try { finalReceipt = await this.receipt(request, finalAttempt.request_sha256); }
+      try { finalReceipt = await this.receipt(committed.request, committed.request_sha256); }
       catch (error) {
         if (error instanceof WorkflowCheckpointError) throw error;
         fail("WORKFLOW_EFFECT_UNCERTAIN");

@@ -23,3 +23,5 @@ export * from "./research-model-gateway-runtime.js";
 export * from "./research-model-stage-handler.js";
 export * from "./research-model-pricing-store.js";
 export * from "./research-model-attempt-revalidator.js";
+export * from "./research-held-scope.js";
+export * from "./research-run-status.js";
