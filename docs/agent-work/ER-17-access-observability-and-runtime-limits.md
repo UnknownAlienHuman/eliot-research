@@ -11,8 +11,7 @@ outside the paths below.
 
 ## Owned paths
 
-- `packages/platform-cloudflare/src/access.ts`
-- `packages/platform-cloudflare/src/access.test.ts`
+- `packages/cloudflare-access/**`
 - `packages/platform-cloudflare/src/observability.ts`
 - `packages/platform-cloudflare/src/observability.test.ts`
 - `packages/platform-cloudflare/src/runtime-limits.ts`

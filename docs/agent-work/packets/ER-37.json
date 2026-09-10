@@ -16,17 +16,12 @@
       "apps/eliotr-core/src/ingest-service.test.ts",
       "apps/eliotr-core/src/source-admission-service.test.ts",
       "scripts/check-ingest-admission.mjs",
-      "packages/contracts/src/snapshot-view.ts",
       "packages/cloudflare-raw-ingest/src/raw-normalized-types.ts",
       "packages/cloudflare-raw-ingest/src/raw-normalized-snapshot-view.ts",
       "packages/cloudflare-raw-ingest/src/raw-normalized-candidate-reader.ts",
       "packages/cloudflare-raw-ingest/src/raw-normalized-admission.ts",
       "packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts",
-      "packages/cloudflare-markdown/src/raw-markdown-candidate-reader.ts",
-      "apps/eliotr-core/src/raw-normalized-admission.ts",
-      "apps/eliotr-core/src/composition-root.ts",
-      "apps/eliotr-core/src/http.ts",
-      "infra/d1/core/migrations/0030_raw_normalized_admission.sql"
+      "apps/eliotr-core/src/raw-normalized-admission.ts"
     ],
     "mandatory_negative_case": "Reuse one idempotency identity with changed bytes or policy, collapse the R2 and D1 fingerprints, or omit projection outbox from the commit; every case must fail without admitted state.",
     "document": "ER-37-governed-ingest-admission-composition.md",

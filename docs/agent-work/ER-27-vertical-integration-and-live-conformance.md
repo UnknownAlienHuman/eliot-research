@@ -13,6 +13,7 @@ outside the paths below.
 
 - `tests/integration/**`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
+- `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
 ## Read only
 
