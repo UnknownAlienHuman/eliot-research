@@ -164,6 +164,14 @@ It does not discover credentials from ambient provider settings or authorize spe
 ResearchWorkflow still needs trusted preparation, current pricing and consent authority before using
 this runtime in its model stages.
 
+`createResearchModelStageHandler` composes the D1 attempt, deployment and fingerprint stores, the R2
+output store and mandatory preparation hook, the prompt compiler and the gateway adapter. Gateway
+credentials and transport are initialized only when a new model call executes, with that invocation's
+cancellation signal. Exact successful recovery and UNKNOWN replay need no fresh gateway credentials,
+prompt preparation or pricing call. Deployment resolution defaults to PRODUCTION and rejects
+fixture-only qualifications. Trusted request preparation, currentness and pricing are required inputs;
+this factory does not supply spending approval or replace the deterministic app Workflow stages.
+
 ## Bounds and proof ceiling
 
 R2 input/output objects are capped at 8 MiB; larger artifacts must be represented by bounded manifests.
@@ -229,6 +237,13 @@ expiry, cancellation during revalidation, UNKNOWN replay and exact saved output.
 Worker transport cases passed with controlled fetch/Response streams: explicit credentials and
 destination, cancellation before fetch, pending-header and body cancellation, bounded response size,
 and completed-byte retention. These cases do not constitute a provider call or live qualification.
+
+The composed stage-handler suite passed four actual local Worker/D1/R2 cases on 2026-09-10: durable
+success and exact replay; recovery with unusable current credentials; UNKNOWN replay after one
+controlled provider attempt; and refusal of the registered FIXTURE route under the production default
+with zero provider calls. It uses the real prompt compiler with a controlled manifest-service result,
+controlled preparation/pricing, and injected fetch. Manifest persistence has its separate storage
+acceptance above; production quote/consent and live provider behavior are not proved by this suite.
 
 The earlier focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and

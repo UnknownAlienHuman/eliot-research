@@ -18,3 +18,4 @@ export * from "./research-model-fingerprint-store.js";
 export * from "./research-model-output-store.js";
 export * from "./research-model-output-preparation.js";
 export * from "./research-model-gateway-runtime.js";
+export * from "./research-model-stage-handler.js";
