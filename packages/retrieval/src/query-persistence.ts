@@ -431,12 +431,39 @@ async function readScopeProfileBinding(
   }
 }
 
-function requireBindingMatch(row: ScopeProfileRow | null, binding: ScopeProfileBinding): void {
+function decodeScopeProfileBinding(row: ScopeProfileRow | null): ScopeProfileBinding {
+  if (
+    row === null || typeof row.profile_version !== "string" ||
+    row.profile_version.length < 1 || row.profile_version.length > 128 ||
+    typeof row.max_sources !== "number" || !Number.isSafeInteger(row.max_sources) || row.max_sources < 1 ||
+    typeof row.max_results !== "number" || !Number.isSafeInteger(row.max_results) || row.max_results < 1
+  ) {
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is malformed", true);
+  }
+  return {
+    version: row.profile_version,
+    max_sources: row.max_sources,
+    max_results: row.max_results,
+  };
+}
+
+async function loadScopeProfileBinding(
+  database: RetrievalQueryD1,
+  snapshot: ScopeSnapshot,
+): Promise<ScopeProfileBinding> {
+  const parsed = ScopeSnapshotSchema.safeParse(snapshot);
+  if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
+  return decodeScopeProfileBinding(
+    await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
+  );
+}
+
+function requireBindingMatch(row: ScopeProfileBinding | null, binding: ScopeProfileBinding): void {
   if (row === null) {
     failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is unavailable", true);
   }
   if (
-    row.profile_version !== binding.version || row.max_sources !== binding.max_sources ||
+    row.version !== binding.version || row.max_sources !== binding.max_sources ||
     row.max_results !== binding.max_results
   ) {
     failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "scope frozen under another profile version does not replay here");
@@ -447,10 +474,14 @@ export function createD1ScopeProfilePort(
   database: RetrievalQueryD1,
   now: () => string = () => new Date().toISOString(),
 ): {
+  loadBinding(snapshot: ScopeSnapshot): Promise<ScopeProfileBinding>;
   recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
   requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
 } {
   return {
+    async loadBinding(snapshot: ScopeSnapshot): Promise<ScopeProfileBinding> {
+      return loadScopeProfileBinding(database, snapshot);
+    },
     async recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
       const parsed = ScopeSnapshotSchema.safeParse(snapshot);
       if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
@@ -465,18 +496,10 @@ export function createD1ScopeProfilePort(
       } catch (error) {
         mapStoreError(error);
       }
-      requireBindingMatch(
-        await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
-        binding,
-      );
+      requireBindingMatch(await loadScopeProfileBinding(database, parsed.data), binding);
     },
     async requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
-      const parsed = ScopeSnapshotSchema.safeParse(snapshot);
-      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
-      requireBindingMatch(
-        await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
-        binding,
-      );
+      requireBindingMatch(await loadScopeProfileBinding(database, snapshot), binding);
     },
   };
 }
