@@ -23,19 +23,32 @@ function channelDetails(value: ChannelReadiness): string {
   return details.join(" · ");
 }
 
+function freshnessLabel(value: string): string {
+  switch (value) {
+    case "current_confirmed": return "current at the last check";
+    case "observed_with_age": return "last observation has aged";
+    case "gap_detected": return "a history gap was detected";
+    default: return "freshness is unknown";
+  }
+}
+
+function qualityLabel(value: LibraryReadinessView["quality_state"]): string {
+  return value === "high_fidelity" ? "high fidelity" : value === "unqualified" ? "not qualified" : value;
+}
+
 export function renderLibraryReadiness(readiness: LibraryReadinessView): string {
   const currentness = readiness.currentness.verification === "VERIFIED"
-    ? `<strong>Current source verified</strong> · ${escapeHtml(readiness.currentness.value.observation_freshness)}`
-    : `<strong>Current source check unavailable</strong> · recorded freshness ${escapeHtml(readiness.currentness.recorded_freshness)}
-       <span class="readiness-reasons">${readiness.currentness.reason_codes.map(escapeHtml).join(", ")}</span>`;
+    ? `<strong>Source is current</strong> · observed ${escapeHtml(readiness.currentness.value.observed_at)}`
+    : `<strong>Freshness not verified</strong> · ${escapeHtml(freshnessLabel(readiness.currentness.recorded_freshness))}
+       <details><summary>Why</summary><small>Recorded freshness ${escapeHtml(readiness.currentness.recorded_freshness)} · ${readiness.currentness.reason_codes.map(escapeHtml).join(", ")}</small></details>`;
   return `<section class="readiness-card" aria-label="Active search readiness">
-    <p><strong>Search readiness</strong> · ${escapeHtml(readiness.quality_state)} · observed ${escapeHtml(readiness.observed_at)}</p>
+    <p><strong>Search readiness</strong> · ${escapeHtml(qualityLabel(readiness.quality_state))} · observed ${escapeHtml(readiness.observed_at)}</p>
     <p>${currentness}</p>
     <dl>${ACTIVE_CHANNELS.map((name) => {
       const value = channel(readiness.channels, name);
       const state = value.state === "ready" ? "Ready" : value.state === "degraded" ? "Unavailable" : escapeHtml(value.state);
-      return `<dt>${escapeHtml(channelLabel(name))}</dt><dd><strong>${state}</strong><br><small>${channelDetails(value)}</small></dd>`;
+      return `<dt>${escapeHtml(channelLabel(name))}</dt><dd><strong>${state}</strong><details><summary>Details</summary><small>${channelDetails(value)}</small></details></dd>`;
     }).join("")}</dl>
-    <p class="readiness-fence">Head <code>${escapeHtml(readiness.source_revision_ref)}</code> · deployment <code>${escapeHtml(readiness.deployment_generation)}</code> · catalog observation <code>${escapeHtml(readiness.catalog_generation)}</code></p>
+    <details class="readiness-fence"><summary>Technical details</summary><small>Head <code>${escapeHtml(readiness.source_revision_ref)}</code> · deployment <code>${escapeHtml(readiness.deployment_generation)}</code> · catalog observation <code>${escapeHtml(readiness.catalog_generation)}</code></small></details>
   </section>`;
 }

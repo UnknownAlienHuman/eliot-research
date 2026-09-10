@@ -43,7 +43,7 @@ describe("active Library readiness boundary", () => {
     value.data.currentness = { verification: "NOT_VERIFIED", recorded_freshness: "observed_with_age", reason_codes: ["CURRENTNESS_SNAPSHOT_WITNESS_UNAVAILABLE"] };
     const decoded = decodeLibraryReadiness(value, "source-1", "deploy-1", revision);
     const rendered = renderLibraryReadiness(decoded);
-    expect(rendered).toContain("Current source check unavailable");
+    expect(rendered).toContain("Freshness not verified");
     expect(rendered).toContain("recorded freshness observed_with_age");
     expect(rendered).not.toContain("Current source verified");
   });

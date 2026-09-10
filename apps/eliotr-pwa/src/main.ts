@@ -109,7 +109,7 @@ function render(health: SystemHealth | null): void {
           <section class="tool-card tool-card--import"><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
           <section class="tool-card"><div id="google-oauth"></div></section>
           <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
-          <section class="tool-card tool-card--research" id="research-card"><div id="exhaustive-workflow"></div><div class="tool-divider"></div><div id="retrieval"></div></section>
+          <section class="tool-card tool-card--research" id="research-card"><div id="retrieval"></div><div class="tool-divider"></div><div id="exhaustive-workflow"></div></section>
         </div>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
