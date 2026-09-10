@@ -25,6 +25,9 @@
       "path": "../platform-cloudflare"
     },
     {
+      "path": "../policy"
+    },
+    {
       "path": "../research"
     }
   ]

@@ -250,6 +250,9 @@ importers:
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      '@eliotr/policy':
+        specifier: workspace:*
+        version: link:../policy
       '@eliotr/research':
         specifier: workspace:*
         version: link:../research

@@ -21,6 +21,7 @@ outside the paths below.
 - `apps/eliotr-core/test/model-attempt-fixture.ts`
 - `apps/eliotr-core/test/research-workflow-recovery.test.ts`
 - `apps/eliotr-core/test/research-held-scope.test.ts`
+- `apps/eliotr-core/test/research-reference-manifest.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
