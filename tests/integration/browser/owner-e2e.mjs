@@ -86,6 +86,46 @@ export const BROWSER_BUNDLE_LIMITS_EXPECTED = {
   total_bytes: 32 * 1024 * 1024,
 };
 
+const OWNER_D1_PROVENANCE_PROTOCOL = "eliotr.owner-e2e.d1-provenance.v1";
+const OWNER_D1_PROVENANCE_BINDINGS = new Set(["CORE_DB", "SEARCH_DB"]);
+const OWNER_D1_PROVENANCE_PHASES = new Set([
+  "owner-d1-unclassified", "owner-d1-migration-ledger", "owner-d1-initial-denial",
+  "owner-d1-after-denial", "owner-d1-replay-before", "owner-d1-replay-after",
+  "owner-d1-jwt-matrix-baseline", "owner-d1-jwt-matrix-after-denial",
+  "owner-d1-rotation-baseline", "owner-d1-rotation-after-denial",
+]);
+const OWNER_D1_PROVENANCE_FAMILIES = new Set([
+  "owner-d1-readback", "migration-ledger", "source-count", "revision-count",
+  "policy-count", "operation-count", "scope-policy-count", "bundle-replay-count",
+]);
+let ownerD1OperationSequence = 0;
+
+function createOwnerD1Provenance({ binding, phase = "owner-d1-unclassified", commandFamily = "owner-d1-readback" } = {}) {
+  const safeBinding = OWNER_D1_PROVENANCE_BINDINGS.has(binding) ? binding : "UNKNOWN";
+  const safePhase = OWNER_D1_PROVENANCE_PHASES.has(phase) ? phase : "owner-d1-unclassified";
+  const safeFamily = OWNER_D1_PROVENANCE_FAMILIES.has(commandFamily) ? commandFamily : "owner-d1-readback";
+  ownerD1OperationSequence = ownerD1OperationSequence >= Number.MAX_SAFE_INTEGER ? 1 : ownerD1OperationSequence + 1;
+  return Object.freeze({ protocol: OWNER_D1_PROVENANCE_PROTOCOL, operation: ownerD1OperationSequence,
+    phase: safePhase, binding: safeBinding, command_family: safeFamily });
+}
+
+function attachOwnerD1Provenance(error, context) {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) return error;
+  try { Object.defineProperty(error, "ownerD1Provenance", { value: context, enumerable: false, configurable: true }); }
+  catch { /* Preserve the original failure even if a foreign error is non-extensible. */ }
+  return error;
+}
+
+function safeOwnerD1Provenance(error) {
+  const value = error?.ownerD1Provenance;
+  if (!value || value.protocol !== OWNER_D1_PROVENANCE_PROTOCOL ||
+      !Number.isSafeInteger(value.operation) || value.operation < 1 ||
+      !OWNER_D1_PROVENANCE_PHASES.has(value.phase) || !OWNER_D1_PROVENANCE_BINDINGS.has(value.binding) ||
+      !OWNER_D1_PROVENANCE_FAMILIES.has(value.command_family)) return undefined;
+  return { protocol: value.protocol, operation: value.operation, phase: value.phase,
+    binding: value.binding, command_family: value.command_family };
+}
+
 export async function checkBundleLimitsSource() {
   const text = await readFile(resolve(root, "apps/eliotr-pwa/src/bundle-input.ts"), "utf8");
   assert.ok(text.includes("files: 64"), "browser profile must declare 64 files");
@@ -426,7 +466,8 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
+async function d1Query(paths, binding, sql, { hardDeadlineMs, phase, commandFamily } = {}) {
+  const provenance = createOwnerD1Provenance({ binding, phase, commandFamily });
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -436,15 +477,19 @@ async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
   // the same durable state and must replay exactly after restart.
   const retryOptions = { execute: executeLocalAsync };
   if (hardDeadlineMs !== undefined) retryOptions.hardDeadlineMs = hardDeadlineMs;
-  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
-  let batches;
   try {
-    batches = JSON.parse(output);
+    const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
+    let batches;
+    try {
+      batches = JSON.parse(output);
+    } catch (error) {
+      assert.fail(`D1 query returned non-JSON readback: ${String(error?.message ?? error).slice(0, 200)}`);
+    }
+    assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
+    return batches[0].results;
   } catch (error) {
-    assert.fail(`D1 query returned non-JSON readback: ${String(error?.message ?? error).slice(0, 200)}`);
+    throw attachOwnerD1Provenance(error, provenance);
   }
-  assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
-  return batches[0].results;
 }
 
 function sqlText(value) {
@@ -502,7 +547,8 @@ async function verifyMigrationLedgers(paths) {
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(root, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
     assert.ok(expected.length > 0, "migration streams must be non-empty");
-    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name",
+      { phase: "owner-d1-migration-ledger", commandFamily: "migration-ledger" });
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
     counts[binding] = expected.length;
   }
@@ -1005,8 +1051,30 @@ function verifyPreservedWorkerFailureOutput() {
   return { state: "PASS" };
 }
 
+export function verifyD1FailureProvenanceRegression() {
+  const sentinel = new Error("Local command failed (1) :: internal reference=controlled-d1");
+  sentinel.cause = { code: 1, diagnostic: "", stdout: "SELECT private_table", stderr: "private-token" };
+  const provenance = createOwnerD1Provenance({ binding: "CORE_DB", phase: "owner-d1-initial-denial", commandFamily: "source-count" });
+  attachOwnerD1Provenance(sentinel, provenance);
+  const wrapped = preserveWorkerFailure(sentinel, {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  });
+  assert.equal(wrapped.cause, sentinel, "D1 provenance must preserve the original Error as the outer cause");
+  assert.equal(wrapped.cause.cause.code, 1, "D1 provenance must preserve the original command code");
+  assert.equal(sentinel.message, "Local command failed (1) :: internal reference=controlled-d1",
+    "D1 provenance must not rewrite the original Error message");
+  assert.match(wrapped.message, /d1_provenance=.*"binding":"CORE_DB"/u);
+  assert.match(wrapped.message, /"phase":"owner-d1-initial-denial"/u);
+  assert.match(wrapped.message, /"command_family":"source-count"/u);
+  assert.match(wrapped.message, /"operation":\d+/u);
+  assert.ok(!wrapped.message.includes("private_table") && !wrapped.message.includes("private-token"),
+    "D1 provenance must not dump SQL or captured private values");
+  return { state: "PASS" };
+}
+
 export async function verifyWorkerFetchDiagnosticRegression() {
   verifyPreservedWorkerFailureOutput();
+  verifyD1FailureProvenanceRegression();
   const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
   let transportCalls = 0;
   await assert.rejects(
@@ -1267,12 +1335,14 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
 function preserveWorkerFailure(error, worker) {
   if (!worker) return error;
   const diagnostics = workerDiagnosticSnapshot(worker);
+  const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
   const original = {
     name: boundedFailureText(error?.name || "Error", 96),
     message: boundedFailureText(error?.message ?? error, 2000),
     stack: boundedFailureText(error?.stack ?? "", 4000),
   };
-  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}`, { cause: error });
+  const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${provenanceText}`, { cause: error });
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
@@ -4923,13 +4993,17 @@ export async function runOwnerE2E() {
     // Zero-mutation baseline: no namespace/grant/source exists yet, so every
     // negative below must leave all protected counts exactly unchanged while
     // denying both the session route and the authorized Library view.
-    const protectedD1Counts = async () => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
-      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision"))[0].n,
-      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
+    const protectedD1Counts = async (phase = "owner-d1-unclassified") => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
+        { phase, commandFamily: "source-count" }))[0].n,
+      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision",
+        { phase, commandFamily: "revision-count" }))[0].n,
+      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy",
+        { phase, commandFamily: "policy-count" }))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
+        { phase, commandFamily: "operation-count" }))[0].n,
     });
-    const d1BeforeNegatives = await protectedD1Counts();
+    const d1BeforeNegatives = await protectedD1Counts("owner-d1-initial-denial");
     const goodForTamper = await sign();
     const tamperSegs = goodForTamper.split(".");
     const tamperedPayloadClaims = JSON.parse(decoder.decode(base64UrlDecode(tamperSegs[1])));
@@ -4993,7 +5067,7 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
     }
-    assert.deepEqual(await protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
+    assert.deepEqual(await protectedD1Counts("owner-d1-after-denial"), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
     {
       const good = await sign();
       const segs = good.split(".");
@@ -5166,9 +5240,11 @@ export async function runOwnerE2E() {
     // Replay where applicable: the same bearer authorizes twice identically,
     // and prepare with the same idempotency key replays DUPLICATE with the
     // same operation_id and the existing receipt instead of a second operation.
-    const d1CountsForReplay = async () => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
+    const d1CountsForReplay = async (phase = "owner-d1-unclassified") => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
+        { phase, commandFamily: "source-count" }))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
+        { phase, commandFamily: "operation-count" }))[0].n,
     });
     let imported;
     try {
@@ -5200,7 +5276,7 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
-    const countsBeforePrepareReplay = await d1CountsForReplay();
+    const countsBeforePrepareReplay = await d1CountsForReplay("owner-d1-replay-before");
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -5211,7 +5287,7 @@ export async function runOwnerE2E() {
     assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
     assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
     assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
-    assert.deepEqual(await d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    assert.deepEqual(await d1CountsForReplay("owner-d1-replay-after"), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
@@ -5426,7 +5502,7 @@ export async function runOwnerE2E() {
     // never values. Replay is covered above (identical bearer + DUPLICATE
     // prepare replay with zero new rows).
     {
-      const matrixBefore = await protectedD1Counts();
+      const matrixBefore = await protectedD1Counts("owner-d1-jwt-matrix-baseline");
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
@@ -5465,7 +5541,7 @@ export async function runOwnerE2E() {
         assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
         assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
           `browser ${item.name} must leak no catalog rows`);
-        assert.deepEqual(await protectedD1Counts(), matrixBefore,
+        assert.deepEqual(await protectedD1Counts("owner-d1-jwt-matrix-after-denial"), matrixBefore,
           `browser ${item.name} must cause zero protected D1 mutation`);
         matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
       }
@@ -5861,7 +5937,7 @@ export async function runOwnerE2E() {
     // token is allowed, and Chromium itself re-pairs with the v2 identity and
     // retrieves the admitted Library source. Zero protected mutation throughout.
     {
-      const rotationBefore = await protectedD1Counts();
+      const rotationBefore = await protectedD1Counts("owner-d1-rotation-baseline");
       const ROTATION_KID = "e2e-key-2";
       const v2keys = await createOwnerE2EKey();
       const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
@@ -5897,7 +5973,7 @@ export async function runOwnerE2E() {
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
-      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
@@ -5957,7 +6033,7 @@ export async function runOwnerE2E() {
         { correlation: "e2e-rotation/v2-revisions-browser" });
       assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
-      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation re-pairing must cause zero D1 drift");
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "rotation must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
