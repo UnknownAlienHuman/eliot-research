@@ -19,6 +19,7 @@ import {
   createEvidenceFreezeComposition,
   type EvidenceFreezeCompositionDependencies,
 } from "./research-evidence-freeze-composition.js";
+import type { Env } from "./env.js";
 
 /** Generation used only by the server-owned exploratory research.run path. */
 export const SERVER_OWNED_RESEARCH_HANDLER_GENERATION = "research-handlers.exploratory.v1";
@@ -37,6 +38,8 @@ export type ResearchStageHandlerFactoryMode =
       readonly kind: "server-owned-exploratory";
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
+      /** Server-owned bindings used to compose retrieval for v2. */
+      readonly environment?: Pick<Env, "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET">;
       readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION | typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION;
       readonly retrieval?: Omit<RetrieveBranchesStageDependencies, "navigation" | "ledger" | "profile">;
       readonly freeze?: EvidenceFreezeCompositionDependencies;
@@ -56,10 +59,14 @@ export function createResearchStageHandlerFactory(
   const protocolScopeHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory"
     ? createFreezeProtocolAndScopeStageHandler({ navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
+  const retrieval = mode.kind === "server-owned-exploratory" && mode.environment !== undefined
+    ? { database: mode.environment.CORE_DB, search_database: mode.environment.SEARCH_DB, work_bucket: mode.environment.WORK_BUCKET,
+      evidence_bucket: mode.environment.EVIDENCE_BUCKET, access: mode.navigation.access }
+    : mode.kind === "server-owned-exploratory" ? mode.retrieval : undefined;
   let retrievalHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" &&
-      (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) && mode.retrieval !== undefined) {
-    const { retrieval, navigation, ledger } = mode;
+      (mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) && retrieval !== undefined) {
+    const { navigation, ledger } = mode;
     retrievalHandler = async (input) => {
       let profile;
       try {
