@@ -102,7 +102,9 @@ export function createEvidenceFreezePredecessorReader(
   readers: EvidenceFreezeCommittedReaders,
 ): EvidenceFreezeCompositionDependencies["read_predecessors"] {
   return async (request, principal) => {
-    if (request.stage !== "RECONCILE") throw new Error("freeze predecessor read requires RECONCILE");
+    if (request.stage !== "RECONCILE" && request.stage !== "FREEZE_EVIDENCE") {
+      throw new Error("freeze predecessor read requires RECONCILE or FREEZE_EVIDENCE");
+    }
     if (request.investigation_ref.id.length === 0 || principal.principal_ref.length === 0) {
       throw new Error("freeze predecessor identity is invalid");
     }
