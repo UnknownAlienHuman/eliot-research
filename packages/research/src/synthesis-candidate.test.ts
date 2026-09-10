@@ -32,6 +32,10 @@ describe("versioned synthesis claims candidate v2", () => {
     expect(normalized.claims[0]?.text_digest).toMatch(/^[a-f0-9]{64}$/u);
     expect(normalized.claims[0]?.required_precision).toBe("exact-excerpt");
     expect(normalized.cited_handle_refs).toEqual([...allowed]);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(baseClaim.text));
+    expect(normalized.claims[0]?.text_digest).toBe(Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join(""));
+    expect(Object.isFrozen(normalized.section_ref)).toBe(true);
+    expect(Object.isFrozen(normalized.claims[0]?.support_handle_refs)).toBe(true);
   });
 
   it("requires the explicit span to contain the exact claim text", async () => {
@@ -52,6 +56,11 @@ describe("versioned synthesis claims candidate v2", () => {
     const first = await normalize();
     const second = await normalize(base, "operation-2");
     expect(second.claims[0]?.claim_ref).not.toEqual(first.claims[0]?.claim_ref);
-    expect(second.claims[0]?.text_digest).not.toEqual(first.claims[0]?.text_digest);
+    expect(second.claims[0]?.text_digest).toEqual(first.claims[0]?.text_digest);
+  });
+
+  it("uses UTF-16 spans without allowing surrogate-pair splits", async () => {
+    const candidate = { ...base, section_text: "😀 claim", material_claims: [{ ...baseClaim, text: "😀", span: { start: 0, end: 1 } }] };
+    await expect(normalize(candidate)).rejects.toMatchObject({ code: "SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID" });
   });
 });
