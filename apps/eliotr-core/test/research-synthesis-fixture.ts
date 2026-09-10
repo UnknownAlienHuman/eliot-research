@@ -91,7 +91,7 @@ function prompt(freeze: Awaited<ReturnType<typeof committedEvidenceFreezeFixture
       },
       manifest_ref, model_route_ref: deployment.route_ref, max_context_bytes: 64 * 1024,
     }),
-    resolve_trusted_parameters: async () => ({ prompt: "Produce synthesis-section-candidate.v1 from the frozen evidence.", max_tokens: 32 }),
+    resolve_trusted_parameters: async () => ({ prompt: "Produce eliotr.research.synthesis-section-candidate.v1 from the frozen evidence.", max_tokens: 32 }),
     request_timeout_ms: 5_000,
   };
 }
@@ -111,9 +111,8 @@ export async function committedFreezeSynthesisFixture() {
     investigation_id: freeze.investigation_id, principal });
   const evidence = stage_five.evidence_pack.resolved_evidence[0];
   if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
-  const candidate = JSON.stringify({ schema: "synthesis-section-candidate.v1", sections: [{
-    text: evidence.exact_excerpt, evidence_handle_refs: [evidence.handle.handle_ref],
-  }] });
+  const candidate = JSON.stringify({ schema: "eliotr.research.synthesis-section-candidate.v1",
+    section_text: evidence.exact_excerpt, cited_handle_refs: [evidence.handle.handle_ref] });
   let prepared: ModelAttemptReservationInput | null = null;
   let provider_calls = 0;
   const request_bodies: string[] = [];
