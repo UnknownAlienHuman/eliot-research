@@ -94,11 +94,32 @@ export function mountResearchRunPanel(
     const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
     result.append(heading, identity);
     if (view.answer.availability === "draft" && artifact !== undefined) {
-      const artifactLine = document.createElement("p"); artifactLine.append("Draft artifact ", codeRef(`${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`)); result.append(artifactLine);
-      const sections = document.createElement("ul");
+      const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
+      const reportTitle = document.createElement("h3"); reportTitle.textContent = "Research draft";
+      const draftBadge = document.createElement("span"); draftBadge.className = "research-draft-badge"; draftBadge.textContent = "DRAFT";
+      reportHead.append(reportTitle, draftBadge);
+      const technical = document.createElement("details"); technical.className = "research-technical-details";
+      const technicalSummary = document.createElement("summary"); technicalSummary.textContent = "Technical details";
+      const technicalFields = document.createElement("dl"); technicalFields.className = "research-technical-fields";
+      const technicalField = (label: string, value: string): void => {
+        const term = document.createElement("dt"); term.textContent = label;
+        const detail = document.createElement("dd"); detail.append(codeRef(value));
+        technicalFields.append(term, detail);
+      };
+      technicalField("Run ID", view.workflow_instance_id);
+      technicalField("Investigation", `${view.investigation_ref.id}:${view.investigation_ref.revision}`);
+      technicalField("Artifact", `${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`);
+      technicalField("Specification", `${artifact.spec_ref.id}:${artifact.spec_ref.revision}`);
+      technicalField("Evidence freeze", `${artifact.evidence_freeze_ref.id}:${artifact.evidence_freeze_ref.revision}`);
+      technicalField("Status", artifact.status);
+      technical.append(technicalSummary, technicalFields);
+      result.append(reportHead, technical);
+      const sections = document.createElement("ul"); sections.className = "research-report-sections";
       for (const section of artifact.sections) {
-        const item = document.createElement("li");
-        const label = document.createElement("span"); label.append("Section ", codeRef(`${section.section_ref.id}:${section.section_ref.revision}`), " · evidence ", codeRef(section.evidence_ledger_ref), " ");
+        const item = document.createElement("li"); item.className = "research-report-section";
+        const sectionRef = `${section.section_ref.id}:${section.section_ref.revision}`;
+        const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${sectionRef}`;
+        const label = document.createElement("p"); label.className = "research-report-section-meta"; label.append("Evidence ledger ", codeRef(section.evidence_ledger_ref));
         const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
         open.onclick = () => {
           if (renderSerial !== serial || controller !== undefined) return;
@@ -117,7 +138,7 @@ export function mountResearchRunPanel(
             })
             .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
         };
-        item.append(label, open); sections.append(item);
+        item.append(sectionHeading, label, open); sections.append(item);
       }
       result.append(sections);
     }
