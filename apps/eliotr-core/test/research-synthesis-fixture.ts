@@ -36,11 +36,19 @@ async function stageDeployment(database: D1Database, options: {
   readonly routeVersion?: string;
   readonly qualificationTier?: QualificationTier;
   readonly expectedActiveRouteVersion?: string | null;
-  readonly deployment?: ModelRouteDeployment;`r`n} = {}): Promise<ModelRouteDeployment> {
+  readonly deployment?: ModelRouteDeployment;
+} = {}): Promise<ModelRouteDeployment> {
   const registryNow = new Date().toISOString();
   const qualificationExpiresAt = futureIso();
   const parametersDigest = await modelGatewayRequestParametersSha256({ max_tokens: 32, stream: false });
-  const deployment: ModelRouteDeployment = options.deployment ?? {`r`n    route_ref: ROUTE,`r`n    route_version: options.routeVersion ?? ROUTE_VERSION,`r`n    prompt_generation: PROMPT_GENERATION,`r`n    schema_generation: SCHEMA_GENERATION,`r`n    parameters_digest: parametersDigest,`r`n    pricing_snapshot_ref: PRICING_SNAPSHOT,`r`n  };
+  const deployment: ModelRouteDeployment = options.deployment ?? {
+    route_ref: deployment.route_ref,
+    route_version: options.routeVersion ?? ROUTE_VERSION,
+    prompt_generation: PROMPT_GENERATION,
+    schema_generation: SCHEMA_GENERATION,
+    parameters_digest: parametersDigest,
+    pricing_snapshot_ref: PRICING_SNAPSHOT,
+  };
   const candidate = {
     schema: "eliotr.dynamic-route-candidate.v1" as const,
     deployment,
@@ -64,7 +72,7 @@ async function stageDeployment(database: D1Database, options: {
   }
   const staged = stagedRecord as unknown as DynamicRouteCandidateWriteReceipt;
   await registry.promote({
-    route_ref: ROUTE,
+    route_ref: deployment.route_ref,
     expected_active_route_version: options.expectedActiveRouteVersion ?? null,
     target_route_version: deployment.route_version,
     candidate_ref: staged.candidate_ref,
@@ -384,4 +392,5 @@ export async function committedFreezeSynthesisFixture() {
     stage_twelve: freeze.stage_twelve, provider_calls: () => provider_calls,
     request_bodies: () => [...request_bodies] };
 }
+
 
