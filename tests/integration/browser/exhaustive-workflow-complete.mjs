@@ -186,8 +186,11 @@ export async function runExhaustiveWorkflowCompleteBrowser({
   boundedText(idempotencyKey, "PWA idempotency key");
   const launched = launchDataOf(await postResponse.json(), expectedGeneration);
   const workflowId = launched.workflow_instance_id;
+  const launchCorrelation = "e2e-exhaustive-complete/launch";
+  const observedApi = [{ method: "POST", path: "/api/v1/research/query", status: postResponse.status() }];
+  const observedCorrelations = [launchCorrelation];
   ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: postResponse.status(),
-    correlation: "e2e-exhaustive-complete/launch", token_present: false });
+    correlation: launchCorrelation, token_present: false });
 
   const deadline = Date.now() + deadlineMs;
   let completed;
@@ -196,9 +199,12 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     attempts += 1;
     const remaining = deadline - Date.now();
     assert.ok(remaining > 0, `Q8 completion did not reach COMPLETE within ${deadlineMs}ms`);
+    const statusCorrelation = `e2e-exhaustive-complete/status-${attempts}`;
     const status = await browserJson(page, ledger, `/api/v1/research/query/${workflowId}`, {
-      correlation: `e2e-exhaustive-complete/status-${attempts}`,
+      correlation: statusCorrelation,
     });
+    observedApi.push({ method: "GET", path: `/api/v1/research/query/${workflowId}`, status: status.status });
+    observedCorrelations.push(statusCorrelation);
     assert.equal(status.status, 200, "Q8 status readback must be HTTP 200");
     const envelope = objectOf(status.data, "status response");
     const statusData = objectOf(envelope.data, "status response data");
@@ -227,10 +233,8 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     status: completed.data.workflow_status,
     receipt: completed.receipt,
     d1,
-    api: [
-      { method: "POST", path: "/api/v1/research/query", status: postResponse.status() },
-      { method: "GET", path: `/api/v1/research/query/${workflowId}`, status: 200 },
-    ],
+    api: observedApi,
+    correlations: observedCorrelations,
     mutations: ["/api/v1/research/query"],
   };
 }

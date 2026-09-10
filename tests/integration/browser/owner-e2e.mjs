@@ -6004,6 +6004,7 @@ export async function runOwnerE2E() {
         "e2e-raw-projection/readiness",
         "e2e-raw-projection/query",
         "e2e-raw-projection/trace",
+        ...exhaustiveWorkflowComplete.correlations,
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
