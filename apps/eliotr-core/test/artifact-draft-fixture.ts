@@ -7,6 +7,7 @@ import {
   type ArtifactDraftSectionInput,
   type PrepareArtifactDraftInput,
 } from "@eliotr/cloudflare-research";
+import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService } from "@eliotr/cloudflare-navigation";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import type { Env } from "../src/env.js";
@@ -110,11 +111,7 @@ export function createArtifactDraftRuntime(database: D1Database = runtime.CORE_D
 export interface ArtifactDraftReadFixture {
   readonly input: PrepareArtifactDraftInput;
   readonly scope: ScopeSnapshot;
-  readonly access: {
-    readonly principal_ref: string;
-    readonly client_class: "owner_pwa";
-    readonly credential_generation: string;
-  };
+  readonly access: EvidenceAccessContext;
   readonly requireCurrent: (scope: ScopeSnapshot) => Promise<ScopeSnapshot>;
   readonly now: () => number;
 }
