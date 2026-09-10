@@ -417,11 +417,6 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
     ACCESS_AUDIENCE: OWNER_E2E_AUDIENCE,
     ACCESS_TEST_JWKS_URL: jwksUrl,
   };
-  // The production converter requires an AI binding while constructing its
-  // owner adapter, even when this harness replays a recorded COMPLETE row.
-  // Keep the binding local-only: the seeded durable replay must return before
-  // any `toMarkdown` provider call, so this does not qualify live AI.
-  config.ai = { binding: "AI", remote: false };
   const serialized = `${JSON.stringify(config, null, 2)}\n`;
   assert.ok(serialized.length < 65536, "patched profile must stay bounded");
   assert.ok(!serialized.includes("BEGIN PRIVATE"), "patched profile must not embed private keys");
