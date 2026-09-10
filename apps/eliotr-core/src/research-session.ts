@@ -2,11 +2,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
+import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { retrieveWithHeldScope } from "./research-retrieval-composition.js";
 import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES } from "@eliotr/cloudflare-research";
-import type { StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
+import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "./research-stage-handlers.js";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
@@ -100,7 +102,7 @@ function mapLedger(error: unknown): never { if (error instanceof ResearchService
 function portsFor(database: D1Database, operationId: string): WorkflowExecutionPorts { const grants = new Map<string, { receipt_ref: string; expires_at_ms: number }>(); return { async authorizeResidency(request, actor): Promise<void> { if (request.operation_id !== operationId || request.input_manifest.residency.access_domain_id !== actor.principal_ref) { const error = new Error("WORKFLOW_AUTHORITY_STALE") as Error & { code: string }; error.code = request.operation_id !== operationId ? "WORKFLOW_CONFLICT" : "WORKFLOW_AUTHORITY_STALE"; throw error; } }, async checkBudget(request) { const k = `${request.operation_id}:${request.stage}`; const cached = grants.get(k); if (cached !== undefined && cached.expires_at_ms > Date.now()) return cached; const grant = { receipt_ref: `research-budget:${request.operation_id}:${request.stage}`, expires_at_ms: Date.now() + 300_000 }; grants.set(k, grant); return grant; } }; }
 async function stageBytes(operation_id: string, stage: string, input_bytes: Uint8Array, attempt_ref: string): Promise<Uint8Array> { const input_sha = await digest(input_bytes); const bytes = new TextEncoder().encode(JSON.stringify({ operation_id, stage, input_sha, attempt_ref })); if (bytes.byteLength > 8 * 1024 * 1024) fail("RESEARCH_INPUT_INVALID", "stage output exceeds its bound"); return bytes; }
 async function shaHex(text: string): Promise<string> { return digest(new TextEncoder().encode(text)); }
-function logicalMatch(head: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string; model_profile_ref: string }, want: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string }): boolean { return head.investigation_id === want.investigation_id && head.goal === want.goal && head.scope_snapshot_id === want.scope_snapshot_id && head.scope_snapshot_revision === want.scope_snapshot_revision && head.evidence_grade === want.evidence_grade && head.lane === "confirmatory" && head.portfolio_ref === want.portfolio_ref && head.principal_ref === want.principal_ref && head.input_digest === want.input_digest && head.policy_generation === want.policy_generation && head.policy_authority_ref === want.policy_authority_ref && head.deployment_generation === want.deployment_generation && head.idempotency_key === want.idempotency_key && head.model_profile_ref === MODEL_PROFILE; }
+function logicalMatch(head: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string; model_profile_ref: string }, want: { investigation_id: string; goal: string; scope_snapshot_id: string; scope_snapshot_revision: number; evidence_grade: string; lane: string; portfolio_ref: string; principal_ref: string; input_digest: string; policy_generation: string; policy_authority_ref: string; deployment_generation: string; idempotency_key: string }): boolean { return head.investigation_id === want.investigation_id && head.goal === want.goal && head.scope_snapshot_id === want.scope_snapshot_id && head.scope_snapshot_revision === want.scope_snapshot_revision && head.evidence_grade === want.evidence_grade && head.lane === want.lane && head.portfolio_ref === want.portfolio_ref && head.principal_ref === want.principal_ref && head.input_digest === want.input_digest && head.policy_generation === want.policy_generation && head.policy_authority_ref === want.policy_authority_ref && head.deployment_generation === want.deployment_generation && head.idempotency_key === want.idempotency_key && head.model_profile_ref === MODEL_PROFILE; }
 export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }> } {
   return {
     async run(context, raw) {
@@ -129,8 +131,11 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       else { const current = await bucket.get(payloadKey).catch(() => null); if (current === null) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true); if ((await digest(new Uint8Array(await current.arrayBuffer()))) !== payloadHash) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409); }
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: env.DEPLOYMENT_GENERATION };
       const store = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
-      const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: POLICY_GEN, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       const pre = await store.readByIdempotency(key).catch(() => null);
+      const lane = pre === null ? "exploratory" : pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" ? pre.head.lane : null;
+      if (lane === null) fail("RESEARCH_CONFLICT", "idempotency identity has an unsupported investigation lane", 409);
+      const handlerGeneration = lane === "exploratory" ? SERVER_OWNED_RESEARCH_HANDLER_GENERATION : HANDLER_GEN;
+      const wantHead = { investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, portfolio_ref: payloadKey, principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: POLICY_GEN, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key };
       let skipCreate = false;
       if (pre !== null) {
         if (pre.head.investigation_id !== investigation_id || !logicalMatch(pre.head, wantHead)) fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
@@ -142,7 +147,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const eventId = checkId(`evt-${hex}`, "event_id");
       if (!skipCreate) {
         try {
-          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane: "confirmatory", lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: POLICY_GEN, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
+          await ledger.create({ investigation_id, goal: request.query, scope_snapshot_id: scopeRef.id, scope_snapshot_revision: scopeRef.revision, evidence_grade: request.evidence_grade, lane, lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: payloadKey, debt_refs: [], principal_ref: context.principal_ref, input_digest: payloadHash, policy_generation: POLICY_GEN, policy_authority_ref: snapshotRow.policy_authority_ref, deployment_generation: env.DEPLOYMENT_GENERATION, idempotency_key: key, model_profile_ref: MODEL_PROFILE, event_id: eventId, payload_handle_ref: payloadKey, payload_digest: payloadHash, created_at: now });
         } catch (error) {
           if (error instanceof LedgerError && (error.code === "LEDGER_CONFLICT" || error.code === "LEDGER_STALE_HEAD")) {
             const existing = await store.readByIdempotency(key).catch(() => null);
@@ -154,9 +159,26 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       void skipCreate;
       const initialManifest: WorkflowObject = WorkflowObjectSchema.parse({ object_ref: payloadKey, sha256: payloadHash, byte_length: payloadBytes.byteLength, residency: { scope_domain_id: scopeRef.id, access_domain_id: context.principal_ref, confidentiality_domain_id: "private", encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1", content_digest: { algorithm: "sha256", digest: payloadHash } } });
       const driver = createMonotoneStageExecutor(db, bucket, portsFor(db, operation_id));
+      let handlers: MonotoneHandlerFactory;
+      if (lane === "exploratory") {
+        const evidence = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
+        const authority = await evidence.loadScope(scopeRef);
+        if (authority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
+        const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation } as const;
+        const scopePorts = createD1ScopePorts(db, access);
+        const navigation = createNavigationReadAuthority({
+          database: db,
+          scope_snapshot: authority.snapshot,
+          access,
+          require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
+        });
+        handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory", navigation, ledger: store });
+      } else {
+        handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
+      }
       let receipts: StageReceipt[];
       try {
-        receipts = await driver.executeOperation({ operation_id, investigation_id, initial_revision: 1, idempotency_key: key, handler_generation: HANDLER_GEN, initial_input_manifest: initialManifest }, principal, () => async ({ request: stageRequest, input_bytes, attempt_ref }) => stageBytes(operation_id, stageRequest.stage, input_bytes, attempt_ref));
+        receipts = await driver.executeOperation({ operation_id, investigation_id, initial_revision: 1, idempotency_key: key, handler_generation: handlerGeneration, initial_input_manifest: initialManifest }, principal, handlers);
       } catch (error) {
         const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_EFFECT_UNCERTAIN";
         if (code === "WORKFLOW_CONFLICT" || code === "WORKFLOW_STAGE_OUT_OF_ORDER" || code === "WORKFLOW_INPUT_INVALID") fail("RESEARCH_CONFLICT", code, 409);
