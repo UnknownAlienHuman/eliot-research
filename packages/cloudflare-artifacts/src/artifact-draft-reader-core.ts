@@ -503,7 +503,8 @@ export async function readArtifactDraftInternal(
       expectedObject,
       selectedSectionValue !== undefined && expectedObject.object_kind === "SECTION_BODY" &&
         expectedObject.object_ref === selectedSectionValue.body_object_ref && expectedObject.section_ordinal === selectedSectionOrdinal ||
-        citations && selectedSectionValue !== undefined && (expectedObject.object_kind === "VERIFICATION_RECEIPT" || expectedObject.object_kind === "DEPENDENCY_MANIFEST"),
+        citations && selectedSectionValue !== undefined &&
+          (expectedObject.object_ref === selectedSectionValue.verification_receipt_ref || expectedObject.object_ref === parsedManifest.revision.dependency_manifest_ref),
     ));
   }
   const plannedStored = parseCanonical(reservation.planned_objects_json, "draft planned objects");
@@ -531,20 +532,7 @@ export async function readArtifactDraftInternal(
   }) !== reservation.request_sha256) {
     fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft request identity differs from durable reservation");
   }
-  const initialObjects = objectRows.results;
-  const rereadObjects = await database.prepare(
-    "SELECT artifact_id, revision, object_kind, object_ref, section_ordinal, receipt_json, residency_key_json, residency_key_digest, created_at FROM artifact_draft_object WHERE artifact_id=?1 AND revision=?2 ORDER BY object_kind, object_ref",
-  ).bind(artifactRef.id, artifactRef.revision).all<ObjectRow>();
-  if (!rereadObjects.success || !Array.isArray(rereadObjects.results) || canonicalJson(initialObjects) !== canonicalJson(rereadObjects.results)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity changed during readback");
-  try { await authority.current(); }
-  catch (error) { if (error instanceof ArtifactDraftReadError) throw error; return mapAuthorityFailure(error); }
-  const finalArtifact = await database.prepare(
-    "SELECT artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at FROM artifact_revision WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
-  ).bind(artifactRef.id, artifactRef.revision).first<ArtifactRow>();
-  const finalBinding = await database.prepare(
-    "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
-  ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
-  if (finalArtifact === null || finalBinding === null || canonicalJson(finalArtifact) !== canonicalJson(artifact) || canonicalJson(finalBinding) !== canonicalJson(binding)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft identity changed during authorization readback");
+  let citationResult: ArtifactDraftSectionCitationsRead | undefined;
   if (citations) {
     if (selectedSectionValue === undefined || selectedSectionOrdinal === undefined) {
       fail("ARTIFACT_DRAFT_READ_INVALID", 400, "citation read requires a section reference");
@@ -566,12 +554,27 @@ export async function readArtifactDraftInternal(
       verification_receipt_ref: selectedSectionValue.verification_receipt_ref,
       verification_bytes: verificationObject.bytes,
     };
-    try { return await readArtifactDraftSectionCitations(citationInput); }
+    try { citationResult = await readArtifactDraftSectionCitations(citationInput); }
     catch (error) {
       if (error instanceof ArtifactDraftSectionCitationsError && error.stale) fail("ARTIFACT_DRAFT_READ_STALE", 410, error.message);
       fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, error instanceof Error ? error.message : "draft citations are invalid");
     }
   }
+  const initialObjects = objectRows.results;
+  const rereadObjects = await database.prepare(
+    "SELECT artifact_id, revision, object_kind, object_ref, section_ordinal, receipt_json, residency_key_json, residency_key_digest, created_at FROM artifact_draft_object WHERE artifact_id=?1 AND revision=?2 ORDER BY object_kind, object_ref",
+  ).bind(artifactRef.id, artifactRef.revision).all<ObjectRow>();
+  if (!rereadObjects.success || !Array.isArray(rereadObjects.results) || canonicalJson(initialObjects) !== canonicalJson(rereadObjects.results)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft object identity changed during readback");
+  try { await authority.current(); }
+  catch (error) { if (error instanceof ArtifactDraftReadError) throw error; return mapAuthorityFailure(error); }
+  const finalArtifact = await database.prepare(
+    "SELECT artifact_id, revision, kind, spec_digest, evidence_freeze_id, evidence_freeze_revision, manifest_r2_key, dependency_manifest_ref, status, created_at FROM artifact_revision WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(artifactRef.id, artifactRef.revision).first<ArtifactRow>();
+  const finalBinding = await database.prepare(
+    "SELECT artifact_id, revision, intent_id, intent_revision, expected_head_revision, principal_ref, spec_ref_id, spec_ref_revision, scope_snapshot_id, scope_snapshot_revision, manifest_r2_key, manifest_sha256, manifest_size_bytes, created_at FROM artifact_draft_binding WHERE artifact_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(artifactRef.id, artifactRef.revision).first<BindingRow>();
+  if (finalArtifact === null || finalBinding === null || canonicalJson(finalArtifact) !== canonicalJson(artifact) || canonicalJson(finalBinding) !== canonicalJson(binding)) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft identity changed during authorization readback");
+  if (citationResult !== undefined) return citationResult;
   if (selectedSectionValue !== undefined && selectedSectionOrdinal !== undefined) {
     const body = storedByRef.get(selectedSectionValue.body_object_ref);
     if (body?.bytes === undefined || body.row.section_ordinal !== selectedSectionOrdinal) {

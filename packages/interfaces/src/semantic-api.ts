@@ -87,6 +87,19 @@ export interface ResearchRunStatus {
   readonly cancellation_receipt_ref?: string;
 }
 
+export interface ResearchArtifactSectionCitations {
+  readonly protocol: "eliotr.artifact-section-citations.v1";
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly scope_snapshot_ref: VersionedRef;
+  readonly verification_receipt_ref: string;
+  readonly semantic_verification: "NOT_EXECUTED";
+  readonly cited_evidence: readonly {
+    readonly handle_ref: VersionedRef;
+    readonly excerpt_sha256: string;
+  }[];
+}
+
 export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
 export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";
 
@@ -134,6 +147,7 @@ export interface SemanticApi {
   run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>;
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
+  artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
   proposeWiki(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<VersionedRef>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, afterCursor: string, allowedScopes: readonly string[]): Promise<{ refs: readonly string[]; next_cursor: string }>;

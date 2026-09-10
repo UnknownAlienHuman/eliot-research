@@ -46,6 +46,11 @@ const orientation = () => {
 };
 const evidenceText = "# Evidence\n\nPinned content.\n";
 const evidenceSha = createHash("sha256").update(evidenceText).digest("hex");
+const draftSectionCitations = envelope({
+  protocol: "eliotr.artifact-section-citations.v1", artifact_ref: draftArtifactRef, section_ref: draftSectionRef,
+  scope_snapshot_ref: { id: "scope-1", revision: 1 }, verification_receipt_ref: "verification-draft-1",
+  semantic_verification: "NOT_EXECUTED", cited_evidence: [{ handle_ref: { id: "handle-1", revision: 1 }, excerpt_sha256: evidenceSha }],
+});
 const evidenceHandle = () => ({
   handle_ref: { id: "handle-1", revision: 1 }, source_namespace_id: "namespace-1",
   source_owner_generation: "owner-1", source_revision_ref: "revision-1",
@@ -197,6 +202,10 @@ const server = createServer((request, response) => {
     if (url.pathname === `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}`) {
       assert.equal(request.method, "GET"); assert.equal(url.search, "");
       return json(envelope(draftArtifact));
+    }
+    if (url.pathname === `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}/sections/${encodeURIComponent(`${draftSectionRef.id}:${draftSectionRef.revision}`)}/citations`) {
+      assert.equal(request.method, "GET"); assert.equal(url.search, "");
+      return json(draftSectionCitations);
     }
     if (url.pathname === `/api/v1/research/artifact/${encodeURIComponent(`${draftArtifactRef.id}:${draftArtifactRef.revision}`)}/sections/${encodeURIComponent(`${draftSectionRef.id}:${draftSectionRef.revision}`)}`) {
       assert.equal(request.method, "GET"); assert.equal(url.search, "");
@@ -360,7 +369,7 @@ try {
     await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("still processing")', `${label}: draft active status`);
     await click("#research-run [data-run-refresh]");
     await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("draft report is ready")', `${label}: draft completed status`);
-    await wait('document.querySelector("#research-run [data-run-result]")?.textContent.includes("Draft artifact artifact-draft-1:1")', `${label}: draft metadata`);
+    await wait('document.querySelector("#research-run [data-run-result]")?.textContent.includes("artifact-draft-1:1")', `${label}: draft metadata`);
   };
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
@@ -438,6 +447,11 @@ try {
   await wait(`document.querySelector("#research-run .research-section-body")?.textContent === ${JSON.stringify(draftSectionText)}`, "Draft section open");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").tagName'), "PRE");
   assert.equal(await evaluate('document.querySelector("#research-run .research-section-body").querySelector("em")'), null);
+  await click('#research-run [data-open-sources="0"]');
+  await wait('document.querySelector("#research-run .research-citation-state")?.textContent.includes("Opening a source checks its current bytes")', "Draft citation state");
+  await click('#research-run [data-open-citation="0"]');
+  await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Draft cited source verify and open");
+  assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
   await evaluate('document.querySelector("#app").dispatchEvent(new CustomEvent("eliotr:health-lost", { detail: { reason: "generation-changed" } }))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft generation clearing");
   await launchDraft("Session clearing");

@@ -1,5 +1,33 @@
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 
+export interface ArtifactSectionBody {
+  readonly artifact_ref: VersionedRef;
+  readonly section_ref: VersionedRef;
+  readonly body_object_ref: string;
+  readonly body_sha256: string;
+  readonly size_bytes: number;
+  readonly body: Uint8Array;
+}
+
+export function artifactSectionResponse(section: ArtifactSectionBody): Response {
+  const body = new ArrayBuffer(section.body.byteLength);
+  new Uint8Array(body).set(section.body);
+  // These identity headers use URI-component encoding; consumers decode with decodeURIComponent.
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(section.size_bytes),
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "x-eliotr-artifact-ref": encodeURIComponent(`${section.artifact_ref.id}:${section.artifact_ref.revision}`),
+      "x-eliotr-section-ref": encodeURIComponent(`${section.section_ref.id}:${section.section_ref.revision}`),
+      "x-eliotr-section-object-ref": encodeURIComponent(section.body_object_ref),
+      "x-eliotr-section-sha256": section.body_sha256,
+    },
+  });
+}
+
 export class ArtifactHttpInputError extends Error {
   public readonly code = "ARTIFACT_REF_INVALID";
   public readonly status = 400;
