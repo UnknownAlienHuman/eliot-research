@@ -43,6 +43,9 @@ export interface WorkflowBudgetGrant {
 }
 export interface WorkflowAttemptRecoveryInput {
   readonly request: StageRequest;
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
   readonly stage_index: number;
   readonly request_sha256: string;
   readonly attempt_ref: string;
@@ -65,6 +68,7 @@ export interface WorkflowExecutionPorts {
 }
 export type WorkflowStageHandler = (input: {
   readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
   readonly input_bytes: Uint8Array;
   readonly attempt_ref: string;
   readonly budget_receipt_ref: string;
