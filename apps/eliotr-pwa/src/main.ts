@@ -10,7 +10,7 @@ import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { mountResearchRunPanel } from "./research-run-panel.js";
 import { mountRawFilePanel } from "./raw-file-panel.js";
 import { escapeHtml } from "./html.js";
-import type { ResolvedEvidence } from "@eliotr/contracts";
+import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
 const root = document.querySelector<HTMLDivElement>("#app");
 if (root === null) throw new Error("missing #app root");
@@ -158,6 +158,11 @@ function render(health: SystemHealth | null): void {
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
   const evidenceRail = evidenceEmpty && evidenceDetail && evidenceStatus
     ? mountEvidenceRail(evidenceEmpty, evidenceDetail, evidenceStatus) : undefined;
+  const selectResearchEvidence = (event: Event): void => {
+    const detail = (event as CustomEvent<{ scopeSnapshotRef?: VersionedRef; handleRef?: VersionedRef; excerptSha256?: string }>).detail;
+    if (detail?.scopeSnapshotRef !== undefined && detail.handleRef !== undefined) evidenceRail?.selectHandle(detail.scopeSnapshotRef, detail.handleRef, detail.excerptSha256);
+  };
+  researchRunHost?.addEventListener("research:evidence-selected", selectResearchEvidence);
   const workspaceViews: Record<string, { title: string; lede: string }> = {
     "#library": { title: "Library overview", lede: "Browse admitted sources, orient yourself in the corpus, and resolve exact evidence when it is available." },
     "#corpus-lens-card": { title: "Corpus Lens", lede: "Read the admitted source map and choose a source for focused investigation." },
@@ -247,7 +252,7 @@ function render(health: SystemHealth | null): void {
   const cleanups = [orientation, retrieval, researchRun, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
