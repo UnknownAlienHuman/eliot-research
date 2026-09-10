@@ -17,7 +17,7 @@ import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertC
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
-import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario } from "./raw-file-browser.mjs";
+import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../../..");
@@ -423,6 +423,56 @@ function d1Query(paths, binding, sql) {
   }
   assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
   return batches[0].results;
+}
+
+function sqlText(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+/**
+ * Install a recorded COMPLETE conversion at the provider boundary. This is a
+ * real local D1/R2 fixture consumed by the production replay path; no live
+ * Workers AI call and no HTTP response interception are involved.
+ */
+async function seedRawMarkdownConversionFixture(paths, input) {
+  const profile = "raw-markdown-ui-v1";
+  const idempotencyKey = `raw-markdown-${await sha256Hex(Buffer.from(
+    `${profile}\u0000${input.captureId}\u0000${input.contentSha256}\u0000${input.contentType}`, "utf8"))}`;
+  const operationId = await sha256Hex(Buffer.from(JSON.stringify([
+    "eliotr.raw-markdown-conversion.v1", "e2e-owner", input.captureId, idempotencyKey,
+  ]), "utf8"));
+  const output = Buffer.from("# Recorded raw owner fixture\n", "utf8");
+  const outputSha256 = await sha256Hex(output);
+  const request = {
+    idempotency_key: idempotencyKey,
+    max_output_bytes: 8 * 1024 * 1024,
+    max_tokens: 1_000_000,
+    timeout_ms: 300_000,
+    conversion_options: { output: { format: "markdown" } },
+  };
+  const requestJson = JSON.stringify(request);
+  const requestSha256 = await sha256Hex(Buffer.from(requestJson, "utf8"));
+  const authoritySha256 = await sha256Hex(Buffer.from(JSON.stringify([
+    input.credentialGeneration, input.expectedGeneration, input.expectedGeneration,
+    input.captureId, input.contentSha256, input.sourceOwnerGeneration,
+  ]), "utf8"));
+  const result = {
+    protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: operationId,
+    capture_id: input.captureId, content_sha256: input.contentSha256, output_sha256: outputSha256,
+    output_bytes: output.byteLength, detected_mime: "text/plain", format: "markdown", tokens: 5,
+  };
+  const resultJson = JSON.stringify(result);
+  const resultSha256 = await sha256Hex(Buffer.from(resultJson, "utf8"));
+  const outputObjectKey = `raw-markdown/${operationId}/output.md`;
+  const receiptObjectKey = `raw-markdown/${operationId}/receipt.json`;
+  const fixtureFile = resolve(paths.directory, `raw-markdown-fixture-${operationId}.md`);
+  await writeFile(fixtureFile, output, { mode: 0o600 });
+  const evidenceBucket = await resolveEvidenceBucket(paths);
+  executeLocal(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
+  d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
+    (operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,attempt_id,state,result_json,result_sha256,output_object_key,receipt_object_key,created_at,updated_at)
+    VALUES(${sqlText(operationId)},${sqlText("e2e-owner")},${sqlText(input.captureId)},${sqlText(input.contentSha256)},${input.sizeBytes},${sqlText(requestSha256)},${sqlText(requestJson)},${sqlText(authoritySha256)},${sqlText(`recorded-${operationId}`)},'COMPLETE',${sqlText(resultJson)},${sqlText(resultSha256)},${sqlText(outputObjectKey)},${sqlText(receiptObjectKey)},${sqlText("2026-09-09T00:00:00.000Z")},${sqlText("2026-09-09T00:00:00.000Z")})`);
+  return { idempotencyKey, operationId, outputObjectKey, outputSha256, resultSha256, fixtureFile };
 }
 
 async function verifyMigrationLedgers(paths) {
@@ -4705,6 +4755,19 @@ export async function runOwnerE2E() {
     rawUpload = await runRawFileUploadOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, ledger,
     });
+    const rawConversionFixture = await seedRawMarkdownConversionFixture(paths, {
+      captureId: rawUpload.captureId, contentSha256: rawUpload.expected.digest,
+      contentType: rawUpload.expected.type, sizeBytes: rawUpload.expected.bytes.length,
+      credentialGeneration: identity.credential_generation, expectedGeneration: paths.generation,
+      sourceOwnerGeneration: ownerGeneration,
+    });
+    const rawProcessed = await processRawFileOwnerScenario({
+      page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
+      captureId: rawUpload.captureId, conversionOperationId: rawConversionFixture.operationId, ledger,
+    });
+    rawUpload = { ...rawUpload, conversionOperationId: rawProcessed.conversionOperationId,
+      admissionOperationId: rawProcessed.admissionOperationId, conversionFixture: rawConversionFixture };
+    receipt.raw_file_conversion_admission = "PASS (recorded provider-boundary conversion fixture, browser COMPLETE candidate, server-composed COMMITTED admission; live Workers AI NOT_EXECUTED)";
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -4838,6 +4901,8 @@ export async function runOwnerE2E() {
         { method: "GET", path: `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`, status: 200 },
         { method: "POST", path: "/api/v1/ingest/raw", status: 200 },
         { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
+        { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/markdown`, status: 200 },
+        { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
       // a listed mutation: the exact browser artifact lifecycle paths
@@ -4933,13 +4998,15 @@ export async function runOwnerE2E() {
       "restart must preserve the namespace ownership/policy rows exactly");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 1 }],
       "restart must preserve the explicit read grant");
+    const sourceRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT source_id, source_namespace_id FROM source WHERE source_namespace_id='${namespace}'`);
+    const revisionRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`);
     assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT r.source_revision_ref FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`),
-      revisionRows.map((row) => ({ source_revision_ref: row.source_revision_ref })),
-      "restart must preserve the admitted revision rows");
-    // The raw capture route records transport settlement only. Once the Worker
-    // is stopped, reconcile its single durable row and original R2 bytes from
-    // the authoritative local stores. This intentionally does not assert a
-    // Library source/revision for the raw file.
+      revisionRowsAfterRaw,
+      "restart must preserve the original and raw-admitted revision rows");
+    // Once the Worker is stopped, reconcile the capture, recorded conversion,
+    // server-composed admission and their immutable R2 readbacks from the
+    // authoritative local stores. The conversion fixture stands in for the
+    // provider boundary; live Workers AI remains explicitly unqualified.
     const rawRows = d1Query(paths, "CORE_DB",
       "SELECT capture_id,principal_ref,source_namespace_id,idempotency_key,original_file_name,content_sha256,size_bytes,content_type,state,object_key " +
       `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
@@ -4955,16 +5022,51 @@ export async function runOwnerE2E() {
     assert.ok(typeof rawRow.object_key === "string" && rawRow.object_key.length > 0, "D1 raw row must retain its R2 key");
     assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
       "same-file recovery must not create an extra raw capture row");
-    assert.equal(d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source WHERE source_namespace_id='${namespace}'`)[0].n,
-      sourceRows.length, "raw capture must not create an extra Library source row");
-    assert.equal(d1Query(paths, "CORE_DB", `SELECT COUNT(*) AS n FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}'`)[0].n,
-      revisionRows.length, "raw capture must not create an extra Library source revision row");
     const rawObject = await tryR2ObjectGet(paths, evidenceBucket, rawRow.object_key);
     assert.equal(rawObject.ok, true, "original raw bytes must be readable from EVIDENCE_BUCKET");
     const rawBytes = Buffer.from(rawObject.output ?? "", "utf8");
     assert.deepEqual(rawBytes, rawUpload.expected.bytes, "R2 raw bytes must match the selected file exactly");
     assert.equal(await sha256Hex(rawBytes), rawUpload.expected.digest, "R2 raw bytes must retain the selected digest");
-    receipt.raw_file_capture = `PASS (browser POST + reload/reselect idempotency GET, one D1 capture row, original R2 bytes; transport only, not ADMITTED/INDEXED)`;
+    const conversionRows = d1Query(paths, "CORE_DB",
+      "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,state,result_sha256,output_object_key,receipt_object_key " +
+      `FROM raw_markdown_conversion WHERE operation_id='${rawUpload.conversionOperationId}'`);
+    assert.equal(conversionRows.length, 1, "raw conversion fixture must leave exactly one durable conversion row");
+    assert.deepEqual(conversionRows[0], {
+      operation_id: rawUpload.conversionOperationId, principal_ref: "e2e-owner", capture_id: rawUpload.captureId,
+      content_sha256: rawUpload.expected.digest, size_bytes: rawUpload.expected.bytes.length, state: "COMPLETE",
+      result_sha256: rawUpload.conversionFixture.resultSha256,
+      output_object_key: rawUpload.conversionFixture.outputObjectKey, receipt_object_key: `raw-markdown/${rawUpload.conversionOperationId}/receipt.json`,
+    }, "conversion row must retain the recorded provider-boundary identity");
+    const convertedObject = await tryR2ObjectGet(paths, evidenceBucket, rawUpload.conversionFixture.outputObjectKey);
+    assert.equal(convertedObject.ok, true, "recorded conversion output must be readable from EVIDENCE_BUCKET");
+    const convertedBytes = Buffer.from(convertedObject.output ?? "", "utf8");
+    assert.equal(await sha256Hex(convertedBytes), rawUpload.conversionFixture.outputSha256,
+      "conversion output R2 bytes must match the recorded result digest");
+    const admissionRows = d1Query(paths, "CORE_DB",
+      "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,candidate_ref,source_revision_ref,source_view_ref,state,ingest_operation_id,receipt_json " +
+      `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
+    assert.equal(admissionRows.length, 1, "raw admission must leave exactly one durable admission row");
+    const admissionRow = admissionRows[0];
+    assert.equal(admissionRow.principal_ref, "e2e-owner");
+    assert.equal(admissionRow.capture_id, rawUpload.captureId);
+    assert.equal(admissionRow.conversion_operation_id, rawUpload.conversionOperationId);
+    assert.match(admissionRow.admission_operation_id, /^[a-f0-9]{64}$/u);
+    assert.match(admissionRow.candidate_ref, /^raw-normalized-candidate:[a-f0-9]{64}$/u);
+    assert.match(admissionRow.source_view_ref, /^snapshot-view:v1:[a-f0-9]{64}$/u);
+    assert.equal(admissionRow.state, "COMMITTED");
+    assert.ok(typeof admissionRow.ingest_operation_id === "string" && admissionRow.ingest_operation_id.length > 0);
+    assert.ok(typeof admissionRow.receipt_json === "string" && admissionRow.receipt_json.length > 0);
+    const admissionReceipt = JSON.parse(admissionRow.receipt_json);
+    assert.ok(["ADMITTED", "DUPLICATE"].includes(admissionReceipt.decision), "COMMITTED admission must carry an admitted receipt");
+    const rawOperationRows = d1Query(paths, "CORE_DB",
+      `SELECT state,decision_receipt_ref,promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${String(admissionRow.ingest_operation_id).replaceAll("'", "''")}'`);
+    assert.equal(rawOperationRows.length, 1, "raw admission ingest operation must exist");
+    assert.equal(rawOperationRows[0].state, "COMMITTED", "raw admission ingest operation must be COMMITTED");
+    assert.ok(typeof rawOperationRows[0].decision_receipt_ref === "string" && rawOperationRows[0].decision_receipt_ref.length > 0);
+    assert.ok(typeof rawOperationRows[0].promotion_receipt_ref === "string" && rawOperationRows[0].promotion_receipt_ref.length > 0);
+    assert.equal(sourceRowsAfterRaw.length, sourceRows.length + 1, "raw admission must add one Library source");
+    assert.equal(revisionRowsAfterRaw.length, revisionRows.length + 1, "raw admission must add one Library revision");
+    receipt.raw_file_capture = `PASS (browser POST + reload/reselect idempotency GET, one D1 capture row, original R2 bytes)`;
     assert.equal(paths.generation, (await prepareLocal({ stateDirectory: directory, log: () => {} })).generation,
       "isolated generation must be stable for the same directory");
     await applyOwnerE2EProfile(paths, jwks.url);
