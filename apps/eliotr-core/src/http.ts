@@ -41,7 +41,6 @@ import {
 import {
   dispatchIngestOperation,
   IngestHttpInputError,
-  rawNormalizedAdmissionRequest,
 } from "./ingest-http.js";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
 import { IngestServiceError } from "./ingest-service.js";
@@ -377,23 +376,6 @@ async function dispatch(
       );
     }
     default:
-      if (match.route.operation === "ingest.raw.normalized.admit") {
-        const captureId = match.params.capture_id;
-        if (captureId === undefined) throw new HttpRequestError("RAW_NORMALIZED_INPUT_INVALID", 400, "capture id is missing");
-        requireNoQuery(url);
-        return apiResult(request, env, await application.services.owner.admitRawFileToNormalized(
-          context,
-          captureId,
-          await rawNormalizedAdmissionRequest(request, match.route.maximum_request_bytes),
-        ));
-      }
-      if (match.route.operation === "ingest.raw.normalized.status") {
-        const captureId = match.params.capture_id;
-        const admissionOperationId = match.params.admission_operation_id;
-        if (captureId === undefined || admissionOperationId === undefined) throw new HttpRequestError("RAW_NORMALIZED_INPUT_INVALID", 400, "admission path is incomplete");
-        requireNoQuery(url);
-        return apiResult(request, env, await application.services.owner.getRawNormalizedAdmissionStatus(context, captureId, admissionOperationId));
-      }
       if (match.route.operation === "ingest.raw.markdown") {
         const captureId = match.params.capture_id;
         if (captureId === undefined) throw new HttpRequestError("RAW_MARKDOWN_INPUT_INVALID", 400, "capture id is missing");
