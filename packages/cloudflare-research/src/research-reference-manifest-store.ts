@@ -121,7 +121,8 @@ function refKey(value: VersionedRef): string {
 function isNavigationScopeError(cause: unknown): boolean {
   if (typeof cause !== "object" || cause === null || !("code" in cause)) return false;
   const code = (cause as { readonly code?: unknown }).code;
-  return code === "NAVIGATION_SCOPE_NOT_CURRENT" || code === "NAVIGATION_SCOPE_MISMATCH";
+  return code === "NAVIGATION_SCOPE_NOT_CURRENT" || code === "NAVIGATION_SCOPE_MISMATCH" ||
+    code === "RETRIEVAL_SCOPE_STALE" || code === "RETRIEVAL_AUTHORITY_STALE";
 }
 
 function manifestBytes(manifest: AllowedReferenceManifest): { readonly json: string; readonly bytes: Uint8Array; readonly digest: string } {
