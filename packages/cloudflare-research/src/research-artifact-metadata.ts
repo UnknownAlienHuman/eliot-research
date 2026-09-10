@@ -17,6 +17,7 @@ import type { ArtifactSectionMaterializationTemplate, ObjectResidencyTemplate } 
 import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
 import type { ResearchMaterializeTrustedMetadata } from "./research-materialize-stage-handler.js";
 import type { StageRequest, WorkflowPrincipal } from "./types.js";
+import { CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS } from "./research-protocol-freeze.js";
 
 export interface ResearchArtifactReportPolicy {
   readonly kind: ArtifactKind;
@@ -111,7 +112,8 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
     if (request.stage !== "MATERIALIZE" || principal.principal_ref !== intent.principal_ref ||
         intent.idempotency_key !== request.idempotency_key || context.operation_id !== request.operation_id ||
         context.principal_ref !== principal.principal_ref || context.credential_generation !== principal.credential_generation ||
-        !sameRef(context.freeze.scope_snapshot_ref, context.manifest.scope_snapshot_ref)) {
+        !sameRef(context.freeze.scope_snapshot_ref, context.manifest.scope_snapshot_ref) ||
+        context.stage_ten_input.protocol_profile.output_contract_ref !== CORPUS_EXPLORATORY_LOOKUP_DEFINITIONS.output_contract_ref) {
       fail("RESEARCH_ARTIFACT_METADATA_AUTHORITY_STALE", "materialize metadata is not bound to the accepted operation");
     }
     const scope = context.freeze.scope_snapshot_ref;
