@@ -55,7 +55,7 @@ interface OutputFixture {
 }
 
 interface OutputFixtureOptions {
-  readonly beforePut?: () => void;
+  readonly beforePut?: (putCalls: number) => void;
 }
 
 beforeAll(initializeModelAttemptRuntime);
@@ -150,7 +150,7 @@ async function outputFixture(
         residency_domains: residency,
         created_at: NOW,
       });
-      options.beforePut?.();
+      options.beforePut?.(putCounter.value);
       const body = new Response(outputBytes).body;
       if (body === null) throw new Error("controlled output body is unavailable");
       const persisted = await storage.outputs.putImmutable(call.output_object_ref, body, outputSha256) as {
@@ -223,7 +223,8 @@ describe("model output residency over actual Worker D1/R2", () => {
     let cancelBeforePut = false;
     const cancelBeforePutController = new AbortController();
     const cancelledBeforePut = await outputFixture("output-cancel-before-put", runtime.CORE_DB, {
-      beforePut: () => {
+      beforePut: (putCalls) => {
+        expect(putCalls).toBe(0);
         cancelBeforePut = true;
         cancelBeforePutController.abort();
       },
@@ -266,7 +267,8 @@ describe("model output residency over actual Worker D1/R2", () => {
     let now = Date.parse(NOW);
     let expiryBeforePut = false;
     const expired = await outputFixture("output-expired-before-put", runtime.CORE_DB, {
-      beforePut: () => {
+      beforePut: (putCalls) => {
+        expect(putCalls).toBe(0);
         expiryBeforePut = true;
         now = Date.parse("2026-09-10T14:00:00.000Z");
       },
