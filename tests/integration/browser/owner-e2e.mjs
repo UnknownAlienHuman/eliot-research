@@ -6227,6 +6227,7 @@ export async function runOwnerE2E() {
     // cancellation proof.
     exhaustiveWorkflow = await runExhaustiveWorkflowBrowser({
       page: playwright.page, browserJson, ledger, query: cancellationQuery,
+      beforeCancel: async () => { await settleLedger(playwright.page, playwright); },
       beforeReload: async () => {
         playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "exhaustive-recovery"));
         playwright.registerOp({ kind: "harness-navigation", cause: "reload", scope: "document",

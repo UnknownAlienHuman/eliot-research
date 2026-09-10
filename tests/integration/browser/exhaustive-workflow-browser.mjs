@@ -65,7 +65,7 @@ async function waitForFreshWorkflowId(page, previousWorkflowId, label, launchAtt
  * through the owner jobs list. It proves launch, status, DELETE and recovery
  * readback without claiming projection completion from a fixture.
  */
-export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection }) {
+export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection, beforeCancel }) {
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
@@ -101,6 +101,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
+  if (beforeCancel !== undefined) await beforeCancel();
   await cancel.click();
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
     null, { timeout: 15000 });
@@ -187,6 +188,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
     const button = document.querySelector("#exhaustive-workflow [data-cancel]");
     return button instanceof HTMLButtonElement && !button.disabled;
   }, null, { timeout: 15000 });
+  if (beforeCancel !== undefined) await beforeCancel();
   await cancel.click();
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow .workflow-status")?.textContent?.includes("cancelled on the server") === true,
     null, { timeout: 15000 });
