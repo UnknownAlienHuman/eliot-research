@@ -39,7 +39,7 @@ export function mountResearchRunPanel(
   healthReady: () => boolean = () => false,
 ): (() => void) & { clearPrivate(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() ? "READY" : "WAITING"}</span></div>
-    <p class="workflow-copy">Start research and check its progress. Generated answers are not available yet.</p>
+    <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
