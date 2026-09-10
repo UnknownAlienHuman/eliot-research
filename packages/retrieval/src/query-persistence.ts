@@ -10,9 +10,17 @@ import type { RetrievalRequest } from "./ports.js";
 import {
   RetrievalQueryError,
   type RetrievalQueryErrorCode,
-  type RetrievalResult,
   type StoredRetrievalResult,
 } from "./service.js";
+import { canonicalRetrievalJson as canonicalJson, decodeCanonicalRetrievalJson, decodeRetrievalResult } from "./query-codec.js";
+
+export function canonicalRetrievalJson(value: unknown): string {
+  try {
+    return canonicalJson(value);
+  } catch {
+    failQuery("RETRIEVAL_INPUT_INVALID", "stored query result is not canonical");
+  }
+}
 
 export interface RetrievalQueryAccess {
   readonly principal_ref: string;
@@ -51,24 +59,6 @@ function mapStoreError(error: unknown): never {
     failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
   }
   failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
-}
-
-export function canonicalRetrievalJson(value: unknown): string {
-  if (value === null || typeof value === "boolean" || typeof value === "string") {
-    return JSON.stringify(value);
-  }
-  if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) failQuery("RETRIEVAL_INPUT_INVALID", "stored query result is not canonical");
-    return String(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(canonicalRetrievalJson).join(",")}]`;
-  if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .filter((entry) => entry[1] !== undefined)
-      .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
-    return `{${entries.map(([key, entry]) => `${JSON.stringify(key)}:${canonicalRetrievalJson(entry)}`).join(",")}}`;
-  }
-  failQuery("RETRIEVAL_INPUT_INVALID", "stored query result is not canonical");
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -184,6 +174,11 @@ interface StoredResultRow {
   readonly request_digest: unknown;
   readonly result_json: unknown;
   readonly result_digest: unknown;
+  readonly scope_snapshot_id: unknown;
+  readonly scope_snapshot_revision: unknown;
+  readonly trace_id: unknown;
+  readonly trace_revision: unknown;
+  readonly coverage_claim: unknown;
   readonly state: unknown;
 }
 
@@ -192,21 +187,18 @@ function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): Store
     failQuery("RETRIEVAL_SCOPE_STALE", "stored query scope is invalidated");
   }
   if (
-    typeof row.request_digest !== "string" || typeof row.result_json !== "string" ||
+    typeof row.request_digest !== "string" || !/^[a-f0-9]{64}$/u.test(row.request_digest) ||
+    typeof row.result_json !== "string" ||
     typeof row.result_digest !== "string" || row.state !== "COMPLETE"
   ) {
     failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(row.result_json);
-  } catch {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed", true);
+  const parsed = decodeCanonicalRetrievalJson(row.result_json);
+  const result = parsed === undefined ? null : decodeRetrievalResult(parsed);
+  if (result === null) {
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed or not a strict retrieval result", true);
   }
-  if (canonicalRetrievalJson(parsed) !== row.result_json) {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is not canonical", true);
-  }
-  return { request_digest: row.request_digest, idempotency_key: idempotencyKey, result: parsed as RetrievalResult };
+  return { request_digest: row.request_digest, idempotency_key: idempotencyKey, result };
 }
 
 export function createD1RetrievalResultStore(
@@ -229,7 +221,7 @@ export function createD1RetrievalResultStore(
       let row: StoredResultRow | null;
       try {
         row = await database.prepare(
-          "SELECT request_digest, result_json, result_digest, state FROM retrieval_query_result " +
+          "SELECT request_digest, result_json, result_digest, scope_snapshot_id, scope_snapshot_revision, trace_id, trace_revision, coverage_claim, state FROM retrieval_query_result " +
           "WHERE principal_ref = ?1 AND client_class = ?2 AND credential_generation = ?3 " +
           "AND idempotency_key = ?4 LIMIT 1",
         ).bind(access.principal_ref, access.client_class, access.credential_generation, idempotencyKey)
@@ -238,7 +230,40 @@ export function createD1RetrievalResultStore(
         failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
       }
       if (row === null) return null;
-      return decodeStoredResult(row, idempotencyKey);
+      const stored = decodeStoredResult(row, idempotencyKey);
+      if (typeof row.result_json !== "string" || row.result_digest !== await sha256Hex(row.result_json) ||
+          row.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
+          row.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
+          row.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
+          row.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
+          row.trace_id !== stored.result.trace.trace_ref.id || row.trace_revision !== stored.result.trace.trace_ref.revision ||
+          row.trace_id !== stored.result.evidence_pack.trace_ref.id || row.trace_revision !== stored.result.evidence_pack.trace_ref.revision ||
+          row.coverage_claim !== stored.result.coverage_claim) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+      }
+      let traceRow: { readonly trace_json: unknown; readonly trace_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown } | null;
+      try {
+        traceRow = await database.prepare(
+          "SELECT trace_json, trace_digest, scope_snapshot_id, scope_snapshot_revision FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
+        ).bind(stored.result.trace.trace_ref.id, stored.result.trace.trace_ref.revision)
+          .first<{ readonly trace_json: unknown; readonly trace_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown }>();
+      } catch {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace is unavailable", true);
+      }
+      const storedTraceValue = traceRow !== null && typeof traceRow.trace_json === "string"
+        ? decodeCanonicalRetrievalJson(traceRow.trace_json)
+        : undefined;
+      if (traceRow === null || typeof traceRow.trace_json !== "string" || typeof traceRow.trace_digest !== "string" ||
+          traceRow.trace_digest !== await sha256Hex(traceRow.trace_json) ||
+          traceRow.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
+          traceRow.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
+          traceRow.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
+          traceRow.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
+          storedTraceValue === undefined ||
+          canonicalRetrievalJson(storedTraceValue) !== canonicalRetrievalJson(stored.result.trace)) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace linkage is not bound to its result", true);
+      }
+      return stored;
     },
     async store(record: StoredRetrievalResult): Promise<void> {
       if (
