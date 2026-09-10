@@ -44,7 +44,7 @@ export interface EvidenceFreezeCommittedReaders {
   readonly read_stage_zero: (input: EvidenceFreezeCommittedReaderInput) => Promise<ProtocolScopeCheckpoint>;
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<RetrieveBranchesCheckpointReadback>;
   readonly read_w1_head: (investigation_id: string) => Promise<LedgerHead | null>;
-  readonly read_authorization_receipt_ref: (operation_id: string) => Promise<string | null>;
+  readonly read_authorization_receipt_ref: (operation_id: string, investigation_id: string, principal: WorkflowPrincipal) => Promise<string | null>;
 }
 
 export interface EvidenceFreezeWorkflowReaderEnvironment {
@@ -81,18 +81,34 @@ export function createEvidenceFreezeWorkflowReaders(
       if (stored === null || stored.request.investigation_ref.id !== input.investigation_id) {
         throw new Error("committed stage five is unavailable");
       }
-      return readRetrieveBranchesCheckpoint({
+      const readback = await readRetrieveBranchesCheckpoint({
         ...environment.retrieve,
         navigation,
         ledger,
       }, stored.request, input.principal);
+      if (readback.receipt.attempt_ref !== stored.attempt_ref) {
+        throw new Error("committed stage five attempt binding differs");
+      }
+      return readback;
     },
     read_w1_head: (investigationId) => checkpoints.head(investigationId),
-    read_authorization_receipt_ref: async (operationId) => {
+    read_authorization_receipt_ref: async (operationId, investigationId, principal) => {
       const row = await environment.database.prepare(
-        "SELECT authorization_receipt_ref FROM research_workflow_run WHERE operation_id = ?1 LIMIT 1",
-      ).bind(operationId).first<{ readonly authorization_receipt_ref: string | null }>();
-      return row?.authorization_receipt_ref ?? null;
+        "SELECT operation_id, investigation_id, principal_ref, credential_generation, deployment_generation, " +
+          "policy_authority_ref, authorization_receipt_ref, scope_snapshot_id, scope_snapshot_revision " +
+          "FROM research_workflow_run WHERE operation_id = ?1 LIMIT 1",
+      ).bind(operationId).first<{
+        readonly operation_id: string; readonly investigation_id: string; readonly principal_ref: string;
+        readonly credential_generation: string; readonly deployment_generation: string;
+        readonly policy_authority_ref: string; readonly authorization_receipt_ref: string | null;
+        readonly scope_snapshot_id: string; readonly scope_snapshot_revision: number;
+      }>();
+      if (row === null || row.operation_id !== operationId || row.investigation_id !== investigationId ||
+          row.principal_ref !== principal.principal_ref || row.credential_generation !== principal.credential_generation ||
+          row.deployment_generation !== principal.deployment_generation || row.scope_snapshot_id !== navigation.scope.snapshot_id ||
+          row.scope_snapshot_revision !== navigation.scope.revision || row.authorization_receipt_ref === null ||
+          row.policy_authority_ref !== (await navigation.current()).policy_authority_ref) return null;
+      return row.authorization_receipt_ref;
     },
   };
 }
@@ -117,7 +133,7 @@ export function createEvidenceFreezePredecessorReader(
     const stageZero = await readers.read_stage_zero(readerInput);
     const stageFive = await readers.read_stage_five(readerInput);
     const head = await readers.read_w1_head(request.investigation_ref.id);
-    const authorizationReceiptRef = await readers.read_authorization_receipt_ref(request.operation_id);
+    const authorizationReceiptRef = await readers.read_authorization_receipt_ref(request.operation_id, request.investigation_ref.id, principal);
     if (head === null || authorizationReceiptRef === null || authorizationReceiptRef.length === 0 ||
         stageZero.operation_id !== request.operation_id || stageZero.investigation_ref.id !== request.investigation_ref.id ||
         stageZero.principal_ref !== principal.principal_ref || stageFive.checkpoint.operation_id !== request.operation_id ||
@@ -130,7 +146,11 @@ export function createEvidenceFreezePredecessorReader(
       throw new Error("freeze predecessor authority is inconsistent");
     }
     const after = await navigation.current();
-    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) throw new Error("freeze predecessor authority changed during readback");
+    const finalHead = await readers.read_w1_head(request.investigation_ref.id);
+    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) || finalHead === null ||
+        canonicalEvidenceJson(finalHead) !== canonicalEvidenceJson(head)) {
+      throw new Error("freeze predecessor authority changed during readback");
+    }
     const lineage: EvidenceFreezeStageFiveLineage = {
       operation_id: stageFive.checkpoint.operation_id,
       investigation_ref: stageFive.checkpoint.investigation_ref,
