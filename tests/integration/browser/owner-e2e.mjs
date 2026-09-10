@@ -852,6 +852,76 @@ export async function browserJson(page, ledger, path, { method = "GET", body, co
   return outcome;
 }
 
+// The local bridge intentionally collapses upstream fetch, response-body and
+// timeout failures into LOCAL_REQUEST_FAILED/502. Keep the owner gate's
+// failure evidence bounded and allowlisted so a Windows-only bridge failure
+// can be classified without exposing URLs, headers, credentials or payloads.
+const OWNER_BRIDGE_DIAGNOSTIC_PROBLEM_CODES = new Set([
+  "LOCAL_REQUEST_FAILED", "LOCAL_REDIRECT_DENIED", "LOCAL_SESSION_BUSY",
+  "LOCAL_SESSION_EXPIRED", "LOCAL_SESSION_REJECTED", "INTERNAL_ERROR",
+]);
+const OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES = new Set(["AbortError", "TypeError", "Error"]);
+const OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES = new Set([
+  "ABORT_ERR", "ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_SOCKET",
+]);
+
+function allowlistedOwnerBridgeProblemCode(value) {
+  const candidate = typeof value === "string" ? value : value?.code ?? value?.data?.code;
+  return typeof candidate === "string" && OWNER_BRIDGE_DIAGNOSTIC_PROBLEM_CODES.has(candidate)
+    ? candidate : undefined;
+}
+
+function ownerBridgeProblemCodeFromMessage(error) {
+  const match = String(error?.message ?? "").match(/\bcode=([A-Z][A-Z0-9_]+)\b/u);
+  return allowlistedOwnerBridgeProblemCode(match?.[1]);
+}
+
+function recordOwnerBridgeDiagnosticEvent(events, event) {
+  if (events.length >= 8) events.shift();
+  events.push(event);
+}
+
+function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) {
+  return async (input, init = {}) => {
+    const startedAt = Date.now();
+    try {
+      const response = await fetchImpl(input, init);
+      recordOwnerBridgeDiagnosticEvent(events, {
+        outcome: "response",
+        status: Number.isInteger(response?.status) ? response.status : null,
+        elapsed_ms: Date.now() - startedAt,
+      });
+      return response;
+    } catch (error) {
+      const errorName = typeof error?.name === "string" ? error.name : "";
+      const directCode = typeof error?.code === "string" ? error.code : "";
+      const causeCode = typeof error?.cause?.code === "string" ? error.cause.code : "";
+      const errorCode = directCode || causeCode;
+      recordOwnerBridgeDiagnosticEvent(events, {
+        outcome: "error",
+        error_name: OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(errorName) ? errorName : "UnknownError",
+        error_code: OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(errorCode) ? errorCode : "UNSPECIFIED",
+        aborted: init?.signal?.aborted === true,
+        elapsed_ms: Date.now() - startedAt,
+      });
+      throw error;
+    }
+  };
+}
+
+function ownerBridgeWorkerDiagnosticSnapshot(worker) {
+  try {
+    const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+    return {
+      pid: Number.isSafeInteger(runtime?.pid) ? runtime.pid : null,
+      exit_code: runtime?.exitCode === null || Number.isInteger(runtime?.exitCode) ? runtime.exitCode : null,
+    };
+  } catch {
+    return { pid: null, exit_code: null };
+  }
+}
+
 async function verifyControlledIssuerCrypto(privateKey, publicJwk) {
   const nowSeconds = Math.floor(globalThis.Date.now() / 1000);
   const goodClaims = { iss: OWNER_E2E_ISSUER, aud: [OWNER_E2E_AUDIENCE], sub: "e2e-owner", type: "app", iat: nowSeconds, exp: nowSeconds + 600 };
@@ -4040,8 +4110,9 @@ export async function importBundleViaBrowser(page, ledger, bundle, idempotencyKe
   const artifactPaths = [];
   const call = async (path, { method = "GET", body, contentType, correlation } = {}) => {
     const outcome = await browserJson(page, ledger, path, { method, body, contentType, correlation });
+    const problemCode = allowlistedOwnerBridgeProblemCode(outcome.data);
     assert.ok(outcome.status >= 200 && outcome.status < 300,
-      `browser artifact call failed: ${method} ${path} -> ${outcome.status}`);
+      `browser artifact call failed: ${method} ${path} -> ${outcome.status}${problemCode === undefined ? "" : ` code=${problemCode}`}`);
     assert.ok(outcome.data && typeof outcome.data.data !== "undefined" &&
       typeof outcome.data.deployment_generation === "string",
       `browser artifact call must return the typed envelope: ${method} ${path}`);
@@ -4238,6 +4309,7 @@ export async function runOwnerE2E() {
   let worker;
   let playwright;
   let bridge;
+  const ownerBridgeDiagnosticEvents = [];
   let jwks;
   let exhaustiveWorkflow;
   let rawUpload;
@@ -4673,7 +4745,8 @@ export async function runOwnerE2E() {
     assertPhaseNetwork(playwright, "unauthenticated", { ...unauthNetworkSpec(worker.origin), workerOrigins: trackOrigin(worker.origin) });
     receipt.network_ledger_phases = { unauthenticated: summarizePhaseLedger(playwright) };
     playwright.resetLedger();
-    bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0 });
+    bridge = await startOwnerBridge({ workerOrigin: worker.origin, token, generation: paths.generation, port: 0,
+      fetchImpl: createOwnerBridgeDiagnosticFetch(ownerBridgeDiagnosticEvents) });
     assert.ok(isChromiumSafePort(Number(new URL(bridge.origin).port)),
       `bridge loopback port must be Chromium-safe, got ${bridge.origin}`);
     receipt.network_ledger_phases.bridge_first_bind = { attempts: bridge.bindAttempts, origin: "redacted-loopback" };
@@ -4727,7 +4800,18 @@ export async function runOwnerE2E() {
       source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
       operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
     });
-    const imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
+    let imported;
+    try {
+      imported = await importBundleViaBrowser(playwright.page, ledger, bundle, "e2e-first-import", "e2e-import-1");
+    } catch (error) {
+      const diagnostic = {
+        protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1",
+        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? "UNAVAILABLE",
+        bridge_events: ownerBridgeDiagnosticEvents.slice(),
+        worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
+      };
+      throw new Error(`browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`);
+    }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
     if (catalogTransportDiagnosticEnabled) {
