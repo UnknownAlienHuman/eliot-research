@@ -21,6 +21,7 @@ import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
 import * as scope from "./scope.js";
 import * as security from "./security.js";
+import * as snapshotView from "./snapshot-view.js";
 import * as source from "./source.js";
 import {
   CONTRACT_JSON_SCHEMA_DIALECT,
@@ -79,6 +80,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "retrieval", exports: retrieval },
   { family: "scope", exports: scope },
   { family: "security", exports: security },
+  { family: "source", exports: snapshotView },
   { family: "source", exports: source },
 ];
 

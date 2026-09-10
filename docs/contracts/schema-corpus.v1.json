@@ -2,7 +2,7 @@
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
   "registry_generation": 2,
-  "schema_count": 132,
+  "schema_count": 134,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -11704,6 +11704,140 @@
       "schema_id": "urn:eliotr:contracts:common:sha256:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "SnapshotViewObservationFreshnessSchema",
+      "family": "source",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:source:snapshot-view-observation-freshness:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "observed_with_age",
+          "unknown"
+        ],
+        "title": "SnapshotViewObservationFreshness",
+        "type": "string",
+        "x-eliotr-family": "source",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-observation-freshness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "SnapshotViewWitnessSchema",
+      "family": "source",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema1": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991,
+            "type": "integer"
+          }
+        },
+        "$id": "urn:eliotr:contracts:source:snapshot-view-witness:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "capture_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "observation_freshness": {
+            "enum": [
+              "observed_with_age",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "original_sha256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "original_size_bytes": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "owner_system_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "policy_revision": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "policy_snapshot_sha256": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "protocol": {
+            "const": "eliotr.snapshot-view.v1",
+            "type": "string"
+          },
+          "residency_key_digest": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "source_logical_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "source_namespace_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "source_owner_generation": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "source_revision_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "source_view_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "verified_principal_ref": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "protocol",
+          "source_view_ref",
+          "capture_id",
+          "source_revision_ref",
+          "source_logical_id",
+          "verified_principal_ref",
+          "owner_system_id",
+          "source_namespace_id",
+          "source_owner_generation",
+          "original_sha256",
+          "original_size_bytes",
+          "residency_key_digest",
+          "policy_snapshot_sha256",
+          "policy_revision",
+          "observed_at",
+          "observation_freshness"
+        ],
+        "title": "SnapshotViewWitness",
+        "type": "object",
+        "x-eliotr-family": "source",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:source:snapshot-view-witness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "SourceAcquisitionCandidateSchema",
