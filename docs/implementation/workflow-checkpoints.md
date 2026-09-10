@@ -69,6 +69,24 @@ passed after correcting its assertion to decode the gateway request and nested p
 actual provider request contains the exact stage-5 handle and excerpt, and replay invokes the
 provider only once. This assertion correction changed no production handler.
 
+The model profile source now decodes an explicitly installed
+`ELIOTR_MODEL_PROFILE_DEFINITION_JSON` value and delegates definition, deployment and provenance
+validation to the existing binding producer. Missing configuration remains unavailable; no default
+model or route is selected. Its eight focused binding cases passed at `c7e90d5`. App-owned Env and
+production composition remain to be wired.
+
+`createResearchArtifactMetadataProducer` derives deterministic artifact/spec/section identities and
+referenced-object bytes from the committed materialization context. It snapshots the server-owned
+report policy and explicit REPORT intent, binds the canonical exploratory output contract and
+retains UNRESOLVED labels. It does not issue a REPORT policy decision or manufacture an intent.
+
+At `a2a542a`, the actual local Worker/D1/R2 stage-17 case passed with the shared strict verification
+codec, metadata producer, exact section citations and owner HTTP citation readback. A mismatched
+protocol family leaves the artifact row count unchanged, and revoked scope access denies both direct
+and HTTP citation reads. The HTTP assertion was corrected to include its versioned protocol field;
+production output was unchanged. Public v3 activation, provider configuration, REPORT admission and
+semantic verification remain open.
+
 ## Execution
 
 `createWorkflowCheckpointExecutor(CORE_DB, WORK_BUCKET, ports)` exposes `execute(request, principal,
@@ -207,6 +225,21 @@ The built-PWA Chromium fixture passed at `78aa52b` on Node 22.23.2. It retains t
 source/unavailable path and checks draft metadata, manually opened exact section text, inert literal
 markup, generation/session/offline clearing and suppression of a delayed private response. Its HTTP
 backend is controlled; it is separate from the actual Worker/D1/R2 proof above.
+
+`GET /api/v1/research/artifact/:ref/sections/:section_ref/citations` exposes only the selected section's
+persisted handle references and excerpt hashes, with exact artifact/section/scope identity and
+`semantic_verification: NOT_EXECUTED`. The reader reuses owner authorization and D1/R2 readback,
+checks the stored verification record against section bytes and the allowed-reference manifest,
+then rechecks current authority. These references are locators: opening their sources still requires
+the normal current `research.verify` and `research.open` path.
+
+At `6c2627a`, the Astro build and existing Chromium fixture passed with an explicit per-section
+source action. The client binds the citations to the displayed section and verification receipt,
+then opens the selected handle through the existing evidence rail and checks its excerpt hash.
+Readable numbered sections replace opaque IDs in headings; identifiers remain in expandable
+details. Draft claims are explicitly unchecked. The controlled-backend browser proof retains the
+legacy unavailable flow, literal section rendering, private-state clearing and late-response checks;
+it is not a live-provider or Cloudflare deployment receipt.
 
 ## W2 monotone bounded executor
 
