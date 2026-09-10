@@ -25,24 +25,46 @@ async function modelEffectRowCount(database: D1Database): Promise<number> {
 }
 
 describe("production governed model attempt handler over actual D1/R2", () => {
-  it("replays each W2-backed stage grant without invoking its durable W3 effect twice", async () => {
-    const firstFixture = await governedModelAttemptFixture("handler-stages-first");
-    const firstHandler = createGovernedModelAttemptHandler(firstFixture.dependencies);
-    const firstInput = firstFixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", "ignored-by-bound-stage");
-    const first = await firstHandler.handler(firstInput);
-    expect(first).toEqual(expect.any(Uint8Array));
-    expect(await firstHandler.handler(firstInput)).toEqual(first);
-    expect(firstFixture.calls()).toBe(1);
+  it("derives separate model identities for two stages of one W2 run and replays exact R2 outputs", async () => {
+    const workflow = await workflowFixture("handler-stages");
+    const fixture = await governedModelAttemptFixture("handler-stages", {
+      database: workflow.db, bucket: workflow.bucket, request: workflow.request,
+      principal, inputBytes: workflow.bytes,
+    });
+    const handler = createGovernedModelAttemptHandler(fixture.dependencies);
+    const first = await workflow.executor.execute(workflow.request, principal, handler.handler);
+    const secondRequest = {
+      ...workflow.request, stage: "ORIENT" as const, investigation_ref: first.investigation_ref,
+      input_manifest: first.output_manifest,
+    };
+    const second = await workflow.executor.execute(secondRequest, principal, handler.handler);
+    expect(first.stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
+    expect(second.stage).toBe("ORIENT");
+    expect(fixture.calls()).toBe(2);
+    expect(first.output_manifest.object_ref).not.toBe(second.output_manifest.object_ref);
+    const modelRows = await workflow.db.prepare(
+      "SELECT intent_id, idempotency_key, output_object_ref FROM research_model_attempt WHERE principal_ref = ?1 ORDER BY rowid",
+    ).bind(principal.principal_ref).all<{
+      readonly intent_id: string; readonly idempotency_key: string; readonly output_object_ref: string;
+    }>();
+    expect(modelRows.results).toHaveLength(2);
+    expect(modelRows.results[0]?.intent_id).not.toBe(modelRows.results[1]?.intent_id);
+    expect(modelRows.results[0]?.idempotency_key).not.toBe(modelRows.results[1]?.idempotency_key);
+    expect(new Set(modelRows.results.map((row) => row.output_object_ref)).size).toBe(2);
 
-    const secondFixture = await governedModelAttemptFixture("handler-stages-second");
-    const secondHandler = createGovernedModelAttemptHandler(secondFixture.dependencies);
-    const secondInput = secondFixture.invocation("ORIENT", "ignored-by-bound-stage");
-    const second = await secondHandler.handler(secondInput);
-    expect(second).toEqual(expect.any(Uint8Array));
-    expect(await secondHandler.handler(secondInput)).toEqual(second);
-    expect(secondFixture.calls()).toBe(1);
-    expect(first.byteLength).toBeGreaterThan(0);
-    expect(second.byteLength).toBeGreaterThan(0);
+    const firstBytes = await workflow.bucket.get(first.output_manifest.object_ref);
+    const secondBytes = await workflow.bucket.get(second.output_manifest.object_ref);
+    expect(firstBytes).not.toBeNull();
+    expect(secondBytes).not.toBeNull();
+    if (firstBytes === null || secondBytes === null) throw new Error("controlled two-stage outputs are missing from R2");
+    expect(new Uint8Array(await firstBytes.arrayBuffer())).toEqual(new TextEncoder().encode("controlled W3 output handler-stages — результат🙂"));
+    expect(new Uint8Array(await secondBytes.arrayBuffer())).toEqual(new TextEncoder().encode("controlled W3 output handler-stages — результат🙂"));
+
+    const firstReplay = await workflow.executor.execute(workflow.request, principal, async () => { throw new Error("first W2 replay invoked its handler"); });
+    const secondReplay = await workflow.executor.execute(secondRequest, principal, async () => { throw new Error("second W2 replay invoked its handler"); });
+    expect(firstReplay.output_manifest).toEqual(first.output_manifest);
+    expect(secondReplay.output_manifest).toEqual(second.output_manifest);
+    expect(fixture.calls()).toBe(2);
   });
 
   it("leaves an uncertain started effect terminal for invocation purposes and never calls the route twice", async () => {
