@@ -50,7 +50,9 @@ create a reverse authority channel and do not let a Google transport result prom
 
 ## Acceptance
 
-- only the configured Cloudflare Access service-token Client ID reaches JSON-RPC dispatch;
+- only the configured Cloudflare Access service-token Client ID reaches JSON-RPC dispatch in the
+  `service-token` profile; the `managed-oauth` profile admits only a verified human Access identity
+  through its dedicated audience;
 - the external Client ID is mapped to the internal logical principal `gemini-spark` only after exact
   signed JWT verification;
 - a human-readable token name cannot substitute for the signed Client ID in `common_name`;
@@ -88,6 +90,8 @@ Cloud project/client for this Workspace profile.
 
 ## Mandatory negative boundary
 
-Request `dry_run=false`, send a browser Origin, use an owner JWT, present the token name instead of the
-configured Client ID, and present a Google readback with a different payload digest. The server must deny
-the first four and return `OBSERVED_MISMATCH` for the last without changing canonical ELIOT state.
+For the `service-token` profile, request `dry_run=false`, send a browser Origin, use an owner JWT, present
+the token name instead of the configured Client ID, and present a Google readback with a different payload
+digest. The server must deny the first four and return `OBSERVED_MISMATCH` for the last without changing
+canonical ELIOT state. For `managed-oauth`, a valid human JWT with the dedicated audience is accepted and
+an ordinary-audience JWT or service-token JWT is denied.

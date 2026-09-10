@@ -202,7 +202,7 @@
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "required_for_transports": ["gemini-mcp"],
-      "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance, write-precondition proof or the required ChatGPT Drive Exchange. Service catalog remains withheld pending explicit scope authority.",
+      "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance or write-precondition proof. The separate unselected ChatGPT Drive Exchange profile remains independently tracked. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests, managed-oauth actor separation, mixed-profile and ordinary-audience rejection, and Workspace Cloud/gcloud rejection",
         "secret-free idempotent setup fixture",

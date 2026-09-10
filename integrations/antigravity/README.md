@@ -41,6 +41,11 @@ domain-separated hash of the verified subject so raw identity values do not ente
 profiles remain pending an Antigravity auth binding followed by the deployed Access round trip; this
 local setup does not claim either profile is authenticated or live-qualified.
 
+The dedicated Access application may be a more-specific `/mcp` application on the same Worker hostname;
+it is distinguished by the exact route policy and `MCP_ACCESS_AUDIENCE`, rather than requiring a second
+DNS host. Application-path selection, OAuth discovery, client compatibility and the deployed
+initialize/tools/list/tools/call plus Workspace readback receipt remain `NOT_EXECUTED`.
+
 ## Gemini Spark is a separate client
 
 Gemini Spark connects a custom app through Gemini web Connected Apps by entering the MCP server URL.
