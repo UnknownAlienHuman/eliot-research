@@ -11,25 +11,23 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { createD1InvestigationLedgerStore, type CreateLedgerInput, type InvestigationLedgerStore, type LedgerD1Database } from "@eliotr/research";
+import { createD1InvestigationLedgerStore, createInvestigationLedgerService, type CreateLedgerInput, type InvestigationLedgerStore, type LedgerD1Database } from "@eliotr/research";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import {
-  createEvidenceFreezeComposition,
-  createEvidenceFreezePredecessorReader,
-  createEvidenceFreezeWorkflowReaders,
   createModelProfileBindingProducer,
   createResearchReferenceManifestStore,
   createWorkflowCheckpointExecutor,
   createFreezeProtocolAndScopeStageHandler,
-  createRetrieveBranchesStageHandler,
   digest,
+  fail,
   type EvidenceFreezeModelDefinition,
-  type RetrieveBranchesStageDependencies,
   type StageReceipt,
   type StageRequest,
   type WorkflowExecutionPorts,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
+import { createRetrieveBranchesStageHandler, type RetrieveBranchesStageDependencies } from "../src/research-retrieve-branches.js";
+import { createEvidenceFreezeComposition, createEvidenceFreezePredecessorReader, createEvidenceFreezeWorkflowReaders } from "../src/research-evidence-freeze-composition.js";
 import { modelGatewaySha256, canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import { importAndProject, prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
 
@@ -48,10 +46,12 @@ interface FreezeFixture {
   readonly retrieve: RetrieveBranchesStageDependencies;
   readonly stage_zero: StageRequest;
   readonly stage_five: StageReceipt;
+  readonly pre_reconcile: StageReceipt;
   readonly composition: ReturnType<typeof createEvidenceFreezeComposition>;
   readonly freeze_store: ReferenceManifestStore;
   readonly profile_definition: EvidenceFreezeModelDefinition;
   readonly operation_id: string;
+  readonly investigation_id: string;
 }
 
 const deployment = Object.freeze({
@@ -135,7 +135,14 @@ async function fixture(): Promise<FreezeFixture> {
     event_id: "freeze-ledger-created", payload_handle_ref: payloadKey, payload_digest: payloadDigest, created_at: now,
   };
   const ledgerStore = createD1InvestigationLedgerStore(db as unknown as LedgerD1Database);
-  await createD1InvestigationLedgerStore(db as unknown as LedgerD1Database).create(ledgerInput);
+  const ledgerService = createInvestigationLedgerService(ledgerStore, {
+    current: async () => ({ principal_ref: principal.principal_ref, scope_snapshot_id: scope.snapshot_id,
+      scope_snapshot_revision: scope.revision, policy_generation: ledgerInput.policy_generation,
+      policy_authority_ref: scope.policy_authority_ref, deployment_generation: principal.deployment_generation,
+      purge_revision: 0, scope_purge_revision: scope.purge_ledger_revision }),
+  }, { has: async (ref) => (await bucket.head(ref)) !== null,
+    digestFor: async (ref) => ref === ledgerInput.payload_handle_ref ? ledgerInput.payload_digest : null });
+  await ledgerService.create(ledgerInput);
   const navigation = createNavigationReadAuthority({ database: db, scope_snapshot: scope, access,
     require_current: (requested) => scopes.requireCurrent(requested), now: () => nowMs });
   const stage_zero: StageRequest = {
@@ -148,8 +155,9 @@ async function fixture(): Promise<FreezeFixture> {
   };
   const ports: WorkflowExecutionPorts = {
     authorizeResidency: async (request, actor) => {
+      await navigation.current();
       if (request.input_manifest.residency.scope_domain_id !== scope.snapshot_id || request.input_manifest.residency.access_domain_id !== actor.principal_ref) {
-        throw new Error("workflow residency is not authorized");
+        fail("WORKFLOW_AUTHORITY_STALE");
       }
     },
     checkBudget: async () => ({ receipt_ref: "freeze-workflow-budget", expires_at_ms: nowMs + 300_000 }),
@@ -165,9 +173,10 @@ async function fixture(): Promise<FreezeFixture> {
   const retrieveRequest: StageRequest = { ...stage_zero, stage: "RETRIEVE_BRANCHES", investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
   const stage_five = await executor.execute(retrieveRequest, principal, createRetrieveBranchesStageHandler(retrieve));
   for (const stage of ["ACQUIRE_AND_CAPTURE", "READ_AND_EXTRACT", "ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const) {
-    await executor.execute({ ...stage_zero, stage, investigation_ref: stage_five.investigation_ref, input_manifest: stage_five.output_manifest }, principal,
+    previous = await executor.execute({ ...stage_zero, stage, investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest }, principal,
       async ({ request, input_bytes }) => new TextEncoder().encode(JSON.stringify({ stage: request.stage, input_sha: await digest(input_bytes) })));
   }
+  const pre_reconcile = previous;
   const current = await ledgerStore.read(investigationId);
   if (current === null) throw new Error("missing current W1 head");
   const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation);
@@ -183,7 +192,8 @@ async function fixture(): Promise<FreezeFixture> {
     }, routeAuthority: { resolve: async () => deployment }, now: () => nowMs });
   const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: runtime.SEARCH_DB });
   const resolver: CloudflareEvidenceResolver = createCloudflareEvidenceResolver({ authority: evidenceAuthority, content: createR2EvidenceContentPort({ evidence_bucket: runtime.EVIDENCE_BUCKET }) });
-  const readers = createEvidenceFreezeWorkflowReaders({ database: db, work_bucket: bucket, retrieve: { ...retrieve, navigation: undefined as never, ledger: undefined as never } }, navigation, ledgerStore);
+  const { navigation: _navigation, ledger: _ledger, ...retrieveEnvironment } = retrieve;
+  const readers = createEvidenceFreezeWorkflowReaders({ database: db, work_bucket: bucket, retrieve: retrieveEnvironment }, navigation, ledgerStore);
   const reader = createEvidenceFreezePredecessorReader(navigation, readers);
   let committedStore: ReturnType<typeof createResearchReferenceManifestStore> | null = null;
   const freezeStore: ReferenceManifestStore = { put: async (manifest) => { if (committedStore === null) throw new Error("manifest store not initialized"); return committedStore.put(manifest); }, get: async (ref) => committedStore?.get(ref) ?? null };
@@ -195,15 +205,15 @@ async function fixture(): Promise<FreezeFixture> {
     manifest_residency_template: { scope_domain_id: scope.snapshot_id, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
       encryption_key_domain_id: "freeze-key-v1", retention_domain_id: "freeze-retention-v1", erasure_domain_id: "freeze-erasure-v1" },
     max_context_bytes: definition.max_context_bytes, manifest_store: freezeStore });
-  return { db, bucket, scope, navigation, ledger: ledgerStore, executor, retrieve, stage_zero, stage_five,
-    composition, freeze_store: freezeStore, profile_definition: definition, operation_id: operationId };
+  return { db, bucket, scope, navigation, ledger: ledgerStore, executor, retrieve, stage_zero, stage_five, pre_reconcile,
+    composition, freeze_store: freezeStore, profile_definition: definition, operation_id: operationId, investigation_id: investigationId };
 }
 
 describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
   it("persists stage 10/11 from real stage 0/5 readbacks and replays without new effects", async () => {
     const f = await fixture();
-    const stage10: StageRequest = { ...f.stage_zero, stage: "RECONCILE", investigation_ref: { id: f.operation_id.replace("operation", "investigation"), revision: 11 },
-      input_manifest: f.stage_five.output_manifest };
+    const stage10: StageRequest = { ...f.stage_zero, stage: "RECONCILE", investigation_ref: f.pre_reconcile.investigation_ref,
+      input_manifest: f.pre_reconcile.output_manifest };
     const reconcile = await f.executor.execute(stage10, principal, f.composition.reconcile);
     const stage11: StageRequest = { ...stage10, stage: "FREEZE_EVIDENCE", investigation_ref: reconcile.investigation_ref, input_manifest: reconcile.output_manifest };
     const frozen = await f.executor.execute(stage11, principal, f.composition.freeze);
@@ -216,15 +226,17 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
 
   it("refuses the committed freeze after its scope grant is revoked", async () => {
     const f = await fixture();
-    const stage10: StageRequest = { ...f.stage_zero, stage: "RECONCILE", investigation_ref: { id: f.operation_id.replace("operation", "investigation"), revision: 11 }, input_manifest: f.stage_five.output_manifest };
+    const stage10: StageRequest = { ...f.stage_zero, stage: "RECONCILE", investigation_ref: f.pre_reconcile.investigation_ref, input_manifest: f.pre_reconcile.output_manifest };
     const reconcile = await f.executor.execute(stage10, principal, f.composition.reconcile);
     const stage11: StageRequest = { ...stage10, stage: "FREEZE_EVIDENCE", investigation_ref: reconcile.investigation_ref, input_manifest: reconcile.output_manifest };
-    await f.executor.execute(stage11, principal, f.composition.freeze);
+    const before = await f.db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE state='COMMITTED'").first<{ n: number }>();
     await f.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
       .bind(f.scope.snapshot_id, f.scope.revision, principal.principal_ref).run();
-    const inputObject = await f.bucket.get(stage11.input_manifest.object_ref);
-    if (inputObject === null) throw new Error("freeze input object is missing");
-    await expect(f.composition.freeze({ request: stage11, principal, input_bytes: new Uint8Array(await inputObject.arrayBuffer()), attempt_ref: "denial", budget_receipt_ref: "denial" }))
+    await expect(f.executor.execute(stage11, principal, f.composition.freeze))
       .rejects.toMatchObject({ code: "NAVIGATION_SCOPE_NOT_CURRENT" });
+    const after = await f.db.prepare("SELECT COUNT(*) AS n FROM research_reference_manifest WHERE state='COMMITTED'").first<{ n: number }>();
+    expect(after?.n).toBe(before?.n);
+    expect(await f.db.prepare("SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage='FREEZE_EVIDENCE'")
+      .bind(f.operation_id).first<{ n: number }>()).toEqual({ n: 0 });
   }, 30_000);
 });

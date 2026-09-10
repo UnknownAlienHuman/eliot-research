@@ -1,10 +1,9 @@
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import {
   createFreezeProtocolAndScopeStageHandler,
-  digest,
+  deterministicWorkflowStageBytes,
   fail,
   type MonotoneHandlerFactory,
   type WorkflowStageHandler,
@@ -40,25 +39,6 @@ export type ResearchStageHandlerFactoryMode =
       readonly freeze?: EvidenceFreezeCompositionDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
-
-async function deterministicStageBytes(
-  operationId: string,
-  stage: ResearchWorkflowStage,
-  inputBytes: Uint8Array,
-  attemptRef: string,
-): Promise<Uint8Array> {
-  const inputSha = await digest(inputBytes);
-  const bytes = new TextEncoder().encode(JSON.stringify({
-    operation_id: operationId,
-    stage,
-    input_sha: inputSha,
-    attempt_ref: attemptRef,
-  }));
-  if (bytes.byteLength > 8 * 1024 * 1024) {
-    fail("WORKFLOW_INPUT_INVALID");
-  }
-  return bytes;
-}
 
 /**
  * Selects the real protocol/scope producer only for its explicit generation.
@@ -108,6 +88,6 @@ export function createResearchStageHandlerFactory(
       return stage === "RECONCILE" ? freezeComposition.reconcile : freezeComposition.freeze;
     }
     return ({ request, input_bytes, attempt_ref }) =>
-      deterministicStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
+      deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
   };
 }
