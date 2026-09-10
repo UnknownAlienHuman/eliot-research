@@ -38,4 +38,14 @@ describe("research run transport", () => {
     expect(() => decodeResearchRunStatus({ data: activeAtTerminal, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
     await expect(readResearchRunStatus("../foreign", generation)).rejects.toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
   });
+
+  it("accepts only a completed server-bound draft artifact", () => {
+    const draft = status();
+    draft.answer = { availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } };
+    expect(decodeResearchRunStatus({ data: draft, trace_id: "trace-1", deployment_generation: generation }, generation).answer)
+      .toEqual({ availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } });
+    const active = status("ACTIVE");
+    active.answer = { availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } };
+    expect(() => decodeResearchRunStatus({ data: active, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
+  });
 });

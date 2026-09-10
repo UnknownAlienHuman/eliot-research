@@ -1,4 +1,4 @@
-import { IdentifierSchema, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
+import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, VersionedRefSchema, type ArtifactRevision } from "@eliotr/contracts";
 import { ApiRequestError, requestApi } from "./api.js";
 
 export interface ResearchRunLaunchView {
@@ -12,7 +12,9 @@ export interface ResearchRunStatusView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   readonly next_stage_index: number;
-  readonly answer: { readonly availability: "unavailable" };
+  readonly answer:
+    | { readonly availability: "unavailable" }
+    | { readonly availability: "draft"; readonly artifact_ref: { readonly id: string; readonly revision: number } };
   readonly cancellation_receipt_ref?: string;
   readonly deployment_generation: string;
 }
@@ -70,6 +72,11 @@ function checkWorkflowId(value: unknown): string {
   return id;
 }
 
+function artifactRevision(value: unknown): ArtifactRevision {
+  try { return ArtifactRevisionSchema.parse(value); }
+  catch { invalid("research artifact response is invalid"); }
+}
+
 export function researchRunBody(query: string, sourceIds: readonly string[], maxResults = MAX_RESULTS): string {
   if (typeof query !== "string" || query.trim().length === 0 || new TextEncoder().encode(query).byteLength > 1024 || /[\u0000-\u001f\u007f]/u.test(query)) invalid("query is invalid");
   if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
@@ -96,12 +103,28 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
   const workflowId = checkWorkflowId(data.workflow_instance_id);
   const stageIndex = data.next_stage_index as number;
   if ((state === "ENGINE_COMPLETED" && stageIndex !== MAX_WORKFLOW_STAGE_INDEX) || (state === "ACTIVE" && stageIndex >= MAX_WORKFLOW_STAGE_INDEX)) invalid("research run state and stage index do not match");
-  const answer = record(data.answer, ["availability"]);
-  if (answer.availability !== "unavailable") invalid("research run answer availability is invalid");
+  const answer = objectRecord(data.answer);
+  const answerKeys = Object.keys(answer);
+  if (answer.availability === "unavailable") {
+    if (answerKeys.length !== 1) invalid("research run answer availability is invalid");
+  } else if (answer.availability === "draft") {
+    if (answerKeys.length !== 2 || !Object.hasOwn(answer, "artifact_ref") || state !== "ENGINE_COMPLETED") invalid("research run draft answer is invalid");
+    versionedRef(answer.artifact_ref, "answer artifact_ref");
+  } else invalid("research run answer availability is invalid");
   const cancellation = Object.hasOwn(data, "cancellation_receipt_ref") ? boundedString(data.cancellation_receipt_ref, "cancellation_receipt_ref") : undefined;
   if (state === "CANCELLED" && cancellation !== `workflow-cancelled:${workflowId}`) invalid("cancelled run receipt does not match the workflow");
   if (state !== "CANCELLED" && cancellation !== undefined) invalid("non-cancelled run cannot carry a cancellation receipt");
-  return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, next_stage_index: stageIndex, answer: { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
+  return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, next_stage_index: stageIndex, answer: answer.availability === "draft" ? { availability: "draft", artifact_ref: versionedRef(answer.artifact_ref, "answer artifact_ref") } : { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
+}
+
+export async function readResearchArtifact(artifactRef: { readonly id: string; readonly revision: number }, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ArtifactRevision> {
+  const ref = versionedRef(artifactRef, "artifact_ref");
+  const raw = await requestApi(`/api/v1/research/artifact/${encodeURIComponent(`${ref.id}:${ref.revision}`)}`, signal ? { signal } : {});
+  const parsed = envelope(raw);
+  checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
+  const artifact = artifactRevision(parsed.data);
+  if (artifact.artifact_ref.id !== ref.id || artifact.artifact_ref.revision !== ref.revision) invalid("research artifact identity does not match the requested ref");
+  return artifact;
 }
 
 export async function startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView> {

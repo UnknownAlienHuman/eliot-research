@@ -1,7 +1,8 @@
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { escapeHtml } from "./html.js";
-import { researchRunBody, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import { researchRunBody, readResearchArtifact, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
 function message(error: unknown): string {
@@ -18,7 +19,7 @@ function statusText(view: ResearchRunStatusView): string {
   switch (view.execution_state) {
     case "ACTIVE": return "Research is still processing. Refresh status to check again.";
     case "CANCELLED": return "Research was cancelled. Answer unavailable.";
-    case "ENGINE_COMPLETED": return "Processing finished. No answer has been generated.";
+    case "ENGINE_COMPLETED": return view.answer.availability === "draft" ? "A draft report is ready for review." : "Processing finished. No answer has been generated.";
   }
 }
 
@@ -76,9 +77,12 @@ export function mountResearchRunPanel(
   };
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
   updateButtons();
-  const renderStatus = (view: ResearchRunStatusView): void => {
+  const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision): void => {
     const text = statusText(view);
-    result.hidden = false; result.innerHTML = `<p><strong>${text}</strong></p><p>Run ID <code>${escapeHtml(view.workflow_instance_id)}</code> · investigation <code>${escapeHtml(view.investigation_ref.id)}</code></p>`;
+    const draft = view.answer.availability === "draft" && artifact !== undefined
+      ? `<p>Draft artifact <code>${escapeHtml(`${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`)}</code></p><ul>${artifact.sections.map((section) => `<li>Section <code>${escapeHtml(`${section.section_ref.id}:${section.section_ref.revision}`)}</code> · evidence <code>${escapeHtml(section.evidence_ledger_ref)}</code></li>`).join("")}</ul>`
+      : "";
+    result.hidden = false; result.innerHTML = `<p><strong>${text}</strong></p><p>Run ID <code>${escapeHtml(view.workflow_instance_id)}</code> · investigation <code>${escapeHtml(view.investigation_ref.id)}</code></p>${draft}`;
     status.textContent = text; refresh.disabled = false;
   };
   const readStatus = (): void => {
@@ -89,7 +93,12 @@ export function mountResearchRunPanel(
     result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
     const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
     void readResearchRunStatus(id, expectedGeneration, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view); })
+      .then(async (view) => {
+        if (active !== serial) return;
+        const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
+        if (active !== serial) return;
+        workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view, artifact);
+      })
       .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; result.replaceChildren(); result.hidden = true; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error); } else status.textContent = message(error); })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
   };
