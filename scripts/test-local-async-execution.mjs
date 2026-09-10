@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import test from "node:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { executeLocalAsync } from "./lib/local-launch.mjs";
 
 async function listen(server) {
@@ -59,4 +62,25 @@ test("async local command timeout waits for child termination", async () => {
     executeLocalAsync(["-e", "setTimeout(() => process.stdout.write('late'), 500)"], { capture: true, timeoutMs: 50 }),
     (error) => error?.cause?.code === "ETIMEDOUT",
   );
+});
+
+test("async local timeout cleans a child process tree before returning", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "eliotr-async-cleanup-"));
+  const marker = join(directory, "late-grandchild-write");
+  const grandchildCode = `setTimeout(() => require("node:fs").writeFileSync(${JSON.stringify(marker)}, "late"), 500)`;
+  const parentCode = [
+    "const { spawn } = require(\"node:child_process\");",
+    `spawn(process.execPath, ["-e", ${JSON.stringify(grandchildCode)}], { stdio: "inherit" });`,
+    "setTimeout(() => {}, 2000);",
+  ].join("");
+  try {
+    await assert.rejects(
+      executeLocalAsync(["-e", parentCode], { capture: true, timeoutMs: 75 }),
+      (error) => error?.cause?.code === "ETIMEDOUT",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    await assert.rejects(readFile(marker), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
