@@ -162,6 +162,10 @@ function validateInput(input: PrepareArtifactDraftInput): void {
   if (input.expected_draft_head_revision !== null && input.expected_draft_head_revision < 1) {
     fail("ARTIFACT_DRAFT_INPUT_INVALID", "expected draft head revision is invalid");
   }
+  if (input.expected_draft_head_revision !== null &&
+      input.revision.artifact_ref.revision <= input.expected_draft_head_revision) {
+    fail("ARTIFACT_DRAFT_HEAD_CONFLICT", "draft revision does not advance the expected head");
+  }
   const topic = input.topic ?? DEFAULT_TOPIC;
   if (!/^[a-z][a-z0-9._-]{0,127}$/u.test(topic)) fail("ARTIFACT_DRAFT_INPUT_INVALID", "draft topic is invalid");
 }
@@ -487,7 +491,11 @@ export async function prepareArtifactDraft(
   ).bind(snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.revision.artifact_ref.id, snapshot.revision.artifact_ref.revision, plan.request_sha256, snapshot.revision.spec_digest, plan.manifest.physical_key, snapshot.expected_draft_head_revision, snapshot.spec.spec_ref.id, snapshot.spec.spec_ref.revision, snapshot.spec.scope_snapshot_ref.id, snapshot.spec.scope_snapshot_ref.revision, canonicalJson(snapshot.intent), snapshot.intent.principal_ref, snapshot.intent.idempotency_key, snapshot.intent.payload_ref, topic, reservationJson(plan.objects), snapshot.revision.created_at);
   try {
     const reservationResults = await database.batch([reservationInsert]);
-    if ((reservationResults[0]?.meta?.changes ?? 0) !== 1) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft reservation did not mutate exactly one row", true);
+    const reservationResult = reservationResults[0];
+    if (reservationResults.length !== 1 || reservationResult === undefined || reservationResult.success !== true ||
+        (reservationResult.meta?.changes ?? 0) !== 1) {
+      fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft reservation did not mutate exactly one row", true);
+    }
   } catch (cause) {
     const raced = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
     if (raced !== null) return raced;
@@ -527,12 +535,17 @@ export async function prepareArtifactDraft(
   statements.push(database.prepare("UPDATE artifact_draft_reservation SET state='FINALIZED', updated_at=?3 WHERE intent_id=?1 AND intent_revision=?2 AND state='RESERVED'").bind(snapshot.intent.intent_ref.id, snapshot.intent.intent_ref.revision, snapshot.revision.created_at));
   try {
     const results = await database.batch(statements);
-    if (results.some((result) => (result.meta?.changes ?? 0) !== 1)) fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch did not mutate exactly one row per statement", true);
+    if (results.length !== statements.length || results.some((result) => result.success !== true)) {
+      fail("ARTIFACT_DRAFT_EFFECT_UNCERTAIN", "draft final batch returned an incomplete result", true);
+    }
+    intentPlan.assertBatchResults(results);
   } catch (cause) {
     const recovered = await readExactDraft(database, store, snapshot, plan, intentPlan.outbox_id);
     if (recovered !== null) return recovered;
     const head = await database.prepare("SELECT head_revision FROM artifact_draft_head WHERE artifact_id=?1 LIMIT 1").bind(snapshot.revision.artifact_ref.id).first<{ readonly head_revision: unknown }>();
     if ((head === null && snapshot.expected_draft_head_revision !== null) ||
+        (head !== null && snapshot.expected_draft_head_revision !== null &&
+          snapshot.revision.artifact_ref.revision <= snapshot.expected_draft_head_revision) ||
         (head !== null && (snapshot.expected_draft_head_revision === null || head.head_revision !== snapshot.expected_draft_head_revision))) {
       fail("ARTIFACT_DRAFT_HEAD_CONFLICT", "draft head changed before commit", false, cause);
     }
