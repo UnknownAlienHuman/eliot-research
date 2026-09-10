@@ -2,7 +2,7 @@ import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type Navigation
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { decodeSynthesisSectionCandidate } from "./research-artifact-draft.js";
-import type { EvidenceFreezeSynthesisContext, EvidenceFreezeSynthesisContextReader } from "./research-evidence-freeze-composition.js";
+import type { EvidenceFreezeSynthesisContext } from "./research-evidence-freeze-composition.js";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import { encodeResearchVerificationResult } from "./research-verification-result.js";
 import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
@@ -16,7 +16,16 @@ export interface ResearchVerificationStageDependencies {
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly recheck_authority: Parameters<typeof readCommittedResearchSynthesisOutput>[0]["recheck_authority"];
   /** Reads the committed freeze/manifest/evidence-pack context for SYNTHESIZE. */
-  readonly context: EvidenceFreezeSynthesisContextReader;
+  /** Fresh reader validates current stage13 head while loading committed stage12 context. */
+  readonly context: ResearchVerificationContextReader;
+}
+
+export interface ResearchVerificationContextReader {
+  read(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly input_bytes: Uint8Array;
+  }): Promise<EvidenceFreezeSynthesisContext>;
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -28,7 +37,7 @@ function refKey(ref: VersionedRef): string {
 }
 
 function sameManifest(left: { readonly object_ref: string; readonly sha256: string }, right: { readonly object_ref: string; readonly sha256: string }): boolean {
-  return left.object_ref === right.object_ref && left.sha256 === right.sha256;
+  return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
 }
 
 function failCorrupt(): never {
@@ -55,7 +64,7 @@ async function committedSynthesisInput(
   database: D1Database,
   work_bucket: R2Bucket,
   request: StageRequest,
-): Promise<{ readonly request: StageRequest; readonly request_sha256: string; readonly attempt_ref: string; readonly output: { readonly object_ref: string; readonly sha256: string } }> {
+): Promise<{ readonly request: StageRequest; readonly request_sha256: string; readonly attempt_ref: string }> {
   const checkpoint = await new WorkflowCheckpointStore(database).readCommittedStageRequest(request.operation_id, "SYNTHESIZE");
   if (checkpoint === null) return failCorrupt();
   const receipt = await new WorkflowCheckpointStore(database).receipt(checkpoint.request, checkpoint.request_sha256);
@@ -64,8 +73,7 @@ async function committedSynthesisInput(
       !sameManifest(receipt.output_manifest, request.input_manifest)) return failCorrupt();
   try { await readWorkflowObject(work_bucket, checkpoint.request.input_manifest, true); }
   catch { return failCorrupt(); }
-  return { request: checkpoint.request, request_sha256: checkpoint.request_sha256, attempt_ref: checkpoint.attempt_ref,
-    output: { object_ref: receipt.output_manifest.object_ref, sha256: receipt.output_manifest.sha256 } };
+  return { request: checkpoint.request, request_sha256: checkpoint.request_sha256, attempt_ref: checkpoint.attempt_ref };
 }
 
 function requireContext(request: StageRequest, principal: WorkflowPrincipal, context: EvidenceFreezeSynthesisContext): void {
@@ -74,7 +82,7 @@ function requireContext(request: StageRequest, principal: WorkflowPrincipal, con
       context.deployment_generation !== principal.deployment_generation ||
       context.current_revision !== request.investigation_ref.revision ||
       context.stage_eleven_request.stage !== "FREEZE_EVIDENCE" ||
-      context.stage_eleven_receipt.engine_state !== "ENGINE_COMPLETED" ||
+      context.stage_eleven_receipt.engine_state !== "CHECKPOINTED" ||
       !sameRef(context.freeze.scope_snapshot_ref, { id: context.stage_five.scope_snapshot_ref.id, revision: context.stage_five.scope_snapshot_ref.revision }) ||
       !sameRef(context.manifest.scope_snapshot_ref, context.freeze.scope_snapshot_ref)) failAuthority();
 }
@@ -88,9 +96,8 @@ export function createResearchVerificationStageHandler(
     const request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(request)));
     if (request.input_manifest.sha256 !== await digest(input_bytes)) failCorrupt();
     const synthesisStage = await committedSynthesisInput(dependencies.database, dependencies.work_bucket, request);
-    const contextInput = await readWorkflowObject(dependencies.work_bucket, synthesisStage.request.input_manifest, true);
     let context: EvidenceFreezeSynthesisContext;
-    try { context = await dependencies.context.read({ request: synthesisStage.request, principal, input_bytes: contextInput }); }
+    try { context = await dependencies.context.read({ request, principal, input_bytes }); }
     catch { return failAuthority(); }
     requireContext(request, principal, context);
     const synthesis = await readCommittedResearchSynthesisOutput({
@@ -98,7 +105,8 @@ export function createResearchVerificationStageHandler(
       operation_id: request.operation_id, principal, recheck_authority: dependencies.recheck_authority,
     });
     if (synthesis === null || synthesis.stage_attempt_ref !== synthesisStage.attempt_ref ||
-        synthesis.stage_request_sha256 !== synthesisStage.request_sha256 || synthesis.output.output_sha256 !== synthesisStage.output.sha256) failCorrupt();
+        synthesis.stage_request_sha256 !== synthesisStage.request_sha256 ||
+        !sameManifest(synthesis.workflow_receipt.output_manifest, request.input_manifest)) failCorrupt();
     let candidate;
     try { candidate = decodeSynthesisSectionCandidate((await decodeModelGatewayBody(synthesis.bytes)).assistant_content); }
     catch { return failCorrupt(); }

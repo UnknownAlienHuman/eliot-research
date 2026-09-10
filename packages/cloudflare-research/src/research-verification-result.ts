@@ -19,7 +19,7 @@ const ResearchVerificationResultSchema = z.object({
   manifest_ref: VersionedRefSchema,
   semantic_verification: z.literal("NOT_EXECUTED"),
   source_verification: z.object({
-    requested_handle_refs: z.array(VersionedRefSchema).max(512),
+    requested_handle_refs: z.array(VersionedRefSchema).min(1).max(512),
     resolved: z.array(z.object({
       handle_ref: VersionedRefSchema,
       source_revision_ref: IdentifierSchema,
@@ -30,7 +30,7 @@ const ResearchVerificationResultSchema = z.object({
       authorization_receipt_ref: IdentifierSchema,
       credential_generation: IdentifierSchema,
       verification_receipt_ref: IdentifierSchema,
-    }).strict()).max(512),
+    }).strict()).min(1).max(512),
   }).strict(),
   verified_at: IsoDateTimeSchema,
 }).strict();
