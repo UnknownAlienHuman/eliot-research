@@ -3,7 +3,7 @@ import type {
   ModelGatewayPricingPort,
 } from "@eliotr/cloudflare-ai";
 import { createModelGatewayFetchAdapter } from "@eliotr/cloudflare-ai";
-import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
+import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelRoutePort as ResearchModelRoutePort } from "@eliotr/research";
 import type { WorkflowStageHandler } from "./types.js";
 import {
@@ -17,7 +17,10 @@ import {
 } from "./model-attempt-handler.js";
 import { createModelAttemptStore } from "./model-attempt-store.js";
 import { ModelAttemptError } from "./model-attempt-types.js";
-import type { ModelAttemptDeploymentRevalidator } from "./research-model-attempt-revalidator.js";
+import {
+  createD1ResearchModelAttemptRevalidator,
+  type SpendAuthorizationReader,
+} from "./research-model-attempt-revalidator.js";
 import { createModelOutputPreparationHook } from "./research-model-output-preparation.js";
 import { createD1ModelGatewayFingerprintStore } from "./research-model-fingerprint-store.js";
 import {
@@ -39,7 +42,7 @@ export interface ResearchModelStageHandlerDependencies {
   readonly pricing: ModelGatewayPricingPort;
   /** Trusted W2-bound preparation and policy/currentness checks. */
   readonly prepare: GovernedModelAttemptDependencies["prepare"];
-  readonly revalidate: ModelAttemptDeploymentRevalidator;
+  readonly spend_authorization: SpendAuthorizationReader;
   /** TEST is an explicit server-owned fixture mode; production defaults to LIVE qualification. */
   readonly deployment_environment?: D1DynamicRouteRegistryOptions["environment"];
 }
@@ -99,13 +102,18 @@ export function createResearchModelStageHandler(
   const deployments = createD1ModelGatewayDeploymentRegistry(dependencies.database, {
     environment: dependencies.deployment_environment ?? "PRODUCTION",
   });
+  const deploymentRevalidate = createD1ResearchModelAttemptRevalidator({
+    database: dependencies.database,
+    routeAuthority: deployments,
+    spendAuthorization: dependencies.spend_authorization,
+  });
   const fingerprints = createD1ModelGatewayFingerprintStore(dependencies.database);
   const prompts = createResearchModelPromptCompiler(dependencies.prompt);
   const base: Omit<GovernedModelAttemptDependencies, "route"> = {
     operation_kind: dependencies.operation_kind,
     attempts,
     prepare: dependencies.prepare,
-    revalidate: async (context, prepared): Promise<void> => { await dependencies.revalidate(context, prepared); },
+    revalidate: async (context, prepared): Promise<void> => { await deploymentRevalidate(context, prepared); },
     prepareOutputBinding: outputPreparation,
     readOutput: outputStorage.readOutput,
   };
@@ -117,7 +125,7 @@ export function createResearchModelStageHandler(
     handler: async (input: Parameters<WorkflowStageHandler>[0]) => {
       let approved: ModelRouteDeployment | null = null;
       const revalidate: GovernedModelAttemptDependencies["revalidate"] = async (context, prepared): Promise<void> => {
-        const result = await dependencies.revalidate(context, prepared);
+        const result = await deploymentRevalidate(context, prepared);
         if (result === undefined || result === null) {
           throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation returned no approved model deployment");
         }
@@ -126,16 +134,6 @@ export function createResearchModelStageHandler(
         catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation returned a malformed model deployment", false, cause); }
         if (candidate.route_ref !== prepared.call.route_ref || candidate.prompt_generation !== prepared.call.prompt_generation || candidate.schema_generation !== prepared.call.schema_generation) {
           throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation deployment does not match the prepared model call");
-        }
-        const rawCurrent = await deployments.resolve(candidate.route_ref);
-        if (rawCurrent === null) {
-          throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is unavailable");
-        }
-        let current: ModelRouteDeployment;
-        try { current = decodeModelRouteDeployment(rawCurrent); }
-        catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment is malformed", false, cause); }
-        if (canonicalJson(current) !== canonicalJson(candidate)) {
-          throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "active model deployment changed during revalidation");
         }
         approved = candidate;
       };
