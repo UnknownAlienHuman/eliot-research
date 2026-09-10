@@ -30,6 +30,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/ingest/bundles/:operation_id", operation: "ingest.bundle.status", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/orient", operation: "research.orient", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/trace/:ref", operation: "research.trace", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/research/artifact/:ref", operation: "research.artifact", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/query", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/jobs", operation: "research.query", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/query/:workflow_id", operation: "research.query", auth: "owner_or_service", maximum_request_bytes: 0, response_mode: "json" },
