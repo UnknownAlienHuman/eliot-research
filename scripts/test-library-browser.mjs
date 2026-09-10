@@ -371,6 +371,8 @@ try {
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run handle recovery");
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
+  assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
+  assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
   await evaluate(`(() => {
     const transfer = new DataTransfer();
     for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));

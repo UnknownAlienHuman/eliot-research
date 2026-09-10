@@ -285,7 +285,6 @@ function updateHealth(health: SystemHealth): void {
   const connector = app.querySelector("#connector-mode");
   if (connector) connector.textContent = googleConnectorLabel(health.google_external_transport);
   app.dispatchEvent(new Event("eliotr:health-updated", { bubbles: true }));
-  window.dispatchEvent(new CustomEvent("eliotr:health-updated", { detail: { ready: health.ready } }));
 }
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
