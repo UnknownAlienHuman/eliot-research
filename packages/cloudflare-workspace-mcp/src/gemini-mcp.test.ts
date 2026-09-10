@@ -1,9 +1,8 @@
-import type { AccessVerifier } from "@eliotr/platform-cloudflare";
+import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
 import { createPlan, validateReceipt } from "./gemini-mcp-google-sync.js";
 import type { GoogleSyncPlanInput } from "./gemini-mcp-tool-common.js";
-import type { Env } from "./env.js";
-import { handleGeminiMcp } from "./gemini-mcp.js";
+import { handleGeminiMcp, type WorkspaceMcpRuntime } from "./gemini-mcp.js";
 import {
   GEMINI_MCP_TOOL_NAMES,
   handleGeminiMcpProtocol,
@@ -213,13 +212,14 @@ describe("Gemini Spark MCP HTTP boundary", () => {
     ENVIRONMENT: "development",
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     MCP_HOSTNAME: "mcp.example",
-  } as unknown as Env;
+    readReadiness: async () => ({ ready: true, blocking_reason_codes: [] }),
+  } satisfies WorkspaceMcpRuntime;
   const executionContext = {} as ExecutionContext;
 
   it("fails closed on an unknown deployment transport", async () => {
     const response = await handleGeminiMcp(
       request({ jsonrpc: "2.0", id: 1, method: "ping" }, "2025-06-18", "https://mcp.example/mcp"),
-      { ...environment, GOOGLE_EXTERNAL_TRANSPORT: "gemini-and-drive" } as unknown as Env,
+      { ...environment, GOOGLE_EXTERNAL_TRANSPORT: "gemini-and-drive" },
       executionContext,
       { accessVerifier: { async verify() { return { authentication_method: "service_token", principal_ref: "token.access" } as never; } } },
     );
