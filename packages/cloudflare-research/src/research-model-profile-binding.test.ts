@@ -7,6 +7,7 @@ import {
   type ModelProfileCurrentAuthority,
   type ModelProfileStageAuthority,
 } from "./research-model-profile-binding.js";
+import { createModelProfileBindingConfigSource } from "./research-model-profile-config.js";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 
 const NOW = Date.parse("2026-09-10T15:00:00.000Z");
@@ -116,6 +117,28 @@ describe("model profile binding producer", () => {
     expect(result.deployment).toEqual(deployment);
     expect(result.policy.allowed_use).toEqual(["research"]);
     expect(result.scope_snapshot.digest).toBe(scope.digest);
+  });
+
+  it("reads the one installed Worker definition through the strict producer", async () => {
+    const source = createModelProfileBindingConfigSource({
+      raw: JSON.stringify(await signedBinding()),
+      provenance_ref: provenanceRef,
+    });
+    const result = await createModelProfileBindingProducer({
+      source,
+      readCurrentAuthority: async () => current(),
+      routeAuthority: { resolve: async () => deployment },
+      now: () => NOW,
+    }).resolve(stage);
+    expect(result.binding.model_profile_ref).toBe(stage.model_profile_ref);
+    await expect(source.read("other-profile")).resolves.toEqual(await signedBinding());
+  });
+
+  it("refuses malformed installed configuration with a typed error", () => {
+    expect(() => createModelProfileBindingConfigSource({
+      raw: "{malformed",
+      provenance_ref: provenanceRef,
+    })).toThrowError(ModelProfileBindingError);
   });
 
   it("refuses absent configuration before any model route can be used", async () => {
