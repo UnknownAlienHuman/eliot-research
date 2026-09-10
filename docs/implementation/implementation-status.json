@@ -179,7 +179,7 @@
     },
     {
       "id": "workspace-candidate-admission",
-      "path": "apps/eliotr-core/src/gemini-mcp-google-sync.ts",
+      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
       "sentinel": "IN_PROGRESS: ER-36 Workspace candidate admission and exact action/readback reconciliation remain unimplemented; v1 observations stay candidate-only.",
       "owner_packets": ["ER-36"],
       "state": "IN_PROGRESS",
@@ -193,7 +193,7 @@
     },
     {
       "id": "implemented-006",
-      "path": "apps/eliotr-core/src/gemini-mcp.ts",
+      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
       "owner_packets": [
         "ER-17",
@@ -208,7 +208,7 @@
         "secret-free idempotent setup fixture",
         "live Access initialize/tools/call and exact readback receipts for the selected profile; default Workspace/Drive qualification is independent of optional gcloud/Google Cloud",
         "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
-        "apps/eliotr-core/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
+        "packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
       ]
     },
     {
@@ -666,7 +666,22 @@
         "packages/cloudflare-markdown/src/raw-markdown-conversion.test.ts: durable reservation and same-operation replay with one provider call",
         "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts: actual local owner HTTP raw capture, D1 ledger, R2 output/receipt and HTTP replay using a controlled binding",
         "infra/d1/core/migrations/0029_raw_markdown_conversion.sql: strict attempt and immutable receipt ledger",
-        "Normalized admission, source mapping, qualification, pricing approval and live Workers AI receipts remain NOT_EXECUTED"
+        "The separate raw-normalized admission path is tracked below; exact source maps, pricing approval and live Workers AI receipts remain NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-raw-normalized-admission",
+      "path": "apps/eliotr-core/src/raw-normalized-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.",
+      "owner_packets": ["ER-01", "ER-13", "ER-14", "ER-16", "ER-21", "ER-24", "ER-25", "ER-27", "ER-29", "ER-37"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner POST binds a stable admission identity to one durable capture and COMPLETE conversion, verifies bounded immutable R2 output, records a historical snapshot-view witness, and composes the existing normalized staging, qualification, promotion and guarded D1 admission path. GET reads the owner-bound existing operation. The browser offers conversion, explicit Library admission and same-key outcome reconciliation. Conversion success remains candidate-only; source admission does not establish search readiness or source-map precision.",
+      "completion_evidence": [
+        "packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts: strict candidate, source witness and output identity checks",
+        "apps/eliotr-core/test/raw-normalized-admission-http.test.ts: actual local HTTP/D1/R2 admission and replay with different original and normalized bytes, changed-key-payload rejection and transactional witness-deletion rollback",
+        "infra/d1/core/migrations/0030_raw_normalized_admission.sql: durable admission, witness, policy and receipt binding",
+        "tests/integration/browser/owner-e2e.mjs: built PWA conversion/admission scenario with an explicitly recorded local conversion fixture; combined browser and both operating-system CI results must be retained for acceptance",
+        "Live Workers AI, deployed Access/D1/R2/Queue, active search readiness and source-map qualification remain separate and NOT_EXECUTED"
       ]
     }
   ]

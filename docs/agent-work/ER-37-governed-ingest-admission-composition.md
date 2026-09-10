@@ -25,17 +25,12 @@ the packets it depends on.
 - `apps/eliotr-core/src/ingest-service.test.ts`
 - `apps/eliotr-core/src/source-admission-service.test.ts`
 - `scripts/check-ingest-admission.mjs`
-- `packages/contracts/src/snapshot-view.ts`
 - `packages/cloudflare-raw-ingest/src/raw-normalized-types.ts`
 - `packages/cloudflare-raw-ingest/src/raw-normalized-snapshot-view.ts`
 - `packages/cloudflare-raw-ingest/src/raw-normalized-candidate-reader.ts`
 - `packages/cloudflare-raw-ingest/src/raw-normalized-admission.ts`
 - `packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts`
-- `packages/cloudflare-markdown/src/raw-markdown-candidate-reader.ts`
 - `apps/eliotr-core/src/raw-normalized-admission.ts`
-- `apps/eliotr-core/src/composition-root.ts`
-- `apps/eliotr-core/src/http.ts`
-- `infra/d1/core/migrations/0030_raw_normalized_admission.sql`
 
 ## Read only
 
@@ -44,10 +39,24 @@ the packets it depends on.
 - `packages/domain/src/source-admission.ts`
 - `packages/domain/src/qualification.ts`
 - `packages/platform-cloudflare/src/ingest.ts`
-- `packages/interfaces/src/owner-api.ts`
-- `apps/eliotr-core/src/http.ts`
-- `apps/eliotr-core/src/composition-root.ts`
-- `infra/d1/core/migrations/**`
+
+## Shared integration paths
+
+The raw admission continuation has a narrow integration grant for the following existing owners.
+These paths retain their original exclusive packet claims; they are not transferred to ER-37.
+
+- ER-01: `packages/contracts/src/snapshot-view.ts` and its contract barrel export.
+- ER-00: inclusion of the raw-ingest and markdown packages in the existing CI package-test step.
+- ER-13: `infra/d1/core/migrations/0030_raw_normalized_admission.sql` and the platform barrel export.
+- ER-14: the `packages/cloudflare-raw-ingest/src/index.ts` capability exports.
+- ER-16: `packages/cloudflare-markdown/src/raw-markdown-candidate-reader.ts`, the strict durable-result
+  decoder in `raw-markdown-conversion.ts`, and their package barrel exports.
+- ER-21: the additive owner DTO and routes in `packages/interfaces/src/owner-api.ts` and `routes.ts`.
+- ER-24: the two raw-admission HTTP dispatch branches in `apps/eliotr-core/src/http.ts`.
+- ER-27: `apps/eliotr-core/test/raw-normalized-admission-http.test.ts` and the existing owner browser harness.
+- ER-36: the raw-admission service wiring in `apps/eliotr-core/src/composition-root.ts`.
+
+Root integrates these changes serially. Migration 0026 and unrelated active work remain untouched.
 
 ## Authority path
 
@@ -137,5 +146,5 @@ back the whole canonical transaction. Staged/promoted bytes alone do not establi
 ER-25 may integrate explicit same-tab continuation in the existing importer; its private checkpoint is
 only an upload optimization, never an admission or policy receipt. Existing cross-layer tests remain
 `bundle-import-http.test.ts`. The raw conversion admission route and migration are the explicitly
-documented ER-37 continuation; no other route, schema, automatic mutation retry or remote deployment is
+documented continuation under the shared integration grants above; no other route, schema, automatic mutation retry or remote deployment is
 introduced.

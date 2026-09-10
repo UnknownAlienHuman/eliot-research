@@ -1,6 +1,8 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/cloudflare-access" },
+    { "path": "packages/cloudflare-workspace-mcp" },
     {
       "path": "packages/contracts"
     },
