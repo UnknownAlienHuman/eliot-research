@@ -6,6 +6,12 @@ const WORKFLOW_ID = /^exhaustive-workflow-[a-f0-9]{64}$/u;
 const JOB_ID = /^exhaustive-job-[a-f0-9]{48}$/u;
 const DIGEST = /^[a-f0-9]{64}$/u;
 const PROTOCOL = "eliotr.exhaustive-query.v1";
+const Q8_STATUS_DIAGNOSTIC_CODES = new Set([
+  "INTERNAL_ERROR", "RESEARCH_WORKFLOW_UNAVAILABLE", "RESEARCH_WORKFLOW_NOT_FOUND",
+  "RESEARCH_OWNER_REQUIRED", "RESEARCH_AUTHORITY_STALE", "RESEARCH_INPUT_INVALID",
+  "RESEARCH_CONFLICT", "RESEARCH_CANCELLED", "RESEARCH_SETTLEMENT_UNCERTAIN",
+  "RETRIEVAL_RESOLUTION_UNCERTAIN", "EVIDENCE_SOURCE_NOT_FOUND",
+]);
 const RECEIPT_KEYS = [
   "job_id", "idempotency_key", "request_digest", "scope_snapshot_id", "scope_snapshot_revision",
   "coverage_claim", "coverage_denominator_ref", "denominator_shards", "settled_shards",
@@ -32,6 +38,12 @@ function boundedText(value, label, maximum = 256) {
     return code !== undefined && (code <= 0x1f || code === 0x7f);
   }), `${label} must not contain control characters`);
   return value;
+}
+
+function q8StatusDiagnosticCode(value) {
+  const candidate = value !== null && typeof value === "object" && !Array.isArray(value) ? value.code : undefined;
+  return typeof candidate === "string" && candidate.length <= 96 && Q8_STATUS_DIAGNOSTIC_CODES.has(candidate)
+    ? candidate : "UNAVAILABLE";
 }
 
 function positiveInteger(value, label) {
@@ -283,7 +295,8 @@ export async function runExhaustiveWorkflowCompleteBrowser({
     });
     observedApi.push({ method: "GET", path: `/api/v1/research/query/${workflowId}`, status: status.status });
     observedCorrelations.push(statusCorrelation);
-    assert.equal(status.status, 200, "Q8 status readback must be HTTP 200");
+    assert.equal(status.status, 200,
+      `Q8 status readback must be HTTP 200 (observed_code=${q8StatusDiagnosticCode(status.data)})`);
     const envelope = objectOf(status.data, "status response");
     const statusData = objectOf(envelope.data, "status response data");
     if (statusData.workflow_status === "errored" || statusData.workflow_status === "terminated") {
