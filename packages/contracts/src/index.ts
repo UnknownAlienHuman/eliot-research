@@ -16,6 +16,7 @@ export * from "./erasure.js";
 export * from "./federation.js";
 export * from "./drive-exchange.js";
 export * from "./library.js";
+export * from "./library-readiness.js";
 export * from "./navigation.js";
 export * from "./publication.js";
 export * from "./model.js";

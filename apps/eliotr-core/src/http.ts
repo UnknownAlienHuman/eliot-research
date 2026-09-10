@@ -334,6 +334,13 @@ async function dispatch(
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
     }
+    case "library.active.readiness": {
+      const sourceId = singleQueryValue(url, "source_id");
+      if (sourceId === undefined || [...url.searchParams.keys()].some((key) => key !== "source_id")) {
+        throw new HttpRequestError("LIBRARY_READINESS_INPUT_INVALID", 400, "exactly one source_id is required");
+      }
+      return apiResult(request, env, await application.services.owner.libraryReadiness(context, { source_id: sourceId }));
+    }
     case "research.catalog": {
       return apiResult(
         request,

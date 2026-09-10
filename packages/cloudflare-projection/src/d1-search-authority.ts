@@ -207,6 +207,117 @@ export async function pinReadyGenerations(
   return { pinned, missing, stale };
 }
 
+export interface D1SearchChannelReadback {
+  readonly channel: "exact" | "lexical";
+  readonly pinned: readonly PinnedGeneration[];
+  readonly missing: readonly string[];
+  readonly stale: readonly string[];
+}
+
+export interface D1ManagedSemanticReadback {
+  readonly state: "ready" | "degraded" | "not_requested";
+  readonly generation?: string;
+  readonly receipt_ref?: string;
+  readonly reason_codes: readonly string[];
+}
+
+interface ManagedSemanticRow {
+  readonly state: unknown;
+  readonly semantic_instance_id: unknown;
+  readonly semantic_generation: unknown;
+  readonly semantic_receipt_ref: unknown;
+  readonly semantic_readback_digest: unknown;
+  readonly reason_codes_json: unknown;
+}
+
+function storedReasonCodes(value: unknown): readonly string[] {
+  if (typeof value !== "string") return ["MANAGED_INDEX_READBACK_FAILED"];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.length > 64 || parsed.some((entry) => typeof entry !== "string" || !IDENTIFIER.test(entry))) {
+      return ["MANAGED_INDEX_READBACK_FAILED"];
+    }
+    return [...new Set(parsed)];
+  } catch {
+    return ["MANAGED_INDEX_READBACK_FAILED"];
+  }
+}
+
+/** Read durable managed-index settlement fields without probing the provider. */
+export async function readD1ManagedSemanticReadback(
+  core: D1Database,
+  sourceRevisionRef: string,
+  projectionGeneration: string,
+  expectedInstanceId: string,
+  expectedManagedGeneration: string,
+): Promise<D1ManagedSemanticReadback> {
+  const row = await core.prepare(
+    "SELECT state, semantic_instance_id, semantic_generation, semantic_receipt_ref, " +
+      "semantic_readback_digest, reason_codes_json FROM projection_generation " +
+      "WHERE source_revision_ref=?1 AND projection_generation=?2 LIMIT 1",
+  ).bind(sourceRevisionRef, projectionGeneration).first<ManagedSemanticRow>();
+  if (row === null) return { state: "not_requested", reason_codes: ["MANAGED_SEMANTIC_UNAVAILABLE"] };
+  const reasons = storedReasonCodes(row.reason_codes_json);
+  if (row.state !== "COMPLETED") {
+    return { state: reasons.length === 0 ? "not_requested" : "degraded", reason_codes: reasons.length === 0 ? ["MANAGED_INDEX_NOT_COMPLETED"] : reasons };
+  }
+  try {
+    const instance = assertIdentifier(row.semantic_instance_id, "stored semantic instance");
+    const generation = assertIdentifier(row.semantic_generation, "stored semantic generation");
+    const receipt = assertIdentifier(row.semantic_receipt_ref, "stored semantic receipt");
+    assertSha256(row.semantic_readback_digest, "stored semantic readback digest");
+    if (instance !== expectedInstanceId || generation !== expectedManagedGeneration) {
+      return { state: "degraded", reason_codes: ["MANAGED_INDEX_READBACK_FAILED"] };
+    }
+    return { state: "ready", generation, receipt_ref: receipt, reason_codes: [] };
+  } catch {
+    return { state: "degraded", reason_codes: ["MANAGED_INDEX_READBACK_FAILED"] };
+  }
+}
+
+function sameCoverage(
+  left: Awaited<ReturnType<typeof pinReadyGenerations>>,
+  right: Awaited<ReturnType<typeof pinReadyGenerations>>,
+): boolean {
+  const refs = (values: readonly string[]) => [...values].sort();
+  if (JSON.stringify(refs(left.missing)) !== JSON.stringify(refs(right.missing)) ||
+      JSON.stringify(refs(left.stale)) !== JSON.stringify(refs(right.stale)) ||
+      left.pinned.length !== right.pinned.length) return false;
+  const byRef = new Map(right.pinned.map((pin) => [pin.source_revision_ref, pin]));
+  return left.pinned.every((pin) => {
+    const match = byRef.get(pin.source_revision_ref);
+    return match !== undefined && match.projection_generation === pin.projection_generation &&
+      match.receipt_ref === pin.receipt_ref && match.readback_digest === pin.readback_digest &&
+      match.item_set_digest === pin.item_set_digest && match.item_count === pin.item_count;
+  });
+}
+
+/** Read active channel authority with a final generation and owner fence comparison. */
+export async function readD1SearchChannelReadback(
+  search: D1Database,
+  core: D1Database,
+  channel: "exact" | "lexical",
+  members: readonly string[],
+  ownerGenerations: Readonly<Record<string, string>>,
+): Promise<D1SearchChannelReadback> {
+  const first = await pinReadyGenerations(search, channel, members, ownerGenerations);
+  for (const pin of first.pinned) {
+    if (await checkCandidateFence(core, ownerGenerations, pin.source_revision_ref) !== "ok") {
+      laneFail("SEARCH_INCOMPLETE", "source authority changed during readiness read");
+    }
+  }
+  const final = await pinReadyGenerations(search, channel, members, ownerGenerations);
+  if (!sameCoverage(first, final)) {
+    laneFail("SEARCH_INCOMPLETE", "D1 Search generation changed during readiness read");
+  }
+  for (const pin of final.pinned) {
+    if (await checkCandidateFence(core, ownerGenerations, pin.source_revision_ref) !== "ok") {
+      laneFail("SEARCH_INCOMPLETE", "source authority changed during readiness read");
+    }
+  }
+  return { channel, pinned: final.pinned, missing: final.missing, stale: final.stale };
+}
+
 export function requirePinnedCoverage(
   pinned: readonly PinnedGeneration[],
   missing: readonly string[],

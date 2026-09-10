@@ -4,6 +4,7 @@ import type {
   SourceCurrentness,
   SourceRevision,
   NormalizedBundleManifest,
+  LibraryReadiness,
 } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "./http.js";
 
@@ -206,6 +207,12 @@ export interface SourceRevisionsResult {
   readonly next_cursor?: string;
 }
 
+export interface LibraryReadinessRequest {
+  readonly source_id: string;
+}
+
+export type LibraryReadinessResult = LibraryReadiness;
+
 /** G1 owner-only Google OAuth begin. The body carries only the stable
  * operation reference; owner/session/config are server-derived, never parsed
  * from the request. The result is a locator for the Google consent page, not
@@ -241,6 +248,7 @@ export interface GoogleConnectionStatusResult {
 }
 
 export interface OwnerApi {  sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
+  libraryReadiness(context: AuthenticatedRequestContext, request: LibraryReadinessRequest): Promise<LibraryReadinessResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;
   getBundleRecovery(context: AuthenticatedRequestContext, operationId: string): Promise<BundleIngestRecovery>;
   prepareBundle(
