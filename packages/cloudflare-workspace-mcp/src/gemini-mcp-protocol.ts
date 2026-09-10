@@ -39,10 +39,27 @@ export interface McpToolDefinition {
   };
 }
 
+export type McpAccessAuthProfile = "service-token" | "managed-oauth";
+
+/**
+ * Internal evidence of the Access verification that produced a tool context.
+ * This is deliberately not part of any MCP wire DTO or caller input.
+ */
+export interface McpVerifiedActorContext {
+  readonly actor_ref: string;
+  readonly credential_generation: string;
+  readonly authentication_method: "cloudflare_access" | "service_token";
+  readonly expires_at: string;
+  readonly auth_profile: McpAccessAuthProfile;
+  readonly deployment_generation: string;
+}
+
 export interface McpToolCallContext {
   readonly principal_ref: string;
   readonly trace_id: string;
   readonly deployment_generation: string;
+  /** Present on live HTTP contexts; legacy pure-tool fixtures may omit it. */
+  readonly verified_actor?: McpVerifiedActorContext;
 }
 
 export interface McpToolCallResult {

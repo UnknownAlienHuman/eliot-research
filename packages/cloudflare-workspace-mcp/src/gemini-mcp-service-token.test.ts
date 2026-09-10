@@ -1,6 +1,6 @@
 import { createCloudflareAccessVerifier, type AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
-import { handleGeminiMcp, type WorkspaceMcpRuntime } from "./gemini-mcp.js";
+import { authenticatedContext, handleGeminiMcp, type WorkspaceMcpRuntime } from "./gemini-mcp.js";
 
 const CLIENT_ID = "00000000000000000000000000000000.access";
 const TEAM_DOMAIN = "https://team-example.cloudflareaccess.com";
@@ -120,6 +120,31 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 }
 
 describe("Gemini MCP Access service-token identity", () => {
+  it("preserves the verified service-token identity beside the compatibility actor", async () => {
+    const result = await authenticatedContext({
+      principal_ref: CLIENT_ID,
+      credential_generation: "service-credential-7",
+      authentication_method: "service_token",
+      expires_at: "2026-09-04T14:00:00.000Z",
+    }, "trace-service", "service-token", CLIENT_ID, TEAM_DOMAIN, "mcp-audience", "generation-7");
+    expect(result).toMatchObject({
+      principal_ref: "gemini-spark",
+      trace_id: "trace-service",
+      deployment_generation: "generation-7",
+      verified_actor: {
+        actor_ref: "gemini-spark",
+        credential_generation: "service-credential-7",
+        authentication_method: "service_token",
+        expires_at: "2026-09-04T14:00:00.000Z",
+        auth_profile: "service-token",
+        deployment_generation: "generation-7",
+      },
+    });
+    if (result instanceof Response) throw new Error("service identity was unexpectedly denied");
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.verified_actor)).toBe(true);
+  });
+
   it("admits the exact signed Access Client ID", async () => {
     const response = await handleGeminiMcp(
       request(),
@@ -316,6 +341,34 @@ describe("Gemini MCP managed-oauth profile", () => {
     });
     expect(response.status).toBe(503);
     expect(await body(response)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
+  });
+
+  it("preserves managed credential evidence without exposing the verified subject", async () => {
+    const result = await authenticatedContext({
+      principal_ref: "alice@example.com",
+      credential_generation: "managed-credential-9",
+      authentication_method: "cloudflare_access",
+      expires_at: "2026-09-04T14:00:00.000Z",
+    }, "trace-managed", "managed-oauth", "", TEAM_DOMAIN, MANAGED_AUDIENCE, "generation-9");
+    if (result instanceof Response) throw new Error("managed identity was unexpectedly denied");
+    expect(result.verified_actor).toMatchObject({
+      credential_generation: "managed-credential-9",
+      authentication_method: "cloudflare_access",
+      expires_at: "2026-09-04T14:00:00.000Z",
+      auth_profile: "managed-oauth",
+      deployment_generation: "generation-9",
+    });
+    expect(result.verified_actor?.actor_ref).toMatch(/^mcp-actor-[a-f0-9]{64}$/u);
+    expect(result.verified_actor?.actor_ref).not.toContain("alice@example.com");
+    expect(result.verified_actor?.actor_ref).toBe(result.principal_ref);
+  });
+
+  it("rejects an incomplete verifier identity before tool dispatch", async () => {
+    const result = await authenticatedContext({
+      principal_ref: "alice@example.com",
+      authentication_method: "cloudflare_access",
+    } as never, "trace-invalid", "managed-oauth", "", TEAM_DOMAIN, MANAGED_AUDIENCE, "generation-9");
+    expect(result).toMatchObject({ status: 401 });
   });
 
   it("rejects outer whitespace and explicit ports in the configured Access team origin", async () => {
