@@ -29,6 +29,9 @@ outside the paths below.
 - `apps/eliotr-core/test/research-model-stage-handler.test.ts`
 - `apps/eliotr-core/test/research-model-pricing-store.test.ts`
 - `apps/eliotr-core/test/research-model-attempt-revalidator.test.ts`
+- `apps/eliotr-core/test/research-evidence-freeze.test.ts`
+- `apps/eliotr-core/test/research-protocol-freeze.test.ts`
+- `apps/eliotr-core/test/erasure-admission-policy.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
 
@@ -88,6 +91,11 @@ storage acceptance does not qualify compilation, publication, PWA flows or live
 Cloudflare; those remain separate requirements in the Wiki/report theme.
 
 ## Mandatory negative boundary
+
+The research evidence-freeze fixture must execute the existing W2 checkpoint with actual local
+D1/R2 and the canonical evidence resolver. It checks immutable freeze readback and replay,
+revocation/corruption refusal, and rejection of changed post-freeze evidence without an explicit
+reopen. It does not qualify model synthesis, claim audit, research completion or a live provider.
 
 Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.
 

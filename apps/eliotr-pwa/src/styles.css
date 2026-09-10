@@ -26,6 +26,9 @@ code, pre { font-family: var(--mono); }
 .status--pending { background: var(--surface-raised); }
 .health-strip { display: flex; min-height: 34px; align-items: center; gap: 8px; padding: 0 28px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 .health-strip strong { color: var(--ink); font-size: 11px; } .health-generation { margin-left: auto; }
+.health-details { color: var(--dim); font-family: var(--mono); font-size: 10px; }
+.health-details summary { cursor: pointer; }
+.health-details-content { display: grid; gap: 4px; min-width: 250px; margin-top: 7px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-raised); color: var(--muted); }
 .health-dot { width: 7px; height: 7px; border-radius: 50%; background: #707886; box-shadow: 0 0 0 4px rgba(112, 120, 134, .12); }
 .health-dot--ready { background: var(--accent); box-shadow: 0 0 0 4px rgba(169, 232, 109, .12); }
 .health-dot--blocked { background: var(--danger); box-shadow: 0 0 0 4px rgba(255, 155, 145, .12); }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { lstat, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
+import { basename, isAbsolute, relative, resolve } from "node:path";
 import { executeLocal, prepareLocal, ROOT, wranglerArgs } from "./local-launch.mjs";
 import { startLocalWorker } from "./local-worker.mjs";
 import { initializeLocalNamespace } from "./local-namespace.mjs";
@@ -16,16 +17,112 @@ function query(paths, binding, sql, phase = "local-smoke-query") {
   return batches[0].results;
 }
 
+function queryBatch(paths, binding, statements, phase = "local-smoke-query") {
+  const output = executeLocal(wranglerArgs(paths, ["d1", "execute", binding, "--command", statements.join(";\n"), "--json"]), {
+    capture: true, diagnosticContext: { binding, phase },
+  });
+  const batches = JSON.parse(output);
+  assert.ok(Array.isArray(batches) && batches.length === statements.length, "D1 batch did not produce one result per statement");
+  for (const batch of batches) assert.equal(batch.success, true, "D1 batch statement failed");
+  return batches.map((batch) => batch.results);
+}
+
+function quoteSqliteIdentifier(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function migrationQuickCheck(paths, binding) {
+  const tableRows = query(paths, binding, "PRAGMA table_list", "d1-migrations-verify");
+  const tableNames = new Set();
+  for (const row of tableRows) {
+    // Include ordinary, virtual, and shadow objects in the main schema. D1's
+    // internal _cf_ objects are listed too, but workerd rejects them as
+    // user-scoped PRAGMA targets; the closed-file check below covers them.
+    if (row.schema === "main" && ["table", "virtual", "shadow"].includes(row.type) &&
+      typeof row.name === "string" && !row.name.toLowerCase().startsWith("_cf_")) {
+      tableNames.add(row.name);
+    }
+  }
+  const statements = ["PRAGMA foreign_key_check", ...[...tableNames].sort().map((tableName) =>
+    `PRAGMA quick_check(${quoteSqliteIdentifier(tableName)})` )];
+  const results = queryBatch(paths, binding, statements, "d1-migrations-verify");
+  assert.deepEqual(results.shift(), [], "Local schema violates foreign keys");
+  for (const [index, tableName] of [...tableNames].sort().entries()) {
+    const result = results[index];
+    assert.deepEqual(result, [{ quick_check: "ok" }], `Local quick_check failed for ${binding}.${tableName}`);
+  }
+}
+
+function sameNames(rows, expected) {
+  return rows.length === expected.length && rows.every((row, index) => row.name === expected[index]);
+}
+
+function assertPathWithin(root, candidate, message) {
+  const suffix = relative(root, candidate);
+  assert.ok(suffix && !suffix.startsWith("..") && !isAbsolute(suffix), message);
+}
+
+async function verifyClosedDatabaseFiles(paths, expectedByBinding) {
+  const persist = resolve(paths.persist);
+  const stateRoot = resolve(persist, "..");
+  const stateParent = resolve(ROOT, ".eliotr-state");
+  assertPathWithin(stateParent, stateRoot, "Local D1 state escaped the smoke harness directory");
+  assert.match(basename(stateRoot), /^smoke-/u, "Local D1 state is not a smoke-owned mkdtemp");
+  assert.equal(basename(persist), "state", "Local D1 persistence root is unexpected");
+  const directory = resolve(persist, "v3", "d1", "miniflare-D1DatabaseObject");
+  const ownedPaths = [stateRoot, persist, resolve(persist, "v3"), resolve(persist, "v3", "d1"), directory];
+  for (const ownedPath of ownedPaths) {
+    assert.equal((await lstat(ownedPath)).isSymbolicLink(), false, `Local D1 path is a symlink: ${ownedPath}`);
+  }
+  const realStateRoot = await realpath(stateRoot);
+  assertPathWithin(realStateRoot, await realpath(persist), "Local D1 persistence escaped its canonical state root");
+  const realDirectory = await realpath(directory);
+  assertPathWithin(realStateRoot, realDirectory, "Local D1 database directory escaped its canonical state root");
+  const entries = await readdir(directory, { withFileTypes: true });
+  const sqliteEntries = entries.filter((entry) => entry.name.endsWith(".sqlite"));
+  assert.ok(sqliteEntries.every((entry) => entry.isFile() && !entry.isSymbolicLink()),
+    "Local D1 persistence contains a non-file or symlink SQLite entry");
+  const metadataEntries = sqliteEntries.filter((entry) => entry.name === "metadata.sqlite");
+  assert.ok(metadataEntries.length <= 1, "Local D1 persistence contains duplicate metadata files");
+  // Miniflare reserves metadata.sqlite for the storage service itself; it is
+  // not a D1 binding. The remaining files must be exactly the two databases.
+  const files = sqliteEntries.filter((entry) => entry.name !== "metadata.sqlite");
+  assert.equal(files.length, expectedByBinding.size, "Local D1 persistence file set is not exactly the two harness databases");
+  const seen = new Set();
+  for (const entry of files) {
+    const path = resolve(directory, entry.name);
+    assertPathWithin(realDirectory, await realpath(path), "Local D1 database file escaped its closed harness directory");
+    const database = new DatabaseSync(path, { readOnly: true });
+    try {
+      const ledger = database.prepare("SELECT name FROM d1_migrations ORDER BY name").all();
+      const binding = [...expectedByBinding.entries()].find(([, expected]) => sameNames(ledger, expected))?.[0];
+      assert.ok(binding && !seen.has(binding), "Local D1 persistence file has an unknown or duplicate migration ledger");
+      const wholeCheck = database.prepare("PRAGMA quick_check").all();
+      assert.equal(wholeCheck.length, 1, `Closed local whole-file quick_check failed for ${binding}`);
+      assert.equal(wholeCheck[0].quick_check, "ok", `Closed local whole-file quick_check failed for ${binding}`);
+      seen.add(binding);
+    } finally { database.close(); }
+  }
+  assert.deepEqual(seen, new Set(expectedByBinding.keys()), "Closed local D1 files did not cover both bindings");
+}
+
 async function verifyMigrations(paths) {
   const counts = {};
+  const expectedByBinding = new Map();
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(ROOT, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
+    expectedByBinding.set(binding, expected);
     const rows = query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name", "d1-migrations-verify");
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
-    assert.deepEqual(query(paths, binding, "PRAGMA foreign_key_check", "d1-migrations-verify"), [], "Local schema violates foreign keys");
-    assert.deepEqual(query(paths, binding, "PRAGMA quick_check", "d1-migrations-verify"), [{ quick_check: "ok" }]);
+    // A whole-schema quick_check can exceed workerd's VDBE budget even when
+    // each bounded object check succeeds. The closed-file whole check below
+    // preserves the prior global page/freelist and cross-object coverage;
+    // SQLite's existing quick_check exclusions (such as UNIQUE/index-content
+    // validation) are unchanged rather than newly introduced here.
+    migrationQuickCheck(paths, binding);
     counts[binding] = expected.length;
   }
+  await verifyClosedDatabaseFiles(paths, expectedByBinding);
   return counts;
 }
 

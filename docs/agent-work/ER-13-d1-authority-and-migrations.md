@@ -80,6 +80,13 @@ Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE
 
 ## Additive navigation schema
 
+The ER-28 erasure admission prerequisite is allocated `0039_erasure_admission_policy.sql` for explicit,
+versioned destructive permissions and currentness/revocation readback. Source admission and read grants
+are not erasure permission. Installation is a trusted operator boundary, with no public grant route;
+this allocation grants no actor production access. ER-27 owns the actual Worker/D1 fixture
+`apps/eliotr-core/test/erasure-admission-policy.test.ts`. Coordinator/HTTP integration and complete
+backup absence proof remain separate acceptance requirements before enabling the ERASURE slice.
+
 The ER-09 W3 pricing handoff is allocated `0038_research_model_pricing.sql` for immutable model pricing
 snapshot storage. This allocation supplies no prices or budget approval. ER-27 owns
 `apps/eliotr-core/test/research-model-pricing-store.test.ts`, including exact replay, conflict/corruption
