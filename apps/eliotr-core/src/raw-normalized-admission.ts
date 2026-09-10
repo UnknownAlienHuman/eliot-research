@@ -19,6 +19,7 @@ import {
 import { readRawMarkdownCandidate } from "@eliotr/cloudflare-markdown";
 import type { RawCaptureReceipt } from "@eliotr/cloudflare-raw-ingest";
 
+// IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const TTL_MS = 24 * 60 * 60 * 1000;
 

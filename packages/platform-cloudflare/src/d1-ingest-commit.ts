@@ -419,32 +419,32 @@ export async function commitAdmittedBundle(
       "AND o.intent_id = ?4 AND o.intent_revision = 1 " +
       "AND o.topic = 'source.revision.admitted' AND o.payload_ref = ?2 " +
        "AND o.payload_sha256 = ?13) " +
-       "AND (json_extract(b.manifest_json,'$.origin.source_view_ref') NOT LIKE 'snapshot-view:v1:%' OR EXISTS (" +
-       "SELECT 1 FROM raw_normalized_admission a WHERE a.ingest_operation_id=b.operation_id " +
-       "AND a.state='COMMITTED' AND a.source_revision_ref=b.source_revision_ref " +
-       "AND a.source_view_ref=json_extract(b.manifest_json,'$.origin.source_view_ref') " +
-       "AND a.principal_ref=b.principal_ref " +
-       "AND a.policy_revision=b.policy_revision AND a.policy_snapshot_sha256=b.policy_snapshot_sha256 " +
-       "AND a.policy_snapshot_json=b.policy_snapshot_json " +
+       "AND ((SELECT json_extract(manifest_json,'$.origin.source_view_ref') FROM bundle_ingest_operation WHERE operation_id=?1) NOT LIKE 'snapshot-view:v1:%' OR EXISTS (" +
+       "SELECT 1 FROM raw_normalized_admission a JOIN bundle_ingest_operation b2 ON b2.operation_id=a.ingest_operation_id WHERE a.ingest_operation_id=?1 " +
+       "AND a.state='COMMITTED' AND a.source_revision_ref=b2.source_revision_ref " +
+       "AND a.source_view_ref=json_extract(b2.manifest_json,'$.origin.source_view_ref') " +
+       "AND a.principal_ref=b2.principal_ref " +
+       "AND a.policy_revision=b2.policy_revision AND a.policy_snapshot_sha256=b2.policy_snapshot_sha256 " +
+       "AND a.policy_snapshot_json=b2.policy_snapshot_json " +
        "AND a.expires_at>?6 " +
        "AND json_extract(a.snapshot_view_json,'$.protocol')='eliotr.snapshot-view.v1' " +
        "AND json_extract(a.snapshot_view_json,'$.source_view_ref')=a.source_view_ref " +
-       "AND json_extract(a.snapshot_view_json,'$.source_revision_ref')=b.source_revision_ref " +
-       "AND json_extract(a.snapshot_view_json,'$.source_logical_id')=json_extract(b.manifest_json,'$.source.logical_id') " +
-       "AND json_extract(a.snapshot_view_json,'$.source_namespace_id')=b.source_namespace_id " +
-       "AND json_extract(a.snapshot_view_json,'$.owner_system_id')=b.owner_system_id " +
-       "AND json_extract(a.snapshot_view_json,'$.source_owner_generation')=b.source_owner_generation " +
-       "AND json_extract(a.snapshot_view_json,'$.original_sha256')=json_extract(b.manifest_json,'$.source.original_sha256') " +
+       "AND json_extract(a.snapshot_view_json,'$.source_revision_ref')=b2.source_revision_ref " +
+       "AND json_extract(a.snapshot_view_json,'$.source_logical_id')=json_extract(b2.manifest_json,'$.source.logical_id') " +
+       "AND json_extract(a.snapshot_view_json,'$.source_namespace_id')=b2.source_namespace_id " +
+       "AND json_extract(a.snapshot_view_json,'$.owner_system_id')=b2.owner_system_id " +
+       "AND json_extract(a.snapshot_view_json,'$.source_owner_generation')=b2.source_owner_generation " +
+       "AND json_extract(a.snapshot_view_json,'$.original_sha256')=json_extract(b2.manifest_json,'$.source.original_sha256') " +
        "AND json_extract(a.snapshot_view_json,'$.capture_id')=a.capture_id " +
-       "AND json_extract(a.snapshot_view_json,'$.verified_principal_ref')=b.principal_ref " +
-       "AND json_extract(a.snapshot_view_json,'$.policy_snapshot_sha256')=b.policy_snapshot_sha256 " +
-       "AND json_extract(a.snapshot_view_json,'$.policy_revision')=b.policy_revision " +
+       "AND json_extract(a.snapshot_view_json,'$.verified_principal_ref')=b2.principal_ref " +
+       "AND json_extract(a.snapshot_view_json,'$.policy_snapshot_sha256')=b2.policy_snapshot_sha256 " +
+       "AND json_extract(a.snapshot_view_json,'$.policy_revision')=b2.policy_revision " +
        "AND json_extract(a.snapshot_view_json,'$.observed_at') IS NOT NULL " +
        "AND EXISTS (SELECT 1 FROM raw_file_capture c WHERE c.capture_id=a.capture_id " +
-       "AND c.state='CAPTURED' AND c.principal_ref=b.principal_ref " +
-       "AND c.owner_system_id=b.owner_system_id AND c.source_namespace_id=b.source_namespace_id " +
-       "AND c.source_owner_generation=b.source_owner_generation " +
-       "AND c.source_revision_ref=b.source_revision_ref " +
+       "AND c.state='CAPTURED' AND c.principal_ref=b2.principal_ref " +
+       "AND c.owner_system_id=b2.owner_system_id AND c.source_namespace_id=b2.source_namespace_id " +
+       "AND c.source_owner_generation=b2.source_owner_generation " +
+       "AND c.source_revision_ref=b2.source_revision_ref " +
        "AND c.content_sha256=json_extract(a.snapshot_view_json,'$.original_sha256') " +
        "AND c.size_bytes=json_extract(a.snapshot_view_json,'$.original_size_bytes') " +
        "AND json_extract(c.receipt_json,'$.captured_at')=json_extract(a.snapshot_view_json,'$.observed_at') " +
