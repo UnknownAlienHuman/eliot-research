@@ -83,5 +83,24 @@ describe("raw normalized admission actual Worker path", () => {
     const witnessAfterRollback = await runtime.CORE_DB.prepare("SELECT state, receipt_json FROM raw_normalized_admission WHERE capture_id=?1").bind(secondCapture.capture_id).first<{ state: string; receipt_json: string | null }>();
     expect(witnessAfterRollback?.state).toBe("UNKNOWN");
     expect(witnessAfterRollback?.receipt_json).toBeNull();
+
+    const thirdBytes = new TextEncoder().encode("%PDF third source");
+    const thirdSha = await sha(thirdBytes);
+    const thirdCaptureResponse = await handleHttp(captureRequest(thirdBytes, thirdSha, "raw-admission-capture-3"), runtime, {} as ExecutionContext, ownerAccess(principal));
+    const thirdCapture = (await thirdCaptureResponse.json() as { data: { capture_id: string } }).data;
+    const thirdConversionId = "d".repeat(64);
+    await seedCompleteConversion(runtime.CORE_DB, runtime.EVIDENCE_BUCKET, thirdCapture.capture_id, principal, thirdSha, thirdBytes.byteLength, thirdConversionId, new TextEncoder().encode("# Witness mutation\n"));
+    const mutationTriggerName = `test_mutate_raw_witness_${crypto.randomUUID().replaceAll("-", "")}`;
+    const mutatedDigest = "f".repeat(64);
+    await runtime.CORE_DB.prepare(`CREATE TRIGGER ${mutationTriggerName} AFTER UPDATE OF state ON bundle_ingest_operation WHEN NEW.state='COMMITTED' BEGIN UPDATE raw_normalized_admission SET snapshot_view_json=json_set(snapshot_view_json,'$.observation_freshness','unknown'), snapshot_view_sha256='${mutatedDigest}' WHERE ingest_operation_id=NEW.operation_id; END`).run();
+    const mutatedWitness = await handleHttp(admissionRequest(thirdCapture.capture_id, "raw-admission-key-3", thirdConversionId), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
+    await runtime.CORE_DB.prepare(`DROP TRIGGER ${mutationTriggerName}`).run();
+    expect([409, 503]).toContain(mutatedWitness.status);
+    expect((await runtime.CORE_DB.prepare("SELECT COUNT(*) AS count FROM source_revision WHERE source_revision_ref=(SELECT source_revision_ref FROM raw_file_capture WHERE capture_id=?1)").bind(thirdCapture.capture_id).first<{ count: number }>())?.count).toBe(0);
+    const witnessAfterMutationRollback = await runtime.CORE_DB.prepare("SELECT state, receipt_json, snapshot_view_json, snapshot_view_sha256 FROM raw_normalized_admission WHERE capture_id=?1").bind(thirdCapture.capture_id).first<{ state: string; receipt_json: string | null; snapshot_view_json: string; snapshot_view_sha256: string }>();
+    expect(witnessAfterMutationRollback?.state).toBe("UNKNOWN");
+    expect(witnessAfterMutationRollback?.receipt_json).toBeNull();
+    expect(JSON.parse(witnessAfterMutationRollback?.snapshot_view_json ?? "{}").observation_freshness).toBe("observed_with_age");
+    expect(witnessAfterMutationRollback?.snapshot_view_sha256).not.toBe(mutatedDigest);
   });
 });
