@@ -54,6 +54,10 @@ interface OutputFixture {
   readonly putCalls: () => number;
 }
 
+interface OutputFixtureOptions {
+  readonly beforePut?: () => void;
+}
+
 beforeAll(initializeModelAttemptRuntime);
 
 async function readOutputRow(outputObjectRef: string): Promise<ModelOutputRow | null> {
@@ -112,6 +116,7 @@ function databaseWithCommittedUpdateAckLoss(database: D1Database): D1Database {
 async function outputFixture(
   tag: string,
   database: D1Database = runtime.CORE_DB,
+  options: OutputFixtureOptions = {},
 ): Promise<OutputFixture> {
   const base = await governedModelAttemptFixture(tag);
   const putCounter = { value: 0 };
@@ -145,6 +150,7 @@ async function outputFixture(
         residency_domains: residency,
         created_at: NOW,
       });
+      options.beforePut?.();
       const body = new Response(outputBytes).body;
       if (body === null) throw new Error("controlled output body is unavailable");
       const persisted = await storage.outputs.putImmutable(call.output_object_ref, body, outputSha256) as {
@@ -214,6 +220,27 @@ describe("model output residency over actual Worker D1/R2", () => {
   });
 
   it("retains known output after post-call cancellation and expiry, and reconciles a committed update with a lost ACK", async () => {
+    let cancelBeforePut = false;
+    const cancelBeforePutController = new AbortController();
+    const cancelledBeforePut = await outputFixture("output-cancel-before-put", runtime.CORE_DB, {
+      beforePut: () => {
+        cancelBeforePut = true;
+        cancelBeforePutController.abort();
+      },
+    });
+    const cancelledBeforePutHandler = createGovernedModelAttemptHandler(cancelledBeforePut.dependencies);
+    const cancelledBeforePutInput = {
+      ...cancelledBeforePut.invocation("FREEZE_PROTOCOL_AND_SCOPE", cancelledBeforePut.stageAttemptRef),
+      principal: { ...cancelledBeforePut.principal, signal: cancelBeforePutController.signal },
+    };
+    await expect(cancelledBeforePutHandler.handler(cancelledBeforePutInput)).rejects.toMatchObject({ code: "WORKFLOW_CANCELLED" });
+    expect(cancelBeforePut).toBe(true);
+    expect(cancelledBeforePut.putCalls()).toBe(1);
+    await expect(cancelledBeforePutHandler.handler(cancelledBeforePut.invocation("FREEZE_PROTOCOL_AND_SCOPE", cancelledBeforePutInput.attempt_ref)))
+      .resolves.toEqual(cancelledBeforePut.outputBytes);
+    expect(cancelledBeforePut.routeCalls()).toBe(1);
+    expect(cancelledBeforePut.putCalls()).toBe(1);
+
     const cancelled = await outputFixture("output-cancel");
     const controller = new AbortController();
     const cancelling = createGovernedModelAttemptHandler({
@@ -237,24 +264,25 @@ describe("model output residency over actual Worker D1/R2", () => {
     expect(cancelled.routeCalls()).toBe(1);
 
     let now = Date.parse(NOW);
-    const expired = await outputFixture("output-expired");
+    let expiryBeforePut = false;
+    const expired = await outputFixture("output-expired-before-put", runtime.CORE_DB, {
+      beforePut: () => {
+        expiryBeforePut = true;
+        now = Date.parse("2026-09-10T14:00:00.000Z");
+      },
+    });
     const expiring = createGovernedModelAttemptHandler({
       ...expired.dependencies,
       now: () => now,
-      route: {
-        execute: async (call: ModelCallInput) => {
-          const receipt = await expired.dependencies.route.execute(call);
-          now = Date.parse("2026-09-10T14:00:00.000Z");
-          return receipt;
-        },
-      },
     });
     const expiredInput = expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", expired.stageAttemptRef);
     await expect(expiring.handler(expiredInput)).rejects.toMatchObject({ code: "WORKFLOW_BUDGET_STOP" });
+    expect(expiryBeforePut).toBe(true);
     expect(expired.routeCalls()).toBe(1);
     expect(expired.putCalls()).toBe(1);
     await expect(expiring.handler(expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", expiredInput.attempt_ref))).resolves.toEqual(expired.outputBytes);
     expect(expired.routeCalls()).toBe(1);
+    expect(expired.putCalls()).toBe(1);
 
     const lostAckDb = databaseWithCommittedUpdateAckLoss(runtime.CORE_DB);
     const lostAck = await outputFixture("output-lost-ack", lostAckDb);
