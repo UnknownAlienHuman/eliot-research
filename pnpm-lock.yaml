@@ -238,6 +238,9 @@ importers:
 
   packages/cloudflare-research:
     dependencies:
+      '@eliotr/cloudflare-ai':
+        specifier: workspace:*
+        version: link:../cloudflare-ai
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence

@@ -92,6 +92,27 @@ scope and pricing authority. It rechecks cancellation and expiry before the paid
 provider results are settled durably even if later authorization prevents Workflow publication. Model
 objects use `model-output/...`; the executor separately owns `workflow/...` checkpoint objects.
 
+The W2 execution-grant receipt and W3 model cost reservation have separate identities. The internal
+`workflow_budget_receipt_ref` binds model preparation, reservation and readback to the exact persisted
+W2 stage attempt, request digest, principal and authority generations. The store checks that binding
+before inserting the model intent or reservation. It does not treat the W2 receipt as a price quote,
+spending consent or replacement for the model reservation.
+
+`loadHeldResearchScope` loads the exact scope pinned by `research_workflow_current` and rechecks its
+owner and currentness. `retrieveWithHeldScope` shares the public query's resolver, lanes and durable
+trace/result stores. It validates the existing scope and grant before writing an immutable server-selected
+retrieval-profile binding, enforces the profile bounds, and never creates a replacement scope or grant.
+The public query retains its replay-before-freeze ordering. These internal preparation paths do not yet
+connect the production research stages to model execution.
+
+The D1 dynamic-route registry in `cloudflare-research` stores immutable canonical candidates and promotes an active route
+through an expected-version compare-and-swap. The call-time deployment resolver reads that same
+active state. Production promotion and resolution require unexpired LIVE qualification; controlled
+fixtures must select the explicit server-owned TEST mode. Migration
+`0035_model_route_registry.sql` adds the candidate and active-generation tables while preserving the
+existing `model_generation` contract. This adapter does not itself issue provider qualification or
+connect the model gateway to the research stages.
+
 These adapters do not supply production prices or grant spending authority. The existing
 `ResearchWorkflow` composition still uses the deterministic handle-producing stage handler. Full W3
 requires the actual run's resolved EvidencePack, persisted AllowedReferenceManifest and context compiler,
@@ -133,6 +154,11 @@ known durable result after a handler loses its acknowledgement, missing R2 outpu
 intent is recorded, unknown outcome without a second handler invocation, and refusal to overwrite a
 corrupt existing object. The model result is controlled test data; these cases do not call or qualify a
 live provider.
+
+The held-scope suite passed four actual local Worker/D1/R2 cases on 2026-09-10. Its positive path
+imports and projects a source, holds the W1 scope, then resolves FAST_SEARCH to exact stored excerpt
+bytes and a matching evidence receipt. Replay creates no replacement scope or grant. Foreign and
+revoked unbound scopes are rejected before retrieval-profile writes.
 
 The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
