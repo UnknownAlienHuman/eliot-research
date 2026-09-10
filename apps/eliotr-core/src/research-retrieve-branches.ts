@@ -22,23 +22,18 @@ import {
 } from "@eliotr/retrieval";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import {
-  decodeProtocolScopeCheckpoint,
-  readFreezeProtocolAndScopeCheckpoint,
-  type ProtocolScopeCheckpoint,
-} from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
-import {
-  digest,
   MAX_WORKFLOW_OUTPUT_BYTES,
-  parseRequest,
+  readFreezeProtocolAndScopeCheckpoint,
+  readWorkflowObject,
   textDigest,
   WorkflowCheckpointError,
+  type ProtocolScopeCheckpoint,
   type StageRequest,
   type StageReceipt,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-research";
 import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
-import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
@@ -76,12 +71,6 @@ export interface RetrieveBranchesCheckpoint {
   readonly coverage_claim: Awaited<ReturnType<typeof retrieveWithHeldScope>>["coverage_claim"];
 }
 
-interface StoredStageZeroAttempt {
-  readonly request_json: string;
-  readonly request_sha256: string;
-  readonly state: string;
-}
-
 interface RetrieveBranchesInput {
   readonly request: StageRequest;
   readonly principal: WorkflowPrincipal;
@@ -112,54 +101,23 @@ async function persistedStageZero(
   request: StageRequest,
   principal: WorkflowPrincipal,
 ): Promise<ProtocolScopeCheckpoint> {
-  const row = await dependencies.database.prepare(
-    "SELECT request_json, request_sha256, state FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = 0 LIMIT 1",
-  ).bind(request.operation_id).first<StoredStageZeroAttempt>();
-  if (row === null || row.state !== "COMMITTED") fail("WORKFLOW_AUTHORITY_STALE");
-  let stageZero: StageRequest;
-  try {
-    stageZero = parseRequest(JSON.parse(row.request_json));
-  } catch {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  if (stageZero.stage !== "FREEZE_PROTOCOL_AND_SCOPE" || stageZero.operation_id !== request.operation_id ||
-      stageZero.investigation_ref.id !== request.investigation_ref.id ||
-      stageZero.investigation_ref.revision !== 1 || row.request_sha256 !== await textDigest(JSON.stringify(stageZero))) {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
-  const receipt = await new WorkflowCheckpointStore(dependencies.database).receipt(
-    stageZero,
-    row.request_sha256,
+  const stored = await new WorkflowCheckpointStore(dependencies.database).readCommittedStageRequest(
+    request.operation_id,
+    "FREEZE_PROTOCOL_AND_SCOPE",
   );
-  if (receipt === null || receipt.stage !== "FREEZE_PROTOCOL_AND_SCOPE" ||
-      receipt.operation_id !== request.operation_id ||
-      receipt.output_manifest.object_ref === "" || receipt.output_manifest.sha256 === "") {
+  if (stored === null || stored.request.investigation_ref.id !== request.investigation_ref.id ||
+      stored.request.investigation_ref.revision !== 1) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  const persistedBytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true);
-  if (persistedBytes.byteLength === 0 || await digest(persistedBytes) !== receipt.output_manifest.sha256) {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  const checkpoint = decodeProtocolScopeCheckpoint(persistedBytes);
-  if (checkpoint.attempt_ref !== receipt.attempt_ref || checkpoint.attempt_ref === "" ||
-      checkpoint.operation_id !== request.operation_id || checkpoint.principal_ref !== principal.principal_ref) {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
-  await readFreezeProtocolAndScopeCheckpoint({
-    request: stageZero,
+  return readFreezeProtocolAndScopeCheckpoint({
+    request: stored.request,
     principal,
     database: dependencies.database,
     bucket: dependencies.work_bucket,
     navigation: dependencies.navigation,
     ledger: dependencies.ledger,
+    expected_attempt_ref: stored.attempt_ref,
   });
-  return checkpoint;
-}
-
-interface StoredRetrieveAttempt {
-  readonly request_json: string;
-  readonly request_sha256: string;
-  readonly state: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -195,40 +153,26 @@ async function persistedStageFive(
   dependencies: RetrieveBranchesStageDependencies,
   request: StageRequest,
 ): Promise<{ readonly stage_request: StageRequest; readonly receipt: StageReceipt; readonly checkpoint: RetrieveBranchesCheckpoint }> {
-  let row: StoredRetrieveAttempt | null;
-  try {
-    row = await dependencies.database.prepare(
-      "SELECT request_json, request_sha256, state FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = 5 LIMIT 1",
-    ).bind(request.operation_id).first<StoredRetrieveAttempt>();
-  } catch {
+  const stored = await new WorkflowCheckpointStore(dependencies.database).readCommittedStageRequest(
+    request.operation_id,
+    "RETRIEVE_BRANCHES",
+  );
+  if (stored === null || stored.request.investigation_ref.id !== request.investigation_ref.id) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  if (row === null || row.state !== "COMMITTED") fail("WORKFLOW_AUTHORITY_STALE");
-  let stageRequest: StageRequest;
-  try { stageRequest = parseRequest(JSON.parse(row.request_json)); }
-  catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
-  if (JSON.stringify(stageRequest) !== row.request_json ||
-      stageRequest.stage !== "RETRIEVE_BRANCHES" || stageRequest.operation_id !== request.operation_id ||
-      stageRequest.investigation_ref.id !== request.investigation_ref.id ||
-      row.request_sha256 !== await textDigest(JSON.stringify(stageRequest))) {
-    fail("WORKFLOW_AUTHORITY_STALE");
-  }
+  const stageRequest = stored.request;
   let receipt: StageReceipt | null;
-  try { receipt = await new WorkflowCheckpointStore(dependencies.database).receipt(stageRequest, row.request_sha256); }
+  try { receipt = await new WorkflowCheckpointStore(dependencies.database).receipt(stageRequest, stored.request_sha256); }
   catch (error) {
     if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("WORKFLOW_OUTPUT_CORRUPT");
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  if (receipt === null || receipt.stage !== "RETRIEVE_BRANCHES" || receipt.operation_id !== request.operation_id ||
-      receipt.investigation_ref.id !== request.investigation_ref.id || receipt.request_sha256 !== row.request_sha256) {
+  if (receipt === null) {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
   let bytes: Uint8Array;
   try { bytes = await readWorkflowObject(dependencies.work_bucket, receipt.output_manifest, true); }
-  catch (error) {
-    if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("WORKFLOW_OUTPUT_CORRUPT");
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
+  catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
   return { stage_request: stageRequest, receipt, checkpoint: decodeRetrieveBranchesCheckpoint(bytes) };
 }
 

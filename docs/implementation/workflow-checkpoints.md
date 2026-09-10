@@ -69,14 +69,16 @@ attempt, receipt, immutable R2 bytes and current W1/scope authority. The bytes r
 W2 `WORK_BUCKET` output with the existing 64 KiB checkpoint bound and D1 receipt; no new table or public
 DTO is introduced.
 
-The shared `research-stage-handlers.ts` factory now selects this real stage for new server-owned
-exploratory runs in the HTTP service, Workflow binding and Durable Object. The generation is
-`research-handlers.exploratory.v1`; legacy confirmatory runs retain their existing deterministic path.
+The shared `research-stage-handlers.ts` factory selects this real stage for server-owned exploratory
+runs in the HTTP service, Workflow binding and Durable Object. Existing
+`research-handlers.exploratory.v1` runs retain their original stage-0-only behavior; new
+`research-handlers.exploratory.v2` runs also execute real retrieval at stage 5. Legacy confirmatory
+runs retain their existing deterministic path, and unsupported persisted generations are refused.
 Migration `0040_research_policy_authority_scope.sql` permits independent scope policy authorities,
 with one ACTIVE generation per authority. Retired rows remain retired and historical bindings remain
 unchanged. The local session fixture passed 10 cases, including independent second-source execution,
 retirement/revocation refusal, actual DO execution from unfinished W1 and duplicate-free replay.
-The other 17 stages still use deterministic metadata handlers; this does not produce a research answer.
+The other 16 stages of v2 still use deterministic metadata handlers; this does not produce a research answer.
 
 ## Retrieval over the held protocol scope
 
@@ -91,8 +93,11 @@ read grant. Its immutable output contains the EvidencePack, trace, coverage clai
 digests for subsequent stages; it does not produce an answer or an AllowedReferenceManifest.
 
 The local D1/Search/R2 fixture walks stages 0 through 5, resolves an actual indexed Q1 excerpt, checks
-stable scope/grant identities and duplicate-free replay, and refuses a revoked grant. Shared caller
-composition, evidence freeze, synthesis and live deployment remain separate acceptance items.
+stable scope/grant identities and duplicate-free replay, and refuses a revoked grant. The shared
+HTTP/Workflow/DO factory now composes this handler for v2 using the same persisted retrieval profile.
+The actual HTTP source-to-retrieval case passed with a requested limit of one, exact R2 excerpt,
+stored stage-5 output, duplicate-free replay and HTTP 409 ORIENTATION_IDEMPOTENCY_CONFLICT when the
+same request key changes its limit. Evidence freeze, synthesis and live deployment remain open.
 
 `readRetrieveBranchesCheckpoint` reads the committed stage-5 receipt and immutable output, verifies
 strict canonical bytes, and binds the result to stage 0, the held scope, current authority and persisted
@@ -104,6 +109,12 @@ The shared retrieval codec and existing `createD1RetrievalResultStore.load` now 
 decoding, result/trace digests and scope/handle-reference linkage. The stage reader reuses that store
 and `createD1ScopeProfilePort.requireBinding`; it no longer duplicates their SQL. The changed
 persistence fixture passed seven cases and the actual Worker stage-reader fixture passed three.
+
+`WorkflowCheckpointStore.readCommittedStageRequest` now supplies the shared strict request readback
+for stages 0 and 5. The stage-0 authoritative reader binds its checkpoint to the receipt's actual
+attempt; the app no longer reads and decodes the same R2 object twice. The changed expected-attempt
+refusal and HTTP v2 replay cases passed together at `aaa13fa` (two selected cases, thirteen skipped).
+Earlier unchanged reader cases remain retained evidence, not a claim that the whole suite was rerun.
 
 ## W2 monotone bounded executor
 

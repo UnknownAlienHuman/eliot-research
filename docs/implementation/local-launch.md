@@ -180,6 +180,12 @@ after it stops, D1/R2 readback verifies the matching outbox, receipts, index and
 Conversion uses a recorded provider response; these receipts do not qualify live conversion or
 deployment, and do not establish the internal cause of earlier intermittent Miniflare CLI failures.
 
+The readiness poll now continues after a classified request timeout within its existing 20-second
+deadline, with each request bounded by the remaining time. Other HTTP, parsing and transport errors
+still fail immediately. Deadline exhaustion retains the last timeout and Worker diagnostics under a
+distinct error code. The focused timeout/success, total-deadline and transport-failure regression
+passed at `62e91da`; the full Windows owner run for this change remains a separate CI result.
+
 CLI protocol reference, checked 2026-09-05: Cloudflare, “Connect through Cloudflare Access using a CLI”
 (updated 2026-04-17), https://developers.cloudflare.com/cloudflare-one/tutorials/cli/ ; CLI flag source:
 https://github.com/cloudflare/cloudflared/blob/master/cmd/cloudflared/access/cmd.go .

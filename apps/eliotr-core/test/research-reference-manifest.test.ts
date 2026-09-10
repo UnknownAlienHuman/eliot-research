@@ -10,7 +10,7 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import type { LocatorCandidate, ObjectResidencyKey, ResolvedEvidence } from "@eliotr/contracts";
-import { createD1ScopePorts, type RetrievalQueryAccess } from "@eliotr/retrieval";
+import { createD1ScopePorts, createD1ScopeProfilePort, type RetrievalQueryAccess } from "@eliotr/retrieval";
 import {
   buildAllowedReferenceManifest,
   type ReferenceManifestPolicyProfile,
@@ -119,13 +119,14 @@ describe("research reference manifest over real D1/R2", () => {
       { CORE_DB: runtime.CORE_DB, SEARCH_DB: runtime.SEARCH_DB }, access,
       payload.data.workflow_instance_id, deployment,
     );
+    const persistedProfile = await createD1ScopeProfilePort(db).loadBinding(held.scope_snapshot);
     const retrieval = await retrieveWithHeldScope(
       { CORE_DB: runtime.CORE_DB, SEARCH_DB: runtime.SEARCH_DB, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET },
       {
         access, scope_snapshot: held.scope_snapshot, raw_query: "Pinned", product: "FAST_SEARCH",
         literals: [], requested_limit: 8, deadline_ms: Date.now() + 30_000,
         idempotency_key: "manifest-evidence", signal: new AbortController().signal,
-        profile: { version: "retrieval-scope-v1", max_sources: 64, max_results: 16 },
+        profile: persistedProfile,
       },
     );
     evidencePack = retrieval.evidence_pack;

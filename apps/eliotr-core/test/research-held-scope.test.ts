@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
-import type { RetrievalQueryAccess } from "@eliotr/retrieval";
-import { evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
+import { createD1EvidenceAuthorityPort, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import {
   loadHeldResearchScope,
   retrieveWithHeldScope,
@@ -10,6 +10,7 @@ import {
   count,
   db,
   principal,
+  request,
   run,
   runtime,
   setupOrientationDatabase,
@@ -26,8 +27,6 @@ const access: RetrievalQueryAccess = {
   client_class: "owner_pwa",
   credential_generation: "credential-v1",
 };
-const profile = { version: "retrieval-scope-v1", max_sources: 64, max_results: 16 } as const;
-
 function runRequest(sourceId: string, key: string): Request {
   return new Request("https://research.example/api/v1/research/run", {
     method: "POST",
@@ -92,7 +91,8 @@ describe("held research scope retrieval over real D1", () => {
   let operationId: string;
   let held: Awaited<ReturnType<typeof loadHeldResearchScope>>;
   let projectedWorld: Q1Namespace;
-  let unboundHeld: Awaited<ReturnType<typeof loadHeldResearchScope>>;
+  let unboundHeld: Pick<Awaited<ReturnType<typeof loadHeldResearchScope>>, "scope_snapshot_ref" | "scope_snapshot">;
+  let profile: ScopeProfileBinding;
 
   beforeAll(async () => {
     await setupOrientationDatabase();
@@ -115,15 +115,19 @@ describe("held research scope retrieval over real D1", () => {
       operationId,
       deployment,
     );
-    const unboundResponse = await run(runRequest(`source-${projectedWorld.namespace}`, "held-scope-unbound-run"));
-    const unboundPayload = await body<{ readonly workflow_instance_id: string }>(unboundResponse);
+    profile = await createD1ScopeProfilePort(db).loadBinding(held.scope_snapshot);
+    expect(profile).toEqual({ version: "retrieval-scope-v1", max_sources: 64, max_results: 8 });
+    const unboundResponse = await run(request(`source-${projectedWorld.namespace}`, {}, "held-scope-unbound-orientation"));
+    const unboundPayload = await body<{ readonly evidence_pack: { readonly scope_snapshot_ref: { readonly id: string; readonly revision: number } } }>(unboundResponse);
     expect(unboundResponse.status, JSON.stringify(unboundPayload)).toBe(200);
-    unboundHeld = await loadHeldResearchScope(
-      { CORE_DB: runtime.CORE_DB, SEARCH_DB: runtime.SEARCH_DB },
-      access,
-      unboundPayload.data.workflow_instance_id,
-      deployment,
-    );
+    const unboundRef = unboundPayload.data.evidence_pack.scope_snapshot_ref;
+    const unboundAuthority = await createD1EvidenceAuthorityPort({
+      core_database: runtime.CORE_DB,
+      search_database: runtime.SEARCH_DB,
+    }).loadScope(unboundRef);
+    if (unboundAuthority === null) throw new Error("Missing fresh orientation scope for unbound profile test");
+    unboundHeld = { scope_snapshot_ref: unboundRef, scope_snapshot: unboundAuthority.snapshot };
+    expect(unboundHeld.scope_snapshot_ref).not.toEqual(held.scope_snapshot_ref);
   }, 30_000);
 
   it("reuses the persisted W1 scope for a real FAST_SEARCH hit and replays exact D1/R2 evidence", async () => {
@@ -190,7 +194,7 @@ describe("held research scope retrieval over real D1", () => {
     expect(afterFirst).toEqual({
       snapshots: before.snapshots,
       grants: before.grants,
-      profiles: before.profiles + 1,
+      profiles: before.profiles,
       results: before.results + 1,
       traces: before.traces + 1,
     });

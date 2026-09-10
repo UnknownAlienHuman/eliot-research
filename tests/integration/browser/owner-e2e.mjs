@@ -664,12 +664,45 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
   return error;
 }
 
+function isWrappedWorkerTimeout(error) {
+  return error?.cause?.name === "TimeoutError" || error?.cause?.cause?.name === "TimeoutError";
+}
+
+function readinessDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, now, lastTimeout }) {
+  const elapsedMs = Math.max(0, now() - startedAt);
+  const error = new Error(
+    `raw projection readiness deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); ` +
+    `phase=${phase}; source_revision_ref=${String(sourceRevisionRef).slice(0, 96)}; ` +
+    `last_error=${lastTimeout ? "TimeoutError" : "none"}`,
+    { cause: lastTimeout },
+  );
+  error.code = "RAW_PROJECTION_READINESS_DEADLINE_EXCEEDED";
+  return error;
+}
+
 async function waitForRawProjectionReadiness(worker, token, sourceId, sourceRevisionRef,
-  { expectedGeneration, deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling" } = {}) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < deadlineMs) {
+  {
+    expectedGeneration, deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling",
+    fetchJson = workerJson, now = Date.now,
+  } = {}) {
+  const startedAt = now();
+  let lastTimeout;
+  while (now() - startedAt < deadlineMs) {
+    const remainingMs = deadlineMs - (now() - startedAt);
     const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(sourceId)}`;
-    const response = await workerJson(worker.origin, readinessPath, { token, phase, worker, timeoutMs: 5000 });
+    let response;
+    try {
+      response = await fetchJson(worker.origin, readinessPath, {
+        token, phase, worker, timeoutMs: Math.min(5000, Math.max(1, remainingMs)),
+      });
+    } catch (error) {
+      if (!isWrappedWorkerTimeout(error)) throw error;
+      lastTimeout = error;
+      if (now() - startedAt >= deadlineMs) break;
+      await new Promise((resolve) => globalThis.setTimeout(resolve,
+        Math.min(intervalMs, Math.max(0, deadlineMs - (now() - startedAt)))));
+      continue;
+    }
     assert.equal(response.status, 200, `active Worker readiness must answer 200, got ${response.status}`);
     const value = response.data?.data;
     if (value?.source_revision_ref && value.source_revision_ref !== sourceRevisionRef) {
@@ -687,9 +720,69 @@ async function waitForRawProjectionReadiness(worker, token, sourceId, sourceRevi
       return value;
     }
     await new Promise((resolve) => globalThis.setTimeout(resolve,
-      Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
+      Math.min(intervalMs, Math.max(0, deadlineMs - (now() - startedAt)))));
   }
-  throw new Error(`raw projection readiness deadline exceeded (${Date.now() - startedAt}ms/${deadlineMs}ms)`);
+  throw readinessDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, now, lastTimeout });
+}
+
+export async function verifyRawProjectionReadinessPollingRegression() {
+  const worker = { origin: "http://127.0.0.1:43123" };
+  const timeout = () => {
+    const cause = new Error("controlled timeout");
+    cause.name = "TimeoutError";
+    return new Error("worker fetch failed stage=fetch phase=controlled", { cause });
+  };
+  let successfulCalls = 0;
+  let successfulClock = 0;
+  const successful = await waitForRawProjectionReadiness(worker, "fixture-token", "source-1", "revision-1", {
+    expectedGeneration: "generation-1", deadlineMs: 1000, intervalMs: 0, now: () => successfulClock,
+    fetchJson: async (_origin, _path, options) => {
+      successfulCalls += 1;
+      assert.equal(options.timeoutMs, successfulCalls === 1 ? 1000 : 900,
+        "readiness fetch must remain bounded by the remaining total deadline");
+      if (successfulCalls === 1) {
+        successfulClock += 100;
+        throw timeout();
+      }
+      return { status: 200, data: { data: {
+        source_id: "source-1", source_revision_ref: "revision-1", deployment_generation: "generation-1",
+        channels: [{ channel: "exact_ready", state: "ready" }, { channel: "lexical_ready", state: "ready" }],
+      } } };
+    },
+  });
+  assert.equal(successful.source_revision_ref, "revision-1");
+  assert.equal(successfulCalls, 2, "a classified timeout must leave the bounded poll alive");
+
+  let clock = 0;
+  let expiredCalls = 0;
+  await assert.rejects(
+    waitForRawProjectionReadiness(worker, "fixture-token", "source-1", "revision-1", {
+      expectedGeneration: "generation-1", deadlineMs: 100, intervalMs: 0, now: () => clock,
+      fetchJson: async (_origin, _path, options) => {
+        expiredCalls += 1;
+        assert.equal(options.timeoutMs, expiredCalls === 1 ? 100 : 40);
+        clock += 60;
+        throw timeout();
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, "RAW_PROJECTION_READINESS_DEADLINE_EXCEEDED");
+      assert.equal(error.cause?.cause?.name, "TimeoutError");
+      assert.match(error.message, /100ms/u);
+      return true;
+    },
+  );
+  assert.equal(expiredCalls, 2, "polling must stop at the total deadline");
+
+  const transport = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  await assert.rejects(
+    waitForRawProjectionReadiness(worker, "fixture-token", "source-1", "revision-1", {
+      expectedGeneration: "generation-1", deadlineMs: 100, intervalMs: 0,
+      fetchJson: async () => { throw new Error("worker fetch failed", { cause: transport }); },
+    }),
+    (error) => { assert.equal(error.cause?.code, "ECONNRESET"); return true; },
+  );
+  return { state: "PASS" };
 }
 
 async function resolveRawProjectionSourceId(worker, token, sourceRevisionRef) {

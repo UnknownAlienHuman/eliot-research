@@ -1,9 +1,12 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { reset } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
+import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
+import { importAndProject, prepareQ1Namespace, type Q1Namespace } from "./retrieval-q1-fixture.js";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
-import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
+import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 
 beforeAll(async () => {
   await setupOrientationDatabase();
@@ -204,7 +207,7 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const tag = "do-exec";
     const stub = doStub(`research-${tag}`);
     const runBinding = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1").bind(payload.workflow_instance_id).first<{ handler_generation: string }>();
-    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION);
     const sessionBody = { session_id: `sess-${tag}`, investigation_id: payload.investigation_ref.id, investigation_revision: 1, operation_id: payload.workflow_instance_id, idempotency_key: "rs-run-first", handler_generation: runBinding?.handler_generation ?? "", initial_input_manifest: manifest, principal_ref: principal, credential_generation: "credential-v1", deployment_generation: "test-generation" };
     expect((await stub.fetch(new Request("https://do/session/start", { method: "POST", headers: { "content-type": "application/json", ...doHeaders() }, body: JSON.stringify(sessionBody) }))).status).toBe(200);
     const before = await workflowCounts();
@@ -279,5 +282,73 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(second.status, JSON.stringify(secondJson)).toBe(200);
     expect(secondJson).toEqual(firstJson);
     expect(await workflowCounts()).toEqual(after);
+  }, 30_000);
+  it("runs the v2 exploratory retrieval stage over an admitted indexed source and replays it", async () => {
+    await reset();
+    const world = {
+      db,
+      searchDb: runtime.SEARCH_DB,
+      runtime,
+      owner: principal,
+      ...(await prepareQ1Namespace(runtime, db, runtime.SEARCH_DB, principal)),
+    } satisfies Q1Namespace;
+    await importAndProject(world);
+    const decision = await db.prepare(
+      "SELECT allowed_use_json, disclosure_ceiling FROM source_admission_decision WHERE source_revision_ref = ?1 LIMIT 1",
+    ).bind(world.revision).first<{ readonly allowed_use_json: string; readonly disclosure_ceiling: string }>();
+    if (decision === null) throw new Error("missing Q1 admission decision");
+    const policyCreatedAt = new Date().toISOString();
+    await db.prepare("INSERT INTO scope_read_policy (source_namespace_id, principal_ref, client_class, policy_ref, generation, allowed_use_json, disclosure_ceiling, state, expires_at, created_at) VALUES (?1,?2,'owner_pwa',?3,1,?4,?5,'ACTIVE',?6,?7)")
+      .bind(world.namespace, principal, `q1-read-${world.namespace}`, decision.allowed_use_json, decision.disclosure_ceiling, new Date(Date.now() + 3_600_000).toISOString(), policyCreatedAt).run();
+    const sourceId = `source-${world.namespace}`;
+    const request = runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run");
+    const firstResponse = await run(request);
+    const first = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(firstResponse);
+    expect(firstResponse.status, JSON.stringify(first)).toBe(200);
+    expect(first.data.workflow_instance_id.startsWith("run-")).toBe(true);
+    const runBinding = await db.prepare("SELECT handler_generation, scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(first.data.workflow_instance_id).first<{ handler_generation: string; scope_snapshot_id: string; scope_snapshot_revision: number }>();
+    expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION);
+    const profile = await db.prepare("SELECT max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2")
+      .bind(runBinding?.scope_snapshot_id, runBinding?.scope_snapshot_revision)
+      .first<{ max_results: number }>();
+    expect(profile?.max_results).toBe(1);
+    const stageFive = await db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 5")
+      .bind(first.data.workflow_instance_id).first<{ receipt_json: string }>();
+    expect(stageFive).not.toBeNull();
+    if (stageFive === null) throw new Error("missing persisted retrieval checkpoint");
+    const stageReceipt = JSON.parse(stageFive.receipt_json) as { output_manifest?: { object_ref?: string } };
+    const stageObjectRef = stageReceipt.output_manifest?.object_ref;
+    expect(typeof stageObjectRef).toBe("string");
+    if (typeof stageObjectRef !== "string") throw new Error("missing persisted retrieval output ref");
+    const stageObject = await runtime.WORK_BUCKET.get(stageObjectRef);
+    expect(stageObject).not.toBeNull();
+    if (stageObject === null) throw new Error("missing persisted retrieval output");
+    const retrieval = JSON.parse(new TextDecoder().decode(new Uint8Array(await stageObject.arrayBuffer()))) as {
+      workflow_stage?: string;
+      retrieval_request_digest?: string;
+      evidence_pack?: { resolved_evidence?: readonly { exact_excerpt?: string }[] };
+      trace?: { scope_snapshot?: { digest?: string } };
+    };
+    expect(retrieval.workflow_stage).toBe("RETRIEVE_BRANCHES");
+    expect(retrieval.evidence_pack?.resolved_evidence).toHaveLength(1);
+    expect(retrieval.evidence_pack?.resolved_evidence?.[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    expect(typeof retrieval.trace?.scope_snapshot?.digest).toBe("string");
+    if (typeof retrieval.trace?.scope_snapshot?.digest !== "string") throw new Error("missing retrieval scope digest");
+    expect(retrieval.retrieval_request_digest).toBe(await retrievalRequestDigest({
+      raw_query: "Pinned",
+      product: "FAST_SEARCH",
+      literals: [],
+      requested_limit: 1,
+      scope_digest: retrieval.trace.scope_snapshot.digest,
+    }));
+    const counts = await workflowCounts();
+    const changedLimitResponse = await run(runRequest(sourceId, { query: "Pinned", max_results: 2 }, "rs-retrieval-run"));
+    const changedLimit = await body(changedLimitResponse);
+    expect(changedLimitResponse.status).toBe(409);
+    expect(changedLimit.code, JSON.stringify(changedLimit)).toBe("ORIENTATION_IDEMPOTENCY_CONFLICT");
+    const replay = await body(await run(runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run")));
+    expect(replay.data).toEqual(first.data);
+    expect(await workflowCounts()).toEqual(counts);
   }, 30_000);
 });
