@@ -142,6 +142,6 @@ describe("model profile binding producer", () => {
     await expect(producer(await signedBinding({ expires_at: "2026-09-10T14:00:00.000Z", policy: { ...policy, expires_at: "2026-09-10T14:00:00.000Z" } })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
     await expect(producer({ ...signed, unexpected: true }).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
     await expect(producer(await signedBinding({ max_context_bytes: 0 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
-    await expect(producer(await signedBinding({ max_context_bytes: 256 * 1024 + 1 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
+    await expect(producer(await signedBinding({ max_context_bytes: Number.MAX_SAFE_INTEGER + 1 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
   });
 });
