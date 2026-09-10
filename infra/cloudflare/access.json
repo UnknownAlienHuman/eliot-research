@@ -13,6 +13,22 @@
     "decision": "allow",
     "selector": "email"
   },
+  "mcp": {
+    "path": "/mcp",
+    "path_cookie_attribute": true,
+    "application": {
+      "name_prefix": "Eliot Research MCP",
+      "type": "self_hosted",
+      "session_duration": "24h",
+      "app_launcher_visible": false,
+      "destination_type": "public"
+    },
+    "policy": {
+      "name_prefix": "Eliot Research MCP",
+      "decision": "allow",
+      "service_token_decision": "non_identity"
+    }
+  },
   "requirements": {
     "hostname_based": true,
     "reason": "ResearchSession uses WebSockets; Worker-level Access currently rejects WebSocket upgrades.",

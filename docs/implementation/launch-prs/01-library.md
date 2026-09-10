@@ -230,3 +230,17 @@ in both Ubuntu and Windows CI. The prior local `bad port` diagnostic retained no
 the migration SQL itself has no network operation. L1 acceptance requires the actual owner-e2e to
 pass in both Ubuntu and Windows CI; full Library L6/L7 and live qualification remain separate.
 Live Access/provider qualification remains `NOT_EXECUTED`.
+
+## Current active-readiness and raw projection checkpoint
+
+Active per-channel readiness now complements the recorded revision-history view. The PWA binds it
+and FAST_SEARCH to the selected source head and deployment, reads the persisted trace and shows only
+the exact verified excerpt. Project editing and the complete populated owner lifecycle remain open.
+
+The focused local scenario on `cdb95d93acf2dc8b2bd0789a8618b72287538301` passed the actual scheduled
+outbox, Queue, R2 materialization and Chromium FAST_SEARCH path. Projection bodies use native Response
+streams with a known length; actual Workers R2 rejected the prior plain stream. Outbox was `SENT`;
+job/projection were `PARTIAL` with `MANAGED_INDEX_READBACK_FAILED`, preserving honest unavailable
+local managed indexing while exact and lexical retrieval succeeded. Only the conversion-provider
+response is recorded. This focused result does not replace the complete owner suite on Ubuntu and
+Windows, the remaining Library acceptance, or deployed provider/storage qualification.
