@@ -65,11 +65,13 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
         if (selected && mine === serial && !disposed) {
           const head = selected.readiness_ref.slice(`readiness:${selected.id}:`.length);
           clearReadiness("Updating selected source…");
+          const selectionReadinessSerial = readinessSerial;
           void (async () => {
             let selectedForReadiness: void | boolean;
-            try { selectedForReadiness = await onSelectSource(selected.id, { deploymentGeneration: received.generation }); } catch { return; }
-            if (selectedForReadiness === false) return;
-            if (mine !== serial || disposed) return;
+            try { selectedForReadiness = await onSelectSource(selected.id, { deploymentGeneration: received.generation }); }
+            catch { if (mine === serial && selectionReadinessSerial === readinessSerial && !disposed) readiness.textContent = "Source selection did not complete. Retry selecting the source."; return; }
+            if (mine !== serial || selectionReadinessSerial !== readinessSerial || disposed) return;
+            if (selectedForReadiness === false) { readiness.textContent = "Source selection did not complete. Retry selecting the source."; return; }
             await checkReadiness(selected.id, received.generation, head, mine);
           })();
         }
