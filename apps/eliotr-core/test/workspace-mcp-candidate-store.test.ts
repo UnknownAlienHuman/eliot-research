@@ -1,8 +1,9 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { WorkspaceMcpObservationV2Schema, WorkspaceMcpPlanV2Schema, WorkspaceMcpReceiptV2Schema } from "@eliotr/contracts";
 import type { WorkspaceMcpObservationV2, WorkspaceMcpReceiptV2 } from "@eliotr/contracts";
 import { createD1WorkspaceMcpCandidateStore } from "../src/workspace-mcp-candidate-store.js";
+import workspaceLedgerMigration from "../../../infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql?raw";
 
 const database = (env as unknown as { CORE_DB: D1Database }).CORE_DB;
 const store = () => createD1WorkspaceMcpCandidateStore(database);
@@ -34,10 +35,18 @@ function input(principal_ref = "actor-a", fingerprint = DIGEST) {
     plan_id: plan.plan_id, plan_sha256: plan.plan_sha256, issued_at: plan.issued_at, expires_at: plan.expires_at, plan };
 }
 
+beforeAll(async () => {
+  const existing = await database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_mcp_plan'").first<{ name: string }>();
+  if (existing !== null && existing !== undefined) return;
+  for (const statement of workspaceLedgerMigration.split(/;\s*(?=CREATE )/u).map((value) => value.trim()).filter(Boolean)) {
+    await database.prepare(statement.endsWith(";") ? statement : `${statement};`).run();
+  }
+});
+
 describe("Workspace MCP candidate ledger on local D1", () => {
   it("replays exact plans, conflicts changed keys, and isolates verified actors", async () => {
     const candidate = store();
-    expect((await candidate.issuePlan(input())).state).toBe("COMMITTED");
+    const first = await candidate.issuePlan(input()); expect(first.state).toBe("COMMITTED");
     expect((await candidate.issuePlan(input())).state).toBe("REPLAY");
     expect((await candidate.issuePlan(input("actor-a", "b".repeat(64)))).state).toBe("CONFLICT");
     expect((await candidate.issuePlan(input("actor-b"))).state).toBe("COMMITTED");
