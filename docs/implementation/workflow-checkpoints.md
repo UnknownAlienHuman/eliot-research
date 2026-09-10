@@ -150,8 +150,19 @@ the bridge does not derive them from caller claims. The content digest and compl
 key are computed from the bounded output after the call. Known output persistence has no new
 cancellation or expiry gate; the governed handler separately controls publication after settlement.
 Immutable R2 and D1 readback reconcile lost acknowledgements. A committed mapping with missing or
-corrupt R2 bytes is refused without repair. Production composition must still place preparation after
-durable STARTED and before invoking the provider.
+corrupt R2 bytes is refused without repair. The governed model handler now requires this preparation
+after durable STARTED and before invoking the provider. It rechecks cancellation, expiry and currentness
+around preparation; definite preparation failures receive a durable FAILED disposition. Existing
+attempts are reconciled before fresh request preparation, so UNKNOWN and terminal replay cannot mint
+a new quote or repeat provider work.
+
+`createResearchModelGatewayRuntime` provides explicit server-held gateway credentials and an
+endpoint-bound POST transport. Its single invocation deadline covers pending headers and bounded
+response-body consumption; parent cancellation and late responses are reconciled without retry.
+Successful response bytes are retained after the request completes even if the parent later cancels.
+It does not discover credentials from ambient provider settings or authorize spending. The app-level
+ResearchWorkflow still needs trusted preparation, current pricing and consent authority before using
+this runtime in its model stages.
 
 ## Bounds and proof ceiling
 
@@ -212,7 +223,14 @@ injected after preparation and before the first R2 PUT, and the known bytes are 
 replayed once. The two unchanged cases were not rerun. These controlled model results do not qualify
 provider quality, authoritative prices, owner consent or live deployment.
 
-The focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
+The mandatory output-preparation update passed thirteen focused actual local Worker/D1/R2 handler and
+output-store cases on 2026-09-10, including preparation ordering, definite failure, cancellation,
+expiry, cancellation during revalidation, UNKNOWN replay and exact saved output. Six separate local
+Worker transport cases passed with controlled fetch/Response streams: explicit credentials and
+destination, cancellation before fetch, pending-header and body cancellation, bounded response size,
+and completed-byte retention. These cases do not constitute a provider call or live qualification.
+
+The earlier focused local D1/R2 model-attempt suites passed fourteen cases on 2026-09-10: eight storage
 cases and six handler cases. The composed recovery case uses the production model handler and
 Workflow executor, loses the acknowledgement after model settlement but before the Workflow output
 record, then resumes from the stored result. The controlled model route is invoked exactly once;
