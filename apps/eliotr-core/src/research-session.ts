@@ -90,6 +90,7 @@ export function createResearchQueryService(env: Pick<Env, "CORE_DB" | "SEARCH_DB
         deadline_ms: deadlineMs,
         idempotency_key: key,
         signal: context.request.signal,
+        profile,
       }).catch(mapRetrievalError);
       return { evidence_pack: result.evidence_pack, trace_ref: result.trace.trace_ref };
     },
