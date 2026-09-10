@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
+import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace } from "./retrieval-q1-fixture.js";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
@@ -293,14 +294,18 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     } satisfies Q1Namespace;
     await importAndProject(world);
     const sourceId = `source-${world.namespace}`;
-    const request = runRequest(sourceId, { query: "Pinned" }, "rs-retrieval-run");
+    const request = runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run");
     const firstResponse = await run(request);
     const first = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(firstResponse);
     expect(firstResponse.status, JSON.stringify(first)).toBe(200);
     expect(first.data.workflow_instance_id.startsWith("run-")).toBe(true);
-    const runBinding = await db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1")
-      .bind(first.data.workflow_instance_id).first<{ handler_generation: string }>();
+    const runBinding = await db.prepare("SELECT handler_generation, scope_snapshot_id, scope_snapshot_revision FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(first.data.workflow_instance_id).first<{ handler_generation: string; scope_snapshot_id: string; scope_snapshot_revision: number }>();
     expect(runBinding?.handler_generation).toBe(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION);
+    const profile = await db.prepare("SELECT max_results FROM retrieval_scope_profile WHERE snapshot_id = ?1 AND revision = ?2")
+      .bind(runBinding?.scope_snapshot_id, runBinding?.scope_snapshot_revision)
+      .first<{ max_results: number }>();
+    expect(profile?.max_results).toBe(1);
     const stageFive = await db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 5")
       .bind(first.data.workflow_instance_id).first<{ receipt_json: string }>();
     expect(stageFive).not.toBeNull();
@@ -314,13 +319,26 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     if (stageObject === null) throw new Error("missing persisted retrieval output");
     const retrieval = JSON.parse(new TextDecoder().decode(new Uint8Array(await stageObject.arrayBuffer()))) as {
       workflow_stage?: string;
+      retrieval_request_digest?: string;
       evidence_pack?: { resolved_evidence?: readonly { exact_excerpt?: string }[] };
+      trace?: { scope_snapshot?: { digest?: string } };
     };
     expect(retrieval.workflow_stage).toBe("RETRIEVE_BRANCHES");
     expect(retrieval.evidence_pack?.resolved_evidence).toHaveLength(1);
     expect(retrieval.evidence_pack?.resolved_evidence?.[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    expect(typeof retrieval.trace?.scope_snapshot?.digest).toBe("string");
+    if (typeof retrieval.trace?.scope_snapshot?.digest !== "string") throw new Error("missing retrieval scope digest");
+    expect(retrieval.retrieval_request_digest).toBe(await retrievalRequestDigest({
+      raw_query: "Pinned",
+      product: "FAST_SEARCH",
+      literals: [],
+      requested_limit: 1,
+      scope_digest: retrieval.trace.scope_snapshot.digest,
+    }));
     const counts = await workflowCounts();
-    const replay = await body(await run(runRequest(sourceId, { query: "Pinned" }, "rs-retrieval-run")));
+    const changedLimit = await body(await run(runRequest(sourceId, { query: "Pinned", max_results: 2 }, "rs-retrieval-run")));
+    expect(changedLimit.code, JSON.stringify(changedLimit)).toBe("RESEARCH_CONFLICT");
+    const replay = await body(await run(runRequest(sourceId, { query: "Pinned", max_results: 1 }, "rs-retrieval-run")));
     expect(replay.data).toEqual(first.data);
     expect(await workflowCounts()).toEqual(counts);
   }, 30_000);

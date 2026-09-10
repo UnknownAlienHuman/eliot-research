@@ -198,7 +198,10 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
         });
         if (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION) {
-          await createD1ScopeProfilePort(db).recordBinding(authority.snapshot, SERVER_RETRIEVAL_SCOPE_PROFILE).catch(mapRetrievalError);
+          await createD1ScopeProfilePort(db).recordBinding(authority.snapshot, {
+            ...SERVER_RETRIEVAL_SCOPE_PROFILE,
+            max_results: request.max_results,
+          }).catch(mapRetrievalError);
         }
         handlers = createResearchStageHandlerFactory({
           kind: "server-owned-exploratory",
