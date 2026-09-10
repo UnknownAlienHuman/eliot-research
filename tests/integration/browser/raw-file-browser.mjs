@@ -45,6 +45,69 @@ function rawBodyDiagnostic(page, response, method, path, status, error) {
   return `method=${requestMethod} phase=${rawResponsePhase(method, path)} status=${status} service_worker=${serviceWorker} network_failure=${networkFailure} body_error=${rawBodyErrorKind(error)} page_closed=${pageClosed} frame_detached=${frameDetached}`;
 }
 
+async function beginRawAdmissionDiagnostic(page, path) {
+  if (!path.endsWith("/admission")) return false;
+  await page.evaluate(() => {
+    const old = window.__eliotrRawAdmissionDiagnostic;
+    old?.dispose?.();
+    const events = [];
+    const allowedCodes = new Set(["API_REQUEST_ABORTED", "API_UNREACHABLE", "API_RESPONSE_SCHEMA_MISMATCH", "API_RESPONSE_TOO_LARGE", "MALFORMED_JSON_RESPONSE", "API_STATUS_INVALID", "API_GENERATION_MISMATCH", "RAW_ADMISSION_RESPONSE_INVALID", "RAW_ADMISSION_OUTCOME_UNKNOWN", "RAW_NORMALIZED_OUTCOME_UNKNOWN"]);
+    let lastMilestone = "";
+    const milestone = () => {
+      const panel = document.querySelector("#raw-upload");
+      const status = panel?.querySelector("[data-raw-status]")?.textContent?.trim() ?? "";
+      const match = status.match(/\b[A-Z][A-Z0-9_]{2,63}\b/gu)?.find((code) => allowedCodes.has(code));
+      const value = match === "API_REQUEST_ABORTED" ? "ui:API_REQUEST_ABORTED"
+        : match ? `ui:${match}`
+          : /Added to Library/iu.test(status) ? "ui:COMPLETED"
+            : /Adding the processed file/iu.test(status) ? "ui:STARTED" : "";
+      if (value && value !== lastMilestone && events.length < 24) { events.push(value); lastMilestone = value; }
+    };
+    const record = (value) => { if (events.length < 24) events.push(value); };
+    const targets = [[window, "eliotr:authorization-cleared", "lifecycle:authorization-cleared"],
+      [window, "offline", "lifecycle:offline"], [window, "pagehide", "lifecycle:pagehide"],
+      [document.querySelector("#app"), "eliotr:health-lost", "lifecycle:health-lost"]];
+    const listeners = [];
+    for (const [target, type, value] of targets) if (target) {
+      const listener = () => record(value);
+      target.addEventListener(type, listener); listeners.push([target, type, listener]);
+    }
+    const panel = document.querySelector("#raw-upload");
+    const observer = panel ? new MutationObserver(milestone) : undefined;
+    observer?.observe(panel, { subtree: true, childList: true, characterData: true, attributes: true });
+    milestone();
+    window.__eliotrRawAdmissionDiagnostic = { events, dispose: () => { observer?.disconnect(); for (const [target, type, listener] of listeners) target.removeEventListener(type, listener); } };
+  });
+  return true;
+}
+
+async function finishRawAdmissionDiagnostic(page) {
+  try {
+    return await page.evaluate(() => {
+      const diagnostic = window.__eliotrRawAdmissionDiagnostic;
+      const panel = document.querySelector("#raw-upload");
+      const status = panel?.querySelector("[data-raw-status]")?.textContent?.trim() ?? "";
+      const allowedCodes = new Set(["API_REQUEST_ABORTED", "API_UNREACHABLE", "API_RESPONSE_SCHEMA_MISMATCH", "API_RESPONSE_TOO_LARGE", "MALFORMED_JSON_RESPONSE", "API_STATUS_INVALID", "API_GENERATION_MISMATCH", "RAW_ADMISSION_RESPONSE_INVALID", "RAW_ADMISSION_OUTCOME_UNKNOWN", "RAW_NORMALIZED_OUTCOME_UNKNOWN"]);
+      const match = status.match(/\b[A-Z][A-Z0-9_]{2,63}\b/gu)?.find((code) => allowedCodes.has(code));
+      const uiCode = match ?? (/Added to Library/iu.test(status) ? "COMPLETED" : "unavailable");
+      const events = Array.isArray(diagnostic?.events) ? diagnostic.events.slice(0, 24) : [];
+      diagnostic?.dispose?.(); delete window.__eliotrRawAdmissionDiagnostic;
+      return { ui_code: uiCode, events };
+    });
+  } catch { return { ui_code: "unavailable", events: [] }; }
+}
+
+function rawResponseTransportDiagnostic(response) {
+  const headers = response.headers();
+  const timing = response.request().timing();
+  const finite = (value) => Number.isFinite(value) ? Math.round(value) : undefined;
+  return {
+    content_type: headers["content-type"] ?? "unavailable",
+    content_length: headers["content-length"] ?? "unavailable",
+    request_start_ms: finite(timing.requestStart), response_start_ms: finite(timing.responseStart), response_end_ms: finite(timing.responseEnd),
+  };
+}
+
 function assertRawEnvelope(value, expectedGeneration, expected) {
   assert.ok(value && typeof value === "object" && !Array.isArray(value), "raw capture response must be an object");
   assert.equal(value.trace_id !== undefined, true, "raw capture response must carry a trace id");
@@ -64,6 +127,7 @@ function assertRawEnvelope(value, expectedGeneration, expected) {
 }
 
 export async function waitForRawResponse(page, method, action, path = "/api/v1/ingest/raw", expectedStatus = 200) {
+  const admissionDiagnostic = await beginRawAdmissionDiagnostic(page, path);
   const expectedOrigin = (() => {
     try { return new URL(page.url()).origin; } catch { return undefined; }
   })();
@@ -86,7 +150,10 @@ export async function waitForRawResponse(page, method, action, path = "/api/v1/i
       // document is navigated away, even though the response event already ran.
       body = await response.body();
     } catch (error) {
-      throw new Error(`raw response body unavailable at settlement (${rawBodyDiagnostic(page, response, method, path, status, error)})`, { cause: error });
+      const ui = admissionDiagnostic ? await finishRawAdmissionDiagnostic(page) : undefined;
+      const transport = rawResponseTransportDiagnostic(response);
+      const detail = `${rawBodyDiagnostic(page, response, method, path, status, error)} content_type=${transport.content_type} content_length=${transport.content_length} request_start_ms=${transport.request_start_ms ?? "unavailable"} response_start_ms=${transport.response_start_ms ?? "unavailable"} response_end_ms=${transport.response_end_ms ?? "unavailable"}${ui ? ` ui_code=${ui.ui_code} ui_events=${ui.events.join(",") || "none"}` : ""}`;
+      throw new Error(`raw response body unavailable at settlement (${detail})`, { cause: error });
     }
     const requestHeaders = await response.request().allHeaders();
     const requestBody = typeof response.request().postData === "function"
@@ -99,6 +166,7 @@ export async function waitForRawResponse(page, method, action, path = "/api/v1/i
         throw new Error(`raw ${method} response must be JSON`, { cause: error });
       }
     }
+    if (admissionDiagnostic) await finishRawAdmissionDiagnostic(page);
     return { status, requestHeaders, requestBody, payload };
   });
   const [, snapshot] = await Promise.all([Promise.resolve().then(action), snapshotPromise]);
