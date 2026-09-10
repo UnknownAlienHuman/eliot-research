@@ -1,0 +1,61 @@
+protocol: eliotr.normalized.v1
+
+origin:
+  owner_system_id:
+  source_namespace_id:
+  source_owner_generation:
+  source_revision_ref:
+  source_view_ref: exact_upstream_view_descriptor
+  workspace_view_revision_ref: optional
+  ownership_mode: federated_reference | immutable_import | ownership_cutover
+  ownership_cutover_receipt_ref: required_for_ownership_cutover | absent_otherwise
+
+source:
+  logical_id:
+  original_name:
+  original_sha256:
+  origin_location_class: local_only | cloud | external
+  mime_type:
+
+residency_and_disclosure:
+  scope_domain_id:
+  access_domain_id:
+  confidentiality_domain_id:
+  encryption_key_domain_id:
+  retention_domain_id:
+  erasure_domain_id:
+  disclosure_ceiling:
+  allowed_use:
+  expiry:
+
+normalization:
+  analyzer:
+  analyzer_version:
+  profile:
+  config_hash:
+  created_at:
+
+content:
+  markdown: content.md
+  markdown_sha256:
+  structure: optional
+  mappings: optional
+  tables: optional
+  coordinate_map_digest: optional
+  loss_map_digest: optional
+
+capabilities:
+  text_ranges: boolean
+  pages: boolean
+  bounding_boxes: boolean
+  tables: boolean
+  figures: boolean
+
+quality:
+  state: high_fidelity | standard | degraded
+  assurance_ceiling:
+  warnings: []
+
+export:
+  purpose:
+  receipt_ref:

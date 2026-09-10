@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# pnpm 11 removed onlyBuiltDependencies. Review lifecycle-script access explicitly.
+allowBuilds:
+  esbuild: true
+  workerd: true

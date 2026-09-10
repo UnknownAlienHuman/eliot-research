@@ -1,0 +1,29 @@
+{
+  "protocol": "eliotr.research-workflow.v1",
+  "workflow_name": "eliotr-research-workflow",
+  "result_payload": "handles_only",
+  "maximum_step_result_bytes": 65536,
+  "default_branch_fanout": 2,
+  "maximum_branch_fanout": 4,
+  "nested_fanout": 0,
+  "stages": [
+    "FREEZE_PROTOCOL_AND_SCOPE",
+    "ORIENT",
+    "INTERPRET",
+    "COMPILE_OBLIGATIONS",
+    "PLAN",
+    "RETRIEVE_BRANCHES",
+    "ACQUIRE_AND_CAPTURE",
+    "READ_AND_EXTRACT",
+    "ANALYZE_BRANCHES",
+    "COUNTER_SEARCH",
+    "RECONCILE",
+    "FREEZE_EVIDENCE",
+    "SYNTHESIZE",
+    "VERIFY",
+    "AUDIT_CLAIMS",
+    "RESOLVE_CITATIONS",
+    "CALCULATE_COVERAGE",
+    "MATERIALIZE"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "@eliotr/pwa",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": true,
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@eliotr/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "vite": "8.2.2",
+    "typescript": "6.0.3"
+  }
+}

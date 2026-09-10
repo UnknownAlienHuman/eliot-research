@@ -1,0 +1,9 @@
+# protocol=eliotr.test-vectors.canonical-utf8.v1
+# schema_generation=1
+# columns=case_id|max_bytes|input_hex|expected|output_hex|error_code
+ascii_exact|5|68656c6c6f|ok|68656c6c6f|-
+unicode_multibyte|12|d09fd180d0b8d0b2d0b5d182|ok|d09fd180d0b8d0b2d0b5d182|-
+empty_zero_budget|0|-|ok|-|-
+invalid_utf8|1|ff|error|-|ELIOTR_UTF8_INVALID
+oversized_before_utf8|0|ff|error|-|ELIOTR_UTF8_TOO_LARGE
+limit_plus_one|2|616263|error|-|ELIOTR_UTF8_TOO_LARGE

@@ -1,0 +1,23 @@
+{
+  "protocol": "eliotr.r2.storage-policy.v1",
+  "evidence_bucket": {
+    "name": "eliotr-evidence",
+    "default_lock": "none",
+    "application_immutable": true,
+    "erasure_coordinator_only_delete": true,
+    "lifecycle_rules": []
+  },
+  "work_bucket": {
+    "name": "eliotr-work",
+    "default_lock": "none",
+    "staging_expiry_days": 7,
+    "quarantine_expiry_days": 30,
+    "backup_policy_ref": "backup-epoch.v1"
+  },
+  "forbidden": [
+    "global_sha256_key_without_residency_identity",
+    "whole_bucket_lock",
+    "erasable_object_under_incompatible_lock",
+    "canonical_state_only_in_staging"
+  ]
+}

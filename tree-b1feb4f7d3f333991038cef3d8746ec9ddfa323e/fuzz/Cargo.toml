@@ -1,0 +1,20 @@
+[package]
+name = "eliotr-m1-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+eliotr-canonical = { path = "../crates/eliotr-canonical", version = "=0.1.0" }
+eliotr-test-vectors = { path = "../crates/eliotr-test-vectors", version = "=0.1.0" }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "m1_kernel"
+path = "fuzz_targets/m1_kernel.rs"
+test = false
+doc = false
+bench = false

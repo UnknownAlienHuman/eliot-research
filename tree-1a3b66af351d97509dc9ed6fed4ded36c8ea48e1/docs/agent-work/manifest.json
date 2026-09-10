@@ -1,0 +1,834 @@
+{
+  "protocol": "eliotr.agent-work.v1",
+  "repository": "UnknownAlienHuman/eliot-research",
+  "baseline_commit": "ec21df807a6ee10e4b2b35283224ff172a077cf8",
+  "architecture_contract": "docs/architecture/ELIOT_RESEARCH.md#v29.1",
+  "generated_at": "2026-09-05T05:30:00Z",
+  "rules": {
+    "one_agent_one_packet": true,
+    "owned_paths_may_not_overlap": true,
+    "unknown_dependency_fails": true,
+    "package_source_line_limit": 10000,
+    "file_source_line_target": 600,
+    "completion_requires_negative_case": true,
+    "live_gate_cannot_be_mocked": true
+  },
+  "packets": [
+    {
+      "id": "ER-00",
+      "depends_on": [],
+      "owned_paths": [
+        "package.json",
+        "pnpm-workspace.yaml",
+        "pnpm-lock.yaml",
+        "packages/cloudflare-federation/package.json",
+        "packages/cloudflare-federation/tsconfig.json",
+        "packages/cloudflare-federation/AGENTS.md",
+        "tsconfig.json",
+        "tsconfig.base.json",
+        "eslint.config.mjs",
+        "vitest.config.ts",
+        ".editorconfig",
+        ".npmrc",
+        ".gitignore",
+        ".github/**",
+        "infra/github/branch-hygiene.json",
+        "Cargo.toml",
+        "Cargo.lock",
+        "rust-toolchain.toml",
+        "deny.toml",
+        ".config/nextest.toml",
+        "scripts/check-boundaries.mjs",
+        "scripts/test-boundary-negative.mjs",
+        "scripts/check-budgets.mjs",
+        "scripts/check-contract-fixtures.mjs",
+        "scripts/check-work-packets.mjs",
+        "scripts/check-rust-boundaries.mjs",
+        "scripts/branch-hygiene-lib.mjs",
+        "scripts/branch-hygiene.mjs",
+        "scripts/test-branch-hygiene.mjs",
+        "docs/agent-work/manifest.json",
+        "docs/agent-work/ER-00-workspace-and-verification-gates.md",
+        "docs/implementation/toolchain.md",
+        "docs/implementation/production-readiness-plan.md",
+        "docs/implementation/gap-register.md",
+        "docs/implementation/canonical-alignment.md",
+        "scripts/check-implementation-status.mjs",
+        "packages/cloudflare-navigation/package.json",
+        "packages/cloudflare-navigation/tsconfig.json",
+        "packages/cloudflare-navigation/AGENTS.md"
+      ],
+      "mandatory_negative_case": "Inject a forbidden Node import and malformed shared vector metadata; prove both real gates fail closed.",
+      "document": "ER-00-workspace-and-verification-gates.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-01",
+      "depends_on": [
+        "ER-00"
+      ],
+      "owned_paths": [
+        "packages/contracts/**",
+        "docs/contracts/**"
+      ],
+      "mandatory_negative_case": "Attempt to parse a tenth disposition and an unknown security field; both must fail.",
+      "document": "ER-01-versioned-contracts-and-schemas.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-02",
+      "depends_on": [
+        "ER-01"
+      ],
+      "owned_paths": [
+        "packages/domain/src/index.ts",
+        "packages/domain/src/result.ts",
+        "packages/domain/src/errors.ts",
+        "packages/domain/src/source-ownership.ts",
+        "packages/domain/src/owner-cutover.ts",
+        "packages/domain/src/residency.ts",
+        "packages/domain/src/readiness.ts",
+        "packages/domain/src/evidence.ts",
+        "packages/domain/src/evidence-grade.ts",
+        "packages/domain/src/investigation.ts",
+        "packages/domain/src/completion.ts",
+        "packages/domain/src/coverage.ts",
+        "packages/domain/src/domain.test.ts",
+        "packages/domain/package.json",
+        "packages/domain/tsconfig.json",
+        "packages/domain/AGENTS.md"
+      ],
+      "mandatory_negative_case": "Try activating a second source owner before the old generation is fenced; reject it.",
+      "document": "ER-02-core-deterministic-domain-state-machines.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-03",
+      "depends_on": [
+        "ER-01",
+        "ER-02"
+      ],
+      "owned_paths": [
+        "packages/policy/**"
+      ],
+      "mandatory_negative_case": "Embed a tool instruction inside admitted source text and prove it cannot alter tools, scope, policy, or output effect.",
+      "document": "ER-03-policy-disclosure-and-injection-boundary.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-04",
+      "depends_on": [
+        "ER-03",
+        "ER-30"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/index.ts",
+        "packages/retrieval/src/planner.ts",
+        "packages/retrieval/src/fusion.ts",
+        "packages/retrieval/src/service.ts",
+        "packages/retrieval/src/retrieval.test.ts",
+        "packages/retrieval/package.json",
+        "packages/retrieval/tsconfig.json",
+        "packages/retrieval/AGENTS.md"
+      ],
+      "mandatory_negative_case": "Return an AI Search no-hit and prove planner does not convert it to an absence claim.",
+      "document": "ER-04-query-planner-and-fusion.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-05",
+      "depends_on": [
+        "ER-01",
+        "ER-29"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/projection.ts"
+      ],
+      "mandatory_negative_case": "Supply mapping-free Markdown and prove the projector does not invent page, bounding-box, or table-cell coordinates.",
+      "document": "ER-05-structural-projector.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-06",
+      "depends_on": [
+        "ER-05",
+        "ER-13",
+        "ER-16"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/ports.ts",
+        "packages/retrieval/src/lanes.ts"
+      ],
+      "mandatory_negative_case": "Return a stale projection hit for a purged revision and prove post-retrieval policy recheck excludes it.",
+      "document": "ER-06-retrieval-lane-adapters.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-07",
+      "depends_on": [
+        "ER-02",
+        "ER-05",
+        "ER-06",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/evidence-resolver.ts",
+        "packages/retrieval/src/exhaustive.ts"
+      ],
+      "mandatory_negative_case": "Change the current source bytes while resolving an old handle; resolver must reject/substantiate the pinned revision, never substitute current bytes.",
+      "document": "ER-07-exact-evidence-resolver-and-exhaustive-scan.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-08",
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-04"
+      ],
+      "owned_paths": [
+        "packages/research/src/index.ts",
+        "packages/research/src/ports.ts",
+        "packages/research/src/investigation-service.ts",
+        "packages/research/src/ledger-commands.ts",
+        "packages/research/src/research.test.ts",
+        "packages/research/src/ledger-commands.test.ts",
+        "packages/research/package.json",
+        "packages/research/tsconfig.json",
+        "packages/research/AGENTS.md"
+      ],
+      "mandatory_negative_case": "Modify a confirmatory primary outcome after exposure and prove subsequent analysis cannot remain silently confirmatory.",
+      "document": "ER-08-investigation-ledger-and-protocol.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-09",
+      "depends_on": [
+        "ER-08",
+        "ER-15",
+        "ER-16"
+      ],
+      "owned_paths": [
+        "packages/research/src/workflow.ts",
+        "apps/eliotr-core/src/research-workflow.ts",
+        "infra/workflows/**",
+        "packages/cloudflare-research/**",
+        "apps/eliotr-core/test/research-workflow.test.ts",
+        "apps/eliotr-core/test/research-workflow-fixture.ts",
+        "docs/implementation/workflow-checkpoints.md"
+      ],
+      "mandatory_negative_case": "Inject a lost acknowledgement after model output persistence and prove retry does not execute/pay for the call twice.",
+      "document": "ER-09-durable-research-workflow.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-10",
+      "depends_on": [
+        "ER-07",
+        "ER-08"
+      ],
+      "owned_paths": [
+        "packages/research/src/evidence-freeze.ts",
+        "packages/research/src/claim-audit.ts",
+        "packages/research/src/coverage.ts"
+      ],
+      "mandatory_negative_case": "Provide the correct source but a cropped excerpt missing the hedge; claim audit must fail excerpt sufficiency.",
+      "document": "ER-10-evidence-freeze-claim-audit-and-coverage.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-11",
+      "depends_on": [
+        "ER-09",
+        "ER-10"
+      ],
+      "owned_paths": [
+        "packages/research/src/artifact-compiler.ts"
+      ],
+      "mandatory_negative_case": "Purge the only support for one section and prove the artifact becomes pending revalidation/redacted dependency rather than remaining accepted.",
+      "document": "ER-11-artifact-compiler.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-12",
+      "depends_on": [
+        "ER-10",
+        "ER-13",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/research/src/wiki.ts",
+        "packages/domain/src/publication.ts"
+      ],
+      "mandatory_negative_case": "Race two publishers against one expected head; exactly one becomes active and the loser receives typed conflict.",
+      "document": "ER-12-research-wiki-and-draft-promotion.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-13",
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-23"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/bindings.ts",
+        "packages/platform-cloudflare/src/d1.ts",
+        "packages/platform-cloudflare/src/d1-outbox-authority.ts",
+        "packages/platform-cloudflare/src/d1-outbox-authority.test.ts",
+        "packages/platform-cloudflare/src/d1-outbox-store.ts",
+        "packages/platform-cloudflare/src/d1-outbox-store.test.ts",
+        "packages/platform-cloudflare/src/d1-inbox-store.ts",
+        "packages/platform-cloudflare/src/d1-inbox-store.test.ts",
+        "packages/platform-cloudflare/src/execution-lease.ts",
+        "packages/platform-cloudflare/src/execution-lease.test.ts",
+        "packages/platform-cloudflare/src/index.ts",
+        "infra/d1/**",
+        "apps/eliotr-core/test/investigation-ledger-d1.test.ts",
+        "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts",
+        "scripts/check-delivery-authority.mjs"
+      ],
+      "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
+      "document": "ER-13-d1-authority-and-migrations.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-14",
+      "depends_on": [
+        "ER-01",
+        "ER-03",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/r2.ts",
+        "packages/platform-cloudflare/src/r2.test.ts",
+        "packages/platform-cloudflare/src/ingest.ts",
+        "packages/platform-cloudflare/src/ingest-types.ts",
+        "packages/platform-cloudflare/src/ingest-validation.ts",
+        "packages/platform-cloudflare/src/ingest-state.ts",
+        "packages/platform-cloudflare/src/ingest-storage.ts",
+        "packages/platform-cloudflare/src/ingest-multipart.ts",
+        "packages/platform-cloudflare/src/ingest-verification.ts",
+        "packages/platform-cloudflare/src/ingest-promotion.ts",
+        "packages/platform-cloudflare/src/ingest-test-fixture.ts",
+        "packages/platform-cloudflare/src/ingest.test.ts",
+        "packages/platform-cloudflare/src/ingest-resilience.test.ts",
+        "infra/r2/**"
+      ],
+      "mandatory_negative_case": "Upload identical bytes under a different erasure or encryption-key domain and prove physical/key/ciphertext reuse is rejected.",
+      "document": "ER-14-r2-staging-residency-and-ingest.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-15",
+      "depends_on": [
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/outbox.ts",
+        "packages/platform-cloudflare/src/queue.ts",
+        "packages/platform-cloudflare/src/delivery-types.ts",
+        "packages/platform-cloudflare/src/delivery-runtime.ts",
+        "packages/platform-cloudflare/src/outbox-dispatcher.ts",
+        "packages/platform-cloudflare/src/outbox-dispatcher.test.ts",
+        "packages/platform-cloudflare/src/queue-consumer.ts",
+        "packages/platform-cloudflare/src/queue-consumer.test.ts"
+      ],
+      "mandatory_negative_case": "Deliver the same message concurrently to two consumers and prove one authoritative operation/receipt results.",
+      "document": "ER-15-outbox-queue-and-retry-discipline.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-16",
+      "depends_on": [
+        "ER-00",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/cloudflare-ai/**",
+        "packages/platform-cloudflare/src/ai-search.ts",
+        "packages/platform-cloudflare/src/ai-search.test.ts",
+        "packages/platform-cloudflare/src/model-gateway.ts",
+        "infra/ai-search/**",
+        "infra/cloudflare/ai-gateways.json"
+      ],
+      "mandatory_negative_case": "Point desired config at an existing instance with a different embedding model and prove provisioning fails instead of mutating it.",
+      "document": "ER-16-ai-search-and-model-gateway-adapters.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-17",
+      "depends_on": [
+        "ER-00",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/access.ts",
+        "packages/platform-cloudflare/src/access.test.ts",
+        "packages/platform-cloudflare/src/observability.ts",
+        "packages/platform-cloudflare/src/observability.test.ts",
+        "packages/platform-cloudflare/src/runtime-limits.ts",
+        "packages/platform-cloudflare/src/runtime-limits.test.ts"
+      ],
+      "mandatory_negative_case": "Attempt to log an evidence excerpt or credential-shaped field and prove redaction/drop occurs.",
+      "document": "ER-17-access-observability-and-runtime-limits.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-18",
+      "depends_on": [
+        "ER-01",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/index.ts",
+        "packages/google-drive-exchange/src/serializer.ts",
+        "packages/google-drive-exchange/src/contribution.ts",
+        "packages/google-drive-exchange/src/provisioner.ts",
+        "packages/google-drive-exchange/src/drive.test.ts",
+        "packages/google-drive-exchange/package.json",
+        "packages/google-drive-exchange/tsconfig.json",
+        "packages/google-drive-exchange/AGENTS.md",
+        "packages/google-drive-exchange/src/contribution-boundary.test.ts",
+        "packages/google-drive-exchange/src/drive-test-fixture.ts"
+      ],
+      "mandatory_negative_case": "Build a request above 128 KiB or with six parts and prove serializer rejects before Drive call.",
+      "document": "ER-18-drive-exchange-protocol-and-provisioner.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-19",
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-18"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/cursor.ts",
+        "packages/google-drive-exchange/src/reconciler.ts"
+      ],
+      "mandatory_negative_case": "Lose a poll notification and edit an imported row; cursor replay/audit must detect both without duplicate work.",
+      "document": "ER-19-drive-cursor-reconciliation-and-tamper-audit.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-20",
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-18"
+      ],
+      "owned_paths": [
+        "packages/google-drive-exchange/src/port.ts",
+        "packages/google-drive-exchange/src/token-vault.ts",
+        "packages/google-drive-exchange/src/result-publisher.ts",
+        "packages/google-drive-exchange/src/rest-transport.ts",
+        "packages/google-drive-exchange/src/sheet-ranges.ts",
+        "packages/google-drive-exchange/src/sheet-port.ts",
+        "packages/google-drive-exchange/src/sheet-port.test.ts",
+        "docs/implementation/drive-rest.md",
+        "packages/google-drive-exchange/src/token-credentials.ts",
+        "packages/google-drive-exchange/src/token-refresh.ts",
+        "packages/google-drive-exchange/src/token-lease.ts",
+        "packages/google-drive-exchange/src/token-vault.test.ts",
+        "packages/google-drive-exchange/src/token-lease.test.ts",
+        "docs/implementation/drive-credentials.md",
+        "packages/google-drive-exchange/src/oauth-types.ts",
+        "packages/google-drive-exchange/src/oauth-transport.ts",
+        "packages/google-drive-exchange/src/oauth-identity.ts",
+        "packages/google-drive-exchange/src/oauth-admission.ts",
+        "packages/google-drive-exchange/src/oauth-test-fixture.ts",
+        "packages/google-drive-exchange/src/oauth-identity.test.ts",
+        "docs/implementation/drive-oauth-admission.md"
+      ],
+      "mandatory_negative_case": "Return invalid_grant during result publication and prove ERC artifact remains available while connector becomes REAUTH_REQUIRED.",
+      "document": "ER-20-google-oauth-port-and-result-publication.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-21",
+      "depends_on": [
+        "ER-03",
+        "ER-04",
+        "ER-13"
+      ],
+      "owned_paths": [
+        "packages/interfaces/src/index.ts",
+        "packages/interfaces/src/http.ts",
+        "packages/interfaces/src/semantic-api.ts",
+        "packages/interfaces/src/owner-api.ts",
+        "packages/interfaces/src/routes.ts",
+        "packages/interfaces/src/application.ts",
+        "packages/interfaces/src/ingest-api.ts",
+        "packages/interfaces/package.json",
+        "packages/interfaces/tsconfig.json",
+        "packages/interfaces/AGENTS.md"
+      ],
+      "mandatory_negative_case": "Request a provider/database/index name through the API and prove it cannot bypass product policy/router.",
+      "document": "ER-21-owner-and-semantic-apis.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-22",
+      "depends_on": [
+        "ER-01",
+        "ER-03",
+        "ER-08",
+        "ER-21"
+      ],
+      "owned_paths": [
+        "packages/interfaces/src/federation-api.ts",
+        "apps/eliotr-core/src/federation-service.ts",
+        "apps/eliotr-core/src/federation-scope-limits.ts",
+        "apps/eliotr-core/src/federation-request-authorities.ts",
+        "apps/eliotr-core/src/federation-service.test.ts"
+      ],
+      "mandatory_negative_case": "Complete transport with an inconclusive research result and prove status is COMPLETED + INCONCLUSIVE, not ANSWERED_WITH_SUPPORTED_RESULT.",
+      "document": "ER-22-generic-federation-boundary.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-23",
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-02",
+        "ER-03"
+      ],
+      "owned_paths": [
+        "packages/testkit/**",
+        "tests/fixtures/**",
+        "tests/golden-corpus/**"
+      ],
+      "mandatory_negative_case": "Run recommendation-vs-decision and hypothesis-vs-observation cases against a deliberately collapsing extractor; harness must fail.",
+      "document": "ER-23-testkit-and-golden-corpus-harness.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-24",
+      "depends_on": [
+        "ER-13",
+        "ER-15",
+        "ER-17",
+        "ER-21"
+      ],
+      "owned_paths": [
+        "apps/eliotr-core/src/env.ts",
+        "apps/eliotr-core/src/index.ts",
+        "apps/eliotr-core/src/http.ts",
+        "apps/eliotr-core/src/composition-root.ts",
+        "apps/eliotr-core/src/queue.ts",
+        "apps/eliotr-core/src/scheduled.ts",
+        "apps/eliotr-core/src/readiness.ts",
+        "apps/eliotr-core/src/research-session.ts",
+        "apps/eliotr-core/src/index.test.ts",
+        "apps/eliotr-core/wrangler.jsonc",
+        "packages/cloudflare-navigation/src/index.ts",
+        "packages/cloudflare-navigation/src/orientation-authority.ts",
+        "packages/cloudflare-navigation/src/orientation-currentness.test.ts",
+        "packages/cloudflare-navigation/src/orientation-currentness.ts",
+        "packages/cloudflare-navigation/src/orientation-input.ts",
+        "packages/cloudflare-navigation/src/orientation-materialization.ts",
+        "packages/cloudflare-navigation/src/orientation-service.ts",
+        "packages/cloudflare-navigation/src/orientation-storage.ts",
+        "apps/eliotr-core/test/orientation-boundaries.test.ts",
+        "apps/eliotr-core/test/orientation-fixture.ts",
+        "apps/eliotr-core/test/orientation-http.test.ts",
+        "apps/eliotr-core/test/orientation-resilience.test.ts",
+        "apps/eliotr-core/vitest.config.ts",
+        "apps/eliotr-core/src/catalog-service.ts",
+        "apps/eliotr-core/src/catalog-service.test.ts",
+        "apps/eliotr-core/src/catalog-queries.ts",
+        "apps/eliotr-core/test/catalog-http.test.ts",
+        "apps/eliotr-core/src/source-revisions.ts",
+        "apps/eliotr-core/test/source-revisions.test.ts",
+        "apps/eliotr-core/src/google-token-store.ts",
+        "apps/eliotr-core/test/google-token-store.test.ts",
+        "apps/eliotr-core/src/google-oauth-store.ts",
+        "apps/eliotr-core/src/google-oauth-service.ts",
+        "apps/eliotr-core/src/google-oauth-begin.ts",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts",
+        "apps/eliotr-core/test/google-oauth-begin-http.test.ts",
+        "apps/eliotr-core/test/retrieval-ident-lex.test.ts",
+        "apps/eliotr-core/test/retrieval-q1-fixture.ts",
+        "apps/eliotr-core/test/retrieval-generation-fences.test.ts"
+      ],
+      "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
+      "document": "ER-24-worker-composition-do-queue-and-schedules.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-25",
+      "depends_on": [
+        "ER-21",
+        "ER-24"
+      ],
+      "owned_paths": [
+        "apps/eliotr-pwa/**",
+        "tests/library.test.ts",
+        "tests/source-revisions.test.ts",
+        "tests/bundle-recovery.test.ts",
+        "scripts/test-library-browser.mjs",
+        "scripts/lib/browser-import-fixture.mjs"
+      ],
+      "mandatory_negative_case": "Simulate Drive/model outage and prove core library/retrieval UI remains usable with explicit degraded status.",
+      "document": "ER-25-owner-pwa.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-26",
+      "depends_on": [
+        "ER-00",
+        "ER-13",
+        "ER-16",
+        "ER-24"
+      ],
+      "owned_paths": [
+        "scripts/provision-cloudflare-core.mjs",
+        "scripts/provision-cloudflare-access.mjs",
+        "scripts/provision-ai-search.mjs",
+        "scripts/lib/cloudflare-d1-http.mjs",
+        "scripts/manage-ai-search-generation.mjs",
+        "scripts/run-provisioner-tests.mjs",
+        "scripts/test-ai-search-generation-operator.mjs",
+        "scripts/test-ai-search-provisioning-readback.mjs",
+        "scripts/test-ai-search-provisioning-reconciliation.mjs",
+        "scripts/provision-ai-gateways.mjs",
+        "scripts/deploy-cloudflare.mjs",
+        "scripts/test-cloudflare-provisioners.mjs",
+        "infra/cloudflare/resources.json",
+        "infra/cloudflare/access.json",
+        "infra/cloudflare/foundation-receipt.schema.json",
+        "infra/cloudflare/access-receipt.schema.json",
+        "infra/cloudflare/deployment-receipt.schema.json",
+        "infra/cloudflare/README.md",
+        "docs/implementation/cloudflare-runbook.md",
+        "docs/adr/0005-hostname-access-for-websocket.md",
+        "scripts/lib/deployment-verification.mjs",
+        "scripts/test-deployment-verification.mjs",
+        "scripts/test-deployment-orchestration.mjs",
+        "docs/implementation/deployment-audit-2026-09-04.md",
+        "scripts/check-launch-code.mjs",
+        "scripts/test-launch-code.mjs",
+        "scripts/local-runtime.mjs",
+        "scripts/test-local-runtime.mjs",
+        "docs/implementation/local-launch.md"
+      ],
+      "mandatory_negative_case": "Seed mocked Cloudflare APIs with an incompatible immutable AI Search profile and an unexpected Access policy; prove every check-only/apply path exits nonzero before any mutation.",
+      "document": "ER-26-cloudflare-provisioning-and-deployment.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-27",
+      "depends_on": [
+        "ER-09",
+        "ER-12",
+        "ER-19",
+        "ER-20",
+        "ER-22",
+        "ER-24",
+        "ER-26"
+      ],
+      "owned_paths": [
+        "tests/integration/**"
+      ],
+      "mandatory_negative_case": "Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.",
+      "document": "ER-27-vertical-integration-and-live-conformance.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-28",
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-13",
+        "ER-14",
+        "ER-34",
+        "ER-37",
+        "ER-38",
+        "ER-39"
+      ],
+      "owned_paths": [
+        "packages/platform-cloudflare/src/erasure-backend.ts",
+        "packages/cloudflare-erasure/**",
+        "apps/eliotr-core/src/erasure-coordinator.ts",
+        "apps/eliotr-core/src/erasure-coordinator.test.ts",
+        "apps/eliotr-core/src/erasure-runtime.ts",
+        "apps/eliotr-core/src/erasure-runtime.test.ts",
+        "infra/erasure/**",
+        "scripts/check-erasure-closure.mjs"
+      ],
+      "mandatory_negative_case": "Block one requested backup location and prove no subset purge can issue COMPLETE/PURGED.",
+      "document": "ER-28-privacy-erasure-and-purge-closure.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-29",
+      "depends_on": [
+        "ER-02",
+        "ER-03",
+        "ER-13",
+        "ER-14"
+      ],
+      "owned_paths": [
+        "packages/domain/src/source-admission.ts",
+        "packages/domain/src/qualification.ts",
+        "apps/eliotr-core/src/ingest-service.ts",
+        "apps/eliotr-core/src/source-admission-service.ts"
+      ],
+      "mandatory_negative_case": "Submit unsaved editor bytes without explicit snapshot origin/view/policy receipt and prove no source/revision is created.",
+      "document": "ER-29-source-acquisition-admission-and-qualification.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-30",
+      "depends_on": [
+        "ER-02",
+        "ER-13",
+        "ER-29"
+      ],
+      "owned_paths": [
+        "packages/domain/src/scope.ts",
+        "packages/domain/src/project-membership.ts",
+        "packages/domain/src/project-membership.test.ts",
+        "apps/eliotr-core/src/scope-service.ts",
+        "apps/eliotr-core/src/scope-service.test.ts",
+        "packages/domain/src/scope/snapshot-identity.ts",
+        "packages/domain/src/scope/snapshot-identity.test.ts",
+        "apps/eliotr-core/src/scope-persistence.test.ts",
+        "apps/eliotr-core/src/sql-fixture.d.ts",
+        "packages/cloudflare-navigation/src/scope-service.ts"
+      ],
+      "mandatory_negative_case": "Purge one member after freeze and prove the stale snapshot cannot authorize retrieval through old index/cache/summary.",
+      "document": "ER-30-global-library-projects-and-scope-snapshots.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-31",
+      "depends_on": [
+        "ER-04",
+        "ER-05",
+        "ER-30"
+      ],
+      "owned_paths": [
+        "packages/retrieval/src/navigation.ts",
+        "packages/retrieval/src/navigation-model.ts",
+        "packages/retrieval/src/navigation-limits.ts",
+        "packages/retrieval/src/navigation-codec.ts",
+        "packages/retrieval/src/navigation-builders.ts",
+        "packages/retrieval/src/navigation.test.ts",
+        "apps/eliotr-core/src/navigation-service.ts",
+        "apps/eliotr-core/src/navigation-service.test.ts",
+        "packages/retrieval/src/navigation-identity.ts",
+        "packages/retrieval/src/navigation-identity.test.ts",
+        "apps/eliotr-core/src/navigation-persistence.ts",
+        "apps/eliotr-core/test/navigation-fixture.ts",
+        "apps/eliotr-core/test/navigation-persistence.test.ts",
+        "apps/eliotr-core/test/tsconfig.json",
+        "packages/cloudflare-navigation/src/navigation-service.ts"
+      ],
+      "mandatory_negative_case": "Generate a plausible Atlas claim with no supporting source span and prove it remains navigation only and cannot support publication.",
+      "document": "ER-31-corpus-lens-navigation.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-32",
+      "depends_on": [
+        "ER-07",
+        "ER-10",
+        "ER-31"
+      ],
+      "owned_paths": [
+        "packages/research/src/distillation.ts",
+        "packages/research/src/argument-map.ts"
+      ],
+      "mandatory_negative_case": "Feed a recommendation sentence and prove extractor cannot emit a decision atom.",
+      "document": "ER-32-selective-distillation-and-argument-maps.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-33",
+      "depends_on": [
+        "ER-07",
+        "ER-12",
+        "ER-15",
+        "ER-17",
+        "ER-32"
+      ],
+      "owned_paths": [
+        "packages/research/src/steward.ts"
+      ],
+      "mandatory_negative_case": "Give Steward a stale Wiki dependency and prove it can mark/propose revalidation but cannot silently rewrite/publish the page.",
+      "document": "ER-33-research-steward.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-34",
+      "depends_on": [
+        "ER-13",
+        "ER-14",
+        "ER-17"
+      ],
+      "owned_paths": [
+        "packages/backup-o2/**",
+        "packages/backup-o2/src/intent-digest.ts",
+        "packages/backup-o2/src/migration-gate.ts",
+        "packages/backup-o2/src/coherent-cut.ts",
+        "packages/backup-o2/src/destination-authority.ts",
+        "packages/backup-o2/src/offsite-durability.ts",
+        "packages/backup-o2/src/r2-conformance.ts",
+        "packages/backup-o2/src/fix2-authority.test.ts",
+        "packages/backup-o2/src/fix2-durability.test.ts",
+        "packages/backup-o2/src/hold-authority.ts",
+        "packages/backup-o2/src/nonce-authority.ts",
+        "packages/backup-o2/src/fix3-expiry.test.ts",
+        "packages/backup-o2/src/fix3-nonce.test.ts",
+        "packages/backup-o2/vitest.config.ts",
+        "packages/platform-cloudflare/src/backup.ts",
+        "infra/backup/**"
+      ],
+      "mandatory_negative_case": "Restore an epoch containing later-purged bytes and prove they are removed/quarantined before any read traffic or index upload.",
+      "document": "ER-34-backup-restore-and-platform-exit.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-35",
+      "depends_on": [
+        "ER-07",
+        "ER-31",
+        "ER-32"
+      ],
+      "owned_paths": [
+        "packages/research/src/specialist-profiles.ts"
+      ],
+      "mandatory_negative_case": "Query code after repository head advances and prove evidence stays pinned to the admitted commit SHA.",
+      "document": "ER-35-specialist-corpus-profiles.md",
+      "max_package_source_lines": 10000
+    },
+    {
+      "id": "ER-40",
+      "depends_on": [
+        "ER-00",
+        "ER-01",
+        "ER-02",
+        "ER-23"
+      ],
+      "owned_paths": [
+        "crates/README.md",
+        "crates/eliotr-canonical/**",
+        "crates/eliotr-test-vectors/**",
+        "crates/eliotr-kernel-wasm/**",
+        "fuzz/**",
+        "scripts/check-er40-line-budget.mjs",
+        "scripts/check-rust-vectors.mjs",
+        "scripts/check-rust-vectors-bootstrap.mjs",
+        "scripts/test-rust-vectors-install.mjs",
+        "scripts/check-rust-wasm.mjs",
+        "docs/agent-work/ER-40-rust-canonical-identity-and-serialization.md"
+      ],
+      "mandatory_negative_case": "Mutate shared canonical JSON metadata with duplicate keys, unsupported numeric forms, over-limit text, unknown fields, or a digest mismatch; TypeScript, native Rust and Rust/Wasm must fail closed before any authority promotion.",
+      "document": "ER-40-rust-canonical-identity-and-serialization.md",
+      "max_package_source_lines": 10000
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eliot-research.invalid/schemas/cloudflare/access-receipt.schema.json",
+  "title": "Eliot Research Cloudflare Access receipt",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "protocol",
+    "application",
+    "policy",
+    "websocket_compatible_contour",
+    "approved_additional_policy_count",
+    "approved_additional_policy_ids_sha256",
+    "worker_level_access",
+    "created_at"
+  ],
+  "properties": {
+    "protocol": { "const": "eliotr.cloudflare-access-receipt.v1" },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "destination", "disposition"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "destination": { "type": "string", "minLength": 1 },
+        "disposition": { "enum": ["CREATED", "VERIFIED"] }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "owner_email_count", "owner_email_set_sha256", "disposition"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "name": { "type": "string", "minLength": 1 },
+        "owner_email_count": { "type": "integer", "minimum": 1 },
+        "owner_email_set_sha256": { "$ref": "#/$defs/sha256" },
+        "disposition": { "enum": ["CREATED", "CREATED_INLINE", "VERIFIED"] }
+      }
+    },
+    "websocket_compatible_contour": { "const": "HOSTNAME_BASED_ACCESS" },
+    "approved_additional_policy_count": { "type": "integer", "minimum": 0 },
+    "approved_additional_policy_ids_sha256": { "$ref": "#/$defs/sha256" },
+    "worker_level_access": { "const": "PROHIBITED_FOR_RESEARCH_SESSION_WEBSOCKETS" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "eliotr-kernel-wasm"
+description = "Portable Rust/Wasm shell for the Eliot Research deterministic kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+m1-self-test-export = []
+
+[dependencies]
+eliotr-test-vectors = { path = "../eliotr-test-vectors", version = "=0.1.0" }
+
+[lints]
+workspace = true

@@ -1,0 +1,34 @@
+{
+  "schema": "eliotr.dynamic-route-provisioning-capability.v1",
+  "gateway_id": "eliotr-reasoning",
+  "control_plane_operations": ["list", "get", "create"],
+  "update_in_place": false,
+  "delete_owned": false,
+  "provider_name_identity": "route_ref + deployment_sha256_prefix",
+  "create_reconciliation": "exact list/get readback only",
+  "candidate_registry": "immutable digest readback",
+  "promotion": "expected-active-version CAS",
+  "production_gate": {
+    "qualification_tier": "LIVE",
+    "maximum_age_seconds": 3600,
+    "bindings": [
+      "gateway_id",
+      "route_ref",
+      "route_version",
+      "prompt_generation",
+      "schema_generation",
+      "parameters_digest",
+      "pricing_snapshot_ref",
+      "provider_route_id",
+      "provider_route_name",
+      "route_definition_sha256",
+      "provider_snapshot_sha256",
+      "control_plane_readback_ref",
+      "execution_probe_ref"
+    ]
+  },
+  "live_control_plane_write_readback": "NOT_EXECUTED",
+  "live_route_execution_probe": "NOT_EXECUTED",
+  "live_fallback_probe": "NOT_EXECUTED",
+  "live_spend_limit_probe": "NOT_EXECUTED"
+}

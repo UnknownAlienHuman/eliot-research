@@ -1,0 +1,37 @@
+{
+  "case_id": "GC-001-recommendation-vs-decision",
+  "source_revision_refs": [
+    "golden-project-decisions-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-project-decisions"
+    ]
+  },
+  "question": "Which production topology is decided, and what capture path is merely recommended?",
+  "expected_product": "RESEARCH",
+  "required_atoms": [
+    "D-001 is a decision",
+    "R-001 is a recommendation"
+  ],
+  "forbidden_collapses": [
+    "recommendation promoted to decision",
+    "future transport presented as active"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc001-decision",
+      "revision": 1
+    },
+    {
+      "id": "handle-gc001-recommendation",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "whether Browser Rendering is enabled in a deployed account"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "The answer must preserve modality and cite separate exact spans."
+}

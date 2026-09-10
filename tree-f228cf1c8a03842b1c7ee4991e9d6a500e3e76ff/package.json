@@ -1,0 +1,37 @@
+{
+  "name": "@eliotr/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "wrangler deploy --dry-run --minify --outdir dist",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "dev": "node ../../scripts/local-runtime.mjs --dev",
+    "cf:types": "wrangler types --env-interface CloudflareEnv src/worker-configuration.d.ts",
+    "deploy:dry-run": "wrangler deploy --dry-run --minify --outdir dist",
+    "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
+  },
+  "dependencies": {
+    "@eliotr/cloudflare-ai": "workspace:*",
+    "@eliotr/cloudflare-erasure": "workspace:*",
+    "@eliotr/cloudflare-evidence": "workspace:*",
+    "@eliotr/cloudflare-navigation": "workspace:*",
+    "@eliotr/cloudflare-projection": "workspace:*",
+    "@eliotr/contracts": "workspace:*",
+    "@eliotr/domain": "workspace:*",
+    "@eliotr/google-drive-exchange": "workspace:*",
+    "@eliotr/interfaces": "workspace:*",
+    "@eliotr/platform-cloudflare": "workspace:*",
+    "@eliotr/policy": "workspace:*",
+    "@eliotr/research": "workspace:*",
+    "@eliotr/retrieval": "workspace:*",
+    "@eliotr/cloudflare-research": "workspace:*"
+  },
+  "devDependencies": {
+    "wrangler": "4.127.1",
+    "@cloudflare/workers-types": "5.20260827.1",
+    "@cloudflare/vitest-plugin": "1.1.0",
+    "vitest": "4.1.11"
+  }
+}

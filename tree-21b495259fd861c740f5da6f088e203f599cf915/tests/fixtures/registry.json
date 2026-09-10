@@ -1,0 +1,27 @@
+{
+  "protocol": "eliotr.fixture-registry.v1",
+  "generation": "fixture-registry-er23-2026-09-08",
+  "fixtures": [
+    {
+      "path": "contracts/eliotr.normalized.v1.yaml",
+      "sha256": "3a5f9fd2b254eebe574b2c4a28f9804df0da9df359e59ceee125fa7da90fef22",
+      "kind": "contract",
+      "eol": "lf"
+    },
+    {
+      "path": "contracts/source.owner-cutover.v1.yaml",
+      "sha256": "b659806e37a4bc60ea67b4416e35212f559213bbadb28618b7edcee686b9277e",
+      "kind": "contract",
+      "eol": "lf"
+    }
+  ],
+  "golden_corpus": {
+    "manifest": "../golden-corpus/manifest.json",
+    "generation": "golden-er23-2026-09-08",
+    "note": "Golden sources are pinned by LF-normalized SHA-256 in their own manifest; this registry does not duplicate those pins."
+  },
+  "notes": [
+    "T0/T1 run offline and deterministically from these pinned fixtures; no network, clock, or randomness.",
+    "SHA-256 pins are LF-normalized UTF-8 bytes for cross-platform determinism; contract fixtures are enforced LF via .gitattributes."
+  ]
+}

@@ -1,0 +1,60 @@
+# Antigravity MCP client profile
+
+This profile is for Google Antigravity 2.0, Antigravity IDE, and Antigravity CLI. It prepares a
+project-local `.agents/mcp_config.json` entry using Antigravity's current `serverUrl` schema. It does
+not install Antigravity, import legacy extensions, change global settings, create Google resources, or
+write credentials.
+
+## Prepare a local template
+
+Preview the exact no-mutation result:
+
+```bash
+node integrations/antigravity/setup.mjs \
+  --endpoint https://mcp.example.com/mcp \
+  --dry-run
+```
+
+To write the project-local template explicitly:
+
+```bash
+node integrations/antigravity/setup.mjs \
+  --endpoint https://mcp.example.com/mcp \
+  --write
+```
+
+The generated `eliot-research` entry is deliberately `disabled: true`. It contains only the remote
+`serverUrl`; it has no headers, OAuth object, environment interpolation, token, or secret. The entry
+remains pending operator authentication and ELIOT live qualification. The setup preserves unrelated
+MCP servers and refuses to overwrite an existing `eliot-research` entry unless it is the exact same
+disabled template.
+
+Antigravity's documented config locations are global `~/.gemini/config/mcp_config.json` and project
+local `.agents/mcp_config.json`. Its remote schema uses `serverUrl`; legacy `url` and `httpUrl` fields
+are unsupported. Antigravity documents OAuth/DCR and custom headers, but this repository does not
+infer a safe secret-reference mechanism for a Cloudflare Access service token. The ELIOT endpoint still
+requires its dedicated Access host/team/audience contract. Set `MCP_ACCESS_AUTH_PROFILE=service-token`
+with the exact Access service-token Client ID for the retained service profile, or
+`MCP_ACCESS_AUTH_PROFILE=managed-oauth` for a verified human Access identity. Managed OAuth must use an
+audience distinct from ordinary `ACCESS_AUDIENCE`, rejects service-token JWTs, and binds a
+domain-separated hash of the verified subject so raw identity values do not enter ELIOT context. Both
+profiles remain pending an Antigravity auth binding followed by the deployed Access round trip; this
+local setup does not claim either profile is authenticated or live-qualified.
+
+The dedicated Access application may be a more-specific `/mcp` application on the same Worker hostname;
+it is distinguished by the exact route policy and `MCP_ACCESS_AUDIENCE`, rather than requiring a second
+DNS host. Application-path selection, OAuth discovery, client compatibility and the deployed
+initialize/tools/list/tools/call plus Workspace readback receipt remain `NOT_EXECUTED`.
+
+## Gemini Spark is a separate client
+
+Gemini Spark connects a custom app through Gemini web Connected Apps by entering the MCP server URL.
+This project-local file is not a Spark configuration and does not install anything into Spark. Spark's
+availability, account eligibility, and authentication/readback remain separate client concerns; the
+exact mapping of Spark credentials to ELIOT's Cloudflare Access headers is unverified.
+
+## Legacy Gemini CLI material
+
+`../gemini-spark/setup.mjs` and its `gemini-extension.json` remain as an explicitly unselected legacy
+Gemini CLI path for existing operators. They are not invoked by this profile and are not a setup path
+for Spark or Antigravity.

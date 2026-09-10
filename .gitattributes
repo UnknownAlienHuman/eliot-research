@@ -1,6 +1,0 @@
-tests/fixtures/contracts/eliotr.normalized.v1.yaml text eol=lf
-tests/fixtures/contracts/source.owner-cutover.v1.yaml text eol=lf
-docs/contracts/canonical-fixtures.v1.json text eol=lf
-docs/contracts/compatibility-registry.v1.json text eol=lf
-docs/contracts/schema-corpus.v1.json text eol=lf
-docs/contracts/schema-index.v1.json text eol=lf

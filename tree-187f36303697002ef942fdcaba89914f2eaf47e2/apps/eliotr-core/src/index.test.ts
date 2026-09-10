@@ -1,0 +1,323 @@
+import { AccessVerificationError, type AccessVerifier } from "@eliotr/cloudflare-access";
+import { describe, expect, it } from "vitest";
+import {
+  AI_SEARCH_PRIMARY_GENERATION,
+  AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+} from "@eliotr/cloudflare-ai";
+import { createApplication } from "./composition-root.js";
+import type { Env } from "./env.js";
+import { handleHttp } from "./http.js";
+import {
+  PROJECTION_EXECUTION_PROFILE,
+  projectionManagedGenerationIsActive,
+} from "./projection-execution-handler.js";
+import worker from "./index.js";
+
+interface DatabaseFixture {
+  readonly database: D1Database;
+  readonly statements: string[];
+}
+
+function databaseFixture(input: {
+  readonly projects?: readonly Record<string, unknown>[];
+  readonly sources?: readonly Record<string, unknown>[];
+  readonly schemaGeneration?: string;
+} = {}): DatabaseFixture {
+  const statements: string[] = [];
+  const database = {
+    prepare(sql: string) {
+      statements.push(sql);
+      const statement = {
+        bind() { return statement; },
+        async first<T>() {
+          if (sql.includes("schema_state")) {
+            return {
+              value: input.schemaGeneration ?? "core-v11-owner-orientation",
+            } as T;
+          }
+          if (sql.includes("COUNT(*) AS pending_count")) return { pending_count: 0 } as T;
+          return null;
+        },
+        async all<T>() {
+          const results = sql.includes("FROM project")
+            ? input.projects ?? []
+            : sql.includes("FROM source s")
+              ? input.sources ?? []
+              : [];
+          return { success: true, results: [...results] as T[] };
+        },
+      };
+      return statement;
+    },
+  } as unknown as D1Database;
+  return { database, statements };
+}
+
+function environment(
+  core: D1Database,
+  search: D1Database = databaseFixture({
+    schemaGeneration: "search-v4-ai-search-generation-registry",
+  }).database,
+): Env {
+  return {
+    CORE_DB: core,
+    SEARCH_DB: search,
+    ASSETS: { fetch: async () => new Response("asset") },
+    ENVIRONMENT: "development",
+    DEPLOYMENT_GENERATION: "test-generation",
+    AI_GATEWAY_REASONING_URL: "https://example.invalid/reasoning",
+    AI_GATEWAY_RETRIEVAL_URL: "https://example.invalid/retrieval",
+    GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+  } as unknown as Env;
+}
+
+function executionContext(): ExecutionContext {
+  return {} as ExecutionContext;
+}
+
+function verifier(method: "cloudflare_access" | "service_token"): AccessVerifier {
+  return {
+    async verify() {
+      return {
+        principal_ref: method === "service_token" ? "service-agent" : "owner-subject",
+        credential_generation: "credential-v1",
+        authentication_method: method,
+        expires_at: "2030-01-01T00:00:00.000Z",
+      };
+    },
+  };
+}
+
+async function body(response: Response): Promise<Record<string, unknown>> {
+  return await response.json() as Record<string, unknown>;
+}
+
+describe("worker export", () => {
+  it("exposes fetch, queue and scheduled handlers", () => {
+    expect(typeof worker.fetch).toBe("function");
+    expect(typeof worker.queue).toBe("function");
+    expect(typeof worker.scheduled).toBe("function");
+  });
+
+  it.each([
+    {
+      profile: "service-token",
+      MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "00000000000000000000000000000000.access",
+    },
+    {
+      profile: "managed-oauth",
+    },
+  ])("routes /mcp through the package auth boundary for $profile", async (profile) => {
+    const fixture = databaseFixture();
+    const response = await worker.fetch(
+      new Request("https://mcp.example/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "mcp-protocol-version": "2025-06-18",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      }),
+      {
+        ...environment(fixture.database),
+        MCP_HOSTNAME: "mcp.example",
+        MCP_ACCESS_AUTH_PROFILE: profile.profile as "service-token" | "managed-oauth",
+        MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
+        MCP_ACCESS_AUDIENCE: profile.profile === "managed-oauth" ? "managed-mcp-audience" : "mcp-audience",
+        ACCESS_AUDIENCE: profile.profile === "managed-oauth" ? "ordinary-api-audience" : undefined,
+        ...(profile.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID === undefined
+          ? {}
+          : { MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: profile.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID }),
+      } as Env,
+      executionContext(),
+    );
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({
+      protocol: "eliotr.mcp.http-error.v1",
+      code: "MCP_AUTHENTICATION_FAILED",
+    });
+    expect(fixture.statements).toEqual([]);
+  });
+});
+
+describe("HTTP authority boundary", () => {
+  it("keeps public health minimal and independent of Access configuration", async () => {
+    const fixture = databaseFixture();
+    const response = await handleHttp(
+      new Request("https://research.example/healthz"),
+      environment(fixture.database),
+      executionContext(),
+    );
+    expect(response.status).toBe(200);
+    const document = await body(response);
+    expect(document.ready).toBe(true);
+    expect(document).not.toHaveProperty("blocking_reason_codes");
+  });
+
+  it("rejects missing protected-route authentication", async () => {
+    const fixture = databaseFixture();
+    const missing: AccessVerifier = {
+      async verify(): Promise<never> {
+        throw new AccessVerificationError("ACCESS_JWT_MISSING", "missing");
+      },
+    };
+    const response = await handleHttp(
+      new Request("https://research.example/api/v1/system/health"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: missing },
+    );
+    expect(response.status).toBe(401);
+    expect(await body(response)).toMatchObject({ code: "ACCESS_JWT_MISSING" });
+  });
+
+  it("does not let a service principal use the owner-only catalog", async () => {
+    const fixture = databaseFixture();
+    const response = await handleHttp(
+      new Request("https://research.example/api/v1/research/catalog"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: verifier("service_token") },
+    );
+    expect(response.status).toBe(403);
+    expect(await body(response)).toMatchObject({ code: "PRINCIPAL_CLASS_DENIED" });
+  });
+
+  it("blocks protected application routes on a stale Core schema generation", async () => {
+    const fixture = databaseFixture({ schemaGeneration: "core-v5-ingest-admission" });
+    const health = await handleHttp(
+      new Request("https://research.example/api/v1/system/health"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: verifier("cloudflare_access") },
+    );
+    expect(health.status).toBe(200);
+    const healthDocument = await body(health);
+    const healthData = healthDocument.data as Record<string, unknown>;
+    expect(healthData.ready).toBe(false);
+    expect(healthData.blocking_reason_codes).toEqual([
+      "CORE_SCHEMA_GENERATION_MISMATCH",
+    ]);
+
+    const catalog = await handleHttp(
+      new Request("https://research.example/api/v1/research/catalog"),
+      environment(fixture.database),
+      executionContext(),
+      { accessVerifier: verifier("cloudflare_access") },
+    );
+    expect(catalog.status).toBe(503);
+    expect(await body(catalog)).toMatchObject({ code: "SCHEMA_NOT_READY" });
+  });
+
+  it("returns typed 404 and 405 responses instead of falling through to static assets", async () => {
+    const fixture = databaseFixture();
+    const missing = await handleHttp(
+      new Request("https://research.example/api/v1/unknown"),
+      environment(fixture.database),
+      executionContext(),
+    );
+    expect(missing.status).toBe(404);
+    const wrongMethod = await handleHttp(
+      new Request("https://research.example/api/v1/system/health", {
+        method: "POST",
+      }),
+      environment(fixture.database),
+      executionContext(),
+    );
+    expect(wrongMethod.status).toBe(405);
+    expect(wrongMethod.headers.get("allow")).toBe("GET");
+  });
+});
+
+
+describe("managed projection generation authority", () => {
+  it("targets the primary g2 instance but keeps it shadow by default", () => {
+    expect(PROJECTION_EXECUTION_PROFILE).toMatchObject({
+      managed_instance_id: "private-prose-g2",
+      managed_generation: AI_SEARCH_PRIMARY_GENERATION,
+      managed_generation_active: false,
+    });
+  });
+
+  it("requires the exact ACTIVE registry record before semantic readiness", () => {
+    expect(projectionManagedGenerationIsActive(null)).toBe(false);
+    expect(projectionManagedGenerationIsActive({
+      artifact: {
+        registry: {
+          active_head_generation: "another-generation",
+          generations: [],
+        },
+      },
+    } as never)).toBe(false);
+    expect(projectionManagedGenerationIsActive({
+      artifact: {
+        registry: {
+          active_head_generation: AI_SEARCH_PRIMARY_GENERATION,
+          generations: [{
+            generation: AI_SEARCH_PRIMARY_GENERATION,
+            state: "ACTIVE",
+            profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+          }],
+        },
+      },
+    } as never)).toBe(true);
+  });
+
+  it("rejects an active-head record with a different immutable profile", () => {
+    expect(() => projectionManagedGenerationIsActive({
+      artifact: {
+        registry: {
+          active_head_generation: AI_SEARCH_PRIMARY_GENERATION,
+          generations: [{
+            generation: AI_SEARCH_PRIMARY_GENERATION,
+            state: "ACTIVE",
+            profile: {
+              ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+              embedding_model: "@cf/incompatible/model",
+            },
+          }],
+        },
+      },
+    } as never)).toThrow(/immutable desired profile/u);
+  });
+});
+
+describe("federation application contract", () => {
+  it("exposes the complete V1 surface and keeps every operation fail-closed", async () => {
+    const fixture = databaseFixture();
+    const application = createApplication({
+      env: environment(fixture.database),
+      executionContext: executionContext(),
+    });
+
+    expect(Object.keys(application.services.federation).sort()).toEqual([
+      "cancel",
+      "changes",
+      "readBundle",
+      "readBundleManifest",
+      "result",
+      "status",
+      "submit",
+    ]);
+    await expect(
+      application.services.federation.readBundle(
+        {} as never,
+        { id: "bundle-1", revision: 1 },
+      ),
+    ).rejects.toMatchObject({
+      code: "IMPLEMENTATION_SLICE_PENDING",
+      operation: "federation.bundle.read",
+      retryable: false,
+    });
+    const capabilities = await application.services.owner.systemCapabilities(
+      {} as never,
+    );
+    expect(capabilities.disabled_slices).toEqual(
+      expect.arrayContaining(["FEDERATION"]),
+    );
+    expect(capabilities.google_external_transport).toBe("gemini-mcp");
+    await expect(application.services.owner.systemHealth({} as never)).resolves.toMatchObject({
+      google_external_transport: "gemini-mcp",
+    });
+  });
+});

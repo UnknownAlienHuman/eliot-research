@@ -1,0 +1,228 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: |
+          test -f pnpm-lock.yaml
+          pnpm install --frozen-lockfile
+      - name: Verify normative contract fixtures
+        run: pnpm contracts:check
+      - name: Verify package boundaries
+        run: pnpm boundaries:check
+      - name: Prove forbidden imports fail closed
+        run: pnpm boundaries:negative
+      - name: Verify source budgets
+        run: pnpm budgets:check
+      - name: Verify swarm work packets
+        run: pnpm work-packets:check
+      - name: Verify branch and worktree hygiene
+        run: pnpm branch-hygiene:check
+      - name: Verify delivery authority fixture
+        run: pnpm delivery:check
+      - name: Verify ingest admission authority fixture
+        run: pnpm ingest:check
+      - name: Verify projection execution authority fixture
+        run: pnpm projection:check
+      - name: Verify exact evidence resolution authority fixture
+        run: pnpm evidence:check
+      - name: Verify exact erasure closure authority fixture
+        run: pnpm erasure:check
+      - name: Verify Gemini MCP integration fixtures
+        run: pnpm gemini:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Typecheck navigation integration fixtures
+        run: pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Test Cloudflare provisioners
+        run: pnpm test:provisioners
+      - name: Test contracts
+        run: timeout 90s pnpm exec vitest run packages/contracts --reporter=verbose
+      - name: Test domain
+        run: timeout 90s pnpm exec vitest run packages/domain --reporter=verbose
+      - name: Test policy
+        run: timeout 90s pnpm exec vitest run packages/policy --reporter=verbose
+      - name: Test retrieval, research and Drive exchange
+        run: timeout 180s pnpm exec vitest run packages/retrieval packages/research packages/google-drive-exchange --reporter=verbose
+      - name: Test Cloudflare federation package command
+        run: timeout 180s pnpm --filter @eliotr/cloudflare-federation test
+      - name: Test Cloudflare AI, ingest, platform, projection, evidence and erasure packages
+        run: timeout 180s pnpm exec vitest run packages/cloudflare-ai packages/cloudflare-markdown packages/cloudflare-raw-ingest packages/platform-cloudflare packages/cloudflare-projection packages/cloudflare-evidence packages/cloudflare-erasure packages/cloudflare-navigation --reporter=verbose
+      - name: Test testkit, integration harness and PWA
+        run: timeout 180s pnpm exec vitest run packages/testkit tests apps/eliotr-pwa --reporter=verbose
+      - name: Test Worker runtime
+        run: pnpm --filter @eliotr/core test
+      - name: Verify implementation-status registry
+        run: pnpm check:implementation-status
+      - name: Build PWA
+        run: pnpm build:pwa
+      - name: Test built Library in Chromium with controlled HTTP fixtures
+        run: pnpm test:library-browser
+      - name: Prepare clean local PWA and both D1 stores
+        run: pnpm local:prepare
+      - name: Generate Cloudflare binding types
+        run: pnpm cf:types
+      - name: Dry-run Worker deployment
+        run: pnpm cf:dry-run
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install 1.98.0 \
+            --profile minimal \
+            --component clippy \
+            --component llvm-tools-preview \
+            --component rustfmt \
+            --target wasm32-unknown-unknown
+          rustup default 1.98.0
+      - name: Install pinned branch-coverage toolchain
+        run: |
+          rustup toolchain install nightly-2026-08-31 \
+            --profile minimal \
+            --component llvm-tools-preview
+      - name: Install checksum-verified pinned Cargo tools
+        uses: taiki-e/install-action@1ed6d7be6168f6c9046541087ff549b6bc581fdf
+        with:
+          tool: |
+            cargo-nextest@0.9.143
+            cargo-deny@0.20.2
+            cargo-llvm-cov@0.9.0
+          fallback: none
+      - name: Verify pinned Cargo tool versions
+        run: |
+          cargo nextest --version | grep -F "cargo-nextest 0.9.143"
+          cargo deny --version | grep -F "cargo-deny 0.20.2"
+          cargo llvm-cov --version | grep -F "cargo-llvm-cov 0.9.0"
+      - name: Verify locked workspace metadata
+        run: cargo metadata --all-features --locked --format-version 1 > /dev/null
+      - name: Verify Rust language boundaries
+        run: node scripts/check-rust-boundaries.mjs
+      - name: Verify shared vectors through TypeScript
+        run: node scripts/check-rust-vectors.mjs
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Lint every Rust target and feature
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Run native Rust tests
+        run: cargo nextest run --workspace --all-features --locked
+      - name: Run Rust documentation tests
+        run: cargo test --doc --workspace --all-features --locked
+      - name: Audit Rust dependencies and sources
+        run: cargo deny check
+      - name: Build and inspect the default portable Rust workspace
+        run: |
+          cargo build --workspace --target wasm32-unknown-unknown --release --locked
+          node scripts/check-rust-wasm.mjs --mode default
+      - name: Execute exact vectors through compiled Rust/Wasm
+        run: |
+          cargo build \
+            --package eliotr-kernel-wasm \
+            --target wasm32-unknown-unknown \
+            --release \
+            --features m1-self-test-export \
+            --locked
+          node scripts/check-rust-wasm.mjs --mode self-test
+      - name: Enforce deterministic-core coverage
+        run: |
+          cargo +nightly-2026-08-31 llvm-cov \
+            --package eliotr-canonical \
+            --package eliotr-test-vectors \
+            --all-features \
+            --locked \
+            --branch \
+            --fail-under-lines 90 \
+            --text
+      - name: Verify the scheduled fuzz dependency lock
+        run: |
+          test -f fuzz/Cargo.lock
+          cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
+          test -z "$(git status --porcelain -- fuzz/Cargo.lock)"
+
+  windows-tooling:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - name: Exercise native Windows checkout line endings
+        run: git config --global core.autocrlf true
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - name: Verify package boundaries on Windows
+        run: node scripts/check-boundaries.mjs
+      - name: Verify Fetch-forbidden local Workers port guard on Windows
+        run: node scripts/test-miniflare-port-guard.mjs
+      - name: Verify source budgets on Windows
+        run: node scripts/check-budgets.mjs
+      - name: Prove portable checkout and negative gates on Windows
+        run: node scripts/test-boundary-negative.mjs
+      - name: Verify deployment HTTP guards on Windows
+        run: node scripts/test-deployment-verification.mjs
+      - name: Verify deployment ordering on Windows
+        run: node scripts/test-deployment-orchestration.mjs
+      - name: Prove test fixtures leave the checkout unchanged
+        run: |
+          $changes = git status --porcelain --untracked-files=all
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($changes) { Write-Error "Tests changed the checkout: $changes"; exit 1 }
+
+  local-launch:
+    name: local-launch (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            timeout_minutes: 10
+          - os: windows-latest
+            timeout_minutes: 15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - run: pnpm install --frozen-lockfile
+      - name: Verify local isolation and command ordering
+        run: pnpm test:local-launch
+      - name: Verify owner session and explicit local policy setup
+        run: pnpm test:local-owner
+      - name: Boot actual Worker with full local migrations, then restart
+        run: pnpm local:smoke
+      - name: Run actual owner browser acceptance
+        run: pnpm test:owner-e2e

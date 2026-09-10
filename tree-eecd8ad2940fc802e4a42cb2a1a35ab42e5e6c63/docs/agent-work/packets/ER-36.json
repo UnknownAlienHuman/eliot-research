@@ -1,0 +1,39 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-36",
+    "depends_on": [
+      "ER-17",
+      "ER-18",
+      "ER-20",
+      "ER-21",
+      "ER-24",
+      "ER-26"
+    ],
+    "owned_paths": [
+      "packages/cloudflare-workspace-mcp/**",
+      "integrations/gemini-spark/**",
+      "integrations/antigravity/**",
+      "docs/implementation/gemini-spark-mcp.md",
+      "apps/eliotr-core/src/http-special-routes.ts",
+      "apps/eliotr-core/src/workspace-mcp-candidate-store.ts",
+      "apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts",
+      "apps/eliotr-core/src/composition-root.ts",
+      "apps/eliotr-core/src/index.test.ts",
+      "apps/eliotr-core/test/google-oauth-begin-http.test.ts",
+      "apps/eliotr-core/test/google-oauth-callback-http.test.ts",
+      "scripts/check-launch-code.mjs",
+      "scripts/test-launch-code.mjs",
+      "scripts/deploy-cloudflare.mjs",
+      "scripts/lib/deployment-verification.mjs",
+      "scripts/test-deployment-verification.mjs",
+      "scripts/test-deployment-orchestration.mjs",
+      "scripts/test-deployment-apply-ordering.mjs",
+      "docs/adr/0006-google-external-transport-profiles.md",
+      "docs/implementation/implementation-status.json"
+    ],
+    "mandatory_negative_case": "Submit dry_run=false, a browser Origin, an owner JWT, a human-readable token name instead of the signed Client ID, and a digest-mismatching Google readback; deny effects and preserve candidate-only state.",
+    "document": "ER-36-gemini-spark-mcp-and-google-orchestration.md",
+    "max_package_source_lines": 10000
+  }
+}

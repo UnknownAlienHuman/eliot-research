@@ -1,0 +1,18 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-43",
+    "depends_on": [
+      "ER-00",
+      "ER-24",
+      "ER-26"
+    ],
+    "owned_paths": [
+      "scripts/lib/local-launch.mjs",
+      "scripts/lib/local-smoke.mjs"
+    ],
+    "mandatory_negative_case": "Inject remote bindings, account IDs and deployment variables; reject unsafe local vars before every subprocess.",
+    "document": "ER-43-local-launch.md",
+    "max_package_source_lines": 10000
+  }
+}

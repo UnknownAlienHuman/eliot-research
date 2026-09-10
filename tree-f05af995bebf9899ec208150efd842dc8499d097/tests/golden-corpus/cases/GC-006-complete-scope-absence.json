@@ -1,0 +1,28 @@
+{
+  "case_id": "GC-006-complete-scope-absence",
+  "source_revision_refs": [
+    "golden-project-decisions-r1",
+    "golden-research-status-r1",
+    "golden-versioned-limits-r1",
+    "golden-scoped-claims-r1",
+    "golden-security-erasure-r1"
+  ],
+  "scope_expression": {
+    "kind": "GLOBAL_LIBRARY"
+  },
+  "question": "Does the frozen fixture corpus mention PostgreSQL as a required production database?",
+  "expected_product": "EXHAUSTIVE_JOB",
+  "required_atoms": [
+    "no matching occurrence in the complete frozen fixture corpus"
+  ],
+  "forbidden_collapses": [
+    "top-k no-hit treated as absence",
+    "unknown denominator called complete"
+  ],
+  "required_evidence_handle_refs": [],
+  "acceptable_unknowns": [
+    "documents outside this frozen fixture corpus"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "Pass requires an exhaustive cursor and explicit denominator, not managed-search top-k."
+}

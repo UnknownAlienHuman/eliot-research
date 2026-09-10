@@ -1,0 +1,33 @@
+name: export-federation-base
+
+on:
+  push:
+    branches:
+      - agent/p0-durable-federation-20260901
+    paths:
+      - .github/workflows/export-federation-base.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/p0-durable-federation-20260901
+          fetch-depth: 1
+      - name: Archive repository source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > SNAPSHOT_HEAD_SHA
+          tar --exclude=.git --exclude=node_modules --exclude=dist --exclude=.wrangler -czf /tmp/eliot-federation-base.tgz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eliot-federation-base
+          path: /tmp/eliot-federation-base.tgz
+          if-no-files-found: error
+          retention-days: 1

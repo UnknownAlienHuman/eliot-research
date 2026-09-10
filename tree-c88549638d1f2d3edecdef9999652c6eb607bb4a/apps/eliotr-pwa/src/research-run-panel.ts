@@ -1,0 +1,243 @@
+import { IdentifierSchema } from "@eliotr/contracts";
+import { ApiRequestError } from "./api.js";
+import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import type { ArtifactRevision } from "@eliotr/contracts";
+import type { LibrarySelectionContext } from "./library-readiness-api.js";
+
+function message(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401 || error.status === 403) return "This research run is no longer available for the current session.";
+    if (error.status === 409) return "The Research run belongs to another deployment or its authority changed. Refresh the workspace.";
+    if (error.retryable) return "The Research service is unavailable. Refresh to try again.";
+    return "The Research run could not be read. Check the query and session.";
+  }
+  return "The Research run could not be read. Check the query and session.";
+}
+
+function statusText(view: ResearchRunStatusView): string {
+  switch (view.execution_state) {
+    case "ACTIVE": return "Research is still processing. Refresh status to check again.";
+    case "CANCELLED": return "Research was cancelled. Answer unavailable.";
+    case "ENGINE_COMPLETED": return view.answer.availability === "draft" ? "A draft report is ready for review." : "Processing finished. No answer has been generated.";
+  }
+}
+
+function decodeSectionBody(bytes: Uint8Array): string {
+  try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section is not valid UTF-8" }); }
+}
+
+function codeRef(value: string): HTMLElement {
+  const code = document.createElement("code");
+  code.textContent = value;
+  return code;
+}
+
+export function mountResearchRunPanel(
+  element: HTMLElement,
+  deploymentGeneration: () => string | undefined,
+  healthReady: () => boolean = () => false,
+): (() => void) & { clearPrivate(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
+  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() ? "READY" : "WAITING"}</span></div>
+    <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
+    <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
+    <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
+    <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
+    <div class="workflow-recovery"><label>Run ID<input data-workflow-id maxlength="128" autocomplete="off" placeholder="Paste a known run ID"></label><button type="button" class="button button--quiet" data-recover>Load status</button></div>
+    <p class="workflow-status" role="status" aria-live="polite">${healthReady() ? "Ready when the current owner session is available." : "Waiting for the current owner session."}</p>
+    <section data-run-result hidden></section>`;
+  const form = element.querySelector<HTMLFormElement>("form");
+  const badge = element.querySelector<HTMLElement>("[data-run-badge]");
+  const query = element.querySelector<HTMLInputElement>('input[name="query"]');
+  const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
+  const selectedOption = scope?.querySelector<HTMLOptionElement>('option[value="selected"]');
+  const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]');
+  const refresh = element.querySelector<HTMLButtonElement>("[data-run-refresh]");
+  const workflowInput = element.querySelector<HTMLInputElement>("[data-workflow-id]");
+  const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
+  const status = element.querySelector<HTMLElement>('[role="status"]');
+  const result = element.querySelector<HTMLElement>("[data-run-result]");
+  if (!form || !badge || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result) throw new Error("Research run panel is incomplete");
+
+  let serial = 0;
+  let controller: AbortController | undefined;
+  let workflowId: string | undefined;
+  let workflowGeneration: string | undefined;
+  let selectedSourceId: string | undefined;
+  let previousBody = "";
+  let idempotencyKey = "";
+
+  const updateButtons = (): void => {
+    const available = healthReady();
+    const busy = controller !== undefined;
+    submit.disabled = !available || busy;
+    recover.disabled = !available || busy;
+    refresh.disabled = !available || busy || workflowId === undefined;
+  };
+  const stop = (): void => { serial += 1; controller?.abort(); controller = undefined; updateButtons(); };
+  const clearPrivate = (): void => {
+    stop(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
+    workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
+    updateButtons(); status.textContent = "Private research state cleared. Reconnect before starting or loading a run.";
+  };
+  const onHealthUpdated = (): void => {
+    const ready = healthReady();
+    badge.textContent = ready ? "READY" : "WAITING";
+    if (!ready) clearPrivate(); else updateButtons();
+  };
+  window.addEventListener("eliotr:health-updated", onHealthUpdated);
+  updateButtons();
+  const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
+    const text = statusText(view);
+    result.replaceChildren();
+    const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
+    const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
+    result.append(heading);
+    if (view.answer.availability === "draft" && artifact !== undefined) {
+      const reportHead = document.createElement("div"); reportHead.className = "research-report-heading";
+      const reportTitle = document.createElement("h3"); reportTitle.textContent = "Research draft";
+      const draftBadge = document.createElement("span"); draftBadge.className = "research-draft-badge"; draftBadge.textContent = "DRAFT";
+      reportHead.append(reportTitle, draftBadge);
+      const technical = document.createElement("details"); technical.className = "research-technical-details";
+      const technicalSummary = document.createElement("summary"); technicalSummary.textContent = "Technical details";
+      const technicalFields = document.createElement("dl"); technicalFields.className = "research-technical-fields";
+      const technicalField = (label: string, value: string): void => {
+        const term = document.createElement("dt"); term.textContent = label;
+        const detail = document.createElement("dd"); detail.append(codeRef(value));
+        technicalFields.append(term, detail);
+      };
+      technicalField("Run ID", view.workflow_instance_id);
+      technicalField("Investigation", `${view.investigation_ref.id}:${view.investigation_ref.revision}`);
+      technicalField("Artifact", `${artifact.artifact_ref.id}:${artifact.artifact_ref.revision}`);
+      technicalField("Specification", `${artifact.spec_ref.id}:${artifact.spec_ref.revision}`);
+      technicalField("Evidence freeze", `${artifact.evidence_freeze_ref.id}:${artifact.evidence_freeze_ref.revision}`);
+      technicalField("Status", artifact.status);
+      technical.append(technicalSummary, technicalFields);
+      result.append(reportHead, technical);
+      const sections = document.createElement("ul"); sections.className = "research-report-sections";
+      artifact.sections.forEach((section, ordinal) => {
+        const item = document.createElement("li"); item.className = "research-report-section";
+        const sectionHeading = document.createElement("h4"); sectionHeading.textContent = `Section ${ordinal + 1}`;
+        const sectionTechnical = document.createElement("details"); sectionTechnical.className = "research-section-details";
+        const sectionTechnicalSummary = document.createElement("summary"); sectionTechnicalSummary.textContent = "Section details";
+        const sectionTechnicalFields = document.createElement("dl"); sectionTechnicalFields.className = "research-technical-fields";
+        const sectionField = (label: string, value: string): void => {
+          const term = document.createElement("dt"); term.textContent = label;
+          const detail = document.createElement("dd"); detail.append(codeRef(value));
+          sectionTechnicalFields.append(term, detail);
+        };
+        sectionField("Section ref", `${section.section_ref.id}:${section.section_ref.revision}`);
+        sectionField("Evidence ledger", section.evidence_ledger_ref);
+        sectionField("Verification receipt", section.verification_receipt_ref);
+        sectionTechnical.append(sectionTechnicalSummary, sectionTechnicalFields);
+        const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
+        open.onclick = () => {
+          if (renderSerial !== serial || controller !== undefined) return;
+          const local = new AbortController(); controller = local; open.disabled = true; status.textContent = "Reading report section…";
+          void readResearchArtifactSection(artifact.artifact_ref, section, local.signal)
+            .then((readback) => {
+              if (renderSerial !== serial) return;
+              const body = document.createElement("pre"); body.className = "research-section-body"; body.textContent = decodeSectionBody(readback.bytes);
+              item.querySelector(".research-section-body")?.remove(); item.append(body); status.textContent = "Report section opened.";
+            })
+            .catch((error: unknown) => {
+              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
+              status.textContent = "The report section could not be opened.";
+            })
+            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
+        };
+        const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
+        sources.onclick = () => {
+          if (renderSerial !== serial || controller !== undefined) return;
+          const local = new AbortController(); controller = local; open.disabled = true; sources.disabled = true; status.textContent = "Reading cited sources…";
+          item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
+          void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal, section.verification_receipt_ref)
+            .then((citations) => {
+              if (renderSerial !== serial) return;
+              const list = document.createElement("div"); list.className = "research-citations";
+              const state = document.createElement("p"); state.className = "research-citation-state";
+              state.textContent = "Draft claims have not been checked. Opening a source checks its current bytes.";
+              list.append(state);
+              if (citations.cited_evidence.length === 0) {
+                const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty);
+              } else {
+                const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
+                const actions = document.createElement("div"); actions.className = "research-citation-actions";
+                citations.cited_evidence.forEach((citation, citationOrdinal) => {
+                  const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal);
+                  button.onclick = () => {
+                    if (renderSerial !== serial || controller !== undefined) return;
+                    element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citations.scope_snapshot_ref, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
+                    status.textContent = "Source selected. Verify it in the Evidence rail.";
+                  };
+                  actions.append(button);
+                });
+                list.append(actions);
+              }
+              item.append(list); status.textContent = "Cited sources loaded; fresh verification is still required.";
+            })
+            .catch((error: unknown) => {
+              if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
+              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
+              status.textContent = "Cited sources could not be read.";
+            })
+            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; sources.disabled = false; updateButtons(); } });
+        };
+        const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
+        item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
+      });
+      result.append(sections);
+    } else {
+      result.append(identity);
+    }
+    result.hidden = false;
+    status.textContent = text; refresh.disabled = false;
+  };
+  const readStatus = (): void => {
+    const id = workflowInput.value.trim();
+    if (id.length === 0) { status.textContent = "Enter a known Run ID first."; return; }
+    if (!healthReady() || !navigator.onLine || deploymentGeneration() === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before reading research."; return; }
+    const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
+    result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
+    const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
+    void readResearchRunStatus(id, expectedGeneration, local.signal)
+      .then(async (view) => {
+        if (active !== serial) return;
+        const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
+        if (active !== serial) return;
+        workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view, artifact);
+      })
+      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; result.replaceChildren(); result.hidden = true; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error); } else status.textContent = message(error); })
+      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
+  };
+  form.onsubmit = (event) => {
+    event.preventDefault();
+    const generation = deploymentGeneration();
+    if (!healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before starting research."; return; }
+    if (scope.value === "selected" && selectedSourceId === undefined) { status.textContent = "Select a source before starting research."; return; }
+    const ids = scope.value === "selected" ? [selectedSourceId as string] : [];
+    let body: string;
+    try { body = researchRunBody(query.value, ids); } catch (error: unknown) { status.textContent = message(error); return; }
+    const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
+    if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
+    submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
+    element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
+    void startResearchRun(body, idempotencyKey, generation, local.signal)
+      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; refresh.disabled = false; status.textContent = "Research started. Refresh status when you want to read the persisted run."; })
+      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else status.textContent = message(error); })
+      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
+  };
+  refresh.onclick = readStatus;
+  recover.onclick = readStatus;
+  const cleanup = (): void => { window.removeEventListener("eliotr:health-updated", onHealthUpdated); stop(); };
+  return Object.assign(cleanup, {
+    clearPrivate,
+    selectSource(id: string, context?: LibrarySelectionContext): void {
+      IdentifierSchema.parse(id); stop(); workflowId = undefined; workflowGeneration = undefined; previousBody = ""; idempotencyKey = ""; result.replaceChildren(); result.hidden = true;
+      selectedSourceId = id; workflowInput.value = ""; updateButtons(); selectedOption.disabled = false; scope.value = "selected"; status.textContent = context?.sourceRevisionRef ? "Selected source ready for a research run." : "Selected source loaded; refresh the Library before starting.";
+    },
+  });
+}

@@ -1,0 +1,45 @@
+{
+  "protocol": "eliotr.cloudflare-foundation.v1",
+  "generation": "cf-foundation-2026-08-28",
+  "worker": {
+    "name": "eliotr-core",
+    "canonical_config": "apps/eliotr-core/wrangler.jsonc",
+    "generated_config": "apps/eliotr-core/wrangler.deploy.jsonc",
+    "receipt": ".eliotr-state/cloudflare-foundation-receipt.json"
+  },
+  "d1_databases": [
+    {
+      "binding": "CORE_DB",
+      "name": "eliotr-core"
+    },
+    {
+      "binding": "SEARCH_DB",
+      "name": "eliotr-search"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE_BUCKET",
+      "name": "eliotr-evidence",
+      "jurisdiction": "default",
+      "storage_class": "Standard"
+    },
+    {
+      "binding": "WORK_BUCKET",
+      "name": "eliotr-work",
+      "jurisdiction": "default",
+      "storage_class": "Standard"
+    }
+  ],
+  "queues": [
+    {
+      "binding": "JOB_QUEUE",
+      "name": "eliotr-jobs",
+      "role": "primary"
+    },
+    {
+      "name": "eliotr-dlq",
+      "role": "dead_letter"
+    }
+  ]
+}

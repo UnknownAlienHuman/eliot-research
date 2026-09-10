@@ -1,0 +1,706 @@
+{
+  "protocol": "eliotr.implementation-status.v1",
+  "baseline_commit": "cbdf64e65b7457ae751c4bfc6e392c4908a3d3c1",
+  "states": [
+    "SCAFFOLD_FAIL_CLOSED",
+    "IN_PROGRESS",
+    "IMPLEMENTED_NOT_LIVE",
+    "LIVE_QUALIFIED"
+  ],
+  "rules": {
+    "missing_registration": "fail",
+    "stale_registration": "fail",
+    "live_without_receipt": "fail",
+    "placeholder_success_response": "fail"
+  },
+  "release_profile": {
+    "protocol": "eliotr.release-profile.v1",
+    "google_external_transport": "gemini-mcp",
+    "qualification": "Workspace candidate admission and exact Google action/readback remain pending; this profile does not require a Google Cloud project or custom OAuth client."
+  },
+  "entries": [
+    {
+      "id": "scaffold-001",
+      "path": "apps/eliotr-core/src/research-workflow.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.",
+      "owner_packets": [
+        "ER-09"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Monotone 18-stage Workflow executes via step.do over durable D1/R2 checkpoints with handle-only 64KiB receipts, D1-backed idempotent budget and principal-bound residency; restart resumes the same operation with no duplicate handler effects; ENGINE_COMPLETED never upgrades research disposition",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-workflow.test.ts: 5 W2 monotone suites over actual local D1/R2 (18-stage restart resume, duplicate/stale/concurrent single-effect, revoke/cancel rollback, lost R2/checkpoint ACK reconciliation, executable step.do binding readback) plus retained W2a single-stage suites",
+        "packages/cloudflare-research/src/executor.ts: createMonotoneStageExecutor reusing the W2a checkpoint boundary with no parallel stack",
+        "packages/research/src/workflow.ts: pure monotone order and 64KiB handle-only step guards",
+        "W3 budget/provider settlement, W4 governed handlers, branch scheduler, notification consumer, retention/erasure/restore and live Workflow/provider receipts remain open; live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "scaffold-002",
+      "path": "apps/eliotr-core/src/research-session.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 ResearchSession executes durable sessions over DO storage with W2 D1/R2 checkpoints; research.query/run are composed; hibernation WebSocket transport and live receipts remain separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "ResearchSession Durable Object persists session authority in DO storage and executes 18-stage W2 checkpoints over D1 Core/R2 with restart resume, single-effect replay, cancel persistence, lost-ACK reconciliation and 64KiB handle-only receipts; research.query serves ORIENT retrieval over injected RetrievalQueryPorts and dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter, whose production path uses owner ScopeSnapshot authority, admitted normalized manifests, persisted DocumentMaps, LIVE EvidenceHandles and pinned R2 reads before Q7 planning/execution/reconciliation; research.run creates a W1 ledger then walks W2; artifact/changes/wiki remain unavailable",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-session.test.ts: 7 suites over actual local D1/R2/DO (query retrieval no-hit replay/stale/foreign, run W1 ledger plus 18-stage resume/duplicate/stale/lost-ACK with 64KiB handle-only receipts, DO start/read/replay/stale/foreign/cancel/status, DO W2 replay without duplicate paid effects)",
+        "apps/eliotr-core/src/research-session.ts: DO storage session state with principal-bound read/cancel plus createMonotoneStageExecutor reuse and no new D1 tables",
+        "apps/eliotr-core/src/composition-root.ts: RESEARCH in enabled_slices with query/run wired to orientation/W1/W2, artifact/changes/wiki still unavailable",
+        "apps/eliotr-core/src/http.ts: research.query/run dispatch with strict DTO and fail-closed mapping",
+        "apps/eliotr-core/src/exhaustive-query-service.ts, apps/eliotr-core/src/exhaustive-workflow-service.ts and packages/cloudflare-navigation/src/exhaustive-query-service.ts: versioned Q8 EXHAUSTIVE_JOB parser/runtime over admitted normalized manifests, persisted structural ranges, batched owner authority and pinned R2 evidence",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts and infra/d1/core/migrations/0024_exhaustive_workflow.sql: durable Workflow binding with request/principal/credential/deployment identity, current-policy checks, cancel intent readback and terminal output validation",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: 8 local Q1 boundary cases covering Workflow launch/readback, idempotency scope conflict, revoked owner, pending retry, actual DELETE cancellation/no-resume control, withdrawal during async inventory, and a small selected scope with 65 active policies; the 65-source case uses one Q1 import plus canonical admitted/projected D1/R2 fixture rows, and the import/projection HTTP and withdrawal-race cases use explicit 20-second per-test integration deadlines for their fresh D1/R2 setup and durable Workflow work",
+        "the ER09 ResearchWorkflow Q8 host extension is implemented with one bounded step.do owner boundary; the existing research.query operation launches/status-reads/cancels the durable Workflow locally, and local COMPLETE is earned from actual persisted authority/evidence readback; post-staging receipts separately qualify LIVE, while deployed Workflow/live Access, full projected-source owner/browser completion, RETRIEVAL slice enablement, hibernation WebSocket transport, PWA session UI and live Durable Object eviction/resume/deployment-restart receipts remain NOT_EXECUTED; the current browser helper covers cancellation, not full projected-source owner/browser completion"
+      ]
+    },
+    {
+      "id": "pending-drive-exchange",
+      "path": "packages/google-drive-exchange/src/reconciler.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit; owner provisioning/Doc publication/composition and live qualification remain separate.",
+      "owner_packets": [
+        "ER-18",
+        "ER-19",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "required_for_transports": ["drive-exchange"],
+      "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback and reconnect/disconnect/status lifecycle now execute; provisioning, Doc publication/export and full runtime composition remain separate. Optional Gemini MCP does not replace this path.",
+      "completion_evidence": [
+        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream (import with cursor advance, duplicate resume without re-freeze/re-admit, admitted-but-unrecorded resume via ContributionIntent DUPLICATE, incomplete missing-parts with no cursor advance and failure counter, held-lease refusal before any Drive read, outrun-TTL commit refusal, edited-replay tamper without re-freeze under a preserved frozen authority, digest-against-frozen tamper audit, missing-not-tampered audit, lost-notification plus edited-row negative with no duplicate work); no new migration",
+        "packages/google-drive-exchange/src/reconciler-store.ts: D1 cursor lease CAS (steal-on-expiry, extend-own, refuse-other, commit only under a live own lease) and frozen-observation ledger (IMPORTED/DUPLICATE_IGNORED/TRANSPORT_TAMPERED) with lost-ACK readback and no multi-statement transaction spanning I/O",
+        "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
+        "Narrow offline drive.file OAuth/token lifecycle, exact result publication/readback and canonical admission adapter with no provider-success authority.",
+        "G1 owner begin: apps/eliotr-core/test/google-oauth-begin-http.test.ts (12 actual local HTTP/D1/crypto cases: forged owner/session/config, service principal, Origin/CSRF, unknown/max+1 fields, invalid Production attestation, replay/concurrency/lost response/currentness revocation, D1 cap/expiry, secret leakage; invalid requests cause zero token/provider calls or credential writes; valid retry returns the same pending intent) and apps/eliotr-pwa strict begin decoder/transport/panel with no private token in URL, log, or browser storage.",
+        "Full local storage/browser lifecycle plus retained real account/action/write-readback qualification; live tests NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-reconciler-store",
+      "path": "packages/google-drive-exchange/src/reconciler-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-19 D1-backed Drive cursor lease guard and frozen-observation ledger over migrations 0001; no new migration, no backfill.",
+      "owner_packets": [
+        "ER-19"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "D1-backed Drive cursor lease guard (acquire with steal-on-expiry, extend-own, refuse-other; commit only under a live own lease with expiry recheck; failure counter without cursor motion; owner-checked release) and frozen-observation ledger (same-ID/same-digest dedup, same-ID/new-digest TRANSPORT_TAMPERED against the original frozen envelope, lost-ACK and raced-write readback) over the committed 0001 drive_cursor/drive_observation tables with no new migration, no backfill and no multi-statement transaction spanning I/O",
+      "completion_evidence": [
+        "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream covering lease CAS refusal, expiry-guarded commit, failure counter and ledger dedup/tamper transitions",
+        "strict TypeScript check with noUncheckedIndexedAccess and exactOptionalPropertyTypes",
+        "live D1/Cloudflare receipts NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-001",
+      "path": "apps/eliotr-core/src/composition-root.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Bounded application lifecycle, health, capabilities, owner catalog and governed ingest composition are executable; unsupported products remain typed unavailable. Owner catalog uses explicit current read policy and admitted-source verification, primary mutation/time fencing and session-bound v2 cursors. Library selection binds active readiness and FAST_SEARCH to the selected head and deployment; metadata orientation remains separate. Owner-only revision history reuses the catalog read fence and independently validates historical admissions; historical per-channel metadata remains RECORDED_ONLY.",
+      "completion_evidence": [
+        "strict TypeScript check",
+        "owner/service authorization negative tests",
+        "apps/eliotr-core/test/source-revisions.test.ts: bounded actual D1/HTTP history, recorded readiness, cursor and withdrawal/purge/expiry negatives",
+        "tests/source-revisions.test.ts and built-PWA Chromium fixture: strict decoding, source/generation binding, pagination and private-state clearing",
+        "live Access and remote D1 receipts"
+      ]
+    },
+    {
+      "id": "implemented-002",
+      "path": "apps/eliotr-core/src/http.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP dispatch requires live owner/service Access receipts.",
+      "owner_packets": [
+        "ER-21",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "route registry, bounded responses, Cloudflare Access verification, owner/service authorization and strict multipart ingest dispatch are executable; strict idempotent owner orientation and trace dispatch execute the real application, not unavailable fallbacks Owner-only system/session returns the verified Access identity and expiry before application composition; the local browser bridge consumes it without an auth bypass.",
+      "completion_evidence": [
+        "HTTP and multipart negative tests",
+        "runtime prototype tests",
+        "live owner and service-principal Access receipts",
+        "Local real-RSA/controlled-JWKS owner-session positive and negative tests; actual user IdP login NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-003",
+      "path": "apps/eliotr-core/src/queue.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.",
+      "owner_packets": [
+        "ER-15",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Queue messages pass strict envelope decoding, digest-bound D1 inbox acquisition, durable projection acceptance/execution and ACK only after terminal receipt settlement",
+      "completion_evidence": [
+        "duplicate-delivery and stale-fence negative tests",
+        "failed or uncertain projection cannot acknowledge delivery",
+        "remote Queue duplicate-delivery and DLQ receipts"
+      ]
+    },
+    {
+      "id": "implemented-004",
+      "path": "apps/eliotr-core/src/scheduled.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 scheduled outbox reconciliation requires remote Queue send/readback receipts.",
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "scheduled handler leases a bounded D1 outbox batch, sends stable Queue envelopes and records exact delivered/retry/dead-letter settlement",
+      "completion_evidence": [
+        "lost producer ACK reconciliation tests",
+        "D1 generation-fenced claim fixture",
+        "remote Queue send/readback receipt"
+      ]
+    },
+    {
+      "id": "implemented-005",
+      "path": "packages/cloudflare-projection/src/projection-delivery-handler.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 projection acceptance requires remote Queue/D1 duplicate-delivery receipts.",
+      "owner_packets": [
+        "ER-13",
+        "ER-15",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "admitted LIVE source revisions create one fenced PROJECTION job acceptance and an ACCEPTED receipt before ER-38 execution",
+      "completion_evidence": [
+        "active owner, purge state and content digest checks",
+        "negative receipt-outcome deduplication test",
+        "remote D1/Queue replay receipt"
+      ]
+    },
+    {
+      "id": "workspace-candidate-admission",
+      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
+      "sentinel": "IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.",
+      "owner_packets": ["ER-36"],
+      "state": "IN_PROGRESS",
+      "required_for_transports": ["gemini-mcp"],
+      "behavior": "The selected Workspace MCP profile preserves v1 behavior and adds strict v2 server-issued intent plans bound to the verified actor, deployment and auth profile. Append-only D1 plans and candidate observations use canonical digests, exact readback and same-key reconciliation. A committed UNKNOWN comparison is distinct from an uncertain D1 write. The ledger does not invoke Google or admit source/evidence bytes; external connector qualification and authenticated source admission remain incomplete.",
+      "completion_evidence": [
+        "packages/contracts/src/workspace-mcp.ts and workspace-mcp.test.ts: strict v2 candidate plans, external receipt input and separate comparison/write uncertainty",
+        "packages/cloudflare-workspace-mcp/src/workspace-mcp-google-sync.test.ts: server-issued plan replay, changed-intent conflict, actor binding and candidate observation behavior",
+        "apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts: actual local Worker/D1 canonical plan and observation readback, actor isolation, historical replay and append-only storage",
+        "infra/d1/core/migrations/0031_workspace_mcp_candidate_ledger.sql: constrained append-only plan and observation ledgers",
+        "Authenticated Workspace source-byte admission, live Google action/readback and managed OAuth client qualification remain NOT_EXECUTED; candidate observations do not establish source/evidence authority."
+      ]
+    },
+    {
+      "id": "implemented-006",
+      "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-36 Gemini Spark MCP requires live Access and Google readback receipts.",
+      "owner_packets": [
+        "ER-17",
+        "ER-24",
+        "ER-36"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "required_for_transports": ["gemini-mcp"],
+      "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance or write-precondition proof. The separate unselected ChatGPT Drive Exchange profile remains independently tracked. Service catalog remains withheld pending explicit scope authority.",
+      "completion_evidence": [
+        "MCP version/body/principal negative tests, managed-oauth actor separation, mixed-profile and ordinary-audience rejection, and Workspace Cloud/gcloud rejection",
+        "secret-free idempotent setup fixture",
+        "live Access initialize/tools/call and exact readback receipts for the selected profile; default Workspace/Drive qualification is independent of optional gcloud/Google Cloud",
+        "Explicit service catalog read-scope adapter and revocation tests required before re-enabling eliotr_catalog; owner impersonation prohibited.",
+        "packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts: target/read-version/time/descriptor/digest/clock negatives, exact expiry, unverified mutation preconditions; candidate-only v1 observations never qualify real effects."
+      ]
+    },
+    {
+      "id": "implemented-007",
+      "path": "apps/eliotr-core/src/ingest-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-14/ER-21/ER-29 ingest requires remote R2/D1/Queue receipts.",
+      "owner_packets": [
+        "ER-13",
+        "ER-14",
+        "ER-21",
+        "ER-24",
+        "ER-29",
+        "ER-37"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Authenticated prepare, bounded multipart staging, exact readback, deterministic qualification, explicit admission and immutable promotion compose into a guarded SourceRevision/outbox batch. Current owner and exact admission policy are rechecked on continuation/promotion and inside the final SQL guard. The PWA can explicitly resume the same frozen upload in one tab or recover a known operation after reload by reselecting exact files and authenticated server readback; existing completed files are reconciled without invented multipart ETags. A separate local operator command initializes only an absent immutable-import namespace without granting read access. Lost operation IDs can be rediscovered with a read-only exact-folder request bound to the same principal, canonical manifest, complete hashes and current policy; discovery does not create a reservation or resume writes automatically. Revision/readiness/project views, remaining failure UI and the full initial populated browser/storage loop remain open in #98.",
+      "completion_evidence": [
+        "idempotency, unsafe-path, missing-mapping and partial-transaction negative tests",
+        "SQLite migration and commit-guard fixture",
+        "live Access, R2 multipart/promotion, remote D1 and Queue receipts",
+        "tests/bundle-import.test.ts bounded browser input and strict sequential transport negatives",
+        "apps/eliotr-core/test/bundle-import-http.test.ts actual local D1/R2 HTTP import, exact replay, malformed lengths and policy/input fences; no implicit read grants",
+        "scripts/test-local-namespace.mjs guarded initialization, lost-ACK, exact replay, policy-only restart and no owner resurrection",
+        "apps/eliotr-core/test/namespace-bootstrap.test.ts controlled RSA-signed owner -> actual D1 initializer -> real HTTP/R2 admission, without read grants",
+        "apps/eliotr-core/test/bundle-import-http.test.ts lost part/file/commit ACK continuation, policy withdrawal and transaction-time policy substitution rollback",
+        "scripts/test-library-browser.mjs built PWA explicit same-tab continuation with a controlled HTTP backend; not live IdP or complete real-storage browser qualification",
+        "tests/bundle-recovery.test.ts exact-file recovery metadata, generation/auth/cancellation and no implicit mutation",
+        "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
+        "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open",
+        "apps/eliotr-core/test/bundle-import-http.test.ts read-only exact-folder discovery after lost prepare/commit replies and PREPARING state; missing/foreign denial, altered metadata/bytes, expiry and policy withdrawal",
+        "apps/eliotr-core/src/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
+        "tests/bundle-recovery.test.ts exact discovery transport, bounded metadata, frozen input, cancellation and no fallback mutation",
+        "scripts/test-library-browser.mjs built PWA reload without operation ID -> read-only discovery -> explicit continuation; controlled HTTP backend, not complete real-storage browser qualification"
+      ]
+    },
+    {
+      "id": "implemented-008",
+      "path": "apps/eliotr-core/src/projection-execution-handler.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-38 projection execution requires remote R2/D1 Search/AI Search receipts.",
+      "owner_packets": [
+        "ER-05",
+        "ER-06",
+        "ER-15",
+        "ER-16",
+        "ER-24",
+        "ER-38"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "pinned LIVE SourceRevision bytes are deterministically projected, immutably materialized, activated in guarded D1 Search generations and uploaded to managed AI Search; semantic readiness requires exact item readback plus an exact ACTIVE primary-generation record from the SEARCH_DB generation registry, never an environment-variable promotion",
+      "completion_evidence": [
+        "UTF-8, item-limit, shadow-activation and provider-readback negative tests",
+        "SEARCH_DB active-head, absent-head and immutable-profile negative tests",
+        "SQLite projection activation and terminal guard fixture",
+        "remote R2, D1 Search, AI Search and Queue replay receipts"
+      ]
+    },
+    {
+      "id": "pending-002",
+      "path": "apps/eliotr-core/src/erasure-coordinator.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-28 exact erasure coordinator",
+      "owner_packets": [
+        "ER-28"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "generation-fenced exact dependency closure quarantines subjects, verifies absence across every requested location, records non-revealing purge ledger entries, invalidates dependents, and blocks rather than claiming subset completion",
+      "completion_evidence": [
+        "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
+        "apps/eliotr-core/src/erasure-coordinator.test.ts exact completion and absence-negative cases",
+        "packages/cloudflare-erasure location-adapter and authority tests",
+        "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED"
+      ]
+    },
+    {
+      "id": "pending-003",
+      "path": "apps/eliotr-core/src/federation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary requires ER-24 composition and retained boundary receipts.",
+      "owner_packets": [
+        "ER-22"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "authenticated and manifest-fenced federation service validates strict requests, maps durable idempotent job reservations, exposes bounded bundle/range/change reads, and reconciles public completion dispositions to the observed internal result without client canonical-write authority",
+      "completion_evidence": [
+        "apps/eliotr-core/src/federation-service.test.ts strict schema, identity/fence, manifest, idempotency, range and reverse-authority cases",
+        "mandatory COMPLETED + INCONCLUSIVE disposition downgrade case",
+        "ER-24 composition wiring and retained mutually authenticated boundary receipt NOT EXECUTED"
+      ]
+    },
+    {
+      "id": "pending-007",
+      "path": "packages/cloudflare-navigation/src/navigation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-31 persisted Corpus Lens requires production scope composition and live D1 receipts.",
+      "owner_packets": [
+        "ER-31"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Immutable navigation storage and current-scope reads are composed into the active owner metadata-only research.orient profile; N1 structural SourceCard/DocumentMap materialization now reads admitted normalized R2 bytes and persists exact UTF-8 ranges, and the admitted table-cell coordinate-map adapter binds canonical per-file R2 objects into navigation-only D1 metadata, while Atlas, evidence handles and live conformance remain open",
+      "completion_evidence": [
+        "apps/eliotr-core/test/orientation-http.test.ts actual HTTP and D1 path",
+        "apps/eliotr-core/test/orientation-resilience.test.ts actual PWA client through Worker, lost ACK, concurrent replay and revocation",
+        "apps/eliotr-core/test/orientation-boundaries.test.ts atomic rollback and 64/65-source bounds",
+        "packages/retrieval/src/structural-navigation.test.ts: Unicode/nested exact-range, digest-mismatch, owner-generation, fenced-heading and skipped-level cases",
+        "apps/eliotr-core/test/structural-navigation-q1.test.ts: actual Q1 HTTP import/projection, manifest/content R2 readback, D1 map persistence/replay and purge currentness rejection",
+        "packages/cloudflare-evidence/src/content-store.ts and packages/cloudflare-navigation/src/orientation-materialization.ts: bounded admitted-content reader and delegated structural adapter",
+        "N1 local path is implemented for normalized Markdown plus the admitted table-cell coordinate-map adapter; native page/region/code precision, LIVE EvidenceHandles, Atlas/N2-N4, broad corpus, remote and live receipts remain NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "pending-008",
+      "path": "packages/cloudflare-navigation/src/scope-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-30 scope snapshot persistence requires ER-24 D1 composition and retained live receipts.",
+      "owner_packets": [
+        "ER-30"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Scope freezer is composed with real D1 namespace read policies, source admission/ownership, project/tag membership and purge frontier for owner metadata orientation; explicit grants, temporal expiry and request-local mutation-fenced currentness are enforced",
+      "completion_evidence": [
+        "apps/eliotr-core/test/scope-persistence.test.ts",
+        "apps/eliotr-core/test/orientation-http.test.ts empty purge ledger at revision zero and authorization",
+        "apps/eliotr-core/test/orientation-resilience.test.ts read-policy/grant withdrawal and membership invalidation",
+        "packages/cloudflare-navigation/src/orientation-currentness.test.ts mutation/time fence",
+        "Deployed principal grants and remote invalidation receipts NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-009",
+      "path": "apps/eliotr-core/src/evidence-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07/ER-11 exact evidence requires live D1/R2 range readback receipts.",
+      "owner_packets": [
+        "ER-07",
+        "ER-11",
+        "ER-19",
+        "ER-21",
+        "ER-24",
+        "ER-39"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "strict locator or existing handle resolution reopens the pinned admitted SourceRevision under an authorized frozen ScopeSnapshot, verifies checksum-bound R2 byte ranges, persists immutable handles and resolution receipts, invalidates stale handles, and derives citation-set receipts for context/output gates",
+      "completion_evidence": [
+        "forged preview, scope, purge, UTF-8 and digest negative tests",
+        "SQLite guard and invalidation fixture",
+        "actual ScopeService snapshot persists in local D1 and passes the production evidence loader with shared protocol-bound identity; legacy or corrupt rows fail closed",
+        "live Access, remote D1 Core/Search, R2 conditional range and citation/output receipts"
+      ]
+    },
+    {
+      "id": "implemented-010",
+      "path": "packages/cloudflare-navigation/src/orientation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner metadata orientation requires retained deployed D1/Access receipts.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner HTTP/PWA orientation automatically freezes a real authorized D1 scope, issues a read-policy-bound grant, materializes immutable metadata cards/maps, persists exact idempotent result/trace and rechecks currentness; no provider calls or fabricated evidence",
+      "completion_evidence": [
+        "Clean migration-to-HTTP-to-trace integration tests",
+        "Actual PWA API/decoder/rendering against Worker integration",
+        "Replay/lost ACK/revocation/expiry and atomic batch rollback cases",
+        "Remote Access, D1 and browser session qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-drive-sheet-rest",
+      "path": "packages/google-drive-exchange/src/sheet-port.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 bounded Exchange Sheet/changes REST subset; OAuth, Doc publication and durable cursor composition remain unfinished.",
+      "owner_packets": [
+        "ER-18",
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Five fixed-generation Drive/Sheets REST methods with trusted per-request credential lease/currentness, numeric bounded ranges, exact metadata, ERC-only append guards, bounded stream deadlines and no automatic retries. HTTP receipts and raw cells remain transport observations. No Worker activation or complete connector is claimed.",
+      "completion_evidence": [
+        "contribution-boundary.test.ts: seven baseline failure groups reproduced and rejected; existing v1 sixteen/five-column serialization round-trips.",
+        "sheet-port.test.ts: fixed resource/lease/range bindings, valid and malformed provider JSON, deadline/body/request budgets, cancellation, revocation, no secret reflection and uncertain append outcomes.",
+        "Actual serializer -> bounded numeric range readback -> strict contribution assembly uses controlled Google HTTP fixtures; not a real account or canonical admission receipt.",
+        "Owner OAuth transport/UI, generation/cursor/freeze/publication/composition and complete local-storage/browser acceptance remain required; live Google/Cloudflare NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-vault",
+      "path": "packages/google-drive-exchange/src/token-vault.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 credential encryption; initial OAuth admission and runtime activation remain separate.",
+      "owner_packets": [
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Context-bound AES-256-GCM refresh-token vault with versioned nonextractable keys, cryptographic random nonces, forward key rotation and exact narrow-scope validation. No initial Google identity admission.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-refresh",
+      "path": "packages/google-drive-exchange/src/token-lease.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 persisted-credential refresh leases; no initial OAuth callback/admission or production connector composition.",
+      "owner_packets": [
+        "ER-20"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "One-attempt, request-scoped OAuth refresh lease from previously admitted encrypted records; deadlines, sticky cancellation, expiry, CAS token rotation and durable REAUTH_REQUIRED. It is not a browser OAuth callback or public connect route.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-credential-store",
+      "path": "packages/google-drive-exchange/src/google-token-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 encrypted credential CAS/readback plus explicit revoke/reconnect; live Google qualification and full Drive activation remain separate.",
+      "owner_packets": [
+        "ER-13",
+        "ER-20",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Actual primary D1 encrypted-credential load/CAS/readback, exact revoke and pinned exchange descriptor checks compose the existing REST lease. Legacy/Testing records fail closed; lost ACKs reconcile exactly and late invalid_grant cannot revoke a replaced grant.",
+      "completion_evidence": [
+        "Local real WebCrypto/D1/R2 tests and controlled OAuth/Sheet responses cover substitution, corrupted ciphertext, key rotation, no plaintext persistence, concurrency, cancellation and artifact preservation.",
+        "The internal initial OAuth service now uses durable state/PKCE/nonce and verified dedicated Google identity; owner HTTP adapters are present while PWA controls and operator production-client evidence admission remain pending. Never bootstrap by hand-setting trusted records.",
+        "Complete connector publication/cursor/browser lifecycle plus retained genuine Google OAuth restart/refresh/revoke receipts remain separate; live NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-drive-initial-oauth",
+      "path": "packages/google-drive-exchange/src/oauth-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-20 OAuth admission plus versioned reconnect lifecycle; PWA controls, provisioning and live qualification remain separate.",
+      "owner_packets": [
+        "ER-20",
+        "ER-13",
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Internal initial OAuth service and real primary-D1 store: encrypted owner/session/client/redirect-bound one-use intent, PKCE/state/nonce, fixed code/JWKS endpoints, actual RS256/dedicated identity/narrow scope/hash/time verification, atomic encrypted credential insertion and exact readback. Versioned owner reconnect/disconnect routes use fresh consent and expected-generation CAS; admission remains AUTHORIZING, with no provisioning, new source grant or completed Drive Exchange. Trusted operator configuration/production evidence and authenticated owner currentness remain caller dependencies.",
+      "completion_evidence": [
+        "oauth-identity.test.ts: 29 real-RSA/transport/configuration regressions, mandatory access hash, optional code hash, issuer/audience/nonce/subject/email, strict scopes and body/deadline/cancellation failures.",
+        "apps/eliotr-core/test/google-oauth-admission.test.ts: 25 actual local D1/crypto cases including restart, one-use replay, concurrent claim, lost initial/claim/admission ACKs, rollback, owner revocation, reconnect CAS and bounded expiry cleanup.",
+        "Owner HTTP adapters and route dispatch are covered locally; PWA controls and complete browser/storage OAuth lifecycle remain required. Fixtures substitute only trusted owner context and provider HTTP, not ID-token signature verification.",
+        "No real Google code exchange, key retrieval, account change or Cloudflare deployment; live qualification NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-investigation-ledger",
+      "path": "packages/research/src/investigation-service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-08/ER-13 versioned Investigation ledger over D1 with atomic single-statement commands, D1-time bounds and explicit supersession; Workflow/Session composition and live receipts remain separate.",
+      "owner_packets": [
+        "ER-08",
+        "ER-13"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Versioned Investigation ledger heads plus append-only events over D1 Core migrations 0014 (heads/events), 0015 (retired guard path, epoch) and 0016 (atomic commands: one INSERT into investigation_ledger_command carries the full fence, versions, epoch, D1-time bounds and complete old/new head/event bytes; BEFORE triggers revalidate against live scope_snapshot, scope_access_grant, current policy/deployment, purge frontier, epoch, owner/actor and verifier binding; the AFTER trigger program performs every head/event effect in the same statement so a separate transaction can never resume a command and zero-row/stale CAS rolls back head, event and command together; no embedded DDL). Guard inserts are retired, heads can never be deleted, direct writes require full-byte-equal committed command bytes, and observed time is bound to D1 current time (60s future skew, 300s past staleness, hard expiry, 10min TTL cap). The write path performs no authority mutation and swallows no error: fence reads fail closed before the command with SETTLEMENT_UNCERTAIN, leaving authority, epoch and ledger byte-identical. Exact replay returns the prior effect with no second mutation through one canonical sameHead/sameEvent validator; any divergent byte under a reused event id is LEDGER_CONFLICT with no effect. Fail-closed portfolio verification, named-verifier acceptance binding, and deviated-obligations-only-via-supersession retained. Precise blockers: external policy/deployment rotations must materialize the D1 current rows (rotations bypassing D1 have no standing; D1 Core is canonical); Workflow/Session composition, research.run enablement and remote D1/Queue/live qualification NOT_EXECUTED.",
+      "completion_evidence": [
+        "packages/research/src/research.test.ts: 19 cases over the committed Core migration stream (0014+0015+0016, no embedded DDL) covering crash before/after atomic guarded append, stale CAS with no orphan event, lost-ACK reconciliation, two-store contention (STALE_HEAD or CONFLICT single winner), every mutation under wrong-principal/foreign-scope/stale-policy-gen/stale-policy-ref/stale-deployment/purge/foreign-actor, portfolio missing/mismatch/backend-error fail-closed, verifier impersonation, deviated reaccept rejection, explicit supersession lineage with full-field replay compare, supersession fault injection (single-statement command), divergent event-id reuse conflicts on append and supersede, and exact supersession replay settling to one effect.",
+        "packages/research/src/ledger-commands.test.ts: 8 FIX4 cases over committed migrations proving command columns mirror the migrated table, separate-transaction CAS plus forged event cannot resume a command (guard path retired, commands immutable), direct head delete fails, D1-time bounds reject expired/future/skewed/over-TTL commands while bounded skew accepts, fence-read and command failures leave authority/epoch/ledger byte-identical with zero authority rows, forged actor/verifier plus every immutable head byte fail closed, exact replay settles once with divergent conflicts, and restart reads contiguously.",
+        "apps/eliotr-core/test/investigation-ledger-d1.test.ts: 13 actual workerd D1 cases via cloudflare:test CORE_DB contour covering committed-migration create/readback/restart, stale append CAS with no orphan event, fences/verifier/deviation/supersession lineage, conflicting replay with no second effect, supersession CAS loss at the single-command boundary (old winner complete, no replacement rows), throw-before-command plus lost-ACK-after-commit single-effect reconciliation, divergent event-id reuse with exact store replay, per-mutation provider fence flips after preflight denied with zero effect, per-dim D1 authority mutations after preflight (scope invalidated, grant revoked, policy gen/ref rotated, deployment rotated, global purge inserted, epoch bumped) each aborting with typed code and byte-identical row state, direct unguarded head/event writes failing via triggers, same-ID divergence on every event field plus head conflicting with identical DB state, concurrent divergent appends electing one winner, and rival-replacement supersede rollback leaving the old ledger OPEN with CREATED-only lineage.",
+        "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts: 9 FIX4 actual workerd D1 cases proving separate transactions cannot resume a command or guard, stale CAS leaves no orphan event or stray command, create/append/supersede boundary faults roll back every row with epoch unchanged, direct head delete plus every unguarded insert/update/delete fails, forged actor/verifier plus immutable head bytes fail byte-identical with a forged raw command rejected, D1-time bounds reject expired/future/skewed/over-TTL commands, authority/ledger failures leave rows byte-identical with zero authority writes and no epoch bump on success, exact replay/lost-ACK/concurrent exact-divergent settle once with one winner, and restart/readback reconstructs contiguous lineage.",
+        "Workflow/Session composition, research.run enablement and remote D1/Queue/live qualification NOT_EXECUTED."
+      ]
+    },
+    {
+      "id": "implemented-workflow-checkpoints-w2a",
+      "path": "packages/cloudflare-research/src/executor.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-09 durable single-stage D1/R2 checkpoints; governed handlers, public Workflow composition and live qualification remain separate.",
+      "owner_packets": [
+        "ER-09",
+        "ER-13"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Executable W2a single-stage checkpoint boundary with canonical 18-stage ordering, immutable bounded R2 outputs, one durable attempt per handler, exact ACK reconciliation, currentness/cancellation/budget checks, and W1 CHECKPOINT plus outbox in one D1 batch. Engine completion never upgrades research disposition. Public Workflow, governed W3/W4 handlers, branch scheduler, notification consumer and metadata retention/erasure/restore integration remain uncomposed.",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-workflow.test.ts: actual local D1/R2 ordering, duplicate/lost ACK, concurrent attempts, cancellation/withdrawal rollback, exact content/residency, 8 MiB/64 KiB bounds, unknown-settlement and strict v1 vector checks.",
+        "infra/workflows/checkpoint-vectors.v1.json; deterministic migration target eliotr-research-core, not promoted Rust authority.",
+        "Live Workflow/provider/settlement/erasure/restore qualification NOT_EXECUTED; keep public scaffold and launch holds."
+      ]
+    },
+    {
+      "id": "implemented-011",
+      "path": "packages/cloudflare-evidence/src/content-store.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 pinned normalized byte/line excerpt materialization; exact phrase/literal verification, coordinate-map table/cell resolution, tokenizer-fallback table, bounded regex scans and sharded exhaustive execution remain separate.",
+      "owner_packets": [
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pinned normalized byte-range and line-range anchors materialize from R2 under key/version/ETag/size/admitted-metadata/checksum pinning with a final HEAD recheck; bounded streaming LF seek (4 MiB / 262144 chunks) preserves CRLF/UTF-8/BOM without whole-source buffering under the 256 KiB excerpt limit; rejected and early-stopped streams are cancelled; page/table/code precision without a verified coordinate map fails closed with EVIDENCE_PRECISION_UNSUPPORTED; retrieval Q2 verification (verifyPinnedExactEvidence) rechecks scope/owner/residency/purge/revision/digest/length over bounded pinned bytes, resolves byte/line/table anchors through the admitted map, verifies exact probes with UTF-8 offsets plus bounded regex scans, and falls back to a reviewed projection table for unsupported tokenizers",
+      "completion_evidence": [
+        "packages/cloudflare-evidence/src/content-store.test.ts: 14 controlled-R2 cases (5 line vectors incl. Cyrillic/emoji/CRLF/BOM, bounds, scan-cap typed limitation, 256 KiB boundary, changedGet/changedHead/truncatedGet fail-closed, invalid-metadata cancel, byte BOM/split-UTF-8, page/table/code typed rejection; #135 fixed: conditional range read sends unquoted head.etag and the fake rejects S3-quoted values the way the runtime does, so a regression turns the suite red)",
+        "packages/retrieval/src/evidence-resolver.test.ts: 11 pure cases (probe offsets plus receipt reuse, mid-resolution byte-mutation refusal with no current-byte substitution, old revision while the head advances, Unicode line offsets, table map present/missing/corrupt, range/length/digest mismatch, forged handle, mid-read revocation, bounded regex valid/unbounded/invalid, tokenizer fallback present/missing)",
+        "Exact phrase/literal match verification over bounded pinned R2 ranges, native/table/cell coordinate-map resolution, reviewed tokenizer-fallback projection table and bounded normalized regex scans now execute as the pure retrieval Q2 verifier above the R2 content port with no second content path; sharded exhaustive plan/execute/merge now executes over frozen scopes with earned coverage (see implemented-exhaustive-scan); R2/D1 composition, Q7 loop and live qualification remain separate",
+        "live Access, remote D1 Core/Search guard and remote R2 conditional-range receipts NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-q3-orchestration",
+      "path": "packages/retrieval/src/service.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 Q3 retrieval query orchestration over injected ports with frozen-scope binding, direct-before-semantic lanes, fused diversity, exact resolution and persisted trace; D1 result/trace persistence executes via query-persistence.ts over migration 0021; Worker wiring and scope-profile versioning remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pure Q3 retrieval query orchestration behind injected ports with no D1/R2/network access and no source-grant minting: freezes an explicitly authorized scope before any lane read with currentness rechecks before every lane, resolution and persistence; fails closed when semantic precedes direct/exact/lexical lanes; fuses ranks with canonical-section dedup plus source-family diversity and visible fusion/limit/resolution omissions; resolves exact evidence per fused candidate; persists the trace only on exact binding match with idempotent same-retry versus changed-input handling; coverage never exceeds SAMPLED and no-hit never becomes an absence claim; RetrievalRequest carries only evaluated inputs (raw_query/product/literals/requested_limit/scope_snapshot) with no unevaluated policy field, and the request digest binds exactly those inputs",
+      "completion_evidence": [
+        "packages/retrieval/src/retrieval.test.ts: 14 cases (direct-before-semantic invariant across all 7 products, scope-freeze-before-lanes ordering, SEM failure degradation with exact results kept, AI-search no-hit stays NONE with no absence claim, same-retry replay without lane re-execution versus changed-input conflict, budget-stop abort with no persisted result, mid-run scope-stale fail-closed with zero resolutions, substituted-trace refusal with no stored result, UNION then EXCEPT scope binding without cross-contamination, per-candidate omission with resolved evidence kept, source-family diversity cap with visible omission, request carries only evaluated inputs with no policy promise and unchanged SAMPLED behaviour)",
+        "Contract amendment is retrieval-local: `policy: PolicyEvaluationResult` plus the `@eliotr/policy` import removed from `packages/retrieval/src/ports.ts`; all six `{} as never` writers updated (`retrieval.test.ts`, `lanes.test.ts`, `query-persistence.test.ts`, `research-session.ts`, `retrieval-q1-fixture.ts`); zero `packages/contracts` edits, zero fixture regeneration, RETRIEVAL slice still disabled",
+        "packages/retrieval/src/service.ts: createRetrievalQueryService plus RetrievalQueryError typed codes and port-injected scope/lane/fusion/resolve/persist/result-store/budget boundaries",
+        "packages/retrieval/src/fusion.ts: optional maxPerFamily/familyOf diversity cap, backward compatible when absent",
+        "packages/retrieval/src/query-persistence.ts: D1 scope/result/trace ports over migration 0021 (frozen-scope freeze/currentness, idempotent COMPLETE result insert with exact trace-linkage readback, exact trace insert, budget guard); no grant minting, no HTTP/model/R2 inside statements",
+        "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream (fresh-apply tables, persist result+pack+trace with digest readback, same-retry replay with no duplicate rows versus changed-input conflict, expired-scope SCOPE_STALE and denied-grant AUTHORITY_STALE with zero rows, substituted-trace refusal plus service TRACE_CORRUPT with no result row, grant-revoke invalidation keeping trace history)",
+        "Worker research.query still delegates to orientation metadata; Q1-lane/R2-byte composition at the app layer, ER-24 composition wiring, scope-profile versioning and sharded exhaustive execution NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-q3-persistence",
+      "path": "packages/retrieval/src/query-persistence.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 D1-backed retrieval query persistence over migration 0021 with frozen-scope binding, idempotent result replay and exact trace linkage; lane/R2 composition and Worker wiring remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "D1-backed RetrievalQueryPorts persistence behind migration 0021 tables with no D1/R2/network/clock authority of its own and no source-grant minting: scope freeze and currentness recheck the frozen ScopeSnapshot row, caller grant, purge frontier and member liveness on every call; result store inserts COMPLETE rows with INSERT-then-exact-readback and verifies the trace linkage; trace port inserts content-addressed immutable rows bound to the live scope digest; budget guard enforces deadline and cancellation",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0021_retrieval_query_persistence.sql: additive retrieval_query_result plus retrieval_query_trace with authority/binding/immutability/invalidation triggers; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
+        "packages/retrieval/src/query-persistence.test.ts: 6 node:sqlite cases over the committed 0001-0021 stream inspecting persisted rows, not mock counts",
+        "Q1-lane/R2-byte composition at the app layer, ER-24 research.query wiring, scope-profile versioning, remote D1/R2 receipts and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-q3-query-wiring",
+      "path": "apps/eliotr-core/src/research-session.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "research.query composes RetrievalQueryPorts at the app layer behind createResearchQueryService instead of delegating to orientation metadata: strict versioned FAST_SEARCH (`retrieval-fast-v1`) and unchanged ORIENT parsing share the frozen 64-member owner scope with per-snapshot profile binding (retrieval-scope-v1 recorded in retrieval_scope_profile over additive migration 0022), replay-before-freeze from the stored frozen scope with live/profile/digest rechecks, IDENT+LEX lane executors over D1 Search plus a SEM lane executor over the managed AI Search surface (SEM degrades honestly to SKIPPED_UNAVAILABLE without a namespace binding or a promoted D1 registry generation) with all other lanes degrading to SKIPPED_UNAVAILABLE, reciprocal-rank fusion, exact evidence resolution over D1 authority plus pinned R2 bytes, persisted trace/result with idempotent same-retry versus changed-input handling, typed RetrievalQueryError mapping, and no source-grant minting; ORIENT orientation and research.run internal orient calls remain untouched",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-query-retrieval.test.ts: 7 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline inspecting persisted rows (including owner HTTP FAST_SEARCH with a real LEX-hit/R2 excerpt, EXACT SKIPPED_UNAVAILABLE, honest SAMPLED and NONE coverage, replay/change conflict, no-hit ORIENT persistence, denied scope, expired-scope replay, cross-profile conflict and substituted-trace refusal)",
+        "apps/eliotr-core/test/research-session.test.ts: query section serves retrieval over HTTP (genuine no-hit NONE, replay equality with frozen row counts, changed-input 409, foreign 403, unchanged 400/422 negatives)",
+        "infra/d1/core/migrations/0022_retrieval_scope_profile.sql: additive profile table with FK to scope_snapshot plus immutability triggers; no backfill, no rewrite, no readiness promotion",
+        "#135 fixed by the disclosed ER-07 narrow fix (not worked around here): packages/cloudflare-evidence/src/content-store.ts:136 now issues the conditional range read with unquoted head.etag, and content-store.test.ts rejects S3-quoted values the way the runtime does; the first real LEX-hit success path above executes through it",
+        "SEM lane executor composed at the app layer (packages/retrieval/src/lanes.ts createSemLaneExecutor over the D1-backed managed port with expected_namespace eliotr, explicit SEM fusion weight, and honest SKIPPED_UNAVAILABLE without a binding or a promoted generation); coverage stays capped at SAMPLED with no exhaustive denominator",
+        "Worker research.query accepts the strict versioned FAST_SEARCH retrieval profile (`retrieval-fast-v1`) through the existing route while preserving the ORIENT DTO and 64-source/16-result bounds; EXACT remains visibly SKIPPED_UNAVAILABLE and NONE/SAMPLED do not earn exhaustive coverage; RETRIEVAL slice stays disabled, research.trace serves persisted retrieval and orientation traces, and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-testkit-golden",
+      "path": "packages/testkit/src/golden.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-23 deterministic Golden Corpus loader/adjudication with collapsing-extractor negative and RU/EN/code/table cases; live model/provider qualification NOT_EXECUTED.",
+      "owner_packets": [
+        "ER-23"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Deterministic offline Golden Corpus loader/adjudication without model prose as oracle, collapsing-extractor must-fail harness, D1/R2/Queue/AI Search/model/Drive failure fakes with lost ACK/stale/tamper/partial/blocked-purge, and adjudicated RU/EN/code/table expansion GC-009..GC-012 with LF SHA-256 pins and promotion thresholds",
+      "completion_evidence": [
+        "packages/testkit/src/golden.test.ts: 7 suites including collapsing-extractor must-fail on GC-001/GC-002, faithful-pass adjudication, malformed/empty/oversized and missing-observation negatives",
+        "packages/testkit/src/fakes.test.ts: 7 suites covering lost-ACK readback without replacement identity, stale CAS with no mutation, tamper digest mismatch, partial-write inspection, blocked purge, and malformed/empty/oversized transport fences",
+        "tests/golden-corpus/golden-harness.test.ts: 4 suites pinning 9 LF SHA-256 sources and 12 adjudicated cases, RU/EN/code/table families, collapsing-extractor block, and no unlisted cases",
+        "tests/golden-corpus/manifest.json generation golden-er23-2026-09-08 with GC-009 RU, GC-010 code, GC-011 table, GC-012 EN dissent/negative; tests/fixtures/registry.json pins contract fixtures and tracks golden generation",
+        "Live model/provider retrieval quality, T2/T3 generation promotion, and workload qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-trace-read",
+      "path": "packages/retrieval/src/trace-read.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 research.trace serves persisted retrieval query-* traces over D1 with owner-bound readback; RETRIEVAL slice enablement remains separate.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "research.trace routes query-* ids to a read-only D1 retrieval trace reader over migration 0021 tables with no grants, writes or trace-of-trace; ownership is the query writer principal/client/credential via retrieval_query_result, so a foreign principal and a missing trace both fail 404 with the same code; malformed ids fail 400; owned stale scopes fail 409; response is the persisted RetrievalTrace (lanes_used, lanes_skipped with reasons, scope_snapshot) plus coverage_claim projected from the owned result row; orient-* path is byte-identical",
+      "completion_evidence": [
+        "apps/eliotr-core/test/research-trace-read.test.ts: 4 cases over actual local D1 Core/Search and R2 through the production Q1 pipeline (LEX-hit SAMPLED readback with lanes/skips/coverage/scope and zero new rows on read, orient-* byte-identical ORIENT/METADATA_ONLY, foreign 404 identical to missing 404 with zero writes, malformed 400 plus unknown-valid 404 with zero writes)",
+        "apps/eliotr-core/test/orientation-http.test.ts, orientation-resilience.test.ts, research-session.test.ts, research-query-retrieval.test.ts retained (33 pass)",
+        "No new D1 migration; 0021 trace/result tables and 0022 profile reused read-only",
+        "RETRIEVAL slice stays disabled; live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-sem-lane",
+      "path": "packages/retrieval/src/lanes.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 SEM lane executor over the managed-search surface with pinned-generation translation and honest degradation; live AI Search readback/promotion receipts remain separate.",
+      "owner_packets": [
+        "ER-04"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "RetrievalLaneExecutor for SEM over the injected ManagedSearchPort in the same shape as IDENT/LEX: plan-derived context expansion, unpromoted managed generation degrades to SEARCH_UNAVAILABLE (SKIPPED_UNAVAILABLE, never a fabricated lane), mid-read registry rotation fails as SEARCH_INCOMPLETE (visible FAILED, never served stale), other managed errors propagate with their original codes; drops the local-only proof_state envelope marker at the lane boundary so exact evidence-authority strict parsing succeeds; generation pinning itself stays inside the registry-backed managed port (D1 before/after reads plus promoted-generation and frozen-scope decode); coverage never exceeds SAMPLED with no exhaustive denominator",
+      "completion_evidence": [
+        "packages/retrieval/src/lanes.test.ts: 5 pure cases (plan expansion with marker drop, wrong-lane refusal, NOT_PROMOTED mapped to SEARCH_UNAVAILABLE, REGISTRY_CHANGED mapped to SEARCH_INCOMPLETE, passthrough of other managed codes)",
+        "apps/eliotr-core/test/research-query-sem.test.ts: 3 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline with a controlled AI Search namespace and a real D1 generation-registry ACTIVE head (SEM recorded in lanes_used with a semantically-found candidate resolved to 28 pinned R2 bytes at SAMPLED, mid-read rotation caught as SEARCH_INCOMPLETE with zero resolutions, unpromoted registry degrades to LANE_UNAVAILABLE without provider contact)",
+        "apps/eliotr-core/src/research-session.ts: SEM composed alongside IDENT/LEX via createD1BackedAiSearchManagedSearchPort over SEARCH_DB with expected_namespace eliotr and explicit SEM fusion weight 1; RETRIEVAL slice stays disabled",
+        "workerd test env carries no live AI Search binding and the Q1 projector reports the managed index DEGRADED, so the provider transport is controlled in tests; live Cloudflare AI Search readback, managed-generation promotion, remote D1 receipts and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-scan",
+      "path": "packages/retrieval/src/exhaustive.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 sharded exhaustive exact scan over frozen scopes with earned coverage; R2/D1 composition, Q7 loop and live qualification remain separate.",
+      "owner_packets": [
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Pure sharded exact scan with no D1/R2/network/clock access and no source-grant minting: the planner partitions frozen-scope member sections into target/hard/section-bounded shards with a scope-derived coverage denominator and fails closed on out-of-scope, uncovered-member, oversized, duplicate, probe and empty inputs; the executor resolves every section through verifyPinnedExactEvidence with probe-absent as an honest miss, typed verification failures as settled fail-closed sections, and timeout/cancel/unknown reads as unsettled unknown outcomes; the merger earns COMPLETE only when every denominator shard settled, otherwise SAMPLED with at least one settled shard or NONE, keeping missing outcomes as unknown with their denominator seat",
+      "completion_evidence": [
+        "packages/retrieval/src/exhaustive.test.ts: 14 cases (frozen-scope sharding within bounds, hard-bound split, scope-derived denominator, out-of-scope/uncovered/oversized/duplicate/probe/empty negatives, real-D1 scope freeze over the committed migration stream, pinned-byte execution with miss, timeout-unknown, cancel-unknown, COMPLETE-only-on-full-settlement, unsettled/missing degradation, foreign/duplicate-outcome refusal)",
+        "packages/retrieval/src/exhaustive-negatives.test.ts: 8 cases (Unicode line offsets, table-cell map present/missing/corrupt, old-revision refusal, range-mismatch, forged-handle, mid-read revocation, mid-resolution byte-mutation refusal)",
+        "RETRIEVAL slice stays disabled and Worker research.query still caps persisted coverage at SAMPLED through the Q3 D1 result store, so a denominator-less COMPLETE claim there stays refused; the Q7 ordered loop persists an earned COMPLETE with its denominator over additive migration 0023 (see implemented-exhaustive-loop); R2-byte Worker composition wiring and live qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-loop",
+      "path": "packages/retrieval/src/exhaustive-reconcile.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-07 ordered exhaustive reconcile loop over migration 0023 with earned COMPLETE persistence; Worker/HTTP composition and live qualification remain separate.",
+      "owner_packets": [
+        "ER-04",
+        "ER-07"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Ordered D1-backed exhaustive reconcile with no D1/R2/network/clock authority of its own and no source-grant minting: starts or resumes a PENDING job bound to the frozen scope digest, journals only SETTLED shard outcomes in planned denominator order, runs mergeExhaustiveShards once over the planned denominator, and persists COMPLETE only with the matching denominator when the merge earns it; unsettled or missing outcomes leave the job PENDING with no weaker final claim; a byte-identical replay returns the stored receipt with no shard re-execution; the Q3 result-store COMPLETE refusal stands unchanged",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0023_exhaustive_reconcile.sql: additive retrieval_exhaustive_job plus retrieval_exhaustive_shard with authority/binding/immutability/invalidation triggers; 0021/0022 untouched; applies cleanly on a fresh database; no backfill, no rewrite, no readiness promotion",
+        "packages/retrieval/src/exhaustive-reconcile.test.ts: 7 node:sqlite cases over the committed 0001-0023 stream (earned COMPLETE persisted with denominator plus readback, COMPLETE replay without re-execution or duplicate rows, partial resume without double-count, unsettled UNFINISHED with zero result rows, foreign-denominator refusal with zero job rows, denominator-less COMPLETE refused by the Q3 store with its exact message, partial finalize refusal with the job left PENDING)",
+        "packages/retrieval/src/exhaustive-reconcile.ts: createD1ExhaustiveJobStore plus reconcileExhaustiveJob behind injected scope/budget/executor ports; coverage never recomputed outside mergeExhaustiveShards; no grant port, no HTTP/model/R2 inside statements",
+        "RETRIEVAL slice stays disabled; research.query now dispatches EXHAUSTIVE_JOB through the versioned Q8 adapter while ORIENT metadata behavior remains unchanged; deployed Workflow, live user-loop handles and live qualification remain NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-exhaustive-workflow",
+      "path": "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 Q8 research.query launches a durable ER09 Workflow with owner-bound status/cancel and Q7 receipt readback; deployed and live qualification remain separate.",
+      "owner_packets": [
+        "ER-24",
+        "ER-09"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "The existing research.query operation accepts EXHAUSTIVE_JOB through a versioned typed workflow envelope, binds one request identity to one principal/client/credential/deployment/job tuple in D1, launches the canonical RESEARCH_WORKFLOW, and exposes GET status plus DELETE cancellation with durable cancel intent before remote termination. The owner-only GET /api/v1/research/query/jobs route adds a bounded recent metadata page with a context-bound keyset cursor; it discloses no query, source, digest, artifact or receipt payload. Workflow execution rechecks the same binding, active owner policy and current deployment before and inside its bounded step; terminal output is strictly decoded and matched through the existing retrieval store to the durable owner credential/job tuple before any COMPLETE or UNFINISHED job is exposed. COMPLETE job disclosure still requires current persisted Q7 receipt references, while missing LIVE user-loop evidence remains UNFINISHED and no RETRIEVAL capability is enabled.",
+      "completion_evidence": [
+        "infra/d1/core/migrations/0024_exhaustive_workflow.sql: strict immutable binding table with tuple uniqueness, deployment fence and cancellation state transition",
+        "infra/d1/core/migrations/0027_exhaustive_workflow_listing.sql: bounded owner/deployment/credential keyset index for recent Workflow metadata discovery",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts: create/status/cancel/list/readback adapter with request identity, owner policy, current-generation and output validation",
+        "packages/cloudflare-navigation/src/exhaustive-workflow-output.ts and packages/retrieval/src/exhaustive-job-store.ts: strict terminal output decoding plus canonical persisted denominator/journal readback; no parallel receipt or coverage authority",
+        "apps/eliotr-core/test/exhaustive-workflow-output.test.ts: actual local HTTP launch/status through a Cloudflare Workflow binding with persisted D1 Q7 state; genuine COMPLETE exposure plus forged COMPLETE/UNFINISHED transport payload omission; deployed Workflow, live Access and live user-loop qualification remain NOT_EXECUTED",
+        "packages/interfaces/src/semantic-api.ts and packages/interfaces/src/routes.ts: versioned owner-only Workflow page DTO and static route contract",
+        "apps/eliotr-core/src/research-workflow.ts: ER09 host extension validates durable binding and currentness before step.do and revalidates before persisting the bounded result",
+        "apps/eliotr-core/test/research-query-exhaustive.test.ts: actual local Q1 import/projection/HTTP launch, status, DELETE cancellation and no-resume assertions; apps/eliotr-core/test/research-query-jobs.test.ts: actual local Q1 HTTP launch/status plus owner-only paginated discovery, distinct-ID keyset continuation, foreign owner/credential/deployment cursor rejection, expired-job refusal and grant-withdrawal-during-status invalidation; deployed Workflow, live Access and live user-loop qualification NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-raw-markdown-conversion",
+      "path": "packages/cloudflare-markdown/src/raw-markdown-conversion.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-16 durable raw markdown conversion records one server-owned provider attempt; live Workers AI qualification remains separate.",
+      "owner_packets": ["ER-16", "ER-21", "ER-24", "ER-27"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner-only conversion reads an immutable raw capture receipt and exact R2 bytes, reserves one D1 attempt before invoking the injected Workers AI adapter, stores immutable output and receipt readback, and returns candidate conversion metadata. Unknown provider effects are never retried.",
+      "completion_evidence": [
+        "packages/cloudflare-markdown/src/raw-markdown-conversion.test.ts: durable reservation and same-operation replay with one provider call",
+        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts: actual local owner HTTP raw capture, D1 ledger, R2 output/receipt and HTTP replay using a controlled binding",
+        "infra/d1/core/migrations/0029_raw_markdown_conversion.sql: strict attempt and immutable receipt ledger",
+        "The separate raw-normalized admission path is tracked below; exact source maps, pricing approval and live Workers AI receipts remain NOT_EXECUTED"
+      ]
+    },
+    {
+      "id": "implemented-library-active-readiness",
+      "path": "apps/eliotr-core/src/library-readiness.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.",
+      "owner_packets": ["ER-01", "ER-13", "ER-24", "ER-27", "ER-38"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner-only source_id readiness reads the admitted current head under the catalog policy/owner/epoch fence. Exact and lexical D1 Search channels are verified independently; managed semantic readiness uses durable registry/readback authority without provider calls. Complete verified snapshot currentness preserves the capture observation; missing full authority is explicitly NOT_VERIFIED and never receives an invented observation timestamp. The PWA binds readiness and FAST_SEARCH to its selected source/head/deployment, keeps recorded history separate and clears stale private results.",
+      "completion_evidence": [
+        "packages/contracts/src/library-readiness.test.ts and the published canonical fixture: strict independent channel and currentness observation contracts",
+        "apps/eliotr-core/test/library-readiness.test.ts: actual local Worker/D1 channel readback, missing lexical isolation, owner fencing and raw capture/conversion/admission snapshot observation preservation",
+        "tests/library-readiness.test.ts and apps/eliotr-pwa/src/retrieval-api.test.ts: selected head/deployment validation and strict FAST_SEARCH request profile",
+        "Controlled browser source-selection/readiness/search/excerpt verification is retained separately from actual D1/R2 tests; it is not a remote or raw outbox-to-projection receipt",
+        "tests/integration/browser/owner-e2e.mjs: focused cdb95d93 actual local scheduled outbox, Queue, R2 projection and Chromium FAST_SEARCH passed with exact raw-source evidence; outbox SENT and projection PARTIAL with MANAGED_INDEX_READBACK_FAILED honestly reflect unavailable local managed indexing; the conversion-provider response is recorded, while storage, application routing and browser behavior are real",
+        "Deployed Access and remote projection/currentness qualification remain NOT_EXECUTED; the complete owner suite on both operating systems remains separate acceptance"
+      ]
+    },
+    {
+      "id": "implemented-raw-normalized-admission",
+      "path": "apps/eliotr-core/src/raw-normalized-admission.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.",
+      "owner_packets": ["ER-01", "ER-13", "ER-14", "ER-16", "ER-21", "ER-24", "ER-25", "ER-27", "ER-29", "ER-37"],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "Owner POST binds a stable admission identity to one durable capture and COMPLETE conversion, verifies bounded immutable R2 output, records a historical snapshot-view witness, and composes the existing normalized staging, qualification, promotion and guarded D1 admission path. GET reads the owner-bound existing operation. The browser offers conversion, explicit Library admission and same-key outcome reconciliation. Conversion success remains candidate-only; source admission does not establish search readiness or source-map precision.",
+      "completion_evidence": [
+        "packages/cloudflare-raw-ingest/src/raw-normalized-admission.test.ts: strict candidate, source witness and output identity checks",
+        "apps/eliotr-core/test/raw-normalized-admission-http.test.ts: actual local HTTP/D1/R2 admission and replay with different original and normalized bytes, changed-key-payload rejection, transactional witness deletion/mutation rollback and same-key recovery using the persisted decision and R2 promotion receipt",
+        "infra/d1/core/migrations/0030_raw_normalized_admission.sql: durable admission, witness, policy and receipt binding",
+        "tests/integration/browser/owner-e2e.mjs: built PWA conversion/admission scenario with an explicitly recorded local conversion fixture; combined browser and both operating-system CI results must be retained for acceptance",
+        "Live Workers AI, deployed Access/D1/R2/Queue, remote active-index qualification and source-map qualification remain separate and NOT_EXECUTED"
+      ]
+    }
+  ]
+}

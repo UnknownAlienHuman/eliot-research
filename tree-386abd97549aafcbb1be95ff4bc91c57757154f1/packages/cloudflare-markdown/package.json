@@ -1,0 +1,17 @@
+{
+  "name": "@eliotr/cloudflare-markdown",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run --root ../.. packages/cloudflare-markdown --reporter=verbose"
+  },
+  "dependencies": { "@eliotr/platform-cloudflare": "workspace:*" }
+}

@@ -1,0 +1,38 @@
+{
+  "case_id": "GC-005-scope-explains-apparent-contradiction",
+  "source_revision_refs": [
+    "golden-scoped-claims-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-scoped-claims"
+    ]
+  },
+  "question": "Did any imports fail?",
+  "expected_product": "RESEARCH",
+  "required_atoms": [
+    "family A had zero failures across twelve PDFs",
+    "family B had two failures across five HTML captures",
+    "combined-corpus no-failure claim is false"
+  ],
+  "forbidden_collapses": [
+    "family A result generalized to all sources",
+    "login stubs omitted"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc005-family-a",
+      "revision": 1
+    },
+    {
+      "id": "handle-gc005-family-b",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "results outside generation alpha"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "The case distinguishes scoped disagreement from a true contradiction."
+}

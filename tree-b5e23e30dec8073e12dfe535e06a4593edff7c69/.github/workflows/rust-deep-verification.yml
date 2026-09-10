@@ -1,0 +1,60 @@
+name: rust-deep-verification
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-deep-verification
+  cancel-in-progress: false
+
+jobs:
+  miri:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned Miri toolchain
+        run: |
+          rustup toolchain install nightly-2026-08-31 \
+            --profile minimal \
+            --component miri
+      - name: Run Miri on pure crates
+        run: |
+          cargo +nightly-2026-08-31 miri test --locked --package eliotr-canonical
+          cargo +nightly-2026-08-31 miri test --locked --package eliotr-test-vectors
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned fuzz toolchain
+        run: |
+          rustup toolchain install nightly-2026-08-31 --profile minimal
+          cargo +nightly-2026-08-31 install cargo-fuzz --version 0.13.2 --locked
+      - name: Verify the frozen fuzz dependency graph
+        run: cargo +nightly-2026-08-31 metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
+      - name: Run the bounded M1 fuzz corpus
+        run: |
+          cargo +nightly-2026-08-31 fuzz run m1_kernel \
+            -- -max_total_time=90 -rss_limit_mb=2048
+
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned mutation toolchain
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+          cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Mutate bounded transport validation
+        run: cargo mutants --package eliotr-canonical --timeout 120 --jobs 2
+      - name: Mutate strict vector parsing and evaluation
+        run: cargo mutants --package eliotr-test-vectors --timeout 120 --jobs 2

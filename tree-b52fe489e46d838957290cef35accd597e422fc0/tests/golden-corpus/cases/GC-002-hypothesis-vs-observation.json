@@ -1,0 +1,39 @@
+{
+  "case_id": "GC-002-hypothesis-vs-observation",
+  "source_revision_refs": [
+    "golden-research-status-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-research-status"
+    ]
+  },
+  "question": "What was hypothesized, what was observed, and what remains untested?",
+  "expected_product": "RESEARCH",
+  "required_atoms": [
+    "H-001 remains a hypothesis",
+    "O-001 is a bounded pilot observation",
+    "semantic recall was not tested"
+  ],
+  "forbidden_collapses": [
+    "hypothesis presented as measured result",
+    "pilot generalized to production"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc002-hypothesis",
+      "revision": 1
+    },
+    {
+      "id": "handle-gc002-observation",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "production Recall@20",
+    "multilingual quality"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "Negative and untested dimensions are load-bearing."
+}

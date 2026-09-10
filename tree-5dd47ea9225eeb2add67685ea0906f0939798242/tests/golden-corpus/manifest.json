@@ -1,0 +1,49 @@
+{
+  "protocol": "eliotr.golden-corpus.v1",
+  "generation": "golden-bootstrap-2026-08-28",
+  "sources": [
+    {
+      "source_revision_ref": "golden-project-decisions-r1",
+      "path": "sources/project-decisions.md",
+      "sha256": "9b1e7b7c07f7c43ec190e9c76ea32c46925804c96149c135a6425f35a3b396cf",
+      "source_kind": "project_document"
+    },
+    {
+      "source_revision_ref": "golden-research-status-r1",
+      "path": "sources/research-status.md",
+      "sha256": "ba90ae8d2ad4debf95310288a405293df09d2d76af138faa2a6f22437401410e",
+      "source_kind": "project_document"
+    },
+    {
+      "source_revision_ref": "golden-versioned-limits-r1",
+      "path": "sources/versioned-limits.md",
+      "sha256": "2ddad4a78093b3b613dea5daee39778bd93c595c82a35ad20a2602f0ea38828b",
+      "source_kind": "specification"
+    },
+    {
+      "source_revision_ref": "golden-scoped-claims-r1",
+      "path": "sources/scoped-claims.md",
+      "sha256": "5c182d07e6da65044fbd1814d8ce6948d7eb3451f364967d0bec2687b28fc4b6",
+      "source_kind": "operational_evidence"
+    },
+    {
+      "source_revision_ref": "golden-security-erasure-r1",
+      "path": "sources/security-and-erasure.md",
+      "sha256": "f0cfe441b051d6a4c66585c8a414aae9ec7a6f5f8a497869e10c4517da2e213a",
+      "source_kind": "security_fixture"
+    }
+  ],
+  "case_files": [
+    "cases/GC-001-recommendation-vs-decision.json",
+    "cases/GC-002-hypothesis-vs-observation.json",
+    "cases/GC-003-number-with-conditions.json",
+    "cases/GC-004-current-vs-superseded.json",
+    "cases/GC-005-scope-explains-apparent-contradiction.json",
+    "cases/GC-006-complete-scope-absence.json",
+    "cases/GC-007-source-prompt-injection.json",
+    "cases/GC-008-redacted-handle.json"
+  ],
+  "notes": [
+    "Bootstrap corpus exercises hard semantic/security gates. ER-23 expands it with admitted real project revisions before generation promotion."
+  ]
+}

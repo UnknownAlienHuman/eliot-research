@@ -1,0 +1,37 @@
+{
+  "case_id": "GC-010-code-literal-exact",
+  "source_revision_refs": [
+    "golden-code-sample-r1"
+  ],
+  "scope_expression": {
+    "kind": "SELECTED_SOURCES",
+    "source_ids": [
+      "golden-code-sample"
+    ]
+  },
+  "question": "Which function is implemented for exact phrase search, and what is merely planned?",
+  "expected_product": "VERIFY_EXACT",
+  "required_atoms": [
+    "exactPhraseSearch is implemented",
+    "semanticRerank is planned, not observed"
+  ],
+  "forbidden_collapses": [
+    "planned function presented as implemented",
+    "pilot generalized to production"
+  ],
+  "required_evidence_handle_refs": [
+    {
+      "id": "handle-gc010-implemented",
+      "revision": 1
+    },
+    {
+      "id": "handle-gc010-planned",
+      "revision": 1
+    }
+  ],
+  "acceptable_unknowns": [
+    "production latency of exact search"
+  ],
+  "coverage_requirement": "complete_scope",
+  "adjudication_notes": "Code identity requires the exact path and line span; the planned stub must never be cited as implemented evidence."
+}
