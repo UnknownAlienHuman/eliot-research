@@ -121,7 +121,7 @@ export interface ArtifactDraftReadFixture {
 }
 
 export async function readableArtifactDraft(tag: string): Promise<ArtifactDraftReadFixture> {
-  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const now = Date.now();
   const access = {
     principal_ref: `owner-${tag}`,
     client_class: "owner_pwa" as const,
@@ -153,7 +153,7 @@ export async function readableArtifactDraft(tag: string): Promise<ArtifactDraftR
 }
 
 export async function readableOwnerArtifactDraft(tag: string): Promise<ArtifactDraftReadFixture> {
-  const now = Date.parse("2026-09-10T12:00:00.000Z");
+  const now = Date.now();
   const access = {
     principal_ref: "orientation-owner",
     client_class: "owner_pwa" as const,
