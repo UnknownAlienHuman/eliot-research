@@ -42,6 +42,12 @@ Admission binds exact route/provider/model, canonical snapshot bytes and trusted
 not discover tariffs, grant spending approval, promote a route or infer a provider invoice. Historical
 readback for known-result reconciliation remains distinct from fresh-call expiry/currentness checks.
 
+The D1 model-attempt revalidator is an ER-09 IO adapter over existing W2, current-authority and
+reservation rows. It requires a trusted spend-authorization reader with exact route/pricing binding;
+access grants and opaque digest strings must not be promoted to financial permission. ER-27 owns
+`research-model-attempt-revalidator.test.ts`. This handoff adds no tariff arithmetic, public DTO,
+budget value or new SQL migration, and must not block settlement of an already known provider result.
+
 ## Read only
 
 - `packages/research/src/ports.ts`
