@@ -5028,6 +5028,8 @@ export async function runOwnerE2E() {
   let rawUpload;
   let rawProjectionFastSearch;
   let rotationBefore;
+  let replayBaseline;
+  let jwtMatrixBaseline;
   let protectedD1Counts;
   let canonicalKey;
   let evidenceBucket;
@@ -5565,6 +5567,31 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
+    // Capture the exact replay baseline while the Worker is offline. The
+    // duplicate prepare below is browser-only; raw capture uses separate
+    // tables and must not alter either this source count or the imported
+    // operation identity before the baseline is reconciled.
+    const replayWorkerPort = worker.port;
+    await worker.stop();
+    worker = undefined;
+    const replaySourceCountBefore = await d1Query(paths, "CORE_DB",
+      "SELECT COUNT(*) AS n FROM source", { phase: "owner-d1-replay-before", commandFamily: "source-count" });
+    const replayOperationCountBefore = await d1Query(paths, "CORE_DB",
+      "SELECT COUNT(*) AS n FROM bundle_ingest_operation", { phase: "owner-d1-replay-before", commandFamily: "operation-count" });
+    const replayOperationIdentityBefore = await d1Query(paths, "CORE_DB",
+      `SELECT operation_id,principal_ref,idempotency_key,input_fingerprint,source_revision_ref,source_id,state FROM bundle_ingest_operation WHERE operation_id='${imported.operationId.replaceAll("'", "''")}'`,
+      { phase: "owner-d1-replay-before", commandFamily: "bundle-replay-count" });
+    assert.equal(replaySourceCountBefore.length, 1, "replay baseline source count must return one row");
+    assert.equal(replayOperationCountBefore.length, 1, "replay baseline operation count must return one row");
+    assert.equal(replayOperationIdentityBefore.length, 1, "replay baseline must find the imported operation identity");
+    replayBaseline = {
+      sourceCount: replaySourceCountBefore[0].n,
+      operationCount: replayOperationCountBefore[0].n,
+      operationIdentity: replayOperationIdentityBefore[0],
+    };
+    worker = await startLocalWorker(paths, { testScheduled: true, port: replayWorkerPort });
+    assert.equal(worker.port, replayWorkerPort, "replay baseline restart must preserve the paired Worker port");
+    workerPortEvidence.push(`replay-baseline-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -5595,11 +5622,9 @@ export async function runOwnerE2E() {
     assert.equal(preRawRevisions.status, 200, "pre-raw revisions must resolve through the Worker");
     assert.ok(JSON.stringify(preRawRevisions.data).includes(revisionRef),
       "pre-raw revision route must expose the imported revision");
-    // Freeze the operator-issued authority rows in memory. Their exact SQL
-    // readback is performed offline, after the raw fixture has settled.
-    const ownerRowsBeforeRaw = [namespaceReceipt.ownership];
-    const admissionPolicyRowsBeforeRaw = [namespaceReceipt.admission_policy];
-    const readPolicyRowsBeforeRaw = [grant.policy];
+    let ownerRowsBeforeRaw;
+    let admissionPolicyRowsBeforeRaw;
+    let readPolicyRowsBeforeRaw;
     let sourceRows;
     let revisionRows;
     // Real raw-file owner flow: the PWA selects a UTF-8 filename and sends the
@@ -5616,6 +5641,37 @@ export async function runOwnerE2E() {
     // Auth's exact-port Worker restart keeps its origin/listener unchanged.
     await worker.stop();
     worker = undefined;
+    // This is the true pre-raw source/authority baseline: the capture has
+    // settled, but no conversion seed or normalized admission has run yet.
+    // Keep full rows so the later post-admission comparison proves identity
+    // preservation rather than comparing two post-change snapshots.
+    ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
+    admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
+    readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
+    sourceRows = await d1Query(paths, "CORE_DB",
+      `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    revisionRows = await d1Query(paths, "CORE_DB",
+      `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    assert.equal(sourceRows.length, 1, "pre-raw source baseline must contain the imported source only");
+    assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef),
+      "pre-raw revision baseline must contain the imported revision");
+    if (replayBaseline !== undefined) {
+      const replaySourceCountAfter = await d1Query(paths, "CORE_DB",
+        "SELECT COUNT(*) AS n FROM source", { phase: "owner-d1-replay-after", commandFamily: "source-count" });
+      const replayOperationCountAfter = await d1Query(paths, "CORE_DB",
+        "SELECT COUNT(*) AS n FROM bundle_ingest_operation", { phase: "owner-d1-replay-after", commandFamily: "operation-count" });
+      const replayOperationIdentityAfter = await d1Query(paths, "CORE_DB",
+        `SELECT operation_id,principal_ref,idempotency_key,input_fingerprint,source_revision_ref,source_id,state FROM bundle_ingest_operation WHERE operation_id='${imported.operationId.replaceAll("'", "''")}'`,
+        { phase: "owner-d1-replay-after", commandFamily: "bundle-replay-count" });
+      assert.deepEqual({ sourceCount: replaySourceCountAfter[0]?.n, operationCount: replayOperationCountAfter[0]?.n },
+        { sourceCount: replayBaseline.sourceCount, operationCount: replayBaseline.operationCount },
+        "duplicate prepare must not add a source or ingest operation before raw seed");
+      assert.deepEqual(replayOperationIdentityAfter, [replayBaseline.operationIdentity],
+        "duplicate prepare must preserve the exact imported operation identity");
+    }
     const rawConversionFixture = await seedRawMarkdownConversionFixture(paths, {
       captureId: rawUpload.captureId, contentSha256: rawUpload.expected.digest,
       contentType: rawUpload.expected.type, sizeBytes: rawUpload.expected.bytes.length,
@@ -5761,6 +5817,22 @@ export async function runOwnerE2E() {
     }
     receipt.network_ledger_phases.authed = summarizePhaseLedger(playwright);
     playwright.resetLedger();
+    // Establish the JWT matrix no-mutation baseline only after all positive
+    // admission/retrieval work is complete. The matrix runs through the real
+    // browser after an exact-port restart; its post-matrix stop compares the
+    // same protected rows and admitted evidence object before reconciliation.
+    const jwtMatrixWorkerPort = worker.port;
+    await worker.stop();
+    worker = undefined;
+    jwtMatrixBaseline = {
+      protected: await protectedD1Counts("owner-d1-jwt-matrix-baseline"),
+      evidence: await tryR2ObjectGet(paths, evidenceBucket, canonicalKey),
+    };
+    assert.equal(jwtMatrixBaseline.evidence.ok, true,
+      "JWT matrix baseline must prove the admitted evidence object is present");
+    worker = await startLocalWorker(paths, { testScheduled: true, port: jwtMatrixWorkerPort });
+    assert.equal(worker.port, jwtMatrixWorkerPort, "JWT matrix restart must preserve the paired Worker port");
+    workerPortEvidence.push(`jwt-matrix-restart=${worker.port}/startAttempts=${worker.startAttempts}`);
     // Browser-driven JWT matrix: expired, wrong audience, wrong issuer,
     // invalid signature, tampered payload and unknown kid, each driven through
     // Chromium page.evaluate fetch same-origin at the Worker with exact HTTP
@@ -5827,6 +5899,13 @@ export async function runOwnerE2E() {
     const stoppedGeneration = paths.generation;
     await worker.stop();
     worker = undefined;
+    if (jwtMatrixBaseline !== undefined) {
+      assert.deepEqual(await protectedD1Counts("owner-d1-jwt-matrix-after-denial"), jwtMatrixBaseline.protected,
+        "JWT matrix denials must not mutate protected D1 rows");
+      const jwtMatrixEvidenceAfter = await tryR2ObjectGet(paths, evidenceBucket, canonicalKey);
+      assert.equal(jwtMatrixEvidenceAfter.ok, true,
+        "JWT matrix denials must preserve the admitted evidence object");
+    }
     // All authoritative CLI/R2 reconciliation starts only after the owning
     // Worker has closed. This is also the exact pre-restart snapshot boundary.
     const scopeSnapshotRowsBeforeRestart = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
@@ -5838,10 +5917,6 @@ export async function runOwnerE2E() {
       admissionPolicyRowsBeforeRaw, "offline readback must preserve the exact admission policy snapshot");
     assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
       readPolicyRowsBeforeRaw, "offline readback must preserve the exact explicit read grant");
-    sourceRows = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
-    assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist after offline readback");
-    revisionRows = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
-    assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist after offline readback");
     const revisionDetail = await d1Query(paths, "CORE_DB",
       `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
       `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
