@@ -30,7 +30,8 @@
     "@eliotr/retrieval": "workspace:*",
     "@eliotr/cloudflare-research": "workspace:*",
     "@eliotr/cloudflare-raw-ingest": "workspace:*",
-    "@eliotr/cloudflare-markdown": "workspace:*"
+    "@eliotr/cloudflare-markdown": "workspace:*",
+    "@eliotr/cloudflare-workflows": "workspace:*"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

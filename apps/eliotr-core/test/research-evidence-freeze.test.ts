@@ -8,7 +8,7 @@ import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATI
 import { createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
 import { createResearchVerificationStageHandler } from "../../../packages/cloudflare-research/src/research-verification-stage-handler.js";
 import { decodeResearchVerificationResult } from "../../../packages/cloudflare-research/src/research-verification-result.js";
-import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 
 
 describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {

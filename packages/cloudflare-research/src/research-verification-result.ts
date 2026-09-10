@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { IdentifierSchema, IsoDateTimeSchema, Sha256Schema, VersionedRefSchema } from "@eliotr/contracts";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
-import { fail, MAX_WORKFLOW_OUTPUT_BYTES } from "./types.js";
+import { fail, MAX_WORKFLOW_OUTPUT_BYTES } from "@eliotr/cloudflare-workflows";
 
 const ResearchVerificationResultSchema = z.object({
   protocol: z.literal("eliotr.research.verification.v1"),

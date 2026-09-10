@@ -11,7 +11,7 @@ import { createResearchModelOutputStore } from "../../../packages/cloudflare-res
 import { createModelOutputPreparationHook } from "../../../packages/cloudflare-research/src/research-model-output-preparation.js";
 import type { GovernedModelAttemptDependencies, ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservationInput, ModelAttemptStore } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
-import { digest, type StageRequest, type WorkflowPrincipal } from "../../../packages/cloudflare-research/src/types.js";
+import { digest, type StageRequest, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type { ModelCallInput, ModelCallReceipt } from "@eliotr/research";
 import type { EvidencePack } from "@eliotr/retrieval";
 import type { Env } from "../src/env.js";

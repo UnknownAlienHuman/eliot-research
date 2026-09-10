@@ -5,9 +5,9 @@ import { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifa
 import type { EvidenceFreezeSynthesisContext, EvidenceFreezeVerificationContextReader } from "./research-evidence-freeze-composition.js";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import { encodeResearchVerificationResult } from "./research-verification-result.js";
-import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "./types.js";
-import { WorkflowCheckpointStore } from "./store.js";
-import { readCommittedStageLineage } from "./research-committed-lineage.js";
+import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
 
 export interface ResearchVerificationStageDependencies {
   readonly database: D1Database;

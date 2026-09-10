@@ -12,8 +12,8 @@ import type { ResearchModelPromptCompilerDependencies } from "../../../packages/
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservationInput } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
 import type { SpendAuthorizationReadRequest, SpendAuthorizationReadback } from "../../../packages/cloudflare-research/src/research-model-attempt-revalidator.js";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
-import { digest, type StageReceipt } from "../../../packages/cloudflare-research/src/types.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { digest, type StageReceipt } from "@eliotr/cloudflare-workflows";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { governedModelAttemptFixture } from "./model-attempt-fixture.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";

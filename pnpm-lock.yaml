@@ -74,6 +74,9 @@ importers:
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-workflows
       '@eliotr/cloudflare-workspace-mcp':
         specifier: workspace:*
         version: link:../../packages/cloudflare-workspace-mcp
@@ -259,6 +262,9 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence
+      '@eliotr/cloudflare-workflows':
+        specifier: workspace:*
+        version: link:../cloudflare-workflows
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -271,6 +277,21 @@ importers:
       '@eliotr/policy':
         specifier: workspace:*
         version: link:../policy
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+
+  packages/cloudflare-workflows:
+    dependencies:
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@eliotr/research':
         specifier: workspace:*
         version: link:../research

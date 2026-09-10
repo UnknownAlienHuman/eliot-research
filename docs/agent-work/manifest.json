@@ -224,6 +224,7 @@
         "apps/eliotr-core/src/research-workflow.ts",
         "infra/workflows/**",
         "packages/cloudflare-research/**",
+        "packages/cloudflare-workflows/**",
         "apps/eliotr-core/test/research-workflow.test.ts",
         "apps/eliotr-core/test/research-workflow-fixture.ts",
         "docs/implementation/workflow-checkpoints.md"

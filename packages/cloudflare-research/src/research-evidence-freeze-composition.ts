@@ -2,7 +2,7 @@ import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type Navigation
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
-import { readWorkflowObject } from "./objects.js";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { decodeEvidenceFreezeStageInput, type EvidenceFreezeStageInput } from "./research-evidence-freeze.js";
 import {
   createResearchModelStageHandler,
@@ -11,7 +11,7 @@ import {
 import type { ModelAttemptPreparationContext, GovernedModelAttemptHandler } from "./model-attempt-handler.js";
 import type { ModelAttemptReservationInput } from "./model-attempt-types.js";
 import { EvidenceFreezeSchema, type AllowedReferenceManifest, type EvidenceFreeze } from "@eliotr/contracts";
-import { fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "./types.js";
+import { fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "@eliotr/cloudflare-workflows";
 import {
   createEvidenceFreezeStageHandler,
   type EvidenceFreezeAuthorityPort,
@@ -25,8 +25,8 @@ import {
   type EvidenceFreezeStageFiveLineage,
 } from "./research-evidence-freeze-preparation.js";
 import { readFreezeProtocolAndScopeCheckpoint } from "./research-protocol-freeze.js";
-import { WorkflowCheckpointStore } from "./store.js";
-import { readCommittedStageLineage } from "./research-committed-lineage.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
 
 export interface EvidenceFreezePredecessorReadback {
   readonly stage_zero: ProtocolScopeCheckpoint;

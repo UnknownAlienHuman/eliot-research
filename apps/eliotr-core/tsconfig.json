@@ -15,8 +15,12 @@
     "src/worker-configuration.d.ts"
   ],
   "references": [
-    { "path": "../../packages/cloudflare-access" },
-    { "path": "../../packages/cloudflare-workspace-mcp" },
+    {
+      "path": "../../packages/cloudflare-access"
+    },
+    {
+      "path": "../../packages/cloudflare-workspace-mcp"
+    },
     {
       "path": "../../packages/cloudflare-ai"
     },
@@ -64,6 +68,9 @@
     },
     {
       "path": "../../packages/cloudflare-research"
+    },
+    {
+      "path": "../../packages/cloudflare-workflows"
     }
   ]
 }
