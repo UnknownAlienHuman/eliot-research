@@ -2,7 +2,7 @@ import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type Navigation
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
-import { readWorkflowObject } from "./objects.js";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 import { decodeEvidenceFreezeStageInput, type EvidenceFreezeStageInput } from "./research-evidence-freeze.js";
 import {
   createResearchModelStageHandler,
@@ -11,7 +11,7 @@ import {
 import type { ModelAttemptPreparationContext, GovernedModelAttemptHandler } from "./model-attempt-handler.js";
 import type { ModelAttemptReservationInput } from "./model-attempt-types.js";
 import { EvidenceFreezeSchema, type AllowedReferenceManifest, type EvidenceFreeze } from "@eliotr/contracts";
-import { fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "./types.js";
+import { fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "@eliotr/cloudflare-workflows";
 import {
   createEvidenceFreezeStageHandler,
   type EvidenceFreezeAuthorityPort,
@@ -25,7 +25,8 @@ import {
   type EvidenceFreezeStageFiveLineage,
 } from "./research-evidence-freeze-preparation.js";
 import { readFreezeProtocolAndScopeCheckpoint } from "./research-protocol-freeze.js";
-import { WorkflowCheckpointStore } from "./store.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { readCommittedStageLineage } from "@eliotr/cloudflare-workflows";
 
 export interface EvidenceFreezePredecessorReadback {
   readonly stage_zero: ProtocolScopeCheckpoint;
@@ -249,11 +250,6 @@ function parseCommittedFreeze(bytes: Uint8Array): EvidenceFreeze {
   }
 }
 
-function committedOrCorrupt<T>(value: T | null): T {
-  if (value === null) fail("WORKFLOW_OUTPUT_CORRUPT");
-  return value;
-}
-
 function ref(value: { readonly id: string; readonly revision: number }): string {
   return `${value.id}:${value.revision}`;
 }
@@ -332,10 +328,10 @@ function createSynthesisContextReader(
           input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      const stageTen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "RECONCILE"));
-      const stageTenReceipt = committedOrCorrupt(await checkpoints.receipt(stageTen.request, stageTen.request_sha256));
-      const stageEleven = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "FREEZE_EVIDENCE"));
-      const stageElevenReceipt = committedOrCorrupt(await checkpoints.receipt(stageEleven.request, stageEleven.request_sha256));
+      const stageTen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "RECONCILE");
+      const stageEleven = await readCommittedStageLineage(checkpoints, input.request.operation_id, "FREEZE_EVIDENCE");
+      const stageTenReceipt = stageTen.receipt;
+      const stageElevenReceipt = stageEleven.receipt;
       assertSynthesisLineage(input.request, stageTen, stageTenReceipt, stageEleven, stageElevenReceipt);
       const authorizationReceiptRef = await readers.read_authorization_receipt_ref(
         input.request.operation_id, input.request.investigation_ref.id, input.principal,
@@ -420,6 +416,42 @@ export function createEvidenceFreezeSynthesisContextReader(
   return createSynthesisContextReader(environment, navigation, readers);
 }
 
+export interface EvidenceFreezeVerificationContextReader {
+  read(input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly input_bytes: Uint8Array;
+  }): Promise<EvidenceFreezeSynthesisContext>;
+}
+
+/** Reads the frozen SYNTHESIZE context while pinning currentness to VERIFY. */
+export function createEvidenceFreezeVerificationContextReader(
+  environment: EvidenceFreezeSynthesisReaderEnvironment,
+  navigation: NavigationReadAuthority,
+  readers: EvidenceFreezeCommittedReaders,
+): EvidenceFreezeVerificationContextReader {
+  const checkpoints = new WorkflowCheckpointStore(environment.database);
+  return {
+    async read(input): Promise<EvidenceFreezeSynthesisContext> {
+      if (input.request.stage !== "VERIFY") fail("WORKFLOW_INPUT_INVALID");
+      const stageTwelve = await readCommittedStageLineage(checkpoints, input.request.operation_id, "SYNTHESIZE");
+      const stageTwelveReceipt = stageTwelve.receipt;
+      if (stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.stage !== "SYNTHESIZE" ||
+          stageTwelveReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageTwelveReceipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
+          !sameJson(stageTwelveReceipt.output_manifest, input.request.input_manifest)) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      const stageTwelveInput = await readWorkflowObject(environment.work_bucket, stageTwelve.request.input_manifest, true);
+      return createSynthesisContextReader(environment, navigation, readers, {
+        expected_head_revision: input.request.investigation_ref.revision,
+        verify_input_bytes: true,
+      }).read({ request: stageTwelve.request, principal: input.principal, input_bytes: stageTwelveInput });
+    },
+  };
+}
+
 export interface EvidenceFreezeMaterializeContext extends EvidenceFreezeSynthesisContext {
   readonly stage_sixteen_request: StageRequest;
   readonly stage_sixteen_request_sha256: string;
@@ -455,10 +487,10 @@ export function createEvidenceFreezeMaterializeContextReader(
           input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
-      const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
-      const stageSixteen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "CALCULATE_COVERAGE"));
-      const stageSixteenReceipt = committedOrCorrupt(await checkpoints.receipt(stageSixteen.request, stageSixteen.request_sha256));
+      const stageTwelve = await readCommittedStageLineage(checkpoints, input.request.operation_id, "SYNTHESIZE");
+      const stageTwelveReceipt = stageTwelve.receipt;
+      const stageSixteen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "CALCULATE_COVERAGE");
+      const stageSixteenReceipt = stageSixteen.receipt;
       if (stageTwelve.request.stage !== "SYNTHESIZE" ||
           stageTwelve.request.operation_id !== input.request.operation_id ||
           stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||

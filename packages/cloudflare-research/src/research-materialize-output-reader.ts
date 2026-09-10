@@ -3,9 +3,9 @@ import { readArtifactDraft, ArtifactDraftReadError } from "./artifact-draft-read
 import { decodeResearchMaterializeResult, ResearchMaterializeResultError, type ResearchMaterializeResultPayload } from "./research-materialize-result.js";
 import { readCommittedResearchSynthesisOutput, ResearchSynthesisOutputError } from "./research-synthesis-output-reader.js";
 import { readResearchRunStatus, type RunStatusAuthoritySnapshot } from "./research-run-status.js";
-import { WorkflowCheckpointStore } from "./store.js";
-import { readWorkflowObject } from "./objects.js";
-import { WorkflowCheckpointError, type StageReceipt, type WorkflowPrincipal } from "./types.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointError, type StageReceipt, type WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
 

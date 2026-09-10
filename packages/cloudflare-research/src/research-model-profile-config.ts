@@ -7,7 +7,7 @@ import {
 } from "./research-model-profile-binding.js";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import type { WorkflowPrincipal } from "./types.js";
+import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 /** The Worker configuration binding consumed by the server-owned profile source. */
 export const MODEL_PROFILE_DEFINITION_JSON_ENV = "ELIOTR_MODEL_PROFILE_DEFINITION_JSON" as const;

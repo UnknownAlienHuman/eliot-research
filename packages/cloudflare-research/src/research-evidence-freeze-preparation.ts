@@ -24,7 +24,7 @@ import type {
   ModelProfileBinding as EvidenceFreezeModelBinding,
   ModelProfileDefinition as EvidenceFreezeModelDefinition,
 } from "./research-model-profile-binding.js";
-import type { StageRequest, WorkflowPrincipal } from "./types.js";
+import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 
 export type { EvidenceFreezeModelBinding, EvidenceFreezeModelDefinition };
 

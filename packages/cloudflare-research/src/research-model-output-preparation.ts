@@ -1,4 +1,4 @@
-import type { StageRequest } from "./types.js";
+import type { StageRequest } from "@eliotr/cloudflare-workflows";
 import type { ModelAttemptReservation } from "./model-attempt-types.js";
 import type { ModelOutputStorage, ResidencyDomainProfile } from "./research-model-output-store.js";
 

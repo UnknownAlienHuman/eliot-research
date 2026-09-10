@@ -433,6 +433,11 @@ independent decisions. The checkpoint notification is only a locator, not public
 
 ## Integration and migration
 
+W2 execution, checkpoint storage and object I/O are implemented in `@eliotr/cloudflare-workflows`.
+Research-specific freeze, provider, verification and materialization handlers remain in
+`@eliotr/cloudflare-research`, which preserves its existing public W2 exports. The package boundary
+does not change stored request/receipt identities, the migration stream or replay behavior.
+
 Migration `0020_research_workflow_checkpoints.sql` adds three metadata tables, a current-authority view and
 transaction guards. Existing W1 commands/migrations and the public readiness generation are unchanged. No backfill or launch-hold
 removal occurs. Do not roll back by deleting attempts; keep the public composition disabled during rollback.

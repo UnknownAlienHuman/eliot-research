@@ -3,7 +3,8 @@ import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-
 import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
 import type { OperationIntent } from "@eliotr/contracts";
 import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
-import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
+import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
+import { decodeResearchVerificationResult } from "../../../packages/cloudflare-research/src/research-verification-result.js";
 import type {
   ResearchMaterializeContext,
   ResearchMaterializeTrustedMetadata,
@@ -11,8 +12,8 @@ import type {
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
 import { createResearchArtifactMetadataProducer, type ResearchArtifactReportPolicy } from "../../../packages/cloudflare-research/src/research-artifact-metadata.js";
 import { readCommittedResearchMaterializeOutput } from "../../../packages/cloudflare-research/src/research-materialize-output-reader.js";
-import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { beforeAll, describe, expect, it } from "vitest";
 import { handleHttp } from "../src/http.js";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
@@ -449,8 +450,33 @@ describe("actual D1/R2 artifact draft reader", () => {
   it("materializes committed SYNTHESIZE output through stage 17 and serves the durable draft", async () => {
     const synthesis = await committedFreezeSynthesisFixture();
     const stageTwelve = await synthesis.freeze.executor.execute(synthesis.stage_twelve, freezePrincipal, synthesis.handler.handler);
-    let previous = stageTwelve;
-    for (const stage of ["VERIFY", "AUDIT_CLAIMS", "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
+    const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
+    const verificationRequest = { ...synthesis.stage_twelve, stage: "VERIFY" as const,
+      investigation_ref: stageTwelve.investigation_ref, input_manifest: stageTwelve.output_manifest };
+    const verification = {
+      database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+      navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver,
+      context: createEvidenceFreezeVerificationContextReader({
+        database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
+        manifest_store: synthesis.freeze.freeze_store, read_stage_five: synthesis.freeze.readers.read_stage_five,
+      }, synthesis.freeze.navigation, synthesis.freeze.readers),
+      recheck_authority: async () => {
+        const status = await statusStore.readRunStatus(synthesis.freeze.operation_id, freezePrincipal);
+        if (status === null) throw new Error("verification fixture run status is missing");
+        return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id,
+          scope_snapshot_revision: status.scope_snapshot_revision };
+      },
+    };
+    const verifyHandler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: synthesis.freeze.navigation, ledger: synthesis.freeze.ledger, verification,
+    })("VERIFY");
+    let previous = await synthesis.freeze.executor.execute(verificationRequest, freezePrincipal, verifyHandler);
+    const verified = decodeResearchVerificationResult(await readWorkflowObject(synthesis.freeze.bucket, previous.output_manifest, true));
+    expect(verified.synthesis.stage_attempt_ref).toBe(stageTwelve.attempt_ref);
+    expect(verified.semantic_verification).toBe("NOT_EXECUTED");
+    expect(verified.source_verification.requested_handle_refs).toEqual(synthesis.stage_five.evidence_pack.resolved_evidence.map((item) => item.handle.handle_ref));
+    for (const stage of ["AUDIT_CLAIMS", "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
       const request = { ...synthesis.stage_twelve, stage, investigation_ref: previous.investigation_ref, input_manifest: previous.output_manifest };
       previous = await synthesis.freeze.executor.execute(request, freezePrincipal, async ({ request: current }) =>
         new TextEncoder().encode(JSON.stringify({ stage: current.stage })));
@@ -478,7 +504,6 @@ describe("actual D1/R2 artifact draft reader", () => {
       .first<{ readonly count: number }>();
     expect(afterMetadataReject?.count).toBe(beforeMetadataReject?.count);
     const metadata = await materializeMetadata(materializeContext, materializeRequest, tag);
-    const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
     const materialize = {
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver,

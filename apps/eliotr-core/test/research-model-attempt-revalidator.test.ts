@@ -10,13 +10,13 @@ import {
   type ModelAttemptPreparationContext,
 } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservation, ModelAttemptReservationInput } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
-import { digest } from "../../../packages/cloudflare-research/src/types.js";
+import { digest } from "@eliotr/cloudflare-workflows";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,
   runtime,
 } from "./model-attempt-fixture.js";
-import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
 
 const SUPPORTED_ROUTE = "dynamic/eliotr-report-section" as const;

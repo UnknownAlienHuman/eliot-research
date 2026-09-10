@@ -25,7 +25,7 @@ import type {
   EvidenceFreezeProtocolDefinition,
 } from "./research-evidence-freeze-preparation.js";
 import { InquiryProtocolProfileSchema } from "@eliotr/contracts";
-import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "./types.js";
+import type { StageRequest, WorkflowPrincipal, WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
 
 const INPUT_PROTOCOL = "eliotr.evidence-freeze-input.v2" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
