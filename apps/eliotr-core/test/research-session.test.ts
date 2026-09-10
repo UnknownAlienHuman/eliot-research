@@ -112,6 +112,25 @@ describe("research.run over real D1/R2 with W1 ledger and W2 checkpoints", () =>
     expect(payload.data.investigation_ref.id.startsWith("research-")).toBe(true);
     const policies = await db.prepare("SELECT COUNT(*) AS n FROM investigation_current_policy WHERE state = 'ACTIVE'").first<number>("n");
     expect(policies).toBeGreaterThanOrEqual(2);
+    const scope = await db.prepare("SELECT policy_authority_ref FROM scope_snapshot s JOIN research_workflow_run r ON r.scope_snapshot_id = s.snapshot_id AND r.scope_snapshot_revision = s.revision WHERE r.operation_id = ?1")
+      .bind(payload.data.workflow_instance_id).first<{ policy_authority_ref: string }>();
+    expect(scope).not.toBeNull();
+    if (scope === null) throw new Error("missing second-run scope policy authority");
+    const current = await db.prepare("SELECT policy_generation FROM investigation_current_policy WHERE policy_authority_ref = ?1 AND state = 'ACTIVE'")
+      .bind(scope.policy_authority_ref).first<{ policy_generation: string }>();
+    expect(current).not.toBeNull();
+    if (current === null) throw new Error("missing second-run current policy");
+    await expect(db.prepare("INSERT INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)")
+      .bind(`${current.policy_generation}-duplicate`, scope.policy_authority_ref, new Date().toISOString()).run()).rejects.toThrow();
+    await db.prepare("UPDATE investigation_current_policy SET state = 'RETIRED' WHERE policy_authority_ref = ?1 AND policy_generation = ?2")
+      .bind(scope.policy_authority_ref, current.policy_generation).run();
+    const retiredReplay = await body(await run(runRequest("rs-second", {}, "rs-run-second")));
+    expect(retiredReplay.code, JSON.stringify(retiredReplay)).toBe("RESEARCH_AUTHORITY_STALE");
+    expect((await db.prepare("SELECT state FROM investigation_current_policy WHERE policy_authority_ref = ?1 AND policy_generation = ?2")
+      .bind(scope.policy_authority_ref, current.policy_generation).first<{ state: string }>())?.state).toBe("RETIRED");
+    const unaffected = await run(runRequest("rs-shared", {}, "rs-run-first"));
+    const unaffectedPayload = await body(unaffected);
+    expect(unaffected.status, JSON.stringify(unaffectedPayload)).toBe(200);
   }, 30_000);
   it("keeps revocation rejection separate from successful independent runs", async () => {
     await seedSource("rs-revoked");
