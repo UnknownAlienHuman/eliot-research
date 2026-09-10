@@ -251,13 +251,20 @@ function parseModelReceipt(value: unknown): ModelCallReceipt | null {
   try { parsed = JSON.parse(value); } catch (cause) { fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt is not JSON", false, cause); }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt is not an object");
   const receipt = parsed as Record<string, unknown>;
-  text(receipt.receipt_ref, "receipt.receipt_ref");
-  text(receipt.route_fingerprint_ref, "receipt.route_fingerprint_ref");
-  text(receipt.output_object_ref, "receipt.output_object_ref");
-  sha(receipt.output_sha256, "receipt.output_sha256");
-  nonNegativeInteger(receipt.input_tokens, "receipt.input_tokens");
-  nonNegativeInteger(receipt.output_tokens, "receipt.output_tokens");
-  finiteNonNegative(receipt.billed_usd, "receipt.billed_usd");
+  try {
+    text(receipt.receipt_ref, "receipt.receipt_ref");
+    text(receipt.route_fingerprint_ref, "receipt.route_fingerprint_ref");
+    text(receipt.output_object_ref, "receipt.output_object_ref");
+    sha(receipt.output_sha256, "receipt.output_sha256");
+    nonNegativeInteger(receipt.input_tokens, "receipt.input_tokens");
+    nonNegativeInteger(receipt.output_tokens, "receipt.output_tokens");
+    finiteNonNegative(receipt.billed_usd, "receipt.billed_usd");
+  } catch (cause) {
+    if (cause instanceof ModelAttemptError && cause.code === "MODEL_ATTEMPT_INPUT_INVALID") {
+      fail("MODEL_ATTEMPT_READBACK_CORRUPT", "persisted model receipt is malformed", false, cause);
+    }
+    throw cause;
+  }
   return receipt as unknown as ModelCallReceipt;
 }
 
