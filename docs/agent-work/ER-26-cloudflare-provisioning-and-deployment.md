@@ -43,7 +43,7 @@ retrieval, authentication semantics, or database schemas.
 
 - `apps/eliotr-core/wrangler.jsonc`
 - `apps/eliotr-core/src/index.ts`
-- `packages/platform-cloudflare/src/access.ts`
+- `packages/cloudflare-access/src/access.ts`
 - `infra/d1/core/migrations/`
 - `infra/d1/search/migrations/`
 

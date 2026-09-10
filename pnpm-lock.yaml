@@ -47,6 +47,9 @@ importers:
 
   apps/eliotr-core:
     dependencies:
+      '@eliotr/cloudflare-access':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-access
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../../packages/cloudflare-ai
@@ -71,6 +74,9 @@ importers:
       '@eliotr/cloudflare-research':
         specifier: workspace:*
         version: link:../../packages/cloudflare-research
+      '@eliotr/cloudflare-workspace-mcp':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-workspace-mcp
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -133,6 +139,12 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+
+  packages/cloudflare-access:
+    dependencies:
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/cloudflare-ai:
     dependencies:
@@ -238,6 +250,15 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/cloudflare-workspace-mcp:
+    dependencies:
+      '@eliotr/cloudflare-access':
+        specifier: workspace:*
+        version: link:../cloudflare-access
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
 
   packages/contracts:
     dependencies:

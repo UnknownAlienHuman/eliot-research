@@ -20,7 +20,7 @@ Derive current status with `gh pr list --state open` and the theme's own checkli
 | #92 | `04-research.md` | §§7–8,14,19.3; Investigation/Workflow/session/model budget | W1 durable ledger |
 | #93 | `05-federation.md` | §11,19.11; generic federation and optional ELIOT leaf | F1 authenticated runtime wiring |
 | #94 | `06-wiki-reports.md` | §§5.4–5.5,9,19.6; Wiki/artifacts/atoms/arguments | P1 immutable publication storage |
-| #95 | `07-google.md` | §§12.3–12.10,13.4–13.6,19.7; required Drive Exchange | G1 owner configuration/begin |
+| #95 | `07-google.md` | §§12.3–12.10,13.4–13.6,19.7; selected Workspace MCP and separate legacy Drive Exchange | G1 owner configuration/begin |
 | #96 | `08-recovery.md` | §§10,13.7–13.8,15–16,19; Steward/erasure/restore/release | O1 shared probe/evidence runner |
 | Rust (#97 closed; plan `09-rust.md` merged to main) | `09-rust.md` | language §§5–10; M2–M7 per-family migration | K1 missing identity parity |
 
@@ -40,8 +40,10 @@ Checkpoint outputs, not merely PR numbers, release downstream work:
   all #94 while all #94 waits for all #92.
 - F1/F2 reservation and authenticated reads reuse existing federation storage; F3 executable research
   consumes W3/W6. Generic bundle transport tests do not need a fabricated completed Investigation.
-- G1/G2 reuse internal OAuth immediately; G3 reconnect and G4 provisioning release G5/G6 cursor import.
-  G7 publication consumes P3 artifact/terminal receipts. Drive must not become a second source owner.
+- In the legacy `drive-exchange` profile, G1/G2 reuse internal OAuth; G3 reconnect and G4 provisioning
+  release G5/G6 cursor import. G7 publication consumes P3 artifact/terminal receipts. The selected
+  `gemini-mcp` profile instead requires its own authenticated Workspace candidate-admission/readback
+  path. Drive must not become a second source owner.
 - O1/O2/O3 probe, backup and restore-local foundations can run independently. O4 full erasure closure
   and O7/O8 staging/production integrate every dependency family. Each theme supplies its own probe.
 - K1–K5 run by stable family. K6/K7 promote/remove each family only after its current TS behavior,

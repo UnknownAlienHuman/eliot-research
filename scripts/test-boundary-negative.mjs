@@ -143,10 +143,10 @@ async function proveUnregisteredPendingStateFailsClosed() {
 }
 
 async function proveWorkPacketParityFailsClosed() {
-  const accessPath =
-    "packages/platform-cloudflare/src/access.ts";
-  const accessTestPath =
-    "packages/platform-cloudflare/src/access.test.ts";
+  const firstOwnedPath =
+    "packages/cloudflare-access/**";
+  const secondOwnedPath =
+    "packages/platform-cloudflare/src/observability.ts";
   const finalPath =
     "packages/platform-cloudflare/src/runtime-limits.test.ts";
   const injectedPath =
@@ -166,9 +166,9 @@ async function proveWorkPacketParityFailsClosed() {
 
   await withWorkPacketMutation(
     "Work-packet manifest-only ownership drift negative boundary",
-    (original) => original.replace(`- \`${accessTestPath}\`\n`, ""),
+    (original) => original.replace(`- \`${secondOwnedPath}\`\n`, ""),
     [
-      `ER-17: manifest owns path absent from packet document: ${accessTestPath}`,
+      `ER-17: manifest owns path absent from packet document: ${secondOwnedPath}`,
     ],
   );
 
@@ -176,8 +176,8 @@ async function proveWorkPacketParityFailsClosed() {
     "Work-packet ownership order drift negative boundary",
     (original) =>
       original.replace(
-        `- \`${accessPath}\`\n- \`${accessTestPath}\`\n`,
-        `- \`${accessTestPath}\`\n- \`${accessPath}\`\n`,
+        `- \`${firstOwnedPath}\`\n- \`${secondOwnedPath}\`\n`,
+        `- \`${secondOwnedPath}\`\n- \`${firstOwnedPath}\`\n`,
       ),
     ["ER-17: manifest and packet document owned paths use different order"],
   );
@@ -185,7 +185,7 @@ async function proveWorkPacketParityFailsClosed() {
   await withWorkPacketMutation(
     "Work-packet malformed ownership entry negative boundary",
     (original) =>
-      original.replace(`- \`${accessPath}\`\n`, `- ${accessPath}\n`),
+      original.replace(`- \`${firstOwnedPath}\`\n`, `- ${firstOwnedPath}\n`),
     [
       "ER-17: ER-17-access-observability-and-runtime-limits.md:",
       "has malformed owned-path entry",
