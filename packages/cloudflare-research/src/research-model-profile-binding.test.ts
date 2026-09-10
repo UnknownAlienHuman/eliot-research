@@ -59,6 +59,7 @@ function makeBinding(overrides: Record<string, unknown> = {}): Record<string, un
     definition_ref: { id: "placeholder", revision: 1 },
     definition_sha256: "placeholder",
     model_profile_ref: stage.model_profile_ref,
+    max_context_bytes: 64 * 1024,
     expires_at: "2026-09-10T16:00:00.000Z",
     deployment,
     policy,
@@ -103,6 +104,7 @@ describe("model profile binding producer", () => {
   it("resolves a server-owned binding only when stage, authority, scope, and route all agree", async () => {
     const result = await producer(await signedBinding()).resolve(stage);
     expect(result.binding.model_profile_ref).toBe(stage.model_profile_ref);
+    expect(result.binding.max_context_bytes).toBe(64 * 1024);
     expect(result.deployment).toEqual(deployment);
     expect(result.policy.allowed_use).toEqual(["research"]);
     expect(result.scope_snapshot.digest).toBe(scope.digest);
@@ -139,5 +141,7 @@ describe("model profile binding producer", () => {
     await expect(producer(tampered).resolve(stage)).rejects.toBeInstanceOf(ModelProfileBindingError);
     await expect(producer(await signedBinding({ expires_at: "2026-09-10T14:00:00.000Z", policy: { ...policy, expires_at: "2026-09-10T14:00:00.000Z" } })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
     await expect(producer({ ...signed, unexpected: true }).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
+    await expect(producer(await signedBinding({ max_context_bytes: 0 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
+    await expect(producer(await signedBinding({ max_context_bytes: 256 * 1024 + 1 })).resolve(stage)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_CONFIG_INVALID" });
   });
 });
