@@ -95,7 +95,8 @@ const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.s
       source_revision_ref: "revision-1", channel: "semantic_ready", state: "degraded", reason_codes: ["AI_SEARCH_UNAVAILABLE"],
       observed_at: "2026-09-02T12:00:00.000Z" }] }], ...(older ? {} : { next_cursor: "olderFixture" }) });
 let revisionMode = "normal"; let pendingRevision;
-let mode = "normal"; let pending; let browser; let socket; let closing;
+let mode = "normal"; let pending; let pendingOrientation; let orientationMode = "normal"; const selectionOrder = [];
+let browser; let socket; let closing;
 const HEALTH_DELAY_MS = 250;
 const requests = []; const posted = []; const errors = [];
 const importing = browserImportFixture();
@@ -126,12 +127,16 @@ const server = createServer((request, response) => {
       return json(page("source-1", '<img src=x onerror="window.attacked=true"> Русский источник', "nextFixture"));
     }
     if (url.pathname === "/api/v1/research/orient") {
+      selectionOrder.push("orientation");
       assert.equal(request.method, "POST"); assert.ok(request.headers["idempotency-key"]);
       const chunks = []; let bytes = 0;
       for await (const chunk of request) { bytes += chunk.length; assert.ok(bytes < 16 * 1024); chunks.push(chunk); }
-      posted.push(JSON.parse(Buffer.concat(chunks).toString("utf8"))); return json(orientation());
+      posted.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      if (orientationMode === "delayed") { pendingOrientation = () => json(orientation()); return; }
+      return json(orientation());
     }
     if (url.pathname === "/api/v1/library/readiness") {
+      selectionOrder.push("readiness");
       assert.equal(request.method, "GET");
       assert.deepEqual([...url.searchParams.entries()], [["source_id", "source-1"]]);
       return json(readiness());
@@ -338,8 +343,13 @@ try {
   await click("#library [data-project]");
   await wait('document.querySelector("#library [data-scope]").textContent.includes("project-1") && Boolean(document.querySelector("#library [data-source]"))', "Project filter");
   assert.ok(requests.some((query) => query.includes("project_id=project-1")));
+  orientationMode = "delayed"; const selectionStart = selectionOrder.length;
   await click("#library [data-source]");
+  await until(() => Boolean(pendingOrientation), "Orientation request before readiness");
+  assert.deepEqual(selectionOrder.slice(selectionStart), ["orientation"]);
+  pendingOrientation(); pendingOrientation = undefined; orientationMode = "normal";
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Source selection to real Lens transport");
+  await until(() => selectionOrder.slice(selectionStart).join(",") === "orientation,readiness", "Readiness after orientation");
   assert.deepEqual(posted[0].scope_expression, { kind: "SELECTED_SOURCES", source_ids: ["source-1"] });
   assert.equal(posted[0].product, "ORIENT");
   await click('[data-nav-target="#research-card"]');
