@@ -155,6 +155,18 @@ importers:
         specifier: workspace:*
         version: link:../platform-cloudflare
 
+  packages/cloudflare-artifacts:
+    dependencies:
+      '@eliotr/cloudflare-evidence':
+        specifier: workspace:*
+        version: link:../cloudflare-evidence
+      '@eliotr/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@eliotr/platform-cloudflare':
+        specifier: workspace:*
+        version: link:../platform-cloudflare
+
   packages/cloudflare-erasure:
     dependencies:
       '@eliotr/contracts':
@@ -241,6 +253,9 @@ importers:
       '@eliotr/cloudflare-ai':
         specifier: workspace:*
         version: link:../cloudflare-ai
+      '@eliotr/cloudflare-artifacts':
+        specifier: workspace:*
+        version: link:../cloudflare-artifacts
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../cloudflare-evidence

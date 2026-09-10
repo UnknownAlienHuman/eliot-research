@@ -4,11 +4,11 @@ import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, create
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus } from "@eliotr/cloudflare-research";
+import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, readCommittedResearchMaterializeOutput, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
 import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
@@ -120,6 +120,12 @@ function mapRunStatusFailure(error: unknown): never {
     }
     fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run authority readback is unavailable", 503, true);
   }
+  if (error instanceof ResearchMaterializeOutputError) {
+    if (error.code === "MATERIALIZE_OUTPUT_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", "research materialization authority is no longer current", 409);
+    if (error.code === "MATERIALIZE_OUTPUT_CORRUPT") fail("RESEARCH_RUN_STATUS_INVALID", "research materialization readback is inconsistent", 409);
+    if (error.code === "MATERIALIZE_OUTPUT_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", "research materialization reference is invalid", 400);
+    fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research materialization readback is unavailable", 503, true);
+  }
   throw error;
 }
 async function readResearchRunStatus(env: Env, context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> {
@@ -145,13 +151,25 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
   }).catch(mapRunStatusFailure);
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
+  if (status.state === "ENGINE_COMPLETED") {
+    const materialized = await readCommittedResearchMaterializeOutput({
+      database: env.CORE_DB,
+      work_bucket: env.WORK_BUCKET,
+      operation_id: operationId,
+      principal,
+      materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      recheck_authority: recheckAuthority,
+    }).catch(mapRunStatusFailure);
+    if (materialized !== null) answer = { availability: "draft", artifact_ref: materialized.materialization.draft.artifact_ref };
+  }
   return {
     protocol: "eliotr.research-run-status.v1",
     workflow_instance_id: status.operation_id,
     investigation_ref: { id: status.investigation_id, revision: status.current_revision },
     execution_state: status.state,
     next_stage_index: status.next_stage_index,
-    answer: { availability: "unavailable" },
+    answer,
     ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }),
   };
 }

@@ -81,7 +81,9 @@ export interface ResearchRunStatus {
   readonly investigation_ref: VersionedRef;
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
   readonly next_stage_index: number;
-  readonly answer: { readonly availability: "unavailable" };
+  readonly answer:
+    | { readonly availability: "unavailable" }
+    | { readonly availability: "draft"; readonly artifact_ref: VersionedRef };
   readonly cancellation_receipt_ref?: string;
 }
 

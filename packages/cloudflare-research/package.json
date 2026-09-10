@@ -13,6 +13,7 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
+    "@eliotr/cloudflare-artifacts": "workspace:*",
     "@eliotr/cloudflare-ai": "workspace:*",
     "@eliotr/cloudflare-evidence": "workspace:*",
     "@eliotr/contracts": "workspace:*",

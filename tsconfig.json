@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "packages/cloudflare-artifacts" },
     { "path": "packages/cloudflare-access" },
     { "path": "packages/cloudflare-workspace-mcp" },
     {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ArtifactSectionRevision } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { decodeResearchRunStatus, researchRunBody, readResearchRunStatus, startResearchRun } from "./research-run-api.js";
+import { decodeResearchRunStatus, readResearchArtifactSection, researchRunBody, readResearchRunStatus, startResearchRun } from "./research-run-api.js";
 
 const generation = "deployment-1";
 const workflow = `run-${"a".repeat(48)}`;
@@ -37,5 +38,49 @@ describe("research run transport", () => {
     const activeAtTerminal = status("ACTIVE"); activeAtTerminal.next_stage_index = 18;
     expect(() => decodeResearchRunStatus({ data: activeAtTerminal, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
     await expect(readResearchRunStatus("../foreign", generation)).rejects.toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
+  });
+
+  it("accepts only a completed server-bound draft artifact", () => {
+    const draft = status();
+    draft.answer = { availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } };
+    expect(decodeResearchRunStatus({ data: draft, trace_id: "trace-1", deployment_generation: generation }, generation).answer)
+      .toEqual({ availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } });
+    const active = status("ACTIVE");
+    active.answer = { availability: "draft", artifact_ref: { id: "artifact-report-1", revision: 1 } };
+    expect(() => decodeResearchRunStatus({ data: active, trace_id: "trace-1", deployment_generation: generation })).toThrow(ApiRequestError);
+  });
+
+  it("opens a declared draft section only when headers and bytes match", async () => {
+    const artifactRef = { id: "artifact-report-1", revision: 1 };
+    const sectionRef = { id: "section-intro", revision: 1 };
+    const bytes = new TextEncoder().encode("# Draft report\n");
+    const owned = new Uint8Array(bytes.byteLength); owned.set(bytes);
+    const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", owned))].map((part) => part.toString(16).padStart(2, "0")).join("");
+    const section: ArtifactSectionRevision = {
+      section_ref: sectionRef,
+      contract_id: "intro",
+      body_object_ref: "artifact-draft/section/section-intro:1",
+      body_sha256: digest,
+      statement_labels: { statement: "SOURCE_SUPPORTED" },
+      evidence_ledger_ref: "ledger-1",
+      verification_receipt_ref: "verification-1",
+    };
+    const fetch = vi.fn(async () => new Response(bytes, { status: 200, headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(bytes.byteLength),
+      "x-eliotr-artifact-ref": encodeURIComponent("artifact-report-1:1"),
+      "x-eliotr-section-ref": encodeURIComponent("section-intro:1"),
+      "x-eliotr-section-object-ref": encodeURIComponent(section.body_object_ref),
+      "x-eliotr-section-sha256": digest,
+    } }));
+    vi.stubGlobal("fetch", fetch);
+    await expect(readResearchArtifactSection(artifactRef, section)).resolves.toMatchObject({ artifact_ref: artifactRef, section_ref: sectionRef, body_object_ref: section.body_object_ref, body_sha256: digest, size_bytes: bytes.byteLength, bytes });
+    expect(fetch).toHaveBeenCalledWith("/api/v1/research/artifact/artifact-report-1%3A1/sections/section-intro%3A1", expect.anything());
+    fetch.mockImplementationOnce(async () => new Response(bytes, { status: 200, headers: {
+      "content-type": "application/octet-stream", "content-length": String(bytes.byteLength),
+      "x-eliotr-artifact-ref": encodeURIComponent("artifact-report-1:1"), "x-eliotr-section-ref": encodeURIComponent("section-intro:1"),
+      "x-eliotr-section-object-ref": encodeURIComponent(section.body_object_ref), "x-eliotr-section-sha256": "0".repeat(64),
+    } }));
+    await expect(readResearchArtifactSection(artifactRef, section)).rejects.toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
   });
 });
