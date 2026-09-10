@@ -3,10 +3,9 @@ import { readArtifactDraft, readArtifactDraftSection } from "@eliotr/cloudflare-
 import type { ArtifactSpec, OperationIntent } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createEvidenceFreezeMaterializeContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
-import {
-  createResearchMaterializeStageHandler,
-  type ResearchMaterializeContext,
-  type ResearchMaterializeTrustedMetadata,
+import type {
+  ResearchMaterializeContext,
+  ResearchMaterializeTrustedMetadata,
 } from "../../../packages/cloudflare-research/src/research-materialize-stage-handler.js";
 import { decodeResearchMaterializeResult } from "../../../packages/cloudflare-research/src/research-materialize-result.js";
 import { readWorkflowObject } from "../../../packages/cloudflare-research/src/objects.js";
@@ -25,6 +24,7 @@ import {
 } from "./artifact-draft-fixture.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { principal as freezePrincipal } from "./research-evidence-freeze-fixture.js";
+import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 
 const freezeAccess = {
   principal_ref: freezePrincipal.principal_ref,
@@ -485,7 +485,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     const tag = crypto.randomUUID();
     const metadata = await materializeMetadata(materializeContext, tag);
     const statusStore = new WorkflowCheckpointStore(synthesis.freeze.db);
-    const handler = createResearchMaterializeStageHandler({
+    const materialize = {
       database: synthesis.freeze.db, work_bucket: synthesis.freeze.bucket,
       navigation: synthesis.freeze.navigation, evidence_resolver: synthesis.freeze.resolver,
       context, recheck_authority: async () => {
@@ -494,7 +494,11 @@ describe("actual D1/R2 artifact draft reader", () => {
         return { investigation_id: status.investigation_id, scope_snapshot_id: status.scope_snapshot_id,
           scope_snapshot_revision: status.scope_snapshot_revision };
       }, metadata: () => metadata,
-    });
+    };
+    const handler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: synthesis.freeze.navigation, ledger: synthesis.freeze.ledger, materialize,
+    })("MATERIALIZE");
     const first = await synthesis.freeze.executor.execute(materializeRequest, freezePrincipal, handler);
     expect(first.stage).toBe("MATERIALIZE");
     expect(synthesis.provider_calls()).toBe(1);
