@@ -36,6 +36,12 @@ ER-27 owns the actual Worker gateway-runtime fixture and the existing model-hand
 Gateway credentials are explicit server-owned inputs, separate from control-plane API credentials.
 Timeout/cancellation and output preparation must not permit a repeated uncertain model invocation.
 
+The next W3 pricing prerequisite is immutable snapshot storage in `research-model-pricing-store.ts`.
+ER-13 allocates `0038_research_model_pricing.sql`; ER-27 owns its actual D1 pricing-store fixture.
+Admission binds exact route/provider/model, canonical snapshot bytes and trusted provenance; it does
+not discover tariffs, grant spending approval, promote a route or infer a provider invoice. Historical
+readback for known-result reconciliation remains distinct from fresh-call expiry/currentness checks.
+
 ## Read only
 
 - `packages/research/src/ports.ts`
