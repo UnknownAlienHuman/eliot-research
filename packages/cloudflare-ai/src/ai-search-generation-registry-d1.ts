@@ -1,6 +1,5 @@
 import {
   AI_SEARCH_GENERATION_REGISTRY_MAX_BYTES,
-  aiSearchGenerationRegistryFailure,
   type AiSearchGenerationRegistryCasCommand,
   type AiSearchGenerationRegistrySnapshot,
   type AiSearchGenerationRegistryStorePort,
@@ -10,10 +9,17 @@ import {
   decodeAiSearchGenerationRegistrySnapshot,
   sameAiSearchGenerationRegistrySnapshot,
 } from "./ai-search-generation-registry-codec.js";
+import {
+  aiSearchRegistryDigest,
+  aiSearchRegistryInputFailure as inputFailure,
+  aiSearchRegistryIdentifier,
+  aiSearchRegistryInteger,
+  aiSearchRegistryReadbackFailure as readbackFailure,
+  aiSearchRegistryWriteFailure as writeFailure,
+  exactAiSearchRegistryObject,
+} from "./ai-search-registry-validation.js";
 import { canonicalModelGatewayJson } from "./model-gateway-request.js";
 
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-const SHA256 = /^[a-f0-9]{64}$/u;
 const COMMAND_KEYS = new Set([
   "artifact",
   "artifact_sha256",
@@ -48,77 +54,6 @@ interface DecodedCommand {
   readonly artifact_json: string;
 }
 
-type Failure = (message: string, cause?: unknown) => never;
-
-function inputFailure(message: string, cause?: unknown): never {
-  aiSearchGenerationRegistryFailure(
-    "AI_SEARCH_REGISTRY_INPUT_INVALID",
-    message,
-    cause === undefined ? {} : { cause },
-  );
-}
-
-function readbackFailure(message: string, cause?: unknown): never {
-  aiSearchGenerationRegistryFailure(
-    "AI_SEARCH_REGISTRY_READBACK_INVALID",
-    message,
-    cause === undefined ? {} : { cause },
-  );
-}
-
-function writeFailure(message: string, cause?: unknown): never {
-  aiSearchGenerationRegistryFailure(
-    "AI_SEARCH_REGISTRY_WRITE_FAILED",
-    message,
-    cause === undefined ? {} : { cause },
-  );
-}
-
-function exactObject(
-  value: unknown,
-  keys: ReadonlySet<string>,
-  label: string,
-  fail: Failure,
-): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    fail(`${label} must be a plain object`);
-  }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
-    fail(`${label} must be a plain object`);
-  }
-  const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) {
-    if (!keys.has(key)) fail(`${label} contains unsupported field ${key}`);
-  }
-  return record;
-}
-
-function identifier(value: unknown, label: string, fail: Failure): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
-    fail(`${label} is not a bounded identifier`);
-  }
-  return value;
-}
-
-function positiveInteger(
-  value: unknown,
-  label: string,
-  fail: Failure,
-): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    fail(`${label} must be a positive safe integer`);
-  }
-  return value;
-}
-
-function digest(value: unknown, label: string, fail: Failure): string {
-  if (typeof value !== "string" || !SHA256.test(value)) {
-    fail(`${label} must be lowercase SHA-256`);
-  }
-  return value;
-}
-
 function artifactJson(value: unknown, label: string): string {
   if (typeof value !== "string") {
     readbackFailure(`${label} must be a string`);
@@ -136,8 +71,8 @@ async function decodeStoredRow(
   raw: unknown,
   expectedNamespace: string,
 ): Promise<AiSearchGenerationRegistrySnapshot> {
-  const row = exactObject(raw, ROW_KEYS, "D1 generation registry row", readbackFailure);
-  const namespace = identifier(
+  const row = exactAiSearchRegistryObject(raw, ROW_KEYS, "D1 generation registry row", readbackFailure, false);
+  const namespace = aiSearchRegistryIdentifier(
     row.namespace,
     "D1 generation registry namespace",
     readbackFailure,
@@ -145,15 +80,18 @@ async function decodeStoredRow(
   if (namespace !== expectedNamespace) {
     readbackFailure("D1 generation registry row belongs to another namespace");
   }
-  const revision = positiveInteger(
+  const revision = aiSearchRegistryInteger(
     row.revision,
     "D1 generation registry revision",
+    1,
     readbackFailure,
+    "D1 generation registry revision must be a positive safe integer",
   );
-  const artifactSha256 = digest(
+  const artifactSha256 = aiSearchRegistryDigest(
     row.artifact_sha256,
     "D1 generation registry digest",
     readbackFailure,
+    "D1 generation registry digest must be lowercase SHA-256",
   );
   const json = artifactJson(
     row.artifact_json,
@@ -183,13 +121,14 @@ async function decodeStoredRow(
 async function decodeCommand(
   raw: AiSearchGenerationRegistryCasCommand,
 ): Promise<DecodedCommand> {
-  const command = exactObject(
+  const command = exactAiSearchRegistryObject(
     raw,
     COMMAND_KEYS,
     "D1 generation registry CAS command",
     inputFailure,
+    false,
   );
-  const namespace = identifier(
+  const namespace = aiSearchRegistryIdentifier(
     command.namespace,
     "D1 generation registry command namespace",
     inputFailure,
@@ -202,17 +141,20 @@ async function decodeCommand(
     );
   }
   const expectedRevision = hasExpectedRevision
-    ? positiveInteger(
+    ? aiSearchRegistryInteger(
         command.expected_revision,
         "D1 generation registry expected revision",
+        1,
         inputFailure,
+        "D1 generation registry expected revision must be a positive safe integer",
       )
     : null;
   const expectedArtifactSha256 = hasExpectedDigest
-    ? digest(
+    ? aiSearchRegistryDigest(
         command.expected_artifact_sha256,
         "D1 generation registry expected digest",
         inputFailure,
+        "D1 generation registry expected digest must be lowercase SHA-256",
       )
     : null;
   const snapshot = await decodeAiSearchGenerationRegistrySnapshot(
@@ -318,7 +260,7 @@ export function createD1AiSearchGenerationRegistryStore(
 
   return Object.freeze({
     async read(namespace: string): Promise<unknown | null> {
-      const boundedNamespace = identifier(
+      const boundedNamespace = aiSearchRegistryIdentifier(
         namespace,
         "D1 generation registry namespace",
         inputFailure,

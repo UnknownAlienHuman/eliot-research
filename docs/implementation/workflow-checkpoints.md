@@ -519,3 +519,17 @@ Workflow executor, loses the acknowledgement after model settlement but before t
 record, then resumes from the stored result. The controlled model route is invoked exactly once;
 the resumed checkpoint contains the exact saved bytes. This qualifies local recovery behavior,
 not live provider execution or the complete W3 production composition.
+
+The native Worker AI Gateway transport uses the installed `AI.gateway("eliotr-reasoning")` binding
+for the existing dynamic route. It checks the binding's gateway URL against the configured account,
+retains timeout/cancellation, bounded output and single-attempt headers, and requires no fabricated
+gateway token. The explicit HTTP-token transport remains available with the same execution contract.
+The model-profile producer can now re-read the persisted current workflow/ledger and navigation
+authority before and after profile selection. Missing installed model definitions still refuse calls.
+
+At `ca673de`, eight local transport cases and the actual source/freeze/synthesis/stage-17 draft case
+passed together; the existing fourteen gateway execution cases also passed. The integrated case uses
+the native binding interface with controlled response bytes and proves draft/citation readback,
+single-call replay and revoked-read refusal. Stages 13–16 are still controlled in that result, and
+the ordinary public run remains exploratory.v2. This is local composition evidence, not a live
+provider call, remote gateway provision, semantic verification or deployment qualification.

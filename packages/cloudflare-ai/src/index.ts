@@ -31,6 +31,9 @@ export {
   type ModelCallInput,
   type ModelCallReceipt,
   type ModelGatewayCredentialPort,
+  type ModelGatewayTokenTransport,
+  type ModelGatewayBindingTransport,
+  type ModelGatewayTransportDependencies,
   type ModelGatewayDeploymentRegistryPort,
   type ModelGatewayExecutionDependencies,
   type ModelGatewayExecutionErrorCode,
@@ -45,7 +48,7 @@ export {
   type ModelGatewayUsageObservation,
   type PreparedModelGatewayHttpRequest,
 } from "./model-gateway-execution-contract.js";
-export { prepareModelGatewayHttpRequest, reasoningEndpoint as resolveModelGatewayReasoningEndpoint, gatewayToken as validateModelGatewayToken } from "./model-gateway-http-request.js";
+export { prepareModelGatewayHttpRequest, prepareModelGatewayBindingRequest, reasoningEndpoint as resolveModelGatewayReasoningEndpoint, gatewayToken as validateModelGatewayToken } from "./model-gateway-http-request.js";
 export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
