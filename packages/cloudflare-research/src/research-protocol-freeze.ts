@@ -415,6 +415,8 @@ export interface ResearchProtocolFreezeReadbackInput {
   readonly bucket: R2Bucket;
   readonly navigation: NavigationReadAuthority;
   readonly ledger: Pick<InvestigationLedgerStore, "read">;
+  /** Optional caller-side binding for readers that already loaded the committed attempt. */
+  readonly expected_attempt_ref?: string;
 }
 
 /**
@@ -461,12 +463,18 @@ export async function readFreezeProtocolAndScopeCheckpoint(
   if (receipt === null || receipt.stage !== "FREEZE_PROTOCOL_AND_SCOPE" || receipt.request_sha256 !== requestDigest) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "committed stage-0 checkpoint receipt is unavailable");
   }
+  if (input.expected_attempt_ref !== undefined && receipt.attempt_ref !== input.expected_attempt_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "committed stage-0 attempt binding differs");
+  }
   const manifest = receipt.output_manifest;
   if (manifest.residency.scope_domain_id !== scope.snapshot_id || manifest.residency.access_domain_id !== input.principal.principal_ref) {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "checkpoint output residency is not bound to current authority");
   }
   const bytes = await readWorkflowObject(input.bucket, manifest, true);
   const checkpoint = decodeProtocolScopeCheckpoint(bytes);
+  if (checkpoint.attempt_ref !== receipt.attempt_ref) {
+    fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE", "protocol scope checkpoint attempt binding differs");
+  }
   assertReadbackBinding(checkpoint, initial.head, run, scope, input.request, input.principal);
   const { profile_ref: _profileRef, ...profileIdentity } = checkpoint.protocol_profile;
   const { denominator_ref: _denominatorRef, ...denominatorIdentity } = checkpoint.coverage_denominator;

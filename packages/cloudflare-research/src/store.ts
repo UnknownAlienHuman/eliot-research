@@ -4,7 +4,7 @@ import {
   type LedgerEvent, type LedgerHead, type LedgerHeadRow,
 } from "@eliotr/research";
 import {
-  decodeReceipt, encodeReceipt, fail, textDigest, WorkflowCheckpointError,
+  decodeReceipt, encodeReceipt, fail, parseRequest, textDigest, WorkflowCheckpointError,
   type StageReceipt, type StageRequest, type WorkflowBudgetGrant, type WorkflowObject, type WorkflowPrincipal,
 } from "./types.js";
 
@@ -19,6 +19,11 @@ export interface AttemptRow {
   operation_id: string; stage_index: number; request_json: string; request_sha256: string;
   attempt_ref: string; expected_revision: number; budget_receipt_ref: string; budget_expires_at_ms: number;
   state: "STARTED" | "OUTPUT_RECORDED" | "COMMITTED"; output_json: string | null;
+}
+export interface CommittedStageRequest {
+  readonly request: StageRequest;
+  readonly request_sha256: string;
+  readonly attempt_ref: string;
 }
 function mapFailure(error: unknown): never {
   if (error instanceof WorkflowCheckpointError) throw error;
@@ -45,6 +50,42 @@ export class WorkflowCheckpointStore {
   private samePrincipal(run: RunRow, principal: WorkflowPrincipal): void {
     if (run.principal_ref !== principal.principal_ref || run.credential_generation !== principal.credential_generation ||
         run.deployment_generation !== principal.deployment_generation) fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  /** Read one committed stage request with its immutable attempt binding and no effects. */
+  async readCommittedStageRequest(
+    operationId: string,
+    stage: StageRequest["stage"],
+  ): Promise<CommittedStageRequest | null> {
+    const stageIndex = RESEARCH_WORKFLOW_STAGES.indexOf(stage);
+    if (stageIndex < 0) fail("WORKFLOW_INPUT_INVALID");
+    const row = await this.db.prepare(
+      "SELECT operation_id, stage_index, request_json, request_sha256, attempt_ref, state " +
+      "FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1",
+    ).bind(operationId, stageIndex).first<{
+      readonly operation_id: string;
+      readonly stage_index: number;
+      readonly request_json: string;
+      readonly request_sha256: string;
+      readonly attempt_ref: string;
+      readonly state: string;
+    }>();
+    if (row === null || row.state !== "COMMITTED") return null;
+    let request: StageRequest;
+    try { request = parseRequest(JSON.parse(row.request_json)); }
+    catch (error) {
+      if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_INPUT_INVALID") {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
+      throw error;
+    }
+    if (row.operation_id !== operationId || row.stage_index !== stageIndex ||
+        request.operation_id !== operationId || request.stage !== stage ||
+        workflowStageIndex(request) !== stageIndex || JSON.stringify(request) !== row.request_json ||
+        row.request_sha256 !== await textDigest(row.request_json) ||
+        typeof row.attempt_ref !== "string" || row.attempt_ref.length < 1 || row.attempt_ref.length > 256) {
+      fail("WORKFLOW_OUTPUT_CORRUPT");
+    }
+    return Object.freeze({ request, request_sha256: row.request_sha256, attempt_ref: row.attempt_ref });
   }
   async current(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
     const run = await this.run(request.operation_id);
