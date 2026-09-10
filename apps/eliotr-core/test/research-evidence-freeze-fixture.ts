@@ -13,8 +13,7 @@ import type { ScopeSnapshot } from "@eliotr/contracts";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, type CreateLedgerInput, type InvestigationLedgerStore, type LedgerD1Database } from "@eliotr/research";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import {
-  createModelProfileBindingProducer,
-  createModelProfileBindingConfigSource,
+  createPersistedModelProfileBindingProducer,
   createResearchReferenceManifestStore,
   createWorkflowCheckpointExecutor,
   createFreezeProtocolAndScopeStageHandler,
@@ -185,19 +184,10 @@ export async function freezeFixture(): Promise<FreezeFixture> {
   if (current === null) throw new Error("missing current W1 head");
   const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation);
   const deployment = definition.deployment;
-  const profileDefinitionSource = createModelProfileBindingConfigSource({
-    raw: JSON.stringify(definition),
-    provenance_ref: definition.config_provenance_ref,
-  });
-  const profileProducer = createModelProfileBindingProducer({ source: profileDefinitionSource,
-    readCurrentAuthority: async () => {
-      const value = await ledgerStore.read(investigationId);
-      if (value === null) throw new Error("missing current W1 head");
-      return { model_profile_ref: value.head.model_profile_ref, policy_generation: value.head.policy_generation,
-        policy_authority_ref: value.head.policy_authority_ref, deployment_generation: value.head.deployment_generation,
-        scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision }, scope_snapshot_digest: scope.digest,
-        scope_snapshot: scope, policy_state: "ACTIVE" as const, deployment_state: "ACTIVE" as const, state: "ACTIVE" as const };
-    }, routeAuthority: { resolve: async () => deployment }, now: () => nowMs });
+  const profileProducer = createPersistedModelProfileBindingProducer({
+    config: { raw: JSON.stringify(definition), provenance_ref: definition.config_provenance_ref },
+    authority: { database: db, navigation, operation_id: operationId, investigation_id: investigationId, principal },
+    routeAuthority: { resolve: async () => deployment }, now: () => nowMs });
   const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: runtime.SEARCH_DB });
   const resolver: CloudflareEvidenceResolver = createCloudflareEvidenceResolver({ authority: evidenceAuthority, content: createR2EvidenceContentPort({ evidence_bucket: runtime.EVIDENCE_BUCKET }) });
   const { navigation: _navigation, ledger: _ledger, ...retrieveEnvironment } = retrieve;

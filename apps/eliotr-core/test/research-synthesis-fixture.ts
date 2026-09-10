@@ -351,16 +351,21 @@ export async function committedFreezeSynthesisFixture() {
   const request_bodies: string[] = [];
   const model: EvidenceFreezeSynthesisModelDependencies = {
     database: freeze.db, work_bucket: freeze.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
-    gateway: { reasoning_gateway_base_url: BASE_URL, gateway_token: "controlled-freeze-synthesis",
-      fetch: async (_input, init) => {
+    gateway: { reasoning_gateway_base_url: BASE_URL, ai_gateway_binding: { gateway: (gatewayId) => {
+      if (gatewayId !== "eliotr-reasoning") throw new Error("unexpected synthesis gateway binding");
+      return { getUrl: async () => BASE_URL, run: async (request, options) => {
+        if (Array.isArray(request) || request.provider !== "compat" || request.endpoint !== "chat/completions") throw new Error("unexpected synthesis binding request");
+        const headers = new Headers(options?.extraHeaders as Record<string, string>);
+        if (headers.has("cf-aig-authorization") || headers.get("cf-aig-max-attempts") !== "1" || headers.get("cf-aig-collect-log-payload") !== "false") throw new Error("synthesis binding policy changed");
         provider_calls += 1;
-        if (typeof init?.body === "string") request_bodies.push(init.body);
+        request_bodies.push(JSON.stringify(request.query));
         return new Response(JSON.stringify({
           id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: deployment.route_ref,
           choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
         }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
-      } },
+      } };
+    } } },
     prompt: freezePrompt(freeze, stage_five, deployment, "freeze"), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {
       if (prepared === null) throw new Error("spend authorization read before preparation");
