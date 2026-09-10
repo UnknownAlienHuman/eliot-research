@@ -10,6 +10,7 @@ export * from "./exhaustive-reconcile.js";
 export * from "./service.js";
 export * from "./query-persistence.js";
 export { decodeCanonicalRetrievalJson, decodeEvidencePack, decodeRetrievalResult } from "./query-codec.js";
+export { decodeRetrieveBranchesCheckpoint, type RetrieveBranchesCheckpoint } from "./research-checkpoint-codec.js";
 export * from "./trace-read.js";
 export * from "./navigation.js";
 export * from "./lanes.js";
