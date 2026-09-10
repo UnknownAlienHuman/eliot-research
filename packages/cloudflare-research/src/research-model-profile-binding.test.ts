@@ -3,7 +3,6 @@ import { type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import {
   createModelProfileBindingProducer,
-  MODEL_PROFILE_BINDING_SCHEMA,
   ModelProfileBindingError,
   type ModelProfileCurrentAuthority,
   type ModelProfileStageAuthority,
@@ -55,14 +54,11 @@ const stage: ModelProfileStageAuthority = {
 
 function makeBinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const material = {
-    schema: MODEL_PROFILE_BINDING_SCHEMA,
+    schema: "eliotr.research.model-profile-definition.v1",
     config_provenance_ref: provenanceRef,
+    definition_ref: { id: "placeholder", revision: 1 },
+    definition_sha256: "placeholder",
     model_profile_ref: stage.model_profile_ref,
-    policy_authority_ref: stage.policy_authority_ref,
-    policy_generation: stage.policy_generation,
-    deployment_generation: stage.deployment_generation,
-    scope_snapshot_ref: stage.scope_snapshot_ref,
-    scope_snapshot_digest: stage.scope_snapshot_digest,
     expires_at: "2026-09-10T16:00:00.000Z",
     deployment,
     policy,
@@ -73,11 +69,13 @@ function makeBinding(overrides: Record<string, unknown> = {}): Record<string, un
 
 async function signedBinding(overrides: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
   const material = makeBinding(overrides);
+  delete material.definition_ref;
+  delete material.definition_sha256;
   const sha = await modelGatewaySha256(canonicalModelGatewayJson(material));
   return {
     ...material,
-    binding_sha256: sha,
-    binding_ref: { id: `eliotr.research.model-profile-binding-${sha}`, revision: 1 },
+    definition_sha256: sha,
+    definition_ref: { id: `eliotr.research.model-profile-definition-${sha}`, revision: 1 },
   };
 }
 
