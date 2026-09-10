@@ -107,6 +107,43 @@ export function decodeSynthesisClaimsCandidateV2(content: string): SynthesisClai
   return parseCandidate(value);
 }
 
+function isSurrogateBoundary(value: string, index: number): boolean {
+  return index > 0 && index < value.length &&
+    value.charCodeAt(index - 1) >= 0xd800 && value.charCodeAt(index - 1) <= 0xdbff &&
+    value.charCodeAt(index) >= 0xdc00 && value.charCodeAt(index) <= 0xdfff;
+}
+
+/** Validates explicit UTF-16 spans and per-claim evidence membership without adding server authority. */
+export function validateSynthesisClaimsCandidateV2(candidate: SynthesisClaimsCandidateV2): SynthesisClaimsCandidateV2 {
+  const parsed = parseCandidate(candidate);
+  for (const [index, material] of parsed.material_claims.entries()) {
+    if (material.span.end <= material.span.start || material.span.end > parsed.section_text.length ||
+        isSurrogateBoundary(parsed.section_text, material.span.start) || isSurrogateBoundary(parsed.section_text, material.span.end) ||
+        parsed.section_text.slice(material.span.start, material.span.end) !== material.text) {
+      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `material claim ${index} span does not contain its exact text`);
+    }
+    const refs = [...material.support_handle_refs, ...material.counterevidence_handle_refs];
+    if (new Set(refs.map(refKey)).size !== refs.length) {
+      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `material claim ${index} repeats an evidence ref`);
+    }
+  }
+  return parsed;
+}
+
+/** Derives the exact support/counterevidence union; it never treats model text as an evidence ref. */
+export function deriveSynthesisClaimsCandidateCitedHandleRefsV2(
+  candidate: SynthesisClaimsCandidateV2,
+): readonly VersionedRef[] {
+  const parsed = validateSynthesisClaimsCandidateV2(candidate);
+  const refs = new Map<string, VersionedRef>();
+  for (const material of parsed.material_claims) {
+    for (const ref of [...material.support_handle_refs, ...material.counterevidence_handle_refs]) {
+      refs.set(refKey(ref), freezeRef(ref));
+    }
+  }
+  return Object.freeze([...refs.values()].sort((left, right) => compareUtf16(refKey(left), refKey(right))));
+}
+
 export interface SynthesisClaimsNormalizationInput {
   readonly candidate: SynthesisClaimsCandidateV2;
   readonly operation_id: string;
@@ -157,7 +194,7 @@ export async function normalizeSynthesisClaimsCandidateV2(
   input: SynthesisClaimsNormalizationInput,
 ): Promise<NormalizedSynthesisClaims> {
   validateTrustedInput(input);
-  const candidate = parseCandidate(input.candidate);
+  const candidate = validateSynthesisClaimsCandidateV2(input.candidate);
   const trusted = Object.freeze({
     operation_id: input.operation_id,
     section_ref: freezeRef(input.section_ref),
@@ -169,16 +206,7 @@ export async function normalizeSynthesisClaimsCandidateV2(
   const cited = new Map<string, VersionedRef>();
   const claims: NormalizedMaterialClaim[] = [];
 
-  const isSurrogateBoundary = (index: number): boolean => index > 0 && index < candidate.section_text.length &&
-    candidate.section_text.charCodeAt(index - 1) >= 0xd800 && candidate.section_text.charCodeAt(index - 1) <= 0xdbff &&
-    candidate.section_text.charCodeAt(index) >= 0xdc00 && candidate.section_text.charCodeAt(index) <= 0xdfff;
-
   for (const [index, material] of candidate.material_claims.entries()) {
-    if (material.span.end <= material.span.start || material.span.end > candidate.section_text.length ||
-        isSurrogateBoundary(material.span.start) || isSurrogateBoundary(material.span.end) ||
-        candidate.section_text.slice(material.span.start, material.span.end) !== material.text) {
-      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `material claim ${index} span does not contain its exact text`);
-    }
     const refs = [...material.support_handle_refs, ...material.counterevidence_handle_refs];
     const keys = refs.map(refKey);
     if (new Set(keys).size !== keys.length || keys.some((key) => !allowed.has(key))) {
