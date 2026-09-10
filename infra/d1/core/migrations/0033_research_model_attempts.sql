@@ -99,3 +99,18 @@ BEGIN SELECT RAISE(ABORT, 'MODEL_ATTEMPT_CONFLICT'); END;
 CREATE TRIGGER research_model_attempt_no_delete
 BEFORE DELETE ON research_model_attempt
 BEGIN SELECT RAISE(ABORT, 'MODEL_ATTEMPT_CONFLICT'); END;
+
+CREATE TRIGGER research_model_attempt_terminal_immutable
+BEFORE UPDATE ON research_model_attempt
+WHEN OLD.state IN ('SUCCEEDED','FAILED','CANCELLED')
+  AND (NEW.state IS NOT OLD.state
+    OR NEW.receipt_json IS NOT OLD.receipt_json
+    OR NEW.receipt_sha256 IS NOT OLD.receipt_sha256
+    OR NEW.output_object_ref IS NOT OLD.output_object_ref
+    OR NEW.output_sha256 IS NOT OLD.output_sha256
+    OR NEW.output_size_bytes IS NOT OLD.output_size_bytes
+    OR NEW.readback_sha256 IS NOT OLD.readback_sha256
+    OR NEW.error_code IS NOT OLD.error_code
+    OR NEW.reason_codes_json IS NOT OLD.reason_codes_json
+    OR NEW.ended_at IS NOT OLD.ended_at)
+BEGIN SELECT RAISE(ABORT, 'MODEL_ATTEMPT_CONFLICT'); END;
