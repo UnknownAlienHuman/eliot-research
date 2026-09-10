@@ -4612,7 +4612,10 @@ export async function runOwnerE2E() {
         instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY", allowed_use: ["research"],
         disclosure_ceiling: "owner-only", license_policy_ref: "e2e-license",
         default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "e2e-residency",
-        default_retention_policy_id: "e2e-retention", minimum_quality_state: "standard" } };
+        default_retention_policy_id: "e2e-retention",
+        // This controlled raw fixture has no source quality mapping; its
+        // minimum mirrors the raw admission fixture while production policy stays unchanged.
+        minimum_quality_state: "degraded" } };
     // Setup/replay at the active-runtime boundary: the Worker is running for
     // identity, so CLI D1 shares SQLite files with Miniflare. Namespace
     // initialization is one mutation attempt; its exact readback is the only
