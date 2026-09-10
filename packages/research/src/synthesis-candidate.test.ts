@@ -62,5 +62,8 @@ describe("versioned synthesis claims candidate v2", () => {
   it("uses UTF-16 spans without allowing surrogate-pair splits", async () => {
     const candidate = { ...base, section_text: "😀 claim", material_claims: [{ ...baseClaim, text: "😀", span: { start: 0, end: 1 } }] };
     await expect(normalize(candidate)).rejects.toMatchObject({ code: "SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID" });
+    const loneSurrogate = String.fromCharCode(0xd800);
+    await expect(normalize({ ...base, section_text: loneSurrogate, material_claims: [{ ...baseClaim, text: loneSurrogate, span: { start: 0, end: 1 } }] }))
+      .rejects.toMatchObject({ code: "SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID" });
   });
 });
