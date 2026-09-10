@@ -45,9 +45,12 @@ export type ResearchStageHandlerFactoryMode =
     }
   | { readonly kind: "legacy-deterministic" };
 
-export type ResearchExploratoryStageCompositionInput = Pick<Extract<ResearchStageHandlerFactoryMode, { kind: "server-owned-exploratory" }>, "generation" | "navigation" | "ledger" | "retrieval">;
-export function createResearchExploratoryStageHandlers(input: ResearchExploratoryStageCompositionInput): MonotoneHandlerFactory {
-  return createResearchStageHandlerFactory({ kind: "server-owned-exploratory", ...input });
+export type ResearchExploratoryStageCompositionInput = Pick<Extract<ResearchStageHandlerFactoryMode, { kind: "server-owned-exploratory" }>, "navigation" | "ledger"> & { readonly generation: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION; readonly environment: Pick<RetrieveBranchesStageDependencies, "database" | "search_database" | "work_bucket" | "evidence_bucket">; readonly access: RetrieveBranchesStageDependencies["access"] };
+export function createResearchExploratoryStageHandlers(
+  { generation, navigation, ledger, environment, access }: ResearchExploratoryStageCompositionInput,
+): MonotoneHandlerFactory {
+  return createResearchStageHandlerFactory({ kind: "server-owned-exploratory", generation, navigation, ledger,
+    ...(generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION ? { retrieval: { ...environment, access } } : {}) });
 }
 
 /**
