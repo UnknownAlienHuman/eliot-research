@@ -18,6 +18,7 @@ import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-p
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
+import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario } from "./raw-file-browser.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -84,6 +85,50 @@ export const BROWSER_BUNDLE_LIMITS_EXPECTED = {
   metadata_bytes: 256 * 1024,
   total_bytes: 32 * 1024 * 1024,
 };
+
+const OWNER_D1_PROVENANCE_PROTOCOL = "eliotr.owner-e2e.d1-provenance.v1";
+const OWNER_D1_PROVENANCE_BINDINGS = new Set(["CORE_DB", "SEARCH_DB"]);
+const OWNER_D1_PROVENANCE_PHASES = new Set([
+  "owner-d1-unclassified", "owner-d1-migration-ledger", "owner-d1-initial-denial",
+  "owner-d1-after-denial", "owner-d1-replay-before", "owner-d1-replay-after",
+  "owner-d1-jwt-matrix-baseline", "owner-d1-jwt-matrix-after-denial",
+  "owner-d1-rotation-baseline", "owner-d1-rotation-after-denial", "owner-d1-raw-projection",
+]);
+const OWNER_D1_PROVENANCE_FAMILIES = new Set([
+  "owner-d1-readback", "migration-ledger", "source-count", "revision-count",
+  "policy-count", "operation-count", "scope-policy-count", "bundle-replay-count",
+  "raw-projection-revision", "raw-projection-outbox", "raw-projection-receipt",
+  "raw-projection-terminal-guard", "raw-projection-readiness", "raw-projection-search-watermark",
+  "raw-projection-generation-receipt", "raw-projection-activation-guard", "raw-projection-items",
+  "raw-projection-fts", "raw-projection-state",
+]);
+let ownerD1OperationSequence = 0;
+
+function createOwnerD1Provenance({ binding, phase = "owner-d1-unclassified", commandFamily = "owner-d1-readback" } = {}) {
+  const safeBinding = OWNER_D1_PROVENANCE_BINDINGS.has(binding) ? binding : "UNKNOWN";
+  const safePhase = OWNER_D1_PROVENANCE_PHASES.has(phase) ? phase : "owner-d1-unclassified";
+  const safeFamily = OWNER_D1_PROVENANCE_FAMILIES.has(commandFamily) ? commandFamily : "owner-d1-readback";
+  ownerD1OperationSequence = ownerD1OperationSequence >= Number.MAX_SAFE_INTEGER ? 1 : ownerD1OperationSequence + 1;
+  return Object.freeze({ protocol: OWNER_D1_PROVENANCE_PROTOCOL, operation: ownerD1OperationSequence,
+    phase: safePhase, binding: safeBinding, command_family: safeFamily });
+}
+
+function attachOwnerD1Provenance(error, context) {
+  if (!error || (typeof error !== "object" && typeof error !== "function")) return error;
+  try { Object.defineProperty(error, "ownerD1Provenance", { value: context, enumerable: false, configurable: true }); }
+  catch { /* Preserve the original failure even if a foreign error is non-extensible. */ }
+  return error;
+}
+
+function safeOwnerD1Provenance(error) {
+  const value = error?.ownerD1Provenance;
+  if (!value || value.protocol !== OWNER_D1_PROVENANCE_PROTOCOL ||
+      !Number.isSafeInteger(value.operation) || value.operation < 1 ||
+      !OWNER_D1_PROVENANCE_PHASES.has(value.phase) || !OWNER_D1_PROVENANCE_BINDINGS.has(value.binding) ||
+      !OWNER_D1_PROVENANCE_FAMILIES.has(value.command_family)) return undefined;
+  return { protocol: value.protocol, operation: value.operation, phase: value.phase,
+    binding: value.binding, command_family: value.command_family };
+}
 
 export async function checkBundleLimitsSource() {
   const text = await readFile(resolve(root, "apps/eliotr-pwa/src/bundle-input.ts"), "utf8");
@@ -425,7 +470,8 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
+async function d1Query(paths, binding, sql, { hardDeadlineMs, phase, commandFamily } = {}) {
+  const provenance = createOwnerD1Provenance({ binding, phase, commandFamily });
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -435,15 +481,19 @@ async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
   // the same durable state and must replay exactly after restart.
   const retryOptions = { execute: executeLocalAsync };
   if (hardDeadlineMs !== undefined) retryOptions.hardDeadlineMs = hardDeadlineMs;
-  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
-  let batches;
   try {
-    batches = JSON.parse(output);
+    const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
+    let batches;
+    try {
+      batches = JSON.parse(output);
+    } catch (error) {
+      assert.fail(`D1 query returned non-JSON readback: ${String(error?.message ?? error).slice(0, 200)}`);
+    }
+    assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
+    return batches[0].results;
   } catch (error) {
-    assert.fail(`D1 query returned non-JSON readback: ${String(error?.message ?? error).slice(0, 200)}`);
+    throw attachOwnerD1Provenance(error, provenance);
   }
-  assert.ok(Array.isArray(batches) && batches.length === 1 && batches[0].success === true, "D1 query did not produce one success result");
-  return batches[0].results;
 }
 
 function sqlText(value) {
@@ -501,7 +551,8 @@ async function verifyMigrationLedgers(paths) {
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(root, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
     assert.ok(expected.length > 0, "migration streams must be non-empty");
-    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name",
+      { phase: "owner-d1-migration-ledger", commandFamily: "migration-ledger" });
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
     counts[binding] = expected.length;
   }
@@ -614,6 +665,8 @@ function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadl
   const visibleCode = cause.original_error?.code ?? "unknown";
   const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); phase=${phase}; original_error_code=${visibleCode}; observation=${compactObservation}`, { cause });
   error.code = "RAW_PROJECTION_DEADLINE_EXCEEDED";
+  const provenance = safeOwnerD1Provenance(originalError) ?? safeOwnerD1Provenance(originalError?.cause);
+  if (provenance) attachOwnerD1Provenance(error, provenance);
   return error;
 }
 
@@ -638,7 +691,8 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
       latest = await readbackWithBoundedRetry("raw-projection-state", () => {
         const remainingMs = deadlineMs - (Date.now() - startedAt);
         if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
-        return d1Query(paths, "CORE_DB", query, { hardDeadlineMs: remainingMs });
+        return d1Query(paths, "CORE_DB", query, { hardDeadlineMs: remainingMs,
+          phase: "owner-d1-raw-projection", commandFamily: "raw-projection-state" });
       }, {
         attempts: 2, delayMs: 100,
       });
@@ -665,13 +719,15 @@ async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
 
 async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, sourceRevisionRef, expectedGeneration }) {
   assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
-  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`);
+  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-revision" });
   assert.equal(revisionRows.length, 1, "raw projection source revision must exist before Queue dispatch");
   const revision = revisionRows[0];
   const preRows = await d1Query(paths, "CORE_DB",
     `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
     `i.operation_kind,i.principal_ref,i.idempotency_key FROM operation_intent i JOIN outbox o ` +
-    `ON o.intent_id=i.intent_id AND o.intent_revision=i.revision WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${sqlText(sourceRevisionRef)}`);
+    `ON o.intent_id=i.intent_id AND o.intent_revision=i.revision WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${sqlText(sourceRevisionRef)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-outbox" });
   assert.equal(preRows.length, 1, "raw admission must create exactly one projection outbox identity");
   assert.equal(preRows[0].topic, "source.revision.admitted");
   assert.equal(preRows[0].payload_ref, sourceRevisionRef);
@@ -698,7 +754,8 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.ok(terminal.queue_message_id, "outbox must retain the delivered Queue identity");
   const receipts = await d1Query(paths, "CORE_DB",
     `SELECT receipt_id,revision,outcome,output_refs_json,readback_receipt_refs_json,reconciliation_required,reason_codes_json ` +
-    `FROM operation_receipt WHERE intent_id=${sqlText(terminal.intent_id)} AND intent_revision=${terminal.intent_revision} ORDER BY created_at`);
+    `FROM operation_receipt WHERE intent_id=${sqlText(terminal.intent_id)} AND intent_revision=${terminal.intent_revision} ORDER BY created_at`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-receipt" });
   assert.ok(receipts.some((row) => row.outcome === "ACCEPTED"), "Queue delivery must persist an acceptance receipt");
   const terminalReceipt = receipts.find((row) => row.outcome === "SUCCEEDED" || row.outcome === "PARTIAL");
   assert.ok(terminalReceipt, "projection must persist a terminal operation receipt");
@@ -710,13 +767,15 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   const terminalGuard = await d1Query(paths, "CORE_DB",
     `SELECT source_revision_ref,projection_generation,job_id,terminal_receipt_id,terminal_receipt_revision,outcome,verified ` +
     `FROM projection_terminal_guard WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
-    `AND projection_generation=${sqlText(terminal.projection_generation)}`);
+    `AND projection_generation=${sqlText(terminal.projection_generation)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-terminal-guard" });
   assert.deepEqual(terminalGuard, [{ source_revision_ref: sourceRevisionRef, projection_generation: terminal.projection_generation,
     job_id: terminal.job_id, terminal_receipt_id: terminalReceipt.receipt_id, terminal_receipt_revision: terminalReceipt.revision,
     outcome: terminalReceipt.outcome, verified: 1 }], "Core terminal guard must bind the exact job and receipt");
   const readiness = await d1Query(paths, "CORE_DB",
     `SELECT channel,state,generation,receipt_ref,reason_codes_json FROM source_readiness WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
-    "AND channel IN ('exact_ready','lexical_ready','semantic_ready') ORDER BY channel");
+    "AND channel IN ('exact_ready','lexical_ready','semantic_ready') ORDER BY channel",
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-readiness" });
   assert.equal(readiness.length, 3, "projection must persist all active readiness channels");
   for (const channel of readiness.filter((row) => row.channel === "exact_ready" || row.channel === "lexical_ready")) {
     assert.equal(channel.state, "ready");
@@ -725,13 +784,15 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   }
   const searchRows = await d1Query(paths, "SEARCH_DB",
     `SELECT channel,projection_generation,source_revision_ref,projected_item_count,state,readback_receipt_ref FROM projection_watermark ` +
-    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)} ORDER BY channel`);
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)} ORDER BY channel`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-search-watermark" });
   assert.deepEqual(searchRows.map((row) => row.channel), ["exact", "lexical"]);
   assert.ok(searchRows.every((row) => row.state === "READY" && row.projected_item_count > 0 && row.readback_receipt_ref),
     "exact and lexical watermarks must be READY with receipts");
   const generationRows = await d1Query(paths, "SEARCH_DB",
     `SELECT state,item_count,item_set_digest,readback_digest,receipt_ref FROM projection_generation_receipt ` +
-    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-generation-receipt" });
   assert.equal(generationRows.length, 1);
   assert.equal(generationRows[0].state, "READY");
   assert.ok(generationRows[0].item_count > 0 && generationRows[0].item_set_digest && generationRows[0].readback_digest && generationRows[0].receipt_ref);
@@ -741,21 +802,24 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(generationRows[0].receipt_ref, terminal.d1_search_receipt_ref, "Search receipt must match Core");
   const guardRows = await d1Query(paths, "SEARCH_DB",
     `SELECT receipt_ref,readback_digest,item_count,verified FROM projection_activation_guard ` +
-    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-activation-guard" });
   assert.deepEqual(guardRows, [{ receipt_ref: generationRows[0].receipt_ref, readback_digest: generationRows[0].readback_digest,
     item_count: generationRows[0].item_count, verified: 1 }]);
   const itemRows = await d1Query(paths, "SEARCH_DB",
     `SELECT p.item_key,p.section_text,p.content_sha256,s.normalized_start_byte,s.normalized_end_byte,s.precision_kind ` +
     `FROM projection_item p JOIN projection_span s ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref ` +
     `AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
-    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY p.item_key`);
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY p.item_key`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-items" });
   assert.equal(itemRows.length, generationRows[0].item_count);
   assert.ok(itemRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
   assert.ok(itemRows.every((row) => row.precision_kind === "normalized_bytes" && row.normalized_end_byte > row.normalized_start_byte));
   const ftsRows = await d1Query(paths, "SEARCH_DB",
     `SELECT f.item_key,p.source_revision_ref,p.projection_generation,f.section_text FROM section_fts f JOIN projection_item p ` +
     `ON p.item_key=f.item_key WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
-    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY f.item_key`);
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY f.item_key`,
+    { phase: "owner-d1-raw-projection", commandFamily: "raw-projection-fts" });
   assert.equal(ftsRows.length, generationRows[0].item_count, "section_fts must contain every active projected item");
   assert.ok(ftsRows.every((row) => row.source_revision_ref === sourceRevisionRef && row.projection_generation === terminal.projection_generation));
   assert.ok(ftsRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
@@ -850,7 +914,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
   const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
   assert.equal(excerpt, "# Recorded raw owner fixture\n");
-  return { scheduledPath, orientationPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
+  return { scheduledPath, orientationPath, readinessPath, sourceId: rawSourceId, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
     queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
 }
 
@@ -1004,8 +1068,47 @@ function verifyPreservedWorkerFailureOutput() {
   return { state: "PASS" };
 }
 
+export function verifyD1FailureProvenanceRegression() {
+  const sentinel = new Error("Local command failed (1) :: internal reference=controlled-d1");
+  sentinel.cause = { code: 1, diagnostic: "", stdout: "SELECT private_table", stderr: "private-token" };
+  const provenance = createOwnerD1Provenance({ binding: "CORE_DB", phase: "owner-d1-initial-denial", commandFamily: "source-count" });
+  attachOwnerD1Provenance(sentinel, provenance);
+  const wrapped = preserveWorkerFailure(sentinel, {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  });
+  assert.equal(wrapped.cause, sentinel, "D1 provenance must preserve the original Error as the outer cause");
+  assert.equal(wrapped.cause.cause.code, 1, "D1 provenance must preserve the original command code");
+  assert.equal(sentinel.message, "Local command failed (1) :: internal reference=controlled-d1",
+    "D1 provenance must not rewrite the original Error message");
+  assert.match(wrapped.message, /d1_provenance=.*"binding":"CORE_DB"/u);
+  assert.match(wrapped.message, /"phase":"owner-d1-initial-denial"/u);
+  assert.match(wrapped.message, /"command_family":"source-count"/u);
+  assert.match(wrapped.message, /"operation":\d+/u);
+  assert.ok(!wrapped.message.includes("private_table") && !wrapped.message.includes("private-token"),
+    "D1 provenance must not dump SQL or captured private values");
+  const timedOut = new Error("Local D1 hard deadline expired");
+  timedOut.cause = { code: "ETIMEDOUT", diagnostic: "", stdout: "SELECT private_table", stderr: "private-token" };
+  attachOwnerD1Provenance(timedOut, createOwnerD1Provenance({ binding: "CORE_DB",
+    phase: "owner-d1-raw-projection", commandFamily: "raw-projection-state" }));
+  const sanitizedTimeout = rawProjectionDeadlineError({ sourceRevisionRef: "revision-diagnostic",
+    phase: "raw-projection-scheduled-and-polling", startedAt: Date.now() - 1, deadlineMs: 20,
+    latest: [], originalError: timedOut });
+  const timeoutOuter = preserveWorkerFailure(sanitizedTimeout, {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  });
+  assert.equal(sanitizedTimeout.code, "RAW_PROJECTION_DEADLINE_EXCEEDED");
+  assert.equal(sanitizedTimeout.cause.original_error.code, "ETIMEDOUT",
+    "raw timeout sanitization must preserve the original command code");
+  assert.match(timeoutOuter.message, /d1_provenance=.*"phase":"owner-d1-raw-projection"/u);
+  assert.match(timeoutOuter.message, /"command_family":"raw-projection-state"/u);
+  assert.ok(!timeoutOuter.message.includes("private_table") && !timeoutOuter.message.includes("private-token"),
+    "raw timeout provenance must remain free of SQL and captured private values");
+  return { state: "PASS" };
+}
+
 export async function verifyWorkerFetchDiagnosticRegression() {
   verifyPreservedWorkerFailureOutput();
+  verifyD1FailureProvenanceRegression();
   const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
   let transportCalls = 0;
   await assert.rejects(
@@ -1266,12 +1369,14 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
 function preserveWorkerFailure(error, worker) {
   if (!worker) return error;
   const diagnostics = workerDiagnosticSnapshot(worker);
+  const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
   const original = {
     name: boundedFailureText(error?.name || "Error", 96),
     message: boundedFailureText(error?.message ?? error, 2000),
     stack: boundedFailureText(error?.stack ?? "", 4000),
   };
-  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}`, { cause: error });
+  const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${provenanceText}`, { cause: error });
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
@@ -4710,6 +4815,8 @@ export async function runOwnerE2E() {
     cross_client_ledger: "PENDING",
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
+    exhaustive_workflow_complete: "PENDING",
+    exhaustive_workflow_complete_d1: "PENDING",
     raw_file_capture: "PENDING",
     raw_projection_fast_search: "PENDING",
     early_cleanup: "PENDING",
@@ -4920,13 +5027,17 @@ export async function runOwnerE2E() {
     // Zero-mutation baseline: no namespace/grant/source exists yet, so every
     // negative below must leave all protected counts exactly unchanged while
     // denying both the session route and the authorized Library view.
-    const protectedD1Counts = async () => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
-      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision"))[0].n,
-      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
+    const protectedD1Counts = async (phase = "owner-d1-unclassified") => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
+        { phase, commandFamily: "source-count" }))[0].n,
+      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision",
+        { phase, commandFamily: "revision-count" }))[0].n,
+      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy",
+        { phase, commandFamily: "policy-count" }))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
+        { phase, commandFamily: "operation-count" }))[0].n,
     });
-    const d1BeforeNegatives = await protectedD1Counts();
+    const d1BeforeNegatives = await protectedD1Counts("owner-d1-initial-denial");
     const goodForTamper = await sign();
     const tamperSegs = goodForTamper.split(".");
     const tamperedPayloadClaims = JSON.parse(decoder.decode(base64UrlDecode(tamperSegs[1])));
@@ -4990,7 +5101,7 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
     }
-    assert.deepEqual(await protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
+    assert.deepEqual(await protectedD1Counts("owner-d1-after-denial"), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
     {
       const good = await sign();
       const segs = good.split(".");
@@ -5163,9 +5274,11 @@ export async function runOwnerE2E() {
     // Replay where applicable: the same bearer authorizes twice identically,
     // and prepare with the same idempotency key replays DUPLICATE with the
     // same operation_id and the existing receipt instead of a second operation.
-    const d1CountsForReplay = async () => ({
-      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
-      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
+    const d1CountsForReplay = async (phase = "owner-d1-unclassified") => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source",
+        { phase, commandFamily: "source-count" }))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation",
+        { phase, commandFamily: "operation-count" }))[0].n,
     });
     let imported;
     try {
@@ -5197,7 +5310,7 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
-    const countsBeforePrepareReplay = await d1CountsForReplay();
+    const countsBeforePrepareReplay = await d1CountsForReplay("owner-d1-replay-before");
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -5208,7 +5321,7 @@ export async function runOwnerE2E() {
     assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
     assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
     assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
-    assert.deepEqual(await d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    assert.deepEqual(await d1CountsForReplay("owner-d1-replay-after"), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
@@ -5255,6 +5368,14 @@ export async function runOwnerE2E() {
       expectedGeneration: paths.generation,
     });
     receipt.raw_projection_fast_search = `PASS (scheduled -> Queue -> projection -> Chromium FAST_SEARCH ${rawProjectionFastSearch.traceRef}; semantic=${rawProjectionFastSearch.semanticState})`;
+    const exhaustiveWorkflowComplete = await runExhaustiveWorkflowCompleteBrowser({
+      page: playwright.page, browserJson, ledger, paths, d1Query,
+      sourceId: rawProjectionFastSearch.sourceId,
+      sourceRevisionRef: rawProjectionFastSearch.sourceRevisionRef,
+      expectedGeneration: paths.generation,
+    });
+    receipt.exhaustive_workflow_complete = `PASS (PWA EXHAUSTIVE_JOB ${exhaustiveWorkflowComplete.workflowId} reached COMPLETE with settled denominator and owner D1 readback)`;
+    receipt.exhaustive_workflow_complete_d1 = `PASS (workflow ${exhaustiveWorkflowComplete.d1.workflow_id}, job ${exhaustiveWorkflowComplete.d1.job_id}, source revision ${exhaustiveWorkflowComplete.d1.source_revision_ref})`;
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -5393,6 +5514,7 @@ export async function runOwnerE2E() {
         { method: "POST", path: rawProjectionFastSearch.orientationPath, status: 200 },
         { method: "GET", path: rawProjectionFastSearch.readinessPath, status: 200 },
         { method: "POST", path: "/api/v1/research/query", status: 200 },
+        ...exhaustiveWorkflowComplete.api,
         { method: "GET", path: `/api/v1/research/trace/${rawProjectionFastSearch.traceRef}`, status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
@@ -5414,7 +5536,7 @@ export async function runOwnerE2E() {
     // never values. Replay is covered above (identical bearer + DUPLICATE
     // prepare replay with zero new rows).
     {
-      const matrixBefore = await protectedD1Counts();
+      const matrixBefore = await protectedD1Counts("owner-d1-jwt-matrix-baseline");
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
@@ -5453,7 +5575,7 @@ export async function runOwnerE2E() {
         assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
         assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
           `browser ${item.name} must leak no catalog rows`);
-        assert.deepEqual(await protectedD1Counts(), matrixBefore,
+        assert.deepEqual(await protectedD1Counts("owner-d1-jwt-matrix-after-denial"), matrixBefore,
           `browser ${item.name} must cause zero protected D1 mutation`);
         matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
       }
@@ -5849,7 +5971,7 @@ export async function runOwnerE2E() {
     // token is allowed, and Chromium itself re-pairs with the v2 identity and
     // retrieves the admitted Library source. Zero protected mutation throughout.
     {
-      const rotationBefore = await protectedD1Counts();
+      const rotationBefore = await protectedD1Counts("owner-d1-rotation-baseline");
       const ROTATION_KID = "e2e-key-2";
       const v2keys = await createOwnerE2EKey();
       const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
@@ -5885,7 +6007,7 @@ export async function runOwnerE2E() {
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
-      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
@@ -5945,7 +6067,7 @@ export async function runOwnerE2E() {
         { correlation: "e2e-rotation/v2-revisions-browser" });
       assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
-      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts("owner-d1-rotation-after-denial"), rotationBefore, "rotation re-pairing must cause zero D1 drift");
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "rotation must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
@@ -6026,6 +6148,7 @@ export async function runOwnerE2E() {
         "e2e-raw-projection/readiness",
         "e2e-raw-projection/query",
         "e2e-raw-projection/trace",
+        ...exhaustiveWorkflowComplete.correlations,
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
