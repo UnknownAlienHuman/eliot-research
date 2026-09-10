@@ -910,6 +910,12 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
   };
 }
 
+function preserveWorkerFailure(error, worker) {
+  if (!worker) return error;
+  const diagnostics = workerDiagnosticSnapshot(worker);
+  return new Error(`owner-e2e failed; worker_diagnostics=${JSON.stringify(diagnostics)}`, { cause: error });
+}
+
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
   try {
     const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
@@ -5749,6 +5755,8 @@ export async function runOwnerE2E() {
       admission_receipt_ref: evidenceMeta.admission_receipt_ref,
       generation: stoppedGeneration,
     };
+  } catch (error) {
+    throw preserveWorkerFailure(error, worker);
   } finally {
     // Unconditional nested finally: EVERY owned resource is released while
     // dependent cleanup is still safe. Each step runs inside its own guard,
