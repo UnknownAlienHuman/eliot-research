@@ -102,7 +102,8 @@ function strictObject(value: unknown, keys: ReadonlySet<string>, label: string):
   return record;
 }
 
-function strictCandidate(content: string): SynthesisSectionCandidate {
+/** Strict decoder shared by VERIFY and DRAFT materialization. */
+export function decodeSynthesisSectionCandidate(content: string): SynthesisSectionCandidate {
   let value: unknown;
   try { value = JSON.parse(content) as unknown; }
   catch { fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "SYNTHESIZE assistant content is not JSON"); }
@@ -114,6 +115,10 @@ function strictCandidate(content: string): SynthesisSectionCandidate {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "SYNTHESIZE section candidate shape is invalid");
   }
   return candidate as unknown as SynthesisSectionCandidate;
+}
+
+function strictCandidate(content: string): SynthesisSectionCandidate {
+  return decodeSynthesisSectionCandidate(content);
 }
 
 function parseEvidencePack(pack: ResearchEvidencePack, expectedScope: VersionedRef, cited: readonly VersionedRef[]): void {
