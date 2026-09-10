@@ -214,6 +214,7 @@ export async function freezeFixture(): Promise<FreezeFixture> {
 export async function committedEvidenceFreezeFixture(): Promise<FreezeFixture & {
   readonly stage_ten: StageReceipt;
   readonly stage_eleven: StageReceipt;
+  readonly stage_twelve: StageRequest;
 }> {
   const fixture = await freezeFixture();
   const stageTen: StageRequest = { ...fixture.stage_zero, stage: "RECONCILE", investigation_ref: fixture.pre_reconcile.investigation_ref,
@@ -222,5 +223,7 @@ export async function committedEvidenceFreezeFixture(): Promise<FreezeFixture & 
   const stageEleven: StageRequest = { ...stageTen, stage: "FREEZE_EVIDENCE", investigation_ref: stageTenReceipt.investigation_ref,
     input_manifest: stageTenReceipt.output_manifest };
   const stageElevenReceipt = await fixture.executor.execute(stageEleven, principal, fixture.composition.freeze);
-  return Object.freeze({ ...fixture, stage_ten: stageTenReceipt, stage_eleven: stageElevenReceipt });
+  const stageTwelve: StageRequest = { ...stageEleven, stage: "SYNTHESIZE", investigation_ref: stageElevenReceipt.investigation_ref,
+    input_manifest: stageElevenReceipt.output_manifest };
+  return Object.freeze({ ...fixture, stage_ten: stageTenReceipt, stage_eleven: stageElevenReceipt, stage_twelve: stageTwelve });
 }
