@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { createGovernedModelAttemptHandler, deriveModelAttemptIdentity } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
+import { createWorkflowCheckpointExecutor } from "../../../packages/cloudflare-research/src/executor.js";
 import { digest } from "../../../packages/cloudflare-research/src/types.js";
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelCallInput } from "@eliotr/research";
@@ -9,6 +10,7 @@ import {
   initializeModelAttemptRuntime,
   runtime,
 } from "./model-attempt-fixture.js";
+import { principal, workflowFixture } from "./research-workflow-fixture.js";
 
 beforeAll(initializeModelAttemptRuntime);
 
@@ -146,9 +148,8 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     const persisted = await fixture.dependencies.attempts.readByIdempotency({
       principal_ref: fixture.principal.principal_ref, operation_kind: "REPORT", idempotency_key: identity.idempotency_key,
     });
-    const outputObjectRef = persisted?.output?.output_object_ref;
-    expect(outputObjectRef).toBeTruthy();
-    if (!outputObjectRef) throw new Error("controlled model output binding is missing");
+    expect(persisted?.output?.output_object_ref).toMatch(/^model-output\/[a-f0-9]{64}\/recovery-stage$/u);
+    const outputObjectRef = `workflow/${requestSha256}/${invocation.attempt_ref}`;
     const recovery: WorkflowAttemptRecoveryInput = {
       request: invocation.request, principal_ref: fixture.principal.principal_ref,
       credential_generation: fixture.principal.credential_generation, deployment_generation: fixture.principal.deployment_generation,
@@ -163,5 +164,43 @@ describe("production governed model attempt handler over actual D1/R2", () => {
       .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(prepares).toBe(1);
     expect(fixture.calls()).toBe(1);
+  });
+
+  it("composes model settlement with W2 lost-ACK recovery without invoking the route twice", async () => {
+    const workflow = await workflowFixture("model-lost-ack");
+    const fixture = await governedModelAttemptFixture("model-lost-ack", {
+      database: workflow.db, bucket: workflow.bucket, request: workflow.request,
+      principal, inputBytes: workflow.bytes,
+    });
+    const modelHandler = createGovernedModelAttemptHandler(fixture.dependencies);
+    const firstExecutor = createWorkflowCheckpointExecutor(workflow.db, workflow.bucket, workflow.ports);
+    await expect(firstExecutor.execute(workflow.request, principal, async (input) => {
+      const output = await modelHandler.handler(input);
+      expect(output.byteLength).toBeGreaterThan(0);
+      throw new Error("controlled W2 lost ACK after model settlement");
+    })).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    expect(fixture.calls()).toBe(1);
+
+    const resumed = createWorkflowCheckpointExecutor(workflow.db, workflow.bucket, {
+      ...workflow.ports, recoverStartedAttempt: modelHandler.recoverStartedAttempt,
+    });
+    const receipt = await resumed.execute(workflow.request, principal, async () => {
+      throw new Error("W2 recovery must not invoke the stage handler");
+    });
+    expect(receipt.engine_state).toBe("CHECKPOINTED");
+    expect(fixture.calls()).toBe(1);
+    const stored = await workflow.bucket.get(receipt.output_manifest.object_ref);
+    expect(stored).not.toBeNull();
+    if (stored === null) throw new Error("recovered W2 output is missing from R2");
+    const recovered = await modelHandler.recoverStartedAttempt({
+      request: workflow.request, principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+      deployment_generation: principal.deployment_generation, stage_index: 0,
+      request_sha256: await stageRequestSha256(workflow.request), attempt_ref: receipt.attempt_ref,
+      output_object_ref: receipt.output_manifest.object_ref, expected_revision: 1,
+      budget_receipt_ref: workflow.budget.receipt_ref, budget_expires_at_ms: workflow.budget.expires_at_ms,
+    });
+    expect(recovered).not.toBeNull();
+    if (recovered === null) throw new Error("model recovery hook returned no output");
+    expect(new Uint8Array(await stored.arrayBuffer())).toEqual(recovered);
   });
 });

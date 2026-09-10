@@ -27,10 +27,10 @@ function identifier(tag: string, prefix: string): string {
   return `${prefix}-${tag}`;
 }
 
-function evidencePack(tag: string, scopeRevision = 1): EvidencePack {
+function evidencePack(tag: string, scopeRevision = 1, scopeId = identifier(tag, "scope")): EvidencePack {
   return {
     pack_ref: { id: identifier(tag, "pack"), revision: 1 },
-    scope_snapshot_ref: { id: identifier(tag, "scope"), revision: scopeRevision },
+    scope_snapshot_ref: { id: scopeId, revision: scopeRevision },
     resolved_evidence: [],
     omitted_candidates: [],
     trace_ref: { id: identifier(tag, "trace"), revision: 1 },
@@ -163,35 +163,48 @@ export interface GovernedModelAttemptFixture {
   };
 }
 
+export interface GovernedModelAttemptFixtureOptions {
+  readonly database?: D1Database;
+  readonly bucket?: R2Bucket;
+  readonly request?: StageRequest;
+  readonly principal?: WorkflowPrincipal;
+  readonly inputBytes?: Uint8Array;
+}
+
 /** Production handler fixture: the route is controlled, but its output is persisted in real local R2. */
-export async function governedModelAttemptFixture(tag: string): Promise<GovernedModelAttemptFixture> {
-  const inputBytes = new TextEncoder().encode(`controlled W3 input ${tag} — Ж🙂`);
+export async function governedModelAttemptFixture(tag: string, options: GovernedModelAttemptFixtureOptions = {}): Promise<GovernedModelAttemptFixture> {
+  const inputBytes = options.inputBytes === undefined ? new TextEncoder().encode(`controlled W3 input ${tag} — Ж🙂`) : new Uint8Array(options.inputBytes);
   const inputSha256 = await digest(inputBytes);
   const nowValue = "2026-09-10T12:00:00.000Z";
-  const scopeId = identifier(tag, "scope");
-  const principal: WorkflowPrincipal = {
+  const defaultScopeId = identifier(tag, "scope");
+  const defaultPrincipal: WorkflowPrincipal = {
     principal_ref: `${tag}-owner`, credential_generation: `${tag}-credential`, deployment_generation: `${tag}-deployment`,
   };
-  const request: StageRequest = {
+  const defaultRequest: StageRequest = {
     protocol: "eliotr.workflow-stage.v1", operation_id: `${tag}-run`, investigation_ref: { id: `${tag}-investigation`, revision: 1 },
     stage: "FREEZE_PROTOCOL_AND_SCOPE", idempotency_key: `${tag}-workflow-key`, handler_generation: `${tag}-handlers-v1`,
     input_manifest: {
       object_ref: `${tag}-input`, sha256: inputSha256, byte_length: inputBytes.byteLength,
       residency: {
-        scope_domain_id: scopeId, access_domain_id: principal.principal_ref, confidentiality_domain_id: `${tag}-private`,
+        scope_domain_id: defaultScopeId, access_domain_id: defaultPrincipal.principal_ref, confidentiality_domain_id: `${tag}-private`,
         encryption_key_domain_id: `${tag}-encryption`, retention_domain_id: `${tag}-retention`, erasure_domain_id: `${tag}-erasure`,
         content_digest: { algorithm: "sha256", digest: inputSha256 },
       },
     },
   };
-  const store = createModelAttemptRuntime(runtime.CORE_DB, () => nowValue);
+  const principal = options.principal ?? defaultPrincipal;
+  const request = options.request ?? defaultRequest;
+  const scopeId = request.input_manifest.residency.scope_domain_id;
+  const database = options.database ?? runtime.CORE_DB;
+  const bucket = options.bucket ?? runtime.WORK_BUCKET;
+  const store = createModelAttemptRuntime(database, () => nowValue);
   let routeCalls = 0;
   const outputBytes = new TextEncoder().encode(`controlled W3 output ${tag} — результат🙂`);
   const route = {
     execute: async (call: ModelCallInput): Promise<ModelCallReceipt> => {
       routeCalls += 1;
       const outputSha256 = await digest(outputBytes);
-      await runtime.WORK_BUCKET.put(call.output_object_ref, outputBytes, { sha256: outputSha256 });
+      await bucket.put(call.output_object_ref, outputBytes, { sha256: outputSha256 });
       return {
         receipt_ref: `${tag}-route-receipt-${routeCalls}`,
         route_fingerprint_ref: `${tag}-route-fingerprint`, output_object_ref: call.output_object_ref,
@@ -222,7 +235,7 @@ export async function governedModelAttemptFixture(tag: string): Promise<Governed
       };
       const call: ModelCallInput = {
         route_ref: "dynamic/eliotr-report-stage", prompt_generation: `${context.model_operation_id}-prompt`,
-        schema_generation: `${tag}-schema`, evidence_pack: evidencePack(tag), output_object_ref: context.model_output_object_ref,
+        schema_generation: `${tag}-schema`, evidence_pack: evidencePack(tag, 1, scopeId), output_object_ref: context.model_output_object_ref,
         max_input_bytes: 64 * 1024, max_output_bytes: 64 * 1024, budget_reservation_ref: reservationId,
         cancellation_ref: `${context.model_operation_id}-cancel`,
       };
@@ -239,7 +252,7 @@ export async function governedModelAttemptFixture(tag: string): Promise<Governed
     revalidate: async () => undefined,
     now: () => Date.parse(nowValue),
     readOutput: async (binding: Pick<ModelOutputBinding, "output_object_ref" | "output_sha256">) => {
-      const object = await runtime.WORK_BUCKET.get(binding.output_object_ref);
+      const object = await bucket.get(binding.output_object_ref);
       if (object === null) throw new Error("controlled model output is missing");
       return new Uint8Array(await object.arrayBuffer());
     },
