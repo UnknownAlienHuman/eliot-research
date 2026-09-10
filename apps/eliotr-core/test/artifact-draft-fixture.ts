@@ -14,10 +14,12 @@ import type { Env } from "../src/env.js";
 
 export const runtime = env as unknown as Env & {
   readonly CORE_MIGRATIONS: D1Migration[];
+  readonly SEARCH_MIGRATIONS: D1Migration[];
 };
 
 export async function initializeArtifactDraftRuntime(): Promise<void> {
   await applyD1Migrations(runtime.CORE_DB, runtime.CORE_MIGRATIONS);
+  await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
 }
 
 async function digest(bytes: Uint8Array): Promise<string> {
