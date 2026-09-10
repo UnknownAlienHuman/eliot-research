@@ -8,15 +8,28 @@ import {
   type MonotoneHandlerFactory,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-research";
+import {
+  createRetrieveBranchesStageHandler,
+  type RetrieveBranchesStageDependencies,
+} from "./research-retrieve-branches.js";
 
 /** Generation used only by the server-owned exploratory research.run path. */
 export const SERVER_OWNED_RESEARCH_HANDLER_GENERATION = "research-handlers.exploratory.v1";
+/** Generation for new exploratory runs that include the persisted retrieval stage. */
+export const SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v2";
+export const SERVER_RETRIEVAL_SCOPE_PROFILE = {
+  version: "retrieval-scope-v1",
+  max_sources: 64,
+  max_results: 16,
+} as const;
 
 export type ResearchStageHandlerFactoryMode =
   | {
       readonly kind: "server-owned-exploratory";
       readonly navigation: NavigationReadAuthority;
       readonly ledger: Pick<InvestigationLedgerStore, "read">;
+      readonly generation?: typeof SERVER_OWNED_RESEARCH_HANDLER_GENERATION | typeof SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
+      readonly retrieval?: RetrieveBranchesStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -50,10 +63,19 @@ export function createResearchStageHandlerFactory(
   const protocolScopeHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory"
     ? createFreezeProtocolAndScopeStageHandler({ navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
+  const retrievalHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory" &&
+      mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION && mode.retrieval !== undefined
+    ? createRetrieveBranchesStageHandler(mode.retrieval)
+    : undefined;
 
   return (stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
       return protocolScopeHandler;
+    }
+    if (stage === "RETRIEVE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
+        mode.generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION) {
+      if (retrievalHandler === undefined) return async () => fail("WORKFLOW_AUTHORITY_STALE");
+      return retrievalHandler;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
