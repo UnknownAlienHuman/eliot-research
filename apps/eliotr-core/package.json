@@ -13,6 +13,8 @@
     "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
   },
   "dependencies": {
+    "@eliotr/cloudflare-access": "workspace:*",
+    "@eliotr/cloudflare-workspace-mcp": "workspace:*",
     "@eliotr/cloudflare-ai": "workspace:*",
     "@eliotr/cloudflare-erasure": "workspace:*",
     "@eliotr/cloudflare-evidence": "workspace:*",

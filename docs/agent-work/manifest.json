@@ -378,8 +378,7 @@
         "ER-13"
       ],
       "owned_paths": [
-        "packages/platform-cloudflare/src/access.ts",
-        "packages/platform-cloudflare/src/access.test.ts",
+        "packages/cloudflare-access/**",
         "packages/platform-cloudflare/src/observability.ts",
         "packages/platform-cloudflare/src/observability.test.ts",
         "packages/platform-cloudflare/src/runtime-limits.ts",
@@ -654,7 +653,8 @@
       ],
       "owned_paths": [
         "tests/integration/**",
-        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts"
+        "apps/eliotr-core/test/raw-markdown-conversion-http.test.ts",
+        "apps/eliotr-core/test/raw-normalized-admission-http.test.ts"
       ],
       "mandatory_negative_case": "Remove live credentials/binding and prove the harness reports NOT EXECUTED rather than passing on local fakes.",
       "document": "ER-27-vertical-integration-and-live-conformance.md",

@@ -2,8 +2,9 @@
 
 **Slice:** 0–1 bridge
 **Depends on:** ER-17, ER-18, ER-20, ER-21, ER-24, ER-26
-**Live gate:** the selected profile must have deployed Access service-token
-initialize/tools/list/tools/call plus its own exact readback receipt. The default Workspace profile
+**Live gate:** the selected authentication profile must have deployed Access
+initialize/tools/list/tools/call plus its own exact readback receipt: signed Client ID for `service-token`,
+or the managed OAuth client flow with its dedicated audience for `managed-oauth`. The default Workspace profile
 qualifies Drive/Docs/Sheets/Slides/Gmail/Calendar; Google Cloud/gcloud is an independent optional
 profile. A missing optional profile is `NOT_EXECUTED`, not a Drive blocker.
 
@@ -16,13 +17,7 @@ create a reverse authority channel and do not let a Google transport result prom
 
 ## Owned paths
 
-- `apps/eliotr-core/src/gemini-mcp.ts`
-- `apps/eliotr-core/src/gemini-mcp-protocol.ts`
-- `apps/eliotr-core/src/gemini-mcp-tool-common.ts`
-- `apps/eliotr-core/src/gemini-mcp-google-sync.ts`
-- `apps/eliotr-core/src/gemini-mcp-tools.ts`
-- `apps/eliotr-core/src/gemini-mcp.test.ts`
-- `apps/eliotr-core/src/gemini-mcp-service-token.test.ts`
+- `packages/cloudflare-workspace-mcp/**`
 - `integrations/gemini-spark/**`
 - `integrations/antigravity/**`
 - `docs/implementation/gemini-spark-mcp.md`
@@ -47,6 +42,11 @@ create a reverse authority channel and do not let a Google transport result prom
 - `apps/eliotr-core/src/env.ts` — ER-24
 - `apps/eliotr-core/wrangler.jsonc` — ER-24
 - `package.json` — ER-00
+
+The package exposes a narrow runtime interface and receives readiness through an injected callback.
+It imports no core application module. ER-17 owns the shared `@eliotr/cloudflare-access` verifier;
+the Worker keeps the same `/mcp` route and passes its existing configuration into this library.
+Root integrates package manifests, TypeScript references, dependency boundaries, CI and lockfile.
 
 ## Acceptance
 
