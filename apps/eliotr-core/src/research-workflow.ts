@@ -226,9 +226,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       handlers = createResearchExploratoryStageHandlers({
         generation: retrievalOwned ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
         navigation, ledger,
-        ...(retrievalOwned ? {
-          retrieval: { database: this.env.CORE_DB, search_database: this.env.SEARCH_DB, work_bucket: this.env.WORK_BUCKET, evidence_bucket: this.env.EVIDENCE_BUCKET, access },
-        } : {}),
+        environment: { database: this.env.CORE_DB, search_database: this.env.SEARCH_DB, work_bucket: this.env.WORK_BUCKET, evidence_bucket: this.env.EVIDENCE_BUCKET }, access,
       });
     } else {
       failWorkflow("WORKFLOW_AUTHORITY_STALE");
