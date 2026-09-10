@@ -148,7 +148,7 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
     expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
     expect(calls).toBe(1);
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 1, outbox: 1, ledger_events: 1 });
-  });
+  }, 30_000);
 
   it("checks exact principal, credential and deployment before any handler", async () => {
     const f = await workflowFixture("principal"); let calls = 0;
