@@ -16,6 +16,8 @@ import type { BuildReferenceManifestInput } from "../../../packages/cloudflare-r
 import type { ResearchModelPromptCompilerDependencies } from "../../../packages/cloudflare-research/src/research-model-prompt.js";
 import type { ModelAttemptPreparationContext } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelAttemptReservationInput } from "../../../packages/cloudflare-research/src/model-attempt-types.js";
+import { WorkflowCheckpointStore } from "../../../packages/cloudflare-research/src/store.js";
+import { digest } from "../../../packages/cloudflare-research/src/types.js";
 import {
   governedModelAttemptFixture,
   initializeModelAttemptRuntime,
@@ -137,7 +139,10 @@ async function compositionFixture(
   rotateAfterFirstRevalidation = false,
 ) {
   const workflow = await workflowFixture(`stage-${tag}`);
-  await workflow.executor.execute(workflow.request, principal, async ({ input_bytes }) => new Uint8Array(input_bytes));
+  const workflowStore = new WorkflowCheckpointStore(workflow.db);
+  const stageRequestSha256 = await digest(new TextEncoder().encode(JSON.stringify(workflow.request)));
+  await workflowStore.ensureRun(workflow.request, principal);
+  await workflowStore.reserve(workflow.request, stageRequestSha256, crypto.randomUUID(), workflow.budget);
   const base = await governedModelAttemptFixture(`stage-${tag}`, {
     database: workflow.db, bucket: workflow.bucket, request: workflow.request, principal, inputBytes: workflow.bytes,
   });
@@ -224,6 +229,26 @@ async function compositionFixture(
   return { workflow, base, handler, deployment, prepare, spend_authorization, revalidateCalls: () => revalidateCalls, providerCalls: () => providerCalls, promptCalls: () => promptCalls, pricingCalls: () => pricingCalls, prepareCalls: () => prepareCalls };
 }
 
+async function expectPreProviderSettlement(
+  database: D1Database,
+  stageAttemptRef: string,
+  expectedErrorCode: string,
+): Promise<void> {
+  const row = await database.prepare(
+    "SELECT m.state AS model_state, m.error_code, b.state AS reservation_state, o.outcome FROM research_model_attempt m JOIN budget_reservation b ON b.reservation_id = m.reservation_id JOIN operation_receipt o ON o.attempt_id = m.attempt_id WHERE m.stage_attempt_ref = ?1 LIMIT 1",
+  ).bind(stageAttemptRef).first<{
+    readonly model_state: string;
+    readonly error_code: string;
+    readonly reservation_state: string;
+    readonly outcome: string;
+  }>();
+  if (row === null) throw new Error("pre-provider settlement row is missing");
+  expect(row.model_state).toBe("CANCELLED");
+  expect(row.error_code).toBe(expectedErrorCode);
+  expect(row.reservation_state).toBe("SETTLED");
+  expect(row.outcome).toBe("CANCELLED");
+}
+
 describe("composed research model stage handler", () => {
   it("executes through real deployment, prompt, output, fingerprint, and pricing seams and replays durably", async () => {
     const fixture = await compositionFixture("success");
@@ -300,6 +325,7 @@ describe("composed research model stage handler", () => {
     await expect(production.handler(fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef)))
       .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(productionProviderCalls).toBe(0);
+    await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
   });
 
   it("propagates a LIVE approved deployment through the production fetch pin", async () => {
@@ -326,6 +352,7 @@ describe("composed research model stage handler", () => {
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.revalidateCalls()).toBe(2);
     expect(fixture.providerCalls()).toBe(0);
+    await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
   });
 
   it.each(["missing", "malformed"] as const)("refuses %s approval before transport", async (approvalMode) => {
@@ -333,5 +360,6 @@ describe("composed research model stage handler", () => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.providerCalls()).toBe(0);
+    await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
   });
 });
