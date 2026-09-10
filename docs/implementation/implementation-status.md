@@ -1,140 +1,84 @@
 # Implementation status is executable
 
-The architecture describes the final system; the repository contains both implemented contours and
-intentional fail-closed scaffolds. [`implementation-status.json`](implementation-status.json) is the
-machine-readable inventory of registered source markers. The ordered path to a production declaration is
-[`production-readiness-plan.md`](production-readiness-plan.md).
+The architecture defines the target product. The machine-readable
+[implementation registry](implementation-status.json) records registered source contours; the
+[gap register](gap-register.md) records missing behavior, and the
+[production readiness plan](production-readiness-plan.md) defines release acceptance.
+These sources answer different questions. A compiling port, completed Workflow or passing local test
+cannot establish production readiness.
 
-A file is not implemented merely because it compiles or exports the final type.
+## Read the current state
 
-States:
+Run these commands in the repository root:
 
-- `SCAFFOLD_FAIL_CLOSED` — contract or port exists, but execution throws or returns an explicit
-  pending response and cannot mutate canonical state.
-- `IN_PROGRESS` — an owned work packet is active; merge still requires its negative acceptance case.
-- `IMPLEMENTED_NOT_LIVE` — deterministic and recorded-fixture gates pass, but a required Cloudflare,
-  Google, provider, recovery, or workload round trip has not produced a live receipt.
-- `LIVE_QUALIFIED` — implementation and its named live gate have a retained receipt.
-
-`pnpm check:implementation-status` fails when a registered marker is missing or stale. It also rejects
-any source file that contains the runtime state `IMPLEMENTATION_PENDING` without a registered
-`SCAFFOLD_FAIL_CLOSED` marker. Removing a marker is therefore an explicit implementation event, not
-cosmetic cleanup. The committer must update the registry, gap register and completion evidence in the
-same change.
-
-## Current registered contours
-
-### `SCAFFOLD_FAIL_CLOSED`
-
-```text
-ResearchSession Durable Object: exposes only pending status; no authoritative session state or WebSocket loop
+```bash
+pnpm check:implementation-status
+pnpm launch:code
 ```
 
-`ResearchWorkflow` left this state when the ER-09 W2 executor landed; it is now
-`IMPLEMENTED_NOT_LIVE` and listed below. `implementation-status.json` is authoritative — if this
-prose and the registry disagree, the registry is right and this file is the bug.
+The first validates registered markers and prints their current state counts. The second reports
+mandatory disabled slices, uncomposed operations and the selected Google transport's unfinished
+requirements. Its `LIVE_DEPLOY_BLOCKED` result is an explicit failure, not a deployment instruction.
+Counts and unavailable-method lists are intentionally not copied into this document: older copies
+incorrectly described an implemented ResearchSession as a scaffold and working query/run routes as
+uncomposed.
 
-### `IN_PROGRESS`
+The launch-code check is a negative gate. Passing it would still require the canonical product,
+Rust migration, live integration, recovery and workload evidence defined in the readiness plan.
+Unregistered composition gaps and unfinished owner workflows also remain in
+[canonical alignment](canonical-alignment.md) and the [theme plans](launch-prs/README.md).
 
-None. The last `IN_PROGRESS` contour (ER-19 Drive cursor reconciliation) left this
-state when its durable leased poll and digest-against-frozen-envelope tamper audit
-landed with deterministic real-D1 negatives; it is now `IMPLEMENTED_NOT_LIVE` and
-listed below. Owner callback and reconnect/disconnect/status now execute; provisioning,
-Doc publication/export and full
-runtime composition for the Day-0 Drive Exchange remain open. Optional Gemini MCP
-planning and self-reported observation validation cannot satisfy that requirement.
+## State meanings
 
-### `IMPLEMENTED_NOT_LIVE`
+| State | What it proves |
+|---|---|
+| `SCAFFOLD_FAIL_CLOSED` | A contract or port exists, but execution explicitly refuses pending behavior without mutating canonical state. |
+| `IN_PROGRESS` | An owned implementation is unfinished and its acceptance remains open. |
+| `IMPLEMENTED_NOT_LIVE` | The named local and recorded-fixture evidence exists; required platform or provider qualification remains open. |
+| `LIVE_QUALIFIED` | The named live gate has a retained receipt and exact readback. |
 
-```text
-deterministic immutable ScopeSnapshot persistence/currentness with purge, deny, owner, policy, disclosure, fence and expiry invalidation
-immutable D1 Corpus Lens storage and scoped navigation composition with exact identities, current grants, purge invalidation and explicit omissions
-generic federation boundary with strict auth/fence/reference and conservative disposition mapping
-Cloudflare Access-protected HTTP dispatch and owner catalog
-governed normalized-bundle ingest and SourceAdmissionDecision
-D1 intent/outbox and scheduled Queue dispatch
-Queue inbox deduplication, ACK and projection-job acceptance
-deterministic projection execution and managed-generation readiness logic
-exact EvidenceHandle, citation and output gating
-exact erasure closure and non-revealing purge ledger
-bounded required-Drive Sheet/changes REST subset and strict contribution transport guards (not full OAuth/cursor/publication)
-durable leased Drive cursor poll with ID/hash dedup plus digest-against-frozen-envelope tamper audit (not owner callback/provisioning/Doc publication/composition)
-context-bound AES-GCM refresh-token vault and primary-D1 CAS/refresh leases (not initial OAuth admission)
-optional Gemini service MCP status/planning/self-reported observation checks (catalog remains withheld)
-ER-09 W2 monotone bounded stage executor over durable D1/R2 checkpoints, and the ResearchWorkflow binding that runs it
-ER-23 deterministic golden-corpus harness with adjudicated RU/EN/code/table cases
-```
+`check:implementation-status` rejects missing/stale registered markers and an unregistered
+`IMPLEMENTATION_PENDING` source marker. Removing a scaffold requires its negative acceptance and
+corresponding registry/gap evidence in the same change. Neither prose nor a green typecheck promotes
+an implementation state.
 
-The public `research.run` and `research.query` routes are still not composed, so an implemented
-executor is not yet a usable product path. `pnpm launch:code` is the authority on what remains
-disabled; run it rather than inferring readiness from this list.
+## Library, retrieval and Workspace boundaries
 
-### Product operations still unavailable at composition time
+The owner Library composes admitted revision history, current source-head readiness, FAST_SEARCH and
+persisted retrieval traces. Revision history remains `RECORDED_ONLY`; active readiness is a separate
+server assessment. The PWA checks source, revision, scope and deployment before rendering resolved
+excerpts, and clears results when those identities become stale.
 
-```text
-research.query
-research.run
-research.artifact
-research.wiki.propose
-research.changes
-federation.submit
-federation.status
-federation.result
-federation.cancel
-federation.bundle.read
-federation.bundle.manifest
-federation.changes
-```
+Raw-file capture, conversion and governed Library admission have separate durable outcomes.
+Conversion is a candidate operation; admission does not establish index readiness. The actual local
+scheduled/Queue/R2 projection and browser FAST_SEARCH path has a focused retained result, including
+honest managed-index degradation. The complete owner suite, deployed Access and managed-provider
+qualification remain separate acceptance. See [Library checkpoints](launch-prs/01-library.md).
 
-`research.orient` is active for `ORIENT`/`E0`, the fixed `orientation-metadata-v1` budget, an empty
-literal list, and owner principals with explicit namespace read policies. It freezes real D1 scope,
-batches metadata-only cards/maps and persists an idempotent result and trace. `research.trace` reads
-only these exact owner-authorized traces. No semantic ranking, exact source-span evidence or full
-Atlas materialization is implied. The PWA Corpus Lens panel uses this API rather than sample data.
-See [local-launch.md](local-launch.md) for limits, setup and remaining launch gates.
+`research.orient` returns metadata-only navigation. `research.query` and `research.run` are composed
+product paths, with limits and remaining gaps documented in the registry and
+[local launch guide](local-launch.md). Q8 can expose an earned `COMPLETE` from the persisted exhaustive
+receipt and its settled denominator. Missing remote acceptance is a qualification gap; it is not a
+rule that forces every local Q8 result to `UNFINISHED`. A Workflow transport completion alone still
+cannot establish a research result or enable the whole RETRIEVAL slice.
 
-Some unavailable operations are not separate status markers because they are composition outputs of the
-owned service/workflow packets. They remain release blockers and are enumerated in the gap register and
-production readiness plan.
+The selected `gemini-mcp` Workspace profile uses Spark Connected Apps or Antigravity. Verified MCP
+identity, server-issued plans and append-only candidate observations preserve transport provenance.
+They do not grant namespace write access or admit source bytes. Explicit candidate authorization,
+byte admission and authenticated Workspace action/readback remain distinct work. The separate
+`drive-exchange` profile is retained for an explicit future selection; its unfinished custom OAuth
+setup is not a prerequisite for the selected Workspace path. See
+[Google transport profiles](../adr/0006-google-external-transport-profiles.md).
 
-## Required distinctions
+## Evidence must match the claim
 
-```text
-Queue send accepted
-≠ durable consumer receipt
-≠ projection success
+- Queue acceptance is not a durable consumer receipt or projection success.
+- A provider/index hit is a locator until exact authorized R2 bytes resolve its EvidenceHandle.
+- SourceCard, DocumentMap and ProjectAtlas are navigation, not publication support.
+- A Google transport result remains a candidate until exact readback and ELIOT admission.
+- Local Worker bindings, browser fixtures and deployment dry-runs are not live qualification.
+- A commit on `main` records delivery. Its CI result and product/release acceptance are separate facts.
 
-Workflow completed
-≠ research completed
-
-ProjectAtlas / SourceCard / DocumentMap
-≠ EvidenceHandle resolution
-≠ publication support
-
-AI Search or provider hit
-≠ EvidenceHandle
-
-Google tool success
-≠ exact Google readback
-≠ canonical ELIOT admission
-
-local fixture or Wrangler dry-run
-≠ live platform qualification
-```
-
-Only a retained receipt and exact readback may advance the relevant state. The repository is under active
-implementation and CI is enabled, but no production-ready declaration exists.
-
-## Authorized revision history
-
-The owner Library now reads permitted admitted revision history through the same catalog/source-policy
-checks and a source/session-bound cursor. The panel shows per-channel records from D1 Core, explicitly
-`RECORDED_ONLY`, including absent records and recorded failure/staleness reasons. It never promotes a
-channel, assesses an active index or resolves evidence. #98 still tracks active-readiness assessment,
-project workflows, failure UI and the complete real-storage browser lifecycle; live gates are unchanged.
-
-The launch-code gate also rejects explicitly disabled mandatory slices, independently of unavailable
-method names or registry states. It parses the composition, ignores comment/string examples and fails
-on missing, duplicate or dynamic disabled-slice declarations. This is a negative gate, not a proof that
-all canonical requirements have been implemented. Raw-file conversion and the real-storage browser
-loop remain open in `canonical-alignment.md` and #98.
+Keep focused test results, full owner acceptance, current CI and live receipts distinct in PR evidence.
+A failing or unexecuted gate remains visible while development continues. The repository's release
+claim is governed by the readiness plan, not by this explanatory page.

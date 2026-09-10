@@ -47,6 +47,7 @@ workspace, shared differential vectors, and mechanical merge/deep-verification g
 - `docs/agent-work/ER-00-workspace-and-verification-gates.md`
 - `docs/implementation/toolchain.md`
 - `docs/implementation/README.md`
+- `docs/implementation/implementation-status.md`
 - `docs/implementation/audit-2026-09-09.md`
 - `docs/implementation/production-readiness-plan.md`
 - `docs/implementation/gap-register.md`
