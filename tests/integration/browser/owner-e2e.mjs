@@ -6022,6 +6022,7 @@ export async function runOwnerE2E() {
         "e2e-raw-upload/markdown",
         "e2e-raw-upload/admission",
         "e2e-raw-projection/scheduled",
+        "e2e-raw-projection/orient",
         "e2e-raw-projection/readiness",
         "e2e-raw-projection/query",
         "e2e-raw-projection/trace",
