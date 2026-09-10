@@ -221,7 +221,7 @@ export interface EvidenceFreezeSynthesisReaderEnvironment {
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<EvidenceFreezeStageFiveLineage>;
 }
 
-export interface EvidenceFreezeSynthesisReaderOptions {
+interface EvidenceFreezeSynthesisReaderOptions {
   /** The current head revision to prove after the read, for a later-stage reader. */
   readonly expected_head_revision?: number;
   /** Materialize validates its own committed input through the stage receipt. */
@@ -315,7 +315,7 @@ function assertSynthesisPreparation(
   }
 }
 
-export function createEvidenceFreezeSynthesisContextReader(
+function createSynthesisContextReader(
   environment: EvidenceFreezeSynthesisReaderEnvironment,
   navigation: NavigationReadAuthority,
   readers: EvidenceFreezeCommittedReaders,
@@ -412,7 +412,19 @@ export function createEvidenceFreezeSynthesisContextReader(
   };
 }
 
+export function createEvidenceFreezeSynthesisContextReader(
+  environment: EvidenceFreezeSynthesisReaderEnvironment,
+  navigation: NavigationReadAuthority,
+  readers: EvidenceFreezeCommittedReaders,
+): EvidenceFreezeSynthesisContextReader {
+  return createSynthesisContextReader(environment, navigation, readers);
+}
+
 export interface EvidenceFreezeMaterializeContext extends EvidenceFreezeSynthesisContext {
+  readonly stage_sixteen_request: StageRequest;
+  readonly stage_sixteen_request_sha256: string;
+  readonly stage_sixteen_attempt_ref: string;
+  readonly stage_sixteen_receipt: StageReceipt;
   readonly stage_twelve_request: StageRequest;
   readonly stage_twelve_request_sha256: string;
   readonly stage_twelve_attempt_ref: string;
@@ -445,19 +457,29 @@ export function createEvidenceFreezeMaterializeContextReader(
       }
       const stageTwelve = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "SYNTHESIZE"));
       const stageTwelveReceipt = committedOrCorrupt(await checkpoints.receipt(stageTwelve.request, stageTwelve.request_sha256));
+      const stageSixteen = committedOrCorrupt(await checkpoints.readCommittedStageRequest(input.request.operation_id, "CALCULATE_COVERAGE"));
+      const stageSixteenReceipt = committedOrCorrupt(await checkpoints.receipt(stageSixteen.request, stageSixteen.request_sha256));
       if (stageTwelve.request.stage !== "SYNTHESIZE" ||
           stageTwelve.request.operation_id !== input.request.operation_id ||
           stageTwelve.request.investigation_ref.id !== input.request.investigation_ref.id ||
           stageTwelveReceipt.stage !== "SYNTHESIZE" ||
           stageTwelveReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
-          stageTwelveReceipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
-          !sameJson(stageTwelveReceipt.output_manifest, input.request.input_manifest) ||
+          stageSixteen.request.stage !== "CALCULATE_COVERAGE" ||
+          stageSixteen.request.operation_id !== input.request.operation_id ||
+          stageSixteen.request.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageSixteenReceipt.stage !== "CALCULATE_COVERAGE" ||
+          stageSixteenReceipt.investigation_ref.id !== input.request.investigation_ref.id ||
+          stageSixteenReceipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
+          !sameJson(stageSixteenReceipt.output_manifest, input.request.input_manifest) ||
           stageTwelveReceipt.input_manifest_ref !== stageTwelve.request.input_manifest.object_ref ||
+          stageSixteenReceipt.input_manifest_ref !== stageSixteen.request.input_manifest.object_ref ||
           stageTwelveReceipt.attempt_ref !== stageTwelve.attempt_ref ||
-          stageTwelveReceipt.request_sha256 !== stageTwelve.request_sha256) {
+          stageSixteenReceipt.attempt_ref !== stageSixteen.attempt_ref ||
+          stageTwelveReceipt.request_sha256 !== stageTwelve.request_sha256 ||
+          stageSixteenReceipt.request_sha256 !== stageSixteen.request_sha256) {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
-      const synthesis = createEvidenceFreezeSynthesisContextReader(environment, navigation, readers, {
+      const synthesis = createSynthesisContextReader(environment, navigation, readers, {
         expected_head_revision: input.request.investigation_ref.revision,
         verify_input_bytes: false,
       });
@@ -467,6 +489,8 @@ export function createEvidenceFreezeMaterializeContextReader(
         fail("WORKFLOW_AUTHORITY_STALE");
       }
       return Object.freeze({ ...context, current_revision: input.request.investigation_ref.revision,
+        stage_sixteen_request: stageSixteen.request, stage_sixteen_request_sha256: stageSixteen.request_sha256,
+        stage_sixteen_attempt_ref: stageSixteen.attempt_ref, stage_sixteen_receipt: stageSixteenReceipt,
         stage_twelve_request: stageTwelve.request, stage_twelve_request_sha256: stageTwelve.request_sha256,
         stage_twelve_attempt_ref: stageTwelve.attempt_ref, stage_twelve_receipt: stageTwelveReceipt });
     },

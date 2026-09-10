@@ -56,6 +56,12 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
     const first = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
     expect(first.stage).toBe("SYNTHESIZE");
     expect(f.provider_calls()).toBe(1);
+    const evidence = f.stage_five.evidence_pack.resolved_evidence[0];
+    if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
+    expect(f.request_bodies()).toHaveLength(1);
+    expect(f.request_bodies()[0]).toContain(evidence.handle.handle_ref.id);
+    expect(f.request_bodies()[0]).toContain(evidence.exact_excerpt);
+    expect(f.request_bodies()[0]).toContain("synthesis-section-candidate.v1");
     const replay = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
     expect(replay.receipt_ref).toBe(first.receipt_ref);
     expect(f.provider_calls()).toBe(1);
