@@ -55,6 +55,11 @@ type WorkflowBudgetBoundReservation = ModelAttemptReservationInput & {
   readonly workflow_budget_receipt_ref: string;
 };
 
+type WorkflowBudgetBoundReadback = ModelAttemptReadback & {
+  /** W2's persisted receipt; distinct from the W3 reservation identifier. */
+  readonly workflow_budget_receipt_ref: string;
+};
+
 export interface GovernedModelAttemptHandler {
   readonly handler: WorkflowStageHandler;
   readonly recoverStartedAttempt: (
@@ -153,13 +158,15 @@ async function readBoundOutput(
 
 function validateReadbackIdentity(
   readback: ModelAttemptReadback,
-  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
+  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly workflow_budget_receipt_ref: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
 ): ModelOutputBinding {
+  const workflowBudgetReceipt = (readback as Partial<WorkflowBudgetBoundReadback>).workflow_budget_receipt_ref;
   if (readback.state !== "SUCCEEDED" || readback.persisted_state !== "SUCCEEDED" || readback.receipt === null || readback.output === null ||
       readback.intent.operation_kind !== input.operation_kind || readback.intent.intent_ref.id !== input.operation_id ||
       readback.intent.principal_ref !== input.principal_ref || readback.intent.idempotency_key !== input.idempotency_key ||
       readback.authority.principal_ref !== input.principal_ref || readback.authority.credential_generation !== input.credential_generation ||
       readback.authority.deployment_generation !== input.deployment_generation || readback.authority.scope_snapshot_ref.id !== input.scope_id ||
+      workflowBudgetReceipt !== input.workflow_budget_receipt_ref ||
       readback.stage_attempt_ref !== input.stage_attempt_ref || readback.stage_request_sha256 !== input.stage_request_sha256 ||
       readback.output.output_object_ref !== input.output_object_ref || readback.receipt.output_object_ref !== input.output_object_ref ||
       readback.receipt.output_sha256 !== readback.output.output_sha256 || readback.output.readback_sha256 !== readback.output.output_sha256) {
@@ -171,7 +178,7 @@ function validateReadbackIdentity(
 async function readSucceededAttempt(
   dependencies: GovernedModelAttemptDependencies,
   readback: ModelAttemptReadback | null,
-  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
+  input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly workflow_budget_receipt_ref: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
 ): Promise<Uint8Array | null> {
   if (readback === null) return null;
   const output = validateReadbackIdentity(readback, input);
@@ -205,6 +212,7 @@ export function createGovernedModelAttemptHandler(
     return readSucceededAttempt(dependencies, readback, {
       principal_ref: input.principal_ref, credential_generation: input.credential_generation,
       deployment_generation: input.deployment_generation, operation_id: identity.operation_id,
+      workflow_budget_receipt_ref: input.budget_receipt_ref,
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256: input.request_sha256,
@@ -228,8 +236,14 @@ export function createGovernedModelAttemptHandler(
     const prepared = await dependencies.prepare(preparation);
     validatePrepared(preparation, prepared, dependencies.operation_kind);
     const reservation = await dependencies.attempts.reserve(prepared);
-    if (reservation.output_object_ref !== model_output_object_ref || reservation.intent.intent_ref.id !== identity.operation_id ||
-        reservation.stage_attempt_ref !== input.attempt_ref || reservation.stage_request_sha256 !== stage_request_sha256) {
+    const workflowBudgetReceipt = (reservation as Partial<WorkflowBudgetBoundReservation>).workflow_budget_receipt_ref;
+    if (reservation.output_object_ref !== model_output_object_ref || reservation.intent.operation_kind !== dependencies.operation_kind ||
+        reservation.intent.intent_ref.id !== identity.operation_id || reservation.intent.principal_ref !== input.principal.principal_ref ||
+        reservation.intent.idempotency_key !== identity.idempotency_key || reservation.authority.principal_ref !== input.principal.principal_ref ||
+        reservation.authority.credential_generation !== input.principal.credential_generation ||
+        reservation.authority.deployment_generation !== input.principal.deployment_generation ||
+        workflowBudgetReceipt !== input.budget_receipt_ref || reservation.stage_attempt_ref !== input.attempt_ref ||
+        reservation.stage_request_sha256 !== stage_request_sha256) {
       uncertain("model reservation is bound to a different workflow output");
     }
     const started = await dependencies.attempts.beginAttempt(reservation);
@@ -237,9 +251,10 @@ export function createGovernedModelAttemptHandler(
       if (started.attempt === null) uncertain("model attempt recovery has no durable attempt identity");
       const readback = await dependencies.attempts.readByAttempt(started.attempt.attempt_id);
       const recovered = await readSucceededAttempt(dependencies, readback, {
-        principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
-        deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
-        operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
+         principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
+         deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
+         workflow_budget_receipt_ref: input.budget_receipt_ref,
+         operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
         scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
         stage_attempt_ref: input.attempt_ref, stage_request_sha256,
       });
@@ -281,9 +296,10 @@ export function createGovernedModelAttemptHandler(
     }
     const settled = await dependencies.attempts.settleAttempt({ attempt_id: started.attempt.attempt_id, state: "SUCCEEDED", receipt, output: binding });
     const settledBytes = await readSucceededAttempt(dependencies, settled, {
-      principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
-      deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
-      operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
+       principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
+       deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
+       workflow_budget_receipt_ref: input.budget_receipt_ref,
+       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256,
     });
