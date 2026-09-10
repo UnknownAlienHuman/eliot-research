@@ -2,15 +2,20 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { ResearchWorkflowStage, VersionedRef } from "@eliotr/contracts";
+import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import {
-  createWorkflowCheckpointExecutor, digest, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
-  type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
+  createWorkflowCheckpointExecutor, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
+  type MonotoneHandlerFactory, type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
+import { createD1ScopePorts } from "@eliotr/retrieval";
+import { createD1InvestigationLedgerStore } from "@eliotr/research";
+import type { LedgerD1Database } from "@eliotr/research";
 import type { Env } from "./env.js";
 import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
 import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
 import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
+import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION } from "./research-stage-handlers.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -136,16 +141,6 @@ function createServerPorts(database: D1Database, operationId: string): WorkflowE
   };
 }
 
-async function deterministicStageBytes(
-  operation_id: string, stage: ResearchWorkflowStage, input_bytes: Uint8Array, attempt_ref: string,
-): Promise<Uint8Array> {
-  const input_sha = await digest(input_bytes);
-  const text = JSON.stringify({ operation_id, stage, input_sha, attempt_ref });
-  const bytes = new TextEncoder().encode(text);
-  if (bytes.byteLength > 8 * 1024 * 1024) failWorkflow("WORKFLOW_INPUT_INVALID");
-  return bytes;
-}
-
 export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowParams> {
   public override async run(event: WorkflowEvent<ResearchWorkflowParams>, step: WorkflowStep): Promise<ResearchWorkflowResult | ExhaustiveQueryResult> {
     const params = parseParams(event.payload);
@@ -192,6 +187,39 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
     };
     const ports = createServerPorts(this.env.CORE_DB, params.operation_id);
     const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
+    let handlers: MonotoneHandlerFactory;
+    if (params.handler_generation !== SERVER_OWNED_RESEARCH_HANDLER_GENERATION) {
+      handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
+    } else {
+      const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
+      const investigation = await ledger.read(params.investigation_ref.id);
+      if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
+          investigation.head.deployment_generation !== principal.deployment_generation) {
+        failWorkflow("WORKFLOW_AUTHORITY_STALE");
+      }
+      const evidence = createD1EvidenceAuthorityPort({
+        core_database: this.env.CORE_DB,
+        search_database: this.env.SEARCH_DB,
+      });
+      const scopeAuthority = await evidence.loadScope({
+        id: investigation.head.scope_snapshot_id,
+        revision: investigation.head.scope_snapshot_revision,
+      });
+      if (scopeAuthority === null) failWorkflow("WORKFLOW_AUTHORITY_STALE");
+      const access = {
+        principal_ref: principal.principal_ref,
+        client_class: "owner_pwa" as const,
+        credential_generation: principal.credential_generation,
+      };
+      const scopePorts = createD1ScopePorts(this.env.CORE_DB, access);
+      const navigation = createNavigationReadAuthority({
+        database: this.env.CORE_DB,
+        scope_snapshot: scopeAuthority.snapshot,
+        access,
+        require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
+      });
+      handlers = createResearchStageHandlerFactory({ kind: "server-owned-exploratory", navigation, ledger });
+    }
     let investigation_ref: VersionedRef = { ...params.investigation_ref };
     let input_manifest: WorkflowObject = params.initial_input_manifest;
     const receipt_refs: string[] = [];
@@ -208,9 +236,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         input_manifest,
       };
       const receipt = await step.do(`w2-stage-${String(index).padStart(2, "0")}-${stage}`, async (): Promise<StageReceipt> => {
-        const outcome = await executor.execute(request, principal, async ({ input_bytes, attempt_ref }) =>
-          deterministicStageBytes(params.operation_id, stage, input_bytes, attempt_ref),
-        );
+        const outcome = await executor.execute(request, principal, handlers(stage));
         const text = JSON.stringify(outcome);
         if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) failWorkflow("WORKFLOW_INPUT_INVALID");
         if ("completion_disposition" in outcome) failWorkflow("WORKFLOW_INPUT_INVALID");
