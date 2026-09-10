@@ -20,7 +20,7 @@ import {
   type ModelCostQuote,
   type ModelOutputBinding,
 } from "./model-attempt-types.js";
-import { assertTerminalReplay, operationReceiptJson, parseOperationReceipt, parseStringArray } from "./model-attempt-readback.js";
+import { assertTerminalReplay, operationReceiptJson, parseOperationReceipt, parseStringArray, parseWorkflowBudgetReceipt } from "./model-attempt-readback.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
@@ -53,6 +53,10 @@ export interface ReservationRow {
   readonly authority_json: unknown;
   readonly stage_attempt_ref: unknown;
   readonly stage_request_sha256: unknown;
+  readonly workflow_budget_receipt_ref: unknown;
+  readonly workflow_principal_ref: unknown;
+  readonly workflow_credential_generation: unknown;
+  readonly workflow_deployment_generation: unknown;
 }
 
 export interface AttemptRow extends ReservationRow {
@@ -205,6 +209,7 @@ function compactRequest(input: ModelAttemptReservationInput, fullDigest: string)
     authority: input.authority,
     stage_attempt_ref: input.stage_attempt_ref,
     stage_request_sha256: input.stage_request_sha256,
+    workflow_budget_receipt_ref: input.workflow_budget_receipt_ref,
   };
 }
 
@@ -214,6 +219,7 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   const authority = authorityObject(input.authority);
   text(input.stage_attempt_ref, "stage_attempt_ref");
   sha(input.stage_request_sha256, "stage_request_sha256");
+  text(input.workflow_budget_receipt_ref, "workflow_budget_receipt_ref");
   text(input.idempotency_key, "idempotency_key");
   if (intent.idempotency_key !== input.idempotency_key || intent.principal_ref !== authority.principal_ref || intent.policy_decision_ref !== authority.policy_decision_ref) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "intent and verified authority do not match");
   if (intent.budget_reservation_ref !== quote.reservation_id || input.call.budget_reservation_ref !== quote.reservation_id) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model call does not use the quoted reservation");
@@ -225,7 +231,7 @@ function validateInput(input: ModelAttemptReservationInput): { quote: ModelCostQ
   text(input.call.output_object_ref, "call.output_object_ref");
   nonNegativeInteger(input.call.max_input_bytes, "call.max_input_bytes");
   nonNegativeInteger(input.call.max_output_bytes, "call.max_output_bytes");
-  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority, stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256 });
+  const full = canonicalJson({ intent, idempotency_key: input.idempotency_key, call: input.call, quote, authority, stage_attempt_ref: input.stage_attempt_ref, stage_request_sha256: input.stage_request_sha256, workflow_budget_receipt_ref: input.workflow_budget_receipt_ref });
   return { quote, authority, request_json: "", request_sha256: full };
 }
 
@@ -301,6 +307,25 @@ function operationIntent(row: AttemptRow): OperationIntent {
   });
 }
 
+async function assertWorkflowStageBinding(database: D1Database, input: ModelAttemptReservationInput): Promise<void> {
+  const row = await database.prepare(
+    "SELECT w.budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
+    "FROM research_workflow_attempt w JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
+    "WHERE w.attempt_ref = ?1 AND w.request_sha256 = ?2 LIMIT 1",
+  ).bind(input.stage_attempt_ref, input.stage_request_sha256).first<{
+    readonly budget_receipt_ref: unknown;
+    readonly workflow_principal_ref: unknown;
+    readonly workflow_credential_generation: unknown;
+    readonly workflow_deployment_generation: unknown;
+  }>();
+  if (row === null || row.budget_receipt_ref !== input.workflow_budget_receipt_ref ||
+      row.workflow_principal_ref !== input.authority.principal_ref ||
+      row.workflow_credential_generation !== input.authority.credential_generation ||
+      row.workflow_deployment_generation !== input.authority.deployment_generation) {
+    fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model attempt is not bound to the persisted workflow stage grant");
+  }
+}
+
 async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
   const attempt = OperationAttemptSchema.parse({
     attempt_id: row.attempt_id,
@@ -317,10 +342,15 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
   const requestJson = canonicalStoredJson(row.attempt_request_json, "model attempt request");
   const budgetRequestJson = canonicalStoredJson(row.request_json, "budget reservation request");
   if (requestJson !== budgetRequestJson || row.request_sha256 !== row.attempt_request_sha256) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model request binding is inconsistent");
+  const workflowBudgetReceipt = parseWorkflowBudgetReceipt(requestJson);
   const budgetAuthorityJson = canonicalStoredJson(row.authority_json, "budget reservation authority");
   const attemptAuthorityJson = canonicalStoredJson(row.attempt_authority_json, "model attempt authority");
   if (budgetAuthorityJson !== attemptAuthorityJson) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model authority binding is inconsistent");
   const authority = parseAuthority(attemptAuthorityJson);
+  if (row.workflow_budget_receipt_ref !== workflowBudgetReceipt || row.workflow_principal_ref !== authority.principal_ref ||
+      row.workflow_credential_generation !== authority.credential_generation || row.workflow_deployment_generation !== authority.deployment_generation) {
+    fail("MODEL_ATTEMPT_READBACK_CORRUPT", "workflow budget grant binding is inconsistent");
+  }
   if (text(row.attempt_stage_attempt_ref, "stage_attempt_ref") !== text(row.stage_attempt_ref, "stage_attempt_ref") || sha(row.attempt_stage_request_sha256, "stage_request_sha256") !== sha(row.stage_request_sha256, "stage_request_sha256")) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "workflow stage binding is inconsistent");
   const receipt = parseModelReceipt(row.receipt_json);
   if ((receipt === null) !== (row.receipt_sha256 === null)) fail("MODEL_ATTEMPT_READBACK_CORRUPT", "model receipt and digest binding disagree");
@@ -360,6 +390,7 @@ async function readbackFromRow(row: AttemptRow): Promise<ModelAttemptReadback> {
     receipt,
     operation_receipt,
     output,
+    workflow_budget_receipt_ref: workflowBudgetReceipt,
     ...(row.error_code === null ? {} : { error_code: text(row.error_code, "error_code") }),
     reason_codes: Object.freeze(parseStringArray(row.reason_codes_json, "reason_codes")),
   });
@@ -370,17 +401,22 @@ function attemptSelect(): string {
     "a.state AS operation_attempt_state, a.checkpoint_ref, a.error_code AS operation_attempt_error_code, " +
     "i.revision, i.operation_kind, i.principal_ref, i.idempotency_key, i.payload_ref, i.policy_decision_ref, i.budget_reservation_ref, i.cancellation_ref, i.created_at AS intent_created_at, " +
     "o.receipt_id AS operation_receipt_id, o.revision AS operation_receipt_revision, o.outcome AS operation_receipt_outcome, o.reconciliation_required AS operation_reconciliation_required, o.output_refs_json AS operation_output_refs_json, o.readback_receipt_refs_json AS operation_readback_receipt_refs_json, o.reason_codes_json AS operation_reasons_json, o.created_at AS operation_receipt_created_at, " +
-    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json, b.stage_attempt_ref, b.stage_request_sha256, b.request_sha256, b.request_json " +
+    "b.project_id, b.platform_usd, b.workers_ai_usd, b.byok_usd, b.max_total_usd, b.workflow_steps, b.state AS state, b.state AS budget_state, b.expires_at, b.created_at AS created_at, b.created_at AS budget_created_at, b.expected_sources, b.expected_sections, b.confidence, b.quote_ref, b.quote_json, b.authority_json, b.stage_attempt_ref, b.stage_request_sha256, b.request_sha256, b.request_json, w.budget_receipt_ref AS workflow_budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
     "FROM research_model_attempt m JOIN operation_attempt a ON a.attempt_id = m.attempt_id " +
     "JOIN operation_intent i ON i.intent_id = m.intent_id AND i.revision = m.intent_revision " +
     "JOIN budget_reservation b ON b.reservation_id = m.reservation_id " +
+    "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
+    "JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
     "LEFT JOIN operation_receipt o ON o.attempt_id = m.attempt_id AND o.intent_id = m.intent_id AND o.intent_revision = m.intent_revision ";
 }
 
 export function createModelAttemptStore(database: D1Database, now: () => string = () => new Date().toISOString()): ModelAttemptStore {
   async function readReservation(input: ModelAttemptReservationInput, request_sha256: string): Promise<ModelAttemptReservation | null> {
     const row = await database.prepare(
-      "SELECT i.*, b.* FROM operation_intent i JOIN budget_reservation b ON b.reservation_id = i.budget_reservation_ref " +
+      "SELECT i.*, b.*, w.budget_receipt_ref AS workflow_budget_receipt_ref, r.principal_ref AS workflow_principal_ref, r.credential_generation AS workflow_credential_generation, r.deployment_generation AS workflow_deployment_generation " +
+      "FROM operation_intent i JOIN budget_reservation b ON b.reservation_id = i.budget_reservation_ref " +
+      "JOIN research_workflow_attempt w ON w.attempt_ref = b.stage_attempt_ref AND w.request_sha256 = b.stage_request_sha256 " +
+      "JOIN research_workflow_run r ON r.operation_id = w.operation_id " +
       "WHERE i.operation_kind = ?1 AND i.principal_ref = ?2 AND i.idempotency_key = ?3 LIMIT 1",
     ).bind(input.intent.operation_kind, input.authority.principal_ref, input.idempotency_key).first<ReservationRow & { readonly intent_id: unknown; readonly revision: unknown; readonly payload_ref: unknown; readonly budget_reservation_ref: unknown; readonly policy_decision_ref: unknown; readonly cancellation_ref: unknown; readonly created_at: unknown }>();
     if (row === null) return null;
@@ -395,7 +431,8 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
     const reservation = reservationFromRow(row);
     const authority = parseAuthority(row.authority_json);
     if (row.stage_attempt_ref !== input.stage_attempt_ref || row.stage_request_sha256 !== input.stage_request_sha256) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "model reservation is bound to a different workflow stage");
-    return Object.freeze({ intent, reservation, request_sha256, request_json: canonicalStoredJson(row.request_json, "request_json"), attempt_identity: attemptIdFor(request_sha256), authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation, stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"), stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256") });
+    if (row.workflow_budget_receipt_ref !== input.workflow_budget_receipt_ref || row.workflow_principal_ref !== authority.principal_ref || row.workflow_credential_generation !== authority.credential_generation || row.workflow_deployment_generation !== authority.deployment_generation) fail("MODEL_ATTEMPT_AUTHORITY_STALE", "model reservation is bound to a different workflow stage grant");
+    return Object.freeze({ intent, reservation, request_sha256, request_json: canonicalStoredJson(row.request_json, "request_json"), attempt_identity: attemptIdFor(request_sha256), authority, output_object_ref: input.call.output_object_ref, route_ref: input.call.route_ref, prompt_generation: input.call.prompt_generation, schema_generation: input.call.schema_generation, stage_attempt_ref: text(row.stage_attempt_ref, "stage_attempt_ref"), stage_request_sha256: sha(row.stage_request_sha256, "stage_request_sha256"), workflow_budget_receipt_ref: text(row.workflow_budget_receipt_ref, "workflow_budget_receipt_ref") });
   }
 
   async function reloadReservation(reservation: ModelAttemptReservation): Promise<BudgetReservation["state"]> {
@@ -411,6 +448,7 @@ export function createModelAttemptStore(database: D1Database, now: () => string 
   return {
     async reserve(input): Promise<ModelAttemptReservation> {
       const prepared = await validatedRequest(input);
+      await assertWorkflowStageBinding(database, input);
       const existing = await readReservation(input, prepared.request_sha256);
       if (existing !== null) return existing;
       const created = now();
