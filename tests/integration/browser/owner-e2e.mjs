@@ -11,9 +11,10 @@ import process from "node:process";
   sessionStorage: readonly, document: readonly, indexedDB: readonly, caches: readonly,
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
   requestAnimationFrame: readonly */
-import { prepareLocal, executeLocal, executeLocalD1WithRetry, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
+import { prepareLocal, executeLocalAsync, executeLocalD1WithRetryAsync, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
 import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
+import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
 import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
@@ -424,7 +425,7 @@ export async function applyOwnerE2EProfile(paths, jwksUrl) {
   return { issuer: OWNER_E2E_ISSUER, audience: OWNER_E2E_AUDIENCE, jwksUrl };
 }
 
-function d1Query(paths, binding, sql) {
+async function d1Query(paths, binding, sql, { hardDeadlineMs } = {}) {
   // Authoritative CLI D1 readback shares SQLite files with a running
   // `wrangler dev` Worker. Bounded retry covers documented transient locks
   // (SQLITE_BUSY/database is locked/EBUSY) within a strict deadline; schema,
@@ -432,7 +433,9 @@ function d1Query(paths, binding, sql) {
   // While the Worker is running, Worker/API readback (catalog/revisions/
   // session) is the primary active-runtime signal; CLI reads below reconcile
   // the same durable state and must replay exactly after restart.
-  const output = executeLocalD1WithRetry(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), { execute: executeLocal });
+  const retryOptions = { execute: executeLocalAsync };
+  if (hardDeadlineMs !== undefined) retryOptions.hardDeadlineMs = hardDeadlineMs;
+  const output = await executeLocalD1WithRetryAsync(wranglerArgs(paths, ["d1", "execute", binding, "--command", sql, "--json"]), retryOptions);
   let batches;
   try {
     batches = JSON.parse(output);
@@ -486,8 +489,8 @@ async function seedRawMarkdownConversionFixture(paths, input) {
   const fixtureFile = resolve(paths.directory, `raw-markdown-fixture-${operationId}.md`);
   await writeFile(fixtureFile, output, { mode: 0o600 });
   const evidenceBucket = await resolveEvidenceBucket(paths);
-  executeLocal(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
-  d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
+  await executeLocalAsync(wranglerArgs(paths, ["r2", "object", "put", `${evidenceBucket}/${outputObjectKey}`, "--file", fixtureFile]), { capture: true });
+  await d1Query(paths, "CORE_DB", `INSERT INTO raw_markdown_conversion
     (operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,attempt_id,state,result_json,result_sha256,output_object_key,receipt_object_key,created_at,updated_at)
     VALUES(${sqlText(operationId)},${sqlText("e2e-owner")},${sqlText(input.captureId)},${sqlText(input.contentSha256)},${input.sizeBytes},${sqlText(requestSha256)},${sqlText(requestJson)},${sqlText(authoritySha256)},${sqlText(`recorded-${operationId}`)},'COMPLETE',${sqlText(resultJson)},${sqlText(resultSha256)},${sqlText(outputObjectKey)},${sqlText(receiptObjectKey)},${sqlText("2026-09-09T00:00:00.000Z")},${sqlText("2026-09-09T00:00:00.000Z")})`);
   return { idempotencyKey, operationId, outputObjectKey, outputSha256, resultSha256, fixtureFile };
@@ -498,7 +501,7 @@ async function verifyMigrationLedgers(paths) {
   for (const [binding, directory] of [["CORE_DB", "core"], ["SEARCH_DB", "search"]]) {
     const expected = (await readdir(resolve(root, "infra/d1", directory, "migrations"))).filter((name) => name.endsWith(".sql")).sort();
     assert.ok(expected.length > 0, "migration streams must be non-empty");
-    const rows = d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
+    const rows = await d1Query(paths, binding, "SELECT name FROM d1_migrations ORDER BY name");
     assert.deepEqual(rows.map((row) => row.name), expected, "Local migration ledger differs from tracked migration files");
     counts[binding] = expected.length;
   }
@@ -527,6 +530,296 @@ export async function readbackWithBoundedRetry(label, fn, { attempts = 3, delayM
     }
   }
   throw lastError;
+}
+
+function rawProjectionObservation(rows, sourceRevisionRef) {
+  const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : undefined;
+  const bounded = (value, max = 256) => {
+    if (typeof value !== "string" || value.length === 0 || value.length > max || !/^[A-Za-z0-9._:@/-]+$/u.test(value)) return null;
+    return value;
+  };
+  const boundedNumberOrIdentifier = (value, max = 256) => Number.isSafeInteger(value) ? value : bounded(value, max);
+  let reasonCodes = null;
+  if (row?.reason_codes_json !== undefined && row?.reason_codes_json !== null) {
+    try {
+      const parsed = JSON.parse(String(row.reason_codes_json));
+      if (Array.isArray(parsed) && parsed.every((value) => typeof value === "string")) {
+        reasonCodes = parsed.slice(0, 16).map((value) => bounded(value, 96)).filter((value) => value !== null);
+      }
+    } catch {
+      reasonCodes = null;
+    }
+  }
+  return {
+    outbox_state: bounded(row?.state, 64),
+    inbox_state: bounded(row?.inbox_state, 64),
+    inbox_attempt: boundedNumberOrIdentifier(row?.inbox_attempt, 32),
+    inbox_last_error_code: bounded(row?.inbox_last_error_code, 96),
+    job_state: bounded(row?.job_state, 64),
+    current_stage: bounded(row?.current_stage, 96),
+    projection_state: bounded(row?.projection_state, 64),
+    reason_codes: reasonCodes,
+    source_revision_ref: bounded(sourceRevisionRef, 96),
+    outbox_id: bounded(row?.outbox_id, 64),
+    intent_id: bounded(row?.intent_id, 64),
+    intent_revision: boundedNumberOrIdentifier(row?.intent_revision, 64),
+    job_id: bounded(row?.job_id, 64),
+    projection_generation: boundedNumberOrIdentifier(row?.projection_generation, 64),
+    terminal_receipt_ref: bounded(row?.terminal_receipt_ref, 96),
+    row_count: Array.isArray(rows) ? Math.min(rows.length, 2) : 0,
+  };
+}
+
+function isRawProjectionD1Timeout(error) {
+  const code = error?.cause?.code ?? error?.code;
+  return code === "ETIMEDOUT" || error?.message === "Local D1 command deadline expired" ||
+    error?.message === "Local D1 hard deadline expired" ||
+    error?.message === "raw projection polling deadline expired before D1 readback";
+}
+
+function rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError }) {
+  const elapsedMs = Math.max(0, Date.now() - startedAt);
+  const originalCode = String(originalError?.cause?.code ?? originalError?.code ?? "unknown")
+    .replaceAll(/[^A-Za-z0-9_.:-]/gu, "").slice(0, 64) || "unknown";
+  const cause = {
+    phase,
+    elapsed_ms: elapsedMs,
+    deadline_ms: deadlineMs,
+    last_successful_observation: rawProjectionObservation(latest, sourceRevisionRef),
+    original_error: originalError ? {
+      name: "LocalD1CommandTimeout",
+      code: originalCode,
+      message: "D1 CLI readback command timed out",
+    } : null,
+  };
+  const observation = JSON.stringify(cause.last_successful_observation);
+  const compactObservation = observation.length <= 900 ? observation : JSON.stringify({
+    outbox_state: cause.last_successful_observation.outbox_state,
+    inbox_state: cause.last_successful_observation.inbox_state,
+    inbox_attempt: cause.last_successful_observation.inbox_attempt,
+    inbox_last_error_code: cause.last_successful_observation.inbox_last_error_code,
+    job_state: cause.last_successful_observation.job_state,
+    current_stage: cause.last_successful_observation.current_stage,
+    projection_state: cause.last_successful_observation.projection_state,
+    reason_codes: cause.last_successful_observation.reason_codes?.slice(0, 4),
+    ids: {
+      source_revision_ref: cause.last_successful_observation.source_revision_ref?.slice(0, 32),
+      outbox_id: cause.last_successful_observation.outbox_id?.slice(0, 32),
+      intent_id: cause.last_successful_observation.intent_id?.slice(0, 32),
+      job_id: cause.last_successful_observation.job_id?.slice(0, 32),
+      projection_generation: cause.last_successful_observation.projection_generation?.toString().slice(0, 32),
+      terminal_receipt_ref: cause.last_successful_observation.terminal_receipt_ref?.slice(0, 32),
+    },
+  });
+  const visibleCode = cause.original_error?.code ?? "unknown";
+  const error = new Error(`raw projection deadline exceeded (${elapsedMs}ms/${deadlineMs}ms); phase=${phase}; original_error_code=${visibleCode}; observation=${compactObservation}`, { cause });
+  error.code = "RAW_PROJECTION_DEADLINE_EXCEEDED";
+  return error;
+}
+
+async function waitForRawProjectionTerminal(paths, sourceRevisionRef,
+  { deadlineMs = 20000, intervalMs = 250, phase = "raw-projection-scheduled-and-polling" } = {}) {
+  const startedAt = Date.now();
+  const escapedRevision = sqlText(sourceRevisionRef);
+  const query = `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
+    `i.operation_kind,i.principal_ref,i.idempotency_key,j.job_id,j.state AS job_state,j.current_stage,j.terminal_receipt_ref,` +
+    `di.state AS inbox_state,di.attempt AS inbox_attempt,di.last_error_code AS inbox_last_error_code,` +
+    `g.projection_generation,g.state AS projection_state,g.content_sha256,g.object_residency_key_digest,g.item_count,` +
+    `g.item_set_digest,g.work_manifest_ref,g.work_manifest_sha256,g.d1_search_receipt_ref,g.d1_search_readback_digest,` +
+    `g.reason_codes_json FROM operation_intent i JOIN outbox o ON o.intent_id=i.intent_id AND o.intent_revision=i.revision ` +
+    `LEFT JOIN job j ON j.intent_id=i.intent_id AND j.intent_revision=i.revision ` +
+    `LEFT JOIN delivery_inbox di ON di.message_id=o.queue_message_id AND di.topic=o.topic ` +
+    `AND di.idempotency_key=i.idempotency_key ` +
+    `LEFT JOIN projection_generation g ON g.job_id=j.job_id ` +
+    `WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${escapedRevision} ORDER BY o.created_at`;
+  let latest = [];
+  while (Date.now() - startedAt < deadlineMs) {
+    try {
+      latest = await readbackWithBoundedRetry("raw-projection-state", () => {
+        const remainingMs = deadlineMs - (Date.now() - startedAt);
+        if (remainingMs <= 0) throw new Error("raw projection polling deadline expired before D1 readback");
+        return d1Query(paths, "CORE_DB", query, { hardDeadlineMs: remainingMs });
+      }, {
+        attempts: 2, delayMs: 100,
+      });
+    } catch (error) {
+      if (isRawProjectionD1Timeout(error) && Date.now() - startedAt >= deadlineMs) {
+        throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest, originalError: error });
+      }
+      throw error;
+    }
+    if (latest.length !== 1) {
+      throw new Error(`raw projection must retain one projection outbox identity, got ${latest.length}`);
+    }
+    const row = latest[0];
+    if (row.outbox_id && row.job_id && row.projection_generation &&
+        ["COMPLETED", "PARTIAL"].includes(row.job_state) &&
+        ["COMPLETED", "PARTIAL"].includes(row.projection_state) &&
+        typeof row.terminal_receipt_ref === "string" && row.terminal_receipt_ref.length > 0) {
+      return row;
+    }
+    await new Promise((resolve) => globalThis.setTimeout(resolve, Math.min(intervalMs, Math.max(1, deadlineMs - (Date.now() - startedAt)))));
+  }
+  throw rawProjectionDeadlineError({ sourceRevisionRef, phase, startedAt, deadlineMs, latest });
+}
+
+async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, sourceRevisionRef, expectedGeneration }) {
+  assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
+  const revisionRows = await d1Query(paths, "CORE_DB", `SELECT source_id,content_sha256,object_residency_key_digest FROM source_revision WHERE source_revision_ref=${sqlText(sourceRevisionRef)}`);
+  assert.equal(revisionRows.length, 1, "raw projection source revision must exist before Queue dispatch");
+  const revision = revisionRows[0];
+  const preRows = await d1Query(paths, "CORE_DB",
+    `SELECT o.outbox_id,o.intent_id,o.intent_revision,o.topic,o.payload_ref,o.payload_sha256,o.state,o.attempts,o.queue_message_id,` +
+    `i.operation_kind,i.principal_ref,i.idempotency_key FROM operation_intent i JOIN outbox o ` +
+    `ON o.intent_id=i.intent_id AND o.intent_revision=i.revision WHERE i.operation_kind='PROJECTION' AND i.payload_ref=${sqlText(sourceRevisionRef)}`);
+  assert.equal(preRows.length, 1, "raw admission must create exactly one projection outbox identity");
+  assert.equal(preRows[0].topic, "source.revision.admitted");
+  assert.equal(preRows[0].payload_ref, sourceRevisionRef);
+  assert.equal(preRows[0].payload_sha256, revision.content_sha256, "outbox payload digest must bind normalized revision bytes");
+  assert.equal(preRows[0].principal_ref, "e2e-owner");
+  const rawProjectionPhase = "raw-projection-scheduled-and-polling";
+  process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
+  const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
+  const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
+    { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
+  assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
+  ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
+    correlation: "e2e-raw-projection/scheduled", token_present: false });
+  const terminal = await waitForRawProjectionTerminal(paths, sourceRevisionRef, { phase: rawProjectionPhase });
+  assert.equal(terminal.state, "SENT", "raw projection outbox must retain SENT after Queue delivery");
+  assert.equal(terminal.outbox_id, preRows[0].outbox_id, "Queue delivery must retain the same outbox identity");
+  assert.equal(terminal.intent_id, preRows[0].intent_id, "Queue delivery must retain the same projection intent");
+  assert.equal(terminal.intent_revision, preRows[0].intent_revision, "Queue delivery must retain the same intent revision");
+  assert.equal(terminal.topic, preRows[0].topic, "Queue delivery must retain the same outbox topic");
+  assert.equal(terminal.payload_ref, preRows[0].payload_ref, "Queue delivery must retain the same source revision payload");
+  assert.equal(terminal.payload_sha256, preRows[0].payload_sha256, "Queue delivery must retain the same payload digest");
+  assert.ok(terminal.attempts >= preRows[0].attempts, "Queue attempts must be monotonic for the same outbox identity");
+  assert.equal(terminal.payload_sha256, revision.content_sha256);
+  assert.ok(terminal.queue_message_id, "outbox must retain the delivered Queue identity");
+  const receipts = await d1Query(paths, "CORE_DB",
+    `SELECT receipt_id,revision,outcome,output_refs_json,readback_receipt_refs_json,reconciliation_required,reason_codes_json ` +
+    `FROM operation_receipt WHERE intent_id=${sqlText(terminal.intent_id)} AND intent_revision=${terminal.intent_revision} ORDER BY created_at`);
+  assert.ok(receipts.some((row) => row.outcome === "ACCEPTED"), "Queue delivery must persist an acceptance receipt");
+  const terminalReceipt = receipts.find((row) => row.outcome === "SUCCEEDED" || row.outcome === "PARTIAL");
+  assert.ok(terminalReceipt, "projection must persist a terminal operation receipt");
+  assert.equal(terminalReceipt.reconciliation_required, terminal.job_state === "PARTIAL" ? 1 : 0);
+  const terminalRefMatch = String(terminal.terminal_receipt_ref).match(/^receipt:([A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}):(\d+)$/u);
+  assert.ok(terminalRefMatch, "job terminal receipt ref must use the canonical projection receipt form");
+  assert.equal(terminalReceipt.receipt_id, terminalRefMatch[1]);
+  assert.equal(terminalReceipt.revision, Number(terminalRefMatch[2]));
+  const terminalGuard = await d1Query(paths, "CORE_DB",
+    `SELECT source_revision_ref,projection_generation,job_id,terminal_receipt_id,terminal_receipt_revision,outcome,verified ` +
+    `FROM projection_terminal_guard WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.deepEqual(terminalGuard, [{ source_revision_ref: sourceRevisionRef, projection_generation: terminal.projection_generation,
+    job_id: terminal.job_id, terminal_receipt_id: terminalReceipt.receipt_id, terminal_receipt_revision: terminalReceipt.revision,
+    outcome: terminalReceipt.outcome, verified: 1 }], "Core terminal guard must bind the exact job and receipt");
+  const readiness = await d1Query(paths, "CORE_DB",
+    `SELECT channel,state,generation,receipt_ref,reason_codes_json FROM source_readiness WHERE source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    "AND channel IN ('exact_ready','lexical_ready','semantic_ready') ORDER BY channel");
+  assert.equal(readiness.length, 3, "projection must persist all active readiness channels");
+  for (const channel of readiness.filter((row) => row.channel === "exact_ready" || row.channel === "lexical_ready")) {
+    assert.equal(channel.state, "ready");
+    assert.equal(channel.generation, terminal.projection_generation);
+    assert.ok(typeof channel.receipt_ref === "string" && channel.receipt_ref.length > 0);
+  }
+  const searchRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT channel,projection_generation,source_revision_ref,projected_item_count,state,readback_receipt_ref FROM projection_watermark ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)} ORDER BY channel`);
+  assert.deepEqual(searchRows.map((row) => row.channel), ["exact", "lexical"]);
+  assert.ok(searchRows.every((row) => row.state === "READY" && row.projected_item_count > 0 && row.readback_receipt_ref),
+    "exact and lexical watermarks must be READY with receipts");
+  const generationRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT state,item_count,item_set_digest,readback_digest,receipt_ref FROM projection_generation_receipt ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.equal(generationRows.length, 1);
+  assert.equal(generationRows[0].state, "READY");
+  assert.ok(generationRows[0].item_count > 0 && generationRows[0].item_set_digest && generationRows[0].readback_digest && generationRows[0].receipt_ref);
+  assert.equal(generationRows[0].item_count, terminal.item_count, "Search item count must match the Core terminal generation");
+  assert.equal(generationRows[0].item_set_digest, terminal.item_set_digest, "Search item-set digest must match Core");
+  assert.equal(generationRows[0].readback_digest, terminal.d1_search_readback_digest, "Search readback digest must match Core");
+  assert.equal(generationRows[0].receipt_ref, terminal.d1_search_receipt_ref, "Search receipt must match Core");
+  const guardRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT receipt_ref,readback_digest,item_count,verified FROM projection_activation_guard ` +
+    `WHERE source_revision_ref=${sqlText(sourceRevisionRef)} AND projection_generation=${sqlText(terminal.projection_generation)}`);
+  assert.deepEqual(guardRows, [{ receipt_ref: generationRows[0].receipt_ref, readback_digest: generationRows[0].readback_digest,
+    item_count: generationRows[0].item_count, verified: 1 }]);
+  const itemRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT p.item_key,p.section_text,p.content_sha256,s.normalized_start_byte,s.normalized_end_byte,s.precision_kind ` +
+    `FROM projection_item p JOIN projection_span s ON s.item_key=p.item_key AND s.source_revision_ref=p.source_revision_ref ` +
+    `AND s.projection_generation=p.projection_generation WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY p.item_key`);
+  assert.equal(itemRows.length, generationRows[0].item_count);
+  assert.ok(itemRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
+  assert.ok(itemRows.every((row) => row.precision_kind === "normalized_bytes" && row.normalized_end_byte > row.normalized_start_byte));
+  const ftsRows = await d1Query(paths, "SEARCH_DB",
+    `SELECT f.item_key,p.source_revision_ref,p.projection_generation,f.section_text FROM section_fts f JOIN projection_item p ` +
+    `ON p.item_key=f.item_key WHERE p.source_revision_ref=${sqlText(sourceRevisionRef)} ` +
+    `AND p.projection_generation=${sqlText(terminal.projection_generation)} AND p.active=1 ORDER BY f.item_key`);
+  assert.equal(ftsRows.length, generationRows[0].item_count, "section_fts must contain every active projected item");
+  assert.ok(ftsRows.every((row) => row.source_revision_ref === sourceRevisionRef && row.projection_generation === terminal.projection_generation));
+  assert.ok(ftsRows.some((row) => row.section_text.includes("Recorded raw owner fixture")));
+  const workBucket = await resolveWorkBucket(paths);
+  assert.ok(typeof terminal.work_manifest_ref === "string" && terminal.work_manifest_ref.length > 0);
+  const workManifest = await tryR2ObjectGet(paths, workBucket, terminal.work_manifest_ref);
+  assert.equal(workManifest.ok, true, "projection Work manifest must be readable from WORK_BUCKET");
+  const workManifestBytes = Buffer.from(workManifest.output ?? "", "utf8");
+  assert.equal(await sha256Hex(workManifestBytes), terminal.work_manifest_sha256, "Work manifest bytes must match its D1 digest");
+  const workManifestJson = JSON.parse(decoder.decode(workManifestBytes));
+  assert.equal(workManifestJson.protocol, "eliotr.projection-work-manifest.v1");
+  assert.equal(workManifestJson.source_revision_ref, sourceRevisionRef);
+  assert.equal(workManifestJson.projection_generation, terminal.projection_generation);
+  assert.equal(workManifestJson.content_sha256, revision.content_sha256);
+  assert.equal(workManifestJson.item_count, generationRows[0].item_count);
+
+  const rawSourceId = revision.source_id;
+  const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
+  const readinessResponse = page.waitForResponse((response) => response.request().method() === "GET" && new URL(response.url()).pathname === "/api/v1/library/readiness", { timeout: 30000 });
+  const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
+  await card.locator("[data-source]").click();
+  const readinessSnapshot = await readinessResponse;
+  assert.equal(readinessSnapshot.status(), 200);
+  const readinessJson = await readinessSnapshot.json();
+  assert.equal(readinessJson?.data?.source_id, rawSourceId);
+  assert.equal(readinessJson?.data?.source_revision_ref, sourceRevisionRef);
+  assert.equal(readinessJson?.data?.deployment_generation, expectedGeneration);
+  ledger.record({ client: "browser", method: "GET", path: readinessPath, status: readinessSnapshot.status(),
+    correlation: "e2e-raw-projection/readiness", token_present: false });
+  await page.waitForSelector("#library [data-library-readiness] .readiness-card", { timeout: 15000 });
+
+  const retrieval = page.locator("#retrieval");
+  await retrieval.locator('input[name="query"]').fill("Recorded raw owner fixture");
+  const queryRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
+  const queryResponse = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/v1/research/query", { timeout: 30000 });
+  const traceResponse = page.waitForResponse((response) => response.request().method() === "GET" && /^\/api\/v1\/research\/trace\/query-[0-9a-f]{48}$/u.test(new URL(response.url()).pathname), { timeout: 30000 });
+  await retrieval.locator('button[type="submit"]').click();
+  const request = await queryRequest;
+  const body = JSON.parse(request.postData() ?? "{}");
+  assert.equal(body.product, "FAST_SEARCH");
+  assert.equal(body.budget_ref, "retrieval-fast-v1");
+  assert.deepEqual(body.scope_expression, { kind: "SELECTED_SOURCES", source_ids: [rawSourceId] });
+  const response = await queryResponse;
+  assert.equal(response.status(), 200);
+  const responseJson = await response.json();
+  const traceRef = responseJson?.data?.trace_ref;
+  assert.match(traceRef?.id ?? "", /^query-[0-9a-f]{48}$/u);
+  assert.ok(responseJson?.data?.evidence_pack?.resolved_evidence?.some((item) => item?.handle?.source_revision_ref === sourceRevisionRef));
+  ledger.record({ client: "browser", method: "POST", path: "/api/v1/research/query", status: response.status(),
+    correlation: "e2e-raw-projection/query", token_present: false });
+  const trace = await traceResponse;
+  assert.equal(trace.status(), 200);
+  const traceJson = await trace.json();
+  assert.equal(traceJson?.data?.query_product, "FAST_SEARCH");
+  assert.ok(traceJson?.data?.lanes_used?.includes("LEX"));
+  assert.ok(traceJson?.data?.scope_snapshot?.member_source_revision_refs?.includes(sourceRevisionRef));
+  const tracePath = new URL(trace.url()).pathname;
+  ledger.record({ client: "browser", method: "GET", path: tracePath, status: trace.status(),
+    correlation: "e2e-raw-projection/trace", token_present: false });
+  await page.waitForFunction(() => document.querySelector("#retrieval [data-excerpt]")?.textContent?.includes("Recorded raw owner fixture") === true, null, { timeout: 30000 });
+  const excerpt = await retrieval.locator("[data-excerpt]").first().textContent();
+  assert.equal(excerpt, "# Recorded raw owner fixture\n");
+  return { scheduledPath, readinessPath, sourceRevisionRef, projectionGeneration: terminal.projection_generation,
+    queryProduct: body.product, traceRef: traceRef.id, semanticState: readiness.find((row) => row.channel === "semantic_ready")?.state ?? "unknown" };
 }
 
 export async function verifyReadbackRetryClassification() {
@@ -600,6 +893,16 @@ function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fe
   return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
 }
 
+function boundedFailureText(value, maxLength) {
+  let text = String(value ?? "")
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, "[REDACTED_JWT]")
+    .replace(/(?:authorization|cookie|cf-access-jwt-assertion|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/giu,
+      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}[REDACTED]`)
+    .replace(/(https?:\/\/[^\s?]+)\?[^\s)]+/gu, "$1?[REDACTED_QUERY]");
+  if (text.length > maxLength) text = `${text.slice(0, maxLength)}...[TRUNCATED]`;
+  return text;
+}
+
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
   { token, method = "GET", body, contentType, headers: extraHeaders, phase, worker, timeoutMs = 15000 } = {}) {
   const headers = { Accept: "application/json", ...(extraHeaders ?? {}) };
@@ -652,7 +955,25 @@ async function workerJson(origin, path, options = {}) {
   return fetchWorkerJsonWithDiagnostics(globalThis.fetch, origin, path, options);
 }
 
+function verifyPreservedWorkerFailureOutput() {
+  const sentinel = new Error("sentinel assertion cf-access-jwt-assertion=private-token");
+  sentinel.name = "SentinelFailure";
+  sentinel.stack = "SentinelFailure: sentinel assertion\n    at sentinelCase (owner-e2e.mjs:6000:7)";
+  const wrapped = preserveWorkerFailure(sentinel, {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  });
+  assert.equal(wrapped.cause, sentinel, "the original failure must remain available as the Error cause");
+  assert.match(wrapped.message, /original_error=/u);
+  assert.match(wrapped.message, /SentinelFailure/u, "the original error name must reach the reported Error");
+  assert.match(wrapped.message, /sentinel assertion/u, "the original error message must reach the reported Error");
+  assert.match(wrapped.message, /owner-e2e\.mjs:6000:7/u, "the original error location must reach the reported Error");
+  assert.match(wrapped.message, /worker_diagnostics=.*"pid":42/u, "bounded Worker diagnostics must remain attached");
+  assert.ok(!wrapped.message.includes("private-token"), "reported failure must redact credential values");
+  return { state: "PASS" };
+}
+
 export async function verifyWorkerFetchDiagnosticRegression() {
+  verifyPreservedWorkerFailureOutput();
   const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
   let transportCalls = 0;
   await assert.rejects(
@@ -908,6 +1229,17 @@ function createOwnerBridgeDiagnosticFetch(events, fetchImpl = globalThis.fetch) 
       throw error;
     }
   };
+}
+
+function preserveWorkerFailure(error, worker) {
+  if (!worker) return error;
+  const diagnostics = workerDiagnosticSnapshot(worker);
+  const original = {
+    name: boundedFailureText(error?.name || "Error", 96),
+    message: boundedFailureText(error?.message ?? error, 2000),
+    stack: boundedFailureText(error?.stack ?? "", 4000),
+  };
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}`, { cause: error });
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
@@ -4167,7 +4499,7 @@ export async function importBundleViaBrowser(page, ledger, bundle, idempotencyKe
 
 async function r2ObjectGet(paths, bucket, key) {
   const args = wranglerArgs(paths, ["r2", "object", "get", `${bucket}/${key}`, "--pipe"]);
-  const output = executeLocal(args, { capture: true });
+  const output = await executeLocalAsync(args, { capture: true });
   return output;
 }
 
@@ -4313,7 +4645,9 @@ export async function runOwnerE2E() {
   let jwks;
   let exhaustiveWorkflow;
   let rawUpload;
+  let rawProjectionFastSearch;
   let teardownError = null;
+  const miniflarePortGuard = await reserveMiniflareForbiddenPorts();
   const receipt = {
     protocol: "eliotr.owner-e2e.v1",
     started_at: startedAt,
@@ -4345,6 +4679,7 @@ export async function runOwnerE2E() {
     exhaustive_workflow: "PENDING",
     exhaustive_workflow_d1: "PENDING",
     raw_file_capture: "PENDING",
+    raw_projection_fast_search: "PENDING",
     early_cleanup: "PENDING",
     catalog_transport_probe: "PENDING",
     teardown_inventory: "PENDING",
@@ -4520,7 +4855,7 @@ export async function runOwnerE2E() {
     receipt.bounds = (await checkBundleLimitsSource()).state;
     receipt.authed_epoch_regression = verifyAuthedEpochRegression().state;
     receipt.controlled_issuer = (await verifyControlledIssuerCrypto(privateKey, publicJwk)).state;
-    worker = await startLocalWorker(paths);
+    worker = await startLocalWorker(paths, { testScheduled: true });
     assert.ok(isChromiumSafePort(worker.port),
       `initial Worker port must be Chromium-safe, got ${worker.port}`);
     workerPortEvidence.push(`initial=${worker.port}/startAttempts=${worker.startAttempts}`);
@@ -4553,13 +4888,13 @@ export async function runOwnerE2E() {
     // Zero-mutation baseline: no namespace/grant/source exists yet, so every
     // negative below must leave all protected counts exactly unchanged while
     // denying both the session route and the authorized Library view.
-    const protectedD1Counts = () => ({
-      source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
-      revision: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision")[0].n,
-      policy: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy")[0].n,
-      operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
+    const protectedD1Counts = async () => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
+      revision: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source_revision"))[0].n,
+      policy: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
     });
-    const d1BeforeNegatives = protectedD1Counts();
+    const d1BeforeNegatives = await protectedD1Counts();
     const goodForTamper = await sign();
     const tamperSegs = goodForTamper.split(".");
     const tamperedPayloadClaims = JSON.parse(decoder.decode(base64UrlDecode(tamperSegs[1])));
@@ -4623,7 +4958,7 @@ export async function runOwnerE2E() {
       assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"), `${item.name} must leak no catalog rows`);
       negativeEvidence.push(`${item.name}=${response.status}/${bodyCode}`);
     }
-    assert.deepEqual(protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
+    assert.deepEqual(await protectedD1Counts(), d1BeforeNegatives, "JWT negatives must cause zero protected D1 mutation");
     {
       const good = await sign();
       const segs = good.split(".");
@@ -4695,7 +5030,7 @@ export async function runOwnerE2E() {
     const namespaceReceipt = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
     assert.equal(namespaceReceipt.read_access_granted, false, "namespace init must not grant read access");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM scope_read_policy"), [{ n: 0 }],
       "login/init alone must not create an implicit read grant");
     const namespaceReplay = await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) });
@@ -4796,9 +5131,9 @@ export async function runOwnerE2E() {
     // Replay where applicable: the same bearer authorizes twice identically,
     // and prepare with the same idempotency key replays DUPLICATE with the
     // same operation_id and the existing receipt instead of a second operation.
-    const d1CountsForReplay = () => ({
-      source: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source")[0].n,
-      operation: d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation")[0].n,
+    const d1CountsForReplay = async () => ({
+      source: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM source"))[0].n,
+      operation: (await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM bundle_ingest_operation"))[0].n,
     });
     let imported;
     try {
@@ -4830,7 +5165,7 @@ export async function runOwnerE2E() {
     assert.equal(bearerReplayA.data?.data?.principal_ref, "e2e-owner");
     assert.deepEqual(bearerReplayB.data?.data?.credential_generation,
       bearerReplayA.data?.data?.credential_generation, "bearer replay must yield the identical generation");
-    const countsBeforePrepareReplay = d1CountsForReplay();
+    const countsBeforePrepareReplay = await d1CountsForReplay();
     const prepareReplay = await browserJson(playwright.page, ledger, "/api/v1/ingest/bundles/prepare", {
       method: "POST", contentType: "application/json",
       body: JSON.stringify({ manifest: bundle.manifest, file_hashes: bundle.hashes,
@@ -4841,23 +5176,23 @@ export async function runOwnerE2E() {
     assert.equal(prepareReplay.data?.data?.disposition, "DUPLICATE", "prepare replay must be DUPLICATE, never a second upload");
     assert.equal(prepareReplay.data?.data?.operation_id, imported.operationId, "prepare replay must bind the same operation");
     assert.deepEqual(prepareReplay.data?.data?.existing_receipt, imported.receipt, "prepare replay must return the existing receipt");
-    assert.deepEqual(d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
+    assert.deepEqual(await d1CountsForReplay(), countsBeforePrepareReplay, "prepare replay must cause zero new source/operation rows");
     // The admitted Library row becomes visible to Chromium only after a PWA
     // reload (the pre-import catalog had no rows); this is the same-origin
     // browser retrieval the ledger closes over below.
-    const sourceRows = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    const sourceRows = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
     assert.equal(sourceRows.length, 1, "authoritative D1 source row must exist");
     const sourceId = sourceRows[0].source_id;
-    const revisionRows = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    const revisionRows = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.ok(revisionRows.some((row) => row.source_revision_ref === revisionRef), "authoritative D1 revision row must exist");
-    const policyRows = d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
+    const policyRows = await d1Query(paths, "CORE_DB", `SELECT generation, state FROM scope_read_policy WHERE source_namespace_id='${namespace}'`);
     assert.deepEqual(policyRows, [{ generation: 1, state: "ACTIVE" }]);
     // Freeze every pre-raw authority row so the new admission cannot rewrite
     // the original source, owner, admission policy, read grant, or scope view.
-    const ownerRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
-    const admissionPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
-    const readPolicyRowsBeforeRaw = d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
-    const scopeSnapshotRowsBeforeRaw = d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
+    const ownerRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`);
+    const admissionPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`);
+    const readPolicyRowsBeforeRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`);
+    const scopeSnapshotRowsBeforeRaw = await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision");
     assert.equal(ownerRowsBeforeRaw.length, 1, "authoritative owner row must exist before raw admission");
     assert.equal(admissionPolicyRowsBeforeRaw.length, 1, "authoritative admission policy row must exist before raw admission");
     assert.equal(readPolicyRowsBeforeRaw.length, 1, "explicit read policy row must exist before raw admission");
@@ -4882,6 +5217,12 @@ export async function runOwnerE2E() {
     rawUpload = { ...rawUpload, conversionOperationId: rawProcessed.conversionOperationId,
       admissionOperationId: rawProcessed.admissionOperationId, conversionFixture: rawConversionFixture };
     receipt.raw_file_conversion_admission = "PASS (recorded provider-boundary conversion fixture, browser COMPLETE candidate, server-composed COMMITTED admission; live Workers AI NOT_EXECUTED)";
+    rawProjectionFastSearch = await runRawProjectionFastSearchCheckpoint({
+      paths, worker, page: playwright.page, ledger,
+      sourceRevisionRef: rawProcessed.admission.source_revision_ref,
+      expectedGeneration: paths.generation,
+    });
+    receipt.raw_projection_fast_search = `PASS (scheduled -> Queue -> projection -> Chromium FAST_SEARCH ${rawProjectionFastSearch.traceRef}; semantic=${rawProjectionFastSearch.semanticState})`;
     let catalog;
     if (!catalogTransportDiagnosticEnabled) {
       catalog = await workerJson(worker.origin, "/api/v1/research/catalog?limit=20", { token, phase: "authorized-library-catalog", worker });
@@ -4927,7 +5268,7 @@ export async function runOwnerE2E() {
     assert.ok(evidenceBucket.includes("evidence"), "evidence bucket name must identify the immutable store");
     assert.ok(workBucket.includes("work"), "work bucket name must identify staging");
     assert.ok(evidenceBucket !== workBucket, "evidence and work buckets must differ");
-    const revisionDetail = d1Query(paths, "CORE_DB",
+    const revisionDetail = await d1Query(paths, "CORE_DB",
       `SELECT r.source_revision_ref, r.content_sha256, r.object_residency_key_digest, r.normalized_artifact_ref, ` +
       `s.source_namespace_id, s.source_owner_generation, s.source_id FROM source_revision r JOIN source s ON s.source_id=r.source_id ` +
       `WHERE s.source_namespace_id='${namespace}'`);
@@ -4937,7 +5278,7 @@ export async function runOwnerE2E() {
     assert.equal(imported.receipt.object_residency_key_digest,
       revisionDetail.find((row) => row.source_revision_ref === revisionRef)?.object_residency_key_digest,
       "commit receipt residency digest must match D1");
-    const operationRows = d1Query(paths, "CORE_DB",
+    const operationRows = await d1Query(paths, "CORE_DB",
       `SELECT state, decision_receipt_ref, promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${imported.operationId}'`);
     assert.equal(operationRows.length, 1, "authoritative ingest operation must exist");
     assert.equal(operationRows[0].state, "COMMITTED", "operation must be COMMITTED");
@@ -5017,6 +5358,9 @@ export async function runOwnerE2E() {
         { method: "GET", path: "/api/v1/ingest/raw", status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/markdown`, status: 200 },
         { method: "POST", path: `/api/v1/ingest/raw/${encodeURIComponent(rawUpload.captureId)}/admission`, status: 200 },
+        { method: "GET", path: rawProjectionFastSearch.readinessPath, status: 200 },
+        { method: "POST", path: "/api/v1/research/query", status: 200 },
+        { method: "GET", path: `/api/v1/research/trace/${rawProjectionFastSearch.traceRef}`, status: 200 },
       ];
       // Every non-GET application route exercised in this window must also be
       // a listed mutation: the exact browser artifact lifecycle paths
@@ -5037,7 +5381,7 @@ export async function runOwnerE2E() {
     // never values. Replay is covered above (identical bearer + DUPLICATE
     // prepare replay with zero new rows).
     {
-      const matrixBefore = protectedD1Counts();
+      const matrixBefore = await protectedD1Counts();
       const evidencePresentBefore = (await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok;
       assert.equal(evidencePresentBefore, true, "matrix baseline requires the admitted evidence object");
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "jwt-matrix"));
@@ -5076,7 +5420,7 @@ export async function runOwnerE2E() {
         assert.equal(catalogDenied.status, 401, `browser ${item.name} must deny the Library view`);
         assert.ok(!JSON.stringify(catalogDenied.data).includes("catalog-"),
           `browser ${item.name} must leak no catalog rows`);
-        assert.deepEqual(protectedD1Counts(), matrixBefore,
+        assert.deepEqual(await protectedD1Counts(), matrixBefore,
           `browser ${item.name} must cause zero protected D1 mutation`);
         matrixEvidence.push(`${item.name}=${denied.status}/${item.code}`);
       }
@@ -5110,16 +5454,16 @@ export async function runOwnerE2E() {
     assert.deepEqual(await initializeLocalNamespace({ command: namespaceCommand,
       identity, query: localPolicyQuery(paths) }), namespaceReceipt,
       "restart must preserve the namespace ownership/policy rows exactly");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_namespace_ownership WHERE source_namespace_id='${namespace}' ORDER BY ownership_record_revision`),
       ownerRowsBeforeRaw, "restart must preserve the exact namespace owner row");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM source_admission_policy WHERE source_namespace_id='${namespace}' ORDER BY revision`),
       admissionPolicyRowsBeforeRaw, "restart must preserve the exact admission policy snapshot");
-    assert.deepEqual(d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", `SELECT * FROM scope_read_policy WHERE source_namespace_id='${namespace}' ORDER BY generation`),
       readPolicyRowsBeforeRaw, "restart must preserve the exact explicit read grant");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT * FROM scope_snapshot ORDER BY snapshot_id, revision"),
       scopeSnapshotRowsBeforeRaw, "restart must preserve the exact scope snapshots");
-    const sourceRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
-    const revisionRowsAfterRaw = d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
+    const sourceRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT * FROM source WHERE source_namespace_id='${namespace}' ORDER BY source_id`);
+    const revisionRowsAfterRaw = await d1Query(paths, "CORE_DB", `SELECT r.* FROM source_revision r JOIN source s ON s.source_id=r.source_id WHERE s.source_namespace_id='${namespace}' ORDER BY r.source_revision_ref`);
     assert.deepEqual(sourceRowsAfterRaw.filter((row) => sourceRows.some((original) => original.source_id === row.source_id)),
       sourceRows, "raw admission must preserve every original source row exactly");
     assert.deepEqual(revisionRowsAfterRaw.filter((row) => revisionRows.some((original) => original.source_revision_ref === row.source_revision_ref)),
@@ -5128,7 +5472,7 @@ export async function runOwnerE2E() {
     // server-composed admission and their immutable R2 readbacks from the
     // authoritative local stores. The conversion fixture stands in for the
     // provider boundary; live Workers AI remains explicitly unqualified.
-    const rawRows = d1Query(paths, "CORE_DB",
+    const rawRows = await d1Query(paths, "CORE_DB",
       "SELECT capture_id,principal_ref,owner_system_id,source_namespace_id,source_revision_ref,source_logical_id,source_owner_generation,idempotency_key,original_file_name,request_digest,residency_key_digest,content_sha256,size_bytes,content_type,state,object_key " +
       `FROM raw_file_capture WHERE principal_ref='e2e-owner' AND idempotency_key='${rawUpload.idempotencyKey.replaceAll("'", "''")}'`);
     assert.equal(rawRows.length, 1, "raw upload must leave exactly one durable capture row");
@@ -5145,14 +5489,14 @@ export async function runOwnerE2E() {
     assert.equal(rawRow.content_type, rawUpload.expected.type, "D1 raw MIME must match selected file");
     assert.equal(rawRow.state, "CAPTURED", "raw upload must settle as CAPTURED");
     assert.ok(typeof rawRow.object_key === "string" && rawRow.object_key.length > 0, "D1 raw row must retain its R2 key");
-    assert.deepEqual(d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
+    assert.deepEqual(await d1Query(paths, "CORE_DB", "SELECT COUNT(*) AS n FROM raw_file_capture WHERE principal_ref='e2e-owner'"), [{ n: 1 }],
       "same-file recovery must not create an extra raw capture row");
     const rawObject = await tryR2ObjectGet(paths, evidenceBucket, rawRow.object_key);
     assert.equal(rawObject.ok, true, "original raw bytes must be readable from EVIDENCE_BUCKET");
     const rawBytes = Buffer.from(rawObject.output ?? "", "utf8");
     assert.deepEqual(rawBytes, rawUpload.expected.bytes, "R2 raw bytes must match the selected file exactly");
     assert.equal(await sha256Hex(rawBytes), rawUpload.expected.digest, "R2 raw bytes must retain the selected digest");
-    const conversionRows = d1Query(paths, "CORE_DB",
+    const conversionRows = await d1Query(paths, "CORE_DB",
       "SELECT operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,state,result_json,result_sha256,output_object_key,receipt_object_key " +
       `FROM raw_markdown_conversion WHERE operation_id='${rawUpload.conversionOperationId}'`);
     assert.equal(conversionRows.length, 1, "raw conversion fixture must leave exactly one durable conversion row");
@@ -5193,7 +5537,7 @@ export async function runOwnerE2E() {
       "conversion output R2 bytes must match the recorded result digest");
     assert.notEqual(rawUpload.conversionFixture.outputSha256, rawUpload.expected.digest,
       "recorded conversion fixture must keep the normalized output digest distinct from the original capture digest");
-    const admissionRows = d1Query(paths, "CORE_DB",
+    const admissionRows = await d1Query(paths, "CORE_DB",
       "SELECT admission_operation_id,principal_ref,capture_id,conversion_operation_id,idempotency_key,input_fingerprint,candidate_ref,source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,policy_revision,state,ingest_operation_id,reason_codes_json,receipt_json " +
       `FROM raw_normalized_admission WHERE admission_operation_id='${rawUpload.admissionOperationId}'`);
     assert.equal(admissionRows.length, 1, "raw admission must leave exactly one durable admission row");
@@ -5264,7 +5608,7 @@ export async function runOwnerE2E() {
         admissionRow.candidate_ref, admissionRow.source_view_ref, admissionRow.policy_snapshot_sha256,
         rawRow.content_sha256, rawUpload.conversionOperationId,
       ]), "utf8")), "admission input fingerprint must bind candidate, witness, policy and conversion");
-    const rawOperationRows = d1Query(paths, "CORE_DB",
+    const rawOperationRows = await d1Query(paths, "CORE_DB",
       `SELECT state,decision_receipt_ref,promotion_receipt_ref FROM bundle_ingest_operation WHERE operation_id='${String(admissionRow.ingest_operation_id).replaceAll("'", "''")}'`);
     assert.equal(rawOperationRows.length, 1, "raw admission ingest operation must exist");
     assert.equal(rawOperationRows[0].state, "COMMITTED", "raw admission ingest operation must be COMMITTED");
@@ -5272,7 +5616,7 @@ export async function runOwnerE2E() {
     assert.equal(admissionRow.reason_codes_json, canonicalJson(admissionReceipt.reason_codes), "admission reason codes must match the committed receipt");
     assert.ok(typeof rawOperationRows[0].decision_receipt_ref === "string" && rawOperationRows[0].decision_receipt_ref.length > 0);
     assert.ok(typeof rawOperationRows[0].promotion_receipt_ref === "string" && rawOperationRows[0].promotion_receipt_ref.length > 0);
-    const rawRevisionRows = d1Query(paths, "CORE_DB",
+    const rawRevisionRows = await d1Query(paths, "CORE_DB",
       `SELECT r.source_revision_ref,r.source_id,r.source_owner_generation,r.content_sha256,r.object_residency_key_digest,r.normalized_artifact_ref,r.source_view_ref ` +
       `FROM source_revision r WHERE r.source_revision_ref='${String(admissionRow.source_revision_ref).replaceAll("'", "''")}'`);
     assert.equal(rawRevisionRows.length, 1, "raw admission must persist one bound Library revision");
@@ -5282,7 +5626,7 @@ export async function runOwnerE2E() {
     assert.equal(rawRevisionRows[0].source_view_ref, admissionRow.source_view_ref, "raw Library revision must retain the admission witness reference");
     assert.equal(rawRevisionRows[0].object_residency_key_digest, admissionReceipt.object_residency_key_digest,
       "raw Library revision residency must match the committed admission receipt");
-    const rawSourceRows = d1Query(paths, "CORE_DB",
+    const rawSourceRows = await d1Query(paths, "CORE_DB",
       `SELECT source_id,source_namespace_id,source_owner_system_id,source_owner_generation,ownership_mode,source_class,default_storage_policy,default_residency_profile_id,default_retention_policy_id ` +
       `FROM source WHERE source_id='${String(rawRevisionRows[0].source_id).replaceAll("'", "''")}'`);
     assert.equal(rawSourceRows.length, 1, "raw admission must persist one bound Library source");
@@ -5472,7 +5816,7 @@ export async function runOwnerE2E() {
     // token is allowed, and Chromium itself re-pairs with the v2 identity and
     // retrieves the admitted Library source. Zero protected mutation throughout.
     {
-      const rotationBefore = protectedD1Counts();
+      const rotationBefore = await protectedD1Counts();
       const ROTATION_KID = "e2e-key-2";
       const v2keys = await createOwnerE2EKey();
       const v2public = { ...v2keys.publicJwk, kid: ROTATION_KID };
@@ -5508,7 +5852,7 @@ export async function runOwnerE2E() {
       ledger.record({ client: "node", method: "GET", path: "/api/v1/system/session",
         status: newAllowed.status, correlation: "e2e-rotation/v2-allowed-node", token_present: true });
       assert.ok(!JSON.stringify(newAllowed.data).includes(newToken.slice(0, 16)), "v2 session must not reflect the token");
-      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation denial/allowance must cause zero D1 drift");
       await settleLedger(playwright.page, playwright);
       playwright.resetLedger();
       playwright.adoptIssuance(playwright.setRole(playwright.currentIssuance(), "rotation-read"));
@@ -5568,7 +5912,7 @@ export async function runOwnerE2E() {
         { correlation: "e2e-rotation/v2-revisions-browser" });
       assert.equal(rotationRetrieval.status, 200, "v2 revision retrieval through Chromium must succeed");
       assert.ok(JSON.stringify(rotationRetrieval.data).includes(revisionRef), "rotation retrieval must include the revision");
-      assert.deepEqual(protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
+      assert.deepEqual(await protectedD1Counts(), rotationBefore, "rotation re-pairing must cause zero D1 drift");
       assert.equal((await tryR2ObjectGet(paths, evidenceBucket, canonicalKey)).ok, true,
         "rotation must not disturb the admitted evidence object");
       await settleLedger(playwright.page, playwright);
@@ -5644,6 +5988,10 @@ export async function runOwnerE2E() {
         "e2e-raw-upload/recovery",
         "e2e-raw-upload/markdown",
         "e2e-raw-upload/admission",
+        "e2e-raw-projection/scheduled",
+        "e2e-raw-projection/readiness",
+        "e2e-raw-projection/query",
+        "e2e-raw-projection/trace",
         "e2e-exhaustive/status-before-cancel",
         "e2e-exhaustive/status-after-cancel",
         "e2e-exhaustive/recovery-list",
@@ -5749,6 +6097,9 @@ export async function runOwnerE2E() {
       admission_receipt_ref: evidenceMeta.admission_receipt_ref,
       generation: stoppedGeneration,
     };
+  } catch (error) {
+    teardownError = preserveWorkerFailure(error, worker);
+    throw teardownError;
   } finally {
     // Unconditional nested finally: EVERY owned resource is released while
     // dependent cleanup is still safe. Each step runs inside its own guard,
@@ -5819,7 +6170,7 @@ export async function runOwnerE2E() {
         // must retain their durable owner binding and CANCEL_REQUESTED state.
         const ids = exhaustiveWorkflow.workflowIds;
         const quotedIds = ids.map((id) => `'${id.replaceAll("'", "''")}'`).join(",");
-        const bindings = d1Query(paths, "CORE_DB",
+        const bindings = await d1Query(paths, "CORE_DB",
           "SELECT workflow_id,job_id,principal_ref,client_class,credential_generation,deployment_generation,request_identity_digest,state " +
           `FROM retrieval_exhaustive_workflow WHERE workflow_id IN (${quotedIds}) ORDER BY workflow_id`);
         assert.equal(bindings.length, ids.length, "D1 must retain one binding row per browser workflow identity");
@@ -5828,7 +6179,7 @@ export async function runOwnerE2E() {
           assert.equal(binding.deployment_generation, paths.generation, "D1 workflow binding must retain the current deployment");
         }
         const jobIds = [...new Set(bindings.map((row) => row.job_id))];
-        const jobs = jobIds.length === 0 ? [] : d1Query(paths, "CORE_DB",
+        const jobs = jobIds.length === 0 ? [] : await d1Query(paths, "CORE_DB",
           `SELECT job_id,principal_ref,client_class,credential_generation,state FROM retrieval_exhaustive_job WHERE job_id IN (${jobIds.map((id) => `'${String(id).replaceAll("'", "''")}'`).join(",")})`);
         const readback = assertWorkflowJobReadback(bindings, jobs);
         receipt.exhaustive_workflow_d1 = `PASS (${readback.bindingCount} browser workflow bindings, ${readback.jobRowCount} canonical retrieval job rows, owner identity and CANCEL_REQUESTED read back after Worker stop)`;
@@ -5937,6 +6288,11 @@ export async function runOwnerE2E() {
           } catch { /* removed: expected */ }
         }
       });
+    // Port reservations are released even when a prior dependent cleanup
+    // step timed out and set teardownStopped; otherwise the guard itself
+    // would survive the run and mask the original cleanup failure.
+    try { await miniflarePortGuard.release(); }
+    catch (error) { stepErrors.push(`miniflarePortGuard.release: ${error?.message ?? error}`); }
     if (Date.now() - teardownStarted >= teardownDeadlineMs) {
       fail("outer teardown deadline exceeded with full reconciliation");
     }

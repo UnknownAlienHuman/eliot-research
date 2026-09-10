@@ -82,7 +82,7 @@ describe("Workspace MCP candidate ledger on local D1", () => {
       observation_sha256: await canonicalDigest(recomputedAfterExpiry), receipt_sha256: ACTOR_A.receiptSha, disposition: "OBSERVED_MISMATCH", reason_codes: ["PLAN_EXPIRED"], receipt: ACTOR_A.receipt,
       observation: recomputedAfterExpiry, observed_at: ACTOR_A.receipt.observed_at });
     expect(replay.state).toBe("REPLAY");
-    expect((replay.state === "REPLAY" ? replay.observation : undefined)?.disposition).toBe("OBSERVED_MATCH");
+    expect(replay.state === "REPLAY" ? WorkspaceMcpObservationV2Schema.parse(replay.observation).disposition : undefined).toBe("OBSERVED_MATCH");
     expect(await database.prepare("SELECT COUNT(*) AS n FROM workspace_mcp_observation").first("n")).toBe(1);
   });
 
