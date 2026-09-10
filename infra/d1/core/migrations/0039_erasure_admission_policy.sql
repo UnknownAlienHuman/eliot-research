@@ -31,6 +31,39 @@ CREATE UNIQUE INDEX erasure_admission_active_identity
     principal_ref, credential_generation, authorization_binding_ref
   ) WHERE state = 'ACTIVE';
 
+CREATE TABLE erasure_admission_request (
+  erasure_id TEXT NOT NULL,
+  erasure_revision INTEGER NOT NULL CHECK (erasure_revision > 0),
+  permission_ref TEXT NOT NULL,
+  permission_revision INTEGER NOT NULL CHECK (permission_revision > 0),
+  principal_ref TEXT NOT NULL,
+  credential_generation TEXT NOT NULL,
+  permission_sha256 TEXT NOT NULL CHECK (
+    length(permission_sha256) = 64 AND permission_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  request_json TEXT NOT NULL CHECK (json_valid(request_json) AND length(CAST(request_json AS BLOB)) <= 262144),
+  request_sha256 TEXT NOT NULL CHECK (
+    length(request_sha256) = 64 AND request_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  request_identity_sha256 TEXT NOT NULL CHECK (
+    length(request_identity_sha256) = 64 AND request_identity_sha256 NOT GLOB '*[^0-9a-f]*'
+  ),
+  admitted_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(erasure_id, erasure_revision),
+  FOREIGN KEY(permission_ref, permission_revision)
+    REFERENCES erasure_admission_policy(permission_ref, revision)
+) STRICT;
+
+CREATE INDEX erasure_admission_request_identity
+  ON erasure_admission_request(permission_ref, permission_revision, request_identity_sha256);
+
+CREATE TRIGGER erasure_admission_request_immutable
+BEFORE UPDATE ON erasure_admission_request
+BEGIN
+  SELECT RAISE(ABORT, 'erasure admission request is immutable');
+END;
+
 CREATE TRIGGER erasure_admission_policy_immutable
 BEFORE UPDATE ON erasure_admission_policy
 WHEN NEW.permission_ref IS NOT OLD.permission_ref

@@ -4,6 +4,7 @@ import {
   createErasureAdmissionPolicyStore,
   type ErasureAdmissionPolicyInput,
 } from "../../../packages/cloudflare-erasure/src/admission-policy.js";
+import { canonicalErasureJson } from "../../../packages/cloudflare-erasure/src/canonical.js";
 import type { ErasureRequest } from "@eliotr/contracts";
 
 const runtime = env as unknown as {
@@ -74,11 +75,14 @@ describe("erasure admission policy against real D1", () => {
   });
 
   it("installs, reads back, and expands a request to the complete location set", async () => {
-    const store = createErasureAdmissionPolicyStore({ database: runtime.CORE_DB, now: () => NOW });
+    let now = NOW;
+    const store = createErasureAdmissionPolicyStore({ database: runtime.CORE_DB, now: () => now });
     const installed = await store.install(policy());
     expect(installed.state).toBe("ACTIVE");
     expect(installed.policy_json).toContain("erc.privacy.erasure-admission.v1");
     expect(installed.policy_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    const replay = await store.install(policy());
+    expect(replay).toEqual(installed);
 
     const admitted = await store.admit(
       { principal_ref: "principal-1", credential_generation: "credential-1" },
@@ -91,6 +95,13 @@ describe("erasure admission policy against real D1", () => {
       "CanonicalPayload", "Projection", "Index", "Blob", "OperationalRecovery",
       "ProviderCopy", "BackupRestorePath", "RouteContinuation",
     ]);
+    now = NOW + 60_000;
+    const replayedAdmission = await store.admit(
+      { principal_ref: "principal-1", credential_generation: "credential-1" },
+      installed.permission_ref,
+      request(),
+    );
+    expect(replayedAdmission).toEqual(admitted);
   });
 
   it("rejects actor/legal-basis drift, conflicting replay, and revoked permission", async () => {
@@ -129,5 +140,50 @@ describe("erasure admission policy against real D1", () => {
       installed.permission_ref,
       request(),
     )).rejects.toMatchObject({ code: "ERASURE_PERMISSION_DENIED" });
+  });
+
+  it("does not treat a read grant as destructive permission and rejects expired permission", async () => {
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO scope_read_policy(source_namespace_id,principal_ref,client_class,policy_ref,generation," +
+      "allowed_use_json,disclosure_ceiling,state,expires_at,created_at) VALUES " +
+      "('namespace-1','principal-1','owner_pwa','read-policy-1',1,'[\"research\"]','owner-only','ACTIVE',?1,?2)",
+    ).bind("2026-10-01T00:00:00.000Z", new Date(NOW).toISOString()).run();
+    const store = createErasureAdmissionPolicyStore({ database: runtime.CORE_DB, now: () => NOW });
+    await expect(store.admit(
+      { principal_ref: "principal-1", credential_generation: "credential-1" },
+      { id: "read-policy-1", revision: 1 },
+      request({ erasure_ref: { id: "erasure-read-only", revision: 1 } }),
+    )).rejects.toMatchObject({ code: "ERASURE_PERMISSION_DENIED" });
+    await store.install(policy({
+      permission_ref: { id: "expired-permission", revision: 1 },
+      expires_at: "2026-09-09T00:00:00.000Z",
+    }));
+    await expect(store.admit(
+      { principal_ref: "principal-1", credential_generation: "credential-1" },
+      { id: "expired-permission", revision: 1 },
+      request({ erasure_ref: { id: "erasure-expired", revision: 1 } }),
+    )).rejects.toMatchObject({ code: "ERASURE_PERMISSION_DENIED" });
+  });
+
+  it("rejects a stored permission whose canonical digest is corrupt", async () => {
+    const store = createErasureAdmissionPolicyStore({ database: runtime.CORE_DB, now: () => NOW });
+    const installed = await store.install(policy());
+    const corruptRef = { id: "permission-corrupt", revision: 1 } as const;
+    const corruptPolicy = policy({ permission_ref: corruptRef, authorization_binding_ref: "operator-receipt-corrupt" });
+    const corruptJson = installed.policy_json.replace(
+      '"permission-1"',
+      '"permission-corrupt"',
+    ).replace('"operator-receipt-1"', '"operator-receipt-corrupt"');
+    expect(canonicalErasureJson(JSON.parse(corruptJson))).toBe(corruptJson);
+    await runtime.CORE_DB.prepare(
+      "INSERT INTO erasure_admission_policy(permission_ref,revision,source_namespace_id,owner_system_id," +
+      "source_owner_generation,principal_ref,credential_generation,authorization_binding_ref,legal_basis_ref," +
+      "valid_from,expires_at,state,policy_json,policy_sha256,created_at,revoked_at) VALUES " +
+      "(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'ACTIVE',?12,?13,?14,NULL)",
+    ).bind(corruptRef.id, corruptRef.revision, corruptPolicy.source_namespace_id, corruptPolicy.owner_system_id,
+      corruptPolicy.source_owner_generation, corruptPolicy.principal_ref, corruptPolicy.credential_generation,
+      corruptPolicy.authorization_binding_ref, corruptPolicy.legal_basis_ref, corruptPolicy.valid_from,
+      corruptPolicy.expires_at, corruptJson, "0".repeat(64), new Date(NOW).toISOString()).run();
+    await expect(store.read(corruptRef)).rejects.toMatchObject({ code: "ERASURE_IDENTITY_CONFLICT" });
   });
 });
