@@ -154,7 +154,18 @@ export class WorkflowCheckpointStore {
     }
     if (run.state === "ENGINE_COMPLETED") {
       if (run.next_stage_index !== RESEARCH_WORKFLOW_STAGES.length) fail("WORKFLOW_OUTPUT_CORRUPT");
-      const committed = await this.readCommittedStageRequest(operationId, "MATERIALIZE");
+      let committed: CommittedStageRequest | null;
+      try {
+        committed = await this.readCommittedStageRequest(operationId, "MATERIALIZE");
+      } catch (error) {
+        // The committed-stage helper predates this status reader and reports
+        // its own D1 read failure as authority-stale. At this boundary that
+        // is an unavailable read, while a missing row remains corruption.
+        if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_AUTHORITY_STALE") {
+          fail("WORKFLOW_EFFECT_UNCERTAIN");
+        }
+        throw error;
+      }
       if (committed === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       let finalReceipt: StageReceipt | null;
       try { finalReceipt = await this.receipt(committed.request, committed.request_sha256); }
