@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeSynthesisClaimsCandidateV2,
+  decodeSynthesisSectionCandidateV1,
   normalizeSynthesisClaimsCandidateV2,
   SynthesisClaimsCandidateError,
   type SynthesisClaimsCandidateV2,
@@ -23,6 +24,28 @@ function normalize(candidate = base, operation_id = "operation-1") {
   return normalizeSynthesisClaimsCandidateV2({ candidate, operation_id, section_ref: { id: "section-1", revision: 1 },
     allowed_handle_refs: allowed, required_precision: "exact-excerpt", required_source_class: "official" });
 }
+
+describe("legacy synthesis section candidate v1", () => {
+  it("decodes the strict bounded section shape", () => {
+    expect(decodeSynthesisSectionCandidateV1(JSON.stringify({
+      schema: "eliotr.research.synthesis-section-candidate.v1",
+      section_text: "Grounded section.",
+      cited_handle_refs: [allowed[0]],
+    }))).toMatchObject({ section_text: "Grounded section.", cited_handle_refs: [allowed[0]] });
+  });
+
+  it("rejects unknown fields and malformed UTF-16", () => {
+    expect(() => decodeSynthesisSectionCandidateV1(JSON.stringify({
+      schema: "eliotr.research.synthesis-section-candidate.v1", section_text: "Grounded section.",
+      cited_handle_refs: [allowed[0]], disposition: "SUPPORTED",
+    }))).toThrow(SynthesisClaimsCandidateError);
+    const loneSurrogate = String.fromCharCode(0xd800);
+    expect(() => decodeSynthesisSectionCandidateV1(JSON.stringify({
+      schema: "eliotr.research.synthesis-section-candidate.v1", section_text: loneSurrogate,
+      cited_handle_refs: [allowed[0]],
+    }))).toThrow(SynthesisClaimsCandidateError);
+  });
+});
 
 describe("versioned synthesis claims candidate v2", () => {
   it("normalizes server identity and derives the exact citation union", async () => {

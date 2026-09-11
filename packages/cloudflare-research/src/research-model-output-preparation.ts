@@ -2,11 +2,7 @@ import type { StageRequest } from "@eliotr/cloudflare-workflows";
 import type { ModelAttemptReservation } from "./model-attempt-types.js";
 import type { ModelOutputStorage, ResidencyDomainProfile } from "./research-model-output-store.js";
 
-/**
- * Trusted inputs for the pre-provider output binding.  The handler constructs
- * this value from the durable STARTED attempt and the frozen W2 request; it is
- * not a public request shape.
- */
+/** Trusted values derived from the durable STARTED attempt and frozen W2 request. */
 export interface ModelOutputPreparationInput {
   readonly reservation: ModelAttemptReservation;
   readonly attempt_id: string;
@@ -16,16 +12,11 @@ export interface ModelOutputPreparationInput {
 
 export type ModelOutputPreparationHook = (input: ModelOutputPreparationInput) => Promise<void>;
 
-/** Removes the unknown output content digest while retaining the W2 residency domains. */
 export function residencyDomainsForRequest(request: StageRequest): ResidencyDomainProfile {
   const { content_digest: _contentDigest, ...residency_domains } = request.input_manifest.residency;
   return residency_domains;
 }
 
-/**
- * Binds the handler's trusted attempt identity to the real output store.  The
- * store performs the durable STARTED-attempt and authority checks itself.
- */
 export function createModelOutputPreparationHook(
   storage: Pick<ModelOutputStorage, "prepareOutputBinding">,
 ): ModelOutputPreparationHook {

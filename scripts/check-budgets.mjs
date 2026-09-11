@@ -9,6 +9,13 @@ const MAX_PACKAGE_SOURCE_LINES = 10_000;
 const MAX_WORKER_SOURCE_BYTES = 600 * 1024;
 const MAX_PWA_SOURCE_BYTES = 2 * 1024 * 1024;
 
+export function countPhysicalLines(text) {
+  if (text.length === 0) return 0;
+  const lines = text.split(/\r\n|\n|\r/u);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return lines.length;
+}
+
 async function walk(dir) {
   const out = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
@@ -21,6 +28,10 @@ async function walk(dir) {
 }
 
 const errors = [];
+if (countPhysicalLines("a\nb\n") !== 2 || countPhysicalLines("a\r\nb\r\n") !== 2 ||
+    countPhysicalLines("a\rb") !== 2 || countPhysicalLines("") !== 0) {
+  errors.push("physical line counter is not cross-platform exact");
+}
 for (const rootName of PACKAGE_ROOTS) {
   const parent = join(ROOT, rootName);
   for (const entry of await readdir(parent, { withFileTypes: true })) {
@@ -33,7 +44,7 @@ for (const rootName of PACKAGE_ROOTS) {
     let bytes = 0;
     for (const file of files) {
       const text = await readFile(file, "utf8");
-      const fileLines = text.split("\n").length;
+      const fileLines = countPhysicalLines(text);
       lines += fileLines;
       bytes += Buffer.byteLength(text);
       if (fileLines > MAX_FILE_LINES) errors.push(`${relative(ROOT, file).split(sep).join("/")} has ${fileLines} lines (max ${MAX_FILE_LINES})`);

@@ -22,6 +22,7 @@ import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliot
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import { encodeArtifactDraftVerification } from "@eliotr/cloudflare-artifacts";
+import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1 } from "@eliotr/research";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
@@ -30,14 +31,6 @@ import {
 } from "./artifact-draft.js";
 import type { ResearchEvidencePack } from "./research-reference-manifest.js";
 import type { ResearchSynthesisOutputReadback } from "./research-synthesis-output-reader.js";
-
-const CANDIDATE_SCHEMA = "eliotr.research.synthesis-section-candidate.v1" as const;
-
-export interface SynthesisSectionCandidate {
-  readonly schema: typeof CANDIDATE_SCHEMA;
-  readonly section_text: string;
-  readonly cited_handle_refs: readonly VersionedRef[];
-}
 
 export interface ResearchArtifactDraftMaterializationInput {
   readonly database: D1Database;
@@ -87,41 +80,21 @@ function fail(code: ResearchArtifactDraftErrorCode, message: string): never {
   throw new ResearchArtifactDraftError(code, message);
 }
 
+export type SynthesisSectionCandidate = SynthesisSectionCandidateV1;
+export function decodeSynthesisSectionCandidate(content: string): SynthesisSectionCandidate {
+  try { return decodeSynthesisSectionCandidateV1(content); }
+  catch (cause) {
+    if (cause instanceof SynthesisClaimsCandidateError) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", cause.message);
+    throw cause;
+  }
+}
+
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
   return left.id === right.id && left.revision === right.revision;
 }
 
 function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
-}
-
-function strictObject(value: unknown, keys: ReadonlySet<string>, label: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value) ||
-      (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)) {
-    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `${label} is not a plain object`);
-  }
-  const record = value as Record<string, unknown>;
-  if (Object.keys(record).some((key) => !keys.has(key))) fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `${label} contains an unsupported field`);
-  return record;
-}
-
-/** Strict decoder shared by VERIFY and DRAFT materialization. */
-export function decodeSynthesisSectionCandidate(content: string): SynthesisSectionCandidate {
-  let value: unknown;
-  try { value = JSON.parse(content) as unknown; }
-  catch { fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "SYNTHESIZE assistant content is not JSON"); }
-  const candidate = strictObject(value, new Set(["schema", "section_text", "cited_handle_refs"]), "SYNTHESIZE candidate");
-  const keys = ["schema", "section_text", "cited_handle_refs"];
-  if (keys.some((key) => !(key in candidate)) || candidate.schema !== CANDIDATE_SCHEMA ||
-      typeof candidate.section_text !== "string" || candidate.section_text.length < 1 || !Array.isArray(candidate.cited_handle_refs) ||
-      candidate.cited_handle_refs.length < 1 || candidate.cited_handle_refs.length > 512 || candidate.cited_handle_refs.some((ref) => !VersionedRefSchema.safeParse(ref).success)) {
-    fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "SYNTHESIZE section candidate shape is invalid");
-  }
-  return candidate as unknown as SynthesisSectionCandidate;
-}
-
-function strictCandidate(content: string): SynthesisSectionCandidate {
-  return decodeSynthesisSectionCandidate(content);
 }
 
 function parseEvidencePack(pack: ResearchEvidencePack, expectedScope: VersionedRef, cited: readonly VersionedRef[]): void {
@@ -240,7 +213,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   } catch (cause) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `SYNTHESIZE gateway output is invalid: ${cause instanceof Error ? cause.message : "decode failed"}`);
   }
-  const candidate = strictCandidate(assistantContent);
+  const candidate = decodeSynthesisSectionCandidate(assistantContent);
   try {
     OperationIntentSchema.parse(input.intent);
     ArtifactSpecSchema.parse(input.spec);

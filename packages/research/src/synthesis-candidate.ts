@@ -2,10 +2,18 @@ import { IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr
 import { z } from "zod";
 import type { MaterialClaim } from "./claim-audit.js";
 
+const SECTION_PROTOCOL = "eliotr.research.synthesis-section-candidate.v1" as const;
 const PROTOCOL = "eliotr.research.synthesis-claims-candidate.v2" as const;
 const MAX_SECTION_TEXT_CHARS = 128 * 1024;
 const MAX_CLAIM_TEXT_CHARS = 16 * 1024;
 const MAX_HANDLES_PER_CLAIM = 512;
+
+export const SynthesisSectionCandidateV1Schema = z.object({
+  schema: z.literal(SECTION_PROTOCOL),
+  section_text: z.string().min(1).max(MAX_SECTION_TEXT_CHARS),
+  cited_handle_refs: z.array(VersionedRefSchema).min(1).max(MAX_HANDLES_PER_CLAIM),
+}).strict();
+export type SynthesisSectionCandidateV1 = z.infer<typeof SynthesisSectionCandidateV1Schema>;
 
 const SpanSchema = z.object({
   // Offsets are JavaScript UTF-16 code-unit positions, never UTF-8 byte offsets.
@@ -97,6 +105,16 @@ function parseCandidate(value: unknown): SynthesisClaimsCandidateV2 {
   if (!parsed.success) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is invalid", parsed.error);
   assertWellFormedUtf16(parsed.data.section_text, "section_text");
   parsed.data.material_claims.forEach((claim, index) => assertWellFormedUtf16(claim.text, `material claim ${index}.text`));
+  return parsed.data;
+}
+
+export function decodeSynthesisSectionCandidateV1(content: string): SynthesisSectionCandidateV1 {
+  let value: unknown;
+  try { value = JSON.parse(content) as unknown; }
+  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis section candidate is not JSON", error); }
+  const parsed = SynthesisSectionCandidateV1Schema.safeParse(value);
+  if (!parsed.success) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis section candidate is invalid", parsed.error);
+  assertWellFormedUtf16(parsed.data.section_text, "section_text");
   return parsed.data;
 }
 
