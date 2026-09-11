@@ -1,0 +1,68 @@
+name: repair-finalizer-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/repair-finalizer-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Cancel the superseded finalizer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select((.status == "queued" or .status == "in_progress") and .path == ".github/workflows/product-pipeline-finalizer-once.yml") | .id' \
+            | while read -r run_id; do
+                gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" || true
+              done
+          sleep 10
+          git fetch origin main
+          git reset --hard origin/main
+      - name: Repair deleted-workflow recovery
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/workflows/product-pipeline-finalizer-once.yml')
+          source = path.read_text(encoding='utf-8')
+          old = '''            commit="$(git rev-list --all -- "$path" | head -n1)"
+            test -n "$commit"
+            git show "$commit:$path" > "/tmp/product-workflows/$name"'''
+          new = '''            commit="$(
+              git log --all --format=%H -- "$path" | while read -r candidate; do
+                if git cat-file -e "$candidate:$path" 2>/dev/null; then
+                  echo "$candidate"
+                  break
+                fi
+              done
+            )"
+            test -n "$commit"
+            git show "$commit:$path" > "/tmp/product-workflows/$name"'''
+          if old not in source:
+              raise SystemExit('finalizer recovery anchor missing')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
+      - name: Commit repaired finalizer
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/repair-finalizer-once.yml
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "ci: recover deleted checkpoint definitions from extant blobs"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
