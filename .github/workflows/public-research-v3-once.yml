@@ -1,0 +1,212 @@
+name: public-research-v3-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/public-research-v3-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-research-v3
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Refresh after backend finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            git fetch origin main
+            if ! git cat-file -e origin/main:.github/workflows/product-pipeline-finalizer-v2-once.yml 2>/dev/null; then
+              git reset --hard origin/main
+              echo "PRODUCT_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo 'backend finalizer did not settle within 30 minutes' >&2
+          exit 1
+      - name: Promote only the public default protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          root = Path.cwd()
+          source_files = list((root / 'apps/eliotr-core/src').glob('*.ts'))
+          candidates = []
+          for path in source_files:
+              text = path.read_text(encoding='utf-8')
+              for match in re.finditer(r'exploratory\.v2', text):
+                  window = text[max(0, match.start() - 2500):match.end() + 2500]
+                  if 'createResearchRunService' in window or 'researchRun' in window or 'public' in window.lower():
+                      candidates.append((path, match.start()))
+          unique = sorted({path for path, _ in candidates})
+          if len(unique) != 1:
+              raise SystemExit(f'expected one public v2 protocol owner, found {[str(path) for path in unique]}')
+          path = unique[0]
+          text = path.read_text(encoding='utf-8')
+          if 'exploratory.v3' not in ''.join(p.read_text(encoding='utf-8') for p in source_files):
+              raise SystemExit('governed exploratory.v3 is not implemented')
+          positions = [match.start() for match in re.finditer(r'exploratory\.v2', text)]
+          target_positions = []
+          for position in positions:
+              window = text[max(0, position - 2500):position + 2500]
+              if 'createResearchRunService' in window or 'researchRun' in window:
+                  target_positions.append(position)
+          if len(target_positions) != 1:
+              raise SystemExit(f'public protocol replacement is ambiguous: {len(target_positions)} matches')
+          position = target_positions[0]
+          text = text[:position] + 'exploratory.v3' + text[position + len('exploratory.v2'):]
+          path.write_text(text, encoding='utf-8', newline='\n')
+
+          # Update only tests that exercise the public run creator. Historical replay
+          # fixtures retain v1/v2 byte identity.
+          changed_tests = []
+          for test in (root / 'apps/eliotr-core/test').glob('research-*.test.ts'):
+              source = test.read_text(encoding='utf-8')
+              if 'exploratory.v2' not in source:
+                  continue
+              if not any(token in source for token in (
+                  '/api/v1/research/run', 'createResearchRunService', 'research.run',
+              )):
+                  continue
+              updated = source
+              updated = re.sub(
+                  r'(?P<prefix>(?:public|default|created|requested|protocol|research\.run)[^\n]{0,220})exploratory\.v2',
+                  lambda match: match.group('prefix') + 'exploratory.v3',
+                  updated,
+                  flags=re.I,
+              )
+              if updated != source:
+                  test.write_text(updated, encoding='utf-8', newline='\n')
+                  changed_tests.append(test.relative_to(root).as_posix())
+
+          invariant = '''import { describe, expect, it } from "vitest";
+          import { readFile } from "node:fs/promises";
+          import { fileURLToPath } from "node:url";
+          import { dirname, resolve } from "node:path";
+
+          describe("public research protocol", () => {
+            it("selects governed v3 without rewriting historical replay protocols", async () => {
+              const here = dirname(fileURLToPath(import.meta.url));
+              const source = await readFile(resolve(here, "../src/research-session.ts"), "utf8");
+              const factory = source.slice(source.indexOf("createResearchRunService"));
+              expect(factory).toContain("exploratory.v3");
+              expect(factory).not.toMatch(/protocol[^\n]{0,160}exploratory\.v2/u);
+              expect(source).toContain("exploratory.v2");
+            });
+          });
+          '''
+          invariant = re.sub(r'^ {10}', '', invariant, flags=re.M)
+          invariant_path = root / 'apps/eliotr-core/test/public-research-v3.test.ts'
+          invariant_path.write_text(invariant, encoding='utf-8', newline='\n')
+
+          # Keep the gap register truthful after the executable switch.
+          gap_path = root / 'docs/implementation/gap-register.md'
+          gap = gap_path.read_text(encoding='utf-8')
+          replacements = {
+              'Public run creation still selects v2, so the live source-to-answer UI loop remains open.':
+                  'Public run creation selects governed v3 and returns a durable DRAFT; live provider and browser qualification remain open.',
+              'Public v3 selection, semantic verification, other governed stages and notification/retention/restore remain incomplete':
+                  'Public v3 selection is implemented; remaining semantic verification, notification, retention, restore and live qualification stay incomplete',
+          }
+          for old, new in replacements.items():
+              if old in gap:
+                  gap = gap.replace(old, new)
+          gap_path.write_text(gap, encoding='utf-8', newline='\n')
+
+          # Register the narrow invariant test under the Worker composition owner.
+          manifest_path = root / 'docs/agent-work/manifest.json'
+          manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+          def find(value):
+              if isinstance(value, dict):
+                  if value.get('id') == 'ER-24': return value
+                  for child in value.values():
+                      found = find(child)
+                      if found is not None: return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find(child)
+                      if found is not None: return found
+              return None
+          packet = find(manifest)
+          if packet is None: raise SystemExit('ER-24 packet missing')
+          key = 'owned_paths' if 'owned_paths' in packet else 'ownedPaths'
+          value = 'apps/eliotr-core/test/public-research-v3.test.ts'
+          if value not in packet[key]: packet[key].append(value)
+          manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8', newline='\n')
+
+          docs = list((root / 'docs/agent-work').glob('ER-24-*.md'))
+          if len(docs) != 1: raise SystemExit(f'expected one ER-24 doc, found {len(docs)}')
+          doc_path = docs[0]
+          doc = doc_path.read_text(encoding='utf-8')
+          heading = re.search(r'(?im)^##\s+Owned paths\s*$', doc)
+          if heading is None: raise SystemExit('ER-24 Owned paths missing')
+          if f'`{value}`' not in doc[heading.end():]:
+              doc = doc[:heading.end()] + f'\n- `{value}`' + doc[heading.end():]
+              doc_path.write_text(doc, encoding='utf-8', newline='\n')
+
+          print({'protocol_owner': path.relative_to(root).as_posix(), 'updated_tests': changed_tests})
+          PY
+      - name: Enforce protocol and evidence boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -RIn --include='*.ts' 'exploratory.v3' apps/eliotr-core/src/research-session.ts apps/eliotr-core/src/research-stage-handlers.ts
+          grep -RIn --include='*.test.ts' 'exploratory.v3' apps/eliotr-core/test
+          grep -RIn --include='*.ts' 'DRAFT' apps/eliotr-core/src packages/cloudflare-research/src >/dev/null
+          if grep -RIn --include='*.ts' 'ENGINE_COMPLETED.*ACCEPTED\|ENGINE_COMPLETED.*COMPLETE' apps/eliotr-core/src packages/research/src; then
+            echo 'engine completion still appears to promote evidence disposition' >&2
+            exit 1
+          fi
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify public v3 locally without providers, Astro or Qdrant
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @eliotr/core exec vitest run test/public-research-v3.test.ts test/research-session.test.ts test/research-run-status.test.ts test/artifact-draft-reader.test.ts
+          pnpm --filter @eliotr/research test
+          pnpm --filter @eliotr/cloudflare-research test
+          pnpm --filter @eliotr/core typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
+      - name: Commit governed public run selection to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/public-research-v3-once.yml
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: make governed research v3 the public default"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$PRODUCT_BASE_SHA"
+          git push origin HEAD:main
