@@ -67,64 +67,33 @@ jobs:
           python3 scripts/materialize-wiki-once.py
           python3 scripts/harden-wiki-once.py
           python3 scripts/fix-wiki-cas-once.py
+          python3 scripts/split-wiki-store-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
-      - name: Build and typecheck workspace project references
-        run: pnpm typecheck
-      - name: Capture strict core test typecheck
-        shell: bash
+      - name: Typecheck workspace and strict test graph
         run: |
-          set +e
-          set -o pipefail
-          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false 2>&1 | tee /tmp/wiki-strict-typecheck.log
-          status=${PIPESTATUS[0]}
-          printf '%s\n' "$status" > /tmp/wiki-strict-typecheck.status
-          exit 0
-      - name: Pack exact generated checkout and diagnostics
-        shell: bash
+          pnpm typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Run product tests
         run: |
-          tar \
-            --exclude=.git \
-            --exclude=node_modules \
-            --exclude='*/node_modules' \
-            --exclude=dist \
-            --exclude='*/dist' \
-            --exclude=.wrangler \
-            --exclude='*/.wrangler' \
-            -czf /tmp/wiki-generated-checkout.tgz .
-      - name: Upload exact generated checkout
-        uses: actions/upload-artifact@v4
-        with:
-          name: wiki-generated-checkout-${{ github.sha }}
-          path: |
-            /tmp/wiki-generated-checkout.tgz
-            /tmp/wiki-strict-typecheck.log
-            /tmp/wiki-strict-typecheck.status
-          if-no-files-found: error
-          retention-days: 1
-      - name: Enforce strict core test typecheck
-        run: test "$(cat /tmp/wiki-strict-typecheck.status)" = 0
-      - name: Research package tests
-        run: pnpm --filter @eliotr/research test
-      - name: Interfaces typecheck
-        run: pnpm --filter @eliotr/interfaces typecheck
-      - name: Core tests
-        run: pnpm --filter @eliotr/core test
-      - name: Workspace lint
-        run: pnpm lint
-      - name: Boundary checks
-        run: pnpm boundaries:check
-      - name: Source budgets
-        run: pnpm budgets:check
-      - name: Work packet ownership
-        run: pnpm work-packets:check
-      - name: Implementation status consistency
-        run: pnpm check:implementation-status
-      - name: Diff integrity
-        run: git diff --check
+          pnpm --filter @eliotr/research test
+          pnpm --filter @eliotr/interfaces typecheck
+          pnpm --filter @eliotr/core test
+      - name: Run structural gates
+        run: |
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
       - name: Commit verified product code to main
         run: |
-          git rm .github/workflows/wiki-product-once.yml scripts/materialize-wiki-once.py scripts/harden-wiki-once.py scripts/fix-wiki-cas-once.py
+          git rm .github/workflows/wiki-product-once.yml \
+            scripts/materialize-wiki-once.py \
+            scripts/harden-wiki-once.py \
+            scripts/fix-wiki-cas-once.py \
+            scripts/split-wiki-store-once.py
           git diff --check
           git config user.name "Eliot Research Product"
           git config user.email "eliot-product@users.noreply.github.com"
