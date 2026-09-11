@@ -1,4 +1,4 @@
-# revision: complete split imports
+# revision: parser-visible ownership
 name: wiki-product-once
 
 on:
@@ -69,6 +69,7 @@ jobs:
           python3 scripts/harden-wiki-once.py
           python3 scripts/fix-wiki-cas-once.py
           python3 scripts/split-wiki-store-once.py
+          python3 scripts/fix-wiki-ownership-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
       - name: Typecheck workspace and strict test graph
@@ -94,7 +95,8 @@ jobs:
             scripts/materialize-wiki-once.py \
             scripts/harden-wiki-once.py \
             scripts/fix-wiki-cas-once.py \
-            scripts/split-wiki-store-once.py
+            scripts/split-wiki-store-once.py \
+            scripts/fix-wiki-ownership-once.py
           git diff --check
           git config user.name "Eliot Research Product"
           git config user.email "eliot-product@users.noreply.github.com"
