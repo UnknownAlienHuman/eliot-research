@@ -1,3 +1,4 @@
+# revision: complete split imports
 name: wiki-product-once
 
 on:
