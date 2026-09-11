@@ -1,4 +1,4 @@
-# revision: parser-visible ownership
+# revision: force-remove modified one-shot generators
 name: wiki-product-once
 
 on:
@@ -91,7 +91,7 @@ jobs:
           git diff --check
       - name: Commit verified product code to main
         run: |
-          git rm .github/workflows/wiki-product-once.yml \
+          git rm -f .github/workflows/wiki-product-once.yml \
             scripts/materialize-wiki-once.py \
             scripts/harden-wiki-once.py \
             scripts/fix-wiki-cas-once.py \
