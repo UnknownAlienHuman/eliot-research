@@ -1,0 +1,135 @@
+name: finalize-local-backend-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/finalize-local-backend-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: finalize-local-backend
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Cancel all superseded product generators
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select((.status == "queued" or .status == "in_progress") and .id != '${{ github.run_id }}' and (.path | test("(?:wiki-product|research-changes-product|federation-product|lifecycle-reconcile-product|research-governed-stages|public-research-v3|dead-code-reachability|product-pipeline-finalizer|repair-(?:finalizer|dead-code-workflow))[^/]*\\.yml$"))) | .id' \
+            | while read -r run_id; do
+                gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" || true
+              done
+          sleep 15
+          git fetch origin main '+refs/heads/*:refs/remotes/origin/*'
+          git reset --hard origin/main
+          echo "PRODUCT_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+      - name: Repair finalizer marker ordering
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/finalize-local-backend-once.py')
+          source = path.read_text(encoding='utf-8')
+          old = '''def marker_pending(marker: tuple[str, ...]) -> bool:
+    mode, path, *patterns = marker
+    target = ROOT / path
+    text = target.read_text(encoding="utf-8") if target.exists() else ""
+    if mode == "missing-or-contains":'''
+          new = '''def marker_pending(marker: tuple[str, ...]) -> bool:
+    mode, path, *patterns = marker
+    if mode == "commit-absent":
+        subjects = output(["git", "log", "--format=%s", "-n", "500"]).splitlines()
+        return patterns[0] not in subjects
+    target = ROOT / path
+    text = target.read_text(encoding="utf-8") if target.is_file() else ""
+    if mode == "missing-or-contains":'''
+          duplicate = '''    if mode == "commit-absent":
+        subjects = output(["git", "log", "--format=%s", "-n", "500"]).splitlines()
+        return patterns[0] not in subjects
+'''
+          if old not in source:
+              raise SystemExit('finalizer marker anchor missing')
+          source = source.replace(old, new, 1)
+          second = source.find(duplicate, source.find(new) + len(new))
+          if second >= 0:
+              source = source[:second] + source[second + len(duplicate):]
+          path.write_text(source, encoding='utf-8', newline='\n')
+          PY
+      - name: Enable pinned pnpm and install once
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Integrate every independently passing backend checkpoint
+        run: python3 scripts/finalize-local-backend-once.py
+      - name: Remove transient generators
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/wiki-product-once.yml \
+            .github/workflows/research-changes-product-once.yml \
+            .github/workflows/federation-product-once.yml \
+            .github/workflows/lifecycle-reconcile-product-once.yml \
+            .github/workflows/research-governed-stages-once.yml \
+            .github/workflows/public-research-v3-once.yml \
+            .github/workflows/dead-code-reachability-once.yml \
+            .github/workflows/product-pipeline-finalizer-once.yml \
+            .github/workflows/product-pipeline-finalizer-v2-once.yml \
+            .github/workflows/repair-finalizer-once.yml \
+            .github/workflows/repair-dead-code-workflow-once.yml \
+            .github/workflows/repair-product-pipeline-once.yml \
+            scripts/materialize-wiki-once.py \
+            scripts/harden-wiki-once.py
+      - name: Verify the resulting backend without Astro, Qdrant or external providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @eliotr/contracts test
+          pnpm --filter @eliotr/domain test
+          pnpm --filter @eliotr/policy test
+          pnpm --filter @eliotr/retrieval test
+          pnpm --filter @eliotr/research test
+          if [ -d packages/cloudflare-research ]; then pnpm --filter @eliotr/cloudflare-research test; fi
+          if [ -d packages/federation-api ]; then pnpm --filter @eliotr/federation-api test; fi
+          if [ -d packages/cloudflare-federation ]; then pnpm --filter @eliotr/cloudflare-federation test; fi
+          pnpm --filter @eliotr/interfaces typecheck
+          pnpm --filter @eliotr/core test
+          pnpm --filter @eliotr/core typecheck
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          pnpm rust:check
+          git diff --check
+      - name: Commit and push the verified backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/finalize-local-backend-once.yml scripts/finalize-local-backend-once.py
+          git add -A
+          git commit -m "feat: finalize locally testable research backend"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$PRODUCT_BASE_SHA"
+          git push origin HEAD:main
