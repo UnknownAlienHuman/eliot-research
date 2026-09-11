@@ -31,6 +31,22 @@ jobs:
           corepack prepare pnpm@11.23.0 --activate
       - name: Materialize and harden Wiki product slice
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/harden-wiki-once.py")
+          source = path.read_text(encoding="utf-8")
+          old_boundary = 'commit_end = store.index("        ];", commit_start) + len("        ];")'
+          new_boundary = 'batch_start = store.index("try { await database.batch(statements);", commit_start)\ncommit_end = store.rfind("\\n", commit_start, batch_start) + 1'
+          old_join = 'store = store[:commit_start] + statements + store[commit_end:]'
+          new_join = 'store = store[:commit_start] + statements + "\\n" + store[commit_end:]'
+          if old_boundary not in source or old_join not in source:
+              raise SystemExit("Wiki CAS hardener anchors missing")
+          path.write_text(
+              source.replace(old_boundary, new_boundary, 1).replace(old_join, new_join, 1),
+              encoding="utf-8",
+              newline="\n",
+          )
+          PY
           python3 scripts/materialize-wiki-once.py
           python3 scripts/harden-wiki-once.py
       - name: Install frozen dependency graph
