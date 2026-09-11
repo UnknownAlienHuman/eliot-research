@@ -28,6 +28,7 @@ D1 authority transaction.
 - `apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts`
 - `scripts/check-delivery-authority.mjs`
 
+- `infra/d1/core/migrations/0042_wiki_publication.sql`
 ## Implemented contour
 
 ```text

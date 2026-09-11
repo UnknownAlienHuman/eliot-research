@@ -14,7 +14,7 @@ import {
   type NavigationStore,
 } from "@eliotr/retrieval";
 import { describe, expect, it } from "vitest";
-import { createNavigationService } from "./navigation-service.js";
+import { createNavigationService } from "../src/navigation-service.js";
 
 const NOW = "2026-09-02T12:00:00.000Z";
 const LATER = "2026-09-03T12:00:00.000Z";

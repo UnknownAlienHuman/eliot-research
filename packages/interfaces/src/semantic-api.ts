@@ -6,6 +6,7 @@ import type {
   ScopeExpression,
   VersionedRef,
   ArtifactRevision,
+  WikiPageRevision,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
@@ -87,6 +88,25 @@ export interface ResearchRunStatus {
   readonly cancellation_receipt_ref?: string;
 }
 
+export type WikiDraftRiskClass =
+  | "D0_MECHANICAL"
+  | "D1_LOW_RISK_ADDITIVE"
+  | "D2_ANALYTICAL"
+  | "D3_AUTHORITY_SENSITIVE";
+
+export interface WikiProposalRequest {
+  readonly page: WikiPageRevision;
+  readonly risk_class: WikiDraftRiskClass;
+}
+
+export interface WikiProposalResult {
+  readonly protocol: "eliotr.wiki-proposal.v1";
+  readonly proposal_ref: VersionedRef;
+  readonly page_ref: VersionedRef;
+  readonly risk_class: WikiDraftRiskClass;
+  readonly state: "PROPOSED";
+}
+
 export interface ResearchArtifactSectionCitations {
   readonly protocol: "eliotr.artifact-section-citations.v1";
   readonly artifact_ref: VersionedRef;
@@ -148,7 +168,7 @@ export interface SemanticApi {
   artifact(context: AuthenticatedRequestContext, artifactRef: VersionedRef): Promise<ArtifactRevision>;
   artifactSection(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<Response>;
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
-  proposeWiki(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<VersionedRef>;
+  proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, afterCursor: string, allowedScopes: readonly string[]): Promise<{ refs: readonly string[]; next_cursor: string }>;
 }

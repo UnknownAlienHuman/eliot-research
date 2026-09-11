@@ -274,7 +274,12 @@
       ],
       "owned_paths": [
         "packages/research/src/wiki.ts",
-        "packages/domain/src/publication.ts"
+        "packages/domain/src/publication.ts",
+        "apps/eliotr-core/src/wiki-publication-store.ts",
+        "apps/eliotr-core/src/wiki-publication-store-support.ts",
+        "apps/eliotr-core/test/wiki-publication-store.test.ts",
+        "apps/eliotr-core/src/wiki-service.ts",
+        "apps/eliotr-core/test/wiki-service.test.ts"
       ],
       "mandatory_negative_case": "Race two publishers against one expected head; exactly one becomes active and the loser receives typed conflict.",
       "document": "ER-12-research-wiki-and-draft-promotion.md",
@@ -302,7 +307,8 @@
         "infra/d1/**",
         "apps/eliotr-core/test/investigation-ledger-d1.test.ts",
         "apps/eliotr-core/test/investigation-ledger-commands-d1.test.ts",
-        "scripts/check-delivery-authority.mjs"
+        "scripts/check-delivery-authority.mjs",
+        "infra/d1/core/migrations/0042_wiki_publication.sql"
       ],
       "mandatory_negative_case": "Crash after canonical mutation transaction but before Queue send; outbox sweeper must recover intent.",
       "document": "ER-13-d1-authority-and-migrations.md",
@@ -505,7 +511,7 @@
         "apps/eliotr-core/src/federation-service.ts",
         "apps/eliotr-core/src/federation-scope-limits.ts",
         "apps/eliotr-core/src/federation-request-authorities.ts",
-        "apps/eliotr-core/src/federation-service.test.ts"
+        "apps/eliotr-core/test/federation-service.test.ts"
       ],
       "mandatory_negative_case": "Complete transport with an inconclusive research result and prove status is COMPLETED + INCONCLUSIVE, not ANSWERED_WITH_SUPPORTED_RESULT.",
       "document": "ER-22-generic-federation-boundary.md",
@@ -596,7 +602,9 @@
         "packages/cloudflare-navigation/src/exhaustive-query-service.ts",
         "packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts",
         "packages/cloudflare-navigation/src/exhaustive-workflow-output.ts",
-        "packages/cloudflare-navigation/src/exhaustive-workflow-service.ts"
+        "packages/cloudflare-navigation/src/exhaustive-workflow-service.ts",
+        "apps/eliotr-core/src/bounded-json.ts",
+        "apps/eliotr-core/test/bounded-json.test.ts"
       ],
       "mandatory_negative_case": "Delete Queue or DO transient state and prove no durable job/investigation/artifact is lost.",
       "document": "ER-24-worker-composition-do-queue-and-schedules.md",
@@ -763,7 +771,7 @@
         "packages/domain/src/project-membership.ts",
         "packages/domain/src/project-membership.test.ts",
         "apps/eliotr-core/src/scope-service.ts",
-        "apps/eliotr-core/src/scope-service.test.ts",
+        "apps/eliotr-core/test/scope-service.test.ts",
         "packages/domain/src/scope/snapshot-identity.ts",
         "packages/domain/src/scope/snapshot-identity.test.ts",
         "apps/eliotr-core/src/scope-persistence.test.ts",
@@ -789,7 +797,7 @@
         "packages/retrieval/src/navigation-builders.ts",
         "packages/retrieval/src/navigation.test.ts",
         "apps/eliotr-core/src/navigation-service.ts",
-        "apps/eliotr-core/src/navigation-service.test.ts",
+        "apps/eliotr-core/test/navigation-service.test.ts",
         "packages/retrieval/src/navigation-identity.ts",
         "packages/retrieval/src/navigation-identity.test.ts",
         "apps/eliotr-core/src/navigation-persistence.ts",

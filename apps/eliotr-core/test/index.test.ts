@@ -4,14 +4,14 @@ import {
   AI_SEARCH_PRIMARY_GENERATION,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
 } from "@eliotr/cloudflare-ai";
-import { createApplication } from "./composition-root.js";
-import type { Env } from "./env.js";
-import { handleHttp } from "./http.js";
+import { createApplication } from "../src/composition-root.js";
+import type { Env } from "../src/env.js";
+import { handleHttp } from "../src/http.js";
 import {
   PROJECTION_EXECUTION_PROFILE,
   projectionManagedGenerationIsActive,
-} from "./projection-execution-handler.js";
-import worker from "./index.js";
+} from "../src/projection-execution-handler.js";
+import worker from "../src/index.js";
 
 interface DatabaseFixture {
   readonly database: D1Database;

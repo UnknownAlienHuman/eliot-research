@@ -32,7 +32,7 @@ create a reverse authority channel and do not let a Google transport result prom
 - `apps/eliotr-core/src/workspace-mcp-candidate-store.ts`
 - `apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts`
 - `apps/eliotr-core/src/composition-root.ts`
-- `apps/eliotr-core/src/index.test.ts`
+- `apps/eliotr-core/test/index.test.ts`
 - `apps/eliotr-core/test/google-oauth-begin-http.test.ts`
 - `apps/eliotr-core/test/google-oauth-callback-http.test.ts`
 - `scripts/check-launch-code.mjs`

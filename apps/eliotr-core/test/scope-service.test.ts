@@ -13,7 +13,7 @@ import {
   type ScopeAuthorityRequest,
   type ScopePersistenceOutcome,
   type ScopeRepository,
-} from "./scope-service.js";
+} from "../src/scope-service.js";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);

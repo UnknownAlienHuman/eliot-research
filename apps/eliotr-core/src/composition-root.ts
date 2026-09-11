@@ -1,3 +1,4 @@
+import { createWikiProposalService } from "./wiki-service.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type {
@@ -60,10 +61,10 @@ function capabilities(env: Env): Record<string, unknown> {
     deployment_generation: env.DEPLOYMENT_GENERATION,
     google_external_transport: readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT),
     enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA", "RESEARCH"],
+    partial_slices: ["WIKI"],
     disabled_slices: [
       "RETRIEVAL",
       "FEDERATION",
-      "WIKI",
       "DRIVE_EXCHANGE",
       "ERASURE",
     ],
@@ -128,7 +129,7 @@ function semanticApi(env: Env): SemanticApi {
       if (citations === null) throw new ArtifactReadNotFoundError("artifact section citations do not exist");
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
-    proposeWiki: () => unavailable("research.wiki.propose"),
+    proposeWiki: createWikiProposalService(env),
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
       if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
     changes: () => unavailable("research.changes"),

@@ -1,9 +1,11 @@
+import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { OrientationError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
 import type {
   ApiProblem,
   ApplicationLifecycle,
   AuthenticatedRequestContext,
   CatalogRequest,
+  QueryRequest,
   SourceRevisionsRequest,
   RouteDefinition,
   RawMarkdownConversionRequest,
@@ -364,6 +366,17 @@ async function dispatch(
       }
       return application.services.semantic.artifactSection(context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef));
     }
+    case "research.wiki.propose": {
+      requireNoQuery(url);
+      return apiResult(
+        request,
+        env,
+        await application.services.semantic.proposeWiki(
+          context,
+          await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),
+        ),
+      );
+    }
     case "research.verify": {
       return apiResult(
         request,
@@ -426,7 +439,7 @@ async function dispatch(
           if (workflowId !== undefined && match.route.method === "DELETE") {
             return apiResult(request, env, await application.services.semantic.queryCancel(context, workflowId));
           }
-          const data = await application.services.semantic.query(context, await request.json());
+          const data = await application.services.semantic.query(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes) as QueryRequest);
           return apiResult(request, env, data, data && typeof data === "object" &&
             "workflow_instance_id" in data && !Object.hasOwn(data, "job") ? 202 : 200);
         }
@@ -437,7 +450,7 @@ async function dispatch(
             if (workflowId === undefined) throw new HttpRequestError("RESEARCH_RUN_ID_INVALID", 400, "workflow id is missing");
             return apiResult(request, env, await application.services.semantic.runStatus(context, workflowId));
           }
-          return apiResult(request, env, await application.services.semantic.run(context, await request.json()));
+          return apiResult(request, env, await application.services.semantic.run(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes) as QueryRequest));
         }
         throw new CapabilityUnavailableError(match.route.operation);
       }

@@ -15,7 +15,7 @@ outside the paths below.
 - `apps/eliotr-core/src/federation-service.ts`
 - `apps/eliotr-core/src/federation-scope-limits.ts`
 - `apps/eliotr-core/src/federation-request-authorities.ts`
-- `apps/eliotr-core/src/federation-service.test.ts`
+- `apps/eliotr-core/test/federation-service.test.ts`
 
 ## Read only
 

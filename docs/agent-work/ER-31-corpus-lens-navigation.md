@@ -18,7 +18,7 @@ outside the paths below.
 - `packages/retrieval/src/navigation-builders.ts`
 - `packages/retrieval/src/navigation.test.ts`
 - `apps/eliotr-core/src/navigation-service.ts`
-- `apps/eliotr-core/src/navigation-service.test.ts`
+- `apps/eliotr-core/test/navigation-service.test.ts`
 - `packages/retrieval/src/navigation-identity.ts`
 - `packages/retrieval/src/navigation-identity.test.ts`
 - `apps/eliotr-core/src/navigation-persistence.ts`
