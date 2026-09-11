@@ -69,19 +69,28 @@ jobs:
           python3 scripts/fix-wiki-cas-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
-      - name: Verify without Astro, Qdrant or external services
-        run: |
-          pnpm --filter @eliotr/research test
-          pnpm --filter @eliotr/interfaces typecheck
-          pnpm --filter @eliotr/core test
-          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
-          pnpm typecheck
-          pnpm lint
-          pnpm boundaries:check
-          pnpm budgets:check
-          pnpm work-packets:check
-          pnpm check:implementation-status
-          git diff --check
+      - name: Research package tests
+        run: pnpm --filter @eliotr/research test
+      - name: Interfaces typecheck
+        run: pnpm --filter @eliotr/interfaces typecheck
+      - name: Core tests
+        run: pnpm --filter @eliotr/core test
+      - name: Strict core test typecheck
+        run: pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Workspace typecheck
+        run: pnpm typecheck
+      - name: Workspace lint
+        run: pnpm lint
+      - name: Boundary checks
+        run: pnpm boundaries:check
+      - name: Source budgets
+        run: pnpm budgets:check
+      - name: Work packet ownership
+        run: pnpm work-packets:check
+      - name: Implementation status consistency
+        run: pnpm check:implementation-status
+      - name: Diff integrity
+        run: git diff --check
       - name: Commit verified product code to main
         run: |
           git rm .github/workflows/wiki-product-once.yml scripts/materialize-wiki-once.py scripts/harden-wiki-once.py scripts/fix-wiki-cas-once.py
