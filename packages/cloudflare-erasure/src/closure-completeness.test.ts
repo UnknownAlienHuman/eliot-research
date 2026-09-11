@@ -49,11 +49,19 @@ function target(kind: PurgeTarget["target_kind"] = "OBJECT"): PurgeTarget {
   };
 }
 
+function emptyD1(): D1Database {
+  return {
+    prepare: vi.fn(() => ({
+      bind: vi.fn(() => ({ all: vi.fn(async () => ({ success: true, results: [] })) })),
+    })),
+  } as unknown as D1Database;
+}
+
 describe("erasure closure completeness", () => {
   it("refuses to invent an empty-location proof when no authoritative target was enumerated", async () => {
     const inventory = createD1ErasureInventory({
-      core_database: {} as D1Database,
-      search_database: {} as D1Database,
+      core_database: emptyD1(),
+      search_database: emptyD1(),
     });
     await expect(inventory.enumerate(request(["evidence-handle:handle-1:1"], ["Blob"])))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
@@ -74,7 +82,7 @@ describe("erasure closure completeness", () => {
         bind: vi.fn(() => ({ all: vi.fn(async () => ({ success: true, results: rows })) })),
       })),
     } as unknown as D1Database;
-    const inventory = createD1ErasureInventory({ core_database: database, search_database: {} as D1Database });
+    const inventory = createD1ErasureInventory({ core_database: database, search_database: emptyD1() });
     await expect(inventory.enumerate(request(["source:source-1"], ["CanonicalPayload"])))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
   });
@@ -104,7 +112,7 @@ describe("erasure closure completeness", () => {
       forLocation: vi.fn(() => ({ purge, verifyAbsent: vi.fn() })),
     } as unknown as ErasureLocationRegistry;
     const backend = createCloudflareErasureBackend({
-      core_database: {} as D1Database,
+      core_database: emptyD1(),
       authority,
       inventory: {} as ErasureInventoryPort,
       locations,
