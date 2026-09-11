@@ -1,0 +1,276 @@
+name: product-pipeline-finalizer-v2-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/product-pipeline-finalizer-v2-once.yml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: product-pipeline-finalizer-v2
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Cancel superseded product runs and refresh main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select((.status == "queued" or .status == "in_progress") and .id != '${{ github.run_id }}' and (.path | test("(?:wiki-product|research-changes-product|federation-product|lifecycle-reconcile-product|research-governed-stages|product-pipeline-finalizer-once|repair-finalizer-once)\\.yml$"))) | .id' \
+            | while read -r run_id; do
+                gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/cancel" || true
+              done
+          sleep 15
+          git fetch origin main '+refs/heads/*:refs/remotes/origin/*'
+          git reset --hard origin/main
+          echo "PRODUCT_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+      - name: Recover checkpoint scripts from extant historical blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/product-workflows /tmp/product-steps
+          for name in \
+            wiki-product-once.yml \
+            research-changes-product-once.yml \
+            federation-product-once.yml \
+            lifecycle-reconcile-product-once.yml \
+            research-governed-stages-once.yml; do
+            path=".github/workflows/$name"
+            if [ -f "$path" ]; then
+              cp "$path" "/tmp/product-workflows/$name"
+              continue
+            fi
+            commit="$(
+              git log --all --format=%H -- "$path" | while read -r candidate; do
+                if git cat-file -e "$candidate:$path" 2>/dev/null; then
+                  echo "$candidate"
+                  break
+                fi
+              done
+            )"
+            test -n "$commit"
+            git show "$commit:$path" > "/tmp/product-workflows/$name"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def blocks(path: Path):
+              lines = path.read_text(encoding='utf-8').splitlines()
+              result = {}
+              current = None
+              index = 0
+              while index < len(lines):
+                  named = re.match(r'^\s*-\s+name:\s*(.+?)\s*$', lines[index])
+                  if named:
+                      current = named.group(1).strip('"\'')
+                      index += 1
+                      continue
+                  run = re.match(r'^(\s*)run:\s*\|[-+]?\s*$', lines[index])
+                  if run and current is not None:
+                      base = len(run.group(1))
+                      index += 1
+                      body = []
+                      while index < len(lines):
+                          line = lines[index]
+                          if line.strip() and len(line) - len(line.lstrip()) <= base:
+                              break
+                          body.append(line[base + 2:] if len(line) >= base + 2 else '')
+                          index += 1
+                      result[current] = '\n'.join(body).rstrip() + '\n'
+                      continue
+                  index += 1
+              return result
+
+          required = {
+              'wiki-product-once.yml': ['Materialize and harden Wiki product slice'],
+              'research-changes-product-once.yml': [
+                  'Extract the retained changes implementation',
+                  'Enforce changes-feed authority invariants',
+              ],
+              'federation-product-once.yml': [
+                  'Select and extract a current-main-compatible federation checkpoint',
+                  'Reject authority regressions before installing dependencies',
+              ],
+              'lifecycle-reconcile-product-once.yml': [
+                  'Derive the exact outbox lease schema and implement reconciliation',
+              ],
+              'research-governed-stages-once.yml': [
+                  'Fetch retained cognitive checkpoints',
+                  'Extract only governed-stage implementation deltas',
+                  'Enforce cognitive and evidence invariants',
+              ],
+          }
+          out = Path('/tmp/product-steps')
+          for filename, names in required.items():
+              available = blocks(Path('/tmp/product-workflows') / filename)
+              for order, name in enumerate(names):
+                  script = available.get(name)
+                  if script is None:
+                      raise SystemExit(f'{filename}: missing step {name}')
+                  if any(token in script.lower() for token in ('git push', 'git commit', 'astro build', 'qdrant')):
+                      raise SystemExit(f'{filename}: forbidden effect in {name}')
+                  (out / f'{filename}-{order}.sh').write_text(
+                      'set -euo pipefail\n' + script,
+                      encoding='utf-8',
+                  )
+          PY
+      - name: Enable pinned pnpm and install once
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+      - name: Integrate independent checkpoints transactionally
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_checkpoint() {
+            local label="$1"
+            local message="$2"
+            local condition="$3"
+            local implementation="$4"
+            local verification="$5"
+            if ! bash -lc "$condition"; then
+              echo "SKIP $label: already integrated" | tee -a /tmp/product-results
+              return 0
+            fi
+            local base
+            base="$(git rev-parse HEAD)"
+            echo "START $label at $base" | tee -a /tmp/product-results
+            set +e
+            bash -lc "$implementation"
+            local implementation_status=$?
+            if [ "$implementation_status" -eq 0 ]; then
+              bash -lc "$verification"
+            fi
+            local status=$?
+            set -e
+            if [ "$implementation_status" -ne 0 ] || [ "$status" -ne 0 ]; then
+              git reset --hard "$base"
+              git clean -fd -e node_modules
+              echo "DEFER $label: implementation=$implementation_status verification=$status" | tee -a /tmp/product-results
+              return 0
+            fi
+            git add -A
+            if git diff --cached --quiet; then
+              echo "SKIP $label: no delta" | tee -a /tmp/product-results
+              return 0
+            fi
+            git commit -m "$message"
+            echo "PASS $label: $(git rev-parse HEAD)" | tee -a /tmp/product-results
+          }
+
+          run_checkpoint \
+            wiki \
+            'feat: implement durable Wiki proposals and publication storage' \
+            '[ ! -f apps/eliotr-core/src/wiki-service.ts ] || grep -q '\''proposeWiki:.*unavailable'\'' apps/eliotr-core/src/composition-root.ts' \
+            'bash /tmp/product-steps/wiki-product-once.yml-0.sh' \
+            'pnpm --filter @eliotr/research test && pnpm --filter @eliotr/interfaces typecheck && pnpm --filter @eliotr/core test && pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false && pnpm budgets:check && pnpm work-packets:check'
+
+          run_checkpoint \
+            research-changes \
+            'feat: implement authenticated durable research changes' \
+            'grep -q '\''changes:.*unavailable("research.changes")'\'' apps/eliotr-core/src/composition-root.ts' \
+            'bash /tmp/product-steps/research-changes-product-once.yml-0.sh && bash /tmp/product-steps/research-changes-product-once.yml-1.sh' \
+            'pnpm --filter @eliotr/interfaces typecheck && pnpm --filter @eliotr/core test && pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false && pnpm budgets:check && pnpm work-packets:check'
+
+          run_checkpoint \
+            federation \
+            'feat: compose authenticated durable federation' \
+            'grep -q '\''unavailable("federation.submit")'\'' apps/eliotr-core/src/composition-root.ts' \
+            'git fetch origin '\''+refs/heads/*:refs/remotes/origin/*'\'' && bash /tmp/product-steps/federation-product-once.yml-0.sh && bash /tmp/product-steps/federation-product-once.yml-1.sh' \
+            'pnpm --filter @eliotr/federation-api test && pnpm --filter @eliotr/cloudflare-federation test && pnpm --filter @eliotr/core test && pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false && pnpm budgets:check && pnpm work-packets:check'
+
+          run_checkpoint \
+            lifecycle-reconciliation \
+            'fix: reconcile expired outbox leases instead of reporting zero' \
+            'grep -q '\''repaired: 0'\'' apps/eliotr-core/src/composition-root.ts' \
+            'bash /tmp/product-steps/lifecycle-reconcile-product-once.yml-0.sh' \
+            'pnpm --filter @eliotr/core exec vitest run test/outbox-reconciler.test.ts && pnpm --filter @eliotr/core typecheck && pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false && pnpm budgets:check && pnpm work-packets:check'
+
+          run_checkpoint \
+            governed-stages \
+            'feat: execute citation resolution and coverage stages' \
+            '! git log --format=%s -n 300 | grep -qx '\''feat: execute citation resolution and coverage stages'\''' \
+            'bash /tmp/product-steps/research-governed-stages-once.yml-0.sh && bash /tmp/product-steps/research-governed-stages-once.yml-1.sh && bash /tmp/product-steps/research-governed-stages-once.yml-2.sh' \
+            'pnpm --filter @eliotr/research test && pnpm --filter @eliotr/cloudflare-research test && pnpm --filter @eliotr/core test && pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false && pnpm budgets:check && pnpm work-packets:check'
+
+          cat /tmp/product-results
+      - name: Remove generators only for settled checkpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/product-pipeline-finalizer-once.yml .github/workflows/repair-finalizer-once.yml
+          if [ -f apps/eliotr-core/src/wiki-service.ts ] \
+            && ! grep -q 'proposeWiki:.*unavailable' apps/eliotr-core/src/composition-root.ts; then
+            rm -f .github/workflows/wiki-product-once.yml scripts/materialize-wiki-once.py scripts/harden-wiki-once.py
+          fi
+          if ! grep -q 'changes:.*unavailable("research.changes")' apps/eliotr-core/src/composition-root.ts; then
+            rm -f .github/workflows/research-changes-product-once.yml
+          fi
+          if ! grep -q 'unavailable("federation.submit")' apps/eliotr-core/src/composition-root.ts; then
+            rm -f .github/workflows/federation-product-once.yml
+          fi
+          if ! grep -q 'repaired: 0' apps/eliotr-core/src/composition-root.ts; then
+            rm -f .github/workflows/lifecycle-reconcile-product-once.yml
+          fi
+          if git log --format=%s -n 300 | grep -qx 'feat: execute citation resolution and coverage stages'; then
+            rm -f .github/workflows/research-governed-stages-once.yml
+          fi
+      - name: Verify the integrated backend tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @eliotr/contracts test
+          pnpm --filter @eliotr/domain test
+          pnpm --filter @eliotr/policy test
+          pnpm --filter @eliotr/retrieval test
+          pnpm --filter @eliotr/research test
+          if [ -d packages/cloudflare-research ]; then pnpm --filter @eliotr/cloudflare-research test; fi
+          if ! grep -q 'unavailable("federation.submit")' apps/eliotr-core/src/composition-root.ts; then
+            pnpm --filter @eliotr/federation-api test
+            pnpm --filter @eliotr/cloudflare-federation test
+          fi
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm typecheck
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          pnpm docs:index:check
+          pnpm rust:check
+          git diff --check
+      - name: Push all locally verified checkpoint commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/product-pipeline-finalizer-v2-once.yml
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: remove settled backend checkpoint generators"
+          fi
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$PRODUCT_BASE_SHA"
+          git push origin HEAD:main
