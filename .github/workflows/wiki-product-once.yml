@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: wiki-product-once
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   implement:
@@ -69,19 +69,16 @@ jobs:
           python3 scripts/fix-wiki-cas-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
-      - name: Research package tests
-        run: pnpm --filter @eliotr/research test
-      - name: Interfaces typecheck
-        run: pnpm --filter @eliotr/interfaces typecheck
-      - name: Core tests
-        run: pnpm --filter @eliotr/core test
-      - name: Strict core test typecheck
+      - name: Capture strict core test typecheck
         shell: bash
         run: |
+          set +e
           set -o pipefail
           pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false 2>&1 | tee /tmp/wiki-strict-typecheck.log
+          status=${PIPESTATUS[0]}
+          printf '%s\n' "$status" > /tmp/wiki-strict-typecheck.status
+          exit 0
       - name: Pack exact generated checkout and diagnostics
-        if: always()
         shell: bash
         run: |
           tar \
@@ -93,17 +90,24 @@ jobs:
             --exclude=.wrangler \
             --exclude='*/.wrangler' \
             -czf /tmp/wiki-generated-checkout.tgz .
-          test -f /tmp/wiki-strict-typecheck.log || : > /tmp/wiki-strict-typecheck.log
       - name: Upload exact generated checkout
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wiki-generated-checkout-${{ github.sha }}
           path: |
             /tmp/wiki-generated-checkout.tgz
             /tmp/wiki-strict-typecheck.log
+            /tmp/wiki-strict-typecheck.status
           if-no-files-found: error
           retention-days: 1
+      - name: Enforce strict core test typecheck
+        run: test "$(cat /tmp/wiki-strict-typecheck.status)" = 0
+      - name: Research package tests
+        run: pnpm --filter @eliotr/research test
+      - name: Interfaces typecheck
+        run: pnpm --filter @eliotr/interfaces typecheck
+      - name: Core tests
+        run: pnpm --filter @eliotr/core test
       - name: Workspace typecheck
         run: pnpm typecheck
       - name: Workspace lint
