@@ -21,8 +21,10 @@ function parseTarget(
   target: PurgeTarget,
   evidenceBucket: R2Bucket,
   workBucket: R2Bucket,
-): R2Target | null {
-  if (target.target_kind === "LOCATION_EMPTY_PROOF") return null;
+): R2Target {
+  if (target.target_kind !== "OBJECT") {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified R2 empty proof is not executable");
+  }
   if (target.canonical_ref.startsWith("r2-evidence:")) {
     return {
       bucket: evidenceBucket,
@@ -50,13 +52,19 @@ function parseTarget(
 
 async function listPrefix(bucket: R2Bucket, prefix: string): Promise<readonly string[]> {
   const keys: string[] = [];
+  const seenCursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; page < 1024; page += 1) {
-    const result = await bucket.list({
-      prefix,
-      limit: 1000,
-      ...(cursor === undefined ? {} : { cursor }),
-    });
+    let result: R2Objects;
+    try {
+      result = await bucket.list({
+        prefix,
+        limit: 1000,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+    } catch (cause) {
+      erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 prefix inventory failed", true, cause);
+    }
     for (const object of result.objects) {
       if (!object.key.startsWith(prefix)) {
         erasureFail("ERASURE_IDENTITY_CONFLICT", "R2 prefix inventory escaped its exact prefix");
@@ -67,10 +75,14 @@ async function listPrefix(bucket: R2Bucket, prefix: string): Promise<readonly st
       }
     }
     if (!result.truncated) return keys;
-    if (typeof result.cursor !== "string" || result.cursor.length === 0 || result.cursor === cursor) {
+    const next = typeof result.cursor === "string"
+      ? assertErasureText(result.cursor, "R2 prefix cursor", 2048)
+      : erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 prefix cursor is missing", true);
+    if (next === cursor || seenCursors.has(next)) {
       erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 prefix cursor did not advance", true);
     }
-    cursor = result.cursor;
+    seenCursors.add(next);
+    cursor = next;
   }
   erasureFail("ERASURE_CLOSURE_INCOMPLETE", "R2 prefix inventory exceeded page ceiling");
 }
@@ -78,9 +90,18 @@ async function listPrefix(bucket: R2Bucket, prefix: string): Promise<readonly st
 async function deleteKeys(bucket: R2Bucket, keys: readonly string[]): Promise<void> {
   for (let index = 0; index < keys.length; index += 1000) {
     const batch = keys.slice(index, index + 1000);
-    if (batch.length === 1) await bucket.delete(batch[0] as string);
-    else if (batch.length > 1) await bucket.delete([...batch]);
+    try {
+      if (batch.length === 1) await bucket.delete(batch[0] as string);
+      else if (batch.length > 1) await bucket.delete([...batch]);
+    } catch (cause) {
+      erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 delete settlement is unknown", true, cause);
+    }
   }
+}
+
+async function exactHead(bucket: R2Bucket, key: string): Promise<R2Object | null> {
+  try { return await bucket.head(key); }
+  catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 exact readback failed", true, cause); }
 }
 
 async function receipt(
@@ -109,22 +130,18 @@ export function createR2ErasureLocationPort(
   return {
     async purge(request, _fence, target): Promise<PurgeAttemptReceipt> {
       const parsed = parseTarget(target, dependencies.evidence_bucket, dependencies.work_bucket);
-      if (parsed === null) {
-        return {
-          target_id: target.target_id,
-          disposition: "ALREADY_ABSENT",
-          receipt_ref: await receipt("delete-r2", request, target, "empty"),
-        };
-      }
       if (parsed.kind === "EXACT") {
-        if (await parsed.bucket.head(parsed.key) === null) {
+        if (await exactHead(parsed.bucket, parsed.key) === null) {
           return {
             target_id: target.target_id,
             disposition: "ALREADY_ABSENT",
             receipt_ref: await receipt("delete-r2", request, target, "already-absent"),
           };
         }
-        await parsed.bucket.delete(parsed.key);
+        try { await parsed.bucket.delete(parsed.key); }
+        catch (cause) {
+          erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "R2 exact delete settlement is unknown", true, cause);
+        }
       } else {
         const keys = await listPrefix(parsed.bucket, parsed.key);
         if (keys.length === 0) {
@@ -145,9 +162,9 @@ export function createR2ErasureLocationPort(
 
     async verifyAbsent(request, _fence, target): Promise<AbsenceVerificationReceipt> {
       const parsed = parseTarget(target, dependencies.evidence_bucket, dependencies.work_bucket);
-      const absent = parsed === null || (parsed.kind === "EXACT"
-        ? await parsed.bucket.head(parsed.key) === null
-        : (await listPrefix(parsed.bucket, parsed.key)).length === 0);
+      const absent = parsed.kind === "EXACT"
+        ? await exactHead(parsed.bucket, parsed.key) === null
+        : (await listPrefix(parsed.bucket, parsed.key)).length === 0;
       return {
         target_id: target.target_id,
         absent,

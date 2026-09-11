@@ -66,6 +66,11 @@ interface RegistryRow {
   readonly next_review_at: unknown;
 }
 
+interface InventoryQueryResult<T> {
+  readonly success?: boolean;
+  readonly results?: readonly T[];
+}
+
 const LOCATIONS: readonly PurgeLocation[] = [
   "CanonicalPayload",
   "Projection",
@@ -76,6 +81,24 @@ const LOCATIONS: readonly PurgeLocation[] = [
   "BackupRestorePath",
   "RouteContinuation",
 ];
+const INVENTORY_ROW_LIMIT = 10_000;
+const INVENTORY_FETCH_LIMIT = INVENTORY_ROW_LIMIT + 1;
+const MAX_CLOSURE_TARGETS = 100_000;
+
+function boundedRows<T>(result: InventoryQueryResult<T>, label: string): readonly T[] {
+  if (result.success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", `${label} failed`, true);
+  const rows = result.results ?? [];
+  if (rows.length > INVENTORY_ROW_LIMIT) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", `${label} exceeds the bounded ${INVENTORY_ROW_LIMIT}-row inventory`);
+  }
+  return rows;
+}
+
+function ensureClosureCapacity(current: number, additional: number, label: string): void {
+  if (!Number.isSafeInteger(additional) || additional < 0 || current > MAX_CLOSURE_TARGETS - additional) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", `${label} exceeds the bounded ${MAX_CLOSURE_TARGETS}-target closure`);
+  }
+}
 
 function purgeLocation(value: unknown): PurgeLocation {
   if (!LOCATIONS.includes(value as PurgeLocation)) {
@@ -179,7 +202,6 @@ async function target(
   location: PurgeLocation,
   canonicalRef: string,
   options: {
-    readonly target_kind?: "OBJECT" | "LOCATION_EMPTY_PROOF";
     readonly provider_ref?: string;
     readonly shared_live_reference_count?: number;
     readonly retention_or_hold_ref?: string;
@@ -196,7 +218,7 @@ async function target(
   const targetId = await stableErasureId("erase-target", identityDigest);
   return {
     target_id: targetId,
-    target_kind: options.target_kind ?? "OBJECT",
+    target_kind: "OBJECT",
     exact_subject_ref: exactSubjectRef,
     location,
     canonical_ref: canonicalRef,
@@ -214,10 +236,9 @@ async function revisionRows(database: D1Database, sourceId: string): Promise<rea
   const result = await database.prepare(
     "SELECT source_revision_ref,source_id,original_r2_key,normalized_artifact_ref," +
     "content_sha256,object_residency_key_digest,purge_state FROM source_revision " +
-    "WHERE source_id=?1 ORDER BY source_revision_ref LIMIT 10000",
+    `WHERE source_id=?1 ORDER BY source_revision_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(sourceId).all<RevisionRow>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "source revision inventory failed", true);
-  return (result.results ?? []).map(decodeRevision);
+  return boundedRows(result, "source revision inventory").map(decodeRevision);
 }
 
 async function oneRevision(database: D1Database, revisionRef: string): Promise<SourceRevisionInventoryRow> {
@@ -234,28 +255,25 @@ async function projections(database: D1Database, revisionRef: string): Promise<r
   const result = await database.prepare(
     "SELECT source_revision_ref,projection_generation,work_manifest_ref,semantic_instance_id," +
     "semantic_generation,state FROM projection_generation WHERE source_revision_ref=?1 " +
-    "AND state<>'RETIRED' ORDER BY projection_generation LIMIT 10000",
+    `AND state<>'RETIRED' ORDER BY projection_generation LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(revisionRef).all<ProjectionRow>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "projection inventory failed", true);
-  return (result.results ?? []).map(decodeProjection);
+  return boundedRows(result, "projection inventory").map(decodeProjection);
 }
 
 async function items(database: D1Database, revisionRef: string, generation: string): Promise<readonly ProjectionItemInventoryRow[]> {
   const result = await database.prepare(
     "SELECT item_key,projection_generation FROM projection_item WHERE source_revision_ref=?1 " +
-    "AND projection_generation=?2 ORDER BY item_key LIMIT 10000",
+    `AND projection_generation=?2 ORDER BY item_key LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(revisionRef, generation).all<ItemRow>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "projection item inventory failed", true);
-  return (result.results ?? []).map(decodeItem);
+  return boundedRows(result, "projection item inventory").map(decodeItem);
 }
 
 async function backups(database: D1Database): Promise<readonly BackupEpochInventoryRow[]> {
   const result = await database.prepare(
     "SELECT backup_epoch_id,offsite_copy_ref,purge_ledger_revision,verification_state " +
-    "FROM backup_epoch WHERE verification_state='VERIFIED' ORDER BY backup_epoch_id LIMIT 10000",
+    `FROM backup_epoch WHERE verification_state='VERIFIED' ORDER BY backup_epoch_id LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).all<BackupRow>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup inventory failed", true);
-  return (result.results ?? []).map(decodeBackup);
+  return boundedRows(result, "backup inventory").map(decodeBackup);
 }
 
 async function registered(
@@ -268,10 +286,11 @@ async function registered(
       "SELECT dependency_id,exact_subject_ref,location,canonical_ref,provider_ref," +
       "object_identity_digest,shared_reference_key,retention_or_hold_ref,next_review_at " +
       "FROM erasure_dependency_registry WHERE exact_subject_ref=?1 AND state='ACTIVE' " +
-      "ORDER BY dependency_id LIMIT 10000",
+      `ORDER BY dependency_id LIMIT ${INVENTORY_FETCH_LIMIT}`,
     ).bind(subjectRef).all<RegistryRow>();
-    if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered dependency inventory failed", true);
-    output.push(...(result.results ?? []).map(decodeRegistry));
+    const rows = boundedRows(result, "registered dependency inventory");
+    ensureClosureCapacity(output.length, rows.length, "registered dependency inventory");
+    output.push(...rows.map(decodeRegistry));
   }
   return output;
 }
@@ -284,10 +303,10 @@ async function sharedCount(
 ): Promise<number> {
   const result = await database.prepare(
     `SELECT source_revision_ref FROM source_revision WHERE ${keyColumn}=?1 AND purge_state='LIVE' ` +
-    "ORDER BY source_revision_ref LIMIT 10000",
+    `ORDER BY source_revision_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(key).all<{ source_revision_ref: string }>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "shared-object inventory failed", true);
-  return (result.results ?? []).filter((row) => !selectedRevisions.has(row.source_revision_ref)).length;
+  return boundedRows(result, "shared-object inventory")
+    .filter((row) => !selectedRevisions.has(row.source_revision_ref)).length;
 }
 
 async function registeredSharedCount(
@@ -297,13 +316,10 @@ async function registeredSharedCount(
 ): Promise<number> {
   const result = await database.prepare(
     "SELECT exact_subject_ref FROM erasure_dependency_registry " +
-    "WHERE shared_reference_key=?1 AND state='ACTIVE' ORDER BY exact_subject_ref LIMIT 10000",
+    `WHERE shared_reference_key=?1 AND state='ACTIVE' ORDER BY exact_subject_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
   ).bind(sharedReferenceKey).all<{ exact_subject_ref: unknown }>();
-  if ((result as { readonly success?: boolean }).success === false) {
-    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered shared-reference inventory failed", true);
-  }
   const live = new Set<string>();
-  for (const row of result.results ?? []) {
+  for (const row of boundedRows(result, "registered shared-reference inventory")) {
     const subject = assertErasureIdentifier(row.exact_subject_ref, "shared dependency subject");
     if (!selectedSubjects.has(subject)) live.add(subject);
   }
@@ -328,12 +344,15 @@ export function createD1ErasureInventory(
       for (const exactSubjectRef of request.exact_subject_refs) {
         const parsed = parseErasureSubject(exactSubjectRef);
         if (parsed.kind === "source_revision") {
+          ensureClosureCapacity(revisions.length, 1, "source revision selection");
           revisions.push({ subject: exactSubjectRef, row: await oneRevision(dependencies.core_database, parsed.source_revision_ref) });
         } else if (parsed.kind === "source") {
           const rows = await revisionRows(dependencies.core_database, parsed.source_id);
           if (rows.length === 0) erasureFail("ERASURE_INPUT_INVALID", `source ${parsed.source_id} has no revisions`);
-          rows.forEach((row) => revisions.push({ subject: exactSubjectRef, row }));
+          ensureClosureCapacity(revisions.length, rows.length, "source revision selection");
+          for (const row of rows) revisions.push({ subject: exactSubjectRef, row });
         } else if (parsed.kind === "evidence_handle") {
+          ensureClosureCapacity(directTargets.length, 2, "direct erasure target selection");
           directTargets.push(await target(
             exactSubjectRef,
             "CanonicalPayload",
@@ -345,6 +364,7 @@ export function createD1ErasureInventory(
             `d1-core:route:evidence-handle:${parsed.handle_id}:${parsed.revision}`,
           ));
         } else {
+          ensureClosureCapacity(directTargets.length, 2, "direct erasure target selection");
           directTargets.push(await target(
             exactSubjectRef,
             "CanonicalPayload",
@@ -365,10 +385,12 @@ export function createD1ErasureInventory(
         : [];
 
       for (const { subject, row } of revisions) {
+        ensureClosureCapacity(generated.length, 3, "canonical erasure targets");
         generated.push(await target(subject, "CanonicalPayload", `d1-core:source-revision:${row.source_revision_ref}`));
         generated.push(await target(subject, "OperationalRecovery", `d1-core:operational:${row.source_revision_ref}`));
         generated.push(await target(subject, "RouteContinuation", `d1-core:route:source-revision:${row.source_revision_ref}`));
         if (row.original_r2_key !== undefined) {
+          ensureClosureCapacity(generated.length, 1, "R2 erasure targets");
           generated.push(await target(subject, "Blob", `r2-evidence:${row.original_r2_key}`, {
             shared_live_reference_count: await sharedCount(
               dependencies.core_database,
@@ -379,6 +401,7 @@ export function createD1ErasureInventory(
           }));
         }
         if (row.normalized_artifact_ref !== undefined) {
+          ensureClosureCapacity(generated.length, 1, "R2 erasure targets");
           generated.push(await target(subject, "Blob", `r2-evidence:${row.normalized_artifact_ref}`, {
             shared_live_reference_count: await sharedCount(
               dependencies.core_database,
@@ -390,34 +413,41 @@ export function createD1ErasureInventory(
         }
         for (const projection of await projections(dependencies.core_database, row.source_revision_ref)) {
           if (projection.work_manifest_ref !== undefined) {
+            ensureClosureCapacity(generated.length, 1, "projection erasure targets");
             generated.push(await target(
               subject,
               "Projection",
               `r2-work-prefix:${workPrefix(projection.work_manifest_ref)}`,
             ));
           }
+          ensureClosureCapacity(generated.length, 1, "index erasure targets");
           generated.push(await target(
             subject,
             "Index",
             `d1-search:${row.source_revision_ref}:${projection.projection_generation}`,
           ));
           if (projection.semantic_instance_id !== undefined) {
+            if (projection.semantic_generation === undefined) {
+              erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active semantic projection lacks an exact provider generation");
+            }
             const projectionItems = await items(
               dependencies.search_database,
               row.source_revision_ref,
               projection.projection_generation,
             );
+            ensureClosureCapacity(generated.length, projectionItems.length, "provider erasure targets");
             for (const item of projectionItems) {
               const key = await providerKey(row.source_revision_ref, item.item_key);
               generated.push(await target(
                 subject,
                 "ProviderCopy",
                 `ai-search:${projection.semantic_instance_id}:${key}`,
-                { provider_ref: projection.semantic_generation ?? "unknown-generation" },
+                { provider_ref: projection.semantic_generation },
               ));
             }
           }
         }
+        ensureClosureCapacity(generated.length, backupRows.length, "backup erasure targets");
         for (const backup of backupRows) {
           generated.push(await target(
             subject,
@@ -430,7 +460,9 @@ export function createD1ErasureInventory(
 
       const selectedSubjects = new Set(request.exact_subject_refs);
       const registeredSharedCounts = new Map<string, number>();
-      for (const dependency of await registered(dependencies.core_database, request.exact_subject_refs)) {
+      const registeredDependencies = await registered(dependencies.core_database, request.exact_subject_refs);
+      ensureClosureCapacity(generated.length, registeredDependencies.length, "registered erasure targets");
+      for (const dependency of registeredDependencies) {
         let liveSharedReferences = 0;
         if (dependency.shared_reference_key !== undefined) {
           const cached = registeredSharedCounts.get(dependency.shared_reference_key);
@@ -467,18 +499,19 @@ export function createD1ErasureInventory(
         }
         unique.set(key, item);
       }
-      for (const location of request.required_locations) {
-        if ([...unique.values()].some((candidate) => candidate.location === location)) continue;
-        const proofRef = `empty-proof:${location}:${requestDigest}`;
-        unique.set(`${location}\u0000${proofRef}`, await target(
-          request.exact_subject_refs[0] ?? "missing-subject",
-          location,
-          proofRef,
-          { target_kind: "LOCATION_EMPTY_PROOF" },
-        ));
+      const missing = request.required_locations.filter((location) =>
+        ![...unique.values()].some((candidate) => candidate.location === location));
+      if (missing.length > 0) {
+        erasureFail(
+          "ERASURE_CLOSURE_INCOMPLETE",
+          `required erasure locations have no authoritative enumerated target: ${missing.join(",")}`,
+        );
       }
-      const targets = [...unique.values()].sort((left, right) =>
-        `${left.location}:${left.canonical_ref}`.localeCompare(`${right.location}:${right.canonical_ref}`));
+      const targets = [...unique.values()].sort((left, right) => {
+        const leftKey = `${left.location}\u0000${left.canonical_ref}`;
+        const rightKey = `${right.location}\u0000${right.canonical_ref}`;
+        return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+      });
       const closureDigest = await erasureDigest(targets.map((item) => ({
         target_id: item.target_id,
         target_kind: item.target_kind,

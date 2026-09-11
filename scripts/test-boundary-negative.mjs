@@ -55,7 +55,7 @@ async function proveCheckoutPathsArePortable() {
     await writeFile(fixture, 'import { readFile } from "node:fs/promises";\nvoid readFile;\n');
     runGate(boundaries, 1, ["packages/domain/src/fixture.ts imports forbidden module node:fs/promises"],
       "portable forbidden-import rejection", temporary);
-    await writeFile(fixture, "// budget fixture\n".repeat(600));
+    await writeFile(fixture, "// budget fixture\n".repeat(601));
     runGate(budgets, 1, ["packages/domain/src/fixture.ts has 601 lines (max 600)"],
       "portable source-budget rejection", temporary);
     console.log("Checkout portability: PASS (space/Unicode/#/% paths; unrelated CWD; exact negative exits).");

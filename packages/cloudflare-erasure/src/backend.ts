@@ -21,6 +21,15 @@ import type {
   ErasureLocationRegistry,
 } from "./types.js";
 
+const SOURCE_REVISION_LIMIT = 10_000;
+const SOURCE_REVISION_FETCH_LIMIT = SOURCE_REVISION_LIMIT + 1;
+
+function requireObjectTarget(target: PurgeTarget): void {
+  if (target.target_kind !== "OBJECT") {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified location-empty proof is not executable");
+  }
+}
+
 async function sourceRevisionRefs(
   database: D1Database,
   request: ErasureRequest,
@@ -32,12 +41,16 @@ async function sourceRevisionRefs(
     if (subject.kind === "source") {
       const result = await database.prepare(
         "SELECT source_revision_ref FROM source_revision WHERE source_id=?1 " +
-        "ORDER BY source_revision_ref LIMIT 10000",
+        `ORDER BY source_revision_ref LIMIT ${SOURCE_REVISION_FETCH_LIMIT}`,
       ).bind(subject.source_id).all<{ source_revision_ref: string }>();
       if ((result as { readonly success?: boolean }).success === false) {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "source quarantine inventory failed", true);
       }
-      for (const row of result.results ?? []) output.add(row.source_revision_ref);
+      const rows = result.results ?? [];
+      if (rows.length > SOURCE_REVISION_LIMIT) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source quarantine inventory exceeds the bounded row ceiling");
+      }
+      for (const row of rows) output.add(row.source_revision_ref);
     }
   }
   return [...output];
@@ -183,6 +196,7 @@ export function createCloudflareErasureBackend(
       ) {
         erasureFail("ERASURE_CLOSURE_INCOMPLETE", "erasure closure is not bound to the request");
       }
+      for (const target of closure.targets) requireObjectTarget(target);
       for (const location of request.required_locations) {
         if (!closure.targets.some((target) => target.location === location)) {
           erasureFail("ERASURE_CLOSURE_INCOMPLETE", `erasure closure omitted ${location}`);
@@ -217,6 +231,7 @@ export function createCloudflareErasureBackend(
 
     async purge(request, fence, target): Promise<PurgeAttemptReceipt> {
       await dependencies.authority.assertFence(fence);
+      requireObjectTarget(target);
       const adapter = dependencies.locations.forLocation(target.location);
       if (adapter === null) {
         const blocker = unavailableBlocker(target, request);
@@ -247,13 +262,17 @@ export function createCloudflareErasureBackend(
 
     async verifyAbsent(request, fence, target, purgeReceipt) {
       await dependencies.authority.assertFence(fence);
+      requireObjectTarget(target);
       const adapter = dependencies.locations.forLocation(target.location);
       if (adapter === null || purgeReceipt.disposition === "BLOCKED") {
+        const reasonCode = adapter === null
+          ? "LOCATION_ADAPTER_UNAVAILABLE"
+          : purgeReceipt.reason_code ?? "LOCATION_DELETE_FAILED";
         const receipt = {
           target_id: target.target_id,
           absent: false,
-          receipt_ref: await stableErasureId("absence-blocked", target.target_id),
-          reason_code: "LOCATION_ADAPTER_UNAVAILABLE",
+          receipt_ref: await stableErasureId("absence-blocked", target.target_id, reasonCode),
+          reason_code: reasonCode,
         } as const;
         await dependencies.authority.recordAbsence(fence, receipt);
         return receipt;
@@ -263,11 +282,12 @@ export function createCloudflareErasureBackend(
         await dependencies.authority.recordAbsence(fence, receipt);
         return receipt;
       } catch (cause) {
+        const reasonCode = failureReasonCode(cause, "ABSENCE_READBACK_FAILED");
         const receipt = {
           target_id: target.target_id,
           absent: false,
-          receipt_ref: await stableErasureId("absence-failed", target.target_id),
-          reason_code: failureReasonCode(cause, "ABSENCE_READBACK_FAILED"),
+          receipt_ref: await stableErasureId("absence-failed", target.target_id, reasonCode),
+          reason_code: reasonCode,
         } as const;
         await dependencies.authority.recordAbsence(fence, receipt);
         return receipt;

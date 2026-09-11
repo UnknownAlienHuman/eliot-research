@@ -20,8 +20,13 @@ interface SearchTarget {
   readonly projection_generation: string;
 }
 
-function parseTarget(target: PurgeTarget): SearchTarget | null {
-  if (target.target_kind === "LOCATION_EMPTY_PROOF") return null;
+const SEARCH_ITEM_LIMIT = 100_000;
+const SEARCH_ITEM_FETCH_LIMIT = SEARCH_ITEM_LIMIT + 1;
+
+function parseTarget(target: PurgeTarget): SearchTarget {
+  if (target.target_kind !== "OBJECT") {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified D1 Search empty proof is not executable");
+  }
   if (!target.canonical_ref.startsWith("d1-search:")) {
     erasureFail("ERASURE_INPUT_INVALID", `unsupported D1 Search erasure target ${target.canonical_ref}`);
   }
@@ -40,10 +45,16 @@ async function itemKeys(
 ): Promise<readonly string[]> {
   const result = await database.prepare(
     "SELECT item_key FROM projection_item WHERE source_revision_ref=?1 " +
-    "AND projection_generation=?2 ORDER BY item_key LIMIT 100000",
+    `AND projection_generation=?2 ORDER BY item_key LIMIT ${SEARCH_ITEM_FETCH_LIMIT}`,
   ).bind(parsed.source_revision_ref, parsed.projection_generation).all<{ item_key: unknown }>();
-  if ((result as { readonly success?: boolean }).success === false) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "D1 Search item inventory failed", true);
-  return (result.results ?? []).map((row) => assertErasureIdentifier(row.item_key, "search item key"));
+  if ((result as { readonly success?: boolean }).success === false) {
+    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "D1 Search item inventory failed", true);
+  }
+  const rows = result.results ?? [];
+  if (rows.length > SEARCH_ITEM_LIMIT) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "D1 Search item inventory exceeds the bounded row ceiling");
+  }
+  return rows.map((row) => assertErasureIdentifier(row.item_key, "search item key"));
 }
 
 async function count(
@@ -89,13 +100,6 @@ export function createD1SearchErasureLocationPort(
   return {
     async purge(request, _fence, target): Promise<PurgeAttemptReceipt> {
       const parsed = parseTarget(target);
-      if (parsed === null) {
-        return {
-          target_id: target.target_id,
-          disposition: "ALREADY_ABSENT",
-          receipt_ref: await receipt("delete-search", request, target, "empty"),
-        };
-      }
       const keys = await itemKeys(database, parsed);
       if (keys.length === 0) {
         return {
@@ -121,7 +125,10 @@ export function createD1SearchErasureLocationPort(
         "AND projection_generation=?2",
       ).bind(parsed.source_revision_ref, parsed.projection_generation));
       for (let index = 0; index < statements.length; index += 100) {
-        await database.batch(statements.slice(index, index + 100));
+        const results = await database.batch(statements.slice(index, index + 100));
+        if (results.some((result) => (result as { readonly success?: boolean }).success === false)) {
+          erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "D1 Search delete batch did not settle", true);
+        }
       }
       return {
         target_id: target.target_id,
@@ -136,42 +143,43 @@ export function createD1SearchErasureLocationPort(
       target,
     ): Promise<AbsenceVerificationReceipt> {
       const parsed = parseTarget(target);
-      const remaining = parsed === null ? 0 : await count(database, parsed);
+      const remaining = await count(database, parsed);
       const absent = remaining === 0;
       const receiptRef = await receipt("absence-search", request, target, absent ? "absent" : "present");
-      if (parsed !== null) {
-        const payload = {
-          erasure_id: fence.erasure_id,
-          erasure_revision: fence.revision,
-          target_id: target.target_id,
-          source_revision_ref: parsed.source_revision_ref,
-          projection_generation: parsed.projection_generation,
-          remaining_item_count: remaining,
-          absence_verified: absent,
-          receipt_ref: receiptRef,
-        };
-        const digest = await erasureSha256Utf8(canonicalErasureJson(payload));
-        await database.prepare(
-          "INSERT INTO erasure_search_receipt(erasure_id,erasure_revision,target_id," +
-          "source_revision_ref,projection_generation,deleted_item_count,remaining_item_count," +
-          "absence_verified,receipt_ref,receipt_digest,created_at) VALUES " +
-          "(?1,?2,?3,?4,?5,0,?6,?7,?8,?9,?10) " +
-          "ON CONFLICT(erasure_id,erasure_revision,target_id) DO UPDATE SET " +
-          "remaining_item_count=excluded.remaining_item_count," +
-          "absence_verified=excluded.absence_verified,receipt_ref=excluded.receipt_ref," +
-          "receipt_digest=excluded.receipt_digest,created_at=excluded.created_at",
-        ).bind(
-          fence.erasure_id,
-          fence.revision,
-          target.target_id,
-          parsed.source_revision_ref,
-          parsed.projection_generation,
-          remaining,
-          absent ? 1 : 0,
-          receiptRef,
-          digest,
-          isoFromMs(clock()),
-        ).run();
+      const payload = {
+        erasure_id: fence.erasure_id,
+        erasure_revision: fence.revision,
+        target_id: target.target_id,
+        source_revision_ref: parsed.source_revision_ref,
+        projection_generation: parsed.projection_generation,
+        remaining_item_count: remaining,
+        absence_verified: absent,
+        receipt_ref: receiptRef,
+      };
+      const digest = await erasureSha256Utf8(canonicalErasureJson(payload));
+      const write = await database.prepare(
+        "INSERT INTO erasure_search_receipt(erasure_id,erasure_revision,target_id," +
+        "source_revision_ref,projection_generation,deleted_item_count,remaining_item_count," +
+        "absence_verified,receipt_ref,receipt_digest,created_at) VALUES " +
+        "(?1,?2,?3,?4,?5,0,?6,?7,?8,?9,?10) " +
+        "ON CONFLICT(erasure_id,erasure_revision,target_id) DO UPDATE SET " +
+        "remaining_item_count=excluded.remaining_item_count," +
+        "absence_verified=excluded.absence_verified,receipt_ref=excluded.receipt_ref," +
+        "receipt_digest=excluded.receipt_digest,created_at=excluded.created_at",
+      ).bind(
+        fence.erasure_id,
+        fence.revision,
+        target.target_id,
+        parsed.source_revision_ref,
+        parsed.projection_generation,
+        remaining,
+        absent ? 1 : 0,
+        receiptRef,
+        digest,
+        isoFromMs(clock()),
+      ).run();
+      if ((write as { readonly success?: boolean }).success === false) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "D1 Search absence receipt did not settle", true);
       }
       return {
         target_id: target.target_id,

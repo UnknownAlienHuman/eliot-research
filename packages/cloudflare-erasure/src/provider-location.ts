@@ -12,8 +12,10 @@ import {
 } from "./canonical.js";
 import type {
   ErasureLocationPort,
+  ManagedSearchErasureInstance,
   ManagedSearchErasureItem,
   ManagedSearchErasureNamespace,
+  ManagedSearchErasurePage,
 } from "./types.js";
 
 interface ProviderTarget {
@@ -21,8 +23,13 @@ interface ProviderTarget {
   readonly key: string;
 }
 
-function parseTarget(target: PurgeTarget): ProviderTarget | null {
-  if (target.target_kind === "LOCATION_EMPTY_PROOF") return null;
+const MAX_PROVIDER_PAGES = 1024;
+const MAX_PROVIDER_ITEMS = 100_000;
+
+function parseTarget(target: PurgeTarget): ProviderTarget {
+  if (target.target_kind !== "OBJECT") {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified provider empty proof is not executable");
+  }
   const prefix = "ai-search:";
   if (!target.canonical_ref.startsWith(prefix)) {
     erasureFail("ERASURE_INPUT_INVALID", `unsupported provider erasure target ${target.canonical_ref}`);
@@ -40,26 +47,47 @@ async function matches(
   namespace: ManagedSearchErasureNamespace,
   parsed: ProviderTarget,
 ): Promise<readonly ManagedSearchErasureItem[]> {
-  const instance = namespace.get(parsed.instance_id);
+  let instance: ManagedSearchErasureInstance;
+  try { instance = namespace.get(parsed.instance_id); }
+  catch (cause) {
+    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "AI Search instance lookup failed", true, cause);
+  }
   const found: ManagedSearchErasureItem[] = [];
+  const seenCursors = new Set<string>();
   let cursor: string | undefined;
-  for (let page = 0; page < 1024; page += 1) {
-    const result = await instance.list(cursor);
+  let observed = 0;
+  for (let page = 0; page < MAX_PROVIDER_PAGES; page += 1) {
+    let result: ManagedSearchErasurePage;
+    try { result = await instance.list(cursor); }
+    catch (cause) {
+      erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "AI Search inventory read failed", true, cause);
+    }
+    if (!Array.isArray(result.items)) {
+      erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "AI Search inventory returned malformed items", true);
+    }
+    observed += result.items.length;
+    if (observed > MAX_PROVIDER_ITEMS) {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "AI Search inventory exceeds the bounded item ceiling");
+    }
     for (const item of result.items) {
       assertErasureIdentifier(item.id, "AI Search item ID");
       assertErasureText(item.key, "AI Search item key", 1024);
       if (item.key === parsed.key) found.push(item);
     }
-    if (result.cursor === undefined) break;
-    if (result.cursor.length === 0 || result.cursor === cursor) {
+    if (result.cursor === undefined) {
+      if (found.length > 1) {
+        erasureFail("ERASURE_IDENTITY_CONFLICT", "multiple AI Search items share one exact provider key");
+      }
+      return found;
+    }
+    const next = assertErasureText(result.cursor, "AI Search cursor", 2048);
+    if (next === cursor || seenCursors.has(next)) {
       erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "AI Search cursor did not advance", true);
     }
-    cursor = result.cursor;
+    seenCursors.add(next);
+    cursor = next;
   }
-  if (found.length > 1) {
-    erasureFail("ERASURE_IDENTITY_CONFLICT", "multiple AI Search items share one exact provider key");
-  }
-  return found;
+  erasureFail("ERASURE_CLOSURE_INCOMPLETE", "AI Search inventory exceeded the bounded page ceiling");
 }
 
 async function receipt(
@@ -83,13 +111,6 @@ export function createManagedSearchErasureLocationPort(
   return {
     async purge(request, _fence, target): Promise<PurgeAttemptReceipt> {
       const parsed = parseTarget(target);
-      if (parsed === null) {
-        return {
-          target_id: target.target_id,
-          disposition: "ALREADY_ABSENT",
-          receipt_ref: await receipt("delete-provider", request, target, "empty"),
-        };
-      }
       const found = await matches(namespace, parsed);
       if (found.length === 0) {
         return {
@@ -99,10 +120,13 @@ export function createManagedSearchErasureLocationPort(
         };
       }
       const matchedItem = found[0];
-    if (matchedItem === undefined) {
-      throw new Error("provider match disappeared before deletion");
-    }
-    await namespace.get(parsed.instance_id).delete(matchedItem.id);
+      if (matchedItem === undefined) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "provider match disappeared before deletion", true);
+      }
+      try { await namespace.get(parsed.instance_id).delete(matchedItem.id); }
+      catch (cause) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "AI Search delete settlement is unknown", true, cause);
+      }
       return {
         target_id: target.target_id,
         disposition: "DELETE_ACCEPTED",
@@ -112,7 +136,7 @@ export function createManagedSearchErasureLocationPort(
 
     async verifyAbsent(request, _fence, target): Promise<AbsenceVerificationReceipt> {
       const parsed = parseTarget(target);
-      const absent = parsed === null || (await matches(namespace, parsed)).length === 0;
+      const absent = (await matches(namespace, parsed)).length === 0;
       return {
         target_id: target.target_id,
         absent,

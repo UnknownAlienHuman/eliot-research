@@ -8,12 +8,13 @@ import {
   assertErasureIdentifier,
   erasureFail,
   isoFromMs,
-  stableErasureId,
 } from "./canonical.js";
 import type { BackupErasurePort, ErasureLocationPort } from "./types.js";
 
-function epoch(target: PurgeTarget): string | null {
-  if (target.target_kind === "LOCATION_EMPTY_PROOF") return null;
+function epoch(target: PurgeTarget): string {
+  if (target.target_kind !== "OBJECT") {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "unverified backup empty proof is not executable");
+  }
   const prefix = "backup:";
   if (!target.canonical_ref.startsWith(prefix)) {
     erasureFail("ERASURE_INPUT_INVALID", `unsupported backup erasure target ${target.canonical_ref}`);
@@ -34,16 +35,13 @@ export function createBackupErasureLocationPort(
   return {
     async purge(request, fence: ErasureFence, target): Promise<PurgeAttemptReceipt> {
       const epochRef = epoch(target);
-      if (epochRef === null) {
-        return {
-          target_id: target.target_id,
-          disposition: "ALREADY_ABSENT",
-          receipt_ref: await stableErasureId("delete-backup", target.target_id, "empty"),
-        };
-      }
       const erasureRef = `${request.erasure_ref.id}:${request.erasure_ref.revision}`;
-      const receipt = await dependencies.port.purge(epochRef, erasureRef);
-      await dependencies.database.prepare(
+      let receipt: { readonly receipt_ref: string };
+      try { receipt = await dependencies.port.purge(epochRef, erasureRef); }
+      catch (cause) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup delete settlement is unknown", true, cause);
+      }
+      const write = await dependencies.database.prepare(
         "INSERT INTO backup_purge_obligation(erasure_id,erasure_revision,backup_epoch_id," +
         "target_id,state,delete_receipt_ref,updated_at) VALUES (?1,?2,?3,?4,'PENDING',?5,?6) " +
         "ON CONFLICT(erasure_id,erasure_revision,backup_epoch_id) DO UPDATE SET " +
@@ -56,6 +54,9 @@ export function createBackupErasureLocationPort(
         receipt.receipt_ref,
         isoFromMs(clock()),
       ).run();
+      if ((write as { readonly success?: boolean }).success === false) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup purge obligation did not settle", true);
+      }
       return {
         target_id: target.target_id,
         disposition: "DELETE_ACCEPTED",
@@ -65,16 +66,13 @@ export function createBackupErasureLocationPort(
 
     async verifyAbsent(request, fence, target): Promise<AbsenceVerificationReceipt> {
       const epochRef = epoch(target);
-      if (epochRef === null) {
-        return {
-          target_id: target.target_id,
-          absent: true,
-          receipt_ref: await stableErasureId("absence-backup", target.target_id, "empty"),
-        };
-      }
       const erasureRef = `${request.erasure_ref.id}:${request.erasure_ref.revision}`;
-      const result = await dependencies.port.verifyAbsent(epochRef, erasureRef);
-      await dependencies.database.prepare(
+      let result: { readonly absent: boolean; readonly receipt_ref: string };
+      try { result = await dependencies.port.verifyAbsent(epochRef, erasureRef); }
+      catch (cause) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup absence readback failed", true, cause);
+      }
+      const write = await dependencies.database.prepare(
         "UPDATE backup_purge_obligation SET state=?5,absence_receipt_ref=?6,updated_at=?7 " +
         "WHERE erasure_id=?1 AND erasure_revision=?2 AND backup_epoch_id=?3 AND target_id=?4",
       ).bind(
@@ -86,6 +84,9 @@ export function createBackupErasureLocationPort(
         result.receipt_ref,
         isoFromMs(clock()),
       ).run();
+      if ((write as { readonly success?: boolean }).success === false) {
+        erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "backup absence receipt did not settle", true);
+      }
       return {
         target_id: target.target_id,
         absent: result.absent,
