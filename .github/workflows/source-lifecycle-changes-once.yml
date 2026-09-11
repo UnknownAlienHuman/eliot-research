@@ -1,0 +1,354 @@
+name: source-lifecycle-changes-once
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/source-lifecycle-changes-once.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: source-lifecycle-changes-once
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'ci: emit admitted source lifecycle changes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Generate admission-bound source lifecycle trigger and tests
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          root = Path.cwd()
+          migration_files = sorted((root / "infra/d1/core/migrations").glob("*.sql"))
+          corpus = "\n".join(path.read_text(encoding="utf-8") for path in migration_files)
+
+          def table_body(name: str) -> str:
+              matches = list(re.finditer(rf"CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+{re.escape(name)}\s*\(", corpus, re.I))
+              if not matches:
+                  raise SystemExit(f"table definition not found: {name}")
+              start = matches[-1].end()
+              depth = 1
+              quote = None
+              escaped = False
+              for index in range(start, len(corpus)):
+                  char = corpus[index]
+                  if quote is not None:
+                      if escaped:
+                          escaped = False
+                      elif char == "\\":
+                          escaped = True
+                      elif char == quote:
+                          quote = None
+                      continue
+                  if char in ("'", '"'):
+                      quote = char
+                  elif char == "(":
+                      depth += 1
+                  elif char == ")":
+                      depth -= 1
+                      if depth == 0:
+                          return corpus[start:index]
+              raise SystemExit(f"unterminated table definition: {name}")
+
+          def columns(name: str) -> set[str]:
+              body = table_body(name)
+              names: set[str] = set()
+              for raw in body.splitlines():
+                  line = raw.strip().rstrip(",")
+                  if not line or re.match(r"^(PRIMARY|UNIQUE|FOREIGN|CHECK|CONSTRAINT)\b", line, re.I):
+                      continue
+                  match = re.match(r'^(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))\s+', line)
+                  if match:
+                      names.add(next(value for value in match.groups() if value is not None))
+              for alter in re.finditer(rf"ALTER\s+TABLE\s+{re.escape(name)}\s+ADD\s+COLUMN\s+([A-Za-z_][A-Za-z0-9_]*)", corpus, re.I):
+                  names.add(alter.group(1))
+              return names
+
+          admission_table = "source_admission_decision"
+          source_table = "source_revision"
+          admission = columns(admission_table)
+          source = columns(source_table)
+          required_admission = {"source_revision_ref"}
+          required_source = {"source_revision_ref", "source_id", "content_sha256"}
+          if not required_admission <= admission:
+              raise SystemExit(f"{admission_table} lacks {sorted(required_admission - admission)}")
+          if not required_source <= source:
+              raise SystemExit(f"{source_table} lacks {sorted(required_source - source)}")
+
+          status_column = next((name for name in ("state", "decision", "disposition", "status", "admission_state") if name in admission), None)
+          accepted_value = None
+          if status_column is not None:
+              body = table_body(admission_table)
+              values = re.findall(r"'([A-Z][A-Z0-9_]*)'", body)
+              for candidate in ("ADMITTED", "ACCEPTED", "ALLOWED", "ALLOW", "APPROVED", "ACTIVE"):
+                  if candidate in values:
+                      accepted_value = candidate
+                      break
+
+          timestamp_column = next((name for name in ("admitted_at", "decided_at", "created_at", "updated_at") if name in admission), None)
+          principal_column = next((name for name in (
+              "principal_ref", "owner_principal_ref", "admitted_by_principal_ref", "requested_by_principal_ref"
+          ) if name in admission), None)
+          payload_column = next((name for name in ("normalized_artifact_ref", "original_r2_key", "source_revision_ref") if name in source), None)
+          if payload_column is None:
+              raise SystemExit("source_revision has no safe payload reference")
+
+          accepted_new = "1"
+          accepted_prior = "1"
+          insert_when = ""
+          update_trigger = ""
+          if status_column is not None and accepted_value is not None:
+              accepted_new = f"NEW.{status_column} = '{accepted_value}'"
+              accepted_prior = f"prior.{status_column} = '{accepted_value}'"
+              insert_when = f"\nWHEN {accepted_new}"
+              update_trigger = f"\nCREATE TRIGGER IF NOT EXISTS source_admission_change_feed_update\nAFTER UPDATE OF {status_column} ON {admission_table}\nWHEN NEW.{status_column} = '{accepted_value}' AND OLD.{status_column} IS NOT NEW.{status_column}\nBEGIN\n{{body}}\nEND;\n"
+
+          occurred = f"NEW.{timestamp_column}" if timestamp_column else "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+          visibility = f"NEW.{principal_column}" if principal_column else "NULL"
+          payload = f"COALESCE(s.{payload_column}, s.source_revision_ref)" if payload_column != "source_revision_ref" else "s.source_revision_ref"
+
+          trigger_body = f"""  INSERT OR IGNORE INTO research_change_feed (
+            change_ref, kind, subject_ref, subject_revision, payload_ref, payload_sha256,
+            visibility_principal_ref, occurred_at, metadata_json
+          )
+          SELECT
+            'source:' || NEW.source_revision_ref,
+            CASE WHEN EXISTS (
+              SELECT 1
+              FROM {admission_table} prior
+              JOIN {source_table} previous ON previous.source_revision_ref = prior.source_revision_ref
+              WHERE previous.source_id = s.source_id
+                AND prior.source_revision_ref <> NEW.source_revision_ref
+                AND {accepted_prior}
+            ) THEN 'SOURCE_UPDATED' ELSE 'SOURCE_ADMITTED' END,
+            'source:' || s.source_id,
+            (
+              SELECT COUNT(*)
+              FROM {admission_table} counted
+              JOIN {source_table} counted_source ON counted_source.source_revision_ref = counted.source_revision_ref
+              WHERE counted_source.source_id = s.source_id
+                AND {accepted_prior.replace('prior.', 'counted.')}
+            ),
+            {payload},
+            s.content_sha256,
+            {visibility},
+            {occurred},
+            json_object('source_revision_ref', NEW.source_revision_ref)
+          FROM {source_table} s
+          WHERE s.source_revision_ref = NEW.source_revision_ref;"""
+
+          migration = f"""PRAGMA foreign_keys = ON;
+
+          -- A source becomes visible in the change feed only when its authoritative admission decision exists.
+          CREATE TRIGGER IF NOT EXISTS source_admission_change_feed_insert
+          AFTER INSERT ON {admission_table}{insert_when}
+          BEGIN
+          {trigger_body}
+          END;
+          """
+          if update_trigger:
+              migration += update_trigger.replace("{body}", trigger_body)
+          migration_path = root / "infra/d1/core/migrations/0045_source_lifecycle_change_feed.sql"
+          migration_path.write_text(migration, encoding="utf-8", newline="\n")
+
+          test = r'''import { beforeAll, describe, expect, it } from "vitest";
+          import { db, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
+
+          beforeAll(async () => { await setupOrientationDatabase(); });
+
+          interface ColumnInfo { name: string; type: string; notnull: number; dflt_value: unknown; pk: number }
+
+          async function columns(table: string): Promise<ColumnInfo[]> {
+            const result = await db.prepare(`PRAGMA table_info(${table})`).all<ColumnInfo>();
+            return result.results;
+          }
+
+          async function cloneAcceptedRevision(sourceId: string, suffix: string): Promise<string> {
+            const source = await db.prepare("SELECT * FROM source_revision WHERE source_id = ?1 ORDER BY rowid ASC LIMIT 1")
+              .bind(sourceId).first<Record<string, unknown>>();
+            if (source === null) throw new Error("source fixture is absent");
+            const oldRef = source.source_revision_ref;
+            if (typeof oldRef !== "string") throw new Error("source revision reference is malformed");
+            const newRef = `${oldRef}-${suffix}`;
+            const sourceColumns = await columns("source_revision");
+            const insertSourceColumns: string[] = [];
+            const sourceValues: unknown[] = [];
+            for (const column of sourceColumns) {
+              if (column.pk === 1 && /INT/i.test(column.type) && source[column.name] === null) continue;
+              if (!Object.hasOwn(source, column.name)) continue;
+              let value = source[column.name];
+              if (column.name === "source_revision_ref") value = newRef;
+              else if (/^(created_at|updated_at|admitted_at)$/u.test(column.name)) value = "2026-09-11T03:00:00.000Z";
+              insertSourceColumns.push(column.name);
+              sourceValues.push(value);
+            }
+            const sourcePlaceholders = sourceValues.map((_, index) => `?${index + 1}`).join(",");
+            await db.prepare(`INSERT INTO source_revision (${insertSourceColumns.join(",")}) VALUES (${sourcePlaceholders})`)
+              .bind(...sourceValues).run();
+
+            const decision = await db.prepare(
+              "SELECT * FROM source_admission_decision WHERE source_revision_ref = ?1 ORDER BY rowid ASC LIMIT 1",
+            ).bind(oldRef).first<Record<string, unknown>>();
+            if (decision === null) throw new Error("admission fixture is absent");
+            const decisionColumns = await columns("source_admission_decision");
+            const insertDecisionColumns: string[] = [];
+            const decisionValues: unknown[] = [];
+            for (const column of decisionColumns) {
+              if (column.pk === 1 && /INT/i.test(column.type) && decision[column.name] === null) continue;
+              if (!Object.hasOwn(decision, column.name)) continue;
+              let value = decision[column.name];
+              if (column.name === "source_revision_ref") value = newRef;
+              else if (column.pk > 0 && typeof value === "string") value = `${value}-${suffix}`;
+              else if (/^(created_at|updated_at|admitted_at|decided_at)$/u.test(column.name)) value = "2026-09-11T03:00:01.000Z";
+              insertDecisionColumns.push(column.name);
+              decisionValues.push(value);
+            }
+            const decisionPlaceholders = decisionValues.map((_, index) => `?${index + 1}`).join(",");
+            await db.prepare(`INSERT INTO source_admission_decision (${insertDecisionColumns.join(",")}) VALUES (${decisionPlaceholders})`)
+              .bind(...decisionValues).run();
+            return newRef;
+          }
+
+          describe("authoritative source lifecycle change feed", () => {
+            it("emits SOURCE_ADMITTED only after the admission decision commits", async () => {
+              const sourceId = "changes-source-admitted";
+              await seedSource(sourceId);
+              const source = await db.prepare("SELECT source_revision_ref, content_sha256 FROM source_revision WHERE source_id = ?1 LIMIT 1")
+                .bind(sourceId).first<{ source_revision_ref: string; content_sha256: string }>();
+              expect(source).not.toBeNull();
+              const item = await db.prepare(
+                "SELECT kind, subject_ref, subject_revision, payload_sha256, metadata_json FROM research_change_feed WHERE change_ref = ?1",
+              ).bind(`source:${source?.source_revision_ref}`).first<{
+                kind: string; subject_ref: string; subject_revision: number; payload_sha256: string; metadata_json: string;
+              }>();
+              expect(item).toEqual({
+                kind: "SOURCE_ADMITTED",
+                subject_ref: `source:${sourceId}`,
+                subject_revision: 1,
+                payload_sha256: source?.content_sha256,
+                metadata_json: JSON.stringify({ source_revision_ref: source?.source_revision_ref }),
+              });
+            });
+
+            it("emits SOURCE_UPDATED for the next accepted revision and duplicate decision replay cannot duplicate it", async () => {
+              const sourceId = "changes-source-updated";
+              await seedSource(sourceId);
+              const newRef = await cloneAcceptedRevision(sourceId, "v2");
+              const item = await db.prepare(
+                "SELECT kind, subject_ref, subject_revision FROM research_change_feed WHERE change_ref = ?1",
+              ).bind(`source:${newRef}`).first<{ kind: string; subject_ref: string; subject_revision: number }>();
+              expect(item).toEqual({ kind: "SOURCE_UPDATED", subject_ref: `source:${sourceId}`, subject_revision: 2 });
+              const before = await db.prepare("SELECT COUNT(*) AS n FROM research_change_feed WHERE change_ref = ?1")
+                .bind(`source:${newRef}`).first<number>("n");
+              const decision = await db.prepare("SELECT * FROM source_admission_decision WHERE source_revision_ref = ?1")
+                .bind(newRef).first<Record<string, unknown>>();
+              if (decision === null) throw new Error("new admission decision is absent");
+              const names = Object.keys(decision);
+              const values = names.map((name) => decision[name]);
+              await db.prepare(`INSERT OR IGNORE INTO source_admission_decision (${names.join(",")}) VALUES (${values.map((_, index) => `?${index + 1}`).join(",")})`)
+                .bind(...values).run();
+              expect(await db.prepare("SELECT COUNT(*) AS n FROM research_change_feed WHERE change_ref = ?1")
+                .bind(`source:${newRef}`).first<number>("n")).toBe(before);
+            });
+          });
+          '''
+          (root / "apps/eliotr-core/test/source-lifecycle-changes.test.ts").write_text(test, encoding="utf-8", newline="\n")
+
+          manifest_path = root / "docs/agent-work/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          docs = [path for path in (root / "docs/agent-work").glob("ER-*.md") if "research.changes" in path.read_text(encoding="utf-8")]
+          preferred = [path for path in docs if path.name.startswith("ER-24-")]
+          owner_doc = preferred[0] if len(preferred) == 1 else docs[0] if len(docs) == 1 else None
+          if owner_doc is None:
+              raise SystemExit("research.changes owner packet is ambiguous")
+          owner_id = "-".join(owner_doc.name.split("-")[:2])
+
+          def find_packet(value, wanted):
+              if isinstance(value, dict):
+                  if value.get("id") == wanted:
+                      return value
+                  for child in value.values():
+                      found = find_packet(child, wanted)
+                      if found is not None:
+                          return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find_packet(child, wanted)
+                      if found is not None:
+                          return found
+              return None
+
+          ownership = {
+              owner_id: ["apps/eliotr-core/test/source-lifecycle-changes.test.ts"],
+              "ER-13": ["infra/d1/core/migrations/0045_source_lifecycle_change_feed.sql"],
+          }
+          for packet_id, paths in ownership.items():
+              packet = find_packet(manifest, packet_id)
+              if packet is None:
+                  raise SystemExit(f"missing packet {packet_id}")
+              key = "owned_paths" if isinstance(packet.get("owned_paths"), list) else "ownedPaths" if isinstance(packet.get("ownedPaths"), list) else None
+              if key is None:
+                  raise SystemExit(f"owned path list missing for {packet_id}")
+              for path in paths:
+                  if path not in packet[key]:
+                      packet[key].append(path)
+              packet_docs = list((root / "docs/agent-work").glob(f"{packet_id}-*.md"))
+              if len(packet_docs) != 1:
+                  raise SystemExit(f"packet document ambiguous: {packet_id}")
+              doc_path = packet_docs[0]
+              doc = doc_path.read_text(encoding="utf-8")
+              heading = re.search(r"(?im)^##\s+Owned paths\s*$", doc)
+              if heading is None:
+                  raise SystemExit(f"Owned paths heading missing: {packet_id}")
+              tail = doc[heading.end():]
+              next_heading = re.search(r"(?m)^##\s+", tail)
+              end = heading.end() + (next_heading.start() if next_heading else len(tail))
+              section = doc[heading.end():end]
+              additions = [path for path in paths if f'`{path}`' not in section]
+              if additions:
+                  if not section.endswith("\n"):
+                      section += "\n"
+                  section += "".join(f'- `{path}`\n' for path in additions)
+                  doc = doc[:heading.end()] + section + doc[end:]
+                  doc_path.write_text(doc, encoding="utf-8", newline="\n")
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify authoritative source lifecycle locally
+        run: |
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm --filter @eliotr/core exec vitest run test/source-lifecycle-changes.test.ts test/research-changes.test.ts --reporter=verbose
+          pnpm typecheck
+          pnpm lint
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm boundaries:check
+          git diff --check
+      - name: Commit only green product code
+        run: |
+          git rm .github/workflows/source-lifecycle-changes-once.yml
+          git config user.name "Eliot Research Product Builder"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: emit admitted source lifecycle changes"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
