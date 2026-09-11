@@ -1,0 +1,199 @@
+name: backend-product-finalize-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/backend-product-finalize-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eliot-main-product-write
+  cancel-in-progress: true
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Fetch all retained implementation history
+        run: git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*'
+      - name: Restore one-shot implementation scripts when prior gates cleaned them
+        shell: bash
+        run: |
+          restore_script() {
+            file="$1"
+            if test -f "$file"; then return 0; fi
+            commit="$(git log --all --format=%H -- "$file" | head -n1)"
+            if test -z "$commit"; then
+              echo "No retained implementation script for $file" >&2
+              return 1
+            fi
+            mkdir -p "$(dirname "$file")"
+            git show "$commit:$file" > "$file"
+          }
+          if test ! -f apps/eliotr-core/src/wiki-service.ts; then
+            restore_script scripts/materialize-wiki-once.py
+            restore_script scripts/harden-wiki-once.py
+          fi
+          if grep -q 'changes: () => unavailable("research.changes")' apps/eliotr-core/src/composition-root.ts; then
+            restore_script scripts/recover-research-changes-once.py
+            restore_script scripts/repair-research-changes-contour-once.py
+          fi
+          if ! grep -q 'createAuthorityBoundResearchChanges' apps/eliotr-core/src/composition-root.ts; then
+            restore_script scripts/harden-research-changes-authority-once.py
+          fi
+          restore_script scripts/promote-research-v3-once.py
+      - name: Finish durable Wiki product if still absent
+        shell: bash
+        run: |
+          if test ! -f apps/eliotr-core/src/wiki-service.ts; then
+            python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/harden-wiki-once.py")
+          source = path.read_text(encoding="utf-8")
+          replacements = [
+              (
+                  'commit_end = store.index("        ];", commit_start) + len("        ];")',
+                  'batch_start = store.index("try { await database.batch(statements);", commit_start)\ncommit_end = store.rfind("\\n", commit_start, batch_start) + 1',
+              ),
+              (
+                  'store = store[:commit_start] + statements + store[commit_end:]',
+                  'store = store[:commit_start] + statements + "\\n" + store[commit_end:]',
+              ),
+              ("race_anchor = '''      expect(", "race_anchor = '''    expect("),
+              (
+                  ')\n        .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });',
+                  ')\n      .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });',
+              ),
+          ]
+          for old, new in replacements:
+              source = source.replace(old, new, 1)
+          path.write_text(source, encoding="utf-8", newline="\n")
+          PY
+            python3 scripts/materialize-wiki-once.py
+            python3 scripts/harden-wiki-once.py
+          fi
+      - name: Recover and compose durable research changes feed
+        shell: bash
+        run: |
+          if grep -q 'changes: () => unavailable("research.changes")' apps/eliotr-core/src/composition-root.ts; then
+            python3 scripts/recover-research-changes-once.py
+            python3 scripts/repair-research-changes-contour-once.py
+          fi
+      - name: Bind research changes cursor to current authority
+        shell: bash
+        run: |
+          if ! grep -q 'createAuthorityBoundResearchChanges' apps/eliotr-core/src/composition-root.ts; then
+            python3 scripts/harden-research-changes-authority-once.py
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for name in (".env.example", "apps/eliotr-core/.dev.vars.example"):
+              path = Path(name)
+              text = path.read_text(encoding="utf-8")
+              if "CHANGES_CURSOR_HMAC_SECRET=" not in text:
+                  if text and not text.endswith("\n"):
+                      text += "\n"
+                  text += "CHANGES_CURSOR_HMAC_SECRET=replace-with-at-least-32-random-bytes\n"
+                  path.write_text(text, encoding="utf-8", newline="\n")
+
+          composition_path = Path("apps/eliotr-core/src/composition-root.ts")
+          composition = composition_path.read_text(encoding="utf-8")
+          field = "    research_changes_cursor_signing_configured: Boolean(env.CHANGES_CURSOR_HMAC_SECRET),\n"
+          if field not in composition:
+              anchor = "    ingest_live_qualified: false,\n"
+              if anchor not in composition:
+                  raise SystemExit("capability field anchor missing")
+              composition = composition.replace(anchor, field + anchor, 1)
+          composition_path.write_text(composition, encoding="utf-8", newline="\n")
+
+          fixture_path = Path("apps/eliotr-core/test/orientation-fixture.ts")
+          if fixture_path.exists():
+              fixture = fixture_path.read_text(encoding="utf-8")
+              if "CHANGES_CURSOR_HMAC_SECRET:" not in fixture:
+                  anchor = "  DEPLOYMENT_GENERATION:"
+                  index = fixture.find(anchor)
+                  if index >= 0:
+                      line_end = fixture.find("\n", index)
+                      fixture = (
+                          fixture[:line_end + 1]
+                          + '  CHANGES_CURSOR_HMAC_SECRET: "orientation-test-research-changes-secret-32-bytes",\n'
+                          + fixture[line_end + 1:]
+                      )
+                      fixture_path.write_text(fixture, encoding="utf-8", newline="\n")
+          PY
+      - name: Promote creation of new backend runs to v3
+        run: python3 scripts/promote-research-v3-once.py
+      - name: Update narrow implementation wording
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("docs/implementation/gap-register.md")
+          if path.exists():
+              text = path.read_text(encoding="utf-8")
+              text = text.replace(
+                  "Public run creation still selects v2, so the live source-to-answer UI loop remains open.",
+                  "Backend creation of new runs selects v3; the Astro source-to-answer browser loop remains open and is outside this checkpoint.",
+              )
+              text = text.replace(
+                  "Public v3 selection, semantic verification, other governed stages and notification/retention/restore remain incomplete",
+                  "Backend v3 selection is active; semantic verification, other governed stages and notification/retention/restore remain incomplete",
+              )
+              path.write_text(text, encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Run focused product tests
+        run: |
+          pnpm --filter @eliotr/research test
+          pnpm --filter @eliotr/core exec vitest run test/research-changes-authority.test.ts
+          pnpm --filter @eliotr/interfaces typecheck
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Run complete offline backend gate
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
+      - name: Commit verified backend product checkpoint to main
+        run: |
+          rm -f .github/workflows/backend-product-finalize-once.yml
+          rm -f .github/workflows/wiki-product-once.yml
+          rm -f .github/workflows/research-changes-recovery-once.yml
+          rm -f .github/workflows/research-changes-authority-gate-once.yml
+          rm -f .github/workflows/research-changes-authority-once.yml
+          rm -f .github/workflows/research-v3-promotion-once.yml
+          rm -f scripts/materialize-wiki-once.py scripts/harden-wiki-once.py
+          rm -f scripts/recover-research-changes-once.py
+          rm -f scripts/repair-research-changes-contour-once.py
+          rm -f scripts/harden-research-changes-authority-once.py
+          rm -f scripts/promote-research-v3-once.py
+          rm -f infra/verification/research-changes-authority-audit.json
+          git add -A
+          git diff --cached --check
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git commit -m "feat: finalize local Wiki changes and research v3 backend"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
