@@ -48,7 +48,9 @@ jobs:
           new_sha = 'const stable = Uint8Array.from(bytes);\n  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", stable.buffer)), (byte) => byte.toString(16).padStart(2, "0")).join("");'
           if old_sha not in store:
               raise SystemExit("Wiki SHA-256 type anchor missing")
-          store_path.write_text(store.replace(old_sha, new_sha, 1), encoding="utf-8", newline="\n")
+          store = store.replace(old_sha, new_sha, 1)
+          store = store.replace("  type WikiImmutableRevisionReceipt,\n", "", 1)
+          store_path.write_text(store, encoding="utf-8", newline="\n")
 
           http_path = Path("apps/eliotr-core/src/http.ts")
           http = http_path.read_text(encoding="utf-8")
