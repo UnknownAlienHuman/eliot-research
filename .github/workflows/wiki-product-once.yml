@@ -54,6 +54,7 @@ jobs:
           PY
           python3 scripts/materialize-wiki-once.py
           python3 scripts/harden-wiki-once.py
+          python3 scripts/fix-wiki-cas-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
       - name: Verify without Astro, Qdrant or external services
@@ -71,7 +72,7 @@ jobs:
           git diff --check
       - name: Commit verified product code to main
         run: |
-          git rm .github/workflows/wiki-product-once.yml scripts/materialize-wiki-once.py scripts/harden-wiki-once.py
+          git rm .github/workflows/wiki-product-once.yml scripts/materialize-wiki-once.py scripts/harden-wiki-once.py scripts/fix-wiki-cas-once.py
           git diff --check
           git config user.name "Eliot Research Product"
           git config user.email "eliot-product@users.noreply.github.com"
