@@ -69,6 +69,8 @@ jobs:
           python3 scripts/fix-wiki-cas-once.py
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
+      - name: Build and typecheck workspace project references
+        run: pnpm typecheck
       - name: Capture strict core test typecheck
         shell: bash
         run: |
@@ -108,8 +110,6 @@ jobs:
         run: pnpm --filter @eliotr/interfaces typecheck
       - name: Core tests
         run: pnpm --filter @eliotr/core test
-      - name: Workspace typecheck
-        run: pnpm typecheck
       - name: Workspace lint
         run: pnpm lint
       - name: Boundary checks
