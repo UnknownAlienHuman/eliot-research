@@ -1,0 +1,144 @@
+name: research-changes-product-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/research-changes-product-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-product-serialization
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Wait for the serialized Wiki checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 80); do
+            git fetch origin main
+            if git cat-file -e origin/main:apps/eliotr-core/src/wiki-service.ts 2>/dev/null \
+              && ! git cat-file -e origin/main:.github/workflows/wiki-product-once.yml 2>/dev/null; then
+              git reset --hard origin/main
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Wiki checkpoint did not settle within 20 minutes" >&2
+          exit 1
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Extract the retained changes implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show 7a9a0578d336323945d94f608a45c680a26d3f40:.github/workflows/research-changes-slice-once.yml > /tmp/research-changes-history.yml
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          source = Path('/tmp/research-changes-history.yml').read_text(encoding='utf-8').splitlines()
+          blocks = []
+          index = 0
+          while index < len(source):
+              match = re.match(r'^(\s*)run:\s*\|[-+]?\s*$', source[index])
+              if match is None:
+                  index += 1
+                  continue
+              base = len(match.group(1))
+              index += 1
+              body = []
+              while index < len(source):
+                  line = source[index]
+                  if line.strip() and len(line) - len(line.lstrip()) <= base:
+                      break
+                  body.append(line[base + 2:] if len(line) >= base + 2 else '')
+                  index += 1
+              script = '\n'.join(body).rstrip() + '\n'
+              score = (
+                  script.count('cat >') * 20
+                  + script.count('research.changes') * 10
+                  + script.count('research_change') * 10
+                  + script.count('changes')
+              )
+              if 'git push' not in script and 'git commit' not in script:
+                  blocks.append((score, len(script), script))
+          if not blocks:
+              raise SystemExit('No executable run blocks found in retained changes workflow')
+          score, size, selected = max(blocks, key=lambda item: (item[0], item[1]))
+          if score < 40 or 'research.changes' not in selected:
+              raise SystemExit(f'Retained changes implementation was not identified safely: score={score}, bytes={size}')
+          forbidden = ['wrangler ', 'qdrant', 'astro build', 'git push', 'git commit']
+          hits = [token for token in forbidden if token in selected.lower()]
+          if hits:
+              raise SystemExit(f'Retained implementation contains forbidden effects: {hits}')
+          Path('/tmp/materialize-research-changes.sh').write_text(
+              'set -euo pipefail\n' + selected,
+              encoding='utf-8',
+          )
+          print(f'extracted retained changes implementation: score={score}, bytes={size}')
+          PY
+          bash /tmp/materialize-research-changes.sh
+      - name: Enforce changes-feed authority invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -RIl --include='*.ts' 'research.changes' apps/eliotr-core/src packages | wc -l)" -gt 0
+          grep -RIl --include='*.ts' 'HMAC\|crypto.subtle.sign\|createHmac' apps/eliotr-core/src packages >/tmp/changes-hmac-files
+          test -s /tmp/changes-hmac-files
+          for field in principal_ref client_class credential_generation deployment_generation expires_at; do
+            grep -RIl --include='*.ts' "$field" $(cat /tmp/changes-hmac-files) >/dev/null
+          done
+          if grep -RIn --include='*.ts' 'changes(context.*allowedScopes\|allowedScopes.*changes' packages/interfaces apps/eliotr-core/src; then
+            echo 'research.changes still accepts caller-supplied authorization scope' >&2
+            exit 1
+          fi
+          if grep -RIn --include='*.ts' 'proposeWiki:.*unavailable\|changes:.*unavailable("research.changes")' apps/eliotr-core/src/composition-root.ts; then
+            echo 'product composition still contains a Wiki/changes placeholder' >&2
+            exit 1
+          fi
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify the product locally without Astro, Qdrant or providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @eliotr/interfaces typecheck
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm typecheck
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
+      - name: Commit the verified changes feed to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/research-changes-product-once.yml
+          git diff --check
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: implement authenticated durable research changes"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
