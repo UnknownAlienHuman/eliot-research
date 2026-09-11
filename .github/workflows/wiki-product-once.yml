@@ -76,7 +76,34 @@ jobs:
       - name: Core tests
         run: pnpm --filter @eliotr/core test
       - name: Strict core test typecheck
-        run: pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false 2>&1 | tee /tmp/wiki-strict-typecheck.log
+      - name: Pack exact generated checkout and diagnostics
+        if: always()
+        shell: bash
+        run: |
+          tar \
+            --exclude=.git \
+            --exclude=node_modules \
+            --exclude='*/node_modules' \
+            --exclude=dist \
+            --exclude='*/dist' \
+            --exclude=.wrangler \
+            --exclude='*/.wrangler' \
+            -czf /tmp/wiki-generated-checkout.tgz .
+          test -f /tmp/wiki-strict-typecheck.log || : > /tmp/wiki-strict-typecheck.log
+      - name: Upload exact generated checkout
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-generated-checkout-${{ github.sha }}
+          path: |
+            /tmp/wiki-generated-checkout.tgz
+            /tmp/wiki-strict-typecheck.log
+          if-no-files-found: error
+          retention-days: 1
       - name: Workspace typecheck
         run: pnpm typecheck
       - name: Workspace lint
