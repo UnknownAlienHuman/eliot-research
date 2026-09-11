@@ -33,24 +33,36 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("scripts/harden-wiki-once.py")
-          source = path.read_text(encoding="utf-8")
-          old_boundary = 'commit_end = store.index("        ];", commit_start) + len("        ];")'
-          new_boundary = 'batch_start = store.index("try { await database.batch(statements);", commit_start)\ncommit_end = store.rfind("\\n", commit_start, batch_start) + 1'
-          old_join = 'store = store[:commit_start] + statements + store[commit_end:]'
-          new_join = 'store = store[:commit_start] + statements + "\\n" + store[commit_end:]'
-          old_race_start = "race_anchor = '''      expect("
-          new_race_start = "race_anchor = '''    expect("
-          old_race_end = ')\n        .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });'
-          new_race_end = ')\n      .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });'
-          anchors = [old_boundary, old_join, old_race_start, old_race_end]
-          if any(anchor not in source for anchor in anchors):
-              raise SystemExit("Wiki hardener anchors missing")
-          source = source.replace(old_boundary, new_boundary, 1)
-          source = source.replace(old_join, new_join, 1)
-          source = source.replace(old_race_start, new_race_start, 1)
-          source = source.replace(old_race_end, new_race_end, 1)
-          path.write_text(source, encoding="utf-8", newline="\n")
+
+          hardener = Path("scripts/harden-wiki-once.py")
+          source = hardener.read_text(encoding="utf-8")
+          replacements = {
+            'commit_end = store.index("        ];", commit_start) + len("        ];")':
+              'batch_start = store.index("try { await database.batch(statements);", commit_start)\ncommit_end = store.rfind("\\n", commit_start, batch_start) + 1',
+            'store = store[:commit_start] + statements + store[commit_end:]':
+              'store = store[:commit_start] + statements + "\\n" + store[commit_end:]',
+            "race_anchor = '''      expect(": "race_anchor = '''    expect(",
+            ')\n        .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });':
+              ')\n      .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });',
+          }
+          for old, new in replacements.items():
+            if old not in source:
+              raise SystemExit(f"Wiki hardener anchor missing: {old}")
+            source = source.replace(old, new, 1)
+          hardener.write_text(source, encoding="utf-8", newline="\n")
+
+          cas = Path("scripts/fix-wiki-cas-once.py")
+          source = cas.read_text(encoding="utf-8")
+          source = source.replace(
+            'start = source.index("      async commitHeadAndOutbox(")',
+            'start = source.index("async commitHeadAndOutbox(")',
+            1,
+          ).replace(
+            'end = source.index("      async readHead(", start)',
+            'end = source.index("async readHead(", start)',
+            1,
+          )
+          cas.write_text(source, encoding="utf-8", newline="\n")
           PY
           python3 scripts/materialize-wiki-once.py
           python3 scripts/harden-wiki-once.py
