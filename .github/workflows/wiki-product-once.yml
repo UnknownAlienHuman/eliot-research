@@ -39,13 +39,18 @@ jobs:
           new_boundary = 'batch_start = store.index("try { await database.batch(statements);", commit_start)\ncommit_end = store.rfind("\\n", commit_start, batch_start) + 1'
           old_join = 'store = store[:commit_start] + statements + store[commit_end:]'
           new_join = 'store = store[:commit_start] + statements + "\\n" + store[commit_end:]'
-          if old_boundary not in source or old_join not in source:
-              raise SystemExit("Wiki CAS hardener anchors missing")
-          path.write_text(
-              source.replace(old_boundary, new_boundary, 1).replace(old_join, new_join, 1),
-              encoding="utf-8",
-              newline="\n",
-          )
+          old_race_start = "race_anchor = '''      expect("
+          new_race_start = "race_anchor = '''    expect("
+          old_race_end = ')\n        .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });'
+          new_race_end = ')\n      .toMatchObject({ code: "WIKI_HEAD_CONFLICT" });'
+          anchors = [old_boundary, old_join, old_race_start, old_race_end]
+          if any(anchor not in source for anchor in anchors):
+              raise SystemExit("Wiki hardener anchors missing")
+          source = source.replace(old_boundary, new_boundary, 1)
+          source = source.replace(old_join, new_join, 1)
+          source = source.replace(old_race_start, new_race_start, 1)
+          source = source.replace(old_race_end, new_race_end, 1)
+          path.write_text(source, encoding="utf-8", newline="\n")
           PY
           python3 scripts/materialize-wiki-once.py
           python3 scripts/harden-wiki-once.py
