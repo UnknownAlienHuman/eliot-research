@@ -1,0 +1,429 @@
+name: artifact-accepted-read-once
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/artifact-accepted-read-once.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: artifact-accepted-read-once
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'ci: implement accepted artifact read path'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Write exact accepted-artifact read service
+        run: |
+          cat > apps/eliotr-core/src/artifact-accepted-read.ts <<'EOF'
+          import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+          import { CatalogInputError } from "./catalog-service.js";
+          import type { Env } from "./env.js";
+
+          export const ARTIFACT_ACCEPTED_READ_PROTOCOL = "eliotr.artifact-accepted-read.v1";
+          const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9:._/@%+-]{0,511}$/u;
+          const DIGEST = /^[a-f0-9]{64}$/u;
+          const MAX_INLINE_BYTES = 512 * 1024;
+          const MAX_STREAM_CHUNKS = 4096;
+
+          interface AcceptedRow {
+            artifact_ref: string;
+            revision: number;
+            origin_change_ref: string;
+            payload_ref: string;
+            payload_sha256: string;
+            review_id: string;
+            review_revision: number;
+            reviewer_ref: string;
+            accepted_at: string;
+            head_revision: number | null;
+            head_payload_ref: string | null;
+            head_payload_sha256: string | null;
+          }
+
+          export interface AcceptedArtifactReadResult {
+            readonly protocol: typeof ARTIFACT_ACCEPTED_READ_PROTOCOL;
+            readonly artifact_ref: string;
+            readonly revision: number;
+            readonly is_head: boolean;
+            readonly origin_change_ref: string;
+            readonly payload_ref: string;
+            readonly payload_sha256: string;
+            readonly review_ref: { readonly id: string; readonly revision: number };
+            readonly accepted_at: string;
+            readonly payload_included: boolean;
+            readonly payload?: unknown;
+          }
+
+          function fail(code: string, message: string, status = 400, retryable = false): never {
+            throw new CatalogInputError(code, message, status, retryable);
+          }
+
+          function ref(value: unknown, label: string): string {
+            if (typeof value !== "string" || !SAFE_REF.test(value) || value.includes("..") || value.includes("\\")) {
+              fail("ARTIFACT_READ_INPUT_INVALID", `${label} is invalid`);
+            }
+            return value;
+          }
+
+          function parse(raw: unknown): { artifact_ref: string; revision: number | null; include_payload: boolean } {
+            if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail("ARTIFACT_READ_INPUT_INVALID", "artifact read request must be an object");
+            const input = raw as Record<string, unknown>;
+            const expected = ["artifact_ref", "revision", "include_payload"];
+            if (Object.keys(input).length !== expected.length || expected.some((key) => !Object.hasOwn(input, key))) {
+              fail("ARTIFACT_READ_INPUT_INVALID", "artifact read request has unknown or missing fields");
+            }
+            const artifactRef = ref(input.artifact_ref, "artifact reference");
+            if (input.revision !== null && (!Number.isSafeInteger(input.revision) || (input.revision as number) < 1)) {
+              fail("ARTIFACT_READ_INPUT_INVALID", "artifact revision is invalid");
+            }
+            if (typeof input.include_payload !== "boolean") fail("ARTIFACT_READ_INPUT_INVALID", "include_payload must be boolean");
+            return { artifact_ref: artifactRef, revision: input.revision as number | null, include_payload: input.include_payload };
+          }
+
+          function owner(context: AuthenticatedRequestContext): string {
+            if (context.client_class !== "owner_pwa") fail("ARTIFACT_READ_OWNER_REQUIRED", "accepted artifact read requires the owner profile", 403);
+            if (context.principal_ref.length < 1 || context.principal_ref.length > 256 || context.principal_ref !== context.principal_ref.trim()) {
+              fail("ARTIFACT_READ_INPUT_INVALID", "artifact reader identity is invalid");
+            }
+            return context.principal_ref;
+          }
+
+          async function sha256(bytes: Uint8Array): Promise<string> {
+            return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+              (byte) => byte.toString(16).padStart(2, "0")).join("");
+          }
+
+          async function loadRow(database: D1Database, principalRef: string, artifactRef: string, revision: number | null): Promise<AcceptedRow> {
+            const revisionPredicate = revision === null ? "r.revision = h.revision" : "r.revision = ?3";
+            let row: AcceptedRow | null;
+            try {
+              row = await database.prepare(
+                "SELECT r.artifact_ref, r.revision, r.origin_change_ref, r.payload_ref, r.payload_sha256, " +
+                "r.review_id, r.review_revision, r.reviewer_ref, r.accepted_at, " +
+                "h.revision AS head_revision, h.payload_ref AS head_payload_ref, h.payload_sha256 AS head_payload_sha256 " +
+                "FROM artifact_accepted_revision r JOIN artifact_acceptance_review v " +
+                "ON v.review_id = r.review_id AND v.review_revision = r.review_revision " +
+                "LEFT JOIN artifact_accepted_head h ON h.artifact_ref = r.artifact_ref " +
+                `WHERE r.artifact_ref = ?1 AND r.reviewer_ref = ?2 AND v.principal_ref = ?2 AND v.state = 'ACCEPTED' AND ${revisionPredicate} LIMIT 1`,
+              ).bind(...(revision === null ? [artifactRef, principalRef] : [artifactRef, principalRef, revision])).first<AcceptedRow>();
+            } catch { fail("ARTIFACT_READ_SETTLEMENT_UNCERTAIN", "accepted artifact readback is unavailable", 503, true); }
+            if (row === null) fail("ARTIFACT_READ_NOT_FOUND", "accepted artifact revision does not exist", 404);
+            if (row.artifact_ref !== artifactRef || row.reviewer_ref !== principalRef || !Number.isSafeInteger(row.revision) || row.revision < 1
+                || !DIGEST.test(row.payload_sha256) || !Number.isSafeInteger(row.review_revision) || row.review_revision < 1) {
+              fail("ARTIFACT_READ_CORRUPT", "accepted artifact authority is malformed", 409);
+            }
+            ref(row.origin_change_ref, "origin change reference");
+            ref(row.payload_ref, "artifact payload reference");
+            ref(row.review_id, "artifact review reference");
+            if (row.head_revision !== null) {
+              if (!Number.isSafeInteger(row.head_revision) || row.head_revision < 1 || row.head_payload_ref === null
+                  || row.head_payload_sha256 === null || !DIGEST.test(row.head_payload_sha256)) {
+                fail("ARTIFACT_READ_CORRUPT", "accepted artifact head is malformed", 409);
+              }
+              if (row.revision === row.head_revision
+                  && (row.payload_ref !== row.head_payload_ref || row.payload_sha256 !== row.head_payload_sha256)) {
+                fail("ARTIFACT_READ_CORRUPT", "accepted artifact head does not match its immutable revision", 409);
+              }
+            }
+            return row;
+          }
+
+          async function readPayload(bucket: R2Bucket, row: AcceptedRow): Promise<unknown> {
+            let object: R2ObjectBody | null;
+            try { object = await bucket.get(row.payload_ref); }
+            catch { fail("ARTIFACT_READ_SETTLEMENT_UNCERTAIN", "accepted artifact payload is unavailable", 503, true); }
+            if (object === null || !Number.isSafeInteger(object.size) || object.size < 1 || object.size > MAX_INLINE_BYTES) {
+              object?.body.cancel().catch(() => undefined);
+              fail("ARTIFACT_READ_PAYLOAD_TOO_LARGE", "accepted artifact payload cannot be included within the response bound", 413);
+            }
+            const reader = object.body.getReader();
+            const chunks: Uint8Array[] = [];
+            let length = 0;
+            let count = 0;
+            try {
+              for (;;) {
+                const part = await reader.read();
+                if (part.done) break;
+                count += 1;
+                length += part.value.byteLength;
+                if (count > MAX_STREAM_CHUNKS || length > object.size || length > MAX_INLINE_BYTES || !Number.isSafeInteger(length)) {
+                  await reader.cancel().catch(() => undefined);
+                  fail("ARTIFACT_READ_CORRUPT", "accepted artifact payload exceeds its declared bounds", 409);
+                }
+                chunks.push(part.value.slice());
+              }
+            } catch (error) {
+              if (error instanceof CatalogInputError) throw error;
+              fail("ARTIFACT_READ_SETTLEMENT_UNCERTAIN", "accepted artifact payload stream is unavailable", 503, true);
+            } finally { reader.releaseLock(); }
+            if (length !== object.size) fail("ARTIFACT_READ_CORRUPT", "accepted artifact payload size changed during readback", 409);
+            const bytes = new Uint8Array(length);
+            let offset = 0;
+            for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+            if (await sha256(bytes) !== row.payload_sha256) fail("ARTIFACT_READ_CORRUPT", "accepted artifact payload digest is corrupt", 409);
+            let text: string;
+            try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+            catch { fail("ARTIFACT_READ_CORRUPT", "accepted artifact payload is not UTF-8", 409); }
+            try { return JSON.parse(text); }
+            catch { fail("ARTIFACT_READ_CORRUPT", "accepted artifact payload is not JSON", 409); }
+          }
+
+          export async function readAcceptedArtifact(
+            env: Pick<Env, "CORE_DB" | "WORK_BUCKET">,
+            context: AuthenticatedRequestContext,
+            raw: unknown,
+          ): Promise<AcceptedArtifactReadResult> {
+            const principalRef = owner(context);
+            const request = parse(raw);
+            const row = await loadRow(env.CORE_DB, principalRef, request.artifact_ref, request.revision);
+            const payload = request.include_payload ? await readPayload(env.WORK_BUCKET, row) : undefined;
+            return {
+              protocol: ARTIFACT_ACCEPTED_READ_PROTOCOL,
+              artifact_ref: row.artifact_ref,
+              revision: row.revision,
+              is_head: row.head_revision === row.revision,
+              origin_change_ref: row.origin_change_ref,
+              payload_ref: row.payload_ref,
+              payload_sha256: row.payload_sha256,
+              review_ref: { id: row.review_id, revision: row.review_revision },
+              accepted_at: row.accepted_at,
+              payload_included: request.include_payload,
+              ...(request.include_payload ? { payload } : {}),
+            };
+          }
+          EOF
+
+          cat > apps/eliotr-core/test/artifact-accepted-read.test.ts <<'EOF'
+          import { beforeAll, describe, expect, it } from "vitest";
+          import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+          import { body, principal, run, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
+          import { recordResearchChange } from "../src/research-changes.js";
+          import { adjudicateClaims } from "../src/claim-adjudication-service.js";
+          import { acceptArtifactDraft } from "../src/artifact-acceptance-service.js";
+          import { readAcceptedArtifact } from "../src/artifact-accepted-read.js";
+
+          beforeAll(async () => { await setupOrientationDatabase(); });
+
+          function context(key: string, who = principal): AuthenticatedRequestContext {
+            return {
+              request: new Request("https://research.example/api/v1/research/artifact/read", {
+                method: "POST", headers: { "content-type": "application/json", "idempotency-key": key },
+              }),
+              principal_ref: who, client_class: "owner_pwa", credential_generation: "credential-v1", trace_id: `trace-${key}`,
+            };
+          }
+
+          async function digest(bytes: Uint8Array): Promise<string> {
+            return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+              (byte) => byte.toString(16).padStart(2, "0")).join("");
+          }
+
+          async function accepted(tag: string) {
+            const artifactRef = `artifact:${tag}`;
+            const value = { artifact_ref: artifactRef, status: "VERIFIED", sections: [{ title: "Result", body: "Exact result" }] };
+            const bytes = new TextEncoder().encode(JSON.stringify(value));
+            const payloadRef = `artifact/accepted-read/${tag}.json`;
+            const payloadSha = await digest(bytes);
+            await runtime.WORK_BUCKET.put(payloadRef, bytes);
+            const changeRef = `artifact-read-draft:${tag}`;
+            await recordResearchChange(runtime.CORE_DB, {
+              change_ref: changeRef, kind: "ARTIFACT_DRAFTED", subject_ref: artifactRef, subject_revision: 1,
+              payload_ref: payloadRef, payload_sha256: payloadSha, visibility_principal_ref: principal,
+              occurred_at: "2026-09-11T07:00:00.000Z", metadata: { terminal: true },
+            });
+            const adjudication = await adjudicateClaims(runtime, context(`read-adjudication-${tag}`), {
+              subject_ref: artifactRef,
+              claims: [{ claim_ref: `claim-${tag}`, required_assurance: "EXACT", current_state: false,
+                minimum_independent_sources: 1, observations: [{ observation_ref: `observation-${tag}`,
+                  source_revision_ref: `source-${tag}`, source_family_ref: `family-${tag}`,
+                  relation: "SUPPORTS", assurance: "EXACT", current: true }] }],
+            });
+            await acceptArtifactDraft(runtime, context(`read-accept-${tag}`), {
+              origin_change_ref: changeRef, expected_head_revision: 0,
+              claim_adjudication_ref: adjudication.adjudication_ref,
+              confirmations: { artifact_reviewed: true, verification_receipts_reviewed: true, no_unresolved_conflicts: true },
+              notes: "Reviewed for accepted read.",
+            });
+            return { artifactRef, value, payloadRef };
+          }
+
+          describe("accepted artifact read path", () => {
+            it("reads exact head metadata without materializing payload bytes", async () => {
+              const item = await accepted("metadata");
+              const result = await readAcceptedArtifact(runtime, context("read-metadata"), {
+                artifact_ref: item.artifactRef, revision: null, include_payload: false,
+              });
+              expect(result).toMatchObject({
+                protocol: "eliotr.artifact-accepted-read.v1", artifact_ref: item.artifactRef,
+                revision: 1, is_head: true, payload_ref: item.payloadRef, payload_included: false,
+              });
+              expect(result).not.toHaveProperty("payload");
+            });
+
+            it("returns bounded exact JSON and rejects another owner identity", async () => {
+              const item = await accepted("payload");
+              const result = await readAcceptedArtifact(runtime, context("read-payload"), {
+                artifact_ref: item.artifactRef, revision: 1, include_payload: true,
+              });
+              expect(result.payload).toEqual(item.value);
+              await expect(readAcceptedArtifact(runtime, context("read-foreign", "owner-2"), {
+                artifact_ref: item.artifactRef, revision: null, include_payload: false,
+              })).rejects.toMatchObject({ code: "ARTIFACT_READ_NOT_FOUND" });
+            });
+
+            it("fails closed when accepted payload bytes change", async () => {
+              const item = await accepted("tampered");
+              await runtime.WORK_BUCKET.put(item.payloadRef, JSON.stringify({ changed: true }));
+              await expect(readAcceptedArtifact(runtime, context("read-tampered"), {
+                artifact_ref: item.artifactRef, revision: null, include_payload: true,
+              })).rejects.toMatchObject({ code: "ARTIFACT_READ_CORRUPT" });
+            });
+
+            it("serves the authenticated HTTP path", async () => {
+              const item = await accepted("http");
+              const response = await run(new Request("https://research.example/api/v1/research/artifact/read", {
+                method: "POST",
+                headers: { "content-type": "application/json", "idempotency-key": "read-http" },
+                body: JSON.stringify({ artifact_ref: item.artifactRef, revision: null, include_payload: true }),
+              }));
+              const payload = await body(response);
+              expect(response.status, JSON.stringify(payload)).toBe(200);
+              expect(payload.data).toMatchObject({ protocol: "eliotr.artifact-accepted-read.v1", payload_included: true });
+            });
+          });
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+          root = Path.cwd()
+          operation_id = "research.artifact.read"
+
+          routes_path = root / "packages/interfaces/src/routes.ts"
+          routes = routes_path.read_text(encoding="utf-8")
+          existing = next((value for value in re.findall(r'operation_id\s*:\s*"([^"]*artifact[^"]*)"', routes, re.I) if "read" in value.lower()), None)
+          if existing is not None:
+              operation_id = existing
+          elif operation_id not in routes:
+              match = re.search(r'operation_id\s*:\s*"([^"]*artifact[^"]*accept[^"]*)"', routes, re.I)
+              if match is None: raise SystemExit("artifact acceptance route missing")
+              start = routes.rfind("{", 0, match.start())
+              depth = 0; quote = None; escaped = False; end = None
+              for index in range(start, len(routes)):
+                  char = routes[index]
+                  if quote is not None:
+                      if escaped: escaped = False
+                      elif char == "\\": escaped = True
+                      elif char == quote: quote = None
+                      continue
+                  if char in ('"', "'"): quote = char
+                  elif char == "{": depth += 1
+                  elif char == "}":
+                      depth -= 1
+                      if depth == 0: end = index + 1; break
+              if end is None: raise SystemExit("artifact acceptance route object end missing")
+              clone = routes[start:end]
+              clone = re.sub(r'(operation_id\s*:\s*")[^"]+(")', rf'\g<1>{operation_id}\2', clone, count=1)
+              clone = re.sub(r'(path\s*:\s*")[^"]+(")', r'\g<1>/api/v1/research/artifact/read\2', clone, count=1)
+              clone = re.sub(r'(auth\s*:\s*")[^"]+(")', r'\g<1>owner\2', clone, count=1)
+              routes = routes[:end] + ",\n" + clone + routes[end:]
+              routes_path.write_text(routes, encoding="utf-8", newline="\n")
+
+          http_path = root / "apps/eliotr-core/src/http.ts"
+          http = http_path.read_text(encoding="utf-8")
+          import_line = 'import { readAcceptedArtifact } from "./artifact-accepted-read.js";\n'
+          if import_line not in http: http = import_line + http
+          pattern = re.compile(rf'^[ \t]*if \(match\.route\.operation_id === "{re.escape(operation_id)}"\) \{{\n[\s\S]*?^[ \t]*\}}\n', re.MULTILINE)
+          http = pattern.sub("", http, count=1)
+          anchor = re.search(r'^(?P<indent>[ \t]*)if \(match\.route\.operation_id === "[^"]*artifact[^"]*accept[^"]*"\)', http, re.MULTILINE | re.I)
+          if anchor is None: raise SystemExit("artifact acceptance HTTP anchor missing")
+          indent = anchor.group("indent")
+          block = (
+              f'{indent}if (match.route.operation_id === "{operation_id}") {{\n'
+              f'{indent}  const data = await readAcceptedArtifact(\n'
+              f'{indent}    env, context,\n'
+              f'{indent}    await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),\n'
+              f'{indent}  );\n'
+              f'{indent}  return apiResult(request, env, data);\n'
+              f'{indent}}}\n'
+          )
+          http = http[:anchor.start()] + block + http[anchor.start():]
+          http_path.write_text(http, encoding="utf-8", newline="\n")
+
+          manifest_path = root / "docs/agent-work/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          packets = []
+          def collect(value):
+              if isinstance(value, dict):
+                  if isinstance(value.get("id"), str): packets.append(value)
+                  for child in value.values(): collect(child)
+              elif isinstance(value, list):
+                  for child in value: collect(child)
+          collect(manifest)
+          owners = []
+          for packet in packets:
+              paths = packet.get("owned_paths") if isinstance(packet.get("owned_paths"), list) else packet.get("ownedPaths")
+              if isinstance(paths, list) and any("artifact-acceptance-service" in path for path in paths if isinstance(path, str)):
+                  owners.append(packet)
+          if len(owners) != 1: raise SystemExit(f"artifact owner packet ambiguous: {[p.get('id') for p in owners]}")
+          packet = owners[0]
+          key = "owned_paths" if isinstance(packet.get("owned_paths"), list) else "ownedPaths"
+          owned = ["apps/eliotr-core/src/artifact-accepted-read.ts", "apps/eliotr-core/test/artifact-accepted-read.test.ts"]
+          for item in owned:
+              if item not in packet[key]: packet[key].append(item)
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+          docs = list((root / "docs/agent-work").glob(f"{packet['id']}-*.md"))
+          if len(docs) != 1: raise SystemExit("artifact packet document ambiguous")
+          doc_path = docs[0]
+          doc = doc_path.read_text(encoding="utf-8")
+          heading = re.search(r"(?im)^##\s+Owned paths\s*$", doc)
+          if heading is None: raise SystemExit("artifact packet lacks Owned paths")
+          tail = doc[heading.end():]
+          next_heading = re.search(r"(?m)^##\s+", tail)
+          end = heading.end() + (next_heading.start() if next_heading else len(tail))
+          section = doc[heading.end():end]
+          additions = [item for item in owned if f'`{item}`' not in section]
+          if additions:
+              if not section.endswith("\n"): section += "\n"
+              section += "".join(f'- `{item}`\n' for item in additions)
+              doc_path.write_text(doc[:heading.end()] + section + doc[end:], encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify accepted artifact read locally
+        run: |
+          pnpm --filter @eliotr/core exec vitest run test/artifact-accepted-read.test.ts test/artifact-acceptance-service.test.ts --reporter=verbose
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm typecheck
+          pnpm lint
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm boundaries:check
+          git diff --check
+      - name: Commit only green accepted-artifact read code
+        run: |
+          git rm .github/workflows/artifact-accepted-read-once.yml
+          git config user.name "Eliot Research Product Builder"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add exact accepted artifact read"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
