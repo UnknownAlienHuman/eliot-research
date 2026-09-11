@@ -1,0 +1,616 @@
+name: wiki-manual-publish-once
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/wiki-manual-publish-once.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki-manual-publish-once
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'ci: implement owner-reviewed Wiki publication route'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Write durable manual review and publication route
+        run: |
+          cat > infra/d1/core/migrations/0044_wiki_manual_review.sql <<'EOF'
+          PRAGMA foreign_keys = ON;
+
+          CREATE TABLE IF NOT EXISTS wiki_manual_review (
+            review_id TEXT NOT NULL,
+            review_revision INTEGER NOT NULL CHECK (review_revision = 1),
+            principal_ref TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            proposal_id TEXT NOT NULL,
+            proposal_revision INTEGER NOT NULL,
+            request_sha256 TEXT NOT NULL CHECK (length(request_sha256) = 64),
+            payload_json TEXT NOT NULL CHECK (length(payload_json) <= 65536),
+            payload_sha256 TEXT NOT NULL CHECK (length(payload_sha256) = 64),
+            receipt_ref TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('RESERVED','ATTESTED','PUBLISHED')),
+            created_at TEXT NOT NULL,
+            published_at TEXT,
+            PRIMARY KEY (review_id, review_revision),
+            UNIQUE (principal_ref, idempotency_key),
+            UNIQUE (receipt_ref),
+            FOREIGN KEY (proposal_id, proposal_revision) REFERENCES wiki_publication_proposal(proposal_id, proposal_revision),
+            CHECK ((state = 'PUBLISHED' AND published_at IS NOT NULL) OR (state <> 'PUBLISHED' AND published_at IS NULL))
+          );
+
+          CREATE TRIGGER IF NOT EXISTS wiki_manual_review_immutable_fields
+          BEFORE UPDATE ON wiki_manual_review
+          WHEN OLD.review_id IS NOT NEW.review_id
+            OR OLD.review_revision IS NOT NEW.review_revision
+            OR OLD.principal_ref IS NOT NEW.principal_ref
+            OR OLD.idempotency_key IS NOT NEW.idempotency_key
+            OR OLD.proposal_id IS NOT NEW.proposal_id
+            OR OLD.proposal_revision IS NOT NEW.proposal_revision
+            OR OLD.request_sha256 IS NOT NEW.request_sha256
+            OR OLD.payload_json IS NOT NEW.payload_json
+            OR OLD.payload_sha256 IS NOT NEW.payload_sha256
+            OR OLD.receipt_ref IS NOT NEW.receipt_ref
+            OR OLD.created_at IS NOT NEW.created_at
+          BEGIN SELECT RAISE(ABORT, 'WIKI_REVIEW_IMMUTABLE'); END;
+
+          CREATE TRIGGER IF NOT EXISTS wiki_manual_review_no_delete
+          BEFORE DELETE ON wiki_manual_review BEGIN SELECT RAISE(ABORT, 'WIKI_REVIEW_IMMUTABLE'); END;
+          EOF
+
+          cat > apps/eliotr-core/src/wiki-review-service.ts <<'EOF'
+          import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
+          import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+          import { createWikiPublisher, WikiPublicationError, type DraftRiskClass } from "@eliotr/research";
+          import { CatalogInputError } from "./catalog-service.js";
+          import type { Env } from "./env.js";
+          import { createD1R2WikiPublicationPort, recordWikiPublicationAuthority } from "./wiki-publication-store.js";
+
+          export const WIKI_MANUAL_REVIEW_PROTOCOL = "eliotr.wiki-manual-review.v1";
+          const MAX_REVIEW_BYTES = 64 * 1024;
+          const DIGEST = /^[a-f0-9]{64}$/u;
+
+          interface ReviewRow {
+            review_id: string;
+            review_revision: number;
+            principal_ref: string;
+            idempotency_key: string;
+            proposal_id: string;
+            proposal_revision: number;
+            request_sha256: string;
+            payload_json: string;
+            payload_sha256: string;
+            receipt_ref: string;
+            state: string;
+            created_at: string;
+            published_at: string | null;
+          }
+
+          interface ReviewConfirmations {
+            evidence_map_reviewed: true;
+            coverage_reviewed: true;
+            dependency_closure_reviewed: true;
+            no_unresolved_conflicts: true;
+            no_unreviewed_current_state_change: true;
+          }
+
+          interface ReviewRequest {
+            proposal_ref: VersionedRef;
+            expected_head_revision: number;
+            confirmations: ReviewConfirmations;
+            notes: string;
+          }
+
+          export interface WikiManualPublicationResult {
+            readonly protocol: "eliotr.wiki-publication.v1";
+            readonly page_ref: VersionedRef;
+            readonly status: "PUBLISHED";
+            readonly reviewer_ref: string;
+            readonly review_receipt_ref: string;
+          }
+
+          function fail(code: string, message: string, status = 400, retryable = false): never {
+            throw new CatalogInputError(code, message, status, retryable);
+          }
+
+          function owner(context: AuthenticatedRequestContext): string {
+            if (context.client_class !== "owner_pwa") fail("WIKI_OWNER_REQUIRED", "Wiki publication requires the owner profile", 403);
+            if (context.principal_ref.length < 1 || context.principal_ref.length > 256 || context.principal_ref !== context.principal_ref.trim()) {
+              fail("WIKI_INPUT_INVALID", "Wiki reviewer identity is invalid");
+            }
+            return context.principal_ref;
+          }
+
+          function idempotency(context: AuthenticatedRequestContext): string {
+            const value = context.request.headers.get("idempotency-key");
+            if (value === null || value.length < 1 || value.length > 256 || /[\u0000-\u0020\u007f]/u.test(value)) {
+              fail("WIKI_INPUT_INVALID", "idempotency-key header is required");
+            }
+            return value;
+          }
+
+          function parse(raw: unknown): ReviewRequest {
+            if (raw === null || typeof raw !== "object" || Array.isArray(raw)) fail("WIKI_INPUT_INVALID", "Wiki review request must be an object");
+            const record = raw as Record<string, unknown>;
+            const expected = ["proposal_ref", "expected_head_revision", "confirmations", "notes"];
+            if (Object.keys(record).length !== expected.length || expected.some((key) => !Object.hasOwn(record, key))) {
+              fail("WIKI_INPUT_INVALID", "Wiki review request has unknown or missing fields");
+            }
+            const proposal = VersionedRefSchema.safeParse(record.proposal_ref);
+            if (!proposal.success || proposal.data.revision !== 1) fail("WIKI_INPUT_INVALID", "Wiki proposal reference is invalid");
+            if (!Number.isSafeInteger(record.expected_head_revision) || (record.expected_head_revision as number) < 0) {
+              fail("WIKI_INPUT_INVALID", "expected Wiki head revision is invalid");
+            }
+            if (record.confirmations === null || typeof record.confirmations !== "object" || Array.isArray(record.confirmations)) {
+              fail("WIKI_INPUT_INVALID", "Wiki review confirmations are invalid");
+            }
+            const confirmations = record.confirmations as Record<string, unknown>;
+            const required = [
+              "evidence_map_reviewed", "coverage_reviewed", "dependency_closure_reviewed",
+              "no_unresolved_conflicts", "no_unreviewed_current_state_change",
+            ];
+            if (Object.keys(confirmations).length !== required.length || required.some((key) => confirmations[key] !== true)) {
+              fail("WIKI_POLICY_DENIED", "all Wiki review confirmations must be explicit", 403);
+            }
+            if (typeof record.notes !== "string" || new TextEncoder().encode(record.notes).byteLength > 4096
+                || /[\u0000\u0001-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(record.notes)) {
+              fail("WIKI_INPUT_INVALID", "Wiki review notes are invalid");
+            }
+            return {
+              proposal_ref: proposal.data,
+              expected_head_revision: record.expected_head_revision as number,
+              confirmations: confirmations as unknown as ReviewConfirmations,
+              notes: record.notes,
+            };
+          }
+
+          async function sha256(value: string): Promise<string> {
+            return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
+              (byte) => byte.toString(16).padStart(2, "0")).join("");
+          }
+
+          function mapWiki(error: unknown): never {
+            if (!(error instanceof WikiPublicationError)) throw error;
+            const status = error.code === "WIKI_INPUT_INVALID" ? 400
+              : error.code === "WIKI_PROPOSAL_NOT_FOUND" ? 404
+                : error.code === "WIKI_POLICY_DENIED" ? 403
+                  : error.code === "WIKI_PUBLICATION_INCOMPLETE" ? 422
+                    : error.code === "WIKI_SETTLEMENT_UNCERTAIN" ? 503 : 409;
+            fail(error.code, error.message, status, error.retryable || status === 503);
+          }
+
+          async function loadReview(database: D1Database, principalRef: string, key: string): Promise<ReviewRow | null> {
+            try {
+              return await database.prepare(
+                "SELECT review_id, review_revision, principal_ref, idempotency_key, proposal_id, proposal_revision, " +
+                "request_sha256, payload_json, payload_sha256, receipt_ref, state, created_at, published_at " +
+                "FROM wiki_manual_review WHERE principal_ref = ?1 AND idempotency_key = ?2 LIMIT 1",
+              ).bind(principalRef, key).first<ReviewRow>();
+            } catch (cause) {
+              fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki review readback is unavailable", 503, true);
+            }
+          }
+
+          async function reserveReview(
+            database: D1Database,
+            request: ReviewRequest,
+            principalRef: string,
+            key: string,
+            pageRef: VersionedRef,
+            riskClass: DraftRiskClass,
+          ): Promise<ReviewRow> {
+            const requestSha = await sha256(JSON.stringify({
+              protocol: WIKI_MANUAL_REVIEW_PROTOCOL,
+              proposal_ref: request.proposal_ref,
+              expected_head_revision: request.expected_head_revision,
+              confirmations: request.confirmations,
+              notes: request.notes,
+              reviewer_ref: principalRef,
+              page_ref: pageRef,
+              risk_class: riskClass,
+            }));
+            const reviewId = `wiki-review-${requestSha.slice(0, 48)}`;
+            const existing = await loadReview(database, principalRef, key);
+            if (existing !== null) {
+              if (existing.review_id !== reviewId || existing.request_sha256 !== requestSha
+                  || existing.proposal_id !== request.proposal_ref.id || existing.proposal_revision !== request.proposal_ref.revision) {
+                fail("WIKI_HEAD_CONFLICT", "review idempotency identity is occupied by different bytes", 409);
+              }
+              return existing;
+            }
+            const createdAt = new Date().toISOString();
+            const payload = JSON.stringify({
+              protocol: WIKI_MANUAL_REVIEW_PROTOCOL,
+              review_ref: { id: reviewId, revision: 1 },
+              proposal_ref: request.proposal_ref,
+              page_ref: pageRef,
+              risk_class: riskClass,
+              reviewer_ref: principalRef,
+              confirmations: request.confirmations,
+              notes: request.notes,
+              issued_at: createdAt,
+            });
+            if (new TextEncoder().encode(payload).byteLength > MAX_REVIEW_BYTES) fail("WIKI_INPUT_INVALID", "Wiki review receipt exceeds its byte bound", 413);
+            const payloadSha = await sha256(payload);
+            const receiptRef = `wiki/reviews/${reviewId}/${payloadSha}.json`;
+            try {
+              await database.prepare(
+                "INSERT OR IGNORE INTO wiki_manual_review " +
+                "(review_id, review_revision, principal_ref, idempotency_key, proposal_id, proposal_revision, request_sha256, " +
+                "payload_json, payload_sha256, receipt_ref, state, created_at) VALUES (?1,1,?2,?3,?4,?5,?6,?7,?8,?9,'RESERVED',?10)",
+              ).bind(reviewId, principalRef, key, request.proposal_ref.id, request.proposal_ref.revision,
+                requestSha, payload, payloadSha, receiptRef, createdAt).run();
+            } catch (cause) {
+              fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki review reservation is uncertain", 503, true);
+            }
+            const stored = await loadReview(database, principalRef, key);
+            if (stored === null || stored.review_id !== reviewId || stored.request_sha256 !== requestSha
+                || stored.payload_json !== payload || stored.payload_sha256 !== payloadSha || stored.receipt_ref !== receiptRef) {
+              fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki review reservation failed exact readback", 409);
+            }
+            return stored;
+          }
+
+          async function persistReceipt(bucket: R2Bucket, review: ReviewRow): Promise<void> {
+            const bytes = new TextEncoder().encode(review.payload_json);
+            try {
+              await bucket.put(review.receipt_ref, bytes, {
+                onlyIf: { etagDoesNotMatch: "*" }, sha256: review.payload_sha256,
+                customMetadata: { immutable: "true", review_id: review.review_id },
+              });
+            } catch {
+              // Conditional collision and lost ACK both settle only through exact readback.
+            }
+            let object: R2ObjectBody | null;
+            try { object = await bucket.get(review.receipt_ref); }
+            catch { fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki review receipt readback is unavailable", 503, true); }
+            if (object === null || object.size !== bytes.byteLength || object.size > MAX_REVIEW_BYTES) {
+              object?.body.cancel().catch(() => undefined);
+              fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki review receipt is absent or malformed", 409);
+            }
+            const observed = new Uint8Array(await object.arrayBuffer());
+            if (await sha256(new TextDecoder("utf-8", { fatal: true }).decode(observed)) !== review.payload_sha256
+                || new TextDecoder("utf-8", { fatal: true }).decode(observed) !== review.payload_json) {
+              fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki review receipt bytes do not match", 409);
+            }
+          }
+
+          async function settleReview(database: D1Database, review: ReviewRow, state: "ATTESTED" | "PUBLISHED"): Promise<void> {
+            const publishedAt = state === "PUBLISHED" ? new Date().toISOString() : null;
+            try {
+              await database.prepare(
+                "UPDATE wiki_manual_review SET state = ?3, published_at = ?4 " +
+                "WHERE review_id = ?1 AND review_revision = ?2 AND state IN ('RESERVED','ATTESTED','PUBLISHED')",
+              ).bind(review.review_id, review.review_revision, state, publishedAt).run();
+            } catch { fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki review settlement is uncertain", 503, true); }
+            const stored = await loadReview(database, review.principal_ref, review.idempotency_key);
+            if (stored === null || stored.state !== state || (state === "PUBLISHED") !== (stored.published_at !== null)) {
+              fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki review settlement failed readback", 503, true);
+            }
+          }
+
+          export async function reviewAndPublishWikiProposal(
+            env: Pick<Env, "CORE_DB" | "WORK_BUCKET">,
+            context: AuthenticatedRequestContext,
+            raw: unknown,
+          ): Promise<WikiManualPublicationResult> {
+            const principalRef = owner(context);
+            const key = idempotency(context);
+            const request = parse(raw);
+            const port = createD1R2WikiPublicationPort(env.CORE_DB, env.WORK_BUCKET, {
+              principal_ref: principalRef,
+              idempotency_key: key,
+            });
+            const publisher = createWikiPublisher(port);
+            let proposal;
+            try { proposal = await port.readProposal(request.proposal_ref); }
+            catch (error) { mapWiki(error); }
+            if (proposal === null) fail("WIKI_PROPOSAL_NOT_FOUND", "Wiki proposal does not exist", 404);
+
+            // Exact replay or an independently admitted authority may already be publishable.
+            try {
+              const page = await publisher.publish(request.proposal_ref, request.expected_head_revision, principalRef);
+              const existing = await loadReview(env.CORE_DB, principalRef, key);
+              return {
+                protocol: "eliotr.wiki-publication.v1",
+                page_ref: { ...page.page_ref }, status: "PUBLISHED", reviewer_ref: principalRef,
+                review_receipt_ref: existing?.receipt_ref ?? "authority:preexisting",
+              };
+            } catch (error) {
+              if (!(error instanceof WikiPublicationError) || error.code !== "WIKI_PUBLICATION_INCOMPLETE") mapWiki(error);
+            }
+
+            const review = await reserveReview(env.CORE_DB, request, principalRef, key, proposal.page.page_ref, proposal.risk_class);
+            await persistReceipt(env.WORK_BUCKET, review);
+            await recordWikiPublicationAuthority(env.CORE_DB, {
+              proposal_ref: request.proposal_ref,
+              principal_ref: principalRef,
+              evidence_receipt_ref: `${review.receipt_ref}:evidence`,
+              dependency_closure_receipt_ref: `${review.receipt_ref}:dependencies`,
+              verifier_receipt_ref: review.receipt_ref,
+              policy_receipt_ref: `${review.receipt_ref}:manual-policy`,
+              coverage_complete: true,
+              dependency_closure_complete: true,
+              conflict_count: 0,
+              changes_current_state: false,
+              admitted_at: review.created_at,
+            });
+            await settleReview(env.CORE_DB, review, "ATTESTED");
+            let page;
+            try { page = await publisher.publish(request.proposal_ref, request.expected_head_revision, principalRef); }
+            catch (error) { mapWiki(error); }
+            await settleReview(env.CORE_DB, review, "PUBLISHED");
+            return {
+              protocol: "eliotr.wiki-publication.v1",
+              page_ref: { ...page.page_ref }, status: "PUBLISHED", reviewer_ref: principalRef,
+              review_receipt_ref: review.receipt_ref,
+            };
+          }
+          EOF
+
+          cat > apps/eliotr-core/test/wiki-review-service.test.ts <<'EOF'
+          import { beforeAll, describe, expect, it } from "vitest";
+          import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+          import type { WikiPageRevision } from "@eliotr/contracts";
+          import { body, db, principal, run, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
+          import { createWikiProposalService } from "../src/wiki-service.js";
+          import { reviewAndPublishWikiProposal } from "../src/wiki-review-service.js";
+
+          beforeAll(async () => { await setupOrientationDatabase(); });
+
+          async function digest(value: string): Promise<string> {
+            return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))),
+              (byte) => byte.toString(16).padStart(2, "0")).join("");
+          }
+
+          function context(key: string, who = principal): AuthenticatedRequestContext {
+            return {
+              request: new Request("https://research.example/api/v1/research/wiki/publish", {
+                method: "POST", headers: { "content-type": "application/json", "idempotency-key": key },
+              }),
+              principal_ref: who, client_class: "owner_pwa", credential_generation: "credential-v1", trace_id: `trace-${key}`,
+            };
+          }
+
+          async function proposal(tag: string) {
+            const text = `# Reviewed ${tag}\n\nManual evidence review.\n`;
+            const bodyKey = `wiki-review/body-${tag}`;
+            const evidenceKey = `wiki-review/evidence-${tag}`;
+            await runtime.WORK_BUCKET.put(bodyKey, text);
+            await runtime.WORK_BUCKET.put(evidenceKey, JSON.stringify({ exact: true, tag }));
+            const page: WikiPageRevision = {
+              page_ref: { id: `review-page-${tag}`, revision: 1 }, page_type: "Source", title: `Reviewed ${tag}`,
+              scope_snapshot_ref: { id: `scope-${tag}`, revision: 1 }, body_object_ref: bodyKey, body_sha256: await digest(text),
+              statement_labels: { claim: "SOURCE_SUPPORTED" }, evidence_map_ref: evidenceKey, counterposition_refs: [],
+              coverage_receipt_ref: { id: `coverage-${tag}`, revision: 1 }, limitations: [], dependency_refs: [`source-${tag}`],
+              generator_generation: "wiki-generator-v1", status: "DRAFT", publication_metadata: {},
+              created_at: "2026-09-11T00:00:00.000Z",
+            };
+            const result = await createWikiProposalService(runtime)(context(`proposal-${tag}`), {
+              page, risk_class: "D3_AUTHORITY_SENSITIVE",
+            }) as unknown as { proposal_ref: { id: string; revision: number } };
+            return { page, proposal_ref: result.proposal_ref };
+          }
+
+          function review(proposalRef: { id: string; revision: number }, notes = "Reviewed against exact evidence.") {
+            return {
+              proposal_ref: proposalRef,
+              expected_head_revision: 0,
+              confirmations: {
+                evidence_map_reviewed: true,
+                coverage_reviewed: true,
+                dependency_closure_reviewed: true,
+                no_unresolved_conflicts: true,
+                no_unreviewed_current_state_change: true,
+              },
+              notes,
+            };
+          }
+
+          describe("owner-reviewed Wiki publication", () => {
+            it("reserves one review, writes an immutable receipt, admits authority, publishes and emits a change", async () => {
+              const value = await proposal("manual");
+              const ctx = context("review-manual");
+              const result = await reviewAndPublishWikiProposal(runtime, ctx, review(value.proposal_ref));
+              expect(result).toMatchObject({ status: "PUBLISHED", reviewer_ref: principal });
+              expect(result.review_receipt_ref).toContain("wiki/reviews/");
+              expect(await runtime.WORK_BUCKET.get(result.review_receipt_ref)).not.toBeNull();
+              const row = await db.prepare("SELECT state, receipt_ref FROM wiki_manual_review WHERE idempotency_key = ?1")
+                .bind("review-manual").first<{ state: string; receipt_ref: string }>();
+              expect(row).toEqual({ state: "PUBLISHED", receipt_ref: result.review_receipt_ref });
+              const change = await db.prepare("SELECT kind FROM research_change_feed WHERE subject_ref = ?1")
+                .bind(`wiki-page:${value.page.page_ref.id}`).first<{ kind: string }>();
+              expect(change?.kind).toBe("WIKI_PUBLISHED");
+            });
+
+            it("replays the same review without a second receipt, authority, revision or outbox", async () => {
+              const value = await proposal("replay");
+              const ctx = context("review-replay");
+              const first = await reviewAndPublishWikiProposal(runtime, ctx, review(value.proposal_ref));
+              const second = await reviewAndPublishWikiProposal(runtime, ctx, review(value.proposal_ref));
+              expect(second).toEqual(first);
+              const reviews = await db.prepare("SELECT COUNT(*) AS n FROM wiki_manual_review WHERE idempotency_key = ?1")
+                .bind("review-replay").first<number>("n");
+              const revisions = await db.prepare("SELECT COUNT(*) AS n FROM wiki_publication_revision WHERE page_id = ?1")
+                .bind(value.page.page_ref.id).first<number>("n");
+              expect(reviews).toBe(1);
+              expect(revisions).toBe(1);
+            });
+
+            it("rejects incomplete confirmations, foreign caller class and divergent same-key review", async () => {
+              const value = await proposal("negative");
+              const missing = review(value.proposal_ref) as Record<string, unknown>;
+              missing.confirmations = { ...(missing.confirmations as object), coverage_reviewed: false };
+              await expect(reviewAndPublishWikiProposal(runtime, context("review-missing"), missing))
+                .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
+              const foreign = context("review-foreign", "service-1");
+              (foreign as { client_class: string }).client_class = "service";
+              await expect(reviewAndPublishWikiProposal(runtime, foreign, review(value.proposal_ref)))
+                .rejects.toMatchObject({ code: "WIKI_OWNER_REQUIRED" });
+              await reviewAndPublishWikiProposal(runtime, context("review-conflict"), review(value.proposal_ref));
+              await expect(reviewAndPublishWikiProposal(runtime, context("review-conflict"), review(value.proposal_ref, "changed")))
+                .rejects.toMatchObject({ code: "WIKI_HEAD_CONFLICT" });
+            });
+
+            it("serves the canonical publish route through the authenticated HTTP dispatcher", async () => {
+              const value = await proposal("http");
+              const request = new Request("https://research.example/api/v1/research/wiki/publish", {
+                method: "POST",
+                headers: { "content-type": "application/json", "idempotency-key": "review-http" },
+                body: JSON.stringify(review(value.proposal_ref)),
+              });
+              const response = await run(request);
+              const payload = await body(response);
+              expect(response.status, JSON.stringify(payload)).toBe(200);
+              expect(payload.data).toMatchObject({ protocol: "eliotr.wiki-publication.v1", status: "PUBLISHED" });
+            });
+          });
+          EOF
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+
+          root = Path.cwd()
+          routes_path = root / "packages/interfaces/src/routes.ts"
+          routes = routes_path.read_text(encoding="utf-8")
+          if 'research.wiki.publish' not in routes:
+              target = routes.find('"research.wiki.propose"')
+              if target < 0: raise SystemExit("canonical Wiki propose route missing")
+              start = routes.rfind("{", 0, target)
+              if start < 0: raise SystemExit("Wiki propose route object start missing")
+              depth = 0
+              in_string = False
+              quote = ""
+              escaped = False
+              end = None
+              for index in range(start, len(routes)):
+                  char = routes[index]
+                  if in_string:
+                      if escaped: escaped = False
+                      elif char == "\\": escaped = True
+                      elif char == quote: in_string = False
+                      continue
+                  if char in ('"', "'"):
+                      in_string = True; quote = char; continue
+                  if char == "{": depth += 1
+                  elif char == "}":
+                      depth -= 1
+                      if depth == 0:
+                          end = index + 1
+                          break
+              if end is None: raise SystemExit("Wiki propose route object end missing")
+              source = routes[start:end]
+              clone = source.replace("research.wiki.propose", "research.wiki.publish")
+              path_match = re.search(r'(path\s*:\s*")([^"]+)(")', clone)
+              if path_match is None: raise SystemExit("Wiki propose route path missing")
+              old_path = path_match.group(2)
+              new_path = old_path.replace("propose", "publish") if "propose" in old_path else old_path.rstrip("/") + "/publish"
+              clone = clone[:path_match.start(2)] + new_path + clone[path_match.end(2):]
+              routes = routes[:end] + ",\n" + clone + routes[end:]
+              routes_path.write_text(routes, encoding="utf-8", newline="\n")
+
+          http_path = root / "apps/eliotr-core/src/http.ts"
+          http = http_path.read_text(encoding="utf-8")
+          import_line = 'import { reviewAndPublishWikiProposal } from "./wiki-review-service.js";\n'
+          if import_line not in http: http = import_line + http
+          existing = re.compile(
+              r'^[ \t]*if \(match\.route\.operation_id === "research\.wiki\.publish"\) \{\n[\s\S]*?^[ \t]*\}\n',
+              re.MULTILINE,
+          )
+          http = existing.sub("", http, count=1)
+          anchor = re.search(r'^(?P<indent>[ \t]*)if \(match\.route\.operation_id === "research\.wiki\.propose"\)', http, re.MULTILINE)
+          if anchor is None: raise SystemExit("Wiki propose HTTP anchor missing")
+          indent = anchor.group("indent")
+          block = (
+              f'{indent}if (match.route.operation_id === "research.wiki.publish") {{\n'
+              f'{indent}  const data = await reviewAndPublishWikiProposal(\n'
+              f'{indent}    env, context,\n'
+              f'{indent}    await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes),\n'
+              f'{indent}  );\n'
+              f'{indent}  return apiResult(request, env, data);\n'
+              f'{indent}}}\n'
+          )
+          http = http[:anchor.start()] + block + http[anchor.start():]
+          http_path.write_text(http, encoding="utf-8", newline="\n")
+
+          ownership = {
+              "ER-12": ["apps/eliotr-core/src/wiki-review-service.ts", "apps/eliotr-core/test/wiki-review-service.test.ts"],
+              "ER-13": ["infra/d1/core/migrations/0044_wiki_manual_review.sql"],
+          }
+          manifest_path = root / "docs/agent-work/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          def find_packet(value, wanted):
+              if isinstance(value, dict):
+                  if value.get("id") == wanted: return value
+                  for child in value.values():
+                      found = find_packet(child, wanted)
+                      if found is not None: return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find_packet(child, wanted)
+                      if found is not None: return found
+              return None
+          for packet_id, paths in ownership.items():
+              packet = find_packet(manifest, packet_id)
+              if packet is None: raise SystemExit(f"missing packet {packet_id}")
+              key = "owned_paths" if isinstance(packet.get("owned_paths"), list) else "ownedPaths" if isinstance(packet.get("ownedPaths"), list) else None
+              if key is None: raise SystemExit(f"owned path list missing {packet_id}")
+              for item in paths:
+                  if item not in packet[key]: packet[key].append(item)
+              docs = list((root / "docs/agent-work").glob(f"{packet_id}-*.md"))
+              if len(docs) != 1: raise SystemExit(f"packet doc ambiguous {packet_id}")
+              doc_path = docs[0]
+              doc = doc_path.read_text(encoding="utf-8")
+              heading = re.search(r"(?im)^##\s+Owned paths\s*$", doc)
+              if heading is None: raise SystemExit(f"Owned paths heading missing {packet_id}")
+              tail = doc[heading.end():]
+              next_heading = re.search(r"(?m)^##\s+", tail)
+              end = heading.end() + (next_heading.start() if next_heading else len(tail))
+              section = doc[heading.end():end]
+              additions = [item for item in paths if f'`{item}`' not in section]
+              if additions:
+                  if not section.endswith("\n"): section += "\n"
+                  section += "".join(f'- `{item}`\n' for item in additions)
+                  doc = doc[:heading.end()] + section + doc[end:]
+                  doc_path.write_text(doc, encoding="utf-8", newline="\n")
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify end-to-end local Wiki product
+        run: |
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm --filter @eliotr/core exec vitest run test/wiki-publication-store.test.ts test/wiki-service.test.ts test/research-changes.test.ts test/wiki-review-service.test.ts --reporter=verbose
+          pnpm typecheck
+          pnpm lint
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm boundaries:check
+          git diff --check
+      - name: Commit only verified product code
+        run: |
+          git rm .github/workflows/wiki-manual-publish-once.yml
+          git config user.name "Eliot Research Product Builder"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add owner-reviewed Wiki publication route"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
