@@ -1,0 +1,251 @@
+name: research-completion-change-once
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/research-completion-change-once.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-completion-change-once
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'ci: wire research completion into durable changes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Wire completed research into the durable feed
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+          root = Path.cwd()
+
+          changes_path = root / "apps/eliotr-core/src/research-changes.ts"
+          changes = changes_path.read_text(encoding="utf-8")
+          if "recordResearchCompletionChange" not in changes:
+              anchor = "          async function readChanges(database: D1Database, principalRef: string, raw: unknown): Promise<ResearchChangesResult> {"
+              position = changes.find(anchor)
+              if position < 0: raise SystemExit("research changes insertion anchor missing")
+              helper = '''          export interface ResearchCompletionChangeInput {
+            readonly operation_id: string;
+            readonly investigation_ref: { readonly id: string; readonly revision: number };
+            readonly output_manifest: { readonly object_ref: string; readonly sha256: string };
+            readonly principal_ref: string;
+            readonly handler_generation: string;
+          }
+
+          /** Persist one completion event using D1 time so retries never invent a different identity. */
+          export async function recordResearchCompletionChange(
+            database: D1Database,
+            input: ResearchCompletionChangeInput,
+          ): Promise<ResearchChangeItem> {
+            const changeRef = `research:${ref(input.operation_id, "research operation id")}`;
+            const subjectRef = `investigation:${ref(input.investigation_ref.id, "investigation id")}`;
+            if (!Number.isSafeInteger(input.investigation_ref.revision) || input.investigation_ref.revision < 1) {
+              fail("RESEARCH_CHANGES_INPUT_INVALID", "investigation revision is invalid");
+            }
+            const payloadRef = ref(input.output_manifest.object_ref, "research output manifest");
+            if (!DIGEST.test(input.output_manifest.sha256)) fail("RESEARCH_CHANGES_INPUT_INVALID", "research output digest is invalid");
+            const principalRef = principal(input.principal_ref);
+            const handlerGeneration = ref(input.handler_generation, "research handler generation");
+            const metadata = canonicalMetadata({ handler_generation: handlerGeneration, terminal_stage: "MATERIALIZE" });
+            try {
+              await database.prepare(
+                "INSERT OR IGNORE INTO research_change_feed " +
+                "(change_ref, kind, subject_ref, subject_revision, payload_ref, payload_sha256, visibility_principal_ref, occurred_at, metadata_json) " +
+                "VALUES (?1,'RESEARCH_COMPLETED',?2,?3,?4,?5,?6,strftime('%Y-%m-%dT%H:%M:%fZ','now'),?7)",
+              ).bind(changeRef, subjectRef, input.investigation_ref.revision, payloadRef,
+                input.output_manifest.sha256, principalRef, metadata).run();
+            } catch (cause) {
+              fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "research completion feed mutation is uncertain", 503, true);
+            }
+            let row: ChangeRow | null;
+            try {
+              row = await database.prepare(
+                "SELECT sequence, change_ref, kind, subject_ref, subject_revision, payload_ref, payload_sha256, " +
+                "visibility_principal_ref, occurred_at, metadata_json FROM research_change_feed WHERE change_ref = ?1 LIMIT 1",
+              ).bind(changeRef).first<ChangeRow>();
+            } catch {
+              fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "research completion feed readback is unavailable", 503, true);
+            }
+            if (row === null) fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "research completion feed readback is absent", 503, true);
+            const decoded = decodeRow(row);
+            if (decoded.kind !== "RESEARCH_COMPLETED" || decoded.subject_ref !== subjectRef
+                || decoded.subject_revision !== input.investigation_ref.revision || decoded.payload_ref !== payloadRef
+                || decoded.payload_sha256 !== input.output_manifest.sha256
+                || decoded.visibility_principal_ref !== principalRef || JSON.stringify(decoded.metadata) !== metadata) {
+              fail("RESEARCH_CHANGES_CONFLICT", "research completion identity is occupied by different bytes", 409);
+            }
+            return decoded;
+          }
+
+'''
+              changes = changes[:position] + helper + changes[position:]
+              changes_path.write_text(changes, encoding="utf-8", newline="\n")
+
+          session_path = root / "apps/eliotr-core/src/research-session.ts"
+          session = session_path.read_text(encoding="utf-8")
+          import_line = 'import { recordResearchCompletionChange } from "./research-changes.js";\n'
+          if import_line not in session: session = import_line + session
+
+          run_old = '''      const last = (receipts as StageReceipt[]).at(-1);
+      if (!last) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow produced no receipts", 503, true);
+      return { investigation_ref: { ...last.investigation_ref }, workflow_instance_id: operation_id };
+'''
+          run_new = '''      const last = (receipts as StageReceipt[]).at(-1);
+      if (!last) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow produced no receipts", 503, true);
+      await recordResearchCompletionChange(env.CORE_DB, {
+        operation_id,
+        investigation_ref: last.investigation_ref,
+        output_manifest: last.output_manifest,
+        principal_ref: context.principal_ref,
+        handler_generation: handlerGeneration,
+      });
+      return { investigation_ref: { ...last.investigation_ref }, workflow_instance_id: operation_id };
+'''
+          if run_old in session:
+              session = session.replace(run_old, run_new, 1)
+          elif "recordResearchCompletionChange(env.CORE_DB" not in session:
+              raise SystemExit("research.run completion anchor missing")
+
+          do_old = ''' const last = receipts.at(-1); if (!last) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN"); await this.save({ ...stored, state: "ENGINE_COMPLETED", investigation_revision: last.investigation_ref.revision, receipt_refs: receipts.map((item) => item.receipt_ref), output_manifest_ref: last.output_manifest.object_ref, updated_at: new Date().toISOString() }); return json(request, { protocol: RESEARCH_SESSION_PROTOCOL, session_id: sid, state: "ENGINE_COMPLETED", operation_id: stored.operation_id, investigation_ref: { ...last.investigation_ref }, receipt_refs: receipts.map((item) => item.receipt_ref), output_manifest_ref: last.output_manifest.object_ref }); }
+'''
+          do_new = ''' const last = receipts.at(-1); if (!last) return problem(request, 503, "SESSION_SETTLEMENT_UNCERTAIN"); await recordResearchCompletionChange(env.CORE_DB, { operation_id: stored.operation_id, investigation_ref: last.investigation_ref, output_manifest: last.output_manifest, principal_ref: stored.principal_ref, handler_generation: stored.handler_generation }); await this.save({ ...stored, state: "ENGINE_COMPLETED", investigation_revision: last.investigation_ref.revision, receipt_refs: receipts.map((item) => item.receipt_ref), output_manifest_ref: last.output_manifest.object_ref, updated_at: new Date().toISOString() }); return json(request, { protocol: RESEARCH_SESSION_PROTOCOL, session_id: sid, state: "ENGINE_COMPLETED", operation_id: stored.operation_id, investigation_ref: { ...last.investigation_ref }, receipt_refs: receipts.map((item) => item.receipt_ref), output_manifest_ref: last.output_manifest.object_ref }); }
+'''
+          if do_old in session:
+              session = session.replace(do_old, do_new, 1)
+          elif "operation_id: stored.operation_id, investigation_ref: last.investigation_ref" not in session:
+              raise SystemExit("ResearchSession completion anchor missing")
+          session_path.write_text(session, encoding="utf-8", newline="\n")
+
+          test_path = root / "apps/eliotr-core/test/research-completion-change.test.ts"
+          test_path.write_text('''import { beforeAll, describe, expect, it } from "vitest";
+          import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
+          import { body, count, db, run, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
+
+          beforeAll(async () => {
+            await setupOrientationDatabase();
+            await seedSource("research-change-complete");
+          });
+
+          function request(key: string) {
+            return new Request("https://research.example/api/v1/research/run", {
+              method: "POST",
+              headers: { "content-type": "application/json", "idempotency-key": key },
+              body: JSON.stringify({
+                query: "Source",
+                product: "RESEARCH",
+                scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["research-change-complete"] },
+                literals: [],
+                evidence_grade: "E1",
+                budget_ref: "research-budget-v1",
+                max_results: 8,
+              }),
+            });
+          }
+
+          describe("research completion change emission", () => {
+            it("writes exactly one principal-scoped RESEARCH_COMPLETED row and replays without duplication", async () => {
+              const firstResponse = await run(request("research-change-completion"));
+              const first = await body<{ investigation_ref: { id: string; revision: number }; workflow_instance_id: string }>(firstResponse);
+              expect(firstResponse.status, JSON.stringify(first)).toBe(200);
+              const row = await db.prepare(
+                "SELECT kind, subject_ref, subject_revision, payload_ref, payload_sha256, visibility_principal_ref " +
+                "FROM research_change_feed WHERE change_ref = ?1",
+              ).bind(`research:${first.data.workflow_instance_id}`).first<{
+                kind: string; subject_ref: string; subject_revision: number; payload_ref: string;
+                payload_sha256: string; visibility_principal_ref: string;
+              }>();
+              expect(row).toMatchObject({
+                kind: "RESEARCH_COMPLETED",
+                subject_ref: `investigation:${first.data.investigation_ref.id}`,
+                subject_revision: first.data.investigation_ref.revision,
+              });
+              expect(row?.payload_ref.length).toBeGreaterThan(0);
+              expect(row?.payload_sha256).toMatch(/^[a-f0-9]{64}$/u);
+              expect(row?.visibility_principal_ref.length).toBeGreaterThan(0);
+              const before = await count("research_change_feed");
+              const replayResponse = await run(request("research-change-completion"));
+              const replay = await body(replayResponse);
+              expect(replayResponse.status, JSON.stringify(replay)).toBe(200);
+              expect(replay.data).toEqual(first.data);
+              expect(await count("research_change_feed")).toBe(before);
+            }, 30_000);
+          });
+''', encoding="utf-8", newline="\n")
+
+          manifest_path = root / "docs/agent-work/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          docs = [path for path in (root / "docs/agent-work").glob("ER-*.md") if "research.changes" in path.read_text(encoding="utf-8")]
+          preferred = [path for path in docs if path.name.startswith("ER-24-")]
+          owner_doc = preferred[0] if len(preferred) == 1 else docs[0] if len(docs) == 1 else None
+          if owner_doc is None: raise SystemExit("research.changes owner packet ambiguous")
+          owner_id = "-".join(owner_doc.name.split("-")[:2])
+          def find_packet(value):
+              if isinstance(value, dict):
+                  if value.get("id") == owner_id: return value
+                  for child in value.values():
+                      found = find_packet(child)
+                      if found is not None: return found
+              elif isinstance(value, list):
+                  for child in value:
+                      found = find_packet(child)
+                      if found is not None: return found
+              return None
+          packet = find_packet(manifest)
+          if packet is None: raise SystemExit("owner packet missing")
+          key = "owned_paths" if isinstance(packet.get("owned_paths"), list) else "ownedPaths" if isinstance(packet.get("ownedPaths"), list) else None
+          if key is None: raise SystemExit("owner path list missing")
+          owned = "apps/eliotr-core/test/research-completion-change.test.ts"
+          if owned not in packet[key]: packet[key].append(owned)
+          manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
+          doc = owner_doc.read_text(encoding="utf-8")
+          if f'`{owned}`' not in doc:
+              heading = re.search(r"(?im)^##\s+Owned paths\s*$", doc)
+              if heading is None: raise SystemExit("owner document lacks Owned paths")
+              tail = doc[heading.end():]
+              next_heading = re.search(r"(?m)^##\s+", tail)
+              end = heading.end() + (next_heading.start() if next_heading else len(tail))
+              section = doc[heading.end():end]
+              if not section.endswith("\n"): section += "\n"
+              section += f'- `{owned}`\n'
+              owner_doc.write_text(doc[:heading.end()] + section + doc[end:], encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify research completion delivery locally
+        run: |
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm --filter @eliotr/core exec vitest run test/research-completion-change.test.ts test/research-changes.test.ts test/wiki-review-service.test.ts --reporter=verbose
+          pnpm typecheck
+          pnpm lint
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm boundaries:check
+          git diff --check
+      - name: Commit only verified product code
+        run: |
+          git rm .github/workflows/research-completion-change-once.yml
+          git config user.name "Eliot Research Product Builder"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: emit durable research completion changes"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
