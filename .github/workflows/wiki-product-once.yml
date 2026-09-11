@@ -34,12 +34,37 @@ jobs:
           python3 scripts/materialize-wiki-once.py
           python3 - <<'PY'
           from pathlib import Path
-          path = Path("apps/eliotr-core/src/wiki-service.ts")
-          source = path.read_text(encoding="utf-8")
-          start = source.index("/** Existing SemanticApi operation.")
-          end = source.index("/** Server-side/manual review path", start)
+
+          service_path = Path("apps/eliotr-core/src/wiki-service.ts")
+          service = service_path.read_text(encoding="utf-8")
+          start = service.index("/** Existing SemanticApi operation.")
+          end = service.index("/** Server-side/manual review path", start)
           factory = "export function createWikiProposalService(\n  env: Pick<Env, \"CORE_DB\" | \"WORK_BUCKET\">,\n): SemanticApi[\"proposeWiki\"] {\n  return (context: AuthenticatedRequestContext, raw: unknown) => propose(env, context, raw);\n}\n\n"
-          path.write_text(source[:start] + factory + source[end:], encoding="utf-8", newline="\n")
+          service_path.write_text(service[:start] + factory + service[end:], encoding="utf-8", newline="\n")
+
+          store_path = Path("apps/eliotr-core/src/wiki-publication-store.ts")
+          store = store_path.read_text(encoding="utf-8")
+          old_sha = 'return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (byte) => byte.toString(16).padStart(2, "0")).join("");'
+          new_sha = 'const stable = Uint8Array.from(bytes);\n  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", stable.buffer)), (byte) => byte.toString(16).padStart(2, "0")).join("");'
+          if old_sha not in store:
+              raise SystemExit("Wiki SHA-256 type anchor missing")
+          store_path.write_text(store.replace(old_sha, new_sha, 1), encoding="utf-8", newline="\n")
+
+          http_path = Path("apps/eliotr-core/src/http.ts")
+          http = http_path.read_text(encoding="utf-8")
+          if "  QueryRequest,\n" not in http:
+              anchor = "  CatalogRequest,\n"
+              if anchor not in http:
+                  raise SystemExit("HTTP QueryRequest import anchor missing")
+              http = http.replace(anchor, anchor + "  QueryRequest,\n", 1)
+          old_query = "const data = await application.services.semantic.query(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes));"
+          new_query = "const data = await application.services.semantic.query(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes) as QueryRequest);"
+          old_run = "return apiResult(request, env, await application.services.semantic.run(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes)));"
+          new_run = "return apiResult(request, env, await application.services.semantic.run(context, await readJsonBodyWithinBytes(request, match.route.maximum_request_bytes) as QueryRequest));"
+          if old_query not in http or old_run not in http:
+              raise SystemExit("HTTP bounded DTO anchors missing")
+          http = http.replace(old_query, new_query, 1).replace(old_run, new_run, 1)
+          http_path.write_text(http, encoding="utf-8", newline="\n")
           PY
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
