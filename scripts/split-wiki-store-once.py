@@ -60,6 +60,7 @@ support_path.write_text(support_imports + body, encoding="utf-8", newline="\n")
 main_imports = '''import {
   VersionedRefSchema,
   WikiPageRevisionSchema,
+  type WikiPageRevision,
 } from "@eliotr/contracts";
 import {
   type WikiHeadCommit,
