@@ -1,5 +1,6 @@
 import { createWikiProposalService } from "./wiki-service.js";
 import { createResearchChangesService } from "./research-changes.js";
+import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type {
@@ -216,17 +217,6 @@ function ownerApi(env: Env): OwnerApi {
     getRawNormalizedAdmissionStatus: rawNormalized.getStatus,
   };
 }
-async function countPendingOutbox(database: D1Database): Promise<number> {
-  const row = await database.prepare(
-    "SELECT COUNT(*) AS pending_count FROM outbox " +
-    "WHERE state IN ('PENDING','LEASED','FAILED')",
-  ).first<{ pending_count: number }>();
-  const count = row?.pending_count ?? 0;
-  if (!Number.isSafeInteger(count) || count < 0) {
-    throw new Error("D1 returned an invalid pending outbox count");
-  }
-  return count;
-}
 // IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.
 export function createApplication(input: CompositionRootInput): ApplicationLifecycle {
   const services = {
@@ -240,11 +230,9 @@ export function createApplication(input: CompositionRootInput): ApplicationLifec
       const report = await readReadiness(input.env);
       return { ready: report.ready, blocking_reason_codes: report.blocking_reason_codes };
     },
-    async reconcile(limit: number) {
-      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1_000) {
-        throw new RangeError("reconcile limit must be an integer in [1, 1000]");
-      }
-      return { repaired: 0, still_pending: await countPendingOutbox(input.env.CORE_DB) };
-    },
+    reconcile: (limit: number) => reconcileExpiredOutboxLeases(input.env.CORE_DB, {
+      now_ms: Date.now(),
+      limit,
+    }),
   };
 }

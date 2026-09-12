@@ -1,0 +1,18 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-46",
+    "depends_on": [
+      "ER-13",
+      "ER-15",
+      "ER-24"
+    ],
+    "owned_paths": [
+      "apps/eliotr-core/src/outbox-reconciler.ts",
+      "apps/eliotr-core/test/outbox-reconciler.test.ts"
+    ],
+    "mandatory_negative_case": "Race reconciliation against a concurrent terminal outbox settlement and inject a lost update acknowledgement; reconciliation must preserve the winner and recover only through exact readback.",
+    "document": "ER-46-outbox-lifecycle-reconciliation.md",
+    "max_package_source_lines": 10000
+  }
+}
