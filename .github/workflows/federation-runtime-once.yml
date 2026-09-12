@@ -55,6 +55,7 @@ jobs:
           python3 scripts/one-shot/federation/implement.py
           python3 - <<'PY'
           from pathlib import Path
+          import json
 
           def replace_once(path: str, old: str, new: str, label: str) -> None:
               file = Path(path)
@@ -105,12 +106,28 @@ jobs:
               "  const valid = await crypto.subtle.verify(\n    \"HMAC\",\n    key,\n    Uint8Array.from(signature).buffer,\n    Uint8Array.from(body).buffer,\n  ).catch(() => false);",
               "federation cursor signature settlement",
           )
-          replace_once(
-              "docs/agent-work/ER-24-worker-composition-do-queue-and-schedules.md",
-              "- `apps/eliotr-core/src/http-errors.ts`\n",
-              "- `apps/eliotr-core/src/http-errors.ts`\n- `apps/eliotr-core/src/federation-http.ts`\n- `apps/eliotr-core/test/federation-runtime-http.test.ts`\n",
-              "ER-24 federation ownership documentation",
+
+          manifest = json.loads(Path("docs/agent-work/manifest.json").read_text(encoding="utf-8"))
+          packet = next((entry for entry in manifest["packets"] if entry["id"] == "ER-24"), None)
+          if packet is None:
+              raise SystemExit("ER-24 manifest packet missing")
+          document = Path("docs/agent-work/ER-24-worker-composition-do-queue-and-schedules.md")
+          lines = document.read_text(encoding="utf-8").splitlines()
+          try:
+              heading = lines.index("## Owned paths")
+          except ValueError as error:
+              raise SystemExit("ER-24 owned-path heading missing") from error
+          end = heading + 1
+          while end < len(lines) and (lines[end] == "" or lines[end].startswith("- `")):
+              end += 1
+          synchronized = (
+              lines[: heading + 1]
+              + [""]
+              + [f"- `{path}`" for path in packet["owned_paths"]]
+              + [""]
+              + lines[end:]
           )
+          document.write_text("\n".join(synchronized) + "\n", encoding="utf-8", newline="\n")
           PY
           git rm .github/workflows/federation-runtime-once.yml \
             scripts/one-shot/federation/payload.tar.gz.b64 \
