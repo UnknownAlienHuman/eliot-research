@@ -1,4 +1,8 @@
-import type { AuthenticatedRequestContext, RouteDefinition } from "@eliotr/interfaces";
+import type {
+  AuthenticatedRequestContext,
+  ResearchChangesRequest,
+  RouteDefinition,
+} from "@eliotr/interfaces";
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
@@ -6,6 +10,9 @@ import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
 import { handleGoogleConnectionDisconnect, handleGoogleConnectionStatus, handleGoogleOAuthReconnectBegin } from "./google-oauth-lifecycle.js";
 import type { Env } from "./env.js";
 import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
+import { readJsonBodyWithinBytes } from "./bounded-json.js";
+import { createResearchChangesService } from "./research-changes.js";
+import { readReadiness } from "./readiness.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
@@ -51,6 +58,29 @@ export async function dispatchHttpSpecialRoute(input: {
       return handleGoogleConnectionStatus(input.request, input.env, input.context, input.identity, input.dependencies);
     case "google.connection.disconnect":
       return handleGoogleConnectionDisconnect(input.request, input.env, input.context, input.identity, input.dependencies);
+    case "research.changes": {
+      requireNoQuery(input.url);
+      const readiness = await readReadiness(input.env);
+      if (!readiness.ready) {
+        throw new HttpRequestError(
+          "SCHEMA_NOT_READY",
+          503,
+          "Required D1 migrations are not applied",
+          true,
+        );
+      }
+      return apiResult(
+        input.request,
+        input.env,
+        await createResearchChangesService(input.env)(
+          input.context,
+          await readJsonBodyWithinBytes(
+            input.request,
+            input.match.route.maximum_request_bytes,
+          ) as ResearchChangesRequest,
+        ),
+      );
+    }
     case "system.session":
       requireNoQuery(input.url);
       return apiResult(input.request, input.env, {

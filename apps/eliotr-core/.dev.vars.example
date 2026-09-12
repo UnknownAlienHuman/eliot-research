@@ -17,4 +17,6 @@ GOOGLE_EXTERNAL_TRANSPORT=gemini-mcp
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 GOOGLE_TOKEN_ENCRYPTION_KEY=
+# Generate 32 random bytes and encode them as unpadded base64url. Never commit the real value.
+RESEARCH_CHANGES_CURSOR_KEY=
 OWNER_NOTIFICATION_WEBHOOK=

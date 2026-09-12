@@ -1,0 +1,20 @@
+{
+  "protocol": "eliotr.agent-work.packet.v1",
+  "packet": {
+    "id": "ER-45",
+    "depends_on": [
+      "ER-13",
+      "ER-21",
+      "ER-24",
+      "ER-36"
+    ],
+    "owned_paths": [
+      "apps/eliotr-core/src/research-changes-cursor.ts",
+      "apps/eliotr-core/src/research-changes.ts",
+      "apps/eliotr-core/test/research-changes.test.ts"
+    ],
+    "mandatory_negative_case": "Forge or replay a change-feed cursor under another principal, credential, deployment or filter; revoke a scope grant between pages; all cases must fail closed without disclosing the protected change.",
+    "document": "ER-45-authenticated-research-changes.md",
+    "max_package_source_lines": 10000
+  }
+}

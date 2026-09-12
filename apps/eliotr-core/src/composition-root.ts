@@ -1,4 +1,5 @@
 import { createWikiProposalService } from "./wiki-service.js";
+import { createResearchChangesService } from "./research-changes.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import type {
@@ -83,6 +84,7 @@ function semanticApi(env: Env): SemanticApi {
   const researchQuery = createResearchQueryService(env);
   const exhaustiveWorkflow = createExhaustiveWorkflowService(env);
   const researchRun = createResearchRunService(env);
+  const researchChanges = createResearchChangesService(env);
   const artifactInput = (context: AuthenticatedRequestContext, artifactRef: VersionedRef) => {
     const now = Date.now;
     const authority = createOwnerScopeAuthority(env.CORE_DB, context, now);
@@ -132,7 +134,7 @@ function semanticApi(env: Env): SemanticApi {
     proposeWiki: createWikiProposalService(env),
     trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
       if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
-    changes: () => unavailable("research.changes"),
+    changes: (context, request) => researchChanges(context, request),
   };
 }
 function federationApi(): FederationApi {

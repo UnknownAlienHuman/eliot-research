@@ -107,6 +107,41 @@ export interface WikiProposalResult {
   readonly state: "PROPOSED";
 }
 
+export type ResearchChangeKind =
+  | "WIKI_PUBLISHED"
+  | "SOURCE_ADMITTED"
+  | "SOURCE_UPDATED"
+  | "ARTIFACT_DRAFTED"
+  | "RESEARCH_COMPLETED"
+  | "ERASURE_COMPLETED";
+
+export interface ResearchChangesRequest {
+  readonly after_cursor: string | null;
+  readonly limit: number;
+  readonly kinds: readonly ResearchChangeKind[];
+}
+
+export interface ResearchChangeItem {
+  readonly sequence: number;
+  readonly change_ref: string;
+  readonly kind: ResearchChangeKind;
+  readonly subject_ref: string;
+  readonly subject_revision: number;
+  readonly payload_ref: string;
+  readonly payload_sha256: string;
+  readonly visibility_principal_ref?: string;
+  readonly visibility_scope_ref?: VersionedRef;
+  readonly occurred_at: string;
+  readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
+}
+
+export interface ResearchChangesResult {
+  readonly protocol: "eliotr.research-changes.v1";
+  readonly items: readonly ResearchChangeItem[];
+  readonly next_cursor: string | null;
+  readonly has_more: boolean;
+}
+
 export interface ResearchArtifactSectionCitations {
   readonly protocol: "eliotr.artifact-section-citations.v1";
   readonly artifact_ref: VersionedRef;
@@ -170,5 +205,5 @@ export interface SemanticApi {
   artifactSectionCitations(context: AuthenticatedRequestContext, artifactRef: VersionedRef, sectionRef: VersionedRef): Promise<ResearchArtifactSectionCitations>;
   proposeWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiProposalResult>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
-  changes(context: AuthenticatedRequestContext, afterCursor: string, allowedScopes: readonly string[]): Promise<{ refs: readonly string[]; next_cursor: string }>;
+  changes(context: AuthenticatedRequestContext, request: ResearchChangesRequest): Promise<ResearchChangesResult>;
 }

@@ -33,6 +33,8 @@ export interface Env {
   readonly GOOGLE_CLIENT_ID?: string;
   readonly GOOGLE_CLIENT_SECRET?: string;
   readonly GOOGLE_TOKEN_ENCRYPTION_KEY?: string;
+  /** Unpadded base64url-encoded 32-byte HMAC key for authenticated research-change cursors. */
+  readonly RESEARCH_CHANGES_CURSOR_KEY?: string;
   /** Active AES-GCM key version for Google OAuth intent/grant ciphertext. Defaults to 1. */
   readonly GOOGLE_TOKEN_KEY_VERSION?: string;
   /** Server-owned G1 OAuth admission configuration; never accepted from request bodies. */
