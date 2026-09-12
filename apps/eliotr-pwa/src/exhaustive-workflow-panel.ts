@@ -397,6 +397,8 @@ export function mountExhaustiveWorkflowPanel(
   window.addEventListener("eliotr:authorization-cleared", clearPrivate);
   window.addEventListener("offline", clearPrivate);
   window.addEventListener("pagehide", clearPrivate);
+  const onOnline = (): void => { buttons(); };
+  window.addEventListener("online", onOnline);
   const onHealthUpdated = (): void => {
     refreshHealthState();
     if (healthReady()) void refreshRecovery();
@@ -407,7 +409,7 @@ export function mountExhaustiveWorkflowPanel(
   buttons();
   if (healthReady()) void refreshRecovery();
   return Object.assign(() => {
-    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("eliotr:health-updated", onHealthUpdated);
+    clearPrivate(); window.removeEventListener("eliotr:authorization-cleared", clearPrivate); window.removeEventListener("offline", clearPrivate); window.removeEventListener("pagehide", clearPrivate); window.removeEventListener("online", onOnline); window.removeEventListener("eliotr:health-updated", onHealthUpdated);
   }, { clearPrivate, selectSource(id: string): void {
     if (!IdentifierSchema.safeParse(id).success) return;
     selectedSourceId = id; selectedScopeOption.disabled = false; scope.value = "selected";

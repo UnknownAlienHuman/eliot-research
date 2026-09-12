@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
 import { createBrowserMcpDiagnosticFixture, runBrowserMcpDiagnosticCanary } from "./lib/browser-mcp-diagnostic-fixture.mjs";
+import { createBrowserResearchReadinessFixture, runBrowserResearchReadinessCanary } from "./lib/browser-research-readiness-fixture.mjs";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -35,16 +36,6 @@ let researchRunStatusReads = 0;
 let draftRunStatusReads = 0;
 const page = (id, title, next) => envelope({ projects: [{ id: "project-1", title: "Проект", generation: "1" }],
   sources: [{ id, title, readiness_ref: `readiness:${id}:revision-1` }], ...(next ? { next_cursor: next } : {}) });
-const orientation = () => {
-  const trace = { id: `orient-${"a".repeat(64)}`, revision: 1 };
-  return envelope({ evidence_pack: { pack_ref: { id: "pack-fixture", revision: 1 },
-    scope_snapshot_ref: { id: "scope-fixture", revision: 1 }, trace_ref: trace,
-    resolved_evidence: [], omitted_candidates: [], total_utf8_bytes: 0 }, trace_ref: trace,
-  navigation: { source_cards: [], document_maps: [], represented_source_revision_refs: [], omitted_source_revision_refs: [],
-    omitted_source_revision_count: 0, omissions_truncated: false, omissions: [], coverage_kind: "unknown",
-    coverage_method: "frozen_scope_order", degraded_source_revision_refs: [], missing_source_classes: [], contradiction_refs: [],
-    centrality: [], recommended_reading_routes: [], navigation_authority: "NAVIGATION_ONLY" } });
-};
 const evidenceText = "# Evidence\n\nPinned content.\n";
 const evidenceSha = createHash("sha256").update(evidenceText).digest("hex");
 const draftSectionCitations = envelope({
@@ -67,31 +58,6 @@ const resolvedEvidence = () => ({
   scope_snapshot_digest: "b".repeat(64), instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY",
   resolved_at: "2026-09-08T00:00:00.000Z",
 });
-const queryTraceRef = { id: `query-${"b".repeat(48)}`, revision: 1 };
-const queryScope = {
-  snapshot_id: "scope-1", revision: 1,
-  resolved_scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] },
-  participant_generations: {}, member_source_revision_refs: ["revision-1"],
-  source_owner_generations: { "revision-1": "owner-1" }, policy_authority_ref: "policy-1",
-  disclosure_closure_digest: "c".repeat(64), purge_ledger_revision: 0,
-  digest: "d".repeat(64), created_at: "2026-09-08T00:00:00.000Z", expires_at: "2026-09-09T00:00:00.000Z",
-};
-const queryTraceData = () => ({
-  trace_ref: queryTraceRef, raw_query: "pinned", scope_snapshot: queryScope,
-  query_product: "FAST_SEARCH", lanes_used: ["LEX"],
-  lanes_skipped: [{ lane: "SEM", reason: "LANE_UNAVAILABLE" }], exact_probes: ["pinned"],
-  index_generations: ["projection-1"], context_expansion: 1,
-  candidates_by_lane: { IDENT: 0, EXACT: 0, LEX: 1, SEM: 0, LITERAL: 0, SOURCECARD: 0, ATLAS: 0,
-    ATOM: 0, ARGUMENT: 0, WIKI: 0, ARTIFACT: 0, STRUCTURE: 0, CODE: 0, WEB: 0, EXHAUSTIVE: 0, VERIFY: 0 },
-  expansion_refs: [], represented_source_refs: ["revision-1"], omitted_sources: [],
-  stale_or_degraded_channels: [], budget_receipt_ref: "budget-1", evidence_pack_ref: "pack-1",
-  coverage_claim: "SAMPLED",
-});
-const queryEvidence = () => envelope({ evidence_pack: {
-    pack_ref: { id: "pack-1", revision: 1 }, scope_snapshot_ref: { id: "scope-1", revision: 1 },
-    resolved_evidence: [resolvedEvidence()], omitted_candidates: [],
-  trace_ref: queryTraceRef, total_utf8_bytes: 28,
-}, trace_ref: queryTraceRef });
 const readiness = () => envelope({
   protocol: "eliotr.library-readiness.v1", source_id: "source-1", source_revision_ref: "revision-1",
   deployment_generation: "browser-fixture", catalog_generation: "1", observed_at: "2026-09-08T00:00:00.000Z",
@@ -116,12 +82,14 @@ const revisionPage = (sourceId, older = false) => envelope({ protocol: "eliotr.s
       source_revision_ref: "revision-1", channel: "semantic_ready", state: "degraded", reason_codes: ["AI_SEARCH_UNAVAILABLE"],
       observed_at: "2026-09-02T12:00:00.000Z" }] }], ...(older ? {} : { next_cursor: "olderFixture" }) });
 let revisionMode = "normal"; let pendingRevision; let sectionMode = "normal"; let pendingSection;
-let mode = "normal"; let pending; let pendingOrientation; let orientationMode = "normal"; const selectionOrder = [];
+let mode = "normal"; let pending;
 let browser; let socket; let closing;
 const HEALTH_DELAY_MS = 250;
-const requests = []; const posted = []; const errors = [];
+const requests = []; const errors = [];
 const importing = browserImportFixture();
 const diagnosticFixture = createBrowserMcpDiagnosticFixture();
+const researchReadinessFixture = createBrowserResearchReadinessFixture({ resolvedEvidence });
+const { posted, selectionOrder } = researchReadinessFixture;
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
@@ -129,8 +97,11 @@ const server = createServer((request, response) => {
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
     if (url.pathname === "/api/v1/system/mcp-diagnostics") return diagnosticFixture.handle(request, response, url);
-    if (url.pathname === "/api/v1/system/health") { await delay(HEALTH_DELAY_MS); return json(envelope({ ready: true, deployment_generation: "browser-fixture",
-      core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() })); }
+    if (url.pathname === "/api/v1/system/health") {
+      if (researchReadinessFixture.handleHealth(response)) return;
+      await delay(HEALTH_DELAY_MS); return json(envelope({ ready: true, deployment_generation: "browser-fixture",
+        core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() }));
+    }
     if (url.pathname === "/api/v1/library/revisions") {
       assert.equal(request.method, "GET"); assert.equal(url.searchParams.get("limit"), "10");
       const value = revisionPage(url.searchParams.get("source_id"), url.searchParams.has("cursor"));
@@ -149,30 +120,14 @@ const server = createServer((request, response) => {
       if (url.searchParams.has("cursor")) return json(page("source-2", "English source"));
       return json(page("source-1", '<img src=x onerror="window.attacked=true"> Русский источник', "nextFixture"));
     }
-    if (url.pathname === "/api/v1/research/orient") {
-      selectionOrder.push("orientation");
-      assert.equal(request.method, "POST"); assert.ok(request.headers["idempotency-key"]);
-      const chunks = []; let bytes = 0;
-      for await (const chunk of request) { bytes += chunk.length; assert.ok(bytes < 16 * 1024); chunks.push(chunk); }
-      posted.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      if (orientationMode === "delayed") { pendingOrientation = () => json(orientation()); return; }
-      return json(orientation());
-    }
+    if (url.pathname === "/api/v1/research/orient") return researchReadinessFixture.handleOrientation(request, response, url);
     if (url.pathname === "/api/v1/library/readiness") {
       selectionOrder.push("readiness");
       assert.equal(request.method, "GET");
       assert.deepEqual([...url.searchParams.entries()], [["source_id", "source-1"]]);
       return json(readiness());
     }
-    if (url.pathname === "/api/v1/research/query") {
-      assert.equal(request.method, "POST");
-      const chunks = []; for await (const chunk of request) chunks.push(chunk);
-      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      assert.deepEqual(body, { query: "pinned", product: "FAST_SEARCH",
-        scope_expression: { kind: "SELECTED_SOURCES", source_ids: ["source-1"] }, literals: [],
-        evidence_grade: "E0", budget_ref: "retrieval-fast-v1", max_results: 16 });
-      return json(queryEvidence());
-    }
+    if (url.pathname === "/api/v1/research/query") return researchReadinessFixture.handleQuery(request, response, url);
     if (url.pathname === "/api/v1/research/run" && request.method === "POST") {
       assert.ok(request.headers["idempotency-key"]);
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -223,11 +178,7 @@ const server = createServer((request, response) => {
       if (sectionMode === "delayed") { pendingSection = sendSection; return; }
       return sendSection();
     }
-    if (url.pathname === `/api/v1/research/trace/${queryTraceRef.id}`) {
-      assert.equal(request.method, "GET");
-      assert.equal(url.search, "");
-      return json(envelope(queryTraceData()));
-    }
+    if (url.pathname.startsWith("/api/v1/research/trace/")) return researchReadinessFixture.handleTrace(request, response, url);
     if (url.pathname === "/api/v1/research/verify") {
       assert.equal(request.method, "POST");
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
@@ -416,11 +367,11 @@ try {
   await click("#library [data-project]");
   await wait('document.querySelector("#library [data-scope]").textContent.includes("project-1") && Boolean(document.querySelector("#library [data-source]"))', "Project filter");
   assert.ok(requests.some((query) => query.includes("project_id=project-1")));
-  orientationMode = "delayed"; const selectionStart = selectionOrder.length;
+  researchReadinessFixture.setOrientationMode("delayed"); const selectionStart = selectionOrder.length;
   await click("#library [data-source]");
-  await until(() => Boolean(pendingOrientation), "Orientation request before readiness");
+  await researchReadinessFixture.waitForPendingOrientation();
   assert.deepEqual(selectionOrder.slice(selectionStart), ["orientation"]);
-  pendingOrientation(); pendingOrientation = undefined; orientationMode = "normal";
+  researchReadinessFixture.releaseOrientation(); researchReadinessFixture.setOrientationMode("normal");
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Source selection to real Lens transport");
   await until(() => selectionOrder.slice(selectionStart).join(",") === "orientation,readiness", "Readiness after orientation");
   assert.deepEqual(posted[0].scope_expression, { kind: "SELECTED_SOURCES", source_ids: ["source-1"] });
@@ -577,17 +528,20 @@ try {
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
   pending?.(); pending = undefined;
   pendingRevision?.(); pendingRevision = undefined;
-  pendingOrientation?.(); pendingOrientation = undefined;
   pendingSection?.(); pendingSection = undefined;
-  mode = "normal"; revisionMode = "normal"; orientationMode = "normal"; sectionMode = "normal";
+  researchReadinessFixture.releaseQuery(); researchReadinessFixture.releaseOrientation();
+  mode = "normal"; revisionMode = "normal"; sectionMode = "normal";
   await cdp("Page.reload");
   await openSources("Diagnostic baseline after reload");
   await wait('document.querySelector("#app")?.dataset.healthGeneration === "browser-fixture"', "Diagnostic health baseline");
+  await runBrowserResearchReadinessCanary({
+    fixture: researchReadinessFixture, cdp, evaluate, wait, click, assertVisible, assertView, openSources,
+  });
   await runBrowserMcpDiagnosticCanary({ fixture: diagnosticFixture, click, evaluate, wait, assertVisible, assertView, openSources });
   assert.deepEqual(errors, []);
   console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
-  pending?.(); socket?.close();
+  pending?.(); researchReadinessFixture.releaseQuery(); researchReadinessFixture.releaseOrientation(); socket?.close();
   if (browser && browser.exitCode === null) {
     browser.kill("SIGTERM"); const timer = setTimeout(() => browser.kill("SIGKILL"), 3000);
     try { await closing; } finally { clearTimeout(timer); }
