@@ -56,6 +56,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         <button class="button button--quiet" type="button" data-raw-recover disabled>Check upload status</button>
         <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
         <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
+        <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Find in Library</button>
         <button class="button button--quiet" type="button" data-raw-stop hidden>Stop</button></div>
     </form>
     <p class="raw-file-limit">Up to ${formatBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>
@@ -70,12 +71,13 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   const recover = element.querySelector<HTMLButtonElement>("[data-raw-recover]");
   const process = element.querySelector<HTMLButtonElement>("[data-raw-process]");
   const admit = element.querySelector<HTMLButtonElement>("[data-raw-admit]");
+  const findLibrary = element.querySelector<HTMLButtonElement>("[data-raw-find-library]");
   const stopButton = element.querySelector<HTMLButtonElement>("[data-raw-stop]");
   const status = element.querySelector<HTMLElement>("[data-raw-status]");
   const receiptNode = element.querySelector<HTMLElement>("[data-raw-receipt]");
   const processingNode = element.querySelector<HTMLElement>("[data-raw-processing]");
   const admissionNode = element.querySelector<HTMLElement>("[data-raw-admission]");
-  if (!form || !input || !submit || !recover || !process || !admit || !stopButton || !status || !receiptNode || !processingNode || !admissionNode) {
+  if (!form || !input || !submit || !recover || !process || !admit || !findLibrary || !stopButton || !status || !receiptNode || !processingNode || !admissionNode) {
     throw new Error("Raw file panel is incomplete");
   }
 
@@ -92,6 +94,8 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   let admissionNeedsResume = false;
   let healthLossStatus: string | undefined;
   let lastGeneration = host.ready() ? host.generation() : undefined;
+  const hasSuccessfulAdmission = (): boolean => admission?.state === "COMMITTED" &&
+    (admission.admission_receipt?.decision === "ADMITTED" || admission.admission_receipt?.decision === "DUPLICATE");
 
   const renderReceipt = (value: RawFileCaptureReceipt, recovered: boolean): void => {
     receiptNode.hidden = false;
@@ -148,6 +152,8 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         : admissionOutcomeUnknown
           ? "Reconcile Library add"
           : "Add to Library";
+    findLibrary.hidden = !hasSuccessfulAdmission();
+    findLibrary.disabled = busy || !hasSuccessfulAdmission();
     input.disabled = busy;
     stopButton.hidden = !busy;
     stopButton.disabled = !busy;
@@ -383,6 +389,10 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   recover.onclick = () => runCapture(true);
   process.onclick = () => runProcess();
   admit.onclick = () => runAdmission();
+  findLibrary.onclick = () => {
+    if (!hasSuccessfulAdmission() || busy) return;
+    element.dispatchEvent(new Event("eliotr:find-in-library", { bubbles: true }));
+  };
   stopButton.onclick = () => {
     if (!busy) return;
     serial++;
@@ -430,7 +440,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   return () => {
     disposed = true;
     clear("Upload panel closed.");
-    form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null; stopButton.onclick = null;
+    form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null; findLibrary.onclick = null; stopButton.onclick = null;
     app?.removeEventListener("eliotr:health-updated", healthUpdated);
     app?.removeEventListener("eliotr:health-lost", clearOnHealthLost);
     window.removeEventListener("eliotr:authorization-cleared", clearOnAuth);
