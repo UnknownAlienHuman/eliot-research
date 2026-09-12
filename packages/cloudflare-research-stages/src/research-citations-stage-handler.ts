@@ -62,6 +62,27 @@ function failAuthority(): never {
   return fail("WORKFLOW_AUTHORITY_STALE");
 }
 
+function snapshotNavigationAccess(
+  value: NavigationReadAuthority["access"],
+): NavigationReadAuthority["access"] {
+  const snapshot = {
+    principal_ref: value.principal_ref,
+    client_class: value.client_class,
+    credential_generation: value.credential_generation,
+  };
+  if (!IdentifierSchema.safeParse(snapshot.principal_ref).success ||
+      !IdentifierSchema.safeParse(snapshot.credential_generation).success) return failAuthority();
+  return Object.freeze(snapshot);
+}
+
+function detached<T>(value: T): T {
+  try {
+    return JSON.parse(canonicalEvidenceJson(value)) as T;
+  } catch {
+    return failAuthority();
+  }
+}
+
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
   return left.id === right.id && left.revision === right.revision;
 }
@@ -78,6 +99,14 @@ function sameRefSet(left: readonly VersionedRef[], right: readonly VersionedRef[
     leftKeys.every((key, index) => key === rightKeys[index]);
 }
 
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const leftValues = [...left].sort();
+  const rightValues = [...right].sort();
+  return new Set(leftValues).size === leftValues.length && new Set(rightValues).size === rightValues.length &&
+    leftValues.every((value, index) => value === rightValues[index]);
+}
+
 function stableSources(value: readonly EvidenceSourceAuthority[]): string {
   return canonicalEvidenceJson([...value].sort((left, right) => (
     left.source_revision_ref < right.source_revision_ref ? -1 : left.source_revision_ref > right.source_revision_ref ? 1 : 0
@@ -92,6 +121,7 @@ function stableContext(value: EvidenceFreezeSynthesisContext): string {
     principal_ref: value.principal_ref,
     credential_generation: value.credential_generation,
     deployment_generation: value.deployment_generation,
+    authorization_receipt_ref: value.authorization_receipt_ref,
     freeze: value.freeze,
     manifest: value.manifest,
     stage_five: value.stage_five,
@@ -130,6 +160,7 @@ function requireCommittedAuditLineage(
       lineage.request.investigation_ref.id !== request.investigation_ref.id ||
       lineage.request.handler_generation !== request.handler_generation ||
       lineage.receipt.engine_state !== "CHECKPOINTED" ||
+      lineage.receipt.input_manifest_ref !== lineage.request.input_manifest.object_ref ||
       lineage.receipt.investigation_ref.id !== request.investigation_ref.id ||
       lineage.receipt.investigation_ref.revision !== request.investigation_ref.revision ||
       canonicalEvidenceJson(lineage.receipt.output_manifest) !== canonicalEvidenceJson(request.input_manifest) ||
@@ -206,14 +237,14 @@ function requireCurrentSource(
   evidence: ResolvedEvidence,
   source: EvidenceSourceAuthority,
   expectedScope: VersionedRef,
-  grant: Awaited<ReturnType<NavigationReadAuthority["current"]>>,
+  authorizationReceiptRef: string,
   access: NavigationReadAuthority["access"],
 ): void {
   if (!sameRef(entry.packed.handle.handle_ref, evidence.handle.handle_ref) ||
       entry.frozen.digest !== evidence.handle.excerpt_sha256 ||
       !sameRef(evidence.handle.scope_snapshot_ref, expectedScope) ||
       evidence.handle.terminal_state !== "LIVE" ||
-      evidence.authorization_receipt_ref !== grant.authorization_receipt_ref ||
+      evidence.authorization_receipt_ref !== authorizationReceiptRef ||
       evidence.credential_generation !== access.credential_generation ||
       source.source_revision_ref !== evidence.handle.source_revision_ref ||
       source.source_owner_generation !== evidence.handle.source_owner_generation ||
@@ -259,30 +290,37 @@ function requireResolverReceipt(
 
 async function resolveAndValidate(
   dependencies: ResearchCitationsStageDependencies,
+  navigationAccess: NavigationReadAuthority["access"],
   refs: readonly VersionedRef[],
   entries: ReadonlyMap<string, ResearchEvidencePackEntry>,
   context: EvidenceFreezeSynthesisContext,
-): Promise<{ readonly receipt: CitationResolutionReceipt; readonly evidence: readonly ResolvedEvidence[] }> {
+): Promise<{
+  readonly receipt: CitationResolutionReceipt;
+  readonly evidence: readonly ResolvedEvidence[];
+  readonly grant_fingerprint: string;
+}> {
   let beforeGrant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
-  try { beforeGrant = await dependencies.navigation.current(); }
+  try { beforeGrant = detached(await dependencies.navigation.current()); }
   catch { return failAuthority(); }
-  if (!beforeGrant.allowed_use.includes("research") ||
-      dependencies.navigation.access.principal_ref.length < 1 ||
-      dependencies.navigation.access.credential_generation.length < 1) return failAuthority();
+  const beforeGrantFingerprint = canonicalEvidenceJson(beforeGrant);
+  const beforeAuthorizationReceiptRef = beforeGrant.authorization_receipt_ref;
+  if (!beforeGrant.allowed_use.includes("research")) return failAuthority();
   const revisions = sourceRevisionRefs(entries);
   let beforeSources: readonly EvidenceSourceAuthority[];
-  try { beforeSources = await dependencies.navigation.sources(revisions, beforeGrant); }
+  try { beforeSources = detached(await dependencies.navigation.sources(revisions, detached(beforeGrant))); }
   catch { return failAuthority(); }
   if (beforeSources.length !== revisions.length || new Set(beforeSources.map((item) => item.source_revision_ref)).size !== revisions.length) {
     return failAuthority();
   }
+  if (!sameStringSet(beforeSources.map((item) => item.source_revision_ref), revisions)) return failAuthority();
+  const beforeSourcesFingerprint = stableSources(beforeSources);
   const sourceByRevision = new Map(beforeSources.map((source) => [source.source_revision_ref, source]));
   let result: Awaited<ReturnType<CloudflareEvidenceResolver["resolveCitationSet"]>>;
   try {
     result = await dependencies.evidence_resolver.resolveCitationSet({
       handle_refs: refs,
       scope_snapshot_ref: context.freeze.scope_snapshot_ref,
-      access: dependencies.navigation.access,
+      access: navigationAccess,
     });
   } catch { return failAuthority(); }
   const receiptParsed = CitationResolutionReceiptSchema.safeParse(result.receipt);
@@ -296,19 +334,21 @@ async function resolveAndValidate(
     const entry = entries.get(refKey(item.handle.handle_ref));
     const source = sourceByRevision.get(item.handle.source_revision_ref);
     if (entry === undefined || source === undefined) return failAuthority();
-    requireCurrentSource(entry, item, source, context.freeze.scope_snapshot_ref, beforeGrant, dependencies.navigation.access);
+    requireCurrentSource(entry, item, source, context.freeze.scope_snapshot_ref, beforeAuthorizationReceiptRef, navigationAccess);
     await requireExactExcerpt(item);
   }));
   if (evidenceByRef.size !== evidence.length) return failCorrupt();
   let afterGrant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
   let afterSources: readonly EvidenceSourceAuthority[];
   try {
-    afterGrant = await dependencies.navigation.current();
-    afterSources = await dependencies.navigation.sources(revisions, afterGrant);
+    afterGrant = detached(await dependencies.navigation.current());
+    afterSources = detached(await dependencies.navigation.sources(revisions, detached(afterGrant)));
   } catch { return failAuthority(); }
-  if (canonicalEvidenceJson(beforeGrant) !== canonicalEvidenceJson(afterGrant) ||
-      stableSources(beforeSources) !== stableSources(afterSources)) return failAuthority();
-  return { receipt, evidence };
+  if (afterSources.length !== revisions.length || new Set(afterSources.map((item) => item.source_revision_ref)).size !== revisions.length ||
+      !sameStringSet(afterSources.map((item) => item.source_revision_ref), revisions)) return failAuthority();
+  if (beforeGrantFingerprint !== canonicalEvidenceJson(afterGrant) ||
+      beforeSourcesFingerprint !== stableSources(afterSources)) return failAuthority();
+  return { receipt, evidence, grant_fingerprint: beforeGrantFingerprint };
 }
 
 function zResolvedEvidence(value: readonly ResolvedEvidence[]) {
@@ -329,8 +369,14 @@ export function createResearchCitationsStageHandler(
   return async (rawInput) => {
     const request = parseRequest(rawInput.request);
     const principal = snapshotPrincipal(rawInput.principal);
-    if (request.stage !== CITATIONS_STAGE || !(rawInput.input_bytes instanceof Uint8Array) ||
-        !IdentifierSchema.safeParse(rawInput.attempt_ref).success) return fail("WORKFLOW_INPUT_INVALID");
+    const attemptParsed = IdentifierSchema.safeParse(rawInput.attempt_ref);
+    if (request.stage !== CITATIONS_STAGE || !(rawInput.input_bytes instanceof Uint8Array) || !attemptParsed.success) {
+      return fail("WORKFLOW_INPUT_INVALID");
+    }
+    const attemptRef = attemptParsed.data;
+    const navigationAccess = snapshotNavigationAccess(dependencies.navigation.access);
+    if (navigationAccess.principal_ref !== principal.principal_ref ||
+        navigationAccess.credential_generation !== principal.credential_generation) return failAuthority();
     const inputBytes = new Uint8Array(rawInput.input_bytes);
     const requestSha256 = await digest(new TextEncoder().encode(JSON.stringify(request)));
     if (request.input_manifest.byte_length !== inputBytes.byteLength ||
@@ -351,7 +397,7 @@ export function createResearchCitationsStageHandler(
     const predecessorBeforeText = stableLineage(predecessor);
     const w1Before = await checkpoints.head(request.investigation_ref.id);
     if (w1Before === null || stableContext({ ...context, w1_head: w1Before }) !== contextBeforeText) return failAuthority();
-    const resolution = await resolveAndValidate(dependencies, refs, entries, context);
+    const resolution = await resolveAndValidate(dependencies, navigationAccess, refs, entries, context);
     let contextAfter: EvidenceFreezeSynthesisContext;
     try { contextAfter = await dependencies.context.read({ request, principal, input_bytes: inputBytes }); }
     catch (error) {
@@ -365,13 +411,17 @@ export function createResearchCitationsStageHandler(
         stableContext(contextAfter) !== contextBeforeText ||
         stableLineage(predecessorAfter) !== predecessorBeforeText ||
         stableContext({ ...contextAfter, w1_head: w1After }) !== contextBeforeText) return failAuthority();
+    let terminalGrantFingerprint: string;
+    try { terminalGrantFingerprint = canonicalEvidenceJson(detached(await dependencies.navigation.current())); }
+    catch { return failAuthority(); }
+    if (terminalGrantFingerprint !== resolution.grant_fingerprint) return failAuthority();
     try {
       return await encodeResearchCitationsResult({
         audit,
         investigation_ref: request.investigation_ref,
         audit_output_sha256: request.input_manifest.sha256,
         evidence_pack_ref: contextAfter.stage_five.evidence_pack.pack_ref,
-        stage_attempt_ref: rawInput.attempt_ref,
+        stage_attempt_ref: attemptRef,
         stage_request_sha256: requestSha256,
         citation_resolution_receipt: resolution.receipt,
       });
