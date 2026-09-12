@@ -60,11 +60,11 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
 }
 
 export function mountRetrievalPanel(element: HTMLElement, healthReady: () => boolean): (() => void) & { selectSource(id: string, context?: LibrarySelectionContext): void; clearPrivate(): void } {
-  element.innerHTML = `<h2>Retrieval</h2>
-    <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
-    Coverage is sampled: a miss does not prove absence, and no model is called.</p>
-    <form><label>Query<input name="query" maxlength="4096" autocomplete="off" required placeholder="Exact term or phrase"></label>
-    <label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
+  element.innerHTML = `<h2>Document search</h2>
+    <p>Search the documents you can access and open verified excerpts. Results cover a limited set of sections;
+    a missing result does not prove a term is absent. No AI model is called.</p>
+    <form><label>Search documents<input name="query" maxlength="4096" autocomplete="off" required placeholder="Exact term or phrase"></label>
+    <label>Advanced (optional): limit to source IDs<input name="sources" maxlength="16000" autocomplete="off" placeholder="Leave blank to search authorized sources; separate IDs with commas (up to 64 sources)"></label>
     <button type="submit">Search</button><button type="button" data-cancel disabled>Cancel</button></form>
     <p role="status" aria-live="polite"></p><section data-result></section><pre data-trace-result hidden></pre>`;
   const form = element.querySelector("form");

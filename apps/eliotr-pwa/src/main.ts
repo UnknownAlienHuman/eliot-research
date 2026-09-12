@@ -161,8 +161,8 @@ function render(health: SystemHealth | null): void {
         </section>
       </section>
       <aside class="panel panel--evidence" aria-label="Evidence details">
-        <div class="evidence-heading"><div><span class="eyebrow">Proof rail</span><h2>Evidence</h2></div><span class="rail-status">QUERY RESULT</span></div>
-        <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select a resolved excerpt</strong><p>Its revision, anchor, integrity and provenance will appear here.</p></div>
+        <div class="evidence-heading"><div><span class="eyebrow">Evidence details</span><h2>Evidence</h2></div><span class="rail-status">No excerpt selected</span></div>
+        <div id="evidence-empty" class="evidence-empty"><span class="evidence-glyph">✦</span><strong>Select an excerpt</strong><p>The source text and verification details will appear here.</p></div>
         <article id="evidence-detail" class="evidence-detail" hidden></article>
         <div class="system-facts"><span class="eyebrow">System facts</span><dl><dt>Core schema</dt><dd id="core-generation">${displayText(health?.core_schema_generation, "Unknown")}</dd><dt>Search schema</dt><dd id="search-generation">${displayText(health?.search_schema_generation, "Unknown")}</dd><dt>Connector</dt><dd id="connector-mode">${googleConnectorLabel(health?.google_external_transport)}</dd></dl></div>
       </aside>
