@@ -14,6 +14,7 @@ import type {
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 const C = "c".repeat(64);
+const EXCERPT_DIGEST = "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8";
 const NOW = Date.UTC(2026, 7, 31, 22, 0, 0);
 const scopeSnapshot: ScopeSnapshot = {
   snapshot_id: "scope-1",
@@ -59,7 +60,7 @@ const candidate: LocatorCandidate = {
   raw_score: 1,
   rank: 1,
   index_generation: "projection-1",
-  metadata: { item_key: "item-1" },
+  metadata: { item_key: "item-1", content_sha256: EXCERPT_DIGEST },
 };
 const access = {
   principal_ref: "principal-1",
@@ -67,7 +68,10 @@ const access = {
   credential_generation: "credential-1",
 };
 
-function fixture() {
+function fixture(options: {
+  readonly anchorDigest?: string;
+  readonly sourceObjectDigest?: string;
+} = {}) {
   let storedHandle: EvidenceHandle | null = null;
   let currentSource: EvidenceSourceAuthority | null = source;
   const invalidations: string[] = [];
@@ -87,7 +91,7 @@ function fixture() {
       return {
         anchor: { kind: "normalized_byte_range", start: 0, end: 5 },
         item_key: "item-1",
-        content_sha256: A,
+        content_sha256: options.anchorDigest ?? EXCERPT_DIGEST,
         coordinate_map_ref: "offset-map-1",
         projection_generation: "projection-1",
       };
@@ -112,12 +116,12 @@ function fixture() {
       async materialize() {
         return {
           exact_excerpt: "alpha",
-          excerpt_sha256: "8ed3f6ad685b959ead7022518e1af76cd816f8e8ec7ccdda1ed4018e8f2223f8",
+          excerpt_sha256: EXCERPT_DIGEST,
           excerpt_byte_length: 5,
           normalized_object_ref: "normalized/object/content.md",
           normalized_object_ref_digest: A,
           source_object_size: 100,
-          source_object_sha256: A,
+          source_object_sha256: options.sourceObjectDigest ?? A,
         };
       },
     },
@@ -144,6 +148,49 @@ describe("exact evidence resolver", () => {
     expect(resolved.handle.anchor).toEqual({ kind: "normalized_byte_range", start: 0, end: 5 });
     expect(resolved.handle.terminal_state).toBe("LIVE");
     expect(resolved.neighboring_text_ref).toBe("item-1");
+  });
+
+  it("accepts an optional candidate digest when the anchor binds the materialized excerpt", async () => {
+    const f = fixture();
+    const { content_sha256: _contentSha256, ...metadataWithoutDigest } = candidate.metadata;
+    const candidateWithoutDigest = { ...candidate, metadata: metadataWithoutDigest };
+    const resolved = await f.resolver.resolveCandidate({
+      candidate: candidateWithoutDigest,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    expect(resolved.exact_excerpt).toBe("alpha");
+  });
+
+  it("rejects an anchor digest that differs from the materialized excerpt", async () => {
+    const f = fixture({ anchorDigest: "f".repeat(64) });
+    await expect(f.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    })).rejects.toMatchObject({ code: "EVIDENCE_LOCATOR_NOT_RESOLVABLE" });
+    expect(f.handle).toBeNull();
+  });
+
+  it("rejects candidate metadata digest that differs from the materialized excerpt", async () => {
+    const f = fixture();
+    const wrongMetadata = { ...candidate, metadata: { ...candidate.metadata, content_sha256: "f".repeat(64) } };
+    await expect(f.resolver.resolveCandidate({
+      candidate: wrongMetadata,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    })).rejects.toMatchObject({ code: "EVIDENCE_LOCATOR_NOT_RESOLVABLE" });
+    expect(f.handle).toBeNull();
+  });
+
+  it("rejects a materialized full-object digest that differs from the source revision", async () => {
+    const f = fixture({ sourceObjectDigest: B });
+    await expect(f.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    })).rejects.toMatchObject({ code: "EVIDENCE_OBJECT_INTEGRITY" });
+    expect(f.handle).toBeNull();
   });
 
   it("fails before materialization when the revision is outside frozen scope", async () => {

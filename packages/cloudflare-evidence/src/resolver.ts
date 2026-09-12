@@ -125,6 +125,29 @@ async function loadSource(
   return source;
 }
 
+function requireMaterializedSourceBinding(
+  materialized: MaterializedEvidenceExcerpt,
+  source: EvidenceSourceAuthority,
+): void {
+  if (materialized.source_object_sha256 !== source.content_sha256) {
+    fail("EVIDENCE_OBJECT_INTEGRITY", "materialized evidence bytes differ from source authority");
+  }
+}
+
+function requireCandidateExcerptBinding(
+  candidate: LocatorCandidate,
+  anchorAuthority: CandidateAnchorAuthority,
+  materialized: MaterializedEvidenceExcerpt,
+): void {
+  const candidateDigest = candidate.metadata.content_sha256;
+  if (
+    anchorAuthority.content_sha256 !== materialized.excerpt_sha256 ||
+    (candidateDigest !== undefined && candidateDigest !== materialized.excerpt_sha256)
+  ) {
+    fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "projection item digest differs from materialized evidence excerpt");
+  }
+}
+
 function expiresAt(
   scope: ScopeAuthority,
   authorization: ScopeAuthorization,
@@ -287,10 +310,9 @@ async function resolveCandidate(
     authorization,
   );
   const anchorAuthority = await dependencies.authority.resolveCandidate(candidate);
-  if (anchorAuthority.content_sha256 !== source.content_sha256) {
-    fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "projection item digest differs from admitted SourceRevision");
-  }
   const materialized = await dependencies.content.materialize(source, anchorAuthority.anchor);
+  requireMaterializedSourceBinding(materialized, source);
+  requireCandidateExcerptBinding(candidate, anchorAuthority, materialized);
   return buildAndPersist(dependencies, {
     source,
     scope,
@@ -342,6 +364,7 @@ async function resolveHandle(
       });
     }
     const materialized = await dependencies.content.materialize(source, handle.anchor);
+    requireMaterializedSourceBinding(materialized, source);
     if (
       materialized.excerpt_sha256 !== handle.excerpt_sha256 ||
       materialized.excerpt_byte_length !== handle.excerpt_byte_length
