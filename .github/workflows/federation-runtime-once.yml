@@ -113,12 +113,6 @@ jobs:
           git diff --check
       - name: Install frozen dependency graph
         run: pnpm install --frozen-lockfile
-      - name: Verify federation product locally
-        run: |
-          pnpm typecheck
-          pnpm --filter @eliotr/cloudflare-federation test
-          pnpm --filter @eliotr/core test
-          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
       - name: Verify structural and documentation gates
         run: |
           pnpm lint
@@ -127,6 +121,12 @@ jobs:
           pnpm work-packets:check
           pnpm check:implementation-status
           git diff --check
+      - name: Verify federation product locally
+        run: |
+          pnpm typecheck
+          pnpm --filter @eliotr/cloudflare-federation test
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
       - name: Commit verified product code to main
         run: |
           git config user.name "Eliot Research Product"
