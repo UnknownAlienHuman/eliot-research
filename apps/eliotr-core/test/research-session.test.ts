@@ -226,13 +226,16 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(secondJson).toEqual(firstJson);
     expect(await workflowCounts()).toEqual(before);
   }, 30_000);
-  it("executes an unfinished exploratory W1 through the DO server-owned factory", async () => {
+  it("refuses DO execution when the durable workflow manifest is missing despite a present portfolio", async () => {
     const f = await workflowFixture("do-exploratory", "exploratory");
     expect(f.request.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
-    const initial = await f.db.prepare("SELECT revision, status, lane FROM investigation_ledger_head WHERE investigation_id = ?1")
-      .bind(f.request.investigation_ref.id).first<{ revision: number; status: string; lane: string }>();
-    expect(initial).toEqual({ revision: 1, status: "OPEN", lane: "exploratory" });
-    expect(await workflowCounts()).toEqual({ attempts: 0, checkpoints: 0, outbox: 0, events: 0 });
+    const portfolioRef = f.request.input_manifest.object_ref;
+    const portfolio = await f.bucket.get(portfolioRef);
+    expect(portfolio).not.toBeNull();
+    expect(portfolio?.size).toBe(f.bytes.byteLength);
+    const runRow = await f.db.prepare("SELECT initial_manifest_json FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(f.request.operation_id).first<{ initial_manifest_json: string }>();
+    expect(runRow).toBeNull();
     const tag = "do-exploratory";
     const stub = doStub(`research-${tag}`);
     const headers = {
@@ -251,37 +254,40 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     const start = await stub.fetch(new Request("https://do/session/start", { method: "POST", headers, body: JSON.stringify(sessionBody) }));
     const startJson = await start.json();
     expect(start.status, JSON.stringify(startJson)).toBe(200);
-    const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const firstJson = await first.json() as { protocol?: string; state?: string; receipt_refs?: string[]; output_manifest_ref?: string; code?: string };
-    expect(first.status, JSON.stringify(firstJson)).toBe(200);
-    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
-    expect(Array.isArray(firstJson.receipt_refs), JSON.stringify(firstJson)).toBe(true);
-    if (first.status !== 200 || firstJson.state !== "ENGINE_COMPLETED" || !Array.isArray(firstJson.receipt_refs)) throw new Error(`unexpected exploratory DO response: ${JSON.stringify(firstJson)}`);
-    expect(firstJson.receipt_refs).toHaveLength(18);
-    const generation = await f.db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1")
-      .bind(f.request.operation_id).first<{ handler_generation: string }>();
-    expect(generation?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
-    const stageZero = await f.db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 0")
-      .bind(f.request.operation_id).first<{ receipt_json: string }>();
-    expect(stageZero).not.toBeNull();
-    if (stageZero === null) throw new Error("missing exploratory DO stage-0 checkpoint");
-    const receipt = JSON.parse(stageZero.receipt_json) as { output_manifest?: { object_ref?: string } };
-    const stageObjectRef = receipt.output_manifest?.object_ref;
-    expect(typeof stageObjectRef).toBe("string");
-    if (typeof stageObjectRef !== "string") throw new Error("missing exploratory DO stage-0 object ref");
-    const stageObject = await f.bucket.get(stageObjectRef);
-    expect(stageObject).not.toBeNull();
-    if (stageObject === null) throw new Error("missing exploratory DO stage-0 object");
-    const checkpoint = decodeProtocolScopeCheckpoint(new Uint8Array(await stageObject.arrayBuffer()));
-    expect(checkpoint.workflow_stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
-    expect(checkpoint.protocol_profile.lane).toBe("exploratory");
-    const after = await workflowCounts();
-    expect(after).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, events: 18 });
-    const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
-    const secondJson = await second.json();
-    expect(second.status, JSON.stringify(secondJson)).toBe(200);
-    expect(secondJson).toEqual(firstJson);
-    expect(await workflowCounts()).toEqual(after);
+    const before = await workflowCounts();
+    const modelAttemptsBefore = await count("research_model_attempt");
+    let r2HeadCalls = 0;
+    let r2GetCalls = 0;
+    const originalHead = f.bucket.head;
+    const originalGet = f.bucket.get;
+    const head = originalHead.bind(f.bucket);
+    const get = originalGet.bind(f.bucket);
+    f.bucket.head = async (...args: Parameters<R2Bucket["head"]>) => {
+      r2HeadCalls += 1;
+      return head(...args);
+    };
+    f.bucket.get = (async (...args: Parameters<R2Bucket["get"]>) => {
+      r2GetCalls += 1;
+      return get(...args);
+    }) as R2Bucket["get"];
+    let response: Response;
+    try {
+      response = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+    } finally {
+      f.bucket.head = originalHead;
+      f.bucket.get = originalGet;
+    }
+    const responseJson = await response.json() as { code?: string; retryable?: boolean };
+    expect(response.status, JSON.stringify(responseJson)).toBe(503);
+    expect(responseJson).toMatchObject({ code: "SESSION_SETTLEMENT_UNCERTAIN", retryable: true });
+    expect(r2HeadCalls).toBe(0);
+    expect(r2GetCalls).toBe(0);
+    expect(await workflowCounts()).toEqual(before);
+    expect(await count("research_model_attempt")).toBe(modelAttemptsBefore);
+    const read = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}`, { headers }));
+    const readJson = await read.json() as { state?: string };
+    expect(read.status, JSON.stringify(readJson)).toBe(200);
+    expect(readJson.state).toBe("ACTIVE");
   }, 30_000);
   it("runs the v2 exploratory retrieval stage over an admitted indexed source and replays it", async () => {
     await reset();
