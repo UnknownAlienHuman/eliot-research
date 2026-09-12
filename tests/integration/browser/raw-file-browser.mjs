@@ -59,7 +59,7 @@ async function beginRawAdmissionDiagnostic(page, path) {
       const match = status.match(/\b[A-Z][A-Z0-9_]{2,63}\b/gu)?.find((code) => allowedCodes.has(code));
       const value = match === "API_REQUEST_ABORTED" ? "ui:API_REQUEST_ABORTED"
         : match ? `ui:${match}`
-          : /Added to Library/iu.test(status) ? "ui:COMPLETED"
+          : /(?:Added to Library|already in Library)/iu.test(status) ? "ui:COMPLETED"
             : /Adding the processed file/iu.test(status) ? "ui:STARTED" : "";
       if (value && value !== lastMilestone && events.length < 24) { events.push(value); lastMilestone = value; }
     };
@@ -89,7 +89,7 @@ async function finishRawAdmissionDiagnostic(page) {
       const status = panel?.querySelector("[data-raw-status]")?.textContent?.trim() ?? "";
       const allowedCodes = new Set(["API_REQUEST_ABORTED", "API_UNREACHABLE", "API_RESPONSE_SCHEMA_MISMATCH", "API_RESPONSE_TOO_LARGE", "MALFORMED_JSON_RESPONSE", "API_STATUS_INVALID", "API_GENERATION_MISMATCH", "RAW_ADMISSION_RESPONSE_INVALID", "RAW_ADMISSION_OUTCOME_UNKNOWN", "RAW_NORMALIZED_OUTCOME_UNKNOWN"]);
       const match = status.match(/\b[A-Z][A-Z0-9_]{2,63}\b/gu)?.find((code) => allowedCodes.has(code));
-      const uiCode = match ?? (/Added to Library/iu.test(status) ? "COMPLETED" : "unavailable");
+      const uiCode = match ?? (/(?:Added to Library|already in Library)/iu.test(status) ? "COMPLETED" : "unavailable");
       const events = Array.isArray(diagnostic?.events) ? diagnostic.events.slice(0, 24) : [];
       diagnostic?.dispose?.(); delete window.__eliotrRawAdmissionDiagnostic;
       return { ui_code: uiCode, events };
@@ -619,6 +619,79 @@ export async function recoverRawFileUploadOwnerScenario({ page, expectedGenerati
   return receipt;
 }
 
+async function assertRawLibraryHandoff(page, panel, admitted = false) {
+  if (!admitted) {
+    await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-find-library]")?.hidden === true,
+      null, { timeout: 15000 });
+    return;
+  }
+  await page.waitForFunction(() => {
+    const button = document.querySelector("#raw-upload [data-raw-find-library]");
+    return button?.hidden === false && button?.disabled === false;
+  }, null, { timeout: 15000 });
+  await page.waitForFunction(() => {
+    const status = document.querySelector("#library [role=status]")?.textContent?.trim() ?? "";
+    return status.length > 0 && !status.includes("Reading permitted sources");
+  }, null, { timeout: 15000 });
+  const selectionSnapshot = () => page.evaluate(() => {
+    const value = (selector) => {
+      const control = document.querySelector(selector);
+      if (control === null || !("value" in control)) throw new Error(`required selection control is missing: ${selector}`);
+      return String(control.value);
+    };
+    const readiness = document.querySelector("#library [data-library-readiness] .readiness-card");
+    return {
+      readinessRefs: readiness ? [...readiness.querySelectorAll("code")].map((node) => node.textContent?.trim() ?? "") : [],
+      orientationSources: value('#corpus-lens input[name="sources"]'),
+      retrievalSources: value('#retrieval input[name="sources"]'),
+      researchScope: value('#research-run select[name="scope"]'),
+      exhaustiveScope: value('#exhaustive-workflow select[name="scope"]'),
+    };
+  });
+  const selectionBeforeHandoff = await selectionSnapshot();
+  const originalViewport = typeof page.viewportSize === "function" ? page.viewportSize() : undefined;
+  assert.ok(originalViewport && Number.isInteger(originalViewport.width) && Number.isInteger(originalViewport.height) &&
+    originalViewport.width > 720 && originalViewport.height > 0,
+  "raw owner handoff requires a configured desktop viewport");
+  const chooser = page.locator("[data-source-chooser-toggle]");
+  const handoff = async (label) => {
+    const button = panel.locator("[data-raw-find-library]");
+    assert.equal(await button.isVisible(), true, `${label}: Find in Library must be visible before interaction`);
+    await button.click();
+    await page.waitForFunction(() => {
+      const section = document.querySelector("#sources-view");
+      const nav = document.querySelector('.workspace-nav [data-nav-target="#library"]');
+      const chooser = document.querySelector("[data-source-chooser-toggle]");
+      const library = document.querySelector("#library");
+      const views = [...document.querySelectorAll("[data-workspace-view]")];
+      const visible = (node) => node !== null && !node.hidden && node.getClientRects().length > 0 &&
+        window.getComputedStyle(node).display !== "none";
+      return visible(section) && nav?.getAttribute("aria-current") === "page" &&
+        document.activeElement === section && chooser?.getAttribute("aria-expanded") === "true" &&
+        visible(library) && views.filter((item) => visible(item)).length === 1;
+    }, null, { timeout: 15000 });
+    assert.equal(await page.locator("#sources-view").isVisible(), true, `${label}: Sources view must be visible`);
+    assert.equal(await page.locator("#library").isVisible(), true, `${label}: Library panel must be visible`);
+    const mobileViewport = await page.evaluate(() => window.matchMedia("(max-width: 720px)").matches);
+    if (mobileViewport) assert.equal(await chooser.isVisible(), true, `${label}: mobile source chooser must be visible`);
+    assert.deepEqual(await selectionSnapshot(), selectionBeforeHandoff,
+      `${label}: Find in Library must preserve source selection and readiness identity`);
+  };
+  try {
+    assert.equal(await page.evaluate(() => window.matchMedia("(max-width: 720px)").matches), false,
+      "the first raw handoff must exercise the original desktop viewport");
+    await handoff("desktop");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForFunction(() => window.innerWidth === 390 && window.innerHeight === 844 &&
+      window.matchMedia("(max-width: 720px)").matches &&
+      document.querySelector("[data-source-chooser-toggle]")?.getAttribute("aria-expanded") === "false",
+    null, { timeout: 15000 });
+    await handoff("mobile");
+  } finally {
+    await page.setViewportSize(originalViewport);
+  }
+}
+
 /**
  * Real Worker processing/admission leg. The caller may seed one recorded,
  * complete conversion candidate into the authoritative local stores before
@@ -649,6 +722,7 @@ export async function processRawFileOwnerScenario({ page, expectedGeneration, ex
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-processing]")?.hidden === false, null, { timeout: 15000 });
   assert.match(await panel.locator("[data-raw-status]").textContent(), /Processed/u);
   assert.match(await panel.locator("[data-raw-processing]").textContent(), /Not admitted or indexed/u);
+  await assertRawLibraryHandoff(page, panel);
 
   const admissionPath = `/api/v1/ingest/raw/${encodeURIComponent(captureId)}/admission`;
   const admissionSnapshot = await waitForRawResponse(page, "POST", () => panel.locator("[data-raw-admit]").click(), admissionPath);
@@ -668,8 +742,10 @@ export async function processRawFileOwnerScenario({ page, expectedGeneration, ex
   ledger?.record({ client: "browser", method: "POST", path: admissionPath, status: admissionSnapshot.status,
     correlation: "e2e-raw-upload/admission", token_present: false });
   await page.waitForFunction(() => document.querySelector("#raw-upload [data-raw-admission]")?.hidden === false, null, { timeout: 15000 });
-  assert.match(await panel.locator("[data-raw-status]").textContent(), /Added to Library/u);
+  const admissionStatus = await panel.locator("[data-raw-status]").textContent();
+  assert.match(admissionStatus, admission.admission_receipt.decision === "DUPLICATE" ? /already in Library/u : /Added to Library/u);
   assert.match(await panel.locator("[data-raw-admission]").textContent(), /COMMITTED/u);
+  await assertRawLibraryHandoff(page, panel, true);
   return { conversion, admission, conversionOperationId, admissionOperationId: admission.admission_operation_id };
 }
 

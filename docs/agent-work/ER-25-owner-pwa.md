@@ -218,6 +218,21 @@ reuses the existing authenticated reload for re-selection and reads the same
 capture by idempotency key. The harness then stops its Worker before checking the
 single `raw_file_capture` row and original EVIDENCE_BUCKET bytes; this transport
 receipt does not claim Library admission, normalization or search readiness.
-The connected checkpoint remains `NOT_EXECUTED` until the updated owner-e2e
-passes in both Ubuntu and Windows; the existing controlled raw-file fixture is
-separate evidence.
+The existing capture and processing/admission scenarios passed owner-e2e on Ubuntu and
+Windows in accepted PR #181, CI run 34712122551. Processing uses a recorded COMPLETE
+conversion at the provider boundary, followed by real server-composed admission and
+canonical readback. Live Workers AI qualification remains separate.
+
+## Explicit Library handoff
+
+After a COMMITTED admission with an ADMITTED or DUPLICATE receipt, the upload panel
+offers Find in Library. It navigates only on an explicit click and expands the existing
+mobile source list. The action does not select a source or derive its identity from a
+filename, candidate reference or revision string. The owner selects an authoritative
+Library row through the existing readiness path. A new file selection or private-state
+clear removes the previous handoff action.
+
+The acceptance extension belongs to the real owner-browser admission scenario. It must
+verify visibility and focus after the explicit click, preserve selection before the click,
+and use the existing canonical Library/readiness readback. Its updated checkpoint is
+pending execution; the separate controlled raw-file fixture is not admission proof.
