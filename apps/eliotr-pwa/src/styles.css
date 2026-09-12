@@ -77,6 +77,7 @@ h2 { margin-bottom: 12px; font-size: 18px; letter-spacing: -.03em; } h3 { margin
 .raw-file-actions button.button:disabled,
 .workflow-actions button.button:disabled,
 .workflow-recovery-head button.button:disabled,
+.workflow-recovery > [data-recovery-more].button:disabled,
 #retrieval form button:disabled { border-color: var(--line); background: var(--navigation); color: var(--dim); opacity: .7; }
 .workflow-status, .workflow-detail { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; } .workflow-detail { color: var(--dim); }
 .research-report-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
