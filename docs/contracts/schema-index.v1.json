@@ -781,6 +781,56 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "McpDiagnosticChallengeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "f6b2a0c03b4d1e90a5d6e33d72329d50d3bfb3ac9fcde93b2fef4a104d7ab2c0",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-challenge-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticConsumeInputSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "06fe56321b3b50e2f382b44c4f4981e194adb89cbfe7a9f12c7b76346264ca4d",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticConsumeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "a6bfef8d364e9c1c5e6e4d03f9112d394ebc2d8aa529452a313a28d0c7ce99fe",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticCreateInputSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "81cc4d80168b9c56bbc892d9a29ec15bc265bda4a6558b6c6faeeda46957012e",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-create-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticLatestStatusSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "ce3acfa88befc5e61d36a900d02836f796b9a7cead1ecd7d5c37cb276ecf4108",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-latest-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
       "export_name": "ModelCallReceiptSchema",
       "family": "model",
       "json_schema_sha256": "ce1b759e07a5ba33e28a158f458f29c462d51990c49d58891e74bf6b8985f6e3",
@@ -1413,6 +1463,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 3,
-  "schema_count": 141
+  "registry_generation": 4,
+  "schema_count": 146
 }

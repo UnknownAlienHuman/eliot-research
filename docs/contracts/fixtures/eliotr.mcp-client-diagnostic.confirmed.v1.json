@@ -1,0 +1,10 @@
+{
+  "auth_profile": "managed-oauth",
+  "challenge_id": "challenge-1",
+  "deployment_generation": "deployment-1",
+  "observation_ref": "observation-1",
+  "observed_at": "2026-09-12T12:01:00.000Z",
+  "protocol": "eliotr.mcp.client-diagnostic.v1",
+  "status": "CONFIRMED",
+  "trace_id": "trace-1"
+}

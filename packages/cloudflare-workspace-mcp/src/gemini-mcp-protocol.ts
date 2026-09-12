@@ -13,6 +13,7 @@ export const MCP_COMPATIBLE_PROTOCOL_VERSIONS = [
 export const GEMINI_MCP_TOOL_NAMES = [
   "eliotr_system_status",
   "eliotr_catalog",
+  "eliotr_confirm_client_diagnostic",
   "eliotr_create_google_sync_plan",
   "eliotr_validate_google_sync_receipt",
 ] as const;

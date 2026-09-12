@@ -55,11 +55,18 @@ may never be added to `CompletionDispositionSchema` as a convenience mapping.
 
 ## Active Library readiness and Workspace MCP publication
 
-Registry generation 3 reserves the `library-readiness` and `workspace-mcp` families for independent
+Registry generation 3 reserved the `library-readiness` and `workspace-mcp` families for independent
 version 1 contracts. These contracts do not change the existing Library catalog or Workspace MCP v1
 wire shapes. The family-name enum is closed, so adding names is a breaking metadata change: the
 registry schema family advances to version 2, generation 1. Version 1 registry readers must retain
 their previous corpus or explicitly upgrade before consuming these families. Compatibility history
 retains all previous schema identities and digests; current registry exports supersede their previous
 entries with `BREAKING` records. The registry document protocol remains version 1 because its transport
-shape is unchanged; `registry_generation` identifies the new publication.
+shape is unchanged; `registry_generation` identifies each publication.
+
+Registry generation 4 adds five initial v1/g1 schemas to the existing `workspace-mcp` family for the
+MCP client diagnostic create, consume, issued-challenge, latest-status and confirmed-result surfaces.
+The challenge token appears only in the issued challenge response; status and consume readback remain
+closed and reject token or verified-actor fields. These additions keep the family version at v1/g1,
+preserve every generation 3 identity and digest, and are recorded as `INITIAL` entries with dedicated
+canonical issued and confirmed JSON fixtures.

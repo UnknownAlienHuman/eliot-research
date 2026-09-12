@@ -9,6 +9,7 @@ import { mountEvidenceRail } from "./evidence-rail.js";
 import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { mountResearchRunPanel } from "./research-run-panel.js";
 import { mountRawFilePanel } from "./raw-file-panel.js";
+import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
@@ -61,10 +62,18 @@ function healthSummary(health: SystemHealth | null): string {
 }
 function googleTransportExplanation(transport: GoogleExternalTransport | undefined): string {
   switch (transport) {
-    case "drive-exchange": return "Drive exchange is configured. Use the owner-controlled Google Drive flow below.";
-    case "gemini-mcp": return "Workspace transport is configured for Gemini Spark. Client activity is not reported by this server.";
-    case "disabled": return "No Workspace transport is configured for this workspace.";
-    default: return "Workspace transport status is unavailable. Client activity is unknown.";
+    case "drive-exchange": return "Google Drive is configured. Use the setup below.";
+    case "gemini-mcp": return "Workspace access is configured. Use the client check when you need confirmation.";
+    case "disabled": return "No workspace connection is configured here.";
+    default: return "Workspace connection status is unknown.";
+  }
+}
+function googleConnectionStateLabel(transport: GoogleExternalTransport | undefined): string {
+  switch (transport) {
+    case "drive-exchange":
+    case "gemini-mcp": return "Configured";
+    case "disabled": return "Unavailable";
+    default: return "Unknown";
   }
 }
 function healthDetails(health: SystemHealth | null): string {
@@ -112,7 +121,7 @@ function render(health: SystemHealth | null): void {
         <div id="library"></div>
       </aside>
       <section class="panel panel--investigation" aria-label="Investigation workspace">
-        <div class="content-heading"><div><span class="eyebrow" data-workspace-eyebrow>Sources</span><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Import or select admitted sources, then open Corpus Lens for structure and readiness.</p></div><div class="content-actions"><span class="profile-chip">E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
+        <div class="content-heading"><div><span class="eyebrow" data-workspace-eyebrow>Sources</span><h1 data-workspace-title>Sources</h1><p class="lede" data-workspace-lede>Import or select admitted sources, then open Corpus Lens for structure and readiness.</p></div><div class="content-actions"><span class="profile-chip" data-workspace-owner-profile>E0 · owner read</span><button class="button button--quiet" type="button" data-refresh>Refresh</button></div></div>
         <section id="sources-view" class="workspace-view" data-workspace-view="sources" tabindex="-1" aria-label="Sources">
           <div class="workspace-cards">
             <article class="intro-card"><div class="intro-card-mark">◎</div><div><strong>Start with your sources</strong><p>Import a folder or choose an admitted source from the Library before opening its structure.</p><div class="intro-card-actions"><button class="button button--quiet workspace-jump" type="button" data-nav-target="#corpus-lens-card">Open Corpus Lens</button></div></div></article>
@@ -133,22 +142,19 @@ function render(health: SystemHealth | null): void {
         </section>
         <section id="connections-card" class="workspace-view" data-workspace-view="connections" tabindex="-1" aria-label="Connections" hidden>
           <div class="connection-stack">
+            <article class="connection-card" id="connection-agent-card"><div id="mcp-client-diagnostic"></div></article>
             <article class="connection-card" id="connection-server-card">
               <div class="connection-heading"><div><span class="eyebrow">Server check</span><h2>Owner API</h2></div><span id="connection-server-state" class="connection-state connection-state--pending">Checking</span></div>
-              <p id="connection-server-copy" class="connection-copy">Checking the server. This check covers API and schema readiness.</p>
+              <p id="connection-server-copy" class="connection-copy">Checking the server. This check covers API and schema readiness only.</p>
               <dl class="connection-facts"><dt>Deployment</dt><dd id="connection-deployment">generation pending</dd><dt>Core schema</dt><dd id="connection-core-generation">Unknown</dd><dt>Search schema</dt><dd id="connection-search-generation">Unknown</dd></dl>
               <details class="connection-details"><summary>Readback</summary><div id="connection-health-details" class="health-details-content">${healthDetails(health)}</div></details>
               <div class="connection-actions"><button class="button button--quiet" type="button" data-connection-refresh>Retry server check</button></div>
             </article>
             <article class="connection-card" id="connection-workspace-card">
-              <div class="connection-heading"><div><span class="eyebrow">Workspace transport</span><h2>Google Drive</h2></div><span id="connection-transport-state" class="connection-state connection-state--unknown">Unknown</span></div>
+              <div class="connection-heading"><div><span class="eyebrow">Workspace connection</span><h2>Google Drive</h2></div><span id="connection-transport-state" class="connection-state connection-state--unknown">Unknown</span></div>
               <p id="connection-transport-copy" class="connection-copy">${escapeHtml(googleTransportExplanation(health?.google_external_transport))}</p>
               <div class="connection-profile"><span class="eyebrow">Owner profile</span><strong>E0 · owner read</strong></div>
               <div id="google-oauth"></div>
-            </article>
-            <article class="connection-card" id="connection-agent-card">
-              <div class="connection-heading"><div><span class="eyebrow">Agent execution</span><h2>Client activity</h2></div><span class="connection-state connection-state--unknown">Unknown</span></div>
-              <p class="connection-copy">No client check recorded yet.</p><p class="connection-note">Agent activity is not reported by the server health check.</p>
             </article>
           </div>
           <details class="access-boundary"><summary>Access and privacy</summary><p>All reads resolve through the owner API. Private data is never cached in the browser.</p></details>
@@ -191,6 +197,11 @@ function render(health: SystemHealth | null): void {
   const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
   const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
+  const diagnosticHost = app.querySelector<HTMLElement>("#mcp-client-diagnostic");
+  const diagnostic = diagnosticHost ? mountMcpClientDiagnosticPanel(diagnosticHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
   const evidenceEmpty = app.querySelector<HTMLElement>("#evidence-empty");
   const evidenceDetail = app.querySelector<HTMLElement>("#evidence-detail");
   const evidenceStatus = app.querySelector<HTMLElement>(".rail-status");
@@ -208,7 +219,7 @@ function render(health: SystemHealth | null): void {
     "#library": sourcesView,
     "#corpus-lens-card": { ...sourcesView, anchorSelector: "#corpus-lens-card" },
     "#research-card": { name: "research", title: "Research", lede: "Search selected source bytes, inspect sampled coverage, and open only verified evidence.", sectionSelector: "#research-view", historyHash: "#research-card", anchorSelector: "#research-card" },
-    "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and Workspace transport; client activity is shown only when observed.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
+    "#connections-card": { name: "connections", title: "Connections", lede: "Check the server and workspace connection; client activity appears only after a manual check.", sectionSelector: "#connections-card", historyHash: "#connections-card", anchorSelector: "#connections-card" },
   };
   const locationSelector = (): string => {
     switch (window.location.hash) {
@@ -228,6 +239,10 @@ function render(health: SystemHealth | null): void {
   };
   const setWorkspaceView = (selector: string, options: { history?: boolean; focus?: boolean; anchor?: boolean } = {}): void => {
     const view = workspaceViews[selector] ?? sourcesView;
+    const workspace = app.querySelector<HTMLElement>(".workspace");
+    if (workspace) workspace.dataset.activeView = view.name;
+    const ownerProfile = app.querySelector<HTMLElement>("[data-workspace-owner-profile]");
+    if (ownerProfile) ownerProfile.hidden = view.name === "connections";
     if (view.name !== "sources" && sourceChooserViewport.matches) setSourceChooserExpanded(false);
     for (const item of app.querySelectorAll<HTMLButtonElement>('.workspace-nav [data-nav-target]')) {
       const active = workspaceViews[item.dataset.navTarget ?? ""]?.name === view.name;
@@ -335,7 +350,7 @@ function render(health: SystemHealth | null): void {
     }
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, importer ? mountBundleImportPanel(importer) : undefined,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
     libraryPanel];
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
@@ -385,7 +400,7 @@ function updateHealth(health: SystemHealth): void {
   }
   const connectionServerCopy = app.querySelector("#connection-server-copy");
   if (connectionServerCopy) connectionServerCopy.textContent = health.ready
-    ? "Server is ready. This covers API and schema readiness only; no client check was recorded."
+    ? "Server is ready. This covers API and schema readiness only. Use Client connection check when you need a manual confirmation."
     : endpointUnreachable
       ? "Server unavailable. Retry the server check."
       : "Server responded. Workspace needs attention; see Details for blocking codes.";
@@ -402,7 +417,7 @@ function updateHealth(health: SystemHealth): void {
       ? "unknown"
       : health.google_external_transport === "disabled" ? "disabled" : "configured";
     connectionTransportState.className = `connection-state connection-state--${transportState}`;
-    connectionTransportState.textContent = googleConnectorLabel(health.google_external_transport);
+    connectionTransportState.textContent = googleConnectionStateLabel(health.google_external_transport);
   }
   const connectionTransportCopy = app.querySelector("#connection-transport-copy");
   if (connectionTransportCopy) connectionTransportCopy.textContent = googleTransportExplanation(health.google_external_transport);

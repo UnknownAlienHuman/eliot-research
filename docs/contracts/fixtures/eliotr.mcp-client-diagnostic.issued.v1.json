@@ -1,0 +1,10 @@
+{
+  "auth_profile": "managed-oauth",
+  "challenge_id": "challenge-1",
+  "challenge_token": "opaque-token/with punctuation",
+  "deployment_generation": "deployment-1",
+  "expires_at": "2026-09-12T12:05:00.000Z",
+  "issued_at": "2026-09-12T12:00:00.000Z",
+  "protocol": "eliotr.mcp.client-diagnostic.v1",
+  "status": "ISSUED"
+}

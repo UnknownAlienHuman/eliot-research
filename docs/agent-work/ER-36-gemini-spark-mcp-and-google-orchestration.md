@@ -30,6 +30,10 @@ create a reverse authority channel and do not let a Google transport result prom
 - `docs/implementation/gemini-spark-mcp.md`
 - `apps/eliotr-core/src/http-special-routes.ts`
 - `apps/eliotr-core/src/workspace-mcp-candidate-store.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`
+- `apps/eliotr-core/src/mcp-client-diagnostic-http.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostic-http.test.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostic-roundtrip.test.ts`
 - `apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts`
 - `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/test/index.test.ts`
@@ -66,7 +70,7 @@ Root integrates package manifests, TypeScript references, dependency boundaries,
   signed JWT verification;
 - a human-readable token name cannot substitute for the signed Client ID in `common_name`;
 - MCP 2025-06-18 initialization and protocol-header enforcement work without server session state;
-- tool definitions retain four product-level contracts, but real discovery exposes only authorized implementations;
+- real tool discovery exposes only authorized implementations wired into the selected deployment;
 - `eliotr_catalog` stays withheld until an explicit service-scope read-policy adapter exists; direct calls fail before D1;
 - ELIOT MCP cannot select providers, models, databases, buckets, indexes, credentials, or arbitrary URLs;
 - no ELIOT tool can directly mutate Google;
@@ -96,6 +100,31 @@ client owns the Google action. Google Cloud/gcloud and Google AI Studio/Gemini A
 unimplemented unless separately selected and qualified. The unfinished server-owned ChatGPT Drive
 Exchange is a separate legacy product path, not authorization or a prerequisite to create a Google
 Cloud project/client for this Workspace profile.
+
+## MCP client diagnostic checkpoint — 2026-09-12
+
+The allocated diagnostic service is `packages/cloudflare-workspace-mcp/src/mcp-client-diagnostics.ts`, with strict
+persisted-record decoding in `packages/cloudflare-workspace-mcp/src/mcp-client-diagnostic-record.ts` and an actual
+D1 fixture in `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`. ER-13 allocates migration 0044;
+ER-01 owns the strict public DTOs. The owner HTTP adapter and fixture are allocated
+`apps/eliotr-core/src/mcp-client-diagnostic-http.ts` and
+`apps/eliotr-core/test/mcp-client-diagnostic-http.test.ts`; ER-21 retains the route registry.
+The signed owner-to-MCP composition fixture is allocated
+`apps/eliotr-core/test/mcp-client-diagnostic-roundtrip.test.ts`.
+An authenticated owner issues a short-lived opaque challenge. A
+separately authenticated MCP client can confirm it once under the deployment-selected Access profile.
+The owner reads the latest challenge for the current owner credential and deployment generation.
+
+Public observations expose the confirmation time, observation reference, deployment generation,
+Access profile and trace identifier. Verified MCP actor and credential bindings remain internal.
+The diagnostic does not prove an individual client/model identity, ongoing availability, document
+access or completed research. Connection confirmation and Worker readiness remain separate UI facts.
+An uncertain persistence result must fail explicitly; it cannot be reported as a successful `UNKNOWN`
+status. Owner HTTP, the authenticated MCP callback and PWA controls are wired. Local signed HTTP
+acceptance covers distinct owner and MCP identities through the real Worker and migrated D1. The
+built PWA browser fixture covers manual challenge and result actions, navigation, expiry and late
+responses after access or deployment changes. Its HTTP backend is controlled; live client and
+Cloudflare qualification remain pending.
 
 ## Mandatory negative boundary
 
