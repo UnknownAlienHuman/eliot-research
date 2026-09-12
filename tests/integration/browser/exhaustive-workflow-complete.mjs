@@ -19,6 +19,18 @@ const RECEIPT_KEYS = [
   "total_scanned_sections", "total_matches", "result_artifact_ref", "coverage_receipt_ref",
 ];
 
+async function showResearchView(page, label) {
+  const nav = page.locator('.workspace-nav [data-nav-target="#research-card"]');
+  await nav.waitFor({ state: "visible", timeout: 15000 });
+  await nav.click();
+  await page.waitForFunction(() => {
+    const view = document.querySelector("#research-view");
+    const active = document.querySelector('.workspace-nav [data-nav-target="#research-card"]');
+    return view !== null && view.hidden === false && active?.getAttribute("aria-current") === "page";
+  }, null, { timeout: 15000 });
+  assert.equal(await nav.getAttribute("aria-current"), "page", `${label}: Research navigation must be current`);
+}
+
 function objectOf(value, label) {
   assert.ok(value !== null && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
   return value;
@@ -250,6 +262,7 @@ export async function runExhaustiveWorkflowCompleteBrowser({
   boundedText(expectedGeneration, "expected deployment generation");
   boundedText(credentialGeneration, "confirmed owner credential generation");
   assert.equal(typeof d1Query, "function", "Q8 completion must receive the existing owner D1 readback port");
+  await showResearchView(page, "exhaustive completion");
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")

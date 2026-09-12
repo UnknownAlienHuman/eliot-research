@@ -923,6 +923,18 @@ async function verifyRawProjectionAfterWorkerStop({ paths, sourceId, sourceRevis
 
 }
 
+async function showWorkspaceView(page, selector, view, label) {
+  const nav = page.locator(`.workspace-nav [data-nav-target="${selector}"]`);
+  await nav.waitFor({ state: "visible", timeout: 15000 });
+  await nav.click();
+  await page.waitForFunction(({ expectedView, expectedSelector }) => {
+    const section = document.querySelector(`[data-workspace-view="${expectedView}"]`);
+    const active = document.querySelector(`.workspace-nav [data-nav-target="${expectedSelector}"]`);
+    return section !== null && section.hidden === false && active?.getAttribute("aria-current") === "page";
+  }, { expectedView: view, expectedSelector: selector }, { timeout: 15000 });
+  assert.equal(await nav.getAttribute("aria-current"), "page", `${label}: ${view} navigation must be current`);
+}
+
 async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledger, token, sourceRevisionRef, expectedGeneration }) {
   assert.ok(typeof sourceRevisionRef === "string" && sourceRevisionRef.length > 0, "raw projection requires a source revision ref");
   const rawSourceId = await resolveRawProjectionSourceId(worker, token, sourceRevisionRef);
@@ -940,6 +952,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   assert.equal(activeReadiness.source_id, rawSourceId, "active readiness source must match the catalog-resolved raw source");
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
   const orientationPath = "/api/v1/research/orient";
+  await showWorkspaceView(page, "#library", "sources", "source selection");
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
   const sourceSnapshots = await waitForRawResponses(page, [
     { key: "orientation", method: "POST", path: orientationPath, expectedStatus: 200 },
@@ -986,6 +999,7 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
     correlation: "e2e-raw-projection/readiness", token_present: false });
   await page.waitForSelector("#library [data-library-readiness] .readiness-card", { timeout: 15000 });
 
+  await showWorkspaceView(page, "#research-card", "research", "FAST_SEARCH");
   const retrieval = page.locator("#retrieval");
   await retrieval.locator('input[name="query"]').fill("Recorded raw owner fixture");
   const querySnapshots = await waitForRawResponses(page, [
@@ -5697,6 +5711,7 @@ export async function runOwnerE2E() {
     // completed after the existing authenticated reload below, so this phase
     // proves POST -> reload/reselect -> idempotency GET without minting a new
     // capture identity. D1/R2 are read back only after the Worker is stopped.
+    await showWorkspaceView(playwright.page, "#library", "sources", "raw upload");
     rawUpload = await runRawFileUploadOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, ledger,
     });
@@ -5827,6 +5842,7 @@ export async function runOwnerE2E() {
       extraPaths: [["GET", `/api/v1/library/revisions?source_id=${encodeURIComponent(sourceId)}&limit=10`]] });
     await playwright.page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await playwright.page.waitForFunction(shellReady, null, { timeout: 15000 });
+    await showWorkspaceView(playwright.page, "#library", "sources", "post-import recovery");
     await playwright.page.waitForFunction(bodyIncludes, sourceId, { timeout: 15000 });
     await recoverRawFileUploadOwnerScenario({
       page: playwright.page, expectedGeneration: paths.generation, expected: rawUpload.expected,
