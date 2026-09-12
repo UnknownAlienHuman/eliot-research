@@ -5,7 +5,7 @@ import {
 import {
   McpClientDiagnosticServiceError,
   createD1McpClientDiagnosticService,
-} from "./mcp-client-diagnostics.js";
+} from "@eliotr/cloudflare-workspace-mcp";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import type { Env } from "./env.js";

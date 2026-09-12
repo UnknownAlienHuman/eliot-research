@@ -6,7 +6,7 @@ import {
   MCP_DIAGNOSTIC_TTL_MS,
   McpClientDiagnosticServiceError,
   createD1McpClientDiagnosticService,
-} from "../src/mcp-client-diagnostics.js";
+} from "@eliotr/cloudflare-workspace-mcp";
 
 const runtime = env as unknown as {
   readonly CORE_DB: D1Database;

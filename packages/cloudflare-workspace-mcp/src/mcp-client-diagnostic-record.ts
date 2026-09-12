@@ -5,7 +5,7 @@ import {
   type McpDiagnosticConsumeResult,
   type McpDiagnosticLatestStatus,
 } from "@eliotr/contracts";
-import type { McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
+import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
 
 export const MCP_DIAGNOSTIC_TTL_MS = 5 * 60 * 1000;
 

@@ -99,8 +99,8 @@ Cloud project/client for this Workspace profile.
 
 ## MCP client diagnostic checkpoint — 2026-09-12
 
-The allocated diagnostic service is `apps/eliotr-core/src/mcp-client-diagnostics.ts`, with strict
-persisted-record decoding in `apps/eliotr-core/src/mcp-client-diagnostic-record.ts` and an actual
+The allocated diagnostic service is `packages/cloudflare-workspace-mcp/src/mcp-client-diagnostics.ts`, with strict
+persisted-record decoding in `packages/cloudflare-workspace-mcp/src/mcp-client-diagnostic-record.ts` and an actual
 D1 fixture in `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`. ER-13 allocates migration 0044;
 ER-01 owns the strict public DTOs. The owner HTTP adapter and fixture are allocated
 `apps/eliotr-core/src/mcp-client-diagnostic-http.ts` and

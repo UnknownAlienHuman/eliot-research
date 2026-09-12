@@ -1,7 +1,9 @@
 import type { Env } from "./env.js";
 import {
   GeminiMcpToolError,
+  createD1McpClientDiagnosticService,
   handleGeminiMcp,
+  McpClientDiagnosticServiceError,
   type McpClientDiagnosticConsume,
   type McpToolCallContext,
   type WorkspaceMcpRuntime,
@@ -11,10 +13,6 @@ import { handleQueue } from "./queue.js";
 import { readReadiness } from "./readiness.js";
 import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
 import { handleScheduled } from "./scheduled.js";
-import {
-  createD1McpClientDiagnosticService,
-  McpClientDiagnosticServiceError,
-} from "./mcp-client-diagnostics.js";
 export { ResearchSession } from "./research-session.js";
 export { ResearchWorkflow } from "./research-workflow.js";
 
