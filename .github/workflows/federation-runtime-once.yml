@@ -66,6 +66,14 @@ jobs:
               raise SystemExit("federation replay fixture anchors missing")
           source = source.replace(anchor, anchor + deadline, 1).replace(old, new, 1)
           path.write_text(source, encoding="utf-8", newline="\n")
+
+          path = Path("packages/cloudflare-federation/src/federation-bundle-authority.ts")
+          source = path.read_text(encoding="utf-8")
+          old = "  return Object.freeze({\n    readAuthorizedManifest"
+          new = "  return Object.freeze<FederationBundleAuthorityLike>({\n    readAuthorizedManifest"
+          if old not in source:
+              raise SystemExit("federation bundle authority contextual typing anchor missing")
+          path.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
           PY
           git rm .github/workflows/federation-runtime-once.yml \
             scripts/one-shot/federation/payload.tar.gz.b64 \
@@ -76,7 +84,6 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify federation product locally
         run: |
-          nl -ba packages/cloudflare-federation/src/federation-bundle-authority.ts | sed -n '105,150p'
           pnpm typecheck
           pnpm --filter @eliotr/cloudflare-federation test
           pnpm --filter @eliotr/core test
