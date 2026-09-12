@@ -97,6 +97,21 @@ unimplemented unless separately selected and qualified. The unfinished server-ow
 Exchange is a separate legacy product path, not authorization or a prerequisite to create a Google
 Cloud project/client for this Workspace profile.
 
+## MCP client diagnostic checkpoint — 2026-09-12
+
+The allocated diagnostic service is `apps/eliotr-core/src/mcp-client-diagnostics.ts`, with its actual
+D1 fixture in `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`. ER-13 allocates migration 0044;
+ER-01 owns the strict public DTOs. An authenticated owner issues a short-lived opaque challenge. A
+separately authenticated MCP client can confirm it once under the deployment-selected Access profile.
+The owner reads the latest challenge for the current owner credential and deployment generation.
+
+Public observations expose the confirmation time, observation reference, deployment generation,
+Access profile and trace identifier. Verified MCP actor and credential bindings remain internal.
+The diagnostic does not prove an individual client/model identity, ongoing availability, document
+access or completed research. Connection confirmation and Worker readiness remain separate UI facts.
+An uncertain persistence result must fail explicitly; it cannot be reported as a successful `UNKNOWN`
+status. Endpoint, tool and PWA wiring are pending until their actual integration is verified.
+
 ## Mandatory negative boundary
 
 For the `service-token` profile, request `dry_run=false`, send a browser Origin, use an owner JWT, present
