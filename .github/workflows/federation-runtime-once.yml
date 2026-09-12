@@ -76,6 +76,7 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify federation product locally
         run: |
+          nl -ba packages/cloudflare-federation/src/federation-bundle-authority.ts | sed -n '105,150p'
           pnpm typecheck
           pnpm --filter @eliotr/cloudflare-federation test
           pnpm --filter @eliotr/core test
