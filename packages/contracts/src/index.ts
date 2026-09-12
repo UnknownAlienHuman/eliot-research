@@ -16,6 +16,7 @@ export * from "./erasure.js";
 export * from "./federation.js";
 export * from "./drive-exchange.js";
 export * from "./workspace-mcp.js";
+export * from "./mcp-diagnostic.js";
 export * from "./library.js";
 export * from "./library-readiness.js";
 export * from "./navigation.js";

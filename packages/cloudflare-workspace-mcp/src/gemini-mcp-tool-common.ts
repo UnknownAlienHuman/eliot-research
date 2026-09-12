@@ -1,7 +1,16 @@
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
+import type {
+  McpDiagnosticConsumeInput,
+  McpDiagnosticConsumeResult,
+} from "@eliotr/contracts";
 import type { WorkspaceMcpCandidateStore } from "./workspace-mcp-ledger.js";
 
 export type GoogleExternalTransport = "disabled" | "gemini-mcp" | "drive-exchange";
+
+export type McpClientDiagnosticConsume = (
+  input: McpDiagnosticConsumeInput,
+  context: McpToolCallContext,
+) => Promise<McpDiagnosticConsumeResult>;
 
 const GOOGLE_EXTERNAL_TRANSPORTS = new Set<GoogleExternalTransport>([
   "disabled",
@@ -28,6 +37,10 @@ export interface GeminiMcpToolDependencies {
   ) => Promise<unknown>;
   /** Verified deployment context and the server-owned durable candidate ledger. */
   readonly mcp_auth_profile?: "service-token" | "managed-oauth";
+  /** Deployment identity selected by the server for diagnostic confirmation. */
+  readonly deployment_generation?: string;
+  /** Trusted Core-backed one-shot challenge consume operation. */
+  readonly mcpClientDiagnosticConsume?: McpClientDiagnosticConsume;
   readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
 }
 

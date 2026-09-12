@@ -81,6 +81,16 @@ Remote D1 and Queue/DLQ receipts remain `NOT EXECUTED`; this packet is not `LIVE
 
 ## Additive navigation schema
 
+The MCP client diagnostic checkpoint is allocated `0044_mcp_client_diagnostics.sql`.
+It stores an owner-scoped, expiring challenge hash and one immutable observation from an
+authenticated MCP call. The only persisted transition is `ISSUED` to `CONFIRMED`; expiration is
+derived when reading or consuming an unused challenge. A confirmed observation remains historical
+after challenge expiry. Owner credentials and the independently authenticated MCP actor are distinct
+identities. Internal actor and credential fields are retained for server validation and are not public
+status fields. This table grants no source access, operation execution, Google permission or model
+qualification. ER-36 owns the consuming service and its integration proof. Remote migration and
+readback remain `NOT_EXECUTED`.
+
 The ER-24 research caller correction is allocated `0040_research_policy_authority_scope.sql`.
 Independent scope policy authorities may coexist; each authority retains at most one ACTIVE policy
 generation. Existing legacy bindings are preserved, and retired generations must not be reactivated by

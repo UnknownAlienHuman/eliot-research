@@ -39,8 +39,24 @@
       "media_type": "application/yaml",
       "protocol": "source.owner-cutover.v1",
       "schema_export": "SourceOwnerCutoverReceiptSchema"
+    },
+    {
+      "canonical_body_sha256": "0bad253a2472409be442720c34098057586c3ca5a7a3fc76ef2b5dbac37076e6",
+      "fixture_id": "mcp-client-diagnostic-issued-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.mcp-client-diagnostic.issued.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.mcp.client-diagnostic.v1",
+      "schema_export": "McpDiagnosticChallengeResultSchema"
+    },
+    {
+      "canonical_body_sha256": "ecfdb017f8c7bdb7c3d01f313a0d54d7bfe330b6e2c2125c27e8b815a0af4a83",
+      "fixture_id": "mcp-client-diagnostic-confirmed-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.mcp-client-diagnostic.confirmed.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.mcp.client-diagnostic.v1",
+      "schema_export": "McpDiagnosticConsumeResultSchema"
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 3
+  "registry_generation": 4
 }

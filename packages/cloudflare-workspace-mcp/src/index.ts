@@ -18,9 +18,28 @@ export {
   type McpToolDefinition,
 } from "./gemini-mcp-protocol.js";
 export {
+  GeminiMcpToolError,
   readGoogleExternalTransport,
+  type McpClientDiagnosticConsume,
   type GoogleExternalTransport,
 } from "./gemini-mcp-tool-common.js";
+export {
+  confirmClientDiagnostic,
+  MCP_CLIENT_DIAGNOSTIC_TOOL_NAME,
+  type McpClientDiagnosticToolDependencies,
+} from "./gemini-mcp-client-diagnostics.js";
+export {
+  createD1McpClientDiagnosticService,
+} from "./mcp-client-diagnostics.js";
+export {
+  MCP_DIAGNOSTIC_TTL_MS,
+  McpClientDiagnosticServiceError,
+  type McpClientDiagnosticContext,
+  type McpClientDiagnosticOwner,
+  type McpClientDiagnosticService,
+  type McpClientDiagnosticServiceErrorCode,
+  type McpClientDiagnosticServiceOptions,
+} from "./mcp-client-diagnostic-record.js";
 export {
   type WorkspaceMcpCandidateStore,
   type WorkspaceMcpObservationStoreInput,

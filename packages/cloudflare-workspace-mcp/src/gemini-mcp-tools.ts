@@ -14,6 +14,10 @@ import {
   strictRecord,
   type GeminiMcpToolDependencies,
 } from "./gemini-mcp-tool-common.js";
+import {
+  confirmClientDiagnostic,
+  MCP_CLIENT_DIAGNOSTIC_TOOL_NAME,
+} from "./gemini-mcp-client-diagnostics.js";
 import { createPlan, validateReceipt } from "./gemini-mcp-google-sync.js";
 import { createWorkspacePlan, validateWorkspaceReceipt } from "./workspace-mcp-google-sync.js";
 
@@ -29,6 +33,12 @@ const candidateLedgerAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: true,
+  openWorldHint: false,
+} as const;
+const clientDiagnosticAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
   openWorldHint: false,
 } as const;
 
@@ -52,6 +62,20 @@ export const GEMINI_MCP_TOOLS: readonly McpToolDefinition[] = [
       },
     },
     annotations: readOnlyAnnotations,
+  },
+  {
+    name: MCP_CLIENT_DIAGNOSTIC_TOOL_NAME,
+    description: "Consume one server-issued MCP client diagnostic challenge and return its exact observation.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["challenge_id", "challenge_token"],
+      properties: {
+        challenge_id: { type: "string", minLength: 1, maxLength: 256 },
+        challenge_token: { type: "string", minLength: 1, maxLength: 1024 },
+      },
+    },
+    annotations: clientDiagnosticAnnotations,
   },
   {
     name: "eliotr_create_google_sync_plan",
@@ -105,6 +129,8 @@ export async function callGeminiMcpTool(
         return { structuredContent: await dependencies.systemStatus(context) };
       case "eliotr_catalog":
         return { structuredContent: await dependencies.catalog(decodeCatalogInput(input), context) };
+      case MCP_CLIENT_DIAGNOSTIC_TOOL_NAME:
+        return { structuredContent: await confirmClientDiagnostic(dependencies, input, context) };
       case "eliotr_create_google_sync_plan":
         return { structuredContent: await (typeof input === "object" && input !== null && (input as Record<string, unknown>).protocol === "eliotr.google-sync.plan.v2"
           ? createWorkspacePlan(input, dependencies, context)

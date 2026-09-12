@@ -13,6 +13,7 @@ import {
   CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
   CanonicalFixtureRegistryDocumentSchema,
 } from "./registry-contracts.js";
+import { MCP_DIAGNOSTIC_PROTOCOL } from "./mcp-diagnostic.js";
 import { CONTRACT_SCHEMA_REGISTRY_GENERATION } from "./schema-registry.js";
 
 export const CANONICAL_FIXTURE_REGISTRY =
@@ -66,6 +67,26 @@ export const CANONICAL_FIXTURE_REGISTRY =
         media_type: "application/yaml",
         canonical_body_sha256:
           SOURCE_OWNER_CUTOVER_CANONICAL_BODY_SHA256,
+      },
+      {
+        fixture_id: "mcp-client-diagnostic-issued-v1",
+        protocol: MCP_DIAGNOSTIC_PROTOCOL,
+        schema_export: "McpDiagnosticChallengeResultSchema",
+        fixture_path:
+          "docs/contracts/fixtures/eliotr.mcp-client-diagnostic.issued.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "0bad253a2472409be442720c34098057586c3ca5a7a3fc76ef2b5dbac37076e6",
+      },
+      {
+        fixture_id: "mcp-client-diagnostic-confirmed-v1",
+        protocol: MCP_DIAGNOSTIC_PROTOCOL,
+        schema_export: "McpDiagnosticConsumeResultSchema",
+        fixture_path:
+          "docs/contracts/fixtures/eliotr.mcp-client-diagnostic.confirmed.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "ecfdb017f8c7bdb7c3d01f313a0d54d7bfe330b6e2c2125c27e8b815a0af4a83",
       },
     ],
   });
