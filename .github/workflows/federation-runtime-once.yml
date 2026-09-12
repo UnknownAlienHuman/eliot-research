@@ -105,6 +105,12 @@ jobs:
               "  const valid = await crypto.subtle.verify(\n    \"HMAC\",\n    key,\n    Uint8Array.from(signature).buffer,\n    Uint8Array.from(body).buffer,\n  ).catch(() => false);",
               "federation cursor signature settlement",
           )
+          replace_once(
+              "docs/agent-work/ER-24-worker-composition-do-queue-and-schedules.md",
+              "- `apps/eliotr-core/src/http-errors.ts`\n",
+              "- `apps/eliotr-core/src/http-errors.ts`\n- `apps/eliotr-core/src/federation-http.ts`\n- `apps/eliotr-core/test/federation-runtime-http.test.ts`\n",
+              "ER-24 federation ownership documentation",
+          )
           PY
           git rm .github/workflows/federation-runtime-once.yml \
             scripts/one-shot/federation/payload.tar.gz.b64 \
