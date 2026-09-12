@@ -4615,12 +4615,20 @@ export function assertPhaseNetwork(harness, label, { origins, api, mutations = [
     assert.equal(finish.path, "/sw.js", `${label}: unobserved service-worker terminal must be /sw.js`);
     assert.ok(origins.includes(finish.origin), `${label}: cross-origin unobserved service-worker egress denied: ${finish.origin}`);
   }
-  const abortAllowed = new Set(aborts);
+  const abortAllowance = new Map();
+  for (const text of aborts) {
+    assert.ok(typeof text === "string" && text.length > 0,
+      `${label}: optional abort allowance must be an exact non-empty string`);
+    abortAllowance.set(text, (abortAllowance.get(text) ?? 0) + 1);
+  }
   const failures = harness.failedRequestEntries;
   assert.ok(Array.isArray(failures), `${label}: structured failure ledger is required`);
   for (const failure of failures) {
     const text = String(failure?.text ?? "");
-    assert.ok(abortAllowed.has(text), `${label}: unexpected failed request, got: ${text.slice(0, 300)}`);
+    const remainingAbortAllowance = abortAllowance.get(text) ?? 0;
+    assert.ok(remainingAbortAllowance > 0,
+      `${label}: unexpected or duplicate failed request, got: ${text.slice(0, 300)}`);
+    abortAllowance.set(text, remainingAbortAllowance - 1);
     assert.ok(Number.isSafeInteger(failure?.reqId), `${label}: failed request without reqId fails closed: ${text.slice(0, 200)}`);
     const own = pending.get(failure.reqId);
     assert.ok(own !== undefined, `${label}: failed request has no pending request or was already responded: ${text.slice(0, 200)}`);
@@ -4676,7 +4684,37 @@ export function verifyPhaseLedgerIdentityRegression(origin = "http://127.0.0.1:4
   assert.throws(() => assertPhaseNetwork({ ...base, networkResponses: [{ ...response, serial: 2 }] },
     "phase-ledger-cross-phase-response", spec), /serial crossed request identity/,
     "a cross-phase response must fail closed even when URL is identical");
-  return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 2 };
+
+  const workflowPath = `/api/v1/research/query/exhaustive-workflow-${"a".repeat(64)}`;
+  const abortText = `GET ${origin}${workflowPath} :: net::ERR_ABORTED`;
+  const abortRequest = Object.freeze({
+    reqId: 3, method: "GET", origin, path: workflowPath, resourceType: "fetch",
+    epoch: 1, serial: 1, opId: 1, docId: 1, role: "exhaustive-recovery", slotId: null,
+  });
+  const abortFailure = Object.freeze({
+    ...abortRequest, text: abortText, errorText: "net::ERR_ABORTED",
+  });
+  const abortHarness = {
+    websockets: [], pageWorkers: [], requests: [abortRequest], networkResponses: [],
+    serviceWorkerFinishedWithoutResponse: [], failedRequestEntries: [abortFailure],
+    context: { serviceWorkers: () => [] },
+  };
+  assert.doesNotThrow(() => assertPhaseNetwork(abortHarness,
+    "phase-ledger-bounded-optional-abort", {
+      origins: [origin], api: [], aborts: [abortText], workerOrigins: [origin],
+    }), "one exact cancellation abort may close its own pending request");
+
+  const duplicateRequest = Object.freeze({ ...abortRequest, reqId: 4 });
+  const duplicateFailure = Object.freeze({ ...abortFailure, reqId: 4 });
+  assert.throws(() => assertPhaseNetwork({
+    ...abortHarness,
+    requests: [abortRequest, duplicateRequest],
+    failedRequestEntries: [abortFailure, duplicateFailure],
+  }, "phase-ledger-duplicate-optional-abort", {
+    origins: [origin], api: [], aborts: [abortText], workerOrigins: [origin],
+  }), /unexpected or duplicate failed request/,
+  "one abort allowance must not hide a second failed request with the same URL");
+  return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 3 };
 }
 
 export function verifyAsyncLaunchTerminalRegression(origin = "http://127.0.0.1:43123") {
@@ -6276,6 +6314,7 @@ export async function runOwnerE2E() {
       origins: [bridge.origin],
       api: exhaustiveWorkflow.api,
       mutations: exhaustiveWorkflow.mutations,
+      aborts: exhaustiveWorkflow.aborts,
       workerOrigins: trackOrigin(bridge.origin),
     });
     receipt.network_ledger_phases.exhaustive_workflow = summarizePhaseLedger(playwright);

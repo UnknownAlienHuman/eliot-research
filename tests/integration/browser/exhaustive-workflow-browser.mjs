@@ -287,5 +287,9 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
       { method: "DELETE", path: `/api/v1/research/query/${relaunchedWorkflowId}`, status: 200 },
     ],
     mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],
+    aborts: [
+      `GET ${new URL(page.url()).origin}/api/v1/research/query/${firstWorkflowId} :: net::ERR_ABORTED`,
+      `GET ${new URL(page.url()).origin}/api/v1/research/query/${relaunchedWorkflowId} :: net::ERR_ABORTED`,
+    ],
   };
 }
