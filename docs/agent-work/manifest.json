@@ -169,7 +169,8 @@
       ],
       "owned_paths": [
         "packages/retrieval/src/ports.ts",
-        "packages/retrieval/src/lanes.ts"
+        "packages/retrieval/src/lanes.ts",
+        "packages/retrieval/src/lanes.test.ts"
       ],
       "mandatory_negative_case": "Return a stale projection hit for a purged revision and prove post-retrieval policy recheck excludes it.",
       "document": "ER-06-retrieval-lane-adapters.md",
@@ -557,6 +558,9 @@
         "apps/eliotr-core/src/research-stage-handlers.ts",
         "apps/eliotr-core/src/research-retrieve-branches.ts",
         "apps/eliotr-core/src/research-retrieval-composition.ts",
+        "apps/eliotr-core/src/research-exact-search.ts",
+        "apps/eliotr-core/test/research-exact-search.test.ts",
+        "apps/eliotr-core/test/research-query-retrieval.test.ts",
         "apps/eliotr-core/src/research-evidence-freeze-composition.ts",
         "apps/eliotr-core/src/exhaustive-query-service.ts",
         "apps/eliotr-core/src/exhaustive-workflow-service.ts",

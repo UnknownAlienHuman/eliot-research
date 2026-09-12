@@ -67,6 +67,7 @@ clean Git status does not imply complete filesystem cleanup or product readiness
 
 ### Delivered in this checkpoint
 
+- Bounded FAST_SEARCH EXACT now enumerates pinned active D1 sections and performs literal matching through the canonical read-only D1/R2 evidence authority before ordinary handle resolution. Raw query whitespace and punctuation are preserved. More than 50 scanned sections across the scope produces typed SEARCH_INCOMPLETE; no complete-scope or absence claim is added. Local owner HTTP tests prove nonzero EXACT candidates, exact stored excerpt, literal hit/miss, duplicate-free replay and redacted-source/revoked-grant refusal. The focused Worker suites passed 16/16 and lane/D1 suites 14/14. RETRIEVAL enablement and live qualification remain open.
 - Configured v3 source VERIFY and DRAFT readback; native Worker AI Gateway transport and explicit model profile source.
 - Per-request REPORT admission composed through the actual stage factory, with decision/intent/outbox/draft committed together after R2 readback. Additive migration0041 checks current owner grant, disclosure, receipt, workflow revision and database-time expiry.
 - A shared frozen-context reader checks the exact committed synthesis-to-current stage chain. The actual REPORT and source-VERIFY-to-draft cases passed together at74203c9:2selected cases,12unchanged skipped. Strict workspace/test TypeScript and targeted ESLint passed; Worker deployment dry run passed.
@@ -83,6 +84,13 @@ clean Git status does not imply complete filesystem cleanup or product readiness
 6. After the complete launch gate is satisfied, deploy the one Worker plus Astro static assets through the installed Cloudflare lane, verify remote Access/D1/R2/model/source/report readback, and qualify the real browser user loop. Then prepare the controlled comparison corpus/questions and begin NotebookLM comparison with the owner.
 
 New financial budgeting/accounting work remains deferred. Existing authorization and duplicate-provider-call protections stay in place.
+
+The bounded ResearchSession recovery repair at `d358283` refuses execution when the durable input
+manifest cannot be read back, even if portfolio bytes remain in R2. It preserves an ACTIVE session
+with a retryable settlement fault. The 12-case local session suite retains a separate successful
+exploratory.v1 run with a durably registered manifest, exact stage-0 readback and duplicate-free
+18-stage replay. This closes portfolio-based manifest reconstruction only; immutable initial
+payload admission, full provider settlement recovery and live qualification remain open.
 
 ### Committed and published Luna work
 

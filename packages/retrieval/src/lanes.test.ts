@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { LocatorCandidate } from "@eliotr/contracts";
-import { createSemLaneExecutor } from "./lanes.js";
-import type { ManagedSearchPort, RetrievalRequest } from "./ports.js";
+import { compileQueryPlan } from "./planner.js";
+import { createExactLaneExecutor, createSemLaneExecutor, executePlannedLanes } from "./lanes.js";
+import type { ExactSearchPort, ManagedSearchPort, RetrievalRequest } from "./ports.js";
 
 function request(): RetrievalRequest {
   return {
@@ -28,6 +29,26 @@ function candidate(): LocatorCandidate {
   };
 }
 
+function exactCandidate(): LocatorCandidate {
+  return {
+    candidate_id: "chunk-exact-1",
+    lane: "EXACT",
+    source_revision_ref: "rev-1",
+    canonical_section_id: "sec-1",
+    preview: "",
+    raw_score: 1,
+    rank: 1,
+    index_generation: "gen-exact-1",
+    metadata: {},
+  };
+}
+
+function exactStub(
+  onSearch: (request: RetrievalRequest) => Promise<readonly LocatorCandidate[]>,
+): Pick<ExactSearchPort, "exactPhraseCandidates"> {
+  return { exactPhraseCandidates: onSearch };
+}
+
 function managedStub(
   onSearch: (
     request: RetrievalRequest,
@@ -48,6 +69,55 @@ async function laneError(
   }
   throw new Error("expected lane execution to fail");
 }
+
+describe("EXACT lane executor over the exact-phrase search surface", () => {
+  it("serves EXACT through the port and preserves unresolved locators", async () => {
+    const input = request();
+    const unresolved = exactCandidate();
+    let observed: RetrievalRequest | null = null;
+    const executor = createExactLaneExecutor(
+      exactStub(async (received) => {
+        observed = received;
+        return [unresolved];
+      }),
+    );
+
+    const results = await executor.execute("EXACT", input);
+
+    expect(observed).toBe(input);
+    expect(results).toEqual([unresolved]);
+    expect(results[0]).toBe(unresolved);
+    expect(results[0]).toMatchObject({ lane: "EXACT", preview: "" });
+  });
+
+  it("refuses lanes other than EXACT", async () => {
+    const executor = createExactLaneExecutor(exactStub(async () => [exactCandidate()]));
+    const error = await laneError(executor.execute("LEX", request()));
+    expect(error.code).toBe("SEARCH_INPUT_INVALID");
+  });
+
+  it("keeps exact-search unavailability as an explicit skipped lane", async () => {
+    const input: RetrievalRequest = { ...request(), product: "FAST_SEARCH" };
+    const executor = createExactLaneExecutor(
+      exactStub(async () => {
+        throw Object.assign(new Error("exact search unavailable"), {
+          code: "SEARCH_UNAVAILABLE",
+        });
+      }),
+    );
+    const receipts = await executePlannedLanes(
+      compileQueryPlan(input),
+      input,
+      { executorFor: (lane) => (lane === "EXACT" ? executor : null) },
+    );
+
+    expect(receipts.find((receipt) => receipt.lane === "EXACT")).toEqual({
+      lane: "EXACT",
+      candidates: [],
+      disposition: "SKIPPED_UNAVAILABLE",
+    });
+  });
+});
 
 describe("SEM lane executor over the managed-search surface", () => {
   it("serves SEM with plan expansion and drops the local proof_state marker", async () => {
