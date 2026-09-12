@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title"><title id="title">ELIOT Research Blue v2 — подключения; демонстрационный макет</title><g font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1600" height="1000" rx="0" fill="#0B101B"/>
+<rect x="0" y="0" width="204" height="1000" rx="0" fill="#0F1625"/>
+<rect x="25" y="25" width="32" height="36" rx="10" fill="#B2CDFF"/>
+<text x="32" y="51" fill="#102954" font-size="26" font-weight="700">E</text>
+<text x="69" y="45" fill="#EDF2FC" font-size="25" font-weight="700">eliot</text>
+<text x="70" y="63" fill="#A5B4CC" font-size="9" font-weight="400">R E S E A R C H</text>
+<rect x="16" y="96" width="172" height="76" rx="16" fill="#141E30" stroke="#2D3C56"/>
+<text x="32" y="126" fill="#EDF2FC" font-size="13" font-weight="600">Память AI-агентов</text>
+<text x="32" y="149" fill="#A5B4CC" font-size="12" font-weight="400">Личный проект</text>
+<text x="31" y="239" fill="#A5B4CC" font-size="19" font-weight="400">◈</text>
+<text x="59" y="238" fill="#A5B4CC" font-size="13" font-weight="400">Исследование</text>
+<text x="31" y="289" fill="#A5B4CC" font-size="19" font-weight="400">▤</text>
+<text x="59" y="288" fill="#A5B4CC" font-size="13" font-weight="400">Источники</text>
+<text x="31" y="339" fill="#A5B4CC" font-size="19" font-weight="400">▧</text>
+<text x="59" y="338" fill="#A5B4CC" font-size="13" font-weight="400">Материалы</text>
+<rect x="16" y="821" width="172" height="44" rx="22" fill="#233D65"/>
+<text x="31" y="849" fill="#A8C7FF" font-size="19" font-weight="400">⇄</text>
+<text x="59" y="848" fill="#A8C7FF" font-size="13" font-weight="600">Подключения</text>
+<text x="173" y="848" fill="#FFD698" font-size="13" font-weight="400">!</text>
+<text x="31" y="895" fill="#A5B4CC" font-size="19" font-weight="400">☼</text>
+<text x="59" y="894" fill="#A5B4CC" font-size="13" font-weight="400">Светлая тема</text>
+<path d="M25 925h154" stroke="#2D3C56"/>
+<rect x="27" y="949" width="30" height="30" rx="15" fill="#233D65"/>
+<text x="33" y="969" fill="#A8C7FF" font-size="10" font-weight="600">YL</text>
+<text x="69" y="966" fill="#EDF2FC" font-size="12" font-weight="400">Iurii</text>
+<text x="69" y="984" fill="#A5B4CC" font-size="10" font-weight="400">Личное пространство</text>
+<text x="234" y="42" fill="#A5B4CC" font-size="12" font-weight="400">Память AI-агентов  /  Подключения</text>
+<text x="1150" y="42" fill="#A5B4CC" font-size="12" font-weight="400">⌕  Найти источник    Ctrl K</text>
+<rect x="1406" y="25" width="161" height="24" rx="5" fill="#0B101B" stroke="#2D3C56"/>
+<text x="1418" y="41" fill="#A5B4CC" font-size="11" font-weight="400">КОНЦЕПТ · ДЕМО</text>
+<rect x="204" y="72" width="1380" height="912" rx="26" fill="#141E30"/>
+<text x="240" y="118" fill="#A5B4CC" font-size="11" font-weight="600">РАБОЧЕЕ ПРОСТРАНСТВО</text>
+<text x="240" y="160" fill="#EDF2FC" font-size="35" font-weight="600">Подключения</text>
+<text x="240" y="191" fill="#A5B4CC" font-size="15" font-weight="400">Кто подключён, что ему доступно и где нужна ваша помощь.</text>
+<rect x="1328" y="125" width="218" height="44" rx="22" fill="#B2CDFF"/>
+<text x="1346" y="153" fill="#102954" font-size="13" font-weight="600">+  Подключить клиента</text>
+<text x="244" y="248" fill="#A8C7FF" font-size="14" font-weight="600">Обзор</text>
+<text x="332" y="248" fill="#A5B4CC" font-size="14" font-weight="400">MCP</text>
+<text x="411" y="248" fill="#A5B4CC" font-size="14" font-weight="400">Агенты</text>
+<text x="511" y="248" fill="#A5B4CC" font-size="14" font-weight="400">Журнал</text>
+<path d="M240 268h1306" stroke="#2D3C56"/>
+<rect x="244" y="265" width="48" height="3" rx="2" fill="#A8C7FF"/>
+<rect x="240" y="294" width="164" height="48" rx="16" fill="#1B2941"/>
+<text x="260" y="324" fill="#A5B4CC" font-size="14" font-weight="400">Ваши агенты</text>
+<rect x="450" y="294" width="206" height="48" rx="16" fill="#233D65"/>
+<text x="470" y="324" fill="#A8C7FF" font-size="14" font-weight="400">ELIOT Research</text>
+<rect x="702" y="294" width="250" height="48" rx="16" fill="#1B2941"/>
+<text x="722" y="324" fill="#A5B4CC" font-size="14" font-weight="400">Разрешённые источники</text>
+<text x="421" y="325" fill="#A8C7FF" font-size="20" font-weight="400">→</text>
+<text x="671" y="325" fill="#A8C7FF" font-size="20" font-weight="400">→</text>
+<text x="252" y="389" fill="#A5B4CC" font-size="12" font-weight="400">Подключения и клиенты</text>
+<text x="914" y="389" fill="#A5B4CC" font-size="11" font-weight="400">Последний результат · демо</text>
+<rect x="240" y="409" width="906" height="352" rx="18" fill="#141E30" stroke="#2D3C56"/>
+<rect x="241" y="497" width="904" height="88" rx="0" fill="#233D65"/>
+<rect x="258" y="433" width="42" height="42" rx="13" fill="#1B2941" stroke="#2D3C56"/>
+<text x="272" y="460" fill="#A8C7FF" font-size="15" font-weight="600">E</text>
+<text x="317" y="445" fill="#EDF2FC" font-size="15" font-weight="600">ELIOT MCP</text>
+<text x="317" y="470" fill="#A5B4CC" font-size="12" font-weight="400">Входящий MCP · статус сервера</text>
+<rect x="981" y="428" width="136" height="30" rx="15" fill="#233D65"/>
+<text x="993" y="448" fill="#A8C7FF" font-size="12" font-weight="400">Проверен</text>
+<text x="933" y="476" fill="#A5B4CC" font-size="10" font-weight="400">Серверный маршрут · демо</text>
+<text x="1124" y="458" fill="#A5B4CC" font-size="23" font-weight="400">›</text>
+<path d="M241 497h904" stroke="#2D3C56"/>
+<rect x="258" y="521" width="42" height="42" rx="13" fill="#1B2941" stroke="#2D3C56"/>
+<text x="272" y="548" fill="#A8C7FF" font-size="15" font-weight="600">A</text>
+<text x="317" y="533" fill="#EDF2FC" font-size="15" font-weight="600">Antigravity</text>
+<text x="317" y="558" fill="#A5B4CC" font-size="12" font-weight="400">Клиент → ELIOT · Workspace</text>
+<rect x="934" y="516" width="183" height="30" rx="15" fill="#352B23"/>
+<text x="946" y="536" fill="#FFD698" font-size="12" font-weight="400">Нет доступа к каталогу</text>
+<text x="933" y="564" fill="#A5B4CC" font-size="10" font-weight="400">Наблюдение из клиента · демо</text>
+<text x="1124" y="546" fill="#A5B4CC" font-size="23" font-weight="400">›</text>
+<path d="M241 585h904" stroke="#2D3C56"/>
+<rect x="258" y="609" width="42" height="42" rx="13" fill="#1B2941" stroke="#2D3C56"/>
+<text x="272" y="636" fill="#A8C7FF" font-size="15" font-weight="600">G</text>
+<text x="317" y="621" fill="#EDF2FC" font-size="15" font-weight="600">Gemini Spark</text>
+<text x="317" y="646" fill="#A5B4CC" font-size="12" font-weight="400">Клиент → ELIOT · Connected App</text>
+<rect x="981" y="604" width="136" height="30" rx="15" fill="#352B23"/>
+<text x="993" y="624" fill="#FFD698" font-size="12" font-weight="400">Требует входа</text>
+<text x="933" y="652" fill="#A5B4CC" font-size="10" font-weight="400">Нужна проверка клиента · демо</text>
+<text x="1124" y="634" fill="#A5B4CC" font-size="23" font-weight="400">›</text>
+<path d="M241 673h904" stroke="#2D3C56"/>
+<rect x="258" y="697" width="42" height="42" rx="13" fill="#1B2941" stroke="#2D3C56"/>
+<text x="272" y="724" fill="#A8C7FF" font-size="15" font-weight="600">E</text>
+<text x="317" y="709" fill="#EDF2FC" font-size="15" font-weight="600">Main Eliot</text>
+<text x="317" y="734" fill="#A5B4CC" font-size="12" font-weight="400">Клиент → ELIOT · HTTP federation</text>
+<rect x="981" y="692" width="136" height="30" rx="15" fill="#233D65"/>
+<text x="993" y="712" fill="#A8C7FF" font-size="12" font-weight="400">Нет наблюдения</text>
+<text x="933" y="740" fill="#A5B4CC" font-size="10" font-weight="400">Настройка ≠ подключение · демо</text>
+<text x="1124" y="722" fill="#A5B4CC" font-size="23" font-weight="400">›</text>
+<rect x="240" y="782" width="906" height="67" rx="16" fill="#352B23"/>
+<text x="260" y="809" fill="#FFD698" font-size="14" font-weight="600">Подключение ≠ доступ к данным.</text>
+<text x="260" y="832" fill="#FFD698" font-size="13" font-weight="400">Antigravity получает статус сервера, но не каталог источников.</text>
+<text x="240" y="887" fill="#EDF2FC" font-size="15" font-weight="600">Проверяйте нужный маршрут</text>
+<text x="240" y="916" fill="#A5B4CC" font-size="13" font-weight="400">Ответ сервера не доказывает подключение конкретного агента.</text>
+<text x="240" y="955" fill="#A5B4CC" font-size="12" font-weight="400">Демо: сеть, ключи и ваши агенты не используются.</text>
+<rect x="1174" y="379" width="372" height="579" rx="22" fill="#1B2941"/>
+<text x="1198" y="418" fill="#EDF2FC" font-size="22" font-weight="600">Antigravity</text>
+<text x="1198" y="443" fill="#A5B4CC" font-size="12" font-weight="400">Проверка из клиента · демонстрация</text>
+<rect x="1198" y="464" width="183" height="30" rx="15" fill="#352B23"/>
+<text x="1210" y="484" fill="#FFD698" font-size="12" font-weight="400">Нет доступа к каталогу</text>
+<text x="1198" y="519" fill="#A5B4CC" font-size="11" font-weight="400">12 сентября · 12:42 UTC · пример</text>
+<rect x="1198" y="543" width="24" height="24" rx="12" fill="#233D65"/>
+<text x="1205" y="560" fill="#A8C7FF" font-size="12" font-weight="400">✓</text>
+<text x="1234" y="555" fill="#EDF2FC" font-size="13" font-weight="600">Адрес сервера</text>
+<text x="1234" y="573" fill="#A5B4CC" font-size="11" font-weight="400">HTTPS · зарегистрированный маршрут</text>
+<rect x="1198" y="590" width="24" height="24" rx="12" fill="#233D65"/>
+<text x="1205" y="607" fill="#A8C7FF" font-size="12" font-weight="400">✓</text>
+<text x="1234" y="602" fill="#EDF2FC" font-size="13" font-weight="600">Авторизация</text>
+<text x="1234" y="620" fill="#A5B4CC" font-size="11" font-weight="400">Проверена для конкретного клиента</text>
+<rect x="1198" y="637" width="24" height="24" rx="12" fill="#233D65"/>
+<text x="1205" y="654" fill="#A8C7FF" font-size="12" font-weight="400">✓</text>
+<text x="1234" y="649" fill="#EDF2FC" font-size="13" font-weight="600">Протокол MCP</text>
+<text x="1234" y="667" fill="#A5B4CC" font-size="11" font-weight="400">Согласован 2025-06-18</text>
+<rect x="1198" y="684" width="24" height="24" rx="12" fill="#233D65"/>
+<text x="1205" y="701" fill="#A8C7FF" font-size="12" font-weight="400">✓</text>
+<text x="1234" y="696" fill="#EDF2FC" font-size="13" font-weight="600">Список инструментов</text>
+<text x="1234" y="714" fill="#A5B4CC" font-size="11" font-weight="400">3 инструмента · каталог не выдан</text>
+<rect x="1198" y="731" width="24" height="24" rx="12" fill="#233D65"/>
+<text x="1205" y="748" fill="#A8C7FF" font-size="12" font-weight="400">✓</text>
+<text x="1234" y="743" fill="#EDF2FC" font-size="13" font-weight="600">Чтение статуса</text>
+<text x="1234" y="761" fill="#A5B4CC" font-size="11" font-weight="400">eliotr_system_status · без записи</text>
+<rect x="1198" y="778" width="24" height="24" rx="12" fill="#352B23"/>
+<text x="1205" y="795" fill="#FFD698" font-size="12" font-weight="400">!</text>
+<text x="1234" y="790" fill="#EDF2FC" font-size="13" font-weight="600">Каталог источников</text>
+<text x="1234" y="808" fill="#A5B4CC" font-size="11" font-weight="400">Нужно отдельное разрешение</text>
+<rect x="1198" y="843" width="324" height="44" rx="22" fill="#B2CDFF"/>
+<text x="1216" y="871" fill="#102954" font-size="13" font-weight="600">✓  Проверить подключение</text>
+<rect x="1198" y="898" width="324" height="44" rx="22" fill="#1B2941" stroke="#758BAD"/>
+<text x="1216" y="926" fill="#EDF2FC" font-size="13" font-weight="600">Посмотреть доступ</text>
+</g></svg>
