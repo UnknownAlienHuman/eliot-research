@@ -1,0 +1,81 @@
+name: federation-runtime-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/federation-runtime-once.yml
+      - scripts/one-shot/federation/payload.tar.gz.b64
+
+permissions:
+  contents: write
+
+concurrency:
+  group: federation-runtime-once
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Materialize authenticated federation runtime
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, io, tarfile
+
+          directory = Path("scripts/one-shot/federation")
+          encoded = (directory / "payload.tar.gz.b64").read_text(encoding="ascii")
+          payload = base64.b64decode(encoded, validate=True)
+          expected = "ab74dfbca462ed4327386bce3752f2ebe19d1fc8d9b242688720a90f733cfa0c"
+          if hashlib.sha256(payload).hexdigest() != expected:
+              raise SystemExit("federation payload digest mismatch")
+          with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+              for member in archive.getmembers():
+                  target = (directory / member.name).resolve()
+                  if directory.resolve() not in target.parents:
+                      raise SystemExit("federation payload path traversal denied")
+              archive.extractall(directory, filter="data")
+          PY
+          python3 scripts/one-shot/federation/implement.py
+          git rm .github/workflows/federation-runtime-once.yml \
+            scripts/one-shot/federation/payload.tar.gz.b64
+          rm -rf scripts/one-shot/federation
+          git diff --check
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify federation product locally
+        run: |
+          pnpm --filter @eliotr/cloudflare-federation test
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+          pnpm typecheck
+      - name: Verify structural and documentation gates
+        run: |
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
+      - name: Commit verified product code to main
+        run: |
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: compose authenticated federation runtime"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
