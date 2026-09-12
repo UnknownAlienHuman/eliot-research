@@ -220,7 +220,7 @@ function assertCitationBindingRow(row: CitationBindingRow): void {
 
 export async function loadCitationSettlement(
   database: D1Database,
-  receipt: CitationResolutionReceipt,
+  receipt: Pick<CitationResolutionReceipt, "receipt_ref">,
   attempt: CitationResolutionAttemptBinding,
 ): Promise<CitationSettlement | null> {
   let results: D1Result<unknown>[];

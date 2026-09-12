@@ -1,7 +1,11 @@
+import { env } from "cloudflare:workers";
 import {
   canonicalEvidenceJson,
+  createR2EvidenceContentPort,
   evidenceSha256,
+  readBoundCitationResolutionReceipt,
   readEvidenceResolutionReceipt,
+  readResolvedCitationEvidence,
 } from "@eliotr/cloudflare-evidence";
 import {
   createEvidenceFreezePostSynthesisContextReader,
@@ -256,12 +260,70 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     const readbackReceiptCounts = await receiptCounts(fixture);
     const readbackProviderCalls = fixture.fixture.provider_calls();
     const readbackAuditProviderCalls = fixture.auditProviderCalls();
+    const currentGrant = await fixture.fixture.freeze.navigation.current();
+    const boundReadbackInput = {
+      attempt_binding: {
+        operation_id: stage15.operation_id,
+        attempt_ref: first.attempt_ref,
+        request_sha256: first.request_sha256,
+      },
+      access: fixture.fixture.freeze.navigation.access,
+      scope_snapshot_ref: {
+        id: fixture.fixture.freeze.navigation.scope.snapshot_id,
+        revision: fixture.fixture.freeze.navigation.scope.revision,
+      },
+      authorization_receipt_ref: currentGrant.authorization_receipt_ref,
+    } as const;
+    const boundReadback = await readBoundCitationResolutionReceipt(
+      fixture.fixture.freeze.db,
+      boundReadbackInput,
+    );
+    expect(boundReadback).not.toBeNull();
+    if (boundReadback === null) throw new Error("bound citation receipt readback is missing");
+    expect(canonicalEvidenceJson(boundReadback)).toBe(row.receipt_json);
+    expect(await evidenceSha256(boundReadback)).toBe(row.receipt_sha256);
+    expect(boundReadback.receipt_ref).toEqual(receipt.receipt_ref);
+    await expect(readBoundCitationResolutionReceipt(fixture.fixture.freeze.db, {
+      ...boundReadbackInput,
+      attempt_binding: {
+        ...boundReadbackInput.attempt_binding,
+        attempt_ref: `${first.attempt_ref}-wrong`,
+      },
+    })).rejects.toMatchObject({ code: "EVIDENCE_SETTLEMENT_UNCERTAIN", retryable: true });
+    expect(await readBoundCitationResolutionReceipt(fixture.fixture.freeze.db, {
+      ...boundReadbackInput,
+      attempt_binding: {
+        ...boundReadbackInput.attempt_binding,
+        operation_id: `${stage15.operation_id}-missing`,
+      },
+    })).toBeNull();
+    await expect(readBoundCitationResolutionReceipt(fixture.fixture.freeze.db, {
+      ...boundReadbackInput,
+      access: {
+        ...boundReadbackInput.access,
+        principal_ref: `${boundReadbackInput.access.principal_ref}-wrong`,
+      },
+    })).rejects.toMatchObject({ code: "EVIDENCE_SETTLEMENT_UNCERTAIN", retryable: true });
+    await expect(readBoundCitationResolutionReceipt(fixture.fixture.freeze.db, {
+      ...boundReadbackInput,
+      scope_snapshot_ref: {
+        ...boundReadbackInput.scope_snapshot_ref,
+        revision: boundReadbackInput.scope_snapshot_ref.revision + 1,
+      },
+    })).rejects.toMatchObject({ code: "EVIDENCE_SETTLEMENT_UNCERTAIN", retryable: true });
+    expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
+    expect(fixture.fixture.provider_calls()).toBe(readbackProviderCalls);
+    expect(fixture.auditProviderCalls()).toBe(readbackAuditProviderCalls);
     const firstItem = receipt.resolved[0];
     const secondItem = receipt.resolved[1];
     if (firstItem === undefined || secondItem === undefined) {
       throw new Error("citation receipt resolved members are incomplete");
     }
     expect(refKey(firstItem.handle_ref)).not.toBe(refKey(secondItem.handle_ref));
+    const savedEvidenceReadbacks = new Map<
+      string,
+      NonNullable<Awaited<ReturnType<typeof readEvidenceResolutionReceipt>>>
+    >();
     for (const item of [firstItem, secondItem]) {
       const readback = await readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
         verification_receipt_ref: item.verification_receipt_ref,
@@ -277,6 +339,7 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
       expect(readback.handle_ref).toEqual(item.handle_ref);
       expect(readback.excerpt_sha256).toBe(item.excerpt_sha256);
       expect(refKey(readback.receipt_ref)).toBe(item.verification_receipt_ref);
+      savedEvidenceReadbacks.set(refKey(item.handle_ref), readback);
     }
     expect(await readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
       verification_receipt_ref: firstItem.verification_receipt_ref,
@@ -286,6 +349,53 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
       verification_receipt_ref: "missing-evidence-resolution-ref",
       expected_handle_ref: firstItem.handle_ref,
     })).toBeNull();
+    expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
+    expect(fixture.fixture.provider_calls()).toBe(readbackProviderCalls);
+    expect(fixture.auditProviderCalls()).toBe(readbackAuditProviderCalls);
+
+    const evidenceContent = createR2EvidenceContentPort({
+      evidence_bucket: (env as unknown as { readonly EVIDENCE_BUCKET: R2Bucket }).EVIDENCE_BUCKET,
+    });
+    const materialized = await readResolvedCitationEvidence({
+      database: fixture.fixture.freeze.db,
+      content: evidenceContent,
+      navigation: fixture.fixture.freeze.navigation,
+      citation: boundReadback,
+    });
+    expect(materialized).toHaveLength(2);
+    expect(sortedRefKeys(materialized.map((item) => item.handle.handle_ref))).toEqual(
+      sortedRefKeys(auditInput.evidence.map((item) => item.handle.handle_ref)),
+    );
+    for (const actual of materialized) {
+      const key = refKey(actual.handle.handle_ref);
+      const admitted = auditInput.evidence.find((item) => refKey(item.handle.handle_ref) === key);
+      const saved = savedEvidenceReadbacks.get(key);
+      expect(admitted).toBeDefined();
+      expect(saved).toBeDefined();
+      if (admitted === undefined || saved === undefined) throw new Error("materialized evidence binding is missing");
+      expect(actual.handle).toEqual(admitted.handle);
+      expect(actual.exact_excerpt).toBe(admitted.exact_excerpt);
+      expect(actual.verification_receipt_ref).toBe(refKey(saved.receipt_ref));
+      expect(actual.resolved_at).toBe(saved.resolved_at);
+    }
+    const corruptedContent = {
+      async materialize(
+        source: Parameters<typeof evidenceContent.materialize>[0],
+        anchor: Parameters<typeof evidenceContent.materialize>[1],
+      ) {
+        const value = await evidenceContent.materialize(source, anchor);
+        return { ...value, exact_excerpt: `${value.exact_excerpt}\ncorrupted` };
+      },
+    };
+    await expect(readResolvedCitationEvidence({
+      database: fixture.fixture.freeze.db,
+      content: corruptedContent,
+      navigation: fixture.fixture.freeze.navigation,
+      citation: boundReadback,
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_OBJECT_INTEGRITY",
+      invalidation_state: "BROKEN_INTEGRITY",
+    });
     expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
     expect(fixture.fixture.provider_calls()).toBe(readbackProviderCalls);
     expect(fixture.auditProviderCalls()).toBe(readbackAuditProviderCalls);
@@ -369,6 +479,38 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     expect(fixture.auditProviderCalls()).toBe(1);
     expect(await checkpointCount(fixture, "RESOLVE_CITATIONS")).toBe(1);
     expect(await citationReceiptRow(fixture, receipt.receipt_ref)).toEqual(row);
+    let currentReads = 0;
+    const lateWithdrawalNavigation = {
+      ...fixture.fixture.freeze.navigation,
+      current: async (...args: Parameters<typeof fixture.fixture.freeze.navigation.current>) => {
+        const grant = await fixture.fixture.freeze.navigation.current(...args);
+        if (++currentReads === 3) {
+          const sourceRevisionRef = auditInput.evidence[0]?.handle.source_revision_ref;
+          if (sourceRevisionRef === undefined) throw new Error("audit fixture has no source revision");
+          expect(grant).toEqual(currentGrant);
+          const update = await fixture.fixture.freeze.db.prepare(
+            "UPDATE source_admission_decision SET decision='QUARANTINED' WHERE source_revision_ref=?1 " +
+              "AND decision='ADMITTED' RETURNING source_namespace_id,source_owner_generation,source_revision_ref,decision",
+          ).bind(sourceRevisionRef).first<Record<string, string>>();
+          expect(update).toEqual({ source_namespace_id: auditInput.evidence[0]?.handle.source_namespace_id,
+            source_owner_generation: auditInput.evidence[0]?.handle.source_owner_generation,
+            source_revision_ref: sourceRevisionRef, decision: "QUARANTINED" });
+        }
+        return grant;
+      },
+    };
+    await expect(readResolvedCitationEvidence({
+      database: fixture.fixture.freeze.db,
+      content: evidenceContent,
+      navigation: lateWithdrawalNavigation,
+      citation: boundReadback,
+    })).rejects.toMatchObject({ code: "NAVIGATION_ARTIFACT_INVALID" });
+    expect(currentReads).toBe(3);
+    expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
+    expect([fixture.fixture.provider_calls(), fixture.auditProviderCalls()]).toEqual([
+      readbackProviderCalls,
+      readbackAuditProviderCalls,
+    ]);
   }, 60_000);
 
   it("rejects source authority drift after the final context read", async () => {

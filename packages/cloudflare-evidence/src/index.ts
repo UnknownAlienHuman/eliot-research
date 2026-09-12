@@ -7,6 +7,8 @@ export * from "./resolver.js";
 export * from "./registry.js";
 export * from "./resolution-readback.js";
 export * from "./citation-registry.js";
+export * from "./citation-readback.js";
+export * from "./saved-citation-readback.js";
 export * from "./scope-store.js";
 export * from "./navigation-store.js";
 export { loadScopeAuthority, loadSourceAuthorities } from "./authority-load.js";
