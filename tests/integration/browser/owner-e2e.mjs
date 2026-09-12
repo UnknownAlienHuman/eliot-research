@@ -1312,25 +1312,11 @@ function safeWorkerDiagnosticError(error, diagnostic, context) {
   return wrapped;
 }
 
-function latestOwnerBridgeDiagnosticEvent(events) {
-  if (!Array.isArray(events)) return undefined;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (!event || typeof event !== "object") continue;
-    if (event.outcome === "response" || event.outcome === "error") return event;
-  }
-  return undefined;
-}
-
-function ownerBridgeBoundaryDiagnosticContext(error, events) {
-  const event = latestOwnerBridgeDiagnosticEvent(events);
-  const responseStatus = event?.outcome === "response" && Number.isSafeInteger(event.status) &&
-    event.status >= 100 && event.status <= 599 ? event.status : undefined;
+function ownerBridgeBoundaryDiagnosticContext(error) {
+  const inherited = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  if (inherited) return normalizeWorkerDiagnosticContext(error, inherited);
   return normalizeWorkerDiagnosticContext(error, {
-    stage: "fetch", phase: "bridge-artifact-import",
-    method: event === undefined ? "OTHER" : event.method,
-    route_family: event === undefined ? "unknown-api-route" : event.route_family,
-    ...(responseStatus === undefined ? {} : { http_status: responseStatus }),
+    stage: "fetch", phase: "bridge-artifact-import", method: "OTHER", route_family: "unknown-api-route",
   });
 }
 
@@ -1475,16 +1461,31 @@ function verifyPreservedWorkerFailureOutput() {
   bridgeError.stack = `ArbitraryBridgeError: bridge stack ${bridgeBearer}\n    at bridgeCase (owner-e2e.mjs:6100:7)\n    at bridgeCase (C:\\private\\bridge-secret.mjs:88:3)`;
   const bridgeEvents = [{ outcome: "response", method: "POST", route_family: "bundle-complete",
     stage: "bundle-complete", status: 503, typed_code: "INTERNAL_ERROR", elapsed_ms: 3 }];
+  const bridgeProblemCode = ownerBridgeProblemCodeFromMessage(bridgeError) ?? "UNAVAILABLE";
+  assert.equal(bridgeProblemCode, "UNAVAILABLE",
+    "an unbound bridge error must not inherit a problem code from stale bridge history");
   const bridgeDiagnostic = safeWorkerDiagnosticError(bridgeError,
     `browser artifact import failed; owner bridge diagnostic=${JSON.stringify({
-      protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1", problem_code: "INTERNAL_ERROR",
+      protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1", problem_code: bridgeProblemCode,
       bridge_events: bridgeEvents, worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
     })}`,
     ownerBridgeBoundaryDiagnosticContext(bridgeError, bridgeEvents));
   const bridgeOuter = preserveWorkerFailure(bridgeDiagnostic, worker);
   assert.match(bridgeOuter.message,
-    /worker_diagnostic_context=\{"stage":"fetch","phase":"bridge-artifact-import","method":"POST","route_family":"bundle-complete","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"http_status":503,"source_stack":\{"basename":"owner-e2e\.mjs","line":6100\}\}/u,
-    "browser import wrapping must retain fixed request context and response status");
+    /worker_diagnostic_context=\{"stage":"fetch","phase":"bridge-artifact-import","method":"OTHER","route_family":"unknown-api-route","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6100\}\}/u,
+    "browser import wrapping must use a fixed boundary context when no context is bound to the same error");
+  assert.doesNotMatch(bridgeOuter.message, /worker_diagnostic_context=.*"http_status"/u,
+    "browser import wrapping must not borrow response status from shared bridge events");
+  const registeredBridge = safeWorkerDiagnosticError(bridgeError, "bound bridge error",
+    normalizeWorkerDiagnosticContext(bridgeError, {
+      stage: "fetch", phase: "bridge-artifact-import", method: "POST", route_family: "bundle-complete", http_status: 418,
+    }));
+  const registeredContext = ownerBridgeBoundaryDiagnosticContext(registeredBridge, bridgeEvents);
+  assert.deepEqual(registeredContext, {
+    stage: "fetch", phase: "bridge-artifact-import", method: "POST", route_family: "bundle-complete",
+    error_class: { name: "UnknownError", code: "UNSPECIFIED" }, http_status: 418,
+    source_stack: { basename: "owner-e2e.mjs", line: 6100 },
+  }, "registered context on the same error must retain its exact status despite shared bridge events");
   const bridgeSerialized = JSON.stringify({ message: bridgeOuter.message, stack: bridgeOuter.stack, cause: bridgeOuter.cause });
   for (const secret of [bridgeBearer, "bridge-private", "ArbitraryBridgeError", "ARBITRARY_BRIDGE_CODE", "bridge-secret.mjs"]) {
     assert.ok(!bridgeSerialized.includes(secret), `browser import diagnostic must omit ${secret}`);
@@ -1889,11 +1890,6 @@ function allowlistedOwnerAccessProblemCode(value) {
 function ownerBridgeProblemCodeFromMessage(error) {
   const match = String(error?.message ?? "").match(/\bcode=([A-Z][A-Z0-9_]+)\b/u);
   return allowlistedOwnerBridgeProblemCode(match?.[1]);
-}
-
-function ownerBridgeProblemCodeFromEvents(events) {
-  return [...events].reverse().find((event) => event.outcome === "response" &&
-    event.status >= 400 && allowlistedOwnerBridgeProblemCode(event.typed_code))?.typed_code;
 }
 
 function recordOwnerBridgeDiagnosticEvent(events, event) {
@@ -5946,12 +5942,12 @@ export async function runOwnerE2E() {
     } catch (error) {
       const diagnostic = {
         protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1",
-        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? ownerBridgeProblemCodeFromEvents(ownerBridgeDiagnosticEvents) ?? "UNAVAILABLE",
+        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? "UNAVAILABLE",
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
       throw safeWorkerDiagnosticError(error, `browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`,
-        ownerBridgeBoundaryDiagnosticContext(error, ownerBridgeDiagnosticEvents));
+        ownerBridgeBoundaryDiagnosticContext(error));
     }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
