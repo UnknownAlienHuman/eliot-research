@@ -16,7 +16,7 @@ are counted. Focus text is retained in the trace but **is not semantic filtering
 
 Cards come from admitted source metadata. Maps explicitly report missing structure. There are no
 fabricated headings, source excerpts, summaries, citation handles or completeness claims. The returned
-EvidencePack contains zero resolved evidence. Full Atlas/section expansion, query/research, federation,
+EvidencePack contains zero resolved evidence. Full Atlas/section expansion, query/research, independent-peer federation qualification,
 Wiki/reports and Rust authority promotion remain mandatory unfinished launch work.
 
 ## Prepare and run

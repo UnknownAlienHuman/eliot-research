@@ -106,8 +106,9 @@ must be invalidated and re-frozen under current authorized policy; do not transp
 rewrite their digests in place, or weaken the reader to accept both constructions.
 
 ER-24 now composes real D1 atom/read-policy authority and explicit principal grants for the bounded
-owner metadata orientation route. Wider retrieval/federation integration and deployed readback remain
-open. The scope service lives in `packages/cloudflare-navigation`; the core file only re-exports it.
+owner metadata orientation route. Wider retrieval integration and deployed federation readback remain open. The local authenticated
+federation composition reuses the same current scope/grant authority. The scope service lives in
+`packages/cloudflare-navigation`; the core file only re-exports it.
 
 ## Active local-first integration
 

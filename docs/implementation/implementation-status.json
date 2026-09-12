@@ -313,7 +313,7 @@
       "completion_evidence": [
         "apps/eliotr-core/test/federation-service.test.ts strict schema, identity/fence, manifest, idempotency, range and reverse-authority cases",
         "mandatory COMPLETED + INCONCLUSIVE disposition downgrade case",
-        "ER-24 composition wiring and retained mutually authenticated boundary receipt NOT EXECUTED",
+        "ER-24 Worker composition and local D1/R2/HTTP seven-operation receipts are complete; independent mutually authenticated deployed-peer receipt remains NOT_EXECUTED",
         "Local D1/R2/HTTP integration covers submit/replay/cancel/result, manifest/range read and signed change replay."
       ]
     },

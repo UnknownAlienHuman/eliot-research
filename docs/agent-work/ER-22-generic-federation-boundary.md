@@ -72,8 +72,8 @@ with an inconclusive observation returns `COMPLETED + INCONCLUSIVE`, even when a
 bundle attempted to claim `ANSWERED_WITH_SUPPORTED_RESULT`. Synthesis remains candidate-only and the
 API exposes no reverse canonical-write operation.
 
-Live receipts: `NOT EXECUTED`. ER-24 still owns Worker composition and route exposure for these durable
-job, manifest, bundle and change-authority ports.
+Independent deployed-peer mutual-authentication, restart, range, cursor, withdrawal and purge receipts
+remain `NOT EXECUTED`.
 
 
 ## Local Worker composition
