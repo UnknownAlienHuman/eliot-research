@@ -39,14 +39,8 @@ jobs:
           root = Path.cwd()
           helper_path = root / "tests/integration/browser/exhaustive-workflow-browser.mjs"
           helper = helper_path.read_text(encoding="utf-8")
-          old_return = '''    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],
-          };'''
-          new_return = '''    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],
-            aborts: [
-              `GET ${new URL(page.url()).origin}/api/v1/research/query/${firstWorkflowId} :: net::ERR_ABORTED`,
-              `GET ${new URL(page.url()).origin}/api/v1/research/query/${relaunchedWorkflowId} :: net::ERR_ABORTED`,
-            ],
-          };'''
+          old_return = '    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],\n  };'
+          new_return = '    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],\n    aborts: [\n      `GET ${new URL(page.url()).origin}/api/v1/research/query/${firstWorkflowId} :: net::ERR_ABORTED`,\n      `GET ${new URL(page.url()).origin}/api/v1/research/query/${relaunchedWorkflowId} :: net::ERR_ABORTED`,\n    ],\n  };'
           if helper.count(old_return) != 1:
               raise SystemExit("exhaustive workflow return anchor must occur exactly once")
           helper_path.write_text(helper.replace(old_return, new_return, 1), encoding="utf-8", newline="\n")
