@@ -100,6 +100,24 @@ async function tableCount(table: string): Promise<number> {
   return (await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first<{ readonly n: number }>())?.n ?? -1;
 }
 
+interface PersistedRetrievalTrace {
+  readonly raw_query: string;
+  readonly query_product: string;
+  readonly lanes_used: readonly string[];
+  readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
+  readonly exact_probes: readonly string[];
+  readonly candidates_by_lane: Readonly<Record<string, number>>;
+}
+
+async function persistedTrace(result: QueryResult): Promise<PersistedRetrievalTrace> {
+  const row = await db
+    .prepare("SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2")
+    .bind(result.trace_ref.id, result.trace_ref.revision)
+    .first<{ readonly trace_json: string }>();
+  if (row === null) throw new Error(`Missing persisted trace ${result.trace_ref.id}@${result.trace_ref.revision}`);
+  return JSON.parse(row.trace_json) as PersistedRetrievalTrace;
+}
+
 describe("research.query retrieval over real D1/R2", () => {
   it("serves FAST_SEARCH through the owner HTTP route over the imported/projected Q1 source", async () => {
     const owner = "rq-fast-search-owner";
@@ -118,13 +136,18 @@ describe("research.query retrieval over real D1/R2", () => {
       .first<{ readonly trace_json: string }>();
     expect(traceRow).not.toBeNull();
     const trace = JSON.parse(traceRow?.trace_json ?? "{}") as {
+      readonly raw_query: string;
       readonly query_product: string;
       readonly lanes_used: readonly string[];
       readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
+      readonly candidates_by_lane: Readonly<Record<string, number>>;
     };
+    expect(trace.raw_query).toBe("Pinned");
     expect(trace.query_product).toBe("FAST_SEARCH");
+    expect(trace.lanes_used).toContain("EXACT");
     expect(trace.lanes_used).toContain("LEX");
-    expect(trace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "LANE_UNAVAILABLE" });
+    expect(trace.lanes_skipped).not.toContainEqual({ lane: "EXACT", reason: "LANE_UNAVAILABLE" });
+    expect(trace.candidates_by_lane.EXACT).toBeGreaterThan(0);
     const resultRow = await db
       .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
       .bind(owner, "rq-fast-search")
@@ -178,6 +201,70 @@ describe("research.query retrieval over real D1/R2", () => {
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-invalid-profile" },
       body: JSON.stringify({ ...request, budget_ref: ORIENTATION_PROFILE }),
     })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("persists FAST_SEARCH EXACT candidate counts for literal whitespace and punctuation distinctions", async () => {
+    const owner = "rq-fast-exact-literal-owner";
+    const world = await worldWithPolicy(owner);
+    const transport = q1Transport(runtime, owner);
+    const run = async (key: string, query: string): Promise<QueryResult> => {
+      const response = await transport("/api/v1/research/query", {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": key },
+        body: JSON.stringify(fastSearchQueryFor(world, query)),
+      }) as { readonly data: QueryResult };
+      return response.data;
+    };
+
+    const punctuationHitQuery = "Pinned content.";
+    const punctuationHit = await run("rq-fast-exact-punctuation-hit", punctuationHitQuery);
+    expect(punctuationHit.evidence_pack.resolved_evidence[0]?.exact_excerpt).toBe("# Evidence\n\nPinned content.\n");
+    const punctuationHitTrace = await persistedTrace(punctuationHit);
+    expect(punctuationHitTrace.raw_query).toBe(punctuationHitQuery);
+    expect(punctuationHitTrace.lanes_used).toContain("EXACT");
+    expect(punctuationHitTrace.candidates_by_lane.EXACT).toBeGreaterThan(0);
+
+    const whitespaceMissQuery = "Pinned  content.";
+    const whitespaceMiss = await run("rq-fast-exact-whitespace-miss", whitespaceMissQuery);
+    const whitespaceMissTrace = await persistedTrace(whitespaceMiss);
+    expect(whitespaceMissTrace.raw_query).toBe(whitespaceMissQuery);
+    expect(whitespaceMissTrace.lanes_used).toContain("EXACT");
+    expect(whitespaceMissTrace.candidates_by_lane.EXACT).toBe(0);
+
+    const punctuationMissQuery = "Pinned content?";
+    const punctuationMiss = await run("rq-fast-exact-punctuation-miss", punctuationMissQuery);
+    const punctuationMissTrace = await persistedTrace(punctuationMiss);
+    expect(punctuationMissTrace.raw_query).toBe(punctuationMissQuery);
+    expect(punctuationMissTrace.lanes_used).toContain("EXACT");
+    expect(punctuationMissTrace.candidates_by_lane.EXACT).toBe(0);
+  });
+
+  it("refuses a FAST_SEARCH replay after its source authority is invalidated", async () => {
+    const owner = "rq-fast-authority-owner";
+    const world = await worldWithPolicy(owner);
+    const transport = q1Transport(runtime, owner);
+    const key = "rq-fast-authority-replay";
+    const first = await transport("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify(fastSearchQueryFor(world, "Pinned content.")),
+    }) as { readonly data: QueryResult };
+    expect(first.data.evidence_pack.resolved_evidence).toHaveLength(1);
+    const persistedBeforeInvalidation = {
+      result: await tableCount("retrieval_query_result"),
+      trace: await tableCount("retrieval_query_trace"),
+    };
+    await db
+      .prepare("UPDATE source_revision SET purge_state = 'REDACTED' WHERE source_revision_ref = ?1")
+      .bind(world.revision)
+      .run();
+    await expect(transport("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify(fastSearchQueryFor(world, "Pinned content.")),
+    })).rejects.toMatchObject({ status: 409, code: "RESEARCH_AUTHORITY_STALE" });
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeInvalidation.result);
+    expect(await tableCount("retrieval_query_trace")).toBe(persistedBeforeInvalidation.trace);
   });
 
   it("persists a no-hit NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {

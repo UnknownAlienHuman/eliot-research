@@ -67,6 +67,7 @@ clean Git status does not imply complete filesystem cleanup or product readiness
 
 ### Delivered in this checkpoint
 
+- Bounded FAST_SEARCH EXACT now enumerates pinned active D1 sections and performs literal matching through the canonical read-only D1/R2 evidence authority before ordinary handle resolution. Raw query whitespace and punctuation are preserved. More than 50 scanned sections across the scope produces typed SEARCH_INCOMPLETE; no complete-scope or absence claim is added. Local owner HTTP tests prove nonzero EXACT candidates, exact stored excerpt, literal hit/miss, duplicate-free replay and redacted-source/revoked-grant refusal. The focused Worker suites passed 16/16 and lane/D1 suites 14/14. RETRIEVAL enablement and live qualification remain open.
 - Configured v3 source VERIFY and DRAFT readback; native Worker AI Gateway transport and explicit model profile source.
 - Per-request REPORT admission composed through the actual stage factory, with decision/intent/outbox/draft committed together after R2 readback. Additive migration0041 checks current owner grant, disclosure, receipt, workflow revision and database-time expiry.
 - A shared frozen-context reader checks the exact committed synthesis-to-current stage chain. The actual REPORT and source-VERIFY-to-draft cases passed together at74203c9:2selected cases,12unchanged skipped. Strict workspace/test TypeScript and targeted ESLint passed; Worker deployment dry run passed.

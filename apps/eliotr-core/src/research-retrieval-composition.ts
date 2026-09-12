@@ -2,6 +2,7 @@ import {
   createCloudflareEvidenceResolver,
   createD1EvidenceAuthorityPort,
   createR2EvidenceContentPort,
+  createNavigationReadAuthority,
   EvidenceRuntimeError,
 } from "@eliotr/cloudflare-evidence";
 import {
@@ -10,12 +11,13 @@ import {
   type HeldResearchScope,
 } from "@eliotr/cloudflare-research";
 import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
-import { createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
+import { createD1SearchExactPort, createD1SearchIdentPort, createD1SearchLexPort } from "@eliotr/cloudflare-projection";
 import {
   createD1RetrievalResultStore,
   createD1RetrievalTracePort,
   createD1ScopePorts,
   createD1ScopeProfilePort,
+  createExactLaneExecutor,
   createIdentLaneExecutor,
   createLexLaneExecutor,
   createQueryBudgetGuard,
@@ -29,6 +31,7 @@ import {
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
 import type { Env } from "./env.js";
+import { createExactPhraseVerifier } from "./research-exact-search.js";
 
 export type ResearchRetrievalEnvironment = Pick<Env, "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET"> & {
   readonly AI_SEARCH?: Env["AI_SEARCH"];
@@ -101,10 +104,22 @@ export async function retrieveWithHeldScope(
     throw new RetrievalQueryError("RETRIEVAL_INPUT_INVALID", "retrieval request exceeds its server-selected scope profile");
   }
   await createD1ScopeProfilePort(env.CORE_DB).recordBinding(input.scope_snapshot, input.profile);
-  const resolver = createCloudflareEvidenceResolver({
-    authority: createD1EvidenceAuthorityPort({ core_database: env.CORE_DB, search_database: env.SEARCH_DB }),
-    content: createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET }),
+  const evidenceAuthority = createD1EvidenceAuthorityPort({
+    core_database: env.CORE_DB,
+    search_database: env.SEARCH_DB,
   });
+  const evidenceContent = createR2EvidenceContentPort({ evidence_bucket: env.EVIDENCE_BUCKET });
+  const resolver = createCloudflareEvidenceResolver({ authority: evidenceAuthority, content: evidenceContent });
+  const navigation = createNavigationReadAuthority({
+    database: env.CORE_DB,
+    scope_snapshot: input.scope_snapshot,
+    access,
+    require_current: async (scope) => {
+      await scopePorts.requireCurrentScope(scope);
+      return scope;
+    },
+  });
+  const queryBudget = createQueryBudgetGuard(input.deadline_ms, () => input.signal.aborted);
   async function resolveEvidence(candidate: LocatorCandidate, scope: ScopeSnapshot): Promise<ResolvedEvidence | null> {
     try {
       return await resolver.resolveCandidate({
@@ -122,6 +137,16 @@ export async function retrieveWithHeldScope(
     }
   }
   const ident = createIdentLaneExecutor(createD1SearchIdentPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
+  const exact = createExactLaneExecutor(createD1SearchExactPort({
+    search_database: env.SEARCH_DB,
+    core_database: env.CORE_DB,
+    verifyExactPhrase: createExactPhraseVerifier({
+      navigation,
+      authority: evidenceAuthority,
+      content: evidenceContent,
+      checkBudget: () => queryBudget.checkBudget(),
+    }),
+  }));
   const lex = createLexLaneExecutor(createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB }));
   const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(
     env.SEARCH_DB,
@@ -131,6 +156,7 @@ export async function retrieveWithHeldScope(
   const lanes = {
     executorFor(lane: RetrievalLane) {
       if (lane === "IDENT") return ident;
+      if (lane === "EXACT") return exact;
       if (lane === "LEX") return lex;
       if (lane === "SEM") return sem;
       return null;
@@ -139,11 +165,11 @@ export async function retrieveWithHeldScope(
   const ports: RetrievalQueryPorts = {
     ...scopePorts,
     lanes,
-    fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
+    fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, EXACT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
     resolveEvidence,
     persistTrace: (trace) => createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace),
     results: createD1RetrievalResultStore(env.CORE_DB, access),
-    checkBudget: () => createQueryBudgetGuard(input.deadline_ms, () => input.signal.aborted).checkBudget(),
+    checkBudget: () => queryBudget.checkBudget(),
   };
   const request: RetrievalRequest = {
     raw_query: input.raw_query,

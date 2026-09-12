@@ -3,6 +3,7 @@ import type { QueryPlan } from "./planner.js";
 import { compileQueryPlan } from "./planner.js";
 import type {
   DirectLookupPort,
+  ExactSearchPort,
   LexicalSearchPort,
   ManagedSearchPort,
   RetrievalLaneExecutor,
@@ -106,6 +107,26 @@ export function createLexLaneExecutor(lexical: LexicalSearchPort): RetrievalLane
         throw error;
       }
       return lexical.search(request, "LEX");
+    },
+  };
+}
+
+/** Q1 governed EXACT executor over the exact-phrase search surface. */
+export function createExactLaneExecutor(
+  exact: Pick<ExactSearchPort, "exactPhraseCandidates">,
+): RetrievalLaneExecutor {
+  return {
+    async execute(
+      lane: RetrievalLane,
+      request: RetrievalRequest,
+    ): Promise<readonly LocatorCandidate[]> {
+      if (lane !== "EXACT") {
+        const error = new Error(`EXACT executor cannot serve lane ${lane}`);
+        error.name = "SEARCH_INPUT_INVALID";
+        (error as unknown as { code: string }).code = "SEARCH_INPUT_INVALID";
+        throw error;
+      }
+      return exact.exactPhraseCandidates(request);
     },
   };
 }

@@ -25,6 +25,9 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/src/research-stage-handlers.ts`
 - `apps/eliotr-core/src/research-retrieve-branches.ts`
 - `apps/eliotr-core/src/research-retrieval-composition.ts`
+- `apps/eliotr-core/src/research-exact-search.ts`
+- `apps/eliotr-core/test/research-exact-search.test.ts`
+- `apps/eliotr-core/test/research-query-retrieval.test.ts`
 - `apps/eliotr-core/src/research-evidence-freeze-composition.ts`
 - `apps/eliotr-core/src/exhaustive-query-service.ts`
 - `apps/eliotr-core/src/exhaustive-workflow-service.ts`
