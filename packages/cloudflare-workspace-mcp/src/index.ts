@@ -18,6 +18,7 @@ export {
   type McpToolDefinition,
 } from "./gemini-mcp-protocol.js";
 export {
+  GeminiMcpToolError,
   readGoogleExternalTransport,
   type McpClientDiagnosticConsume,
   type GoogleExternalTransport,

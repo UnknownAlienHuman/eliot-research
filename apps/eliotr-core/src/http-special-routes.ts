@@ -13,6 +13,10 @@ import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { readReadiness } from "./readiness.js";
+import {
+  handleMcpClientDiagnosticIssue,
+  handleMcpClientDiagnosticLatest,
+} from "./mcp-client-diagnostic-http.js";
 
 interface SpecialRouteMatch {
   readonly route: RouteDefinition;
@@ -47,6 +51,22 @@ export async function dispatchHttpSpecialRoute(input: {
     requireDriveExchangeTransport(input.env);
   }
   switch (input.match.route.operation) {
+    case "system.mcp-diagnostic.issue":
+      return handleMcpClientDiagnosticIssue(
+        input.request,
+        input.env,
+        input.context,
+        input.identity,
+        input.dependencies,
+      );
+    case "system.mcp-diagnostic.latest":
+      return handleMcpClientDiagnosticLatest(
+        input.request,
+        input.env,
+        input.context,
+        input.identity,
+        input.dependencies,
+      );
     case "google.oauth.begin":
       requireNoQuery(input.url);
       return handleGoogleOAuthBegin(input.request, input.env, input.context, input.identity, input.dependencies);
