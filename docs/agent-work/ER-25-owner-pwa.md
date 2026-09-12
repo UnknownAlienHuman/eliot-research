@@ -19,6 +19,7 @@ outside the paths below.
 - `scripts/test-library-browser.mjs`
 - `scripts/lib/browser-import-fixture.mjs`
 - `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
+- `scripts/lib/browser-research-readiness-fixture.mjs`
 
 ## Read only
 
