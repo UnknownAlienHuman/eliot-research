@@ -9,9 +9,10 @@ export function renderLibrary(page: LibraryPage): string {
   return `<h3>Projects on this page</h3>${page.projects.length ? page.projects.map((project, index) =>
     `<p><button type="button" data-project="${index}">${escapeHtml(project.title)}</button></p>`).join("") : "<p>No readable projects on this page.</p>"}
     <h3>Sources on this page</h3>${page.sources.length ? page.sources.map((source, index) =>
-      `<article class="source-card"><strong>${escapeHtml(source.title)}</strong><p><code>${escapeHtml(source.id)}</code></p>
-       <p>Admitted source. Search readiness is checked when you select it.</p>
-       <button type="button" data-source="${index}">Open in Corpus Lens</button>
+      `<article class="source-card"><strong>${escapeHtml(source.title)}</strong>
+       <details><summary>Source identifier</summary><code>${escapeHtml(source.id)}</code></details>
+       <p>Permitted source. Search readiness is checked when you select it.</p>
+       <button type="button" data-source="${index}">Open source</button>
        <button type="button" data-versions="${index}">Versions and readiness</button></article>`).join("") : "<p>No readable source heads on this page.</p>"}`;
 }
 

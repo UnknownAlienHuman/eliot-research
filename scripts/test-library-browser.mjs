@@ -440,7 +440,7 @@ try {
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-workflow-id]").value === ""', "Draft offline clearing");
   await evaluate('window.dispatchEvent(new Event("offline"))');
-  await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
+  await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "No excerpt selected"', "Evidence offline clearing");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
   assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
   await openSources("Sources before import"); await openBundle();
