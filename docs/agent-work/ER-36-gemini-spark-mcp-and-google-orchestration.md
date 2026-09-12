@@ -116,7 +116,11 @@ Access profile and trace identifier. Verified MCP actor and credential bindings 
 The diagnostic does not prove an individual client/model identity, ongoing availability, document
 access or completed research. Connection confirmation and Worker readiness remain separate UI facts.
 An uncertain persistence result must fail explicitly; it cannot be reported as a successful `UNKNOWN`
-status. Endpoint, tool and PWA wiring are pending until their actual integration is verified.
+status. Owner HTTP, the authenticated MCP callback and PWA controls are wired. Local signed HTTP
+acceptance covers distinct owner and MCP identities through the real Worker and migrated D1. The
+built PWA browser fixture covers manual challenge and result actions, navigation, expiry and late
+responses after access or deployment changes. Its HTTP backend is controlled; live client and
+Cloudflare qualification remain pending.
 
 ## Mandatory negative boundary
 

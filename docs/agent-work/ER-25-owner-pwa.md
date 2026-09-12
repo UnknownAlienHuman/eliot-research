@@ -18,6 +18,7 @@ outside the paths below.
 - `tests/bundle-recovery.test.ts`
 - `scripts/test-library-browser.mjs`
 - `scripts/lib/browser-import-fixture.mjs`
+- `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
 
 ## Read only
 
@@ -194,6 +195,19 @@ requires the server-issued workflow identity, reads a non-terminal status, sends
 real cancel action, and verifies terminal readback through the same Worker origin.
 The scenario is accepted only when `test:owner-e2e` passes on both Ubuntu and Windows;
 live qualification and complete-result acceptance remain separate.
+
+## Manual MCP client diagnostic
+
+Connections starts with a client connection card. The owner can issue a short-lived challenge,
+copy its exact MCP tool instruction and explicitly read the latest result. A confirmed observation
+shows the time of a past call; deployment, Access profile and trace remain in a disclosure. The
+card does not claim current presence, model identity or completed document work. Source navigation
+preserves the instruction. Expiry clears its secret, while a pending confirmed readback may still
+arrive; authorization, deployment loss, offline and page disposal clear private state and stale reads.
+
+The built-PWA Chromium fixture verifies this flow on a fresh page after the existing Library,
+Evidence and Research scenarios. Its HTTP backend is controlled. Signed MCP/owner HTTP and actual
+D1 composition have a separate Core fixture; neither test is live client qualification.
 
 ## Raw-file capture browser checkpoint
 

@@ -59,7 +59,7 @@ Spark Connected App or Antigravity remote MCP client POST https://<MCP_HOSTNAME>
 → service-token: exact Client ID from JWT common_name → logical principal gemini-spark
 → managed-oauth: verified JWT subject → domain-separated SHA-256 actor principal
 → MCP protocol/version/body validation
-→ authorized subset of the four-tool contract allow-list
+→ authorized subset of the configured tool allow-list
 → bounded result
 ```
 
@@ -95,11 +95,39 @@ eliotr_system_status
 eliotr_catalog
 eliotr_create_google_sync_plan
 eliotr_validate_google_sync_receipt
+eliotr_confirm_client_diagnostic
 ```
 
-All four are read-only from ELIOT's perspective. The planning tool has an executable
-`NO_EXTERNAL_EFFECT` ceiling. Receipt validation never states that ELIOT performed the Google readback
-or changed canonical state.
+Discovery includes only wired, authorized tools. The catalog remains withheld until service-scope
+read authority is composed. Sync plans do not execute Google actions; v2 plans and observations use
+the existing candidate ledger. Receipt validation does not claim that ELIOT performed Google readback.
+Client confirmation writes only the diagnostic observation described below.
+
+## Client connection check
+
+The owner API issues a challenge through `POST /api/v1/system/mcp-diagnostics` with an empty JSON
+object, a same-origin request and `x-eliotr-csrf: 1`. Its 201 response contains the one-time
+`challenge_id` and `challenge_token`. The deployment must explicitly select `MCP_ACCESS_AUTH_PROFILE`.
+The token expires after five minutes and is stored only as a SHA-256 digest in D1.
+
+Pass the issued fields to `eliotr_confirm_client_diagnostic` through the configured MCP client.
+The client authenticates on the dedicated MCP hostname and audience. Owner and MCP identities may
+differ; possession of the challenge never replaces MCP authentication. Confirmation is a single
+guarded transition with exact readback. Ordinary replay is rejected.
+
+`GET /api/v1/system/mcp-diagnostics` returns the latest challenge for the current owner credential
+and deployment generation, or typed `MCP_DIAGNOSTIC_CHALLENGE_NOT_FOUND`. GET supports browser reads
+without an Origin header and rejects a supplied foreign Origin or Referer. Responses are `no-store`;
+status readback contains no challenge token or verified actor credentials.
+
+A confirmed observation records a past authenticated call. It does not identify an individual
+client/model, establish continuing availability, prove document access or complete a research run.
+An unused expired challenge cannot be confirmed; an already confirmed observation remains historical.
+Connections exposes manual Start client check, Copy instruction and Check result actions. Challenge
+material stays in page memory, clears after expiry or access/deployment loss and is never polled or
+persisted in browser storage. Confirmed call time is visible; technical readback stays in Details.
+Local acceptance includes signed owner/MCP HTTP through the real Worker and migrated D1, plus the
+built PWA in Chromium with controlled HTTP responses. Live client compatibility remains unqualified.
 
 ## Google integration
 
@@ -146,7 +174,8 @@ permissions; those remain independent live preconditions.
 
 ### Service catalog authorization
 
-The real Worker currently advertises three tools: status, Google sync planning and receipt validation.
+The Worker advertises its configured status, Google sync and receipt tools. The diagnostic tool is
+included only when the explicit selected Access profile and trusted Core callback are configured.
 The `eliotr_catalog` contract remains defined, but it is not advertised or executable without an explicit
 service-scope read-policy adapter. Direct calls return `MCP_CATALOG_SCOPE_REQUIRED` before D1 access.
 A signed Client ID alone is not a namespace grant; mapping it to `owner_pwa` is prohibited. Launch 07

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { browserImportFixture } from "./lib/browser-import-fixture.mjs";
+import { createBrowserMcpDiagnosticFixture, runBrowserMcpDiagnosticCanary } from "./lib/browser-mcp-diagnostic-fixture.mjs";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
@@ -120,12 +121,14 @@ let browser; let socket; let closing;
 const HEALTH_DELAY_MS = 250;
 const requests = []; const posted = []; const errors = [];
 const importing = browserImportFixture();
+const diagnosticFixture = createBrowserMcpDiagnosticFixture();
 const server = createServer((request, response) => {
   void (async () => {
     const url = new URL(request.url, "http://127.0.0.1");
     response.setHeader("cache-control", "no-store");
     const json = (body) => { response.setHeader("content-type", "application/json"); response.end(JSON.stringify(body)); };
     if (url.pathname.startsWith("/api/v1/ingest/bundles")) return importing.handle(request, response, url);
+    if (url.pathname === "/api/v1/system/mcp-diagnostics") return diagnosticFixture.handle(request, response, url);
     if (url.pathname === "/api/v1/system/health") { await delay(HEALTH_DELAY_MS); return json(envelope({ ready: true, deployment_generation: "browser-fixture",
       core_schema_generation: "fixture", search_schema_generation: "fixture", blocking_reason_codes: [], checked_at: new Date().toISOString() })); }
     if (url.pathname === "/api/v1/library/revisions") {
@@ -437,7 +440,6 @@ try {
   assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
   assert.equal(await evaluate('document.querySelector(".evidence-source").tagName'), "PRE");
   await click('[data-nav-target="#connections-card"]'); await assertView("connections", "#connections-card");
-  assert.deepEqual(await evaluate('({ state: document.querySelector("#connection-agent-card .connection-state").textContent, copy: document.querySelector("#connection-agent-card .connection-copy").textContent })'), { state: "Unknown", copy: "No client check recorded yet." });
   await evaluate("history.back()"); await wait('location.hash === "#research-card" && document.querySelector("#research-view")?.hidden === false', "Browser Back to Research"); await assertView("research", "#research-card");
   assert.deepEqual(await evaluate('({ scope: document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture"), evidence: document.querySelector(".evidence-source")?.textContent, rail: document.querySelector(".rail-status").textContent })'), { scope: true, evidence: evidenceText, rail: "VERIFIED" });
   await assertVisible('#research-run input[name="query"]', "Research query input");
@@ -573,6 +575,15 @@ try {
   await evaluate('window.dispatchEvent(new Event("offline"))');
   await wait('document.querySelector("#library [role=status]").textContent.includes("Offline")', "Offline transition");
   assert.equal(await evaluate('document.querySelector("#library [data-library-result]").textContent'), "");
+  pending?.(); pending = undefined;
+  pendingRevision?.(); pendingRevision = undefined;
+  pendingOrientation?.(); pendingOrientation = undefined;
+  pendingSection?.(); pendingSection = undefined;
+  mode = "normal"; revisionMode = "normal"; orientationMode = "normal"; sectionMode = "normal";
+  await cdp("Page.reload");
+  await openSources("Diagnostic baseline after reload");
+  await wait('document.querySelector("#app")?.dataset.healthGeneration === "browser-fixture"', "Diagnostic health baseline");
+  await runBrowserMcpDiagnosticCanary({ fixture: diagnosticFixture, click, evaluate, wait, assertVisible, assertView, openSources });
   assert.deepEqual(errors, []);
   console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
 } finally {
