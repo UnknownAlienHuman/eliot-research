@@ -222,24 +222,6 @@ export function classifyRuntimeDiagnostic({ stdout = "", stderr = "", stdoutTrun
   });
 }
 
-function summarizeRuntimeOutput(text) {
-  const events = [];
-  for (const line of String(text ?? "").split(/\r?\n/u)) {
-    const value = line.trim();
-    if (!value) continue;
-    const lower = value.toLowerCase();
-    const kind = /error|exception|fatal|uncaught|crash|reset/u.test(lower) ? "error"
-      : /reload|restart|restarting|reloading/u.test(lower) ? "reload"
-        : /exit|closed|terminated|shutdown/u.test(lower) ? "exit"
-          : /ready|listen(?:ing)?|started/u.test(lower) ? "ready" : null;
-    if (kind === null) continue;
-    const code = value.match(/\b(?:ECONNRESET|EADDRINUSE|ERR_UNSAFE_PORT|EADDRNOTAVAIL|ETIMEDOUT|SIGTERM|SIGKILL)\b/iu)?.[0]?.toUpperCase();
-    const status = value.match(/\bstatus[=: ]+(\d{3})\b/iu)?.[1];
-    events.push(`${kind}${code ? `:${code}` : ""}${status ? `:status-${status}` : ""}`);
-  }
-  return [...new Set(events)].slice(-24).join(",").slice(0, 2000);
-}
-
 async function spawnOnce(paths, port, { testScheduled = false } = {}) {
   assertChromiumSafePort(port, "local worker port");
   const child = spawn(process.execPath, devArguments(paths, port, { testScheduled }), {
@@ -283,8 +265,7 @@ async function spawnOnce(paths, port, { testScheduled = false } = {}) {
   };
   return { child, closed, stop, spawnError: () => spawnError, stderrTail: () => redactSpawnDiagnostic(stderrTail),
     diagnostics: () => Object.freeze({ pid: child.pid ?? null, port, exitCode: child.exitCode,
-      signalCode: normalizeSignalCode(child.signalCode), stderrTail: redactSpawnDiagnostic(stderrTail),
-      stdoutEvents: summarizeRuntimeOutput(stdoutTail), runtimeDiagnostic: classifyRuntimeDiagnostic({
+      signalCode: normalizeSignalCode(child.signalCode), runtimeDiagnostic: classifyRuntimeDiagnostic({
         stdout: stdoutTail, stderr: stderrTail, stdoutTruncated, stderrTruncated, signalCode: child.signalCode,
       }) }) };
 }
@@ -328,17 +309,20 @@ export async function startLocalWorker(paths, {
     // Classify the failure: a port collision or bad-port refusal stops this
     // child and reselects a fresh Chromium-safe port with a bounded retry. Any
     // other failure (config, migration, schema, authority) fails closed now.
+    // Keep the raw child text private for collision classification. The
+    // externally thrown error carries only the fixed runtime classification.
     const diagnostic = `${handle.spawnError()?.message ?? ""}\n${handle.spawnError()?.code ?? ""}\n${handle.stderrTail()}`;
+    const runtimeCode = handle.diagnostics().runtimeDiagnostic?.code ?? "UNKNOWN";
     await handle.stop();
     if ((earlyExit || handle.child.exitCode !== null) && isPortCollisionMessage(diagnostic)) {
       if (explicitPort) {
-        throw new Error(`Local Worker requested port ${requestedPort} collided/refused; refusing fallback :: ${handle.stderrTail().slice(0, 300)}`);
+        throw new Error(`Local Worker requested port ${requestedPort} collided/refused; refusing fallback :: runtime=${runtimeCode}`);
       }
-      lastError = new Error(`Local Worker port ${port} collided/refused (attempt ${attempt}/${attempts}); reselecting a fresh Chromium-safe port :: ${handle.stderrTail().slice(0, 300)}`);
+      lastError = new Error(`Local Worker port ${port} collided/refused (attempt ${attempt}/${attempts}); reselecting a fresh Chromium-safe port :: runtime=${runtimeCode}`);
       continue;
     }
     if (earlyExit || handle.child.exitCode !== null) {
-      throw new Error(`Local Worker exited before HTTP readiness on Chromium-safe port ${port} :: ${handle.stderrTail().slice(0, 300)}`);
+      throw new Error(`Local Worker exited before HTTP readiness on Chromium-safe port ${port} :: runtime=${runtimeCode}`);
     }
     throw new Error("Local Worker did not become ready with both migrated databases");
   }

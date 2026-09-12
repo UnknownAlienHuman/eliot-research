@@ -1093,6 +1093,7 @@ function ownerBridgeRouteDescriptor(path) {
     [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission$/u, "raw-admission"],
     [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission\/[^/]+$/u, "raw-admission-status"],
     [/^\/api\/v1\/system\/session$/u, "system-session"],
+    [/^\/healthz$/u, "healthz"],
     [/^\/api\/v1\/research\/catalog$/u, "research-catalog"],
     [/^\/api\/v1\/research\/query(?:\/[^/]+)?$/u, "research-query"],
     [/^\/api\/v1\/library\/revisions$/u, "library-revisions"],
@@ -1150,10 +1151,119 @@ function harnessGitHead() {
 }
 
 function fetchErrorClass(error) {
-  const candidates = [error, error?.cause, error?.cause?.cause];
-  const name = candidates.find((item) => item && typeof item.name === "string" && item.name.length > 0)?.name ?? "unknown";
-  const code = candidates.find((item) => item && typeof item.code === "string" && item.code.length > 0)?.code ?? "unknown";
-  return `${name.slice(0, 48)}/${code.slice(0, 64)}`;
+  const { name, code } = safeWorkerErrorClass(error);
+  return `${name}/${code}`;
+}
+
+const OWNER_WORKER_DIAGNOSTIC_STAGES = new Set(["fetch", "body"]);
+const OWNER_WORKER_DIAGNOSTIC_PHASES = new Set([
+  "authorized-library-catalog", "authorized-library-revisions", "bridge-after-cli", "catalog-probe-after-cli",
+  "catalog-probe-before-cli", "direct-after-cli", "direct-before-cli", "duplicate-jwks-catalog", "duplicate-jwks-session",
+  "failed-start-health", "failed-start-stopped-probe", "initial-owner-session",
+  "initial-unauthenticated", "jwt-clock-skew-future", "jwt-clock-skew-valid", "jwt-email-claim",
+  "post-restart-catalog", "post-restart-health", "post-restart-revisions", "post-restart-stopped-probe",
+  "pre-raw-catalog", "pre-raw-revisions", "raw-projection-scheduled-and-polling",
+  "raw-projection-source-resolution", "restart-health", "rotation-new-token", "rotation-old-token",
+  "rotation-read", "socket-probe", "staging-denial",
+]);
+const OWNER_WORKER_DIAGNOSTIC_ROUTES = new Set([
+  "bundle-prepare", "bundle-commit", "bundle-upload-part", "bundle-complete", "bundle-status",
+  "raw-capture", "raw-conversion", "raw-admission", "raw-admission-status", "system-session", "healthz",
+  "research-catalog", "research-query", "library-revisions", "library-readiness", "unknown-api-route",
+]);
+const OWNER_WORKER_DIAGNOSTIC_CONTEXT = new WeakMap();
+const OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES = new Set([
+  "owner-e2e.mjs", "local-worker.mjs", "local-launch.mjs", "local-owner-bridge.mjs", "deployment-verification.mjs",
+]);
+
+function workerDiagnosticPhase(value) {
+  if (typeof value !== "string") return "unspecified";
+  if (OWNER_WORKER_DIAGNOSTIC_PHASES.has(value)) return value;
+  if (value.startsWith("jwt-negative-")) return "jwt-negative";
+  return "unspecified";
+}
+
+function workerDiagnosticStage(value) {
+  return typeof value === "string" && OWNER_WORKER_DIAGNOSTIC_STAGES.has(value) ? value : "unknown";
+}
+
+function workerDiagnosticMethod(value) {
+  const candidate = String(value ?? "GET").toUpperCase();
+  return OWNER_BRIDGE_DIAGNOSTIC_METHODS.has(candidate) ? candidate : "OTHER";
+}
+
+function workerDiagnosticRoute(path) {
+  try { return ownerBridgeRouteDescriptor(path).route_family; }
+  catch { return "unknown-api-route"; }
+}
+
+function safeHarnessSourceStack(error) {
+  let stack;
+  try { stack = error?.stack; } catch { return null; }
+  if (typeof stack !== "string") return null;
+  for (const line of stack.split(/\r?\n/u)) {
+    const match = line.match(/([^()\r\n]+):(\d+):\d+\)?$/u);
+    if (!match) continue;
+    const location = match[1].trim();
+    const basename = location.split(/[\\/]/u).at(-1)?.split(/\s+/u).at(-1);
+    const lineNumber = Number(match[2]);
+    if (!OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES.has(basename) ||
+        !Number.isSafeInteger(lineNumber) || lineNumber < 1 || lineNumber > 1_000_000_000) continue;
+    return Object.freeze({ basename, line: lineNumber });
+  }
+  return null;
+}
+
+function workerErrorCandidates(error) {
+  try {
+    return [error, error?.cause, error?.cause?.cause, error?.cause?.original_error]
+      .filter((item) => item && typeof item === "object");
+  } catch {
+    return [];
+  }
+}
+
+function safeWorkerErrorClass(error) {
+  const candidates = workerErrorCandidates(error);
+  const name = candidates.find((item) => typeof item.name === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(item.name) || item.name === "TimeoutError"))?.name ?? "UnknownError";
+  const code = candidates.find((item) => typeof item.code === "string" &&
+    OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(item.code))?.code ?? "UNSPECIFIED";
+  return Object.freeze({ name, code });
+}
+
+function safeWorkerErrorCause(error) {
+  const { name, code } = safeWorkerErrorClass(error);
+  return Object.freeze({ name, code });
+}
+
+function normalizeWorkerDiagnosticContext(error, context) {
+  if (!context || typeof context !== "object") return undefined;
+  const route = typeof context.route_family === "string" && OWNER_WORKER_DIAGNOSTIC_ROUTES.has(context.route_family)
+    ? context.route_family : "unknown-api-route";
+  const safe = {
+    stage: workerDiagnosticStage(context.stage),
+    phase: workerDiagnosticPhase(context.phase),
+    method: workerDiagnosticMethod(context.method),
+    route_family: route,
+    error_class: safeWorkerErrorClass(error),
+  };
+  if (Number.isSafeInteger(context.http_status) && context.http_status >= 100 && context.http_status <= 599) {
+    safe.http_status = context.http_status;
+  }
+  const sourceStack = safeHarnessSourceStack(error);
+  if (sourceStack) safe.source_stack = sourceStack;
+  return Object.freeze(safe);
+}
+
+function safeWorkerDiagnosticError(error, diagnostic, context) {
+  const wrapped = new Error(diagnostic);
+  Object.defineProperty(wrapped, "cause", {
+    configurable: true, enumerable: false, value: safeWorkerErrorCause(error), writable: false,
+  });
+  const safeContext = normalizeWorkerDiagnosticContext(error, context);
+  if (safeContext) OWNER_WORKER_DIAGNOSTIC_CONTEXT.set(wrapped, safeContext);
+  return wrapped;
 }
 
 function workerDiagnosticSnapshot(worker) {
@@ -1164,44 +1274,28 @@ function workerDiagnosticSnapshot(worker) {
     code: runtime?.signalCode, phase: "process" }).signal_code;
   if (!runtime) return {
     pid: null, port: null, exit_code: null, signal_code: null,
-    stderr_tail: "unavailable", stdout_events: "unavailable", runtime_diagnostic: "unavailable",
+    runtime_diagnostic: "unavailable",
   };
   return {
     pid: Number.isSafeInteger(runtime.pid) ? runtime.pid : null,
     port: Number.isSafeInteger(runtime.port) ? runtime.port : null,
-    exit_code: runtime.exitCode ?? null,
+    exit_code: Number.isSafeInteger(runtime.exitCode) ? runtime.exitCode : null,
     signal_code: runtimeDiagnostic === "unavailable" ? safeTopLevelSignal : runtimeDiagnostic.signal_code,
-    stderr_tail: typeof runtime.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable",
-    stdout_events: typeof runtime.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable",
     runtime_diagnostic: runtimeDiagnostic,
   };
 }
 
 function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
   const snapshot = workerDiagnosticSnapshot(worker);
-  const exitCode = snapshot.exit_code;
-  const signalCode = snapshot.signal_code;
-  const stderrTail = snapshot.stderr_tail;
-  const stdoutEvents = snapshot.stdout_events;
+  const { name: errorName, code: errorCode } = safeWorkerErrorClass(error);
   const runtimeDiagnostic = typeof snapshot.runtime_diagnostic === "string" ? snapshot.runtime_diagnostic : JSON.stringify(snapshot.runtime_diagnostic);
-  const pid = snapshot.pid;
-  const port = snapshot.port;
-  const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
-  const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
-  const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
-  const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
-  const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
-  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_signal_code=${String(signalCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents} worker_runtime_diagnostic=${runtimeDiagnostic}`;
-}
-
-function boundedFailureText(value, maxLength) {
-  let text = String(value ?? "")
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, "[REDACTED_JWT]")
-    .replace(/(?:authorization|cookie|cf-access-jwt-assertion|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/giu,
-      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}[REDACTED]`)
-    .replace(/(https?:\/\/[^\s?]+)\?[^\s)]+/gu, "$1?[REDACTED_QUERY]");
-  if (text.length > maxLength) text = `${text.slice(0, maxLength)}...[TRUNCATED]`;
-  return text;
+  const context = normalizeWorkerDiagnosticContext(error, {
+    stage, phase, method, route_family: workerDiagnosticRoute(path),
+  });
+  return Object.freeze({
+    message: `worker fetch failed stage=${workerDiagnosticStage(stage)} phase=${workerDiagnosticPhase(phase)} method=${workerDiagnosticMethod(method)} path=${workerDiagnosticRoute(path)} error=${errorName}/${errorCode} worker_pid=${String(snapshot.pid)} worker_port=${String(snapshot.port)} worker_exit_code=${String(snapshot.exit_code)} worker_signal_code=${String(snapshot.signal_code)} worker_runtime_diagnostic=${runtimeDiagnostic}`,
+    context,
+  });
 }
 
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
@@ -1220,7 +1314,8 @@ export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path
       method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker }), { cause: error });
+    const diagnostic = workerFetchDiagnostic(error, { method, path, phase, worker });
+    throw safeWorkerDiagnosticError(error, diagnostic.message, diagnostic.context);
   }
 }
 
@@ -1231,10 +1326,11 @@ export async function fetchWorkerJsonWithDiagnostics(fetchImpl, origin, path, op
   try {
     text = await response.text();
   } catch (error) {
-    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" }), { cause: error });
+    const diagnostic = workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" });
+    throw safeWorkerDiagnosticError(error, diagnostic.message, diagnostic.context);
   }
   const data = (() => {
-    try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
+    try { return text ? JSON.parse(text) : null; } catch { return { parse_error: "NON_JSON_RESPONSE" }; }
   })();
   return { status: response.status, data, headers: response.headers };
 }
@@ -1243,10 +1339,10 @@ async function observeCatalogTransport(label, operation, worker, records) {
   const startedAt = Date.now();
   try {
     const response = await operation();
-    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
+    records.push({ phase: workerDiagnosticPhase(label), elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
     return { ok: true, response };
   } catch (error) {
-    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "error",
+    records.push({ phase: workerDiagnosticPhase(label), elapsed_ms: Date.now() - startedAt, outcome: "error",
       error_class: fetchErrorClass(error), worker: workerDiagnosticSnapshot(worker) });
     return { ok: false, error };
   }
@@ -1257,26 +1353,39 @@ async function workerJson(origin, path, options = {}) {
 }
 
 function verifyPreservedWorkerFailureOutput() {
-  const sentinel = new Error("sentinel assertion cf-access-jwt-assertion=private-token");
-  sentinel.name = "SentinelFailure";
-  sentinel.stack = "SentinelFailure: sentinel assertion\n    at sentinelCase (owner-e2e.mjs:6000:7)";
-  const wrapped = preserveWorkerFailure(sentinel, {
+  const opaqueBearer = "opaque-bearer-7f4d";
+  const opaqueUrl = "https://worker.invalid/private/path-secret#fragment-secret";
+  const sentinel = new Error(`arbitrary message ${opaqueBearer} ${opaqueUrl}`);
+  sentinel.name = "ArbitraryErrorName";
+  sentinel.code = "ARBITRARY_ERROR_CODE";
+  sentinel.stack = `ArbitraryErrorName: arbitrary stack ${opaqueBearer}\n    at privateCase (owner-e2e.mjs:6000:7)\n    at privateCase (C:\\private\\stack-secret.mjs:77:3)`;
+  const worker = {
     diagnostics: () => ({ pid: 42, port: 43123, exitCode: 1, signalCode: "SIGKILL", stderrTail: "controlled diagnostics", stdoutEvents: "ready,error",
       runtimeDiagnostic: { protocol: "eliotr.local-worker.runtime-diagnostic.v1", template: "uncaught-workerd-exception",
         class: "runtime", code: "WORKERD_UNCAUGHT_EXCEPTION", phase: "runtime", source: "stdout",
         source_stack: { basename: "worker.js", line: 42 }, signal_code: "SIGKILL",
         counts: { observed: 2, classified: 1, unknown: 1, stdout: 2, stderr: 0 }, truncated: { stdout: false, stderr: false } } }),
+  };
+  const diagnostic = workerFetchDiagnostic(sentinel, {
+    method: "GET", path: "/api/v1/research/query/private-path-secret?secret=private-query#fragment-secret",
+    phase: "rotation-read", worker,
   });
-  assert.equal(wrapped.cause, sentinel, "the original failure must remain available as the Error cause");
+  const nested = safeWorkerDiagnosticError(sentinel, diagnostic.message, diagnostic.context);
+  const wrapped = preserveWorkerFailure(nested, worker);
+  assert.equal(wrapped.cause, undefined, "the original failure must not remain available as an Error cause");
   assert.match(wrapped.message, /original_error=/u);
-  assert.match(wrapped.message, /SentinelFailure/u, "the original error name must reach the reported Error");
-  assert.match(wrapped.message, /sentinel assertion/u, "the original error message must reach the reported Error");
-  assert.match(wrapped.message, /owner-e2e\.mjs:6000:7/u, "the original error location must reach the reported Error");
+  assert.match(wrapped.message, /"name":"UnknownError","code":"UNSPECIFIED"/u,
+    "only the fixed unknown error class may reach the reported Error");
+  assert.match(wrapped.message, /worker_diagnostic_context=\{"stage":"fetch","phase":"rotation-read","method":"GET","route_family":"research-query","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6000\}\}/u,
+    "nested worker diagnostics must preserve only trusted fixed context");
   assert.match(wrapped.message, /worker_diagnostics=.*"pid":42/u, "bounded Worker diagnostics must remain attached");
   assert.match(wrapped.message, /"runtime_diagnostic":\{.*"template":"uncaught-workerd-exception"/u,
     "fixed runtime diagnostic classification must reach the reported Error");
   assert.match(wrapped.message, /"signal_code":"SIGKILL"/u, "safe process signal must reach the reported Error");
-  assert.ok(!wrapped.message.includes("private-token"), "reported failure must redact credential values");
+  const serialized = JSON.stringify({ message: wrapped.message, stack: wrapped.stack, cause: wrapped.cause });
+  for (const secret of [opaqueBearer, opaqueUrl, "fragment-secret", "ArbitraryErrorName", "ARBITRARY_ERROR_CODE", "stack-secret.mjs"]) {
+    assert.ok(!serialized.includes(secret), `serialized diagnostic must omit ${secret}`);
+  }
   return { state: "PASS" };
 }
 
@@ -1288,8 +1397,8 @@ export function verifyD1FailureProvenanceRegression() {
   const wrapped = preserveWorkerFailure(sentinel, {
     diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
   });
-  assert.equal(wrapped.cause, sentinel, "D1 provenance must preserve the original Error as the outer cause");
-  assert.equal(wrapped.cause.cause.code, 1, "D1 provenance must preserve the original command code");
+  assert.equal(wrapped.cause, undefined, "D1 provenance must not expose the original Error as the outer cause");
+  assert.equal(sentinel.cause.code, 1, "D1 provenance must preserve the original command code internally");
   assert.equal(sentinel.message, "Local command failed (1) :: internal reference=controlled-d1",
     "D1 provenance must not rewrite the original Error message");
   assert.match(wrapped.message, /d1_provenance=.*"binding":"CORE_DB"/u);
@@ -1321,25 +1430,39 @@ export function verifyD1FailureProvenanceRegression() {
 export async function verifyWorkerFetchDiagnosticRegression() {
   verifyPreservedWorkerFailureOutput();
   verifyD1FailureProvenanceRegression();
-  const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  const opaqueBearer = "opaque-bearer-transport";
+  const opaqueUrl = "https://worker.invalid/private/path-secret#fragment-secret";
+  const transportError = Object.assign(new TypeError(`arbitrary transport message ${opaqueBearer} ${opaqueUrl}`), {
+    code: "ARBITRARY_TRANSPORT_CODE",
+  });
+  transportError.name = "ArbitraryTransportError";
+  transportError.stack = `ArbitraryTransportError: arbitrary stack\n    at privateTransport (C:\\private\\transport-secret.mjs:77:3)`;
   let transportCalls = 0;
   await assert.rejects(
     fetchWorkerJsonWithDiagnostics(
       async () => { transportCalls += 1; throw transportError; },
       "http://127.0.0.1:43123",
-      "/api/v1/research/query/jobs?cursor=private-query&token=private-token",
-      { method: "GET", phase: "rotation-read", token: "private-token",
-        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset" }) } },
+      "/api/v1/research/query/private-path-secret?cursor=private-query&token=private-token#fragment-secret",
+      { method: "GET", phase: "rotation-read", token: opaqueBearer,
+        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset", stdoutEvents: "opaque stdout secret" }) } },
     ),
     (error) => {
       const text = String(error?.message ?? error);
-      assert.match(text, /phase=rotation-read method=GET path=\/api\/v1\/research\/query\/jobs/u);
+      assert.match(text, /phase=rotation-read method=GET path=research-query/u);
       assert.match(text, /stage=fetch/u);
-      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /error=UnknownError\/UNSPECIFIED/u);
       assert.match(text, /worker_exit_code=null/u);
-      assert.match(text, /worker_stderr_tail=wrangler: listener reset/u);
-      assert.ok(!text.includes("private-query") && !text.includes("private-token"),
-        "fetch diagnostics must omit query, token and body values");
+      assert.doesNotMatch(text, /worker_stderr_tail|worker_stdout_events/u,
+        "fetch diagnostics must omit raw child output fields");
+      assert.ok(!text.includes("private-query") && !text.includes("private-token") &&
+        !text.includes("listener reset"), "fetch diagnostics must omit query, token and raw child output values");
+      const serialized = JSON.stringify({ message: error.message, stack: error.stack, cause: error.cause });
+      for (const secret of [opaqueBearer, opaqueUrl, "fragment-secret", "ArbitraryTransportError",
+        "ARBITRARY_TRANSPORT_CODE", "transport-secret.mjs", "arbitrary transport message"]) {
+        assert.ok(!serialized.includes(secret), `serialized fetch diagnostic must omit ${secret}`);
+      }
+      assert.equal(error.cause?.name, "UnknownError", "sanitized transport cause must use a fixed class");
+      assert.equal(error.cause?.code, "UNSPECIFIED", "sanitized transport cause must use a fixed code");
       return true;
     },
   );
@@ -1381,9 +1504,10 @@ export async function verifyWorkerFetchDiagnosticRegression() {
     ),
     (error) => {
       const text = String(error?.message ?? error);
-      assert.match(text, /stage=body phase=restart-health method=GET path=\/healthz/u);
+      assert.match(text, /stage=body phase=restart-health method=GET path=healthz/u);
       assert.match(text, /error=TypeError\/ECONNRESET/u);
       assert.match(text, /worker_exit_code=17/u);
+      assert.doesNotMatch(text, /worker_stderr_tail|worker_stdout_events/u);
       assert.ok(!text.includes("private-token"), "body diagnostics must omit query values");
       return true;
     },
@@ -1645,13 +1769,11 @@ function preserveWorkerFailure(error, worker) {
   if (!worker) return error;
   const diagnostics = workerDiagnosticSnapshot(worker);
   const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
-  const original = {
-    name: boundedFailureText(error?.name || "Error", 96),
-    message: boundedFailureText(error?.message ?? error, 2000),
-    stack: boundedFailureText(error?.stack ?? "", 4000),
-  };
+  const workerContext = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  const original = workerContext?.error_class ?? safeWorkerErrorClass(error);
+  const contextText = workerContext ? `; worker_diagnostic_context=${JSON.stringify(workerContext)}` : "";
   const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
-  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${provenanceText}`, { cause: error });
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${contextText}${provenanceText}`);
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
@@ -5645,7 +5767,7 @@ export async function runOwnerE2E() {
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
-      throw new Error(`browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`, { cause: error });
+      throw safeWorkerDiagnosticError(error, `browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`);
     }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
@@ -5821,8 +5943,8 @@ export async function runOwnerE2E() {
           worker: workerDiagnosticSnapshot(worker),
           probes: catalogTransportProbeRecords,
         };
-        throw new Error(`${directAfterCli.error?.message ?? String(directAfterCli.error)}\n` +
-          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`, { cause: directAfterCli.error });
+        throw new Error(`owner-e2e catalog transport probe failed; error_class=${fetchErrorClass(directAfterCli.error)}\n` +
+          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`);
       }
       catalog = directAfterCli.response;
       receipt.catalog_transport_probe = {
