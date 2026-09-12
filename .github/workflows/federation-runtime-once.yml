@@ -76,10 +76,10 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Verify federation product locally
         run: |
+          pnpm typecheck
           pnpm --filter @eliotr/cloudflare-federation test
           pnpm --filter @eliotr/core test
           pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
-          pnpm typecheck
       - name: Verify structural and documentation gates
         run: |
           pnpm lint
