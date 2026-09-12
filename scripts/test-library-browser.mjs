@@ -537,6 +537,8 @@ try {
   await runBrowserResearchReadinessCanary({
     fixture: researchReadinessFixture, cdp, evaluate, wait, click, assertVisible, assertView, openSources,
   });
+  await cdp("Page.reload");
+  await openSources("MCP baseline after research checks");
   await runBrowserMcpDiagnosticCanary({ fixture: diagnosticFixture, click, evaluate, wait, assertVisible, assertView, openSources });
   assert.deepEqual(errors, []);
   console.log("Library browser: PASS (built PWA; pagination/filter/selection, same-operation continuation/status and reload/missing-ID discovery, legacy unavailable research run, persisted DRAFT metadata/section digest and literal rendering, generation/session/offline and late-response clearing, XSS, denial, generation drift, stale responses, research.verify → research.open and inert evidence rendering). Backend is controlled; IdP and full ingest-to-evidence NOT_EXECUTED.");
