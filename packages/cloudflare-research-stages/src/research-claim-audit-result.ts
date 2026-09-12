@@ -196,7 +196,10 @@ function sameRefSet(left: readonly VersionedRef[], right: readonly VersionedRef[
 }
 
 function sameRefSequence(left: readonly VersionedRef[], right: readonly VersionedRef[]): boolean {
-  return left.length === right.length && left.every((ref, index) => sameRef(ref, right[index]!));
+  return left.length === right.length && left.every((ref, index) => {
+    const rightRef = right[index];
+    return rightRef !== undefined && sameRef(ref, rightRef);
+  });
 }
 
 function validateVerifierAuthority(

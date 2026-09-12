@@ -5,7 +5,6 @@ import {
   createEvidenceFreezeVerificationContextReader,
   type ModelAttemptPreparationContext,
   type ModelAttemptReservationInput,
-  type ResearchModelPromptCompilerDependencies,
   type SpendAuthorizationReadRequest,
   type SpendAuthorizationReadback,
 } from "@eliotr/cloudflare-research";

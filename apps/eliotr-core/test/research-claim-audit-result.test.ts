@@ -272,18 +272,26 @@ describe("canonical compact AUDIT_CLAIMS result", () => {
       ...input,
       model_attempt: {
         ...input.model_attempt,
-        receipt: { ...input.model_attempt.receipt!, output_sha256: digestFor(24) },
+        receipt: (() => {
+          const receipt = input.model_attempt.receipt;
+          if (receipt === undefined) throw new Error("fixture model attempt receipt is missing");
+          return { ...receipt, output_sha256: digestFor(24) };
+        })(),
       } as typeof input.model_attempt,
     }), "WORKFLOW_INPUT_INVALID");
 
     const encoded = encodeResearchClaimAuditResult(input);
     const wire = JSON.parse(decoder.decode(encoded)) as ResearchClaimAuditResult & { unexpected?: boolean };
-    wire.claims = [...wire.claims, wire.claims[0]!];
+    const firstWireClaim = wire.claims[0];
+    if (firstWireClaim === undefined) throw new Error("encoded result has no claims");
+    wire.claims = [...wire.claims, firstWireClaim];
     expectCode(() => decodeResearchClaimAuditResult(encoder.encode(canonicalEvidenceJson(wire))), "WORKFLOW_OUTPUT_CORRUPT");
 
     const duplicateRef = JSON.parse(decoder.decode(encoded)) as ResearchClaimAuditResult;
+    const firstDuplicateClaim = duplicateRef.claims[0];
+    if (firstDuplicateClaim === undefined) throw new Error("encoded result has no claims");
     duplicateRef.claims[0] = {
-      ...duplicateRef.claims[0]!,
+      ...firstDuplicateClaim,
       support_handle_refs: [supportRef, supportRef],
     };
     expectCode(() => decodeResearchClaimAuditResult(encoder.encode(canonicalEvidenceJson(duplicateRef))), "WORKFLOW_OUTPUT_CORRUPT");

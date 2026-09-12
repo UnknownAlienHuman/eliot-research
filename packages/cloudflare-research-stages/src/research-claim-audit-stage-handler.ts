@@ -72,7 +72,7 @@ export interface ResearchClaimAuditStageDependencies
   ) => Promise<ModelAttemptReservationInput>;
 }
 
-export interface ResearchClaimAuditStageHandler extends ResearchModelStageHandler {}
+export type ResearchClaimAuditStageHandler = ResearchModelStageHandler;
 
 function inputInvalid(): never {
   return fail("WORKFLOW_INPUT_INVALID");

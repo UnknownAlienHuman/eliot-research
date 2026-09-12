@@ -1,4 +1,4 @@
-import { canonicalEvidenceJson, type EvidenceSourceAuthority } from "@eliotr/cloudflare-evidence";
+import type { EvidenceSourceAuthority } from "@eliotr/cloudflare-evidence";
 import type {
   EvidenceFreezeSynthesisContext,
   ResearchEvidencePack,
