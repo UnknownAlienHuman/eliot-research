@@ -5,6 +5,7 @@ export * from "./content-store.js";
 export * from "./coordinate-map-reader.js";
 export * from "./resolver.js";
 export * from "./registry.js";
+export * from "./resolution-readback.js";
 export * from "./citation-registry.js";
 export * from "./scope-store.js";
 export * from "./navigation-store.js";

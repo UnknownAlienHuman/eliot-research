@@ -1,4 +1,8 @@
-import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import {
+  canonicalEvidenceJson,
+  evidenceSha256,
+  readEvidenceResolutionReceipt,
+} from "@eliotr/cloudflare-evidence";
 import {
   createEvidenceFreezePostSynthesisContextReader,
 } from "@eliotr/cloudflare-research";
@@ -72,6 +76,39 @@ async function citationReceiptRow(
     readonly all_material_citations_resolved: number;
     readonly verified: number;
   }>();
+}
+
+async function receiptCounts(
+  fixture: Awaited<ReturnType<typeof researchClaimAuditStageFixture>>,
+): Promise<{ readonly evidence: number; readonly citation: number }> {
+  const row = await fixture.fixture.freeze.db.prepare(
+    "SELECT (SELECT COUNT(*) FROM evidence_resolution_receipt) AS evidence, " +
+      "(SELECT COUNT(*) FROM citation_resolution_receipt) AS citation",
+  ).first<{ readonly evidence: number; readonly citation: number }>();
+  if (row === null) throw new Error("receipt count readback is missing");
+  return row;
+}
+
+async function evidenceReceiptRow(
+  fixture: Awaited<ReturnType<typeof researchClaimAuditStageFixture>>,
+  item: { readonly verification_receipt_ref: string; readonly handle_ref: { readonly id: string; readonly revision: number } },
+): Promise<{ readonly receipt_json: string; readonly receipt_sha256: string } | null> {
+  return fixture.fixture.freeze.db.prepare(
+    "SELECT receipt_json,receipt_sha256 FROM evidence_resolution_receipt " +
+      "WHERE handle_id=?1 AND handle_revision=?2 " +
+      "AND (receipt_id || ':' || CAST(revision AS TEXT))=?3 LIMIT 1",
+  ).bind(item.handle_ref.id, item.handle_ref.revision, item.verification_receipt_ref)
+    .first<{ readonly receipt_json: string; readonly receipt_sha256: string }>();
+}
+
+interface EvidenceGuardRow {
+  readonly handle_id: string;
+  readonly handle_revision: number;
+  readonly receipt_id: string;
+  readonly receipt_revision: number;
+  readonly identity_digest: string;
+  readonly verified: number;
+  readonly created_at: string;
 }
 
 describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
@@ -171,6 +208,100 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     expect(row.resolved_count).toBe(receipt.resolved_count);
     expect(row.all_material_citations_resolved).toBe(1);
     expect(row.verified).toBe(1);
+
+    const readbackReceiptCounts = await receiptCounts(fixture);
+    const readbackProviderCalls = fixture.fixture.provider_calls();
+    const readbackAuditProviderCalls = fixture.auditProviderCalls();
+    const firstItem = receipt.resolved[0];
+    const secondItem = receipt.resolved[1];
+    if (firstItem === undefined || secondItem === undefined) {
+      throw new Error("citation receipt resolved members are incomplete");
+    }
+    expect(refKey(firstItem.handle_ref)).not.toBe(refKey(secondItem.handle_ref));
+    for (const item of [firstItem, secondItem]) {
+      const readback = await readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
+        verification_receipt_ref: item.verification_receipt_ref,
+        expected_handle_ref: item.handle_ref,
+      });
+      expect(readback).not.toBeNull();
+      if (readback === null) throw new Error("saved evidence resolution receipt is missing");
+      const stored = await evidenceReceiptRow(fixture, item);
+      expect(stored).not.toBeNull();
+      if (stored === null) throw new Error("stored evidence resolution receipt row is missing");
+      expect(canonicalEvidenceJson(readback)).toBe(stored.receipt_json);
+      expect(await evidenceSha256(readback)).toBe(stored.receipt_sha256);
+      expect(readback.handle_ref).toEqual(item.handle_ref);
+      expect(readback.excerpt_sha256).toBe(item.excerpt_sha256);
+      expect(refKey(readback.receipt_ref)).toBe(item.verification_receipt_ref);
+    }
+    expect(await readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
+      verification_receipt_ref: firstItem.verification_receipt_ref,
+      expected_handle_ref: secondItem.handle_ref,
+    })).toBeNull();
+    expect(await readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
+      verification_receipt_ref: "missing-evidence-resolution-ref",
+      expected_handle_ref: firstItem.handle_ref,
+    })).toBeNull();
+    expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
+    expect(fixture.fixture.provider_calls()).toBe(readbackProviderCalls);
+    expect(fixture.auditProviderCalls()).toBe(readbackAuditProviderCalls);
+
+    const firstGuard = await fixture.fixture.freeze.db.prepare(
+      "SELECT g.handle_id,g.handle_revision,g.receipt_id,g.receipt_revision,g.identity_digest, " +
+        "g.verified,g.created_at FROM evidence_resolution_guard g " +
+        "JOIN evidence_resolution_receipt r ON r.receipt_id=g.receipt_id " +
+        "AND r.revision=g.receipt_revision WHERE g.handle_id=?1 AND g.handle_revision=?2 " +
+        "AND (r.receipt_id || ':' || CAST(r.revision AS TEXT))=?3 LIMIT 1",
+    ).bind(
+      firstItem.handle_ref.id,
+      firstItem.handle_ref.revision,
+      firstItem.verification_receipt_ref,
+    ).first<EvidenceGuardRow>();
+    expect(firstGuard).not.toBeNull();
+    if (firstGuard === null) throw new Error("saved evidence resolution guard is missing");
+    try {
+      await fixture.fixture.freeze.db.prepare(
+        "DELETE FROM evidence_resolution_guard WHERE handle_id=?1 AND handle_revision=?2 " +
+          "AND receipt_id=?3 AND receipt_revision=?4",
+      ).bind(
+        firstGuard.handle_id,
+        firstGuard.handle_revision,
+        firstGuard.receipt_id,
+        firstGuard.receipt_revision,
+      ).run();
+      await expect(readEvidenceResolutionReceipt(fixture.fixture.freeze.db, {
+        verification_receipt_ref: firstItem.verification_receipt_ref,
+        expected_handle_ref: firstItem.handle_ref,
+      })).rejects.toMatchObject({ code: "EVIDENCE_INPUT_INVALID" });
+    } finally {
+      await fixture.fixture.freeze.db.prepare(
+        "INSERT INTO evidence_resolution_guard " +
+          "(handle_id,handle_revision,receipt_id,receipt_revision,identity_digest,verified,created_at) " +
+          "VALUES (?1,?2,?3,?4,?5,?6,?7)",
+      ).bind(
+        firstGuard.handle_id,
+        firstGuard.handle_revision,
+        firstGuard.receipt_id,
+        firstGuard.receipt_revision,
+        firstGuard.identity_digest,
+        firstGuard.verified,
+        firstGuard.created_at,
+      ).run();
+    }
+    const restoredGuard = await fixture.fixture.freeze.db.prepare(
+      "SELECT handle_id,handle_revision,receipt_id,receipt_revision,identity_digest,verified,created_at " +
+        "FROM evidence_resolution_guard WHERE handle_id=?1 AND handle_revision=?2 " +
+        "AND receipt_id=?3 AND receipt_revision=?4 LIMIT 1",
+    ).bind(
+      firstGuard.handle_id,
+      firstGuard.handle_revision,
+      firstGuard.receipt_id,
+      firstGuard.receipt_revision,
+    ).first<EvidenceGuardRow>();
+    expect(restoredGuard).toEqual(firstGuard);
+    expect(await receiptCounts(fixture)).toEqual(readbackReceiptCounts);
+    expect(fixture.fixture.provider_calls()).toBe(readbackProviderCalls);
+    expect(fixture.auditProviderCalls()).toBe(readbackAuditProviderCalls);
 
     const resultText = new TextDecoder().decode(firstBytes);
     expect(resultText).not.toContain("Pinned support content");
