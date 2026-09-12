@@ -128,26 +128,34 @@ function requireSourceBinding(
   ) {
     fail("EVIDENCE_OWNER_GENERATION_MISMATCH", "source authority does not match the frozen exact candidate binding");
   }
-  const metadataDigest = identity.metadataContentSha256;
-  if (metadataDigest !== undefined && metadataDigest !== source.content_sha256) {
-    fail("EVIDENCE_IDENTITY_CONFLICT", "candidate content digest differs from source authority");
-  }
 }
 
 function requireAnchorBinding(
   anchor: CandidateAnchorAuthority,
-  source: EvidenceSourceAuthority,
   identity: ExactReadIdentity,
 ): void {
   if (
-    anchor.content_sha256 !== source.content_sha256 ||
     anchor.projection_generation !== identity.indexGeneration
   ) {
-    fail("EVIDENCE_IDENTITY_CONFLICT", "candidate anchor does not match source or projection authority");
+    fail("EVIDENCE_IDENTITY_CONFLICT", "candidate anchor does not match projection authority");
   }
   const metadataItem = identity.metadataItemKey;
   if (metadataItem !== undefined && metadataItem !== anchor.item_key) {
     fail("EVIDENCE_IDENTITY_CONFLICT", "candidate item key differs from anchor authority");
+  }
+}
+
+function requireExcerptBinding(
+  anchor: CandidateAnchorAuthority,
+  materialized: MaterializedEvidenceExcerpt,
+  identity: ExactReadIdentity,
+): void {
+  const metadataDigest = identity.metadataContentSha256;
+  if (
+    anchor.content_sha256 !== materialized.excerpt_sha256 ||
+    (metadataDigest !== undefined && metadataDigest !== materialized.excerpt_sha256)
+  ) {
+    fail("EVIDENCE_IDENTITY_CONFLICT", "candidate excerpt digest differs from materialized evidence");
   }
 }
 
@@ -200,12 +208,13 @@ export function createExactPhraseVerifier(
       dependencies.checkBudget,
       () => dependencies.authority.resolveCandidate(identity.candidate),
     );
-    requireAnchorBinding(anchorAuthority, beforeSourceSnapshot, identity);
+    requireAnchorBinding(anchorAuthority, identity);
     const materialized: MaterializedEvidenceExcerpt = await checkedRead(
       dependencies.checkBudget,
       () => dependencies.content.materialize(beforeSourceSnapshot, anchorAuthority.anchor),
     );
     requireMaterializedBinding(materialized, beforeSourceSnapshot);
+    requireExcerptBinding(anchorAuthority, materialized, identity);
 
     const afterGrant: ScopeAuthorization = await checkedRead(
       dependencies.checkBudget,
