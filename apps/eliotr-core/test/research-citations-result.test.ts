@@ -136,6 +136,7 @@ async function makeInput(coverageLimitations?: readonly string[]): Promise<Resea
   }
   return {
     audit,
+    investigation_ref: { id: audit.investigation_ref.id, revision: 2 },
     audit_output_sha256: digestFor(50),
     evidence_pack_ref: evidencePackRef,
     stage_attempt_ref: "citations-attempt",
@@ -168,6 +169,7 @@ describe("canonical compact RESOLVE_CITATIONS result v2", () => {
     const result = await decodeResearchCitationsResult(bytes);
 
     expect(result.protocol).toBe("eliotr.research.citations.v2");
+    expect(result.investigation_ref).toEqual({ id: "investigation-citations", revision: 2 });
     expect(result.audit.output_sha256).toBe(digestFor(50));
     expect(result.audit.synthesis.output_sha256).toBe(digestFor(12));
     expect(result.audit.verification.normalization_binding_sha256).toBe(digestFor(15));

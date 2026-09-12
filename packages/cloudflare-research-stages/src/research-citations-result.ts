@@ -106,6 +106,8 @@ export type ResearchCitationsClaim = ResearchCitationsResult["claims"][number];
 export interface ResearchCitationsResultInput {
   /** Decoded, committed compact Stage14 result. */
   readonly audit: ResearchClaimAuditResult;
+  /** Stage15's own investigation revision from its stage request/receipt. */
+  readonly investigation_ref: VersionedRef;
   /** SHA-256 from the committed Stage14 workflow output manifest. */
   readonly audit_output_sha256: string;
   readonly evidence_pack_ref: VersionedRef;
@@ -223,7 +225,7 @@ function resultFromInput(input: ResearchCitationsResultInput): unknown {
   return {
     protocol: PROTOCOL,
     operation_id: audit.operation_id,
-    investigation_ref: audit.investigation_ref,
+    investigation_ref: input.investigation_ref,
     stage: STAGE,
     stage_attempt_ref: input.stage_attempt_ref,
     stage_request_sha256: input.stage_request_sha256,
