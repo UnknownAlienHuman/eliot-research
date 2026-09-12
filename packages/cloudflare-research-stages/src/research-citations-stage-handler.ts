@@ -298,6 +298,8 @@ async function resolveAndValidate(
   readonly receipt: CitationResolutionReceipt;
   readonly evidence: readonly ResolvedEvidence[];
   readonly grant_fingerprint: string;
+  readonly source_revision_refs: readonly string[];
+  readonly source_fingerprint: string;
 }> {
   let beforeGrant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
   try { beforeGrant = detached(await dependencies.navigation.current()); }
@@ -348,7 +350,13 @@ async function resolveAndValidate(
       !sameStringSet(afterSources.map((item) => item.source_revision_ref), revisions)) return failAuthority();
   if (beforeGrantFingerprint !== canonicalEvidenceJson(afterGrant) ||
       beforeSourcesFingerprint !== stableSources(afterSources)) return failAuthority();
-  return { receipt, evidence, grant_fingerprint: beforeGrantFingerprint };
+  return {
+    receipt,
+    evidence,
+    grant_fingerprint: beforeGrantFingerprint,
+    source_revision_refs: Object.freeze([...revisions]),
+    source_fingerprint: beforeSourcesFingerprint,
+  };
 }
 
 function zResolvedEvidence(value: readonly ResolvedEvidence[]) {
@@ -411,6 +419,20 @@ export function createResearchCitationsStageHandler(
         stableContext(contextAfter) !== contextBeforeText ||
         stableLineage(predecessorAfter) !== predecessorBeforeText ||
         stableContext({ ...contextAfter, w1_head: w1After }) !== contextBeforeText) return failAuthority();
+    let finalGrant: Awaited<ReturnType<NavigationReadAuthority["current"]>>;
+    let finalSources: readonly EvidenceSourceAuthority[];
+    try {
+      finalGrant = detached(await dependencies.navigation.current());
+      finalSources = detached(await dependencies.navigation.sources(
+        resolution.source_revision_refs,
+        detached(finalGrant),
+      ));
+    } catch { return failAuthority(); }
+    if (finalSources.length !== resolution.source_revision_refs.length ||
+        new Set(finalSources.map((item) => item.source_revision_ref)).size !== resolution.source_revision_refs.length ||
+        !sameStringSet(finalSources.map((item) => item.source_revision_ref), resolution.source_revision_refs) ||
+        canonicalEvidenceJson(finalGrant) !== resolution.grant_fingerprint ||
+        stableSources(finalSources) !== resolution.source_fingerprint) return failAuthority();
     let terminalGrantFingerprint: string;
     try { terminalGrantFingerprint = canonicalEvidenceJson(detached(await dependencies.navigation.current())); }
     catch { return failAuthority(); }

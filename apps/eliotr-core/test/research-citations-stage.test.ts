@@ -1,4 +1,4 @@
-import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import {
   createEvidenceFreezePostSynthesisContextReader,
 } from "@eliotr/cloudflare-research";
@@ -9,6 +9,8 @@ import {
 import {
   readCommittedStageLineage,
   readWorkflowObject,
+  parseRequest,
+  textDigest,
   WorkflowCheckpointStore,
   type StageRequest,
 } from "@eliotr/cloudflare-workflows";
@@ -54,16 +56,21 @@ async function citationReceiptRow(
   readonly requested_count: number;
   readonly resolved_count: number;
   readonly all_material_citations_resolved: number;
+  readonly verified: number;
 } | null> {
   return fixture.fixture.freeze.db.prepare(
-    "SELECT receipt_json, receipt_sha256, requested_count, resolved_count, all_material_citations_resolved " +
-      "FROM citation_resolution_receipt WHERE receipt_id=?1 AND revision=?2 LIMIT 1",
+    "SELECT r.receipt_json, r.receipt_sha256, r.requested_count, r.resolved_count, " +
+      "r.all_material_citations_resolved, g.verified " +
+      "FROM citation_resolution_receipt r JOIN citation_resolution_guard g " +
+      "ON g.receipt_id=r.receipt_id AND g.receipt_revision=r.revision " +
+      "WHERE r.receipt_id=?1 AND r.revision=?2 LIMIT 1",
   ).bind(receipt.id, receipt.revision).first<{
     readonly receipt_json: string;
     readonly receipt_sha256: string;
     readonly requested_count: number;
     readonly resolved_count: number;
     readonly all_material_citations_resolved: number;
+    readonly verified: number;
   }>();
 }
 
@@ -132,6 +139,7 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     expect(result.investigation_ref).toEqual(stage15.investigation_ref);
     expect(first.investigation_ref.revision).toBe(stage15.investigation_ref.revision + 1);
     expect(result.stage_attempt_ref).toBe(first.attempt_ref);
+    expect(result.stage_request_sha256).toBe(first.request_sha256);
     expect(result.audit.protocol).toBe("eliotr.research.audit-claims-result.v1");
     expect(result.audit.stage_attempt_ref).toBe(auditReceipt.attempt_ref);
     expect(result.audit.stage_request_sha256).toBe(auditReceipt.request_sha256);
@@ -158,10 +166,11 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     if (row === null) throw new Error("citation resolver did not persist a receipt");
     expect(JSON.parse(row.receipt_json) as unknown).toEqual(receipt);
     expect(canonicalEvidenceJson(JSON.parse(row.receipt_json) as unknown)).toBe(row.receipt_json);
-    expect(row.receipt_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(await evidenceSha256(JSON.parse(row.receipt_json) as unknown)).toBe(row.receipt_sha256);
     expect(row.requested_count).toBe(receipt.requested_count);
     expect(row.resolved_count).toBe(receipt.resolved_count);
     expect(row.all_material_citations_resolved).toBe(1);
+    expect(row.verified).toBe(1);
 
     const resultText = new TextDecoder().decode(firstBytes);
     expect(resultText).not.toContain("Pinned support content");
@@ -185,5 +194,89 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     expect(fixture.auditProviderCalls()).toBe(1);
     expect(await checkpointCount(fixture, "RESOLVE_CITATIONS")).toBe(1);
     expect(await citationReceiptRow(fixture, receipt.receipt_ref)).toEqual(row);
+  }, 60_000);
+
+  it("rejects source authority drift after the final context read", async () => {
+    const fixture = await researchClaimAuditStageFixture({ include_counterevidence: true });
+    const auditInput = await readAuditStageInput(fixture);
+    const sourceRevisionRef = auditInput.evidence[0]?.handle.source_revision_ref;
+    if (sourceRevisionRef === undefined) throw new Error("audit fixture has no source revision");
+    const auditReceipt = await fixture.fixture.freeze.executor.execute(
+      fixture.stage14,
+      principal,
+      fixture.auditHandler,
+    );
+    const stage15: StageRequest = {
+      ...fixture.stage14,
+      stage: "RESOLVE_CITATIONS",
+      investigation_ref: auditReceipt.investigation_ref,
+      input_manifest: auditReceipt.output_manifest,
+    };
+    const baseContext = createEvidenceFreezePostSynthesisContextReader({
+      database: fixture.fixture.freeze.db,
+      work_bucket: fixture.fixture.freeze.bucket,
+      manifest_store: fixture.fixture.freeze.freeze_store,
+      read_stage_five: fixture.fixture.freeze.readers.read_stage_five,
+    }, fixture.fixture.freeze.navigation, fixture.fixture.freeze.readers, "RESOLVE_CITATIONS");
+    let contextReads = 0;
+    const context = {
+      async read(input: Parameters<typeof baseContext.read>[0]) {
+        const value = await baseContext.read(input);
+        contextReads += 1;
+        if (contextReads === 2) {
+          const grantBefore = await fixture.fixture.freeze.navigation.current();
+          await fixture.fixture.freeze.db.prepare(
+            "UPDATE source_admission_decision SET decision='QUARANTINED' " +
+              "WHERE source_revision_ref=?1 AND decision='ADMITTED'",
+          ).bind(sourceRevisionRef).run();
+          const admission = await fixture.fixture.freeze.db.prepare(
+            "SELECT decision FROM source_admission_decision WHERE source_revision_ref=?1 " +
+              "ORDER BY created_at DESC LIMIT 1",
+          ).bind(sourceRevisionRef).first<{ readonly decision: string }>();
+          expect(admission?.decision).toBe("QUARANTINED");
+          expect(await fixture.fixture.freeze.navigation.current()).toEqual(grantBefore);
+        }
+        return value;
+      },
+    };
+    const stage15Handler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory",
+      generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: fixture.fixture.freeze.navigation,
+      ledger: fixture.fixture.freeze.ledger,
+      resolve_citations: {
+        database: fixture.fixture.freeze.db,
+        navigation: fixture.fixture.freeze.navigation,
+        evidence_resolver: fixture.fixture.freeze.resolver,
+        context,
+      },
+    })("RESOLVE_CITATIONS");
+
+    const normalizedStage15 = parseRequest(stage15);
+    const stage15RequestSha256 = await textDigest(JSON.stringify(normalizedStage15));
+    await expect(fixture.fixture.freeze.executor.execute(stage15, principal, stage15Handler))
+      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
+    expect(contextReads).toBe(2);
+    const pending = await fixture.fixture.freeze.db.prepare(
+      "SELECT state, output_json, request_json, request_sha256 FROM research_workflow_attempt " +
+        "WHERE operation_id=?1 AND stage_index=?2 AND request_sha256=?3 LIMIT 1",
+    ).bind(
+      fixture.fixture.freeze.operation_id,
+      RESEARCH_WORKFLOW_STAGES.indexOf("RESOLVE_CITATIONS"),
+      stage15RequestSha256,
+    ).first<{
+      readonly state: string;
+      readonly output_json: string | null;
+      readonly request_json: string;
+      readonly request_sha256: string;
+    }>();
+    if (pending === null) throw new Error("Stage15 attempt readback is missing");
+    expect(pending.state).toBe("STARTED");
+    expect(pending.output_json).toBeNull();
+    expect(pending.request_sha256).toBe(stage15RequestSha256);
+    expect(JSON.parse(pending.request_json) as unknown).toEqual(normalizedStage15);
+    expect(await checkpointCount(fixture, "RESOLVE_CITATIONS")).toBe(0);
+    expect(fixture.fixture.provider_calls()).toBe(1);
+    expect(fixture.auditProviderCalls()).toBe(1);
   }, 60_000);
 });
