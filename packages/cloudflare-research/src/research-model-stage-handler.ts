@@ -45,6 +45,8 @@ export interface ResearchModelStageHandlerDependencies {
   readonly spend_authorization: SpendAuthorizationReader;
   /** TEST is an explicit server-owned fixture mode; production defaults to LIVE qualification. */
   readonly deployment_environment?: D1DynamicRouteRegistryOptions["environment"];
+  /** Optional server-owned full deployment pin; omitted by legacy callers. */
+  readonly expected_deployment?: ModelRouteDeployment;
 }
 
 export type ResearchModelStageHandler = GovernedModelAttemptHandler;
@@ -89,9 +91,34 @@ function createRoute(
   });
 }
 
+function snapshotExpectedDeployment(
+  value: ModelRouteDeployment | undefined,
+): ModelRouteDeployment | undefined {
+  if (value === undefined) return undefined;
+  try {
+    const decoded = decodeModelRouteDeployment(value);
+    return Object.freeze({
+      route_ref: decoded.route_ref,
+      route_version: decoded.route_version,
+      prompt_generation: decoded.prompt_generation,
+      schema_generation: decoded.schema_generation,
+      parameters_digest: decoded.parameters_digest,
+      pricing_snapshot_ref: decoded.pricing_snapshot_ref,
+    });
+  } catch (cause) {
+    throw new ModelAttemptError(
+      "MODEL_ATTEMPT_AUTHORITY_STALE",
+      "expected model deployment pin is malformed",
+      false,
+      cause,
+    );
+  }
+}
+
 export function createResearchModelStageHandler(
   dependencies: ResearchModelStageHandlerDependencies,
 ): ResearchModelStageHandler {
+  const expectedDeployment = snapshotExpectedDeployment(dependencies.expected_deployment);
   const attempts = createModelAttemptStore(dependencies.database);
   const outputStorage = createResearchModelOutputStore({
     database: dependencies.database,
@@ -133,6 +160,15 @@ export function createResearchModelStageHandler(
         catch (cause) { throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation returned a malformed model deployment", false, cause); }
         if (candidate.route_ref !== prepared.call.route_ref || candidate.prompt_generation !== prepared.call.prompt_generation || candidate.schema_generation !== prepared.call.schema_generation) {
           throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation deployment does not match the prepared model call");
+        }
+        if (expectedDeployment !== undefined &&
+            (candidate.route_ref !== expectedDeployment.route_ref ||
+             candidate.route_version !== expectedDeployment.route_version ||
+             candidate.prompt_generation !== expectedDeployment.prompt_generation ||
+             candidate.schema_generation !== expectedDeployment.schema_generation ||
+             candidate.parameters_digest !== expectedDeployment.parameters_digest ||
+             candidate.pricing_snapshot_ref !== expectedDeployment.pricing_snapshot_ref)) {
+          throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", "revalidation deployment does not match the expected deployment pin");
         }
         approved = candidate;
       };

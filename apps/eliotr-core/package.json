@@ -29,6 +29,7 @@
     "@eliotr/research": "workspace:*",
     "@eliotr/retrieval": "workspace:*",
     "@eliotr/cloudflare-research": "workspace:*",
+    "@eliotr/cloudflare-research-stages": "workspace:*",
     "@eliotr/cloudflare-raw-ingest": "workspace:*",
     "@eliotr/cloudflare-markdown": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",

@@ -1,7 +1,10 @@
 # Durable research stage checkpoints — W2a + W2
 
 `@eliotr/cloudflare-workflows` implements the D1/R2 checkpoint boundary, with compatibility exports
-from `@eliotr/cloudflare-research`. Research-specific handlers remain in the research adapter.
+from `@eliotr/cloudflare-research`. The later research-stage adapters live in
+`@eliotr/cloudflare-research-stages`, which the Worker composes directly over both packages.
+Stage-13 verification and its result codec are exported by this later-stage package; their v1
+persisted protocol is unchanged by the move.
 W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
 executable `ResearchWorkflow` binding over the same boundary. Owner HTTP composition can start runs
 and read their durable status. Governed model/evidence handlers (W3/W4) and live qualification remain open.
@@ -128,6 +131,30 @@ produce server-owned claim identities. One verifier response covers the exact cl
 input digest; source/excerpt support are model observations, while reference resolution, required
 checks and verifier qualification remain server facts. Candidate tests passed 5/5 at `1751789` and
 semantic batch tests 5/5 at `c20797a`. These pure modules do not yet qualify an actual stage-14 call.
+
+Configured source verification now accepts an explicit server-owned `v2_config` with section identity,
+required precision and source class. It snapshots those settings before asynchronous work, accepts
+only `synthesis-claims-candidate.v2` in that mode, and resolves the exact normalized support and
+counterevidence union. Its canonical v2 result binds the committed synthesis digest, normalized claim
+identities and source readbacks while retaining `semantic_verification: NOT_EXECUTED`. The result is
+bounded to 64 KiB. Omitting v2 configuration retains the v1 parser and persisted result protocol.
+
+On 2026-09-12 under Node 22.23.2, the actual local Worker/D1/R2 v2 success and replay case passed
+alongside the existing v1 source case and two direct factory-handler refusal cases (v1 content in v2
+mode and revoked scope access): four selected passed, five unchanged cases skipped. The v2 codec's
+five cases passed, including valid canonical payloads at exactly 65,536 and 65,537 bytes; only the
+first is accepted. Strict Worker fixture TypeScript passed. Semantic audit and v2 materialization
+remain separate unfinished stages.
+
+The Stage14 input reader reconstructs the strict v2 VERIFY result from committed D1/R2
+lineage and rechecks synthesis bytes, the W1 head, frozen references, exact source excerpts,
+and the selected verifier. Its stable digest binds the explicit audit policy and the actual
+source class separately from the required class. A final navigation read follows awaited
+source, verifier, W1 and digest work. Three actual local input cases passed on 2026-09-12:
+stable replay, a verifier disallowed by the committed manifest, and scope revocation during
+the final source read. They retain one prior synthesis provider call and create no Stage14
+checkpoint. The verifier qualification port in these cases is explicitly controlled test
+data; these results do not qualify a semantic model or prove an AUDIT_CLAIMS invocation.
 
 The v3 factory also selects the actual stage-13 `VERIFY` handler. It rereads the committed synthesis
 attempt and provider output, derives the requested source handles from that output, and resolves them
@@ -590,3 +617,19 @@ the native binding interface with controlled response bytes and proves draft/cit
 single-call replay and revoked-read refusal. Stages 13–16 are still controlled in that result, and
 the ordinary public run remains exploratory.v2. This is local composition evidence, not a live
 provider call, remote gateway provision, semantic verification or deployment qualification.
+
+On 2026-09-12, the actual local D1/R2 AUDIT_CLAIMS suite passed two cases over committed Stage12
+synthesis and Stage13 verification.v2 input. The v3 factory invokes the governed AUDIT model adapter,
+binds the verifier response to the exact audit input, and writes a compact result with independent
+reference, source and excerpt assessments. The controlled document source fails the requested
+official-source requirement despite a valid reference and supporting excerpt; its disposition is
+`UNSUPPORTED`. Terminal replay preserves the exact bytes and checkpoint without another model call.
+
+The second case interrupts W2 after the governed model result is durable and before its output intent
+is recorded. The factory's stage-specific recovery reconstructs the same compact artifact from the
+saved W3 result, commits exactly one Stage14 checkpoint and leaves both synthesis and audit provider
+counts at one. A mismatched handler generation cannot enter this recovery route. Exact immutable
+fingerprint readback and the six-field deployment pin bind the model result to the selected verifier.
+The provider, verifier qualification reader and zero-price accounting are explicit controlled fixture
+inputs. Public exploratory.v3 activation, live verifier qualification and stages 15–17 integration
+remain separate work; these tests do not establish a complete production research run.

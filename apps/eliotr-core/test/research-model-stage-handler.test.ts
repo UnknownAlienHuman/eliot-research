@@ -3,6 +3,7 @@ import { createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudf
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
 import { readCommittedResearchSynthesisOutput } from "../../../packages/cloudflare-research/src/research-synthesis-output-reader.js";
 import { digest } from "@eliotr/cloudflare-workflows";
+import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { initializeModelAttemptRuntime } from "./model-attempt-fixture.js";
 import { principal } from "./research-workflow-fixture.js";
 import {
@@ -15,6 +16,86 @@ import {
 } from "./research-synthesis-fixture.js";
 
 beforeAll(initializeModelAttemptRuntime);
+
+type CompositionFixture = Awaited<ReturnType<typeof compositionFixture>>;
+
+function alternateDigest(value: string): string {
+  const zero = "0".repeat(64);
+  return value === zero ? "1".repeat(64) : zero;
+}
+
+function pinnedHandler(
+  fixture: CompositionFixture,
+  tag: string,
+  expectedDeployment: ModelRouteDeployment,
+): { readonly handler: ReturnType<typeof createResearchModelStageHandler>; readonly providerCalls: () => number } {
+  let providerCalls = 0;
+  const handler = createResearchModelStageHandler({
+    database: fixture.workflow.db,
+    work_bucket: fixture.workflow.bucket,
+    operation_kind: "REPORT",
+    deployment_environment: "TEST",
+    gateway: {
+      reasoning_gateway_base_url: BASE_URL,
+      gateway_token: "controlled-gateway-token",
+      fetch: async () => {
+        providerCalls += 1;
+        return new Response(JSON.stringify({
+          id: `expected-pin-response-${tag}`,
+          object: "chat.completion",
+          created: 1,
+          model: ROUTE,
+          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: `expected pin ${tag}` } }],
+          usage: { prompt_tokens: 4, completion_tokens: 5, total_tokens: 9 },
+        }), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "cf-aig-provider": "controlled-provider",
+            "cf-aig-model": "controlled-model",
+            "cf-aig-log-id": `expected-pin-log-${tag}`,
+          },
+        });
+      },
+    },
+    prompt: promptDependencies(tag),
+    pricing: {
+      quote: async () => ({
+        quote_ref: `expected-pin-price-${tag}`,
+        pricing_snapshot_ref: fixture.deployment.pricing_snapshot_ref,
+        billed_usd: 0,
+      }),
+    },
+    prepare: fixture.prepare,
+    spend_authorization: fixture.spend_authorization,
+    expected_deployment: expectedDeployment,
+  });
+  return { handler, providerCalls: () => providerCalls };
+}
+
+const DEPLOYMENT_PIN_MISMATCHES = [
+  {
+    field: "route_version",
+    apply: (deployment: ModelRouteDeployment): ModelRouteDeployment => ({
+      ...deployment,
+      route_version: `${deployment.route_version}-mismatch`,
+    }),
+  },
+  {
+    field: "parameters_digest",
+    apply: (deployment: ModelRouteDeployment): ModelRouteDeployment => ({
+      ...deployment,
+      parameters_digest: alternateDigest(deployment.parameters_digest),
+    }),
+  },
+  {
+    field: "pricing_snapshot_ref",
+    apply: (deployment: ModelRouteDeployment): ModelRouteDeployment => ({
+      ...deployment,
+      pricing_snapshot_ref: `${deployment.pricing_snapshot_ref}-mismatch`,
+    }),
+  },
+] as const;
 
 describe("composed research model stage handler", () => {
   it("reads the committed SYNTHESIZE output from its W2 stage binding and replays exactly", async () => {
@@ -167,5 +248,30 @@ describe("composed research model stage handler", () => {
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.providerCalls()).toBe(0);
     await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
+  });
+
+  it.each(DEPLOYMENT_PIN_MISMATCHES)(
+    "refuses a full deployment pin when $field differs before provider execution",
+    async ({ field, apply }) => {
+      const fixture = await compositionFixture(`expected-pin-${field}`);
+      const handler = pinnedHandler(fixture, `expected-pin-${field}`, apply(fixture.deployment));
+      const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
+      await expect(handler.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+      expect(handler.providerCalls()).toBe(0);
+      expect(fixture.revalidateCalls()).toBe(1);
+      await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
+    },
+  );
+
+  it("keeps a detached expected deployment pin after caller mutation", async () => {
+    const fixture = await compositionFixture("expected-pin-caller-mutation");
+    const expected = { ...fixture.deployment };
+    const handler = pinnedHandler(fixture, "expected-pin-caller-mutation", expected);
+    expected.route_version = `${expected.route_version}-caller-mutated`;
+    const result = await handler.handler.handler(
+      fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef),
+    );
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(handler.providerCalls()).toBe(1);
   });
 });
