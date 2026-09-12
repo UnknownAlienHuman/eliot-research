@@ -1951,8 +1951,68 @@
       "schema_id": "urn:eliotr:contracts:workspace-mcp:workspace-mcp-receipt-v2:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "McpDiagnosticChallengeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "f6b2a0c03b4d1e90a5d6e33d72329d50d3bfb3ac9fcde93b2fef4a104d7ab2c0",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 MCP client diagnostic challenge response; the opaque token is confined to the issued challenge and excluded from status and consume readback.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-challenge-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "McpDiagnosticConsumeInputSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "06fe56321b3b50e2f382b44c4f4981e194adb89cbfe7a9f12c7b76346264ca4d",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 MCP client diagnostic consume input; the one-shot token-bearing request is closed and is never a status or readback shape.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "McpDiagnosticConsumeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "a6bfef8d364e9c1c5e6e4d03f9112d394ebc2d8aa529452a313a28d0c7ce99fe",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 MCP client diagnostic consume result; confirmed observation data excludes the challenge token and verified actor fields.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "McpDiagnosticCreateInputSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "81cc4d80168b9c56bbc892d9a29ec15bc265bda4a6558b6c6faeeda46957012e",
+      "kind": "OBJECT",
+      "note": "Initial ER-36 MCP client diagnostic create input; the empty owner request keeps authority and credential fields server-owned.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-create-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "McpDiagnosticLatestStatusSchema",
+      "family": "workspace-mcp",
+      "json_schema_sha256": "ce3acfa88befc5e61d36a900d02836f796b9a7cead1ecd7d5c37cb276ecf4108",
+      "kind": "UNION",
+      "note": "Initial ER-36 MCP client diagnostic latest status; issued, confirmed and expired readback excludes challenge tokens.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-latest-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 3
+  "registry_generation": 4
 }

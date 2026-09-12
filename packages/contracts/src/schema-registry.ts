@@ -9,6 +9,7 @@ import * as evidence from "./evidence.js";
 import * as federation from "./federation.js";
 import * as library from "./library.js";
 import * as libraryReadiness from "./library-readiness.js";
+import * as mcpDiagnostic from "./mcp-diagnostic.js";
 import * as model from "./model.js";
 import * as navigation from "./navigation.js";
 import * as normalizedBundle from "./normalized-bundle.js";
@@ -35,7 +36,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 3 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 4 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -70,6 +71,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "federation", exports: federation },
   { family: "library", exports: library },
   { family: "library-readiness", exports: libraryReadiness },
+  { family: "workspace-mcp", exports: mcpDiagnostic },
   { family: "model", exports: model },
   { family: "navigation", exports: navigation },
   { family: "normalized-bundle", exports: normalizedBundle },

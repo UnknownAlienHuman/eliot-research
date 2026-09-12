@@ -3,6 +3,8 @@ import * as z from "zod";
 
 import canonicalFixturesRaw from "../../../docs/contracts/canonical-fixtures.v1.json?raw";
 import compatibilityRegistryRaw from "../../../docs/contracts/compatibility-registry.v1.json?raw";
+import diagnosticConfirmedFixtureRaw from "../../../docs/contracts/fixtures/eliotr.mcp-client-diagnostic.confirmed.v1.json?raw";
+import diagnosticIssuedFixtureRaw from "../../../docs/contracts/fixtures/eliotr.mcp-client-diagnostic.issued.v1.json?raw";
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import schemaIndexRaw from "../../../docs/contracts/schema-index.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
@@ -12,6 +14,8 @@ import {
   CompletionDispositionSchema,
   EvidenceContextBlockSchema,
   FederationJobStatusSchema,
+  McpDiagnosticConsumeResultSchema,
+  McpDiagnosticLatestStatusSchema,
   SourceOwnerCutoverReceiptSchema,
 } from "./index.js";
 import * as registryContracts from "./registry-index.js";
@@ -468,6 +472,8 @@ describe("ER-01 public contract registry", () => {
   it.each([
     ["library-readiness-v1", libraryReadinessFixtureRaw],
     ["workspace-mcp-plan-input-v2", workspaceMcpFixtureRaw],
+    ["mcp-client-diagnostic-issued-v1", diagnosticIssuedFixtureRaw],
+    ["mcp-client-diagnostic-confirmed-v1", diagnosticConfirmedFixtureRaw],
   ])("round-trips %s with its published canonical digest", async (fixtureId, raw) => {
     const fixture = CANONICAL_FIXTURE_REGISTRY.fixtures.find((item) => item.fixture_id === fixtureId);
     if (fixture === undefined) throw new Error(`Missing canonical fixture ${fixtureId}`);
@@ -476,6 +482,27 @@ describe("ER-01 public contract registry", () => {
     expect(schema.parse(value)).toEqual(value);
     expect(schema.parse(parseJson(serializeCanonicalContractJson(value)))).toEqual(value);
     expect(await sha256(value)).toBe(fixture.canonical_body_sha256);
+  });
+
+  it("rejects diagnostic challenge tokens from status and consume readback", () => {
+    const issued = parseJson(diagnosticIssuedFixtureRaw);
+    const confirmed = McpDiagnosticConsumeResultSchema.parse(
+      parseJson(diagnosticConfirmedFixtureRaw),
+    );
+    if (!isObject(issued)) throw new Error("issued fixture must be an object");
+    const challengeToken = issued.challenge_token;
+    if (typeof challengeToken !== "string") {
+      throw new Error("issued fixture must carry a challenge token");
+    }
+
+    expect(McpDiagnosticLatestStatusSchema.safeParse(issued).success).toBe(false);
+    expect(
+      McpDiagnosticConsumeResultSchema.safeParse({
+        ...confirmed,
+        challenge_token: challengeToken,
+      }).success,
+    ).toBe(false);
+    expect(Object.hasOwn(confirmed, "challenge_token")).toBe(false);
   });
 
   it("serializes deterministic plain JSON and rejects hidden runtime state", () => {

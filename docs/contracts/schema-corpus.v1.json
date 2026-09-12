@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 3,
-  "schema_count": 141,
+  "registry_generation": 4,
+  "schema_count": 146,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -8338,6 +8338,397 @@
       "schema_id": "urn:eliotr:contracts:retrieval:locator-candidate:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticChallengeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.mcp.client-diagnostic.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema3": {
+            "enum": [
+              "service-token",
+              "managed-oauth"
+            ],
+            "type": "string"
+          },
+          "__schema4": {
+            "const": "ISSUED",
+            "type": "string"
+          },
+          "__schema5": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-challenge-result:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "auth_profile": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "challenge_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "challenge_token": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "deployment_generation": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "expires_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "issued_at": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "status": {
+            "$ref": "#/$defs/__schema4"
+          }
+        },
+        "required": [
+          "protocol",
+          "challenge_id",
+          "issued_at",
+          "expires_at",
+          "deployment_generation",
+          "auth_profile",
+          "status",
+          "challenge_token"
+        ],
+        "title": "McpDiagnosticChallengeResult",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-challenge-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticConsumeInputSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-input:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "challenge_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "challenge_token": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge_id",
+          "challenge_token"
+        ],
+        "title": "McpDiagnosticConsumeInput",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticConsumeResultSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-result:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "auth_profile": {
+            "enum": [
+              "service-token",
+              "managed-oauth"
+            ],
+            "type": "string"
+          },
+          "challenge_id": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "deployment_generation": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "observation_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.mcp.client-diagnostic.v1",
+            "type": "string"
+          },
+          "status": {
+            "const": "CONFIRMED",
+            "type": "string"
+          },
+          "trace_id": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "protocol",
+          "status",
+          "challenge_id",
+          "observation_ref",
+          "observed_at",
+          "auth_profile",
+          "deployment_generation",
+          "trace_id"
+        ],
+        "title": "McpDiagnosticConsumeResult",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-consume-result:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticCreateInputSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-create-input:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {},
+        "title": "McpDiagnosticCreateInput",
+        "type": "object",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-create-input:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "McpDiagnosticLatestStatusSchema",
+      "family": "workspace-mcp",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.mcp.client-diagnostic.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema3": {
+            "enum": [
+              "service-token",
+              "managed-oauth"
+            ],
+            "type": "string"
+          },
+          "__schema4": {
+            "const": "ISSUED",
+            "type": "string"
+          },
+          "__schema5": {
+            "const": "CONFIRMED",
+            "type": "string"
+          },
+          "__schema6": {
+            "const": "EXPIRED",
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-latest-status:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "auth_profile": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "challenge_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "deployment_generation": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "issued_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "protocol": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema4"
+              }
+            },
+            "required": [
+              "protocol",
+              "challenge_id",
+              "issued_at",
+              "expires_at",
+              "deployment_generation",
+              "auth_profile",
+              "status"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "auth_profile": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "challenge_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "deployment_generation": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "issued_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "observation_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "observed_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "protocol": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema5"
+              },
+              "trace_id": {
+                "$ref": "#/$defs/__schema1"
+              }
+            },
+            "required": [
+              "protocol",
+              "challenge_id",
+              "issued_at",
+              "expires_at",
+              "deployment_generation",
+              "auth_profile",
+              "status",
+              "observation_ref",
+              "observed_at",
+              "trace_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "auth_profile": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "challenge_id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "deployment_generation": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expires_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "issued_at": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "protocol": {
+                "$ref": "#/$defs/__schema0"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema6"
+              }
+            },
+            "required": [
+              "protocol",
+              "challenge_id",
+              "issued_at",
+              "expires_at",
+              "deployment_generation",
+              "auth_profile",
+              "status"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "McpDiagnosticLatestStatus",
+        "x-eliotr-family": "workspace-mcp",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:workspace-mcp:mcp-diagnostic-latest-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ModelCallReceiptSchema",
