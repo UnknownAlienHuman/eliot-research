@@ -61,7 +61,11 @@ export interface FreezeFixture {
 export interface FreezeFixtureOptions {
   /** Optional committed-manifest admission used by later-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
+  /** Add two real top-level evidence sections for multi-handle downstream fixtures. */
+  readonly include_counterevidence?: boolean;
 }
+
+const COUNTEREVIDENCE_MARKDOWN = "# Support\n\nPinned support content.\n\n# Counterevidence\n\nPinned counterevidence content.\n";
 
 async function signedProfile(
   scope: ScopeSnapshot,
@@ -115,7 +119,9 @@ export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise
   await applyD1Migrations(runtime.SEARCH_DB, runtime.SEARCH_MIGRATIONS);
   const world = { db, searchDb: runtime.SEARCH_DB, runtime, owner: access.principal_ref,
     ...(await prepareQ1Namespace(runtime, db, runtime.SEARCH_DB, access.principal_ref)) };
-  await importAndProject(world);
+  await importAndProject(world, options.include_counterevidence === true
+    ? { content_markdown: COUNTEREVIDENCE_MARKDOWN }
+    : {});
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
   const expiresAt = new Date(nowMs + 3_600_000).toISOString();

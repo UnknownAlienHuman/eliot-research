@@ -34,6 +34,8 @@ export interface CommittedFreezeSynthesisFixtureOptions {
   readonly synthesis_prompt?: string;
   /** Optional manifest admission used by later committed-stage reader fixtures. */
   readonly allowed_verifier_refs?: readonly string[];
+  /** Add a second real projected evidence section for downstream citation fixtures. */
+  readonly include_counterevidence?: boolean;
 }
 
 function futureIso(): string {
@@ -341,9 +343,10 @@ function freezePrompt(
 }
 
 export async function committedFreezeSynthesisFixture(options: CommittedFreezeSynthesisFixtureOptions = {}) {
-  const freeze = await committedEvidenceFreezeFixture(options.allowed_verifier_refs === undefined
-    ? {}
-    : { allowed_verifier_refs: options.allowed_verifier_refs });
+  const freeze = await committedEvidenceFreezeFixture({
+    ...(options.allowed_verifier_refs === undefined ? {} : { allowed_verifier_refs: options.allowed_verifier_refs }),
+    ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
+  });
   const base = await governedModelAttemptFixture("freeze-synthesis", {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
@@ -357,14 +360,27 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
     investigation_id: freeze.investigation_id, principal: freezePrincipal });
   const evidence = stage_five.evidence_pack.resolved_evidence[0];
   if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
+  const supportEvidence = options.include_counterevidence === true
+    ? stage_five.evidence_pack.resolved_evidence.find((item) => item.exact_excerpt.includes("# Support"))
+    : evidence;
+  const counterEvidence = options.include_counterevidence === true
+    ? stage_five.evidence_pack.resolved_evidence.find((item) => item.exact_excerpt.includes("# Counterevidence"))
+    : undefined;
+  if (supportEvidence === undefined ||
+      (options.include_counterevidence === true && (counterEvidence === undefined ||
+        supportEvidence.handle.handle_ref.id === counterEvidence.handle.handle_ref.id &&
+        supportEvidence.handle.handle_ref.revision === counterEvidence.handle.handle_ref.revision))) {
+    throw new Error("stage five fixture did not produce distinct support and counterevidence handles");
+  }
   const candidate_protocol = options.candidate_protocol ?? "v1";
   const synthesis_prompt = options.synthesis_prompt ?? (candidate_protocol === "v2"
     ? "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence."
     : "Produce eliotr.research.synthesis-section-candidate.v1 from the frozen evidence.");
   const candidate = candidate_protocol === "v2"
-    ? JSON.stringify({ schema: "eliotr.research.synthesis-claims-candidate.v2", section_text: evidence.exact_excerpt,
-      material_claims: [{ text: evidence.exact_excerpt, kind: "observation", support_handle_refs: [evidence.handle.handle_ref],
-        counterevidence_handle_refs: [], span: { start: 0, end: evidence.exact_excerpt.length } }] })
+    ? JSON.stringify({ schema: "eliotr.research.synthesis-claims-candidate.v2", section_text: supportEvidence.exact_excerpt,
+      material_claims: [{ text: supportEvidence.exact_excerpt, kind: "observation", support_handle_refs: [supportEvidence.handle.handle_ref],
+        counterevidence_handle_refs: counterEvidence === undefined ? [] : [counterEvidence.handle.handle_ref],
+        span: { start: 0, end: supportEvidence.exact_excerpt.length } }] })
     : JSON.stringify({ schema: "eliotr.research.synthesis-section-candidate.v1",
       section_text: evidence.exact_excerpt, cited_handle_refs: [evidence.handle.handle_ref] });
   let prepared: ModelAttemptReservationInput | null = null;

@@ -182,11 +182,17 @@ function auditPrompt(
   };
 }
 
-async function committedAuditInputFixture() {
+export interface ResearchClaimAuditStageFixtureOptions {
+  /** Include a second real projected counterevidence section in the committed pack. */
+  readonly include_counterevidence?: boolean;
+}
+
+async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtureOptions = {}) {
   const fixture = await committedFreezeSynthesisFixture({
     candidate_protocol: "v2",
     synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
     allowed_verifier_refs: [AUDIT_VERIFIER_REF],
+    ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
   });
   const synthesis = await fixture.freeze.executor.execute(fixture.stage_twelve, principal, fixture.handler.handler);
   const stage13: StageRequest = {
@@ -257,8 +263,10 @@ export interface ResearchClaimAuditStageFixture {
 }
 
 /** Builds committed W1/W2 stages, then composes the real W2 AUDIT handler. */
-export async function researchClaimAuditStageFixture(): Promise<ResearchClaimAuditStageFixture> {
-  const prepared = await committedAuditInputFixture();
+export async function researchClaimAuditStageFixture(
+  options: ResearchClaimAuditStageFixtureOptions = {},
+): Promise<ResearchClaimAuditStageFixture> {
+  const prepared = await committedAuditInputFixture(options);
   const auditInput = await prepared.reader.read({
     request: prepared.stage14,
     principal,
