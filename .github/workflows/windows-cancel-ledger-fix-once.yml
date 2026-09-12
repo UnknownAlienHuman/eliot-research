@@ -1,0 +1,159 @@
+name: windows-cancel-ledger-fix-once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/windows-cancel-ledger-fix-once.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-cancel-ledger-fix-once
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'ci: fix bounded Windows cancellation ledger'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+      - name: Account for exact bounded cancellation aborts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path.cwd()
+          helper_path = root / "tests/integration/browser/exhaustive-workflow-browser.mjs"
+          helper = helper_path.read_text(encoding="utf-8")
+          old_return = '''    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],
+          };'''
+          new_return = '''    mutations: ["/api/v1/research/query", `/api/v1/research/query/${firstWorkflowId}`, `/api/v1/research/query/${relaunchedWorkflowId}`],
+            aborts: [
+              `GET ${new URL(page.url()).origin}/api/v1/research/query/${firstWorkflowId} :: net::ERR_ABORTED`,
+              `GET ${new URL(page.url()).origin}/api/v1/research/query/${relaunchedWorkflowId} :: net::ERR_ABORTED`,
+            ],
+          };'''
+          if helper.count(old_return) != 1:
+              raise SystemExit("exhaustive workflow return anchor must occur exactly once")
+          helper_path.write_text(helper.replace(old_return, new_return, 1), encoding="utf-8", newline="\n")
+
+          owner_path = root / "tests/integration/browser/owner-e2e.mjs"
+          owner = owner_path.read_text(encoding="utf-8")
+
+          old_allowance = '''  const abortAllowed = new Set(aborts);
+            const failures = harness.failedRequestEntries;'''
+          new_allowance = '''  const abortAllowance = new Map();
+            for (const text of aborts) {
+              assert.ok(typeof text === "string" && text.length > 0,
+                `${label}: optional abort allowance must be an exact non-empty string`);
+              abortAllowance.set(text, (abortAllowance.get(text) ?? 0) + 1);
+            }
+            const failures = harness.failedRequestEntries;'''
+          if owner.count(old_allowance) != 1:
+              raise SystemExit("phase abort allowance anchor must occur exactly once")
+          owner = owner.replace(old_allowance, new_allowance, 1)
+
+          old_failure = '''    assert.ok(abortAllowed.has(text), `${label}: unexpected failed request, got: ${text.slice(0, 300)}`);
+              assert.ok(Number.isSafeInteger(failure?.reqId), `${label}: failed request without reqId fails closed: ${text.slice(0, 200)}`);'''
+          new_failure = '''    const remainingAbortAllowance = abortAllowance.get(text) ?? 0;
+              assert.ok(remainingAbortAllowance > 0,
+                `${label}: unexpected or duplicate failed request, got: ${text.slice(0, 300)}`);
+              abortAllowance.set(text, remainingAbortAllowance - 1);
+              assert.ok(Number.isSafeInteger(failure?.reqId), `${label}: failed request without reqId fails closed: ${text.slice(0, 200)}`);'''
+          if owner.count(old_failure) != 1:
+              raise SystemExit("phase failed-request anchor must occur exactly once")
+          owner = owner.replace(old_failure, new_failure, 1)
+
+          old_phase = '''    assertPhaseNetwork(playwright, "exhaustive_workflow", {
+                origins: [bridge.origin],
+                api: exhaustiveWorkflow.api,
+                mutations: exhaustiveWorkflow.mutations,
+                workerOrigins: trackOrigin(bridge.origin),
+              });'''
+          new_phase = '''    assertPhaseNetwork(playwright, "exhaustive_workflow", {
+                origins: [bridge.origin],
+                api: exhaustiveWorkflow.api,
+                mutations: exhaustiveWorkflow.mutations,
+                aborts: exhaustiveWorkflow.aborts,
+                workerOrigins: trackOrigin(bridge.origin),
+              });'''
+          if owner.count(old_phase) != 1:
+              raise SystemExit("exhaustive workflow phase anchor must occur exactly once")
+          owner = owner.replace(old_phase, new_phase, 1)
+
+          old_regression = '''  assert.throws(() => assertPhaseNetwork({ ...base, networkResponses: [{ ...response, serial: 2 }] },
+              "phase-ledger-cross-phase-response", spec), /serial crossed request identity/,
+              "a cross-phase response must fail closed even when URL is identical");
+            return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 2 };'''
+          new_regression = '''  assert.throws(() => assertPhaseNetwork({ ...base, networkResponses: [{ ...response, serial: 2 }] },
+              "phase-ledger-cross-phase-response", spec), /serial crossed request identity/,
+              "a cross-phase response must fail closed even when URL is identical");
+
+            const workflowPath = `/api/v1/research/query/exhaustive-workflow-${"a".repeat(64)}`;
+            const abortText = `GET ${origin}${workflowPath} :: net::ERR_ABORTED`;
+            const abortRequest = Object.freeze({
+              reqId: 3, method: "GET", origin, path: workflowPath, resourceType: "fetch",
+              epoch: 1, serial: 1, opId: 1, docId: 1, role: "exhaustive-recovery", slotId: null,
+            });
+            const abortFailure = Object.freeze({
+              ...abortRequest, text: abortText, errorText: "net::ERR_ABORTED",
+            });
+            const abortHarness = {
+              websockets: [], pageWorkers: [], requests: [abortRequest], networkResponses: [],
+              serviceWorkerFinishedWithoutResponse: [], failedRequestEntries: [abortFailure],
+              context: { serviceWorkers: () => [] },
+            };
+            assert.doesNotThrow(() => assertPhaseNetwork(abortHarness,
+              "phase-ledger-bounded-optional-abort", {
+                origins: [origin], api: [], aborts: [abortText], workerOrigins: [origin],
+              }), "one exact cancellation abort may close its own pending request");
+
+            const duplicateRequest = Object.freeze({ ...abortRequest, reqId: 4 });
+            const duplicateFailure = Object.freeze({ ...abortFailure, reqId: 4 });
+            assert.throws(() => assertPhaseNetwork({
+              ...abortHarness,
+              requests: [abortRequest, duplicateRequest],
+              failedRequestEntries: [abortFailure, duplicateFailure],
+            }, "phase-ledger-duplicate-optional-abort", {
+              origins: [origin], api: [], aborts: [abortText], workerOrigins: [origin],
+            }), /unexpected or duplicate failed request/,
+            "one abort allowance must not hide a second failed request with the same URL");
+            return { protocol: "eliotr.owner-e2e.phase-ledger-identity.v1", state: "PASS", negatives: 3 };'''
+          if owner.count(old_regression) != 1:
+              raise SystemExit("phase ledger regression anchor must occur exactly once")
+          owner_path.write_text(owner.replace(old_regression, new_regression, 1), encoding="utf-8", newline="\n")
+          PY
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify targeted ledger behavior
+        run: |
+          node --check tests/integration/browser/owner-e2e.mjs
+          node --check tests/integration/browser/exhaustive-workflow-browser.mjs
+          node --test --test-name-pattern="L6 phase ledger" tests/integration/browser/library.spec.ts
+          pnpm exec eslint tests/integration/browser/owner-e2e.mjs tests/integration/browser/exhaustive-workflow-browser.mjs
+          git diff --check
+      - name: Commit verified fix to main
+        run: |
+          git rm .github/workflows/windows-cancel-ledger-fix-once.yml
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add tests/integration/browser/owner-e2e.mjs tests/integration/browser/exhaustive-workflow-browser.mjs
+          git diff --cached --check
+          git commit -m "test: account for bounded workflow cancellation aborts"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
