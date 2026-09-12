@@ -263,3 +263,6 @@ original viewport.
 The browser backend is controlled and these checks are client/workflow acceptance only; they are not
 live owner authorization, MCP client or provider qualification. This is a bounded ER-25 checkpoint and
 does not close the broader theme or project work.
+
+Disabled upload, workflow, Recent scans and Retrieval actions share the existing muted treatment,
+so their visible state matches their availability without changing layout or the calm palette.
