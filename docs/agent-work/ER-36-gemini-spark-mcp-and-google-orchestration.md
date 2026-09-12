@@ -30,6 +30,10 @@ create a reverse authority channel and do not let a Google transport result prom
 - `docs/implementation/gemini-spark-mcp.md`
 - `apps/eliotr-core/src/http-special-routes.ts`
 - `apps/eliotr-core/src/workspace-mcp-candidate-store.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`
+- `apps/eliotr-core/src/mcp-client-diagnostic-http.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostic-http.test.ts`
+- `apps/eliotr-core/test/mcp-client-diagnostic-roundtrip.test.ts`
 - `apps/eliotr-core/test/workspace-mcp-candidate-store.test.ts`
 - `apps/eliotr-core/src/composition-root.ts`
 - `apps/eliotr-core/test/index.test.ts`
