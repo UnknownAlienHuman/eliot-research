@@ -15,6 +15,7 @@ outside the paths below.
 - `apps/eliotr-core/src/research-workflow.ts`
 - `infra/workflows/**`
 - `packages/cloudflare-research/**`
+- `packages/cloudflare-research-stages/**`
 - `packages/cloudflare-workflows/**`
 - `apps/eliotr-core/test/research-workflow.test.ts`
 - `apps/eliotr-core/test/research-workflow-fixture.ts`
@@ -22,8 +23,14 @@ outside the paths below.
 
 The `cloudflare-workflows` package owns the W2 executor, checkpoint store, object I/O, schemas and
 committed-stage lineage readback. `cloudflare-research` composes its research handlers on that runtime
-and retains the existing public exports. This extraction changes no stored protocol, migration or
+and retains the workflow compatibility exports. This extraction changes no stored protocol, migration or
 handler generation; neither package may introduce a second checkpoint authority.
+
+`cloudflare-research-stages` holds the later governed stage adapters above these
+existing boundaries. The Worker composes it directly; existing research and
+workflow packages must not import it. It reuses their committed readback and
+model-attempt authorities without increasing the per-package source budget.
+The stage-13 verification handler and result codec are exported from this later-stage package.
 
 The durable model-route D1 registry belongs to `cloudflare-research` alongside model-attempt persistence.
 Its provider contracts and codecs are imported from ER-16's `@eliotr/cloudflare-ai` public API.

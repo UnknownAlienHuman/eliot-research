@@ -70,6 +70,9 @@
       "path": "../../packages/cloudflare-research"
     },
     {
+      "path": "../../packages/cloudflare-research-stages"
+    },
+    {
       "path": "../../packages/cloudflare-workflows"
     },
     {

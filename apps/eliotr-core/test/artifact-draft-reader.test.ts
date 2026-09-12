@@ -4,7 +4,7 @@ import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-
 import type { OperationIntent } from "@eliotr/contracts";
 import { evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
-import { decodeResearchVerificationResult } from "../../../packages/cloudflare-research/src/research-verification-result.js";
+import { decodeResearchVerificationResult } from "@eliotr/cloudflare-research-stages";
 import type {
   ResearchMaterializeContext,
   ResearchMaterializeTrustedMetadata,

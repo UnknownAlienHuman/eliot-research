@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-research";
+import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import { freezeFixture, principal } from "./research-evidence-freeze-fixture.js";
 import { committedFreezeSynthesisFixture } from "./research-synthesis-fixture.js";
 import { createResearchStageHandlerFactory, SERVER_OWNED_FREEZE_HANDLER_GENERATION } from "../src/research-stage-handlers.js";
 import { createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
-import { createResearchVerificationStageHandler } from "../../../packages/cloudflare-research/src/research-verification-stage-handler.js";
-import { decodeResearchVerificationResult } from "../../../packages/cloudflare-research/src/research-verification-result.js";
+import {
+  createResearchVerificationStageHandler,
+  decodeResearchVerificationResult,
+  decodeResearchVerificationResultV2,
+  type ResearchVerificationV2Config,
+} from "@eliotr/cloudflare-research-stages";
 import { readWorkflowObject } from "@eliotr/cloudflare-workflows";
 
 
@@ -109,6 +114,133 @@ describe("FREEZE_EVIDENCE over committed exploratory W2 stages", () => {
     expect(result.source_verification.requested_handle_refs).toEqual([evidence.handle.handle_ref]);
     expect(result.source_verification.resolved[0]?.excerpt_sha256).toBe(evidence.handle.excerpt_sha256);
     expect(result.source_verification.resolved[0]?.authorization_receipt_ref).toBe((await f.freeze.navigation.current()).authorization_receipt_ref);
+  }, 30_000);
+
+  it("verifies a strict v2 synthesis candidate through current source readback and replays one checkpoint", async () => {
+    const f = await committedFreezeSynthesisFixture({
+      candidate_protocol: "v2",
+      synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
+    });
+    const synthesis = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    const stage13: StageRequest = { ...f.stage_twelve, stage: "VERIFY", investigation_ref: synthesis.investigation_ref,
+      input_manifest: synthesis.output_manifest };
+    const evidence = f.stage_five.evidence_pack.resolved_evidence[0];
+    if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
+    const config: ResearchVerificationV2Config = {
+      section_ref: { id: "verification-section-v2", revision: 1 },
+      required_precision: "exact-excerpt",
+      required_source_class: "official",
+    };
+    const verification = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: f.freeze.navigation, ledger: f.freeze.ledger,
+      verification: {
+        database: f.freeze.db, work_bucket: f.freeze.bucket, navigation: f.freeze.navigation,
+        evidence_resolver: f.freeze.resolver,
+        recheck_authority: async () => ({ investigation_id: f.freeze.investigation_id,
+          scope_snapshot_id: f.freeze.scope.snapshot_id, scope_snapshot_revision: f.freeze.scope.revision }),
+        context: createEvidenceFreezeVerificationContextReader({
+          database: f.freeze.db, work_bucket: f.freeze.bucket, manifest_store: f.freeze.freeze_store,
+          read_stage_five: f.freeze.readers.read_stage_five,
+        }, f.freeze.navigation, f.freeze.readers),
+        v2_config: config,
+      },
+    })("VERIFY");
+    config.required_precision = "mutated-after-handler-creation";
+    config.section_ref.id = "mutated-after-handler-creation";
+    const first = await f.freeze.executor.execute(stage13, principal, verification);
+    const result = await decodeResearchVerificationResultV2(await readWorkflowObject(f.freeze.bucket, first.output_manifest, true));
+    const modelOutput = await f.freeze.db.prepare(
+      "SELECT output_sha256 FROM research_model_output WHERE stage_attempt_ref=?1 AND stage_request_sha256=?2 LIMIT 1",
+    ).bind(synthesis.attempt_ref, synthesis.request_sha256).first<{ readonly output_sha256: string }>();
+    expect(result.synthesis.output_sha256).toBe(modelOutput?.output_sha256);
+    expect(result.normalization.section_ref).toEqual({ id: "verification-section-v2", revision: 1 });
+    expect(result.normalization.required_precision).toBe("exact-excerpt");
+    expect(result.normalization.required_source_class).toBe("official");
+    expect(result.normalization.claims).toHaveLength(1);
+    expect(result.normalization.claims[0]?.claim_kind).toBe("observation");
+    expect(result.normalization.claims[0]?.support_handle_refs).toEqual([evidence.handle.handle_ref]);
+    expect(result.normalization.claims[0]?.counterevidence_handle_refs).toEqual([]);
+    expect(result.normalization.cited_handle_refs).toEqual([evidence.handle.handle_ref]);
+    expect(result.source_verification.requested_handle_refs).toEqual([evidence.handle.handle_ref]);
+    expect(result.source_verification.resolved[0]?.excerpt_sha256).toBe(evidence.handle.excerpt_sha256);
+    expect(result.semantic_verification).toBe("NOT_EXECUTED");
+    expect(f.provider_calls()).toBe(1);
+    const firstCheckpoints = await f.freeze.db.prepare(
+      "SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=?2",
+    ).bind(f.freeze.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf("VERIFY")).first<{ readonly n: number }>();
+    expect(firstCheckpoints?.n).toBe(1);
+
+    const replay = await f.freeze.executor.execute(stage13, principal, verification);
+    expect(replay.receipt_ref).toBe(first.receipt_ref);
+    expect(f.provider_calls()).toBe(1);
+    const replayCheckpoints = await f.freeze.db.prepare(
+      "SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=?2",
+    ).bind(f.freeze.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf("VERIFY")).first<{ readonly n: number }>();
+    expect(replayCheckpoints?.n).toBe(1);
+  }, 30_000);
+
+  it("refuses v1 synthesis content when a v2 config is present without creating VERIFY state", async () => {
+    const f = await committedFreezeSynthesisFixture();
+    const synthesis = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    const stage13: StageRequest = { ...f.stage_twelve, stage: "VERIFY", investigation_ref: synthesis.investigation_ref,
+      input_manifest: synthesis.output_manifest };
+    const handler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: f.freeze.navigation, ledger: f.freeze.ledger,
+      verification: {
+        database: f.freeze.db, work_bucket: f.freeze.bucket, navigation: f.freeze.navigation,
+        evidence_resolver: f.freeze.resolver,
+        recheck_authority: async () => ({ investigation_id: f.freeze.investigation_id,
+          scope_snapshot_id: f.freeze.scope.snapshot_id, scope_snapshot_revision: f.freeze.scope.revision }),
+        context: createEvidenceFreezeVerificationContextReader({
+          database: f.freeze.db, work_bucket: f.freeze.bucket, manifest_store: f.freeze.freeze_store,
+          read_stage_five: f.freeze.readers.read_stage_five,
+        }, f.freeze.navigation, f.freeze.readers),
+        v2_config: { section_ref: { id: "verification-section-v2", revision: 1 }, required_precision: "exact-excerpt", required_source_class: "official" },
+      },
+    })("VERIFY");
+    const inputBytes = await readWorkflowObject(f.freeze.bucket, stage13.input_manifest, true);
+    await expect(handler({ request: stage13, principal, input_bytes: inputBytes,
+      attempt_ref: "verification-v2-v1-content", budget_receipt_ref: "verification-v2-budget" }))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+    const checkpoints = await f.freeze.db.prepare(
+      "SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=?2",
+    ).bind(f.freeze.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf("VERIFY")).first<{ readonly n: number }>();
+    expect(checkpoints?.n).toBe(0);
+    expect(f.provider_calls()).toBe(1);
+  }, 30_000);
+
+  it("refuses v2 VERIFY after the committed scope grant is revoked without creating VERIFY state", async () => {
+    const f = await committedFreezeSynthesisFixture({ candidate_protocol: "v2" });
+    const synthesis = await f.freeze.executor.execute(f.stage_twelve, principal, f.handler.handler);
+    const stage13: StageRequest = { ...f.stage_twelve, stage: "VERIFY", investigation_ref: synthesis.investigation_ref,
+      input_manifest: synthesis.output_manifest };
+    const handler = createResearchStageHandlerFactory({
+      kind: "server-owned-exploratory", generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+      navigation: f.freeze.navigation, ledger: f.freeze.ledger,
+      verification: {
+        database: f.freeze.db, work_bucket: f.freeze.bucket, navigation: f.freeze.navigation,
+        evidence_resolver: f.freeze.resolver,
+        recheck_authority: async () => ({ investigation_id: f.freeze.investigation_id,
+          scope_snapshot_id: f.freeze.scope.snapshot_id, scope_snapshot_revision: f.freeze.scope.revision }),
+        context: createEvidenceFreezeVerificationContextReader({
+          database: f.freeze.db, work_bucket: f.freeze.bucket, manifest_store: f.freeze.freeze_store,
+          read_stage_five: f.freeze.readers.read_stage_five,
+        }, f.freeze.navigation, f.freeze.readers),
+        v2_config: { section_ref: { id: "verification-section-v2", revision: 1 }, required_precision: "exact-excerpt", required_source_class: "official" },
+      },
+    })("VERIFY");
+    await f.freeze.db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3")
+      .bind(f.freeze.scope.snapshot_id, f.freeze.scope.revision, principal.principal_ref).run();
+    const inputBytes = await readWorkflowObject(f.freeze.bucket, stage13.input_manifest, true);
+    await expect(handler({ request: stage13, principal, input_bytes: inputBytes,
+      attempt_ref: "verification-v2-revoked", budget_receipt_ref: "verification-v2-revoked-budget" }))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    const checkpoints = await f.freeze.db.prepare(
+      "SELECT COUNT(*) AS n FROM research_workflow_checkpoint WHERE operation_id=?1 AND stage_index=?2",
+    ).bind(f.freeze.operation_id, RESEARCH_WORKFLOW_STAGES.indexOf("VERIFY")).first<{ readonly n: number }>();
+    expect(checkpoints?.n).toBe(0);
   }, 30_000);
 
   it("refuses VERIFY when the committed scope grant is revoked", async () => {

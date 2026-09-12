@@ -12,9 +12,11 @@ import {
   type ResearchMaterializeStageDependencies,
   createResearchReportMaterializeStageHandler,
   type ResearchReportMaterializeStageDependencies,
+} from "@eliotr/cloudflare-research";
+import {
   createResearchVerificationStageHandler,
   type ResearchVerificationStageDependencies,
-} from "@eliotr/cloudflare-research";
+} from "@eliotr/cloudflare-research-stages";
 import {
   createRetrieveBranchesStageHandler,
   type RetrieveBranchesStageDependencies,

@@ -1,7 +1,10 @@
 # Durable research stage checkpoints — W2a + W2
 
 `@eliotr/cloudflare-workflows` implements the D1/R2 checkpoint boundary, with compatibility exports
-from `@eliotr/cloudflare-research`. Research-specific handlers remain in the research adapter.
+from `@eliotr/cloudflare-research`. The later research-stage adapters live in
+`@eliotr/cloudflare-research-stages`, which the Worker composes directly over both packages.
+Stage-13 verification and its result codec are exported by this later-stage package; their v1
+persisted protocol is unchanged by the move.
 W2a proved single-stage D1/R2 checkpoints; W2 adds the monotone bounded stage executor and the
 executable `ResearchWorkflow` binding over the same boundary. Owner HTTP composition can start runs
 and read their durable status. Governed model/evidence handlers (W3/W4) and live qualification remain open.
@@ -128,6 +131,20 @@ produce server-owned claim identities. One verifier response covers the exact cl
 input digest; source/excerpt support are model observations, while reference resolution, required
 checks and verifier qualification remain server facts. Candidate tests passed 5/5 at `1751789` and
 semantic batch tests 5/5 at `c20797a`. These pure modules do not yet qualify an actual stage-14 call.
+
+Configured source verification now accepts an explicit server-owned `v2_config` with section identity,
+required precision and source class. It snapshots those settings before asynchronous work, accepts
+only `synthesis-claims-candidate.v2` in that mode, and resolves the exact normalized support and
+counterevidence union. Its canonical v2 result binds the committed synthesis digest, normalized claim
+identities and source readbacks while retaining `semantic_verification: NOT_EXECUTED`. The result is
+bounded to 64 KiB. Omitting v2 configuration retains the v1 parser and persisted result protocol.
+
+On 2026-09-12 under Node 22.23.2, the actual local Worker/D1/R2 v2 success and replay case passed
+alongside the existing v1 source case and two direct factory-handler refusal cases (v1 content in v2
+mode and revoked scope access): four selected passed, five unchanged cases skipped. The v2 codec's
+five cases passed, including valid canonical payloads at exactly 65,536 and 65,537 bytes; only the
+first is accepted. Strict Worker fixture TypeScript passed. Semantic audit and v2 materialization
+remain separate unfinished stages.
 
 The v3 factory also selects the actual stage-13 `VERIFY` handler. It rereads the committed synthesis
 attempt and provider output, derives the requested source handles from that output, and resolves them
