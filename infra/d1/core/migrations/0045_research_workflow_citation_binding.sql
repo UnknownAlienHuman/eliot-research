@@ -60,40 +60,65 @@ BEGIN
     JOIN research_workflow_checkpoint predecessor_checkpoint
       ON predecessor_checkpoint.operation_id = predecessor.operation_id
       AND predecessor_checkpoint.stage_index = predecessor.stage_index
-    WHERE r.operation_id = NEW.operation_id
-      AND r.state = 'ACTIVE'
-      AND r.next_stage_index = 15
-      AND r.current_revision = a.expected_revision
-      AND r.ledger_revision = a.expected_revision
-      AND a.state = 'STARTED'
-      AND a.output_json IS NULL
-      AND a.attempt_ref = NEW.attempt_ref
-      AND a.request_sha256 = NEW.request_sha256
-      AND json_extract(a.request_json, '$.protocol') IS 'eliotr.workflow-stage.v1'
-      AND json_extract(a.request_json, '$.operation_id') IS r.operation_id
-      AND json_extract(a.request_json, '$.stage') IS 'RESOLVE_CITATIONS'
-      AND json_extract(a.request_json, '$.investigation_ref.id') IS r.investigation_id
-      AND json_extract(a.request_json, '$.investigation_ref.revision') IS r.current_revision
-      AND json_extract(a.request_json, '$.idempotency_key') IS r.idempotency_key
-      AND json_extract(a.request_json, '$.handler_generation') IS r.handler_generation
-      AND json_extract(a.request_json, '$.input_manifest') IS predecessor.output_json
-      AND predecessor.state = 'COMMITTED'
-      AND predecessor.output_json IS NOT NULL
-      AND json_extract(predecessor.request_json, '$.protocol') IS 'eliotr.workflow-stage.v1'
-      AND json_extract(predecessor.request_json, '$.operation_id') IS r.operation_id
-      AND json_extract(predecessor.request_json, '$.stage') IS 'AUDIT_CLAIMS'
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.protocol') IS 'eliotr.workflow-checkpoint.v1'
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.operation_id') IS r.operation_id
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.stage') IS 'AUDIT_CLAIMS'
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.attempt_ref') IS predecessor.attempt_ref
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.request_sha256') IS predecessor.request_sha256
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.input_manifest_ref') IS
-        json_extract(predecessor.request_json, '$.input_manifest.object_ref')
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.output_manifest') IS predecessor.output_json
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.investigation_ref.id') IS r.investigation_id
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.investigation_ref.revision') IS r.current_revision
-      AND json_extract(predecessor_checkpoint.receipt_json, '$.engine_state') IS 'CHECKPOINTED'
-      AND predecessor_checkpoint.request_sha256 IS predecessor.request_sha256
+    -- SQLite's expression-depth limit is sensitive to a long left-associative
+    -- AND chain (the current-run view is expanded here).  These pairs retain
+    -- the same three-valued SQL conjunction while keeping the tree balanced.
+    WHERE (
+      (
+        (
+          (r.operation_id = NEW.operation_id AND r.state = 'ACTIVE')
+          AND (r.next_stage_index = 15 AND r.current_revision = a.expected_revision)
+        )
+        AND (
+          (r.ledger_revision = a.expected_revision AND a.state = 'STARTED')
+          AND (a.output_json IS NULL AND a.attempt_ref = NEW.attempt_ref)
+        )
+      )
+      AND (
+        (
+          (a.request_sha256 = NEW.request_sha256
+            AND json_extract(a.request_json, '$.protocol') IS 'eliotr.workflow-stage.v1')
+          AND (json_extract(a.request_json, '$.operation_id') IS r.operation_id
+            AND json_extract(a.request_json, '$.stage') IS 'RESOLVE_CITATIONS')
+        )
+        AND (
+          (json_extract(a.request_json, '$.investigation_ref.id') IS r.investigation_id
+            AND json_extract(a.request_json, '$.investigation_ref.revision') IS r.current_revision)
+          AND (json_extract(a.request_json, '$.idempotency_key') IS r.idempotency_key
+            AND json_extract(a.request_json, '$.handler_generation') IS r.handler_generation)
+        )
+      )
+    )
+    AND (
+      (
+        (json_extract(a.request_json, '$.input_manifest') IS predecessor.output_json
+          AND predecessor.state = 'COMMITTED')
+        AND (predecessor.output_json IS NOT NULL
+          AND json_extract(predecessor.request_json, '$.protocol') IS 'eliotr.workflow-stage.v1')
+      )
+      AND (
+        (json_extract(predecessor.request_json, '$.operation_id') IS r.operation_id
+          AND json_extract(predecessor.request_json, '$.stage') IS 'AUDIT_CLAIMS')
+        AND (json_extract(predecessor_checkpoint.receipt_json, '$.protocol') IS 'eliotr.workflow-checkpoint.v1'
+          AND json_extract(predecessor_checkpoint.receipt_json, '$.operation_id') IS r.operation_id)
+      )
+    )
+    AND (
+      (
+        (json_extract(predecessor_checkpoint.receipt_json, '$.stage') IS 'AUDIT_CLAIMS'
+          AND json_extract(predecessor_checkpoint.receipt_json, '$.attempt_ref') IS predecessor.attempt_ref)
+        AND (json_extract(predecessor_checkpoint.receipt_json, '$.request_sha256') IS predecessor.request_sha256
+          AND json_extract(predecessor_checkpoint.receipt_json, '$.input_manifest_ref') IS
+            json_extract(predecessor.request_json, '$.input_manifest.object_ref'))
+      )
+      AND (
+        (json_extract(predecessor_checkpoint.receipt_json, '$.output_manifest') IS predecessor.output_json
+          AND json_extract(predecessor_checkpoint.receipt_json, '$.investigation_ref.id') IS r.investigation_id)
+        AND (json_extract(predecessor_checkpoint.receipt_json, '$.investigation_ref.revision') IS r.current_revision
+          AND json_extract(predecessor_checkpoint.receipt_json, '$.engine_state') IS 'CHECKPOINTED')
+      )
+    )
+    AND predecessor_checkpoint.request_sha256 IS predecessor.request_sha256
   );
 END;
 
@@ -119,23 +144,36 @@ BEGIN
       AND grant_row.principal_ref = receipt.principal_ref
       AND grant_row.credential_generation = receipt.credential_generation
       AND grant_row.authorization_receipt_ref = receipt.authorization_receipt_ref
-    WHERE r.operation_id = NEW.operation_id
-      AND r.state = 'ACTIVE'
-      AND receipt.receipt_sha256 = NEW.receipt_sha256
-      AND receipt.scope_snapshot_id = r.scope_snapshot_id
-      AND receipt.scope_snapshot_revision = r.scope_snapshot_revision
-      AND receipt.principal_ref = r.principal_ref
-      AND receipt.credential_generation = r.credential_generation
-      AND receipt.authorization_receipt_ref = r.authorization_receipt_ref
-      AND receipt.client_class = grant_row.client_class
-      AND grant_row.policy_authority_ref = r.policy_authority_ref
-      AND grant_row.state = 'ACTIVE'
-      AND julianday(grant_row.expires_at) > julianday('now')
-      AND json_type(grant_row.allowed_use_json) = 'array'
-      AND EXISTS (
-        SELECT 1 FROM json_each(grant_row.allowed_use_json) u
-        WHERE u.type = 'text' AND u.value = 'research'
+    -- Keep the current-workflow, receipt, and grant predicates balanced.  The
+    -- current-run view expands into its own expression tree in D1/SQLite.
+    WHERE (
+      (
+        (r.operation_id = NEW.operation_id AND r.state = 'ACTIVE')
+        AND (receipt.receipt_sha256 = NEW.receipt_sha256
+          AND receipt.scope_snapshot_id = r.scope_snapshot_id)
       )
+      AND (
+        (receipt.scope_snapshot_revision = r.scope_snapshot_revision
+          AND receipt.principal_ref = r.principal_ref)
+        AND (receipt.credential_generation = r.credential_generation
+          AND receipt.authorization_receipt_ref = r.authorization_receipt_ref)
+      )
+    )
+    AND (
+      (
+        (receipt.client_class = grant_row.client_class
+          AND grant_row.policy_authority_ref = r.policy_authority_ref)
+        AND (grant_row.state = 'ACTIVE'
+          AND julianday(grant_row.expires_at) > julianday('now'))
+      )
+      AND (
+        json_type(grant_row.allowed_use_json) = 'array'
+        AND EXISTS (
+          SELECT 1 FROM json_each(grant_row.allowed_use_json) u
+          WHERE u.type = 'text' AND u.value = 'research'
+        )
+      )
+    )
   );
 END;
 
@@ -155,10 +193,15 @@ BEGIN
       ON scope.snapshot_id = receipt.scope_snapshot_id
       AND scope.revision = receipt.scope_snapshot_revision
     CROSS JOIN json_each(receipt.resolved_json) member
-    WHERE r.operation_id = NEW.operation_id
-      AND receipt.receipt_sha256 = NEW.receipt_sha256
-      AND scope.invalidated_at IS NULL
-      AND julianday(scope.expires_at) > julianday('now')
+    -- Balance both the outer current-scope check and the per-member
+    -- reconciliation predicate.  Every leaf remains the same guard; only
+    -- associative AND grouping changes to stay below SQLite's depth limit.
+    WHERE (
+      (r.operation_id = NEW.operation_id
+        AND receipt.receipt_sha256 = NEW.receipt_sha256)
+      AND (scope.invalidated_at IS NULL
+        AND julianday(scope.expires_at) > julianday('now'))
+    )
       AND NOT EXISTS (
         SELECT 1
         FROM evidence_handle h
@@ -187,55 +230,78 @@ BEGIN
         JOIN source_admission_decision admission
           ON admission.source_revision_ref = source_revision.source_revision_ref
           AND admission.decision = 'ADMITTED'
-        WHERE h.handle_id = json_extract(member.value, '$.handle_ref.id')
-          AND h.revision = json_extract(member.value, '$.handle_ref.revision')
-          AND h.scope_snapshot_id = receipt.scope_snapshot_id
-          AND h.scope_snapshot_revision = receipt.scope_snapshot_revision
-          AND h.terminal_state = 'LIVE'
-          AND evidence_receipt.terminal_state = 'LIVE'
-          AND evidence_receipt.purge_state = 'LIVE'
-          AND evidence_receipt.scope_snapshot_id = receipt.scope_snapshot_id
-          AND evidence_receipt.scope_snapshot_revision = receipt.scope_snapshot_revision
-          AND evidence_receipt.authorization_receipt_ref = receipt.authorization_receipt_ref
-          AND evidence_receipt.source_revision_ref = source_revision.source_revision_ref
-          AND evidence_receipt.source_owner_generation = source_revision.source_owner_generation
-          AND evidence_receipt.source_revision_content_sha256 = source_revision.content_sha256
-          AND h.source_revision_ref = source_revision.source_revision_ref
-          AND h.source_owner_generation = source_revision.source_owner_generation
-          AND h.object_residency_key_digest = source_revision.object_residency_key_digest
-          AND source_row.source_owner_generation = source_revision.source_owner_generation
-          AND source_revision.purge_state = 'LIVE'
-          AND admission.decision_receipt_ref = (
-            SELECT chosen.decision_receipt_ref
-            FROM source_admission_decision chosen
-            WHERE chosen.source_revision_ref = source_revision.source_revision_ref
-              AND chosen.decision = 'ADMITTED'
-            ORDER BY chosen.created_at DESC, chosen.decision_receipt_ref DESC
-            LIMIT 1
+        WHERE (
+          (
+            (
+              (h.handle_id = json_extract(member.value, '$.handle_ref.id')
+                AND h.revision = json_extract(member.value, '$.handle_ref.revision'))
+              AND (h.scope_snapshot_id = receipt.scope_snapshot_id
+                AND h.scope_snapshot_revision = receipt.scope_snapshot_revision)
+            )
+            AND (
+              (h.terminal_state = 'LIVE'
+                AND evidence_receipt.terminal_state = 'LIVE')
+              AND ((evidence_receipt.purge_state = 'LIVE'
+                AND evidence_receipt.scope_snapshot_id = receipt.scope_snapshot_id)
+                AND (evidence_receipt.scope_snapshot_revision = receipt.scope_snapshot_revision
+                  AND evidence_receipt.authorization_receipt_ref = receipt.authorization_receipt_ref))
+            )
           )
-          AND admission.source_namespace_id = source_row.source_namespace_id
-          AND admission.owner_system_id = source_row.source_owner_system_id
-          AND admission.source_owner_generation = source_revision.source_owner_generation
-          AND admission.object_residency_key_digest = source_revision.object_residency_key_digest
-          AND (admission.expires_at IS NULL OR julianday(admission.expires_at) > julianday('now'))
-          AND json_type(admission.allowed_use_json) = 'array'
-          AND EXISTS (
-            SELECT 1 FROM json_each(admission.allowed_use_json) u
-            WHERE u.type = 'text' AND u.value = 'research'
+          AND (
+            (
+              (evidence_receipt.source_revision_ref = source_revision.source_revision_ref
+                AND evidence_receipt.source_owner_generation = source_revision.source_owner_generation)
+              AND ((evidence_receipt.source_revision_content_sha256 = source_revision.content_sha256
+                AND h.source_revision_ref = source_revision.source_revision_ref)
+                AND (h.source_owner_generation = source_revision.source_owner_generation
+                  AND h.object_residency_key_digest = source_revision.object_residency_key_digest))
+            )
+            AND (
+              (source_row.source_owner_generation = source_revision.source_owner_generation
+                AND source_revision.purge_state = 'LIVE')
+              AND (admission.decision_receipt_ref = (
+                SELECT chosen.decision_receipt_ref
+                FROM source_admission_decision chosen
+                WHERE chosen.source_revision_ref = source_revision.source_revision_ref
+                  AND chosen.decision = 'ADMITTED'
+                ORDER BY chosen.created_at DESC, chosen.decision_receipt_ref DESC
+                LIMIT 1
+              )
+                AND (admission.source_namespace_id = source_row.source_namespace_id
+                  AND admission.owner_system_id = source_row.source_owner_system_id))
+            )
           )
-          AND EXISTS (
-            SELECT 1 FROM json_each(scope.member_source_revision_refs_json) scope_member
-            WHERE scope_member.value = source_revision.source_revision_ref
+        )
+        AND (
+          (
+            (admission.source_owner_generation = source_revision.source_owner_generation
+              AND admission.object_residency_key_digest = source_revision.object_residency_key_digest)
+            AND ((admission.expires_at IS NULL
+              OR julianday(admission.expires_at) > julianday('now'))
+              AND json_type(admission.allowed_use_json) = 'array')
           )
-          AND EXISTS (
+          AND (
+            EXISTS (
+              SELECT 1 FROM json_each(admission.allowed_use_json) u
+              WHERE u.type = 'text' AND u.value = 'research'
+            )
+            AND EXISTS (
+              SELECT 1 FROM json_each(scope.member_source_revision_refs_json) scope_member
+              WHERE scope_member.value = source_revision.source_revision_ref
+            )
+          )
+        )
+        AND (
+          (EXISTS (
             SELECT 1 FROM json_each(scope.source_owner_generations_json) scope_generation
             WHERE scope_generation.key = source_revision.source_revision_ref
               AND scope_generation.value = source_revision.source_owner_generation
           )
-          AND evidence_receipt.excerpt_sha256 = json_extract(member.value, '$.excerpt_sha256')
-          AND h.excerpt_sha256 = json_extract(member.value, '$.excerpt_sha256')
-          AND (evidence_receipt.receipt_id || ':' || evidence_receipt.revision) =
-            json_extract(member.value, '$.verification_receipt_ref')
+            AND evidence_receipt.excerpt_sha256 = json_extract(member.value, '$.excerpt_sha256'))
+          AND (h.excerpt_sha256 = json_extract(member.value, '$.excerpt_sha256')
+            AND (evidence_receipt.receipt_id || ':' || evidence_receipt.revision) =
+              json_extract(member.value, '$.verification_receipt_ref'))
+        )
       )
   );
 END;
