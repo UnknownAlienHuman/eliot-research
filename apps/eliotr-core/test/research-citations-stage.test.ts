@@ -78,6 +78,35 @@ async function citationReceiptRow(
   }>();
 }
 
+async function citationBindingRow(
+  fixture: Awaited<ReturnType<typeof researchClaimAuditStageFixture>>,
+  operationId: string,
+): Promise<{
+  readonly operation_id: string;
+  readonly stage_index: number;
+  readonly attempt_ref: string;
+  readonly request_sha256: string;
+  readonly receipt_id: string;
+  readonly receipt_revision: number;
+  readonly receipt_sha256: string;
+  readonly bound_at: string;
+} | null> {
+  return fixture.fixture.freeze.db.prepare(
+    "SELECT operation_id,stage_index,attempt_ref,request_sha256,receipt_id,receipt_revision, " +
+      "receipt_sha256,bound_at FROM research_workflow_citation_binding " +
+      "WHERE operation_id=?1 AND stage_index=?2 LIMIT 1",
+  ).bind(operationId, RESEARCH_WORKFLOW_STAGES.indexOf("RESOLVE_CITATIONS")).first<{
+    readonly operation_id: string;
+    readonly stage_index: number;
+    readonly attempt_ref: string;
+    readonly request_sha256: string;
+    readonly receipt_id: string;
+    readonly receipt_revision: number;
+    readonly receipt_sha256: string;
+    readonly bound_at: string;
+  }>();
+}
+
 async function receiptCounts(
   fixture: Awaited<ReturnType<typeof researchClaimAuditStageFixture>>,
 ): Promise<{ readonly evidence: number; readonly citation: number }> {
@@ -208,6 +237,21 @@ describe("RESOLVE_CITATIONS W2 over committed AUDIT_CLAIMS", () => {
     expect(row.resolved_count).toBe(receipt.resolved_count);
     expect(row.all_material_citations_resolved).toBe(1);
     expect(row.verified).toBe(1);
+    const binding = await citationBindingRow(fixture, stage15.operation_id);
+    expect(binding).toEqual({
+      operation_id: stage15.operation_id,
+      stage_index: RESEARCH_WORKFLOW_STAGES.indexOf("RESOLVE_CITATIONS"),
+      attempt_ref: first.attempt_ref,
+      request_sha256: first.request_sha256,
+      receipt_id: receipt.receipt_ref.id,
+      receipt_revision: receipt.receipt_ref.revision,
+      receipt_sha256: row.receipt_sha256,
+      bound_at: expect.any(String),
+    });
+    if (binding === null) throw new Error("citation workflow binding row is missing");
+    expect(binding.bound_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+    );
 
     const readbackReceiptCounts = await receiptCounts(fixture);
     const readbackProviderCalls = fixture.fixture.provider_calls();

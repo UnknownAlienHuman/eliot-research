@@ -294,6 +294,9 @@ async function resolveAndValidate(
   refs: readonly VersionedRef[],
   entries: ReadonlyMap<string, ResearchEvidencePackEntry>,
   context: EvidenceFreezeSynthesisContext,
+  operationId: string,
+  attemptRef: string,
+  requestSha256: string,
 ): Promise<{
   readonly receipt: CitationResolutionReceipt;
   readonly evidence: readonly ResolvedEvidence[];
@@ -323,6 +326,11 @@ async function resolveAndValidate(
       handle_refs: refs,
       scope_snapshot_ref: context.freeze.scope_snapshot_ref,
       access: navigationAccess,
+      attempt_binding: {
+        operation_id: operationId,
+        attempt_ref: attemptRef,
+        request_sha256: requestSha256,
+      },
     });
   } catch { return failAuthority(); }
   const receiptParsed = CitationResolutionReceiptSchema.safeParse(result.receipt);
@@ -405,7 +413,16 @@ export function createResearchCitationsStageHandler(
     const predecessorBeforeText = stableLineage(predecessor);
     const w1Before = await checkpoints.head(request.investigation_ref.id);
     if (w1Before === null || stableContext({ ...context, w1_head: w1Before }) !== contextBeforeText) return failAuthority();
-    const resolution = await resolveAndValidate(dependencies, navigationAccess, refs, entries, context);
+    const resolution = await resolveAndValidate(
+      dependencies,
+      navigationAccess,
+      refs,
+      entries,
+      context,
+      request.operation_id,
+      attemptRef,
+      requestSha256,
+    );
     let contextAfter: EvidenceFreezeSynthesisContext;
     try { contextAfter = await dependencies.context.read({ request, principal, input_bytes: inputBytes }); }
     catch (error) {
