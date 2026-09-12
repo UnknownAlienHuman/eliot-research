@@ -9,6 +9,7 @@ import {
 import type { RouteFingerprint } from "@eliotr/platform-cloudflare";
 import {
   createD1ModelGatewayFingerprintStore,
+  readD1ModelGatewayFingerprint,
   type ResearchModelFingerprintStoreOptions,
 } from "../../../packages/cloudflare-research/src/research-model-fingerprint-store.js";
 
@@ -110,6 +111,8 @@ describe("D1 model gateway fingerprint store over actual Worker D1", () => {
     await gateway.putImmutable(newest, newestDigest);
     await gateway.putImmutable(isolated, isolatedDigest);
 
+    await expect(readD1ModelGatewayFingerprint(runtime.CORE_DB, `route-fingerprint-${oldDigest}`)).resolves.toEqual(old);
+    await expect(readD1ModelGatewayFingerprint(runtime.CORE_DB, "route-fingerprint-missing")).resolves.toBeNull();
     await expect(gateway.getLatest(old.route_ref)).resolves.toEqual(newest);
     await expect(gateway.getLatest(isolated.route_ref)).resolves.toEqual(isolated);
     await expect(gateway.putImmutable(old, oldDigest)).resolves.toEqual({

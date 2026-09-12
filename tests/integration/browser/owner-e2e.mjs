@@ -12,7 +12,7 @@ import process from "node:process";
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
   requestAnimationFrame: readonly */
 import { prepareLocal, executeLocalAsync, executeLocalD1WithRetryAsync, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
-import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
+import { startLocalWorker, reserveChromiumSafePort, sanitizeRuntimeDiagnostic } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
@@ -940,24 +940,36 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   const rawSourceId = await resolveRawProjectionSourceId(worker, token, sourceRevisionRef);
   const rawProjectionPhase = "raw-projection-scheduled-and-polling";
   process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
+  const rawProjectionMarkerStartedAt = Date.now();
+  const rawProjectionMarker = (phase, state) => {
+    process.stdout.write(`owner-e2e marker phase=${phase} state=${state} elapsed_ms=${Math.max(0, Date.now() - rawProjectionMarkerStartedAt)}\n`);
+  };
   const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
+  rawProjectionMarker("scheduled", "before");
   const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
     { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
+  rawProjectionMarker("scheduled", "after");
   assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
   ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
     correlation: "e2e-raw-projection/scheduled", token_present: false });
+  rawProjectionMarker("readiness", "before");
   const activeReadiness = await waitForRawProjectionReadiness(worker, token, rawSourceId, sourceRevisionRef, {
     expectedGeneration, phase: rawProjectionPhase,
   });
+  rawProjectionMarker("readiness", "after");
   assert.equal(activeReadiness.source_id, rawSourceId, "active readiness source must match the catalog-resolved raw source");
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
   const orientationPath = "/api/v1/research/orient";
+  rawProjectionMarker("source-view", "before");
   await showWorkspaceView(page, "#library", "sources", "source selection");
+  rawProjectionMarker("source-view", "after");
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
+  rawProjectionMarker("source-responses", "before");
   const sourceSnapshots = await waitForRawResponses(page, [
     { key: "orientation", method: "POST", path: orientationPath, expectedStatus: 200 },
     { key: "readiness", method: "GET", path: readinessPath, expectedStatus: 200 },
   ], () => card.locator("[data-source]").click());
+  rawProjectionMarker("source-responses", "after");
   const orientationSnapshot = sourceSnapshots.orientation;
   const readinessSnapshot = sourceSnapshots.readiness;
   const orientationBody = JSON.parse(orientationSnapshot.requestBody ?? "{}");
@@ -1093,6 +1105,7 @@ function ownerBridgeRouteDescriptor(path) {
     [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission$/u, "raw-admission"],
     [/^\/api\/v1\/ingest\/raw\/[^/]+\/admission\/[^/]+$/u, "raw-admission-status"],
     [/^\/api\/v1\/system\/session$/u, "system-session"],
+    [/^\/healthz$/u, "healthz"],
     [/^\/api\/v1\/research\/catalog$/u, "research-catalog"],
     [/^\/api\/v1\/research\/query(?:\/[^/]+)?$/u, "research-query"],
     [/^\/api\/v1\/library\/revisions$/u, "library-revisions"],
@@ -1150,47 +1163,206 @@ function harnessGitHead() {
 }
 
 function fetchErrorClass(error) {
-  const candidates = [error, error?.cause, error?.cause?.cause];
-  const name = candidates.find((item) => item && typeof item.name === "string" && item.name.length > 0)?.name ?? "unknown";
-  const code = candidates.find((item) => item && typeof item.code === "string" && item.code.length > 0)?.code ?? "unknown";
-  return `${name.slice(0, 48)}/${code.slice(0, 64)}`;
+  const { name, code } = safeWorkerErrorClass(error);
+  return `${name}/${code}`;
+}
+
+const OWNER_WORKER_DIAGNOSTIC_STAGES = new Set(["fetch", "body"]);
+const OWNER_WORKER_DIAGNOSTIC_PHASES = new Set([
+  "authorized-library-catalog", "authorized-library-revisions", "bridge-after-cli", "catalog-probe-after-cli",
+  "bridge-artifact-import",
+  "catalog-probe-before-cli", "direct-after-cli", "direct-before-cli", "duplicate-jwks-catalog", "duplicate-jwks-session",
+  "failed-start-health", "failed-start-stopped-probe", "initial-owner-session",
+  "initial-unauthenticated", "jwt-clock-skew-future", "jwt-clock-skew-valid", "jwt-email-claim",
+  "post-restart-catalog", "post-restart-health", "post-restart-revisions", "post-restart-stopped-probe",
+  "pre-raw-catalog", "pre-raw-revisions", "raw-projection-scheduled-and-polling",
+  "raw-projection-source-resolution", "restart-health", "rotation-new-token", "rotation-old-token",
+  "rotation-read", "socket-probe", "staging-denial",
+]);
+const OWNER_WORKER_DIAGNOSTIC_ROUTES = new Set([
+  "bundle-prepare", "bundle-commit", "bundle-upload-part", "bundle-complete", "bundle-status",
+  "raw-capture", "raw-conversion", "raw-admission", "raw-admission-status", "system-session", "healthz",
+  "research-catalog", "research-query", "library-revisions", "library-readiness", "unknown-api-route",
+]);
+const OWNER_WORKER_DIAGNOSTIC_CONTEXT = new WeakMap();
+const OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES = new Set([
+  "owner-e2e.mjs", "local-worker.mjs", "local-launch.mjs", "local-owner-bridge.mjs", "deployment-verification.mjs",
+]);
+
+function workerDiagnosticPhase(value) {
+  if (typeof value !== "string") return "unspecified";
+  if (OWNER_WORKER_DIAGNOSTIC_PHASES.has(value)) return value;
+  if (value.startsWith("jwt-negative-")) return "jwt-negative";
+  return "unspecified";
+}
+
+function workerDiagnosticStage(value) {
+  return typeof value === "string" && OWNER_WORKER_DIAGNOSTIC_STAGES.has(value) ? value : "unknown";
+}
+
+function workerDiagnosticMethod(value) {
+  const candidate = String(value ?? "GET").toUpperCase();
+  return OWNER_BRIDGE_DIAGNOSTIC_METHODS.has(candidate) ? candidate : "OTHER";
+}
+
+function workerDiagnosticRoute(path) {
+  try { return ownerBridgeRouteDescriptor(path).route_family; }
+  catch { return "unknown-api-route"; }
+}
+
+function safeHarnessSourceStack(error) {
+  let stack;
+  try { stack = error?.stack; } catch { return null; }
+  if (typeof stack !== "string") return null;
+  for (const line of stack.split(/\r?\n/u)) {
+    const match = line.match(/([^()\r\n]+):(\d+):\d+\)?$/u);
+    if (!match) continue;
+    const location = match[1].trim();
+    const basename = location.split(/[\\/]/u).at(-1)?.split(/\s+/u).at(-1);
+    const lineNumber = Number(match[2]);
+    const sourceStack = safeHarnessSourceStackValue({ basename, line: lineNumber });
+    if (sourceStack) return sourceStack;
+  }
+  return null;
+}
+
+function safeHarnessSourceStackValue(value) {
+  if (!value || typeof value !== "object") return null;
+  const basename = value.basename;
+  const line = value.line;
+  if (typeof basename !== "string" || !OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES.has(basename) ||
+      !Number.isSafeInteger(line) || line < 1 || line > 1_000_000_000) return null;
+  return Object.freeze({ basename, line });
+}
+
+function workerErrorCandidates(error) {
+  try {
+    return [error, error?.cause, error?.cause?.cause, error?.cause?.original_error]
+      .filter((item) => item && typeof item === "object");
+  } catch {
+    return [];
+  }
+}
+
+function safeHarnessSourceStackFromError(error) {
+  for (const candidate of workerErrorCandidates(error)) {
+    const sourceStack = safeHarnessSourceStack(candidate);
+    if (sourceStack) return sourceStack;
+  }
+  return null;
+}
+
+function safeWorkerErrorClass(error) {
+  const candidates = workerErrorCandidates(error);
+  const assertion = candidates.find((item) => item.name === "AssertionError" && item.code === "ERR_ASSERTION");
+  if (assertion) return Object.freeze({ name: "AssertionError", code: "ERR_ASSERTION" });
+  const name = candidates.find((item) => typeof item.name === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(item.name) || item.name === "TimeoutError"))?.name ?? "UnknownError";
+  const code = candidates.find((item) => typeof item.code === "string" &&
+    OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(item.code))?.code ?? "UNSPECIFIED";
+  return Object.freeze({ name, code });
+}
+
+function safeWorkerErrorClassFromContext(error, candidate) {
+  const fallback = safeWorkerErrorClass(error);
+  if (!candidate || typeof candidate !== "object") return fallback;
+  if (candidate.name === "AssertionError" && candidate.code === "ERR_ASSERTION") {
+    return Object.freeze({ name: "AssertionError", code: "ERR_ASSERTION" });
+  }
+  const name = typeof candidate.name === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(candidate.name) || candidate.name === "TimeoutError" || candidate.name === "UnknownError")
+    ? candidate.name : fallback.name;
+  const code = typeof candidate.code === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(candidate.code) || candidate.code === "UNSPECIFIED")
+    ? candidate.code : fallback.code;
+  return Object.freeze({ name, code });
+}
+
+function safeWorkerErrorCause(error) {
+  const { name, code } = safeWorkerErrorClass(error);
+  return Object.freeze({ name, code });
+}
+
+function normalizeWorkerDiagnosticContext(error, context) {
+  if (!context || typeof context !== "object") return undefined;
+  const route = typeof context.route_family === "string" && OWNER_WORKER_DIAGNOSTIC_ROUTES.has(context.route_family)
+    ? context.route_family : "unknown-api-route";
+  const safe = {
+    stage: workerDiagnosticStage(context.stage),
+    phase: workerDiagnosticPhase(context.phase),
+    method: workerDiagnosticMethod(context.method),
+    route_family: route,
+    error_class: safeWorkerErrorClassFromContext(error, context.error_class),
+  };
+  if (Number.isSafeInteger(context.http_status) && context.http_status >= 100 && context.http_status <= 599) {
+    safe.http_status = context.http_status;
+  }
+  const sourceStack = safeHarnessSourceStackValue(context.source_stack) ?? safeHarnessSourceStack(error);
+  if (sourceStack) safe.source_stack = sourceStack;
+  return Object.freeze(safe);
+}
+
+function safeWorkerDiagnosticError(error, diagnostic, context) {
+  const wrapped = new Error(diagnostic);
+  Object.defineProperty(wrapped, "cause", {
+    configurable: true, enumerable: false, value: safeWorkerErrorCause(error), writable: false,
+  });
+  const safeContext = normalizeWorkerDiagnosticContext(error, context);
+  if (safeContext) OWNER_WORKER_DIAGNOSTIC_CONTEXT.set(wrapped, safeContext);
+  return wrapped;
+}
+
+function ownerBridgeBoundaryDiagnosticContext(error) {
+  const inherited = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  if (inherited) return normalizeWorkerDiagnosticContext(error, inherited);
+  return normalizeWorkerDiagnosticContext(error, {
+    stage: "fetch", phase: "bridge-artifact-import", method: "OTHER", route_family: "unknown-api-route",
+  });
+}
+
+function ownerCatalogDiagnosticContext(error) {
+  const inherited = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  return normalizeWorkerDiagnosticContext(error, {
+    stage: inherited?.stage ?? "fetch",
+    phase: inherited?.phase ?? "catalog-probe-after-cli",
+    method: inherited?.method ?? "GET",
+    route_family: inherited?.route_family ?? "research-catalog",
+    ...(inherited?.error_class === undefined ? {} : { error_class: inherited.error_class }),
+    ...(inherited?.source_stack === undefined ? {} : { source_stack: inherited.source_stack }),
+    ...(inherited?.http_status === undefined ? {} : { http_status: inherited.http_status }),
+  });
 }
 
 function workerDiagnosticSnapshot(worker) {
   const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
-  if (!runtime) return { pid: null, port: null, exit_code: null, stderr_tail: "unavailable", stdout_events: "unavailable" };
+  const runtimeDiagnostic = runtime?.runtimeDiagnostic && typeof runtime.runtimeDiagnostic === "object"
+    ? sanitizeRuntimeDiagnostic(runtime.runtimeDiagnostic) : "unavailable";
+  const safeTopLevelSignal = sanitizeRuntimeDiagnostic({ template: "process-signal", class: "process",
+    code: runtime?.signalCode, phase: "process" }).signal_code;
+  if (!runtime) return {
+    pid: null, port: null, exit_code: null, signal_code: null,
+    runtime_diagnostic: "unavailable",
+  };
   return {
     pid: Number.isSafeInteger(runtime.pid) ? runtime.pid : null,
     port: Number.isSafeInteger(runtime.port) ? runtime.port : null,
-    exit_code: runtime.exitCode ?? null,
-    stderr_tail: typeof runtime.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable",
-    stdout_events: typeof runtime.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable",
+    exit_code: Number.isSafeInteger(runtime.exitCode) ? runtime.exitCode : null,
+    signal_code: runtimeDiagnostic === "unavailable" ? safeTopLevelSignal : runtimeDiagnostic.signal_code,
+    runtime_diagnostic: runtimeDiagnostic,
   };
 }
 
 function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
-  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
-  const exitCode = runtime?.exitCode ?? null;
-  const stderrTail = typeof runtime?.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable";
-  const stdoutEvents = typeof runtime?.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable";
-  const pid = Number.isSafeInteger(runtime?.pid) ? runtime.pid : null;
-  const port = Number.isSafeInteger(runtime?.port) ? runtime.port : null;
-  const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
-  const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
-  const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
-  const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
-  const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
-  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
-}
-
-function boundedFailureText(value, maxLength) {
-  let text = String(value ?? "")
-    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/gu, "[REDACTED_JWT]")
-    .replace(/(?:authorization|cookie|cf-access-jwt-assertion|access[_-]?token|password|secret)\s*[:=]\s*[^\s,;]+/giu,
-      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)}[REDACTED]`)
-    .replace(/(https?:\/\/[^\s?]+)\?[^\s)]+/gu, "$1?[REDACTED_QUERY]");
-  if (text.length > maxLength) text = `${text.slice(0, maxLength)}...[TRUNCATED]`;
-  return text;
+  const snapshot = workerDiagnosticSnapshot(worker);
+  const { name: errorName, code: errorCode } = safeWorkerErrorClass(error);
+  const runtimeDiagnostic = typeof snapshot.runtime_diagnostic === "string" ? snapshot.runtime_diagnostic : JSON.stringify(snapshot.runtime_diagnostic);
+  const context = normalizeWorkerDiagnosticContext(error, {
+    stage, phase, method, route_family: workerDiagnosticRoute(path),
+  });
+  return Object.freeze({
+    message: `worker fetch failed stage=${workerDiagnosticStage(stage)} phase=${workerDiagnosticPhase(phase)} method=${workerDiagnosticMethod(method)} path=${workerDiagnosticRoute(path)} error=${errorName}/${errorCode} worker_pid=${String(snapshot.pid)} worker_port=${String(snapshot.port)} worker_exit_code=${String(snapshot.exit_code)} worker_signal_code=${String(snapshot.signal_code)} worker_runtime_diagnostic=${runtimeDiagnostic}`,
+    context,
+  });
 }
 
 export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path,
@@ -1209,7 +1381,8 @@ export async function fetchWorkerResponseWithDiagnostics(fetchImpl, origin, path
       method, headers, body, redirect: "manual", signal: globalThis.AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker }), { cause: error });
+    const diagnostic = workerFetchDiagnostic(error, { method, path, phase, worker });
+    throw safeWorkerDiagnosticError(error, diagnostic.message, diagnostic.context);
   }
 }
 
@@ -1220,10 +1393,11 @@ export async function fetchWorkerJsonWithDiagnostics(fetchImpl, origin, path, op
   try {
     text = await response.text();
   } catch (error) {
-    throw new Error(workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" }), { cause: error });
+    const diagnostic = workerFetchDiagnostic(error, { method, path, phase, worker, stage: "body" });
+    throw safeWorkerDiagnosticError(error, diagnostic.message, diagnostic.context);
   }
   const data = (() => {
-    try { return text ? JSON.parse(text) : null; } catch { return { raw: text.slice(0, 512) }; }
+    try { return text ? JSON.parse(text) : null; } catch { return { parse_error: "NON_JSON_RESPONSE" }; }
   })();
   return { status: response.status, data, headers: response.headers };
 }
@@ -1232,10 +1406,10 @@ async function observeCatalogTransport(label, operation, worker, records) {
   const startedAt = Date.now();
   try {
     const response = await operation();
-    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
+    records.push({ phase: workerDiagnosticPhase(label), elapsed_ms: Date.now() - startedAt, outcome: "http", status: response.status });
     return { ok: true, response };
   } catch (error) {
-    records.push({ phase: label, elapsed_ms: Date.now() - startedAt, outcome: "error",
+    records.push({ phase: workerDiagnosticPhase(label), elapsed_ms: Date.now() - startedAt, outcome: "error",
       error_class: fetchErrorClass(error), worker: workerDiagnosticSnapshot(worker) });
     return { ok: false, error };
   }
@@ -1246,19 +1420,152 @@ async function workerJson(origin, path, options = {}) {
 }
 
 function verifyPreservedWorkerFailureOutput() {
-  const sentinel = new Error("sentinel assertion cf-access-jwt-assertion=private-token");
-  sentinel.name = "SentinelFailure";
-  sentinel.stack = "SentinelFailure: sentinel assertion\n    at sentinelCase (owner-e2e.mjs:6000:7)";
-  const wrapped = preserveWorkerFailure(sentinel, {
-    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+  const opaqueBearer = "opaque-bearer-7f4d";
+  const opaqueUrl = "https://worker.invalid/private/path-secret#fragment-secret";
+  const sentinel = new Error(`arbitrary message ${opaqueBearer} ${opaqueUrl}`);
+  sentinel.name = "ArbitraryErrorName";
+  sentinel.code = "ARBITRARY_ERROR_CODE";
+  sentinel.stack = `ArbitraryErrorName: arbitrary stack ${opaqueBearer}\n    at privateCase (owner-e2e.mjs:6000:7)\n    at privateCase (C:\\private\\stack-secret.mjs:77:3)`;
+  const worker = {
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: 1, signalCode: "SIGKILL", stderrTail: "controlled diagnostics", stdoutEvents: "ready,error",
+      runtimeDiagnostic: { protocol: "eliotr.local-worker.runtime-diagnostic.v1", template: "uncaught-workerd-exception",
+        class: "runtime", code: "WORKERD_UNCAUGHT_EXCEPTION", phase: "runtime", source: "stdout",
+        source_stack: { basename: "worker.js", line: 42 }, signal_code: "SIGKILL",
+        counts: { observed: 2, classified: 1, unknown: 1, stdout: 2, stderr: 0 }, truncated: { stdout: false, stderr: false } } }),
+  };
+  const diagnostic = workerFetchDiagnostic(sentinel, {
+    method: "GET", path: "/api/v1/research/query/private-path-secret?secret=private-query#fragment-secret",
+    phase: "rotation-read", worker,
   });
-  assert.equal(wrapped.cause, sentinel, "the original failure must remain available as the Error cause");
+  const nested = safeWorkerDiagnosticError(sentinel, diagnostic.message, diagnostic.context);
+  const wrapped = preserveWorkerFailure(nested, worker);
+  assert.equal(wrapped.cause, undefined, "the original failure must not remain available as an Error cause");
   assert.match(wrapped.message, /original_error=/u);
-  assert.match(wrapped.message, /SentinelFailure/u, "the original error name must reach the reported Error");
-  assert.match(wrapped.message, /sentinel assertion/u, "the original error message must reach the reported Error");
-  assert.match(wrapped.message, /owner-e2e\.mjs:6000:7/u, "the original error location must reach the reported Error");
+  assert.match(wrapped.message, /"name":"UnknownError","code":"UNSPECIFIED"/u,
+    "only the fixed unknown error class may reach the reported Error");
+  assert.match(wrapped.message, /worker_diagnostic_context=\{"stage":"fetch","phase":"rotation-read","method":"GET","route_family":"research-query","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6000\}\}/u,
+    "nested worker diagnostics must preserve only trusted fixed context");
   assert.match(wrapped.message, /worker_diagnostics=.*"pid":42/u, "bounded Worker diagnostics must remain attached");
-  assert.ok(!wrapped.message.includes("private-token"), "reported failure must redact credential values");
+  assert.match(wrapped.message, /"runtime_diagnostic":\{.*"template":"uncaught-workerd-exception"/u,
+    "fixed runtime diagnostic classification must reach the reported Error");
+  assert.match(wrapped.message, /"signal_code":"SIGKILL"/u, "safe process signal must reach the reported Error");
+  const serialized = JSON.stringify({ message: wrapped.message, stack: wrapped.stack, cause: wrapped.cause });
+  for (const secret of [opaqueBearer, opaqueUrl, "fragment-secret", "ArbitraryErrorName", "ARBITRARY_ERROR_CODE", "stack-secret.mjs"]) {
+    assert.ok(!serialized.includes(secret), `serialized diagnostic must omit ${secret}`);
+  }
+
+  const bridgeBearer = "bridge-bearer-private";
+  const bridgeError = new Error(`bridge message ${bridgeBearer} https://worker.invalid/bridge-private`);
+  bridgeError.name = "ArbitraryBridgeError";
+  bridgeError.code = "ARBITRARY_BRIDGE_CODE";
+  bridgeError.stack = `ArbitraryBridgeError: bridge stack ${bridgeBearer}\n    at bridgeCase (owner-e2e.mjs:6100:7)\n    at bridgeCase (C:\\private\\bridge-secret.mjs:88:3)`;
+  const bridgeEvents = [{ outcome: "response", method: "POST", route_family: "bundle-complete",
+    stage: "bundle-complete", status: 503, typed_code: "INTERNAL_ERROR", elapsed_ms: 3 }];
+  const bridgeProblemCode = ownerBridgeProblemCodeFromMessage(bridgeError) ?? "UNAVAILABLE";
+  assert.equal(bridgeProblemCode, "UNAVAILABLE",
+    "an unbound bridge error must not inherit a problem code from stale bridge history");
+  const bridgeDiagnostic = safeWorkerDiagnosticError(bridgeError,
+    `browser artifact import failed; owner bridge diagnostic=${JSON.stringify({
+      protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1", problem_code: bridgeProblemCode,
+      bridge_events: bridgeEvents, worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
+    })}`,
+    ownerBridgeBoundaryDiagnosticContext(bridgeError, bridgeEvents));
+  const bridgeOuter = preserveWorkerFailure(bridgeDiagnostic, worker);
+  assert.match(bridgeOuter.message,
+    /worker_diagnostic_context=\{"stage":"fetch","phase":"bridge-artifact-import","method":"OTHER","route_family":"unknown-api-route","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6100\}\}/u,
+    "browser import wrapping must use a fixed boundary context when no context is bound to the same error");
+  assert.doesNotMatch(bridgeOuter.message, /worker_diagnostic_context=.*"http_status"/u,
+    "browser import wrapping must not borrow response status from shared bridge events");
+  const registeredBridge = safeWorkerDiagnosticError(bridgeError, "bound bridge error",
+    normalizeWorkerDiagnosticContext(bridgeError, {
+      stage: "fetch", phase: "bridge-artifact-import", method: "POST", route_family: "bundle-complete", http_status: 418,
+    }));
+  const registeredContext = ownerBridgeBoundaryDiagnosticContext(registeredBridge, bridgeEvents);
+  assert.deepEqual(registeredContext, {
+    stage: "fetch", phase: "bridge-artifact-import", method: "POST", route_family: "bundle-complete",
+    error_class: { name: "UnknownError", code: "UNSPECIFIED" }, http_status: 418,
+    source_stack: { basename: "owner-e2e.mjs", line: 6100 },
+  }, "registered context on the same error must retain its exact status despite shared bridge events");
+  const bridgeSerialized = JSON.stringify({ message: bridgeOuter.message, stack: bridgeOuter.stack, cause: bridgeOuter.cause });
+  for (const secret of [bridgeBearer, "bridge-private", "ArbitraryBridgeError", "ARBITRARY_BRIDGE_CODE", "bridge-secret.mjs"]) {
+    assert.ok(!bridgeSerialized.includes(secret), `browser import diagnostic must omit ${secret}`);
+  }
+
+  const catalogBearer = "catalog-bearer-private";
+  const catalogError = new Error(`catalog message ${catalogBearer} https://worker.invalid/catalog-private`);
+  catalogError.name = "ArbitraryCatalogError";
+  catalogError.code = "ARBITRARY_CATALOG_CODE";
+  catalogError.stack = `ArbitraryCatalogError: catalog stack ${catalogBearer}\n    at catalogCase (owner-e2e.mjs:6200:9)\n    at catalogCase (C:\\private\\catalog-secret.mjs:99:4)`;
+  const directCatalogError = safeWorkerDiagnosticError(catalogError, "safe direct catalog transport failure",
+    normalizeWorkerDiagnosticContext(catalogError, {
+      stage: "fetch", phase: "catalog-probe-after-cli", method: "GET", route_family: "research-catalog",
+    }));
+  const catalogProbes = [
+    { phase: "catalog-probe-after-cli", elapsed_ms: 4, outcome: "error",
+      error_class: "UnknownError/UNSPECIFIED", worker: workerDiagnosticSnapshot(worker) },
+    { phase: "bridge-after-cli", elapsed_ms: 5, outcome: "http", status: 502 },
+  ];
+  const catalogDiagnostic = safeWorkerDiagnosticError(directCatalogError,
+    `owner-e2e catalog transport probe failed; error_class=UnknownError/UNSPECIFIED\n` +
+    `owner-e2e catalog transport probe=${JSON.stringify({
+      protocol: "eliotr.owner-e2e.catalog-transport-probe.v1", worker: workerDiagnosticSnapshot(worker), probes: catalogProbes,
+    })}`,
+    ownerCatalogDiagnosticContext(directCatalogError));
+  const catalogOuter = preserveWorkerFailure(catalogDiagnostic, worker);
+  assert.match(catalogOuter.message,
+    /worker_diagnostic_context=\{"stage":"fetch","phase":"catalog-probe-after-cli","method":"GET","route_family":"research-catalog","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6200\}\}/u,
+    "catalog probe wrapping must retain inherited context without borrowing another response status");
+  assert.doesNotMatch(catalogOuter.message, /"http_status":502/u,
+    "catalog transport failure must not attribute bridge response status to the direct request");
+  const catalogSerialized = JSON.stringify({ message: catalogOuter.message, stack: catalogOuter.stack, cause: catalogOuter.cause });
+  for (const secret of [catalogBearer, "catalog-private", "ArbitraryCatalogError", "ARBITRARY_CATALOG_CODE", "catalog-secret.mjs"]) {
+    assert.ok(!catalogSerialized.includes(secret), `catalog probe diagnostic must omit ${secret}`);
+  }
+  const noResponseContext = ownerBridgeBoundaryDiagnosticContext(new Error("no response"), [
+    { outcome: "error", method: "GET", route_family: "research-query", stage: "research-query" },
+  ]);
+  assert.equal(Object.hasOwn(noResponseContext, "http_status"), false,
+    "transport-only bridge failures must omit unknown HTTP status");
+
+  const assertionMessage = "assertion-message-private";
+  const assertionExpected = "assertion-expected-private";
+  const assertionActual = "assertion-actual-private";
+  const assertion = new Error(assertionMessage);
+  assertion.name = "AssertionError";
+  assertion.code = "ERR_ASSERTION";
+  assertion.expected = assertionExpected;
+  assertion.actual = assertionActual;
+  assertion.stack = `AssertionError: ${assertionMessage}\n    at assertionCase (owner-e2e.mjs:6300:9)\n    at assertionCase (C:\\private\\assertion-secret.mjs:101:4)`;
+  const assertionOuter = preserveWorkerFailure(assertion, worker);
+  assert.match(assertionOuter.message, /original_error=\{"name":"AssertionError","code":"ERR_ASSERTION"\}/u,
+    "unregistered assertions must retain only their fixed error classification");
+  assert.match(assertionOuter.message,
+    /worker_diagnostic_context=\{"error_class":\{"name":"AssertionError","code":"ERR_ASSERTION"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6300\}\}/u,
+    "unregistered assertions must retain only an allowlisted source frame");
+  assert.doesNotMatch(assertionOuter.message, /route_family|http_status/u,
+    "unregistered assertions must not receive a guessed route or HTTP status");
+  const assertionSerialized = JSON.stringify({ message: assertionOuter.message, stack: assertionOuter.stack, cause: assertionOuter.cause });
+  for (const secret of [assertionMessage, assertionExpected, assertionActual, "assertion-secret.mjs"]) {
+    assert.ok(!assertionSerialized.includes(secret), `unregistered assertion diagnostic must omit ${secret}`);
+  }
+
+  const genericMessage = "generic-message-private";
+  const generic = new Error(genericMessage);
+  generic.name = "PrivateGenericError";
+  generic.code = "PRIVATE_GENERIC_CODE";
+  generic.stack = `PrivateGenericError: ${genericMessage}\n    at genericCase (owner-e2e.mjs:6400:11)\n    at genericCase (C:\\private\\generic-secret.mjs:111:5)`;
+  const genericOuter = preserveWorkerFailure(generic, worker);
+  assert.match(genericOuter.message, /original_error=\{"name":"UnknownError","code":"UNSPECIFIED"\}/u,
+    "unregistered generic errors must collapse to the fixed unknown classification");
+  assert.match(genericOuter.message,
+    /worker_diagnostic_context=\{"error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6400\}\}/u,
+    "unregistered generic errors must retain only an allowlisted source frame");
+  assert.doesNotMatch(genericOuter.message, /route_family|http_status/u,
+    "unregistered generic errors must not receive a guessed route or HTTP status");
+  const genericSerialized = JSON.stringify({ message: genericOuter.message, stack: genericOuter.stack, cause: genericOuter.cause });
+  for (const secret of [genericMessage, "PrivateGenericError", "PRIVATE_GENERIC_CODE", "generic-secret.mjs"]) {
+    assert.ok(!genericSerialized.includes(secret), `unregistered generic diagnostic must omit ${secret}`);
+  }
   return { state: "PASS" };
 }
 
@@ -1270,8 +1577,8 @@ export function verifyD1FailureProvenanceRegression() {
   const wrapped = preserveWorkerFailure(sentinel, {
     diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
   });
-  assert.equal(wrapped.cause, sentinel, "D1 provenance must preserve the original Error as the outer cause");
-  assert.equal(wrapped.cause.cause.code, 1, "D1 provenance must preserve the original command code");
+  assert.equal(wrapped.cause, undefined, "D1 provenance must not expose the original Error as the outer cause");
+  assert.equal(sentinel.cause.code, 1, "D1 provenance must preserve the original command code internally");
   assert.equal(sentinel.message, "Local command failed (1) :: internal reference=controlled-d1",
     "D1 provenance must not rewrite the original Error message");
   assert.match(wrapped.message, /d1_provenance=.*"binding":"CORE_DB"/u);
@@ -1303,25 +1610,39 @@ export function verifyD1FailureProvenanceRegression() {
 export async function verifyWorkerFetchDiagnosticRegression() {
   verifyPreservedWorkerFailureOutput();
   verifyD1FailureProvenanceRegression();
-  const transportError = Object.assign(new TypeError("fetch failed"), { code: "ECONNRESET" });
+  const opaqueBearer = "opaque-bearer-transport";
+  const opaqueUrl = "https://worker.invalid/private/path-secret#fragment-secret";
+  const transportError = Object.assign(new TypeError(`arbitrary transport message ${opaqueBearer} ${opaqueUrl}`), {
+    code: "ARBITRARY_TRANSPORT_CODE",
+  });
+  transportError.name = "ArbitraryTransportError";
+  transportError.stack = `ArbitraryTransportError: arbitrary stack\n    at privateTransport (C:\\private\\transport-secret.mjs:77:3)`;
   let transportCalls = 0;
   await assert.rejects(
     fetchWorkerJsonWithDiagnostics(
       async () => { transportCalls += 1; throw transportError; },
       "http://127.0.0.1:43123",
-      "/api/v1/research/query/jobs?cursor=private-query&token=private-token",
-      { method: "GET", phase: "rotation-read", token: "private-token",
-        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset" }) } },
+      "/api/v1/research/query/private-path-secret?cursor=private-query&token=private-token#fragment-secret",
+      { method: "GET", phase: "rotation-read", token: opaqueBearer,
+        worker: { diagnostics: () => ({ exitCode: null, stderrTail: "wrangler: listener reset", stdoutEvents: "opaque stdout secret" }) } },
     ),
     (error) => {
       const text = String(error?.message ?? error);
-      assert.match(text, /phase=rotation-read method=GET path=\/api\/v1\/research\/query\/jobs/u);
+      assert.match(text, /phase=rotation-read method=GET path=research-query/u);
       assert.match(text, /stage=fetch/u);
-      assert.match(text, /error=TypeError\/ECONNRESET/u);
+      assert.match(text, /error=UnknownError\/UNSPECIFIED/u);
       assert.match(text, /worker_exit_code=null/u);
-      assert.match(text, /worker_stderr_tail=wrangler: listener reset/u);
-      assert.ok(!text.includes("private-query") && !text.includes("private-token"),
-        "fetch diagnostics must omit query, token and body values");
+      assert.doesNotMatch(text, /worker_stderr_tail|worker_stdout_events/u,
+        "fetch diagnostics must omit raw child output fields");
+      assert.ok(!text.includes("private-query") && !text.includes("private-token") &&
+        !text.includes("listener reset"), "fetch diagnostics must omit query, token and raw child output values");
+      const serialized = JSON.stringify({ message: error.message, stack: error.stack, cause: error.cause });
+      for (const secret of [opaqueBearer, opaqueUrl, "fragment-secret", "ArbitraryTransportError",
+        "ARBITRARY_TRANSPORT_CODE", "transport-secret.mjs", "arbitrary transport message"]) {
+        assert.ok(!serialized.includes(secret), `serialized fetch diagnostic must omit ${secret}`);
+      }
+      assert.equal(error.cause?.name, "UnknownError", "sanitized transport cause must use a fixed class");
+      assert.equal(error.cause?.code, "UNSPECIFIED", "sanitized transport cause must use a fixed code");
       return true;
     },
   );
@@ -1363,9 +1684,10 @@ export async function verifyWorkerFetchDiagnosticRegression() {
     ),
     (error) => {
       const text = String(error?.message ?? error);
-      assert.match(text, /stage=body phase=restart-health method=GET path=\/healthz/u);
+      assert.match(text, /stage=body phase=restart-health method=GET path=healthz/u);
       assert.match(text, /error=TypeError\/ECONNRESET/u);
       assert.match(text, /worker_exit_code=17/u);
+      assert.doesNotMatch(text, /worker_stderr_tail|worker_stdout_events/u);
       assert.ok(!text.includes("private-token"), "body diagnostics must omit query values");
       return true;
     },
@@ -1570,11 +1892,6 @@ function ownerBridgeProblemCodeFromMessage(error) {
   return allowlistedOwnerBridgeProblemCode(match?.[1]);
 }
 
-function ownerBridgeProblemCodeFromEvents(events) {
-  return [...events].reverse().find((event) => event.outcome === "response" &&
-    event.status >= 400 && allowlistedOwnerBridgeProblemCode(event.typed_code))?.typed_code;
-}
-
 function recordOwnerBridgeDiagnosticEvent(events, event) {
   if (events.length >= 8) events.shift();
   events.push(event);
@@ -1627,24 +1944,28 @@ function preserveWorkerFailure(error, worker) {
   if (!worker) return error;
   const diagnostics = workerDiagnosticSnapshot(worker);
   const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
-  const original = {
-    name: boundedFailureText(error?.name || "Error", 96),
-    message: boundedFailureText(error?.message ?? error, 2000),
-    stack: boundedFailureText(error?.stack ?? "", 4000),
-  };
+  const workerContext = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  const original = workerContext?.error_class ?? safeWorkerErrorClass(error);
+  const sourceStack = workerContext?.source_stack ?? safeHarnessSourceStackFromError(error);
+  const catchAllContext = workerContext ?? Object.freeze({
+    error_class: original, ...(sourceStack ? { source_stack: sourceStack } : {}),
+  });
+  const contextText = `; worker_diagnostic_context=${JSON.stringify(catchAllContext)}`;
   const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
-  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${provenanceText}`, { cause: error });
+  return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${contextText}${provenanceText}`);
 }
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
   try {
-    const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+    const snapshot = workerDiagnosticSnapshot(worker);
     return {
-      pid: Number.isSafeInteger(runtime?.pid) ? runtime.pid : null,
-      exit_code: runtime?.exitCode === null || Number.isInteger(runtime?.exitCode) ? runtime.exitCode : null,
+      pid: snapshot.pid,
+      exit_code: snapshot.exit_code,
+      signal_code: snapshot.signal_code,
+      runtime_diagnostic: snapshot.runtime_diagnostic,
     };
   } catch {
-    return { pid: null, exit_code: null };
+    return { pid: null, exit_code: null, signal_code: null, runtime_diagnostic: "unavailable" };
   }
 }
 
@@ -5621,11 +5942,12 @@ export async function runOwnerE2E() {
     } catch (error) {
       const diagnostic = {
         protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1",
-        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? ownerBridgeProblemCodeFromEvents(ownerBridgeDiagnosticEvents) ?? "UNAVAILABLE",
+        problem_code: ownerBridgeProblemCodeFromMessage(error) ?? "UNAVAILABLE",
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
-      throw new Error(`browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`, { cause: error });
+      throw safeWorkerDiagnosticError(error, `browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`,
+        ownerBridgeBoundaryDiagnosticContext(error));
     }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
@@ -5801,8 +6123,10 @@ export async function runOwnerE2E() {
           worker: workerDiagnosticSnapshot(worker),
           probes: catalogTransportProbeRecords,
         };
-        throw new Error(`${directAfterCli.error?.message ?? String(directAfterCli.error)}\n` +
-          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`, { cause: directAfterCli.error });
+        throw safeWorkerDiagnosticError(directAfterCli.error,
+          `owner-e2e catalog transport probe failed; error_class=${fetchErrorClass(directAfterCli.error)}\n` +
+          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`,
+          ownerCatalogDiagnosticContext(directAfterCli.error));
       }
       catalog = directAfterCli.response;
       receipt.catalog_transport_probe = {

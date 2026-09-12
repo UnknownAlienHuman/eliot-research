@@ -34,5 +34,5 @@ export * from "./research-report-materialize-stage-handler.js";
 export * from "./research-report-config.js";
 export * from "./research-artifact-metadata.js";
 export * from "./research-materialize-output-reader.js";
-export * from "./research-verification-result.js";
-export * from "./research-verification-stage-handler.js";
+export * from "./research-synthesis-output-reader.js";
+export { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifact-draft.js";

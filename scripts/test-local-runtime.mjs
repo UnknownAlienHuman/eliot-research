@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { devArguments, executeLocal, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, wranglerArgs } from "./lib/local-launch.mjs";
+import { classifyRuntimeDiagnostic, sanitizeRuntimeDiagnostic } from "./lib/local-worker.mjs";
 
 const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
 const runtimeSource = await readFile(resolve(ROOT, "scripts/local-runtime.mjs"), "utf8");
@@ -100,6 +101,43 @@ assert.throws(
   },
 );
 console.log("Migration failure context: PASS (bound binding/phase and allowlisted runtime code)");
+
+const mixedRuntimeDiagnostic = classifyRuntimeDiagnostic({
+  stdout: "\u001b[31mERROR Uncaught exception\u001b[0m\n    at C:\\runner\\worker.js:42:7\nprivate-token=do-not-reflect",
+  stderr: "[ERROR] address already in use authorization=private-token",
+  stdoutTruncated: true,
+  signalCode: "SIGKILL",
+});
+assert.equal(mixedRuntimeDiagnostic.template, "uncaught-workerd-exception");
+assert.equal(mixedRuntimeDiagnostic.class, "runtime");
+assert.equal(mixedRuntimeDiagnostic.phase, "runtime");
+assert.equal(mixedRuntimeDiagnostic.source, "stdout");
+assert.deepEqual(mixedRuntimeDiagnostic.source_stack, { basename: "worker.js", line: 42 });
+assert.equal(mixedRuntimeDiagnostic.signal_code, "SIGKILL");
+assert.equal(mixedRuntimeDiagnostic.truncated.stdout, true);
+assert.ok(mixedRuntimeDiagnostic.counts.unknown >= 2, "unmatched lines must remain counted as unknown");
+assert.ok(!JSON.stringify(mixedRuntimeDiagnostic).includes("private-token"), "runtime diagnostics must omit private output");
+
+const allocationDiagnostic = classifyRuntimeDiagnostic({ stdout: "ERROR Uncaught exception: allocation failed" });
+assert.equal(allocationDiagnostic.template, "allocation-failed", "specific allocation evidence must outrank generic uncaught text");
+const unknownRuntimeDiagnostic = classifyRuntimeDiagnostic({ stdout: "opaque PRIVATE_SENTINEL source text", signalCode: "SIGUNSAFE" });
+assert.equal(unknownRuntimeDiagnostic.template, "unknown");
+assert.equal(unknownRuntimeDiagnostic.code, "UNKNOWN");
+assert.equal(unknownRuntimeDiagnostic.signal_code, "UNKNOWN");
+assert.ok(!JSON.stringify(unknownRuntimeDiagnostic).includes("PRIVATE_SENTINEL"));
+const privateStackDiagnostic = sanitizeRuntimeDiagnostic({ template: "uncaught-workerd-exception", class: "runtime",
+  code: "WORKERD_UNCAUGHT_EXCEPTION", phase: "runtime", source: "stdout",
+  source_stack: { basename: "private-token-value.js", line: 42 }, counts: { observed: 1, classified: 1, unknown: 0 },
+  truncated: { stdout: false, stderr: false } });
+assert.equal(privateStackDiagnostic.source_stack, null, "unknown source basenames must not be reflected");
+const boundedRuntimeDiagnostic = classifyRuntimeDiagnostic({
+  stdout: `${"private-token=do-not-reflect ".repeat(20000)}ERROR opaque`, stdoutTruncated: true,
+  stderr: "opaque stderr",
+});
+assert.ok(JSON.stringify(boundedRuntimeDiagnostic).length < 1500, "runtime diagnostics must remain bounded");
+assert.equal(boundedRuntimeDiagnostic.truncated.stdout, true);
+assert.ok(!JSON.stringify(boundedRuntimeDiagnostic).includes("private-token"));
+console.log("Worker runtime diagnostics: PASS (allowlisted class/code/phase/source, bounded counters, redacted unknowns)");
 
 const child = { pid: 12345, exitCode: null, signalCode: null,
   kill: () => assert.fail("Windows must terminate the owned tree, not only its wrapper") };

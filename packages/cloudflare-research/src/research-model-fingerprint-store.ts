@@ -20,6 +20,7 @@ const FINGERPRINT_KEYS = new Set([
   "route_version",
   "schema_generation",
 ]);
+const FINGERPRINT_SELECT = "observation_seq, fingerprint_ref, route_ref, fingerprint_sha256, fingerprint_json, observed_at";
 
 export type ResearchModelFingerprintErrorCode =
   | "MODEL_FINGERPRINT_INPUT_INVALID"
@@ -153,6 +154,12 @@ function fingerprintRef(sha256: string): string {
   return `route-fingerprint-${sha256}`;
 }
 
+function assertDatabase(database: D1Database): void {
+  if (typeof database !== "object" || database === null || typeof database.prepare !== "function") {
+    fail("MODEL_FINGERPRINT_INPUT_INVALID", "model fingerprint database binding is invalid");
+  }
+}
+
 async function rowValue(row: FingerprintRow, code: ResearchModelFingerprintErrorCode): Promise<{ readonly fingerprint: RouteFingerprint; readonly sha256: string; readonly json: string; readonly ref: string }> {
   const ref = identifier(row.fingerprint_ref, "stored fingerprint reference", code);
   const routeRef = identifier(row.route_ref, "stored fingerprint route", code);
@@ -180,14 +187,11 @@ export function createD1ModelGatewayFingerprintStore(
   database: D1Database,
   options: ResearchModelFingerprintStoreOptions = {},
 ): ModelGatewayFingerprintStorePort {
-  if (typeof database !== "object" || database === null || typeof database.prepare !== "function") {
-    fail("MODEL_FINGERPRINT_INPUT_INVALID", "model fingerprint database binding is invalid");
-  }
+  assertDatabase(database);
   const now = options.now ?? (() => new Date().toISOString());
-  const select = "observation_seq, fingerprint_ref, route_ref, fingerprint_sha256, fingerprint_json, observed_at";
 
   async function read(ref: string): Promise<FingerprintRow | null> {
-    return database.prepare(`SELECT ${select} FROM research_model_fingerprint WHERE fingerprint_ref=?1 LIMIT 1`).bind(ref).first<FingerprintRow>();
+    return database.prepare(`SELECT ${FINGERPRINT_SELECT} FROM research_model_fingerprint WHERE fingerprint_ref=?1 LIMIT 1`).bind(ref).first<FingerprintRow>();
   }
 
   function verifyExpected(expectedSha256: string, json: string): Promise<string> {
@@ -213,7 +217,7 @@ export function createD1ModelGatewayFingerprintStore(
       let writeError: unknown;
       try {
         inserted = await database.prepare(
-          `INSERT INTO research_model_fingerprint(fingerprint_ref, route_ref, fingerprint_sha256, fingerprint_json, observed_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(fingerprint_ref) DO NOTHING RETURNING ${select}`,
+          `INSERT INTO research_model_fingerprint(fingerprint_ref, route_ref, fingerprint_sha256, fingerprint_json, observed_at) VALUES (?1,?2,?3,?4,?5) ON CONFLICT(fingerprint_ref) DO NOTHING RETURNING ${FINGERPRINT_SELECT}`,
         ).bind(ref, canonical.fingerprint.route_ref, expected, canonical.json, timestamp(now(), "fingerprint observed_at")).first<FingerprintRow>();
       } catch (cause) {
         writeError = cause;
@@ -252,7 +256,7 @@ export function createD1ModelGatewayFingerprintStore(
     async getLatest(routeRef: string): Promise<unknown | null> {
       const requested = identifier(routeRef, "requested fingerprint route");
       const row = await database.prepare(
-        `SELECT ${select} FROM research_model_fingerprint WHERE route_ref=?1 ORDER BY observation_seq DESC LIMIT 1`,
+        `SELECT ${FINGERPRINT_SELECT} FROM research_model_fingerprint WHERE route_ref=?1 ORDER BY observation_seq DESC LIMIT 1`,
       ).bind(requested).first<FingerprintRow>();
       if (row === null) return null;
       const readback = await rowValue(row, "MODEL_FINGERPRINT_READBACK_CORRUPT");
@@ -260,4 +264,22 @@ export function createD1ModelGatewayFingerprintStore(
       return readback.fingerprint;
     },
   });
+}
+
+/** Read one immutable route fingerprint by its persisted reference. */
+export async function readD1ModelGatewayFingerprint(
+  database: D1Database,
+  fingerprintReference: string,
+): Promise<RouteFingerprint | null> {
+  assertDatabase(database);
+  const requested = identifier(fingerprintReference, "requested fingerprint reference");
+  const row = await database.prepare(
+    `SELECT ${FINGERPRINT_SELECT} FROM research_model_fingerprint WHERE fingerprint_ref=?1 LIMIT 1`,
+  ).bind(requested).first<FingerprintRow>();
+  if (row === null) return null;
+  const readback = await rowValue(row, "MODEL_FINGERPRINT_READBACK_CORRUPT");
+  if (readback.ref !== requested) {
+    fail("MODEL_FINGERPRINT_READBACK_CORRUPT", "exact fingerprint reference differs from the requested reference");
+  }
+  return readback.fingerprint;
 }

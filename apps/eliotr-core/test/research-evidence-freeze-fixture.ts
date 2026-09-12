@@ -42,6 +42,8 @@ export interface FreezeFixture {
   readonly scope: ScopeSnapshot;
   readonly navigation: ReturnType<typeof createNavigationReadAuthority>;
   readonly ledger: InvestigationLedgerStore;
+  /** Reusable W2 authority ports for lost-ACK recovery fixtures. */
+  readonly ports: WorkflowExecutionPorts;
   readonly executor: ReturnType<typeof createWorkflowCheckpointExecutor>;
   readonly retrieve: RetrieveBranchesStageDependencies;
   readonly resolver: CloudflareEvidenceResolver;
@@ -56,10 +58,20 @@ export interface FreezeFixture {
   readonly investigation_id: string;
 }
 
-async function signedProfile(scope: ScopeSnapshot, policyAuthorityRef: string, policyGeneration: string): Promise<EvidenceFreezeModelDefinition> {
+export interface FreezeFixtureOptions {
+  /** Optional committed-manifest admission used by later-stage reader fixtures. */
+  readonly allowed_verifier_refs?: readonly string[];
+}
+
+async function signedProfile(
+  scope: ScopeSnapshot,
+  policyAuthorityRef: string,
+  policyGeneration: string,
+  allowedVerifierRefs: readonly string[] = [],
+): Promise<EvidenceFreezeModelDefinition> {
   const expiresAt = scope.expires_at;
   const policy = Object.freeze({
-    allowed_tool_definition_refs: [], allowed_verifier_refs: [],
+    allowed_tool_definition_refs: [], allowed_verifier_refs: [...allowedVerifierRefs],
     permitted_anchor_and_precision_ceilings: ["normalized-text-coordinates-v1"],
     provider_and_policy_generations: { policy: policyGeneration },
     permitted_acquisition_or_expansion_routes: [], disclosure_ceiling: "owner-only",
@@ -95,7 +107,7 @@ async function signedProfile(scope: ScopeSnapshot, policyAuthorityRef: string, p
   });
 }
 
-export async function freezeFixture(): Promise<FreezeFixture> {
+export async function freezeFixture(options: FreezeFixtureOptions = {}): Promise<FreezeFixture> {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
@@ -182,14 +194,18 @@ export async function freezeFixture(): Promise<FreezeFixture> {
   const pre_reconcile = previous;
   const current = await ledgerStore.read(investigationId);
   if (current === null) throw new Error("missing current W1 head");
-  const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation);
+  const definition = await signedProfile(scope, current.head.policy_authority_ref, current.head.policy_generation, options.allowed_verifier_refs);
   const deployment = definition.deployment;
   const profileProducer = createPersistedModelProfileBindingProducer({
     config: { raw: JSON.stringify(definition), provenance_ref: definition.config_provenance_ref },
     authority: { database: db, navigation, operation_id: operationId, investigation_id: investigationId, principal },
     routeAuthority: { resolve: async () => deployment }, now: () => nowMs });
   const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: runtime.SEARCH_DB });
-  const resolver: CloudflareEvidenceResolver = createCloudflareEvidenceResolver({ authority: evidenceAuthority, content: createR2EvidenceContentPort({ evidence_bucket: runtime.EVIDENCE_BUCKET }) });
+  const resolver: CloudflareEvidenceResolver = createCloudflareEvidenceResolver({
+    authority: evidenceAuthority,
+    content: createR2EvidenceContentPort({ evidence_bucket: runtime.EVIDENCE_BUCKET }),
+    now: () => nowMs,
+  });
   const { navigation: _navigation, ledger: _ledger, ...retrieveEnvironment } = retrieve;
   const readers = createEvidenceFreezeWorkflowReaders({ database: db, work_bucket: bucket, retrieve: retrieveEnvironment }, navigation, ledgerStore);
   const reader = createEvidenceFreezePredecessorReader(navigation, readers);
@@ -203,16 +219,16 @@ export async function freezeFixture(): Promise<FreezeFixture> {
     manifest_residency_template: { scope_domain_id: scope.snapshot_id, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
       encryption_key_domain_id: "freeze-key-v1", retention_domain_id: "freeze-retention-v1", erasure_domain_id: "freeze-erasure-v1" },
     max_context_bytes: definition.max_context_bytes, manifest_store: freezeStore });
-  return { db, bucket, scope, navigation, ledger: ledgerStore, executor, retrieve, resolver, readers, stage_zero, stage_five, pre_reconcile,
+  return { db, bucket, scope, navigation, ledger: ledgerStore, ports, executor, retrieve, resolver, readers, stage_zero, stage_five, pre_reconcile,
     composition, freeze_store: freezeStore, profile_definition: definition, operation_id: operationId, investigation_id: investigationId };
 }
 
-export async function committedEvidenceFreezeFixture(): Promise<FreezeFixture & {
+export async function committedEvidenceFreezeFixture(options: FreezeFixtureOptions = {}): Promise<FreezeFixture & {
   readonly stage_ten: StageReceipt;
   readonly stage_eleven: StageReceipt;
   readonly stage_twelve: StageRequest;
 }> {
-  const fixture = await freezeFixture();
+  const fixture = await freezeFixture(options);
   const stageTen: StageRequest = { ...fixture.stage_zero, stage: "RECONCILE", investigation_ref: fixture.pre_reconcile.investigation_ref,
     input_manifest: fixture.pre_reconcile.output_manifest };
   const stageTenReceipt = await fixture.executor.execute(stageTen, principal, fixture.composition.reconcile);

@@ -27,6 +27,14 @@ const PRICING_SNAPSHOT = "stage-handler-pricing-v1";
 export const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`;
 export type QualificationTier = "FIXTURE" | "LIVE";
 export type ApprovalMode = "approved" | "missing" | "malformed";
+export type SynthesisCandidateProtocol = "v1" | "v2";
+
+export interface CommittedFreezeSynthesisFixtureOptions {
+  readonly candidate_protocol?: SynthesisCandidateProtocol;
+  readonly synthesis_prompt?: string;
+  /** Optional manifest admission used by later committed-stage reader fixtures. */
+  readonly allowed_verifier_refs?: readonly string[];
+}
 
 function futureIso(): string {
   return new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -280,8 +288,11 @@ function freezePrompt(
   stage_five: Awaited<ReturnType<typeof freeze.readers.read_stage_five>>,
   deployment: ModelRouteDeployment,
   tag: string,
+  synthesis_prompt: string,
+  allowed_verifier_refs: readonly string[] = [],
 ): ResearchModelPromptCompilerDependencies {
   const manifest_ref: VersionedRef = { id: `synthesis-prompt-${tag}`, revision: 1 };
+  const allowedVerifierRefs = [...allowed_verifier_refs];
   const manifest_service = createResearchReferenceManifestService({
     navigation: freeze.navigation, resolver: freeze.resolver,
     store: {
@@ -316,7 +327,7 @@ function freezePrompt(
       evidence_pack: input.evidence_pack, navigation: freeze.navigation,
       resolver: freeze.resolver,
       policy: {
-        allowed_tool_definition_refs: [], allowed_verifier_refs: [], permitted_anchor_and_precision_ceilings: [],
+        allowed_tool_definition_refs: [], allowed_verifier_refs: allowedVerifierRefs, permitted_anchor_and_precision_ceilings: [],
         provider_and_policy_generations: freeze.profile_definition.policy.provider_and_policy_generations, stale_or_revoked_entries: [],
         permitted_acquisition_or_expansion_routes: freeze.profile_definition.policy.permitted_acquisition_or_expansion_routes,
         disclosure_ceiling: freeze.profile_definition.policy.disclosure_ceiling, allowed_use: freeze.profile_definition.policy.allowed_use,
@@ -324,13 +335,15 @@ function freezePrompt(
       },
       manifest_ref, model_route_ref: deployment.route_ref, max_context_bytes: 64 * 1024,
     }),
-    resolve_trusted_parameters: async () => ({ prompt: "Produce eliotr.research.synthesis-section-candidate.v1 from the frozen evidence.", max_tokens: 32 }),
+    resolve_trusted_parameters: async () => ({ prompt: synthesis_prompt, max_tokens: 32 }),
     request_timeout_ms: 5_000,
   };
 }
 
-export async function committedFreezeSynthesisFixture() {
-  const freeze = await committedEvidenceFreezeFixture();
+export async function committedFreezeSynthesisFixture(options: CommittedFreezeSynthesisFixtureOptions = {}) {
+  const freeze = await committedEvidenceFreezeFixture(options.allowed_verifier_refs === undefined
+    ? {}
+    : { allowed_verifier_refs: options.allowed_verifier_refs });
   const base = await governedModelAttemptFixture("freeze-synthesis", {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
@@ -344,8 +357,16 @@ export async function committedFreezeSynthesisFixture() {
     investigation_id: freeze.investigation_id, principal: freezePrincipal });
   const evidence = stage_five.evidence_pack.resolved_evidence[0];
   if (evidence === undefined) throw new Error("stage five fixture has no resolved evidence");
-  const candidate = JSON.stringify({ schema: "eliotr.research.synthesis-section-candidate.v1",
-    section_text: evidence.exact_excerpt, cited_handle_refs: [evidence.handle.handle_ref] });
+  const candidate_protocol = options.candidate_protocol ?? "v1";
+  const synthesis_prompt = options.synthesis_prompt ?? (candidate_protocol === "v2"
+    ? "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence."
+    : "Produce eliotr.research.synthesis-section-candidate.v1 from the frozen evidence.");
+  const candidate = candidate_protocol === "v2"
+    ? JSON.stringify({ schema: "eliotr.research.synthesis-claims-candidate.v2", section_text: evidence.exact_excerpt,
+      material_claims: [{ text: evidence.exact_excerpt, kind: "observation", support_handle_refs: [evidence.handle.handle_ref],
+        counterevidence_handle_refs: [], span: { start: 0, end: evidence.exact_excerpt.length } }] })
+    : JSON.stringify({ schema: "eliotr.research.synthesis-section-candidate.v1",
+      section_text: evidence.exact_excerpt, cited_handle_refs: [evidence.handle.handle_ref] });
   let prepared: ModelAttemptReservationInput | null = null;
   let provider_calls = 0;
   const request_bodies: string[] = [];
@@ -366,7 +387,7 @@ export async function committedFreezeSynthesisFixture() {
         }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
       } };
     } } },
-    prompt: freezePrompt(freeze, stage_five, deployment, "freeze"), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
+    prompt: freezePrompt(freeze, stage_five, deployment, "freeze", synthesis_prompt, options.allowed_verifier_refs), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {
       if (prepared === null) throw new Error("spend authorization read before preparation");
       return {
