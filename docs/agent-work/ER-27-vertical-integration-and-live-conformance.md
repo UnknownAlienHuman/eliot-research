@@ -34,6 +34,8 @@ outside the paths below.
 - `apps/eliotr-core/test/research-claim-audit-fixture.ts`
 - `apps/eliotr-core/test/research-citations-result.test.ts`
 - `apps/eliotr-core/test/research-citations-stage.test.ts`
+- `apps/eliotr-core/test/research-citations-fixture.ts`
+- `apps/eliotr-core/test/research-citations-recovery.test.ts`
 - `apps/eliotr-core/test/research-citation-attempt-binding.test.ts`
 - `apps/eliotr-core/test/research-synthesis-fixture.ts`
 - `apps/eliotr-core/test/research-model-pricing-store.test.ts`
