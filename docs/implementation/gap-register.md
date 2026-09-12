@@ -84,6 +84,13 @@ clean Git status does not imply complete filesystem cleanup or product readiness
 
 New financial budgeting/accounting work remains deferred. Existing authorization and duplicate-provider-call protections stay in place.
 
+The bounded ResearchSession recovery repair at `d358283` refuses execution when the durable input
+manifest cannot be read back, even if portfolio bytes remain in R2. It preserves an ACTIVE session
+with a retryable settlement fault. The 12-case local session suite retains a separate successful
+exploratory.v1 run with a durably registered manifest, exact stage-0 readback and duplicate-free
+18-stage replay. This closes portfolio-based manifest reconstruction only; immutable initial
+payload admission, full provider settlement recovery and live qualification remain open.
+
 ### Committed and published Luna work
 
 The follow-up cleanup audit saved the unfinished files as inactive artifacts in
