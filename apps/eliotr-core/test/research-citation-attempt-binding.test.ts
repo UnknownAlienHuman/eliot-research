@@ -19,6 +19,7 @@ import type { CreateLedgerInput } from "@eliotr/research";
 import {
   principal,
   runtime,
+  faultDatabase,
   workflowFixture,
 } from "./research-workflow-fixture.js";
 
@@ -43,6 +44,20 @@ type AttemptRow = {
 type CitationReceiptRow = {
   readonly receipt_json: string;
   readonly receipt_sha256: string;
+};
+
+type CitationGuardRow = {
+  readonly receipt_id: string;
+  readonly receipt_revision: number;
+  readonly verified: number;
+  readonly created_at: string;
+};
+
+type WorkflowFixture = Awaited<ReturnType<typeof workflowFixture>>;
+
+type Stage15Operation = {
+  readonly request: StageRequest;
+  readonly attempt: AttemptRow;
 };
 
 async function insertBinding(database: D1Database, row: BindingRow): Promise<void> {
@@ -137,6 +152,94 @@ async function walkControlledStages(
   }
   if (previous === null) throw new Error("controlled stage walk produced no receipt");
   return previous;
+}
+
+async function createStage15Operation(
+  workflow: WorkflowFixture,
+  suffix: string,
+): Promise<Stage15Operation> {
+  const firstHead = await workflow.ledger.read(workflow.request.investigation_ref.id);
+  const operationId = `${workflow.request.operation_id}-${suffix}`;
+  const investigationId = `${workflow.request.investigation_ref.id}-${suffix}`;
+  const ledgerInput: CreateLedgerInput = {
+    investigation_id: investigationId,
+    goal: `citation binding ${suffix}`,
+    scope_snapshot_id: firstHead.scope_snapshot_id,
+    scope_snapshot_revision: firstHead.scope_snapshot_revision,
+    evidence_grade: firstHead.evidence_grade,
+    lane: firstHead.lane,
+    lane_registrations: firstHead.lane_registrations,
+    obligations: firstHead.obligations,
+    hypotheses: firstHead.hypotheses,
+    portfolio_ref: workflow.request.input_manifest.object_ref,
+    debt_refs: firstHead.debt_refs,
+    principal_ref: firstHead.principal_ref,
+    input_digest: workflow.request.input_manifest.sha256,
+    policy_generation: firstHead.policy_generation,
+    policy_authority_ref: firstHead.policy_authority_ref,
+    deployment_generation: firstHead.deployment_generation,
+    idempotency_key: `ledger-${suffix}`,
+    model_profile_ref: firstHead.model_profile_ref,
+    event_id: `ledger-event-${suffix}`,
+    payload_handle_ref: workflow.request.input_manifest.object_ref,
+    payload_digest: workflow.request.input_manifest.sha256,
+    created_at: new Date().toISOString(),
+  };
+  expect((await workflow.ledger.create(ledgerInput)).revision).toBe(1);
+  const stageZero: StageRequest = {
+    ...workflow.request,
+    operation_id: operationId,
+    investigation_ref: { id: investigationId, revision: 1 },
+    idempotency_key: `workflow-${suffix}`,
+  };
+  const auditReceipt = await walkControlledStages(workflow.executor, stageZero);
+  const request: StageRequest = {
+    ...stageZero,
+    stage: "RESOLVE_CITATIONS",
+    investigation_ref: auditReceipt.investigation_ref,
+    input_manifest: auditReceipt.output_manifest,
+  };
+  return { request, attempt: await leaveStarted(workflow.db, workflow.executor, request) };
+}
+
+function createResolver(
+  workflow: WorkflowFixture,
+  database: D1Database = workflow.db,
+  now?: () => number,
+) {
+  return createCloudflareEvidenceResolver({
+    authority: createD1EvidenceAuthorityPort({
+      core_database: database,
+      search_database: runtime.SEARCH_DB,
+    }),
+    content: createR2EvidenceContentPort({ evidence_bucket: workflow.bucket }),
+    ...(now === undefined ? {} : { now }),
+  });
+}
+
+async function readCitationSettlement(
+  database: D1Database,
+  receiptId: string,
+  receiptRevision: number,
+  operationId: string,
+): Promise<{
+  readonly receipt: CitationReceiptRow;
+  readonly guard: CitationGuardRow;
+  readonly binding: BindingRow;
+}> {
+  const receipt = await database.prepare(
+    "SELECT receipt_json,receipt_sha256 FROM citation_resolution_receipt " +
+      "WHERE receipt_id=?1 AND revision=?2 LIMIT 1",
+  ).bind(receiptId, receiptRevision).first<CitationReceiptRow>();
+  const guard = await database.prepare(
+    "SELECT receipt_id,receipt_revision,verified,created_at FROM citation_resolution_guard " +
+      "WHERE receipt_id=?1 AND receipt_revision=?2 LIMIT 1",
+  ).bind(receiptId, receiptRevision).first<CitationGuardRow>();
+  const binding = await readBinding(database, operationId);
+  if (receipt === null || guard === null || binding === null) {
+    throw new Error("citation receipt, guard, and binding readback is incomplete");
+  }
+  return { receipt, guard, binding };
 }
 
 describe("ER-13 Stage15 citation-receipt binding migration", () => {
@@ -307,5 +410,186 @@ describe("ER-13 Stage15 citation-receipt binding migration", () => {
       firstBinding.operation_id,
       secondBinding.operation_id,
     ].sort());
+
+    const applicationOperation = await createStage15Operation(workflow, "application");
+    const applicationHandle = { id: "missing-application-stage15-handle", revision: 1 };
+    const applicationCitation = await createResolver(workflow).resolveCitationSet({
+      handle_refs: [applicationHandle],
+      scope_snapshot_ref: scopeSnapshotRef,
+      access: evidenceAccess,
+      attempt_binding: {
+        operation_id: applicationOperation.request.operation_id,
+        attempt_ref: applicationOperation.attempt.attempt_ref,
+        request_sha256: applicationOperation.attempt.request_sha256,
+      },
+    });
+    expect(applicationCitation.resolved_evidence).toHaveLength(0);
+    expect(applicationCitation.receipt.rejected).toEqual([{
+      handle_ref: applicationHandle,
+      reason_code: "EVIDENCE_HANDLE_NOT_FOUND",
+    }]);
+    const applicationReceiptJson = canonicalEvidenceJson(applicationCitation.receipt);
+    const applicationReceiptSha = await evidenceSha256(applicationCitation.receipt);
+    const applicationSettlement = await readCitationSettlement(
+      workflow.db,
+      applicationCitation.receipt.receipt_ref.id,
+      applicationCitation.receipt.receipt_ref.revision,
+      applicationOperation.request.operation_id,
+    );
+    expect(applicationSettlement.receipt.receipt_json).toBe(applicationReceiptJson);
+    expect(applicationSettlement.receipt.receipt_sha256).toBe(applicationReceiptSha);
+    expect(applicationSettlement.guard).toMatchObject({
+      receipt_id: applicationCitation.receipt.receipt_ref.id,
+      receipt_revision: applicationCitation.receipt.receipt_ref.revision,
+      verified: 1,
+      created_at: applicationCitation.receipt.created_at,
+    });
+    expect(applicationSettlement.binding).toMatchObject({
+      operation_id: applicationOperation.request.operation_id,
+      stage_index: 15,
+      attempt_ref: applicationOperation.attempt.attempt_ref,
+      request_sha256: applicationOperation.attempt.request_sha256,
+      receipt_id: applicationCitation.receipt.receipt_ref.id,
+      receipt_revision: applicationCitation.receipt.receipt_ref.revision,
+      receipt_sha256: applicationReceiptSha,
+    });
+    expect(applicationSettlement.binding.bound_at).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u,
+    );
+
+    const replayOperation = await createStage15Operation(workflow, "application-replay");
+    const laterNow = Date.parse(applicationCitation.receipt.created_at) + 1_000;
+    expect(laterNow).toBeGreaterThan(Date.parse(applicationCitation.receipt.created_at));
+    const replayCitation = await createResolver(workflow, workflow.db, () => laterNow).resolveCitationSet({
+      handle_refs: [applicationHandle],
+      scope_snapshot_ref: scopeSnapshotRef,
+      access: evidenceAccess,
+      attempt_binding: {
+        operation_id: replayOperation.request.operation_id,
+        attempt_ref: replayOperation.attempt.attempt_ref,
+        request_sha256: replayOperation.attempt.request_sha256,
+      },
+    });
+    expect(replayCitation.receipt).toEqual(applicationCitation.receipt);
+    expect(replayCitation.resolved_evidence).toHaveLength(0);
+    expect(replayCitation.receipt.created_at).toBe(applicationCitation.receipt.created_at);
+    expect(await evidenceSha256(replayCitation.receipt)).toBe(applicationReceiptSha);
+    const replaySettlement = await readCitationSettlement(
+      workflow.db,
+      applicationCitation.receipt.receipt_ref.id,
+      applicationCitation.receipt.receipt_ref.revision,
+      replayOperation.request.operation_id,
+    );
+    expect(replaySettlement.binding).toMatchObject({
+      operation_id: replayOperation.request.operation_id,
+      attempt_ref: replayOperation.attempt.attempt_ref,
+      request_sha256: replayOperation.attempt.request_sha256,
+      receipt_id: applicationCitation.receipt.receipt_ref.id,
+      receipt_revision: applicationCitation.receipt.receipt_ref.revision,
+      receipt_sha256: applicationReceiptSha,
+    });
+    const applicationReceiptCount = await workflow.db.prepare(
+      "SELECT COUNT(*) AS count FROM citation_resolution_receipt WHERE receipt_id=?1 AND revision=?2",
+    ).bind(applicationCitation.receipt.receipt_ref.id, applicationCitation.receipt.receipt_ref.revision)
+      .first<{ readonly count: number }>();
+    expect(applicationReceiptCount?.count).toBe(1);
+
+    const lostAckOperation = await createStage15Operation(workflow, "application-lost-ack");
+    const lostAckHandle = { id: "missing-lost-ack-stage15-handle", revision: 1 };
+    let lostAck = false;
+    const lostAckDatabase = faultDatabase(workflow.db, {
+      afterBatch: async () => {
+        if (!lostAck) {
+          const durableBinding = await workflow.db.prepare(
+            "SELECT operation_id,stage_index,attempt_ref,request_sha256,receipt_id,receipt_revision,receipt_sha256,bound_at " +
+              "FROM research_workflow_citation_binding WHERE operation_id=?1 AND stage_index=15",
+          ).bind(lostAckOperation.request.operation_id).first<BindingRow>();
+          if (durableBinding === null) return;
+          expect(durableBinding).toMatchObject({
+            operation_id: lostAckOperation.request.operation_id,
+            stage_index: 15,
+            attempt_ref: lostAckOperation.attempt.attempt_ref,
+            request_sha256: lostAckOperation.attempt.request_sha256,
+          });
+          const durableReceipt = await workflow.db.prepare(
+            "SELECT receipt_json,receipt_sha256 FROM citation_resolution_receipt " +
+              "WHERE receipt_id=?1 AND revision=?2 LIMIT 1",
+          ).bind(durableBinding.receipt_id, durableBinding.receipt_revision).first<CitationReceiptRow>();
+          const durableGuard = await workflow.db.prepare(
+            "SELECT verified FROM citation_resolution_guard WHERE receipt_id=?1 AND receipt_revision=?2 LIMIT 1",
+          ).bind(durableBinding.receipt_id, durableBinding.receipt_revision).first<{
+            readonly verified: number;
+          }>();
+          expect(durableReceipt).not.toBeNull();
+          expect(durableReceipt?.receipt_sha256).toBe(durableBinding.receipt_sha256);
+          expect(durableGuard).toEqual({ verified: 1 });
+          lostAck = true;
+          throw new Error("controlled citation settlement lost ACK");
+        }
+      },
+    });
+    const lostAckCitation = await createResolver(workflow, lostAckDatabase).resolveCitationSet({
+      handle_refs: [lostAckHandle],
+      scope_snapshot_ref: scopeSnapshotRef,
+      access: evidenceAccess,
+      attempt_binding: {
+        operation_id: lostAckOperation.request.operation_id,
+        attempt_ref: lostAckOperation.attempt.attempt_ref,
+        request_sha256: lostAckOperation.attempt.request_sha256,
+      },
+    });
+    expect(lostAck).toBe(true);
+    expect(lostAckCitation.resolved_evidence).toHaveLength(0);
+    const lostAckReceiptSha = await evidenceSha256(lostAckCitation.receipt);
+    const lostAckSettlement = await readCitationSettlement(
+      workflow.db,
+      lostAckCitation.receipt.receipt_ref.id,
+      lostAckCitation.receipt.receipt_ref.revision,
+      lostAckOperation.request.operation_id,
+    );
+    expect(lostAckSettlement.receipt.receipt_json).toBe(canonicalEvidenceJson(lostAckCitation.receipt));
+    expect(lostAckSettlement.receipt.receipt_sha256).toBe(lostAckReceiptSha);
+    expect(lostAckSettlement.guard).toMatchObject({ verified: 1 });
+    expect(lostAckSettlement.binding).toMatchObject({
+      operation_id: lostAckOperation.request.operation_id,
+      attempt_ref: lostAckOperation.attempt.attempt_ref,
+      request_sha256: lostAckOperation.attempt.request_sha256,
+      receipt_id: lostAckCitation.receipt.receipt_ref.id,
+      receipt_revision: lostAckCitation.receipt.receipt_ref.revision,
+      receipt_sha256: lostAckReceiptSha,
+    });
+
+    const receiptOnlyOperation = await createStage15Operation(workflow, "application-receipt-only");
+    const receiptOnlyHandle = { id: "missing-receipt-only-stage15-handle", revision: 1 };
+    const receiptOnlyCitation = await createResolver(workflow).resolveCitationSet({
+      handle_refs: [receiptOnlyHandle],
+      scope_snapshot_ref: scopeSnapshotRef,
+      access: evidenceAccess,
+    });
+    const receiptOnlyRow = await workflow.db.prepare(
+      "SELECT receipt_json,receipt_sha256 FROM citation_resolution_receipt " +
+        "WHERE receipt_id=?1 AND revision=?2 LIMIT 1",
+    ).bind(receiptOnlyCitation.receipt.receipt_ref.id, receiptOnlyCitation.receipt.receipt_ref.revision)
+      .first<CitationReceiptRow>();
+    if (receiptOnlyRow === null) throw new Error("receipt-only fixture row is missing");
+    const rejectedBindingCitation = createResolver(workflow).resolveCitationSet({
+      handle_refs: [receiptOnlyHandle],
+      scope_snapshot_ref: scopeSnapshotRef,
+      access: evidenceAccess,
+      attempt_binding: {
+        operation_id: receiptOnlyOperation.request.operation_id,
+        attempt_ref: firstAttempt.attempt_ref,
+        request_sha256: receiptOnlyOperation.attempt.request_sha256,
+      },
+    });
+    await expect(rejectedBindingCitation).rejects.toMatchObject({
+      code: "EVIDENCE_SETTLEMENT_UNCERTAIN",
+      retryable: true,
+    });
+    expect(await readBinding(workflow.db, receiptOnlyOperation.request.operation_id)).toBeNull();
+    expect(await workflow.db.prepare(
+      "SELECT receipt_json,receipt_sha256 FROM citation_resolution_receipt WHERE receipt_id=?1 AND revision=?2",
+    ).bind(receiptOnlyCitation.receipt.receipt_ref.id, receiptOnlyCitation.receipt.receipt_ref.revision)
+      .first<CitationReceiptRow>()).toEqual(receiptOnlyRow);
   }, 60_000);
 });
