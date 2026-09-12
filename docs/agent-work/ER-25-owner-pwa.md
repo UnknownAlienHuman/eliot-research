@@ -49,6 +49,27 @@ and validates the exact nested `SystemHealth` shape. The legacy raw-health respo
 unknown fields, duplicate blocker codes, non-canonical timestamps, and generation mismatch all fail
 closed. This is client validation only; it does not grant authority or qualify a live deployment.
 
+### Calm blue workspace checkpoint — 2026-09-12
+
+The Astro owner application adapts the blue workspace proposal in `docs/design/` to its existing
+mounted controllers. Sources, Research and Connections are contextual views with hash navigation,
+keyboard focus and Back support. Switching views preserves the current source and evidence state;
+authorization loss, offline and deployment-generation changes retain their existing clearing rules.
+The desktop uses a viewport grid with independently scrolling content. On narrow screens a compact
+source chooser and persistent bottom navigation keep the document area reachable; empty evidence
+uses a compact rail and selected evidence remains available.
+
+Connections distinguishes an unreachable server from a responding deployment with blocked readiness.
+It reports the selected Workspace transport separately and mounts the existing owner Google flow only
+for `drive-exchange`. There is no agent-activity endpoint in this checkpoint: client activity remains
+unknown, and a successful health response does not establish an agent connection or execution.
+No owner API, credential, read grant, migration or private browser persistence is introduced.
+
+Manual checks of the built application at 1280, 1024 and 390 pixels verified navigation, focus, Back,
+the mobile source chooser and the absence of horizontal overflow. The static preview has no owner
+backend and is visual evidence only. The controlled HTTP browser fixture and actual Worker/D1/R2
+owner user loop remain separate acceptance gates; this checkpoint does not close live qualification.
+
 ## Acceptance
 
 - Initial JS bundle remains ≤600 KiB gzip.

@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title"><title id="title">ELIOT Research Blue v2 — исследование; демонстрационный макет</title><g font-family="Arial, sans-serif">
+<rect x="0" y="0" width="1600" height="1000" rx="0" fill="#0B101B"/>
+<rect x="0" y="0" width="204" height="1000" rx="0" fill="#0F1625"/>
+<rect x="25" y="25" width="32" height="36" rx="10" fill="#B2CDFF"/>
+<text x="32" y="51" fill="#102954" font-size="26" font-weight="700">E</text>
+<text x="69" y="45" fill="#EDF2FC" font-size="25" font-weight="700">eliot</text>
+<text x="70" y="63" fill="#A5B4CC" font-size="9" font-weight="400">R E S E A R C H</text>
+<rect x="16" y="96" width="172" height="76" rx="16" fill="#141E30" stroke="#2D3C56"/>
+<text x="32" y="126" fill="#EDF2FC" font-size="13" font-weight="600">Память AI-агентов</text>
+<text x="32" y="149" fill="#A5B4CC" font-size="12" font-weight="400">Личный проект</text>
+<rect x="16" y="211" width="172" height="44" rx="22" fill="#233D65"/>
+<text x="31" y="239" fill="#A8C7FF" font-size="19" font-weight="400">◈</text>
+<text x="59" y="238" fill="#A8C7FF" font-size="13" font-weight="600">Исследование</text>
+<text x="31" y="289" fill="#A5B4CC" font-size="19" font-weight="400">▤</text>
+<text x="59" y="288" fill="#A5B4CC" font-size="13" font-weight="400">Источники</text>
+<text x="31" y="339" fill="#A5B4CC" font-size="19" font-weight="400">▧</text>
+<text x="59" y="338" fill="#A5B4CC" font-size="13" font-weight="400">Материалы</text>
+<text x="31" y="849" fill="#A8C7FF" font-size="19" font-weight="400">⇄</text>
+<text x="59" y="848" fill="#A5B4CC" font-size="13" font-weight="600">Подключения</text>
+<text x="173" y="848" fill="#FFD698" font-size="13" font-weight="400">!</text>
+<text x="31" y="895" fill="#A5B4CC" font-size="19" font-weight="400">☼</text>
+<text x="59" y="894" fill="#A5B4CC" font-size="13" font-weight="400">Светлая тема</text>
+<path d="M25 925h154" stroke="#2D3C56"/>
+<rect x="27" y="949" width="30" height="30" rx="15" fill="#233D65"/>
+<text x="33" y="969" fill="#A8C7FF" font-size="10" font-weight="600">YL</text>
+<text x="69" y="966" fill="#EDF2FC" font-size="12" font-weight="400">Iurii</text>
+<text x="69" y="984" fill="#A5B4CC" font-size="10" font-weight="400">Личное пространство</text>
+<text x="234" y="42" fill="#A5B4CC" font-size="12" font-weight="400">Память AI-агентов  /  Исследование</text>
+<text x="1150" y="42" fill="#A5B4CC" font-size="12" font-weight="400">⌕  Найти источник    Ctrl K</text>
+<rect x="1406" y="25" width="161" height="24" rx="5" fill="#0B101B" stroke="#2D3C56"/>
+<text x="1418" y="41" fill="#A5B4CC" font-size="11" font-weight="400">КОНЦЕПТ · ДЕМО</text>
+<rect x="204" y="72" width="1380" height="912" rx="26" fill="#141E30"/>
+<rect x="205" y="73" width="220" height="910" rx="0" fill="#141E30"/>
+<text x="224" y="119" fill="#EDF2FC" font-size="15" font-weight="600">Источники  6</text>
+<rect x="222" y="142" width="184" height="39" rx="12" fill="#1B2941" stroke="#2D3C56"/>
+<text x="235" y="167" fill="#A5B4CC" font-size="12" font-weight="400">Найти в подборке…</text>
+<text x="225" y="209" fill="#A5B4CC" font-size="10" font-weight="600">ВЫБРАНО 6 ИЗ 6</text>
+<rect x="221" y="229" width="185" height="65" rx="13" fill="#233D65"/>
+<text x="232" y="257" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="254" fill="#EDF2FC" font-size="12" font-weight="600">MemoryOS</text>
+<text x="257" y="276" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="262" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<text x="232" y="333" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="330" fill="#EDF2FC" font-size="12" font-weight="600">A-MEM</text>
+<text x="257" y="352" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="338" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<text x="232" y="409" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="406" fill="#EDF2FC" font-size="12" font-weight="600">Mem0</text>
+<text x="257" y="428" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="414" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<text x="232" y="485" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="482" fill="#EDF2FC" font-size="12" font-weight="600">LongMemEval</text>
+<text x="257" y="504" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="490" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<text x="232" y="561" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="558" fill="#EDF2FC" font-size="12" font-weight="600">Архитектура ELIOT</text>
+<text x="257" y="580" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="566" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<text x="232" y="637" fill="#A8C7FF" font-size="18" font-weight="400">▧</text>
+<text x="257" y="634" fill="#EDF2FC" font-size="12" font-weight="600">Протокол оценки</text>
+<text x="257" y="656" fill="#A5B4CC" font-size="10" font-weight="400">Материал · демо</text>
+<text x="387" y="642" fill="#A8C7FF" font-size="16" font-weight="400">☑</text>
+<path d="M225 717h178" stroke="#2D3C56"/>
+<text x="225" y="745" fill="#A5B4CC" font-size="11" font-weight="400">Срез результата S-012</text>
+<text x="225" y="765" fill="#A5B4CC" font-size="11" font-weight="400">Выбор для нового вопроса</text>
+<text x="225" y="783" fill="#A5B4CC" font-size="11" font-weight="400">не меняет готовый результат.</text>
+<rect x="425" y="73" width="1" height="910" rx="0" fill="#2D3C56"/>
+<text x="459" y="117" fill="#A5B4CC" font-size="11" font-weight="600">ОБЗОР ЛИТЕРАТУРЫ</text>
+<text x="459" y="163" fill="#EDF2FC" font-size="31" font-weight="600">Как устроена память</text>
+<text x="459" y="204" fill="#EDF2FC" font-size="31" font-weight="600">AI-агентов?</text>
+<text x="459" y="236" fill="#A5B4CC" font-size="14" font-weight="400">Механизмы, ограничения и вопросы для проверки.</text>
+<rect x="459" y="258" width="93" height="30" rx="15" fill="#352B23"/>
+<text x="471" y="278" fill="#FFD698" font-size="12" font-weight="400">Черновик</text>
+<rect x="562" y="258" width="186" height="30" rx="15" fill="#233D65"/>
+<text x="574" y="278" fill="#A8C7FF" font-size="12" font-weight="400">6 источников · S-012</text>
+<rect x="459" y="316" width="768" height="128" rx="20" fill="#1B2941" stroke="#2D3C56"/>
+<text x="479" y="349" fill="#EDF2FC" font-size="15" font-weight="400">Какие механизмы памяти подходят для ELIOT?</text>
+<rect x="479" y="391" width="223" height="30" rx="15" fill="#233D65"/>
+<text x="491" y="411" fill="#A8C7FF" font-size="12" font-weight="400">По выбранным источникам</text>
+<rect x="1038" y="382" width="169" height="44" rx="22" fill="#B2CDFF"/>
+<text x="1056" y="410" fill="#102954" font-size="13" font-weight="600">Исследовать  →</text>
+<text x="463" y="492" fill="#A8C7FF" font-size="14" font-weight="600">Выводы</text>
+<text x="571" y="492" fill="#A5B4CC" font-size="14" font-weight="400">Сравнение</text>
+<text x="701" y="492" fill="#A5B4CC" font-size="14" font-weight="400">Ход работы</text>
+<path d="M459 512h768" stroke="#2D3C56"/>
+<rect x="463" y="509" width="61" height="3" rx="2" fill="#A8C7FF"/>
+<text x="459" y="553" fill="#A8C7FF" font-size="11" font-weight="600">01 / РАБОЧАЯ ГИПОТЕЗА</text>
+<text x="459" y="593" fill="#EDF2FC" font-size="23" font-weight="600">Разделять функции, а не только хранилища</text>
+<rect x="459" y="616" width="742" height="30" rx="5" fill="#233D65"/>
+<text x="461" y="637" fill="#EDF2FC" font-size="15" font-weight="400">Хранение, обновление и проверку знаний стоит рассматривать отдельно.</text>
+<rect x="1200" y="616" width="28" height="30" rx="15" fill="#233D65"/>
+<text x="1212" y="636" fill="#A8C7FF" font-size="12" font-weight="400">1</text>
+<text x="459" y="682" fill="#A5B4CC" font-size="15" font-weight="400">Для ELIOT важно не только качество поиска, но и исправление</text>
+<text x="459" y="708" fill="#A5B4CC" font-size="15" font-weight="400">устаревших сведений с сохранением происхождения выводов.</text>
+<text x="464" y="755" fill="#A5B4CC" font-size="11" font-weight="400">Что проверить</text>
+<text x="854" y="755" fill="#A5B4CC" font-size="11" font-weight="400">Следующий шаг</text>
+<path d="M459 771h768" stroke="#2D3C56"/>
+<text x="464" y="804" fill="#EDF2FC" font-size="13" font-weight="400">Обновление знаний</text>
+<text x="854" y="804" fill="#EDF2FC" font-size="13" font-weight="400">Сопоставить механизмы</text>
+<path d="M459 822h768" stroke="#2D3C56"/>
+<text x="464" y="856" fill="#EDF2FC" font-size="13" font-weight="400">Длительные задачи</text>
+<text x="854" y="856" fill="#EDF2FC" font-size="13" font-weight="400">Проверить условия тестов</text>
+<rect x="459" y="887" width="768" height="63" rx="15" fill="#352B23"/>
+<text x="478" y="913" fill="#FFD698" font-size="13" font-weight="600">Открытый вопрос</text>
+<text x="478" y="935" fill="#FFD698" font-size="12" font-weight="400">Что подтверждается экспериментами, а что остаётся предположением?</text>
+<text x="459" y="976" fill="#A5B4CC" font-size="11" font-weight="400">Выборочный поиск · полнота не установлена</text>
+<rect x="1255" y="73" width="328" height="910" rx="23" fill="#1B2941"/>
+<text x="1277" y="118" fill="#EDF2FC" font-size="17" font-weight="600">Основание вывода</text>
+<text x="1277" y="148" fill="#A5B4CC" font-size="11" font-weight="400">MemoryOS · демонстрационный источник</text>
+<rect x="1277" y="175" width="284" height="279" rx="13" fill="#F4F7FC"/>
+<text x="1298" y="205" fill="#627189" font-size="8" font-weight="600">ПРИМЕР ПРЕДСТАВЛЕНИЯ ТЕКСТА</text>
+<text x="1298" y="239" fill="#243049" font-size="18" font-weight="600">Memory architecture</text>
+<text x="1298" y="264" fill="#243049" font-size="18" font-weight="600">Research notes</text>
+<rect x="1298" y="290" width="238" height="52" rx="3" fill="#DBE8FF"/>
+<text x="1300" y="310" fill="#23477D" font-size="11" font-weight="400">Хранение, обновление и извлечение</text>
+<text x="1300" y="330" fill="#23477D" font-size="11" font-weight="400">знаний проверяются отдельно.</text>
+<text x="1298" y="374" fill="#627189" font-size="11" font-weight="400">Иллюстрация расположения текста,</text>
+<text x="1298" y="395" fill="#627189" font-size="11" font-weight="400">не подлинный фрагмент публикации.</text>
+<text x="1298" y="431" fill="#627189" font-size="9" font-weight="400">НЕ ОРИГИНАЛ PDF</text>
+<text x="1277" y="499" fill="#A8C7FF" font-size="11" font-weight="600">РАБОЧАЯ ГИПОТЕЗА</text>
+<text x="1277" y="534" fill="#EDF2FC" font-size="14" font-weight="400">Разделение функций памяти —</text>
+<text x="1277" y="560" fill="#EDF2FC" font-size="14" font-weight="400">направление исследования,</text>
+<text x="1277" y="586" fill="#EDF2FC" font-size="14" font-weight="400">а не установленный результат.</text>
+<rect x="1277" y="614" width="223" height="30" rx="15" fill="#352B23"/>
+<text x="1289" y="634" fill="#FFD698" font-size="12" font-weight="400">Поддержка не проверена</text>
+<text x="1277" y="688" fill="#A5B4CC" font-size="11" font-weight="400">Срез результата</text>
+<text x="1469" y="688" fill="#EDF2FC" font-size="11" font-weight="400">S-012 · демо</text>
+<text x="1277" y="722" fill="#A5B4CC" font-size="11" font-weight="400">EvidenceHandle</text>
+<text x="1456" y="722" fill="#EDF2FC" font-size="11" font-weight="400">Не выпускался</text>
+<rect x="1277" y="756" width="284" height="44" rx="22" fill="#1B2941" stroke="#758BAD"/>
+<text x="1295" y="784" fill="#EDF2FC" font-size="13" font-weight="600">Прочитать контекст  →</text>
+<text x="1277" y="856" fill="#A5B4CC" font-size="11" font-weight="400">Демонстрационные данные.</text>
+<text x="1277" y="878" fill="#A5B4CC" font-size="11" font-weight="400">Реальное исследование не запускалось.</text>
+</g></svg>

@@ -10,6 +10,18 @@ const CANCELLATION_DIAGNOSTIC_CODES = new Set([
   "RESEARCH_WORKFLOW_NOT_FOUND", "RESEARCH_WORKFLOW_UNAVAILABLE", "RESEARCH_INPUT_INVALID",
 ]);
 
+async function showResearchView(page, label) {
+  const nav = page.locator('.workspace-nav [data-nav-target="#research-card"]');
+  await nav.waitFor({ state: "visible", timeout: 15000 });
+  await nav.click();
+  await page.waitForFunction(() => {
+    const view = document.querySelector("#research-view");
+    const active = document.querySelector('.workspace-nav [data-nav-target="#research-card"]');
+    return view !== null && view.hidden === false && active?.getAttribute("aria-current") === "page";
+  }, null, { timeout: 15000 });
+  assert.equal(await nav.getAttribute("aria-current"), "page", `${label}: Research navigation must be current`);
+}
+
 function cancellationDiagnosticCode(value) {
   const candidate = value?.code ?? value?.data?.code;
   return typeof candidate === "string" && candidate.length <= 96 &&
@@ -140,6 +152,7 @@ async function waitForFreshWorkflowId(page, previousWorkflowId, label, launchAtt
  * readback without claiming projection completion from a fixture.
  */
 export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, query = "Pinned", beforeReload, beforeRecoverySelection, beforeCancellationCheck }) {
+  await showResearchView(page, "exhaustive workflow");
   const panel = page.locator("#exhaustive-workflow");
   const submit = panel.locator('button[type="submit"]');
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")
@@ -196,6 +209,7 @@ export async function runExhaustiveWorkflowBrowser({ page, browserJson, ledger, 
   await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
   await page.waitForFunction(() => document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent?.trim() === "READY",
     null, { timeout: 15000 });
+  await showResearchView(page, "exhaustive recovery");
   assert.equal(await panel.getAttribute("data-workflow-id"), null,
     "a PWA reload must not retain the previous workflow identity in page state");
   await page.waitForFunction((id) => Array.from(document.querySelectorAll("#exhaustive-workflow [data-recovery-workflow-id]"))

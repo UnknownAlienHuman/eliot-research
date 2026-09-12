@@ -360,8 +360,14 @@ try {
     }
     return evaluate(expression);
   }, label);
-  const click = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+  const visible = (selector) => evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); return Boolean(node && !node.hidden && node.getClientRects().length && getComputedStyle(node).display !== "none"); })()`);
+  const assertVisible = async (selector, label) => assert.equal(await visible(selector), true, `${label}: control is visible`);
+  const click = async (selector) => { await assertVisible(selector, `click ${selector}`); return evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`); };
+  const assertView = async (view, navTarget, focused = true) => { const state = await evaluate(`(() => { const section = document.querySelector(${JSON.stringify(`[data-workspace-view="${view}"]`)}); const views = [...document.querySelectorAll("[data-workspace-view]")]; return { visible: Boolean(section && !section.hidden && section.getClientRects().length), count: views.filter((item) => !item.hidden && item.getClientRects().length).length, active: document.querySelector(${JSON.stringify(`[data-nav-target="${navTarget}"]` )})?.getAttribute("aria-current"), focused: document.activeElement === section }; })()`); assert.deepEqual(state, { visible: true, count: 1, active: "page", focused }, `Workspace ${view}`); };
+  const openSources = async (label) => { await wait('Boolean(document.querySelector("[data-nav-target=\\"#library\\"]"))', `${label}: navigation`); await click('[data-nav-target="#library"]'); if (!(await visible("#library [data-first]"))) await click("[data-source-chooser-toggle]"); if (!(await visible("#library [data-source]"))) await click("#library [data-first]"); await wait('Boolean(document.querySelector("#library [data-source]"))', `${label}: visible source controls`); };
+  const openBundle = async () => { if (!(await evaluate('document.querySelector("#bundle-import details")?.open'))) await click("#bundle-import details > summary"); await assertVisible('input[name="bundle"]', "bundle input"); await assertVisible('#bundle-import button[type="submit"]', "bundle submit"); };
   const launchDraft = async (label) => {
+    await assertVisible('#research-run input[name="query"]', `${label}: research input`);
     await evaluate(`(() => { const input = document.querySelector('#research-run input[name="query"]'); input.value = "draft research question"; input.closest("form").requestSubmit(); })()`);
     await wait(`document.querySelector("#research-run [role=status]")?.textContent.includes("Research started")`, `${label}: draft launch`);
     assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), draftWorkflowId);
@@ -373,6 +379,7 @@ try {
   };
   await cdp("Runtime.enable"); await cdp("Page.enable"); await cdp("Page.navigate", { url: origin });
   await wait('document.querySelector("#library")?.textContent.includes("Русский источник")', "Library first page");
+  await openSources("Initial Sources"); await assertView("sources", "#library");
   await wait('document.querySelector("#exhaustive-workflow [data-workflow-badge]")?.textContent.trim() === "READY"', "Health event reaches exhaustive panel");
   assert.equal(await evaluate('document.querySelector("#exhaustive-workflow button[type=submit]").disabled'), false);
   assert.equal(await evaluate('document.querySelectorAll("#library img").length'), 0);
@@ -416,6 +423,9 @@ try {
   assert.deepEqual(posted[0].scope_expression, { kind: "SELECTED_SOURCES", source_ids: ["source-1"] });
   assert.equal(posted[0].product, "ORIENT");
   await click('[data-nav-target="#research-card"]');
+  await assertView("research", "#research-card");
+  await assertVisible('#retrieval input[name="query"]', "FAST_SEARCH query input");
+  await assertVisible('#retrieval button[type="submit"]', "FAST_SEARCH submit");
   await evaluate(`(() => {
     const input = document.querySelector('#retrieval input[name="query"]');
     input.value = "pinned"; input.closest("form").requestSubmit();
@@ -426,6 +436,12 @@ try {
   await wait('document.querySelector(".rail-status").textContent === "VERIFIED" && Boolean(document.querySelector(".evidence-source"))', "Evidence verify and open");
   assert.equal(await evaluate('document.querySelector(".evidence-source").textContent'), evidenceText);
   assert.equal(await evaluate('document.querySelector(".evidence-source").tagName'), "PRE");
+  await click('[data-nav-target="#connections-card"]'); await assertView("connections", "#connections-card");
+  assert.deepEqual(await evaluate('({ state: document.querySelector("#connection-agent-card .connection-state").textContent, copy: document.querySelector("#connection-agent-card .connection-copy").textContent })'), { state: "Unknown", copy: "No client check recorded yet." });
+  await evaluate("history.back()"); await wait('location.hash === "#research-card" && document.querySelector("#research-view")?.hidden === false', "Browser Back to Research"); await assertView("research", "#research-card");
+  assert.deepEqual(await evaluate('({ scope: document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture"), evidence: document.querySelector(".evidence-source")?.textContent, rail: document.querySelector(".rail-status").textContent })'), { scope: true, evidence: evidenceText, rail: "VERIFIED" });
+  await assertVisible('#research-run input[name="query"]', "Research query input");
+  await assertVisible('#research-run form button[type="submit"]', "Research submit");
   await evaluate(`(() => {
     const input = document.querySelector('#research-run input[name="query"]');
     input.value = "research question"; input.closest("form").requestSubmit();
@@ -437,10 +453,13 @@ try {
   await click("#research-run [data-run-refresh]");
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run completed status");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").textContent.includes("available" )'), false);
+  await assertVisible("#research-run [data-workflow-id]", "run recovery input");
+  await assertVisible("#research-run [data-recover]", "run recovery button");
   await evaluate(`(() => {
     const input = document.querySelector('#research-run [data-workflow-id]');
-    input.value = ${JSON.stringify(researchWorkflowId)}; document.querySelector('#research-run [data-recover]').click();
+    input.value = ${JSON.stringify(researchWorkflowId)};
   })()`);
+  await click("#research-run [data-recover]");
   await wait('document.querySelector("#research-run [role=status]")?.textContent.includes("No answer has been generated")', "Research run handle recovery");
   await launchDraft("Initial draft");
   await click('#research-run [data-run-result] button');
@@ -471,10 +490,11 @@ try {
   await wait('document.querySelector("#evidence-empty").hidden === false && document.querySelector(".rail-status").textContent === "QUERY RESULT"', "Evidence offline clearing");
   assert.equal(await evaluate('document.querySelector("#research-run [data-run-result]").hidden && document.querySelector("#research-run [data-run-result]").textContent === ""'), true);
   assert.equal(await evaluate('document.querySelector("#research-run [data-workflow-id]").value'), "");
+  await openSources("Sources before import"); await openBundle();
   await evaluate(`(() => {
     const transfer = new DataTransfer();
     for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
-    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    const input = document.querySelector('input[name="bundle"]'); input.files = transfer.files;
     input.dispatchEvent(new Event("change", { bubbles: true })); input.closest("form").requestSubmit();
   })()`);
   await wait('Boolean(document.querySelector("[data-resume]") && !document.querySelector("[data-resume]").disabled)', "Explicit import recovery available");
@@ -492,11 +512,11 @@ try {
   // recover the durable receipt without another prepare/part/commit mutation.
   const beforeReload = importing.calls.length;
   await cdp("Page.reload");
-  await wait('Boolean(document.querySelector("#library [data-source]"))', "Library after reload");
+  await openSources("Sources after reload"); await openBundle();
   await evaluate(`(() => {
     const transfer = new DataTransfer();
     for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
-    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    const input = document.querySelector('input[name="bundle"]'); input.files = transfer.files;
     const recovery = document.querySelector('input[name="recovery"]'); recovery.value = "ingest-browser";
     input.dispatchEvent(new Event("change", { bubbles: true })); input.closest("form").requestSubmit();
   })()`);
@@ -510,11 +530,11 @@ try {
   // Another reload, this time without any retained operation ID. Discovery is read-only
   // despite using POST for private exact-folder metadata; continuation remains an explicit click.
   await cdp("Page.reload");
-  await wait('Boolean(document.querySelector("[data-discover]"))', "Discovery after reload");
+  await openSources("Sources before discovery"); await openBundle();
   await evaluate(`(() => {
     const transfer = new DataTransfer();
     for (const [name, text] of Object.entries(${JSON.stringify(importing.files)})) transfer.items.add(new File([text], name));
-    const input = document.querySelector('input[name="bundle"]'); input.closest('details').open = true; input.files = transfer.files;
+    const input = document.querySelector('input[name="bundle"]'); input.files = transfer.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
   })()`);
   assert.equal(await evaluate('document.querySelector("input[name=recovery]").value'), "");
@@ -529,7 +549,7 @@ try {
   assert.ok(importing.calls.slice(afterDiscovery).every((call) => call.method === "GET"));
   assert.deepEqual(await evaluate('Object.keys(localStorage)'), []);
   assert.deepEqual(await evaluate('Object.keys(sessionStorage)'), []);
-  await wait('Boolean(document.querySelector("#library [data-source]"))', "Library after discovery reload");
+  await openSources("Sources after discovery");
   await click("#library [data-source]");
   await wait('document.querySelector("#corpus-lens [data-result]").textContent.includes("scope-fixture")', "Lens before denial");
   // Badly formatted 403 still clears every private panel, before parsing an error body.
