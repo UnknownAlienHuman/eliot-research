@@ -312,6 +312,11 @@ active anchor and optional candidate item digest must match the exact materializ
 owner, source revision, projection generation and item identity checks remain in force. The provider's
 preview and normalized text never substitute for the materialized bytes.
 
+The exhaustive section inventory retains each pinned projection item's digest and passes it to the
+evidence resolver when that section is read. Inventory remains metadata-only; it neither substitutes
+the full-source digest for a section digest nor eagerly reads every section. Canonical projection
+item-set validation can reject a changed digest before a job is created.
+
 Focused Core tests cover the distinct digests and reject mismatched anchor, candidate and full-source
 identities. The real two-section research fixture also reaches evidence resolution through admission,
 projection and retrieval. These are local controlled acceptance checks; they do not establish a
