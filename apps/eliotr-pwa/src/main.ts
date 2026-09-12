@@ -192,7 +192,7 @@ function render(health: SystemHealth | null): void {
   sourceChooserViewport.addEventListener("change", handleSourceChooserViewport);
   setSourceChooserExpanded(sourceChooserExpanded);
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
-  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   const researchRunHost = app.querySelector<HTMLElement>("#research-run");
   const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
@@ -347,12 +347,12 @@ function render(health: SystemHealth | null): void {
   });
   const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
     if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); return; }
-    retrieval?.selectSource(id, context);
-    researchRun?.selectSource(id, context);
-    exhaustive?.selectSource(id);
     if (!context?.sourceRevisionRef) {
       if (!orientation || !(await orientation.selectSource(id))) return false;
     }
+    retrieval?.selectSource(id, context);
+    researchRun?.selectSource(id, context);
+    exhaustive?.selectSource(id);
     return true;
   }) : undefined;
   const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, importer ? mountBundleImportPanel(importer) : undefined,

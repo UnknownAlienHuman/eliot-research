@@ -143,7 +143,22 @@ describe("research reference manifest over real D1/R2", () => {
       readonly projection_generation: string; readonly updated_at: string;
     }>();
     if (item === null) throw new Error("Missing projected item for second excerpt");
-    const secondItem = { ...item, item_key: `manifest-second-${world.namespace}`, canonical_section_id: `${item.canonical_section_id}-excerpt` };
+    const originalSpan = await q1Runtime.SEARCH_DB.prepare(
+      "SELECT normalized_start_byte, normalized_end_byte FROM projection_span WHERE item_key = ?1 AND source_revision_ref = ?2 LIMIT 1",
+    ).bind(item.item_key, sourceRef).first<{ readonly normalized_start_byte: number; readonly normalized_end_byte: number }>();
+    if (originalSpan === null || originalSpan.normalized_start_byte !== 0 || originalSpan.normalized_end_byte < 11) {
+      throw new Error("Q1 fixture must provide an original section starting at byte zero and spanning the excerpt");
+    }
+    const sectionBytes = new TextEncoder().encode(item.section_text).slice(0, 11);
+    const secondSectionText = new TextDecoder("utf-8", { fatal: true }).decode(sectionBytes);
+    const secondSectionDigest = await evidenceSha256Bytes(sectionBytes);
+    const secondItem = {
+      ...item,
+      item_key: `manifest-second-${world.namespace}`,
+      canonical_section_id: `${item.canonical_section_id}-excerpt`,
+      section_text: secondSectionText,
+      content_sha256: secondSectionDigest,
+    };
     await q1Runtime.SEARCH_DB.prepare(
       "INSERT INTO projection_item (item_key, source_revision_ref, canonical_section_id, project_membership_ids_json, source_class, title, heading_path, document_context_header, section_text, normalized_offset_map_ref, content_sha256, instruction_taint, projection_generation, active, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,1,?14)",
     ).bind(secondItem.item_key, secondItem.source_revision_ref, secondItem.canonical_section_id, secondItem.project_membership_ids_json,

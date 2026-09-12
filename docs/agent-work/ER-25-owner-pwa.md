@@ -19,6 +19,7 @@ outside the paths below.
 - `scripts/test-library-browser.mjs`
 - `scripts/lib/browser-import-fixture.mjs`
 - `scripts/lib/browser-mcp-diagnostic-fixture.mjs`
+- `scripts/lib/browser-research-readiness-fixture.mjs`
 
 ## Read only
 
@@ -238,5 +239,30 @@ admission, the same receipt drives both the desktop and 390x844 mobile handoffs.
 visible/focused Sources and Library, preserves the existing selection/readiness identity,
 and restores the original viewport before the canonical projection/readiness scenario.
 All 23 owner-browser cases and the complete checkpoint gate passed on their first runs.
-The final label/hint change alters copy only and passed targeted lint; exact-candidate CI
-remains required. The separate controlled raw-file fixture is not admission proof.
+The final label/hint change alters copy only and passed targeted lint. PR #182 exact-head CI
+run `34714511359` passed all five jobs; after merge to main
+`bcf8129354b4288a30fc0d58593a31f27d42f36a`, post-merge run `34715381713` passed all five jobs.
+The separate controlled raw-file fixture is not admission proof.
+
+## Readiness and evidence browser checkpoint
+
+The controlled Chromium scenario now exercises the user-visible readiness boundary with a valid
+`pinned` query and `source-1` input: a responded-but-not-ready health state shows the waiting copy,
+disables Search and Recent scans, and a forced form submission produces zero query POSTs. A real
+ready response enables both controls with the ready copy. An actual browser offline→online transition
+disables and then restores Recent scans Refresh; the scenario reselects the real Library source after
+reconnect before issuing its next query.
+
+The same scenario holds a valid query response while health is lost, then releases the late response
+and verifies that private results, trace and evidence rail state do not return. A non-auth orientation
+failure leaves the prior dependent source selections unchanged because they are applied only after
+successful orientation. Opening the existing pinned excerpt preserves desktop evidence identity and
+scroll, while the 390x844 path waits for a focused, visible `VERIFIED` evidence rail and restores the
+original viewport.
+
+The browser backend is controlled and these checks are client/workflow acceptance only; they are not
+live owner authorization, MCP client or provider qualification. This is a bounded ER-25 checkpoint and
+does not close the broader theme or project work.
+
+Disabled upload, workflow, Recent scans and Retrieval actions share the existing muted treatment,
+so their visible state matches their availability without changing layout or the calm palette.

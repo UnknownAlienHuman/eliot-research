@@ -69,6 +69,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 - `apps/eliotr-core/test/exhaustive-query-service.test.ts`
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
+- `apps/eliotr-core/test/research-exhaustive-sections.test.ts`
 - `apps/eliotr-core/test/exhaustive-workflow-output.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
@@ -302,3 +303,21 @@ ledger records one Workers AI attempt and reconciles lost acknowledgements witho
 uncertain provider effect. It produces candidate conversion metadata only; it does not create a
 normalized manifest, evidence handle, source map, or research admission. Controlled tests inject
 the AI binding, and production binding/live qualification remain separate gates.
+
+## Multi-section exact retrieval
+
+Exact phrase verification keeps the admitted SourceRevision digest separate from the digest of a
+projected section. The materializer's full-object digest must match the pinned SourceRevision; the
+active anchor and optional candidate item digest must match the exact materialized excerpt. Scope,
+owner, source revision, projection generation and item identity checks remain in force. The provider's
+preview and normalized text never substitute for the materialized bytes.
+
+The exhaustive section inventory retains each pinned projection item's digest and passes it to the
+evidence resolver when that section is read. Inventory remains metadata-only; it neither substitutes
+the full-source digest for a section digest nor eagerly reads every section. Canonical projection
+item-set validation can reject a changed digest before a job is created.
+
+Focused Core tests cover the distinct digests and reject mismatched anchor, candidate and full-source
+identities. The real two-section research fixture also reaches evidence resolution through admission,
+projection and retrieval. These are local controlled acceptance checks; they do not establish a
+live retrieval channel or enable a new public research generation.

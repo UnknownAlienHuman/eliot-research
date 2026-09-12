@@ -74,6 +74,11 @@ h2 { margin-bottom: 12px; font-size: 18px; letter-spacing: -.03em; } h3 { margin
 .workflow-badge { padding: 5px 8px; border: 1px solid rgba(149, 183, 255, .3); border-radius: 99px; color: var(--blue); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
 .workflow-copy { max-width: 620px; margin: 13px 0 20px; color: var(--muted); font-size: 13px; line-height: 1.65; }
 .field-hint { color: var(--dim); } .connector-copy { max-width: 560px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.65; } .workflow-actions { display: flex; flex-wrap: wrap; gap: 6px; } .workflow-actions .button { margin: 0; } .workflow-actions button[type="submit"] { border-color: var(--accent); color: #102954; }
+.raw-file-actions button.button:disabled,
+.workflow-actions button.button:disabled,
+.workflow-recovery-head button.button:disabled,
+.workflow-recovery > [data-recovery-more].button:disabled,
+#retrieval form button:disabled { border-color: var(--line); background: var(--navigation); color: var(--dim); opacity: .7; }
 .workflow-status, .workflow-detail { margin: 14px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; } .workflow-detail { color: var(--dim); }
 .research-report-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
 .research-report-heading h3 { margin-bottom: 0; }

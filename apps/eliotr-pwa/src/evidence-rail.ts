@@ -58,6 +58,14 @@ export function mountEvidenceRail(
 ): EvidenceRailController {
   let serial = 0;
   let controller: AbortController | undefined;
+  detail.tabIndex = -1;
+
+  const focusOpenedEvidence = (): void => {
+    detail.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 720px)").matches) {
+      detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  };
 
   const clear = (): void => {
     serial += 1;
@@ -74,6 +82,7 @@ export function mountEvidenceRail(
     const pending = document.createElement("p"); pending.className = "evidence-pending";
     pending.textContent = "Verifying pinned handle and reopening source bytes…";
     detail.append(pending);
+    focusOpenedEvidence();
     void verifyAndOpenEvidence(selectedScope, handleRef, controller.signal)
       .then((opened) => {
         if (current !== serial) return;

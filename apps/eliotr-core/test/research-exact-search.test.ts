@@ -11,8 +11,9 @@ import type { LocatorCandidate, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { createExactPhraseVerifier, type ExactPhraseVerifierDependencies } from "../src/research-exact-search.js";
 
+const EXACT_EXCERPT = "Résumé (v2)! ";
 const CONTENT_DIGEST = "a".repeat(64);
-const EXCERPT_DIGEST = "b".repeat(64);
+const EXCERPT_DIGEST = "ee29d3efac6a8e824d3599fe33b47eaf219acd7ac6b7be3d50d4859178f058e0";
 const RESIDENCY_DIGEST = "c".repeat(64);
 
 function scope(): ScopeSnapshot {
@@ -58,9 +59,9 @@ function candidate(): LocatorCandidate {
       source_revision_ref: "rev-exact-1",
       canonical_section_id: "section-exact-1",
       projection_generation: "generation-exact-1",
-      content_sha256: CONTENT_DIGEST,
+      content_sha256: EXCERPT_DIGEST,
       normalized_start_byte: 0,
-      normalized_end_byte: 18,
+      normalized_end_byte: 15,
     },
   };
 }
@@ -97,11 +98,11 @@ function grant(): ScopeAuthorization {
   };
 }
 
-function anchor(): CandidateAnchorAuthority {
+function anchor(contentSha256 = EXCERPT_DIGEST): CandidateAnchorAuthority {
   return {
-    anchor: { kind: "normalized_byte_range", start: 0, end: 18 },
+    anchor: { kind: "normalized_byte_range", start: 0, end: 15 },
     item_key: "item-exact-1",
-    content_sha256: CONTENT_DIGEST,
+    content_sha256: contentSha256,
     projection_generation: "generation-exact-1",
   };
 }
@@ -112,6 +113,8 @@ function fixture(options: {
   readonly onSources?: (call: number) => void;
   readonly checkBudget?: () => void;
   readonly excerpt?: string;
+  readonly anchorDigest?: string;
+  readonly sourceObjectDigest?: string;
 } = {}): ExactPhraseVerifierDependencies & {
   readonly state: { contentReads: number; authorityReads: number; currentReads: number; sourceReads: number };
   readonly replaceSource: (next: EvidenceSourceAuthority) => void;
@@ -148,7 +151,7 @@ function fixture(options: {
     async resolveCandidate() {
       authorityReads += 1;
       state.authorityReads = authorityReads;
-      return anchor();
+      return anchor(options.anchorDigest);
     },
   };
   const content: Pick<ExactPhraseVerifierDependencies["content"], "materialize"> = {
@@ -156,13 +159,13 @@ function fixture(options: {
       state.contentReads += 1;
       options.onMaterialize?.();
       return {
-        exact_excerpt: options.excerpt ?? "Résumé (v2)! ",
+        exact_excerpt: options.excerpt ?? EXACT_EXCERPT,
         excerpt_sha256: EXCERPT_DIGEST,
-        excerpt_byte_length: 18,
+        excerpt_byte_length: 15,
         normalized_object_ref: "normalized-exact-1",
         normalized_object_ref_digest: RESIDENCY_DIGEST,
-        source_object_size: 18,
-        source_object_sha256: CONTENT_DIGEST,
+        source_object_size: 15,
+        source_object_sha256: options.sourceObjectDigest ?? CONTENT_DIGEST,
       };
     },
   };
@@ -190,6 +193,29 @@ describe("EXACT phrase verifier", () => {
     await expect(verify(candidate(), input, "résumé (v2)! ")).resolves.toBe(false);
     await expect(verify(candidate(), input, "Resume (v2)! ")).resolves.toBe(false);
     await expect(verify(candidate(), input, "Résumé (v2)!")).resolves.toBe(true);
+  });
+
+  it("rejects an anchor digest that differs from the materialized excerpt", async () => {
+    const f = fixture({ anchorDigest: "f".repeat(64) });
+    const verify = createExactPhraseVerifier(f);
+    await expect(verify(candidate(), request(f.navigation.scope), "Résumé")).rejects.toMatchObject({ code: "EVIDENCE_IDENTITY_CONFLICT" });
+    expect(f.state.contentReads).toBe(1);
+  });
+
+  it("rejects candidate metadata digest that differs from the materialized excerpt", async () => {
+    const f = fixture();
+    const wrongMetadata = candidate();
+    wrongMetadata.metadata.content_sha256 = "f".repeat(64);
+    const verify = createExactPhraseVerifier(f);
+    await expect(verify(wrongMetadata, request(f.navigation.scope), "Résumé")).rejects.toMatchObject({ code: "EVIDENCE_IDENTITY_CONFLICT" });
+    expect(f.state.contentReads).toBe(1);
+  });
+
+  it("rejects a materialized full-object digest that differs from the source revision", async () => {
+    const f = fixture({ sourceObjectDigest: "f".repeat(64) });
+    const verify = createExactPhraseVerifier(f);
+    await expect(verify(candidate(), request(f.navigation.scope), "Résumé")).rejects.toMatchObject({ code: "EVIDENCE_OBJECT_INTEGRITY" });
+    expect(f.state.contentReads).toBe(1);
   });
 
   it("refuses a source revoked after materialization", async () => {

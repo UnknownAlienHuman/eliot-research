@@ -85,3 +85,19 @@ reuses the evidence admission/owner decoder rather than creating a second author
 Navigation artifacts and section-handle candidates remain non-evidentiary; no resolver/publication
 checks are bypassed. ER-13's `0010_navigation_artifacts.sql` supplies immutable slots and derived-data
 purge/invalidation triggers. Exact live erasure/restore and public API composition remain separate gates.
+
+## Source and section digest binding
+
+A section item carries the SHA-256 of its exact UTF-8 excerpt, which differs from the admitted full
+SourceRevision digest for multi-section documents. Candidate resolution checks the materializer's
+full-object digest against the SourceRevision and separately checks the active anchor and optional
+candidate digest against the returned excerpt digest. Existing-handle resolution retains the
+full-source binding. D1 anchor identity and conditional R2 byte-range integrity remain authoritative;
+this separation does not permit index text or preview bytes to become evidence.
+
+Focused resolver cases exercise distinct source/excerpt digests, an omitted optional candidate digest,
+and rejection of mismatched anchor, candidate or full-source digests before any handle is persisted.
+The complete checkpoint validation and exact-head CI evidence are recorded in its pull request.
+
+A later full-source digest mismatch also invalidates an existing handle as BROKEN_INTEGRITY; the
+focused mint-then-drift case verifies both rejection and the terminal registry state.
