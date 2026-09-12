@@ -8,6 +8,8 @@ import { createCloudflareEvidenceResolver } from "./resolver.js";
 import type {
   EvidenceAuthorityPort,
   EvidenceSourceAuthority,
+  PersistCitationResolutionInput,
+  ResolveCitationSetInput,
   ScopeAuthority,
 } from "./types.js";
 
@@ -76,6 +78,7 @@ function fixture(options: {
   let currentSource: EvidenceSourceAuthority | null = source;
   let currentSourceObjectDigest = options.sourceObjectDigest ?? A;
   const invalidations: string[] = [];
+  let persistedCitationInput: PersistCitationResolutionInput | null = null;
   const authority: EvidenceAuthorityPort = {
     async loadScope() { return scope; },
     async authorizeScope() {
@@ -104,7 +107,10 @@ function fixture(options: {
       storedHandle ??= input.proposed_handle;
       return { handle: storedHandle, receipt: input.resolution_receipt };
     },
-    async persistCitationReceipt(input) { return input.receipt; },
+    async persistCitationReceipt(input) {
+      persistedCitationInput = input;
+      return input.receipt;
+    },
     async invalidateHandle(handle, state) {
       invalidations.push(state);
       storedHandle = { ...handle, terminal_state: state, invalidation_ref: `invalidation-${state}` };
@@ -134,6 +140,7 @@ function fixture(options: {
     setSource(value: EvidenceSourceAuthority | null) { currentSource = value; },
     setSourceObjectDigest(value: string) { currentSourceObjectDigest = value; },
     get handle() { return storedHandle; },
+    get persistedCitationInput() { return persistedCitationInput; },
   };
 }
 
@@ -257,5 +264,51 @@ describe("exact evidence resolver", () => {
       handle_ref: { id: "missing-handle", revision: 1 },
       reason_code: "EVIDENCE_HANDLE_NOT_FOUND",
     }]);
+  });
+
+  it("forwards a frozen attempt binding captured before persistence awaits", async () => {
+    const f = fixture();
+    const binding = {
+      operation_id: "operation-1",
+      attempt_ref: "attempt-1",
+      request_sha256: A,
+    };
+    const pending = f.resolver.resolveCitationSet({
+      handle_refs: [{ id: "missing-handle", revision: 1 }],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+      attempt_binding: binding,
+    });
+    binding.operation_id = "forged-operation";
+    binding.attempt_ref = "forged-attempt";
+    binding.request_sha256 = B;
+    await pending;
+
+    const forwarded = f.persistedCitationInput?.attempt_binding;
+    expect(forwarded).toEqual({
+      operation_id: "operation-1",
+      attempt_ref: "attempt-1",
+      request_sha256: A,
+    });
+    if (forwarded === undefined) throw new Error("attempt binding was not forwarded");
+    expect(forwarded).not.toBe(binding);
+    expect(Object.isFrozen(forwarded)).toBe(true);
+  });
+
+  it("rejects an invalid attempt binding before persistence", async () => {
+    const f = fixture();
+    const invalid = {
+      operation_id: "operation-1",
+      attempt_ref: "attempt-1",
+      request_sha256: A,
+      unexpected: "field",
+    } as unknown as NonNullable<ResolveCitationSetInput["attempt_binding"]>;
+    await expect(f.resolver.resolveCitationSet({
+      handle_refs: [],
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+      attempt_binding: invalid,
+    })).rejects.toMatchObject({ code: "EVIDENCE_INPUT_INVALID" });
+    expect(f.persistedCitationInput).toBeNull();
   });
 });

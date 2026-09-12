@@ -12,6 +12,7 @@ import {
 import { validateEvidenceResolution } from "@eliotr/domain";
 import {
   assertEvidenceIdentifier,
+  assertEvidenceSha256,
   canonicalEvidenceJson,
   evidenceRefKey,
   evidenceSha256,
@@ -24,6 +25,7 @@ import {
 import {
   EvidenceRuntimeError,
   type CandidateAnchorAuthority,
+  type CitationResolutionAttemptBinding,
   type CloudflareEvidenceResolver,
   type EvidenceAccessContext,
   type EvidenceResolverDependencies,
@@ -133,6 +135,32 @@ function requireMaterializedSourceBinding(
     fail("EVIDENCE_OBJECT_INTEGRITY", "materialized evidence bytes differ from source authority", {
       invalidation_state: "BROKEN_INTEGRITY",
     });
+  }
+}
+
+const CITATION_ATTEMPT_BINDING_KEYS = ["attempt_ref", "operation_id", "request_sha256"] as const;
+
+function snapshotCitationAttemptBinding(
+  binding: CitationResolutionAttemptBinding | undefined,
+): CitationResolutionAttemptBinding | undefined {
+  if (binding === undefined) return undefined;
+  if (typeof binding !== "object" || binding === null || Array.isArray(binding)) {
+    fail("EVIDENCE_INPUT_INVALID", "citation resolution attempt binding is invalid");
+  }
+  const record = binding as unknown as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (keys.length !== CITATION_ATTEMPT_BINDING_KEYS.length ||
+      keys.some((key, index) => key !== CITATION_ATTEMPT_BINDING_KEYS[index])) {
+    fail("EVIDENCE_INPUT_INVALID", "citation resolution attempt binding is invalid");
+  }
+  try {
+    return Object.freeze({
+      operation_id: assertEvidenceIdentifier(record.operation_id, "attempt_binding.operation_id"),
+      attempt_ref: assertEvidenceIdentifier(record.attempt_ref, "attempt_binding.attempt_ref"),
+      request_sha256: assertEvidenceSha256(record.request_sha256, "attempt_binding.request_sha256"),
+    });
+  } catch (cause) {
+    fail("EVIDENCE_INPUT_INVALID", "citation resolution attempt binding is invalid", { cause });
   }
 }
 
@@ -419,6 +447,7 @@ export function createCloudflareEvidenceResolver(
       input.access,
     ),
     async resolveCitationSet(input) {
+      const attempt_binding = snapshotCitationAttemptBinding(input.attempt_binding);
       validateAccess(input.access);
       if (input.handle_refs.length > 512) {
         fail("CITATION_SET_INVALID", "citation set exceeds the hard handle limit");
@@ -503,6 +532,7 @@ export function createCloudflareEvidenceResolver(
         access: input.access,
         scope,
         authorization,
+        ...(attempt_binding === undefined ? {} : { attempt_binding }),
       });
       return { receipt: persisted, resolved_evidence: resolvedEvidence };
     },
