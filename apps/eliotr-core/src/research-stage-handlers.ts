@@ -17,7 +17,9 @@ import {
 import {
   createResearchVerificationStageHandler,
   createResearchClaimAuditStageHandler,
+  createResearchCitationsStageHandler,
   type ResearchClaimAuditStageDependencies,
+  type ResearchCitationsStageDependencies,
   type ResearchVerificationStageDependencies,
 } from "@eliotr/cloudflare-research-stages";
 import {
@@ -58,6 +60,8 @@ export type ResearchStageHandlerFactoryMode =
       readonly verification?: ResearchVerificationStageDependencies;
       /** Explicit Stage14 server-owned audit wiring; no default verifier is inferred. */
       readonly audit_claims?: ResearchClaimAuditStageDependencies;
+      /** Explicit Stage15 server-owned citation wiring; no default resolver is inferred. */
+      readonly resolve_citations?: ResearchCitationsStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -116,6 +120,7 @@ export function createResearchStageHandlerFactory(
     mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION;
   let synthesisAdapter: ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined;
   let auditAdapter: ReturnType<typeof createResearchClaimAuditStageHandler> | undefined;
+  let citationsAdapter: ReturnType<typeof createResearchCitationsStageHandler> | undefined;
   function getSynthesisAdapter(): ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
         mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.synthesis === undefined) return undefined;
@@ -127,6 +132,12 @@ export function createResearchStageHandlerFactory(
         mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.audit_claims === undefined) return undefined;
     auditAdapter ??= createResearchClaimAuditStageHandler(mode.audit_claims);
     return auditAdapter;
+  }
+  function getCitationsAdapter(): ReturnType<typeof createResearchCitationsStageHandler> | undefined {
+    if (mode.kind !== "server-owned-exploratory" ||
+        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.resolve_citations === undefined) return undefined;
+    citationsAdapter ??= createResearchCitationsStageHandler(mode.resolve_citations);
+    return citationsAdapter;
   }
 
   const factory = ((stage) => {
@@ -156,6 +167,10 @@ export function createResearchStageHandlerFactory(
       const adapter = getAuditAdapter();
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
+    if (stage === "RESOLVE_CITATIONS" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      const adapter = getCitationsAdapter();
+      return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter;
+    }
     if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;
     }
@@ -168,6 +183,7 @@ export function createResearchStageHandlerFactory(
       if (input.request.handler_generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION) return null;
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
+      if (input.request.stage === "RESOLVE_CITATIONS") return getCitationsAdapter()?.recoverStartedAttempt(input) ?? null;
       return null;
     };
     Object.defineProperty(factory, "recoverStartedAttempt", {

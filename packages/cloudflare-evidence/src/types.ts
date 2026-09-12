@@ -129,6 +129,12 @@ export interface PersistEvidenceResolutionInput {
 }
 
 
+export interface CitationResolutionAttemptBinding {
+  readonly operation_id: string;
+  readonly attempt_ref: string;
+  readonly request_sha256: string;
+}
+
 export interface PersistCitationResolutionInput {
   readonly receipt: CitationResolutionReceipt;
   readonly receipt_json: string;
@@ -136,6 +142,7 @@ export interface PersistCitationResolutionInput {
   readonly access: EvidenceAccessContext;
   readonly scope: ScopeAuthority;
   readonly authorization: ScopeAuthorization;
+  readonly attempt_binding?: CitationResolutionAttemptBinding;
 }
 
 export interface EvidenceAuthorityPort {
@@ -185,6 +192,13 @@ export interface ResolveHandleInput {
   readonly access: EvidenceAccessContext;
 }
 
+export interface ResolveCitationSetInput {
+  readonly handle_refs: readonly VersionedRef[];
+  readonly scope_snapshot_ref: VersionedRef;
+  readonly access: EvidenceAccessContext;
+  readonly attempt_binding?: CitationResolutionAttemptBinding;
+}
+
 export interface CitationResolutionResult {
   readonly receipt: CitationResolutionReceipt;
   readonly resolved_evidence: readonly ResolvedEvidence[];
@@ -193,9 +207,5 @@ export interface CitationResolutionResult {
 export interface CloudflareEvidenceResolver {
   resolveCandidate(input: ResolveCandidateInput): Promise<ResolvedEvidence>;
   resolveHandle(input: ResolveHandleInput): Promise<ResolvedEvidence>;
-  resolveCitationSet(input: {
-    readonly handle_refs: readonly VersionedRef[];
-    readonly scope_snapshot_ref: VersionedRef;
-    readonly access: EvidenceAccessContext;
-  }): Promise<CitationResolutionResult>;
+  resolveCitationSet(input: ResolveCitationSetInput): Promise<CitationResolutionResult>;
 }

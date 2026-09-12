@@ -115,3 +115,13 @@ head, outbox semantics or enabled Worker route. Apply it with the other Core mig
 the navigation service. `check-erasure-closure.mjs` executes the entire migration stream; the ER-31 local
 Workers fixture exercises the actual table and trigger statements. Remote migration/readback is still
 `NOT_EXECUTED`. Rollback disables the consuming code, not destructive rollback of additive tables.
+
+## Stage15 citation recovery binding allocation
+
+The configured exploratory research checkpoint reserves `0045_research_workflow_citation_binding.sql`
+for an immutable internal link from the exact W2 Stage15 operation, attempt and request digest to a
+canonical citation receipt and digest. Existing W2 authority and the receipt's exact active grant bind
+scope and access identity. One historical receipt may be shared by distinct valid workflow operations;
+receipt identity is not globally unique in the binding table. This additive schema does not advance
+runtime readiness or activate public research recovery. Exact atomic persistence, current readback and
+interruption acceptance remain required before the recovery path is accepted.
