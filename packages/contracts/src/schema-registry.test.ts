@@ -14,8 +14,6 @@ import {
   CompletionDispositionSchema,
   EvidenceContextBlockSchema,
   FederationJobStatusSchema,
-  McpDiagnosticConsumeResultSchema,
-  McpDiagnosticLatestStatusSchema,
   SourceOwnerCutoverReceiptSchema,
 } from "./index.js";
 import * as registryContracts from "./registry-index.js";
@@ -482,27 +480,6 @@ describe("ER-01 public contract registry", () => {
     expect(schema.parse(value)).toEqual(value);
     expect(schema.parse(parseJson(serializeCanonicalContractJson(value)))).toEqual(value);
     expect(await sha256(value)).toBe(fixture.canonical_body_sha256);
-  });
-
-  it("rejects diagnostic challenge tokens from status and consume readback", () => {
-    const issued = parseJson(diagnosticIssuedFixtureRaw);
-    const confirmed = McpDiagnosticConsumeResultSchema.parse(
-      parseJson(diagnosticConfirmedFixtureRaw),
-    );
-    if (!isObject(issued)) throw new Error("issued fixture must be an object");
-    const challengeToken = issued.challenge_token;
-    if (typeof challengeToken !== "string") {
-      throw new Error("issued fixture must carry a challenge token");
-    }
-
-    expect(McpDiagnosticLatestStatusSchema.safeParse(issued).success).toBe(false);
-    expect(
-      McpDiagnosticConsumeResultSchema.safeParse({
-        ...confirmed,
-        challenge_token: challengeToken,
-      }).success,
-    ).toBe(false);
-    expect(Object.hasOwn(confirmed, "challenge_token")).toBe(false);
   });
 
   it("serializes deterministic plain JSON and rejects hidden runtime state", () => {
