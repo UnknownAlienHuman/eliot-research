@@ -12,7 +12,7 @@ import process from "node:process";
   Buffer: readonly, fetch: readonly, setTimeout: readonly, clearTimeout: readonly,
   requestAnimationFrame: readonly */
 import { prepareLocal, executeLocalAsync, executeLocalD1WithRetryAsync, isTransientLocalD1Error, resolveLocalBrowserExecutable, writeHarnessMarker, removeHarnessOwned, wranglerArgs, devArguments } from "../../../scripts/lib/local-launch.mjs";
-import { startLocalWorker, reserveChromiumSafePort } from "../../../scripts/lib/local-worker.mjs";
+import { startLocalWorker, reserveChromiumSafePort, sanitizeRuntimeDiagnostic } from "../../../scripts/lib/local-worker.mjs";
 import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertChromiumSafePort, isPortCollisionMessage, CHROMIUM_UNSAFE_PORTS } from "../../../scripts/lib/local-owner-bridge.mjs";
 import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
@@ -1158,29 +1158,40 @@ function fetchErrorClass(error) {
 
 function workerDiagnosticSnapshot(worker) {
   const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
-  if (!runtime) return { pid: null, port: null, exit_code: null, stderr_tail: "unavailable", stdout_events: "unavailable" };
+  const runtimeDiagnostic = runtime?.runtimeDiagnostic && typeof runtime.runtimeDiagnostic === "object"
+    ? sanitizeRuntimeDiagnostic(runtime.runtimeDiagnostic) : "unavailable";
+  const safeTopLevelSignal = sanitizeRuntimeDiagnostic({ template: "process-signal", class: "process",
+    code: runtime?.signalCode, phase: "process" }).signal_code;
+  if (!runtime) return {
+    pid: null, port: null, exit_code: null, signal_code: null,
+    stderr_tail: "unavailable", stdout_events: "unavailable", runtime_diagnostic: "unavailable",
+  };
   return {
     pid: Number.isSafeInteger(runtime.pid) ? runtime.pid : null,
     port: Number.isSafeInteger(runtime.port) ? runtime.port : null,
     exit_code: runtime.exitCode ?? null,
+    signal_code: runtimeDiagnostic === "unavailable" ? safeTopLevelSignal : runtimeDiagnostic.signal_code,
     stderr_tail: typeof runtime.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable",
     stdout_events: typeof runtime.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable",
+    runtime_diagnostic: runtimeDiagnostic,
   };
 }
 
 function workerFetchDiagnostic(error, { method, path, phase, worker, stage = "fetch" } = {}) {
-  const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
-  const exitCode = runtime?.exitCode ?? null;
-  const stderrTail = typeof runtime?.stderrTail === "string" ? runtime.stderrTail.slice(-2000) : "unavailable";
-  const stdoutEvents = typeof runtime?.stdoutEvents === "string" ? runtime.stdoutEvents.slice(-2000) : "unavailable";
-  const pid = Number.isSafeInteger(runtime?.pid) ? runtime.pid : null;
-  const port = Number.isSafeInteger(runtime?.port) ? runtime.port : null;
+  const snapshot = workerDiagnosticSnapshot(worker);
+  const exitCode = snapshot.exit_code;
+  const signalCode = snapshot.signal_code;
+  const stderrTail = snapshot.stderr_tail;
+  const stdoutEvents = snapshot.stdout_events;
+  const runtimeDiagnostic = typeof snapshot.runtime_diagnostic === "string" ? snapshot.runtime_diagnostic : JSON.stringify(snapshot.runtime_diagnostic);
+  const pid = snapshot.pid;
+  const port = snapshot.port;
   const errorName = error instanceof Error && error.name.length > 0 ? error.name : "unknown";
   const directCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : undefined;
   const cause = error && typeof error === "object" && "cause" in error ? error.cause : undefined;
   const causeCode = cause && typeof cause === "object" && "code" in cause && typeof cause.code === "string" ? cause.code : undefined;
   const errorCode = (directCode ?? causeCode ?? "unknown").slice(0, 64);
-  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents}`;
+  return `worker fetch failed stage=${String(stage).slice(0, 16)} phase=${String(phase ?? "unspecified").slice(0, 80)} method=${String(method ?? "GET")} path=${diagnosticRoutePath(path)} error=${errorName}/${errorCode} worker_pid=${String(pid)} worker_port=${String(port)} worker_exit_code=${String(exitCode)} worker_signal_code=${String(signalCode)} worker_stderr_tail=${stderrTail} worker_stdout_events=${stdoutEvents} worker_runtime_diagnostic=${runtimeDiagnostic}`;
 }
 
 function boundedFailureText(value, maxLength) {
@@ -1250,7 +1261,11 @@ function verifyPreservedWorkerFailureOutput() {
   sentinel.name = "SentinelFailure";
   sentinel.stack = "SentinelFailure: sentinel assertion\n    at sentinelCase (owner-e2e.mjs:6000:7)";
   const wrapped = preserveWorkerFailure(sentinel, {
-    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, stderrTail: "controlled diagnostics", stdoutEvents: "ready" }),
+    diagnostics: () => ({ pid: 42, port: 43123, exitCode: 1, signalCode: "SIGKILL", stderrTail: "controlled diagnostics", stdoutEvents: "ready,error",
+      runtimeDiagnostic: { protocol: "eliotr.local-worker.runtime-diagnostic.v1", template: "uncaught-workerd-exception",
+        class: "runtime", code: "WORKERD_UNCAUGHT_EXCEPTION", phase: "runtime", source: "stdout",
+        source_stack: { basename: "worker.js", line: 42 }, signal_code: "SIGKILL",
+        counts: { observed: 2, classified: 1, unknown: 1, stdout: 2, stderr: 0 }, truncated: { stdout: false, stderr: false } } }),
   });
   assert.equal(wrapped.cause, sentinel, "the original failure must remain available as the Error cause");
   assert.match(wrapped.message, /original_error=/u);
@@ -1258,6 +1273,9 @@ function verifyPreservedWorkerFailureOutput() {
   assert.match(wrapped.message, /sentinel assertion/u, "the original error message must reach the reported Error");
   assert.match(wrapped.message, /owner-e2e\.mjs:6000:7/u, "the original error location must reach the reported Error");
   assert.match(wrapped.message, /worker_diagnostics=.*"pid":42/u, "bounded Worker diagnostics must remain attached");
+  assert.match(wrapped.message, /"runtime_diagnostic":\{.*"template":"uncaught-workerd-exception"/u,
+    "fixed runtime diagnostic classification must reach the reported Error");
+  assert.match(wrapped.message, /"signal_code":"SIGKILL"/u, "safe process signal must reach the reported Error");
   assert.ok(!wrapped.message.includes("private-token"), "reported failure must redact credential values");
   return { state: "PASS" };
 }
@@ -1638,13 +1656,15 @@ function preserveWorkerFailure(error, worker) {
 
 function ownerBridgeWorkerDiagnosticSnapshot(worker) {
   try {
-    const runtime = typeof worker?.diagnostics === "function" ? worker.diagnostics() : undefined;
+    const snapshot = workerDiagnosticSnapshot(worker);
     return {
-      pid: Number.isSafeInteger(runtime?.pid) ? runtime.pid : null,
-      exit_code: runtime?.exitCode === null || Number.isInteger(runtime?.exitCode) ? runtime.exitCode : null,
+      pid: snapshot.pid,
+      exit_code: snapshot.exit_code,
+      signal_code: snapshot.signal_code,
+      runtime_diagnostic: snapshot.runtime_diagnostic,
     };
   } catch {
-    return { pid: null, exit_code: null };
+    return { pid: null, exit_code: null, signal_code: null, runtime_diagnostic: "unavailable" };
   }
 }
 
