@@ -940,24 +940,36 @@ async function runRawProjectionFastSearchCheckpoint({ paths, worker, page, ledge
   const rawSourceId = await resolveRawProjectionSourceId(worker, token, sourceRevisionRef);
   const rawProjectionPhase = "raw-projection-scheduled-and-polling";
   process.stdout.write(`owner-e2e phase=${rawProjectionPhase}\n`);
+  const rawProjectionMarkerStartedAt = Date.now();
+  const rawProjectionMarker = (phase, state) => {
+    process.stdout.write(`owner-e2e marker phase=${phase} state=${state} elapsed_ms=${Math.max(0, Date.now() - rawProjectionMarkerStartedAt)}\n`);
+  };
   const scheduledPath = "/cdn-cgi/local/scheduled?format=json";
+  rawProjectionMarker("scheduled", "before");
   const scheduled = await fetchWorkerJsonWithDiagnostics(globalThis.fetch, worker.origin, scheduledPath,
     { phase: rawProjectionPhase, worker, timeoutMs: 5000 });
+  rawProjectionMarker("scheduled", "after");
   assert.equal(scheduled.status, 200, "local scheduled event must be accepted by Wrangler");
   ledger.record({ client: "node", method: "GET", path: scheduledPath, status: scheduled.status,
     correlation: "e2e-raw-projection/scheduled", token_present: false });
+  rawProjectionMarker("readiness", "before");
   const activeReadiness = await waitForRawProjectionReadiness(worker, token, rawSourceId, sourceRevisionRef, {
     expectedGeneration, phase: rawProjectionPhase,
   });
+  rawProjectionMarker("readiness", "after");
   assert.equal(activeReadiness.source_id, rawSourceId, "active readiness source must match the catalog-resolved raw source");
   const readinessPath = `/api/v1/library/readiness?source_id=${encodeURIComponent(rawSourceId)}`;
   const orientationPath = "/api/v1/research/orient";
+  rawProjectionMarker("source-view", "before");
   await showWorkspaceView(page, "#library", "sources", "source selection");
+  rawProjectionMarker("source-view", "after");
   const card = page.locator("#library .source-card").filter({ hasText: rawSourceId }).first();
+  rawProjectionMarker("source-responses", "before");
   const sourceSnapshots = await waitForRawResponses(page, [
     { key: "orientation", method: "POST", path: orientationPath, expectedStatus: 200 },
     { key: "readiness", method: "GET", path: readinessPath, expectedStatus: 200 },
   ], () => card.locator("[data-source]").click());
+  rawProjectionMarker("source-responses", "after");
   const orientationSnapshot = sourceSnapshots.orientation;
   const readinessSnapshot = sourceSnapshots.readiness;
   const orientationBody = JSON.parse(orientationSnapshot.requestBody ?? "{}");
@@ -1232,8 +1244,18 @@ function workerErrorCandidates(error) {
   }
 }
 
+function safeHarnessSourceStackFromError(error) {
+  for (const candidate of workerErrorCandidates(error)) {
+    const sourceStack = safeHarnessSourceStack(candidate);
+    if (sourceStack) return sourceStack;
+  }
+  return null;
+}
+
 function safeWorkerErrorClass(error) {
   const candidates = workerErrorCandidates(error);
+  const assertion = candidates.find((item) => item.name === "AssertionError" && item.code === "ERR_ASSERTION");
+  if (assertion) return Object.freeze({ name: "AssertionError", code: "ERR_ASSERTION" });
   const name = candidates.find((item) => typeof item.name === "string" &&
     (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(item.name) || item.name === "TimeoutError"))?.name ?? "UnknownError";
   const code = candidates.find((item) => typeof item.code === "string" &&
@@ -1244,6 +1266,9 @@ function safeWorkerErrorClass(error) {
 function safeWorkerErrorClassFromContext(error, candidate) {
   const fallback = safeWorkerErrorClass(error);
   if (!candidate || typeof candidate !== "object") return fallback;
+  if (candidate.name === "AssertionError" && candidate.code === "ERR_ASSERTION") {
+    return Object.freeze({ name: "AssertionError", code: "ERR_ASSERTION" });
+  }
   const name = typeof candidate.name === "string" &&
     (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(candidate.name) || candidate.name === "TimeoutError" || candidate.name === "UnknownError")
     ? candidate.name : fallback.name;
@@ -1500,6 +1525,46 @@ function verifyPreservedWorkerFailureOutput() {
   ]);
   assert.equal(Object.hasOwn(noResponseContext, "http_status"), false,
     "transport-only bridge failures must omit unknown HTTP status");
+
+  const assertionMessage = "assertion-message-private";
+  const assertionExpected = "assertion-expected-private";
+  const assertionActual = "assertion-actual-private";
+  const assertion = new Error(assertionMessage);
+  assertion.name = "AssertionError";
+  assertion.code = "ERR_ASSERTION";
+  assertion.expected = assertionExpected;
+  assertion.actual = assertionActual;
+  assertion.stack = `AssertionError: ${assertionMessage}\n    at assertionCase (owner-e2e.mjs:6300:9)\n    at assertionCase (C:\\private\\assertion-secret.mjs:101:4)`;
+  const assertionOuter = preserveWorkerFailure(assertion, worker);
+  assert.match(assertionOuter.message, /original_error=\{"name":"AssertionError","code":"ERR_ASSERTION"\}/u,
+    "unregistered assertions must retain only their fixed error classification");
+  assert.match(assertionOuter.message,
+    /worker_diagnostic_context=\{"error_class":\{"name":"AssertionError","code":"ERR_ASSERTION"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6300\}\}/u,
+    "unregistered assertions must retain only an allowlisted source frame");
+  assert.doesNotMatch(assertionOuter.message, /route_family|http_status/u,
+    "unregistered assertions must not receive a guessed route or HTTP status");
+  const assertionSerialized = JSON.stringify({ message: assertionOuter.message, stack: assertionOuter.stack, cause: assertionOuter.cause });
+  for (const secret of [assertionMessage, assertionExpected, assertionActual, "assertion-secret.mjs"]) {
+    assert.ok(!assertionSerialized.includes(secret), `unregistered assertion diagnostic must omit ${secret}`);
+  }
+
+  const genericMessage = "generic-message-private";
+  const generic = new Error(genericMessage);
+  generic.name = "PrivateGenericError";
+  generic.code = "PRIVATE_GENERIC_CODE";
+  generic.stack = `PrivateGenericError: ${genericMessage}\n    at genericCase (owner-e2e.mjs:6400:11)\n    at genericCase (C:\\private\\generic-secret.mjs:111:5)`;
+  const genericOuter = preserveWorkerFailure(generic, worker);
+  assert.match(genericOuter.message, /original_error=\{"name":"UnknownError","code":"UNSPECIFIED"\}/u,
+    "unregistered generic errors must collapse to the fixed unknown classification");
+  assert.match(genericOuter.message,
+    /worker_diagnostic_context=\{"error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6400\}\}/u,
+    "unregistered generic errors must retain only an allowlisted source frame");
+  assert.doesNotMatch(genericOuter.message, /route_family|http_status/u,
+    "unregistered generic errors must not receive a guessed route or HTTP status");
+  const genericSerialized = JSON.stringify({ message: genericOuter.message, stack: genericOuter.stack, cause: genericOuter.cause });
+  for (const secret of [genericMessage, "PrivateGenericError", "PRIVATE_GENERIC_CODE", "generic-secret.mjs"]) {
+    assert.ok(!genericSerialized.includes(secret), `unregistered generic diagnostic must omit ${secret}`);
+  }
   return { state: "PASS" };
 }
 
@@ -1885,7 +1950,11 @@ function preserveWorkerFailure(error, worker) {
   const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
   const workerContext = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
   const original = workerContext?.error_class ?? safeWorkerErrorClass(error);
-  const contextText = workerContext ? `; worker_diagnostic_context=${JSON.stringify(workerContext)}` : "";
+  const sourceStack = workerContext?.source_stack ?? safeHarnessSourceStackFromError(error);
+  const catchAllContext = workerContext ?? Object.freeze({
+    error_class: original, ...(sourceStack ? { source_stack: sourceStack } : {}),
+  });
+  const contextText = `; worker_diagnostic_context=${JSON.stringify(catchAllContext)}`;
   const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
   return new Error(`owner-e2e failed; original_error=${JSON.stringify(original)}; worker_diagnostics=${JSON.stringify(diagnostics)}${contextText}${provenanceText}`);
 }
