@@ -17,7 +17,7 @@ import { startOwnerBridge, bindChromiumSafeListener, isChromiumSafePort, assertC
 import { reserveMiniflareForbiddenPorts } from "../../../scripts/lib/miniflare-port-guard.mjs";
 import { initializeLocalNamespace } from "../../../scripts/lib/local-namespace.mjs";
 import { localPolicyQuery, applyLocalReadPolicy } from "../../../scripts/lib/local-read-policy.mjs";
-import { runExhaustiveWorkflowBrowser, getQ6DiagnosticContext } from "./exhaustive-workflow-browser.mjs";
+import { runExhaustiveWorkflowBrowser } from "./exhaustive-workflow-browser.mjs";
 import { runExhaustiveWorkflowCompleteBrowser } from "./exhaustive-workflow-complete.mjs";
 import { runRawFileUploadOwnerScenario, recoverRawFileUploadOwnerScenario, processRawFileOwnerScenario, waitForRawResponses } from "./raw-file-browser.mjs";
 import { installLocalCancellationSeam } from "./local-cancellation-seam.mjs";
@@ -1188,15 +1188,6 @@ const OWNER_WORKER_DIAGNOSTIC_CONTEXT = new WeakMap();
 const OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES = new Set([
   "owner-e2e.mjs", "local-worker.mjs", "local-launch.mjs", "local-owner-bridge.mjs", "deployment-verification.mjs",
 ]);
-const OWNER_Q6_DIAGNOSTIC_SUBPHASES = new Set([
-  "view-ready", "ready-check", "launch-submit", "launch-id", "status-before-cancel", "cancel-control",
-  "cancel-request", "status-after-cancel", "reload-ready", "recovery-list", "recovery-selection",
-  "recovered-status", "relaunch-submit", "relaunch-id", "relaunch-status-before-cancel",
-  "relaunch-cancel-control", "relaunch-cancel-request", "relaunch-status-after-cancel", "unknown",
-]);
-const OWNER_Q6_WORKFLOW_STATUSES = new Set([
-  "queued", "running", "paused", "waiting", "waitingForPause", "complete", "errored", "terminated", "unknown",
-]);
 
 function workerDiagnosticPhase(value) {
   if (typeof value !== "string") return "unspecified";
@@ -1261,20 +1252,6 @@ function safeHarnessSourceStackFromError(error) {
   return null;
 }
 
-function normalizeQ6DiagnosticContext(value) {
-  if (!value || typeof value !== "object") return undefined;
-  if (!OWNER_Q6_DIAGNOSTIC_SUBPHASES.has(value.q6_subphase) ||
-      !OWNER_Q6_WORKFLOW_STATUSES.has(value.workflow_status)) return undefined;
-  if ([value.panel_present, value.has_workflow_id, value.cancel_disabled].some((item) => typeof item !== "boolean")) return undefined;
-  return Object.freeze({
-    q6_subphase: value.q6_subphase,
-    workflow_status: value.workflow_status,
-    panel_present: value.panel_present,
-    has_workflow_id: value.has_workflow_id,
-    cancel_disabled: value.cancel_disabled,
-  });
-}
-
 function safeWorkerErrorClass(error) {
   const candidates = workerErrorCandidates(error);
   const assertion = candidates.find((item) => item.name === "AssertionError" && item.code === "ERR_ASSERTION");
@@ -1322,8 +1299,6 @@ function normalizeWorkerDiagnosticContext(error, context) {
   }
   const sourceStack = safeHarnessSourceStackValue(context.source_stack) ?? safeHarnessSourceStack(error);
   if (sourceStack) safe.source_stack = sourceStack;
-  const q6 = normalizeQ6DiagnosticContext(context.q6);
-  if (q6) Object.assign(safe, q6);
   return Object.freeze(safe);
 }
 
@@ -1632,72 +1607,8 @@ export function verifyD1FailureProvenanceRegression() {
   return { state: "PASS" };
 }
 
-function verifyQ6DiagnosticContextPreservation() {
-  const secret = "q6-private-workflow-id-bearer-url-text";
-  const sentinel = new Error(`q6 arbitrary message ${secret}`);
-  const diagnostic = safeWorkerDiagnosticError(sentinel, "q6 diagnostic", {
-    stage: "fetch", phase: "raw-projection-scheduled-and-polling", method: "GET", route_family: "research-query",
-    q6: {
-      q6_subphase: "status-before-cancel", workflow_status: "running", panel_present: true,
-      has_workflow_id: true, cancel_disabled: false, workflow_id: secret, badge: secret,
-      arbitrary_text: secret, url: `https://worker.invalid/${secret}`, token: secret,
-    },
-  });
-  const wrapped = preserveWorkerFailure(diagnostic, {
-    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, signalCode: null }),
-  });
-  assert.match(wrapped.message, /"q6_subphase":"status-before-cancel"/u,
-    "Q6 failure must preserve the fixed failing subphase");
-  assert.match(wrapped.message, /"workflow_status":"running"/u,
-    "Q6 failure must preserve the allowlisted observed workflow status");
-  assert.match(wrapped.message, /"panel_present":true,"has_workflow_id":true,"cancel_disabled":false/u,
-    "Q6 failure must preserve only boolean panel state");
-  assert.ok(!wrapped.message.includes(secret), "Q6 diagnostics must omit workflow IDs, URLs, tokens and arbitrary text");
-  return { state: "PASS" };
-}
-
-async function verifyQ6HelperDiagnosticContextPreservation() {
-  const secret = "q6-helper-private-workflow-text";
-  const workflowId = `exhaustive-workflow-${"a".repeat(64)}`;
-  const nav = { waitFor: async () => {}, click: async () => {}, getAttribute: async () => "page" };
-  const submit = { click: async () => {} };
-  const input = { fill: async () => {} };
-  const badge = { textContent: async () => "READY" };
-  const panel = {
-    locator: (selector) => selector.includes("input") ? input : selector.includes("submit") ? submit : badge,
-    getAttribute: async (name) => name === "data-workflow-id" ? workflowId : null,
-    evaluate: async () => ({ panel_present: true, has_workflow_id: true, cancel_disabled: true }),
-  };
-  const page = {
-    locator: (selector) => selector.startsWith(".workspace-nav") ? nav : panel,
-    waitForFunction: async () => {},
-  };
-  const error = await runExhaustiveWorkflowBrowser({
-    page,
-    browserJson: async () => ({ data: { data: {
-      protocol: "eliotr.exhaustive-query.v1", workflow_instance_id: workflowId,
-      workflow_status: "complete", private_text: secret,
-    } } }),
-    ledger: {}, query: secret,
-  }).then(() => assert.fail("terminal synthetic workflow must fail the cancellation witness"), (failure) => failure);
-  assert.deepEqual(getQ6DiagnosticContext(error), {
-    q6_subphase: "status-before-cancel", workflow_status: "complete",
-    panel_present: true, has_workflow_id: true, cancel_disabled: true,
-  }, "the helper failure must attach its fixed Q6 context before rethrowing");
-  const wrapped = preserveWorkerFailure(error, {
-    diagnostics: () => ({ pid: 42, port: 43123, exitCode: null, signalCode: null }),
-  });
-  assert.match(wrapped.message, /"q6_subphase":"status-before-cancel","workflow_status":"complete"/u);
-  assert.match(wrapped.message, /"panel_present":true,"has_workflow_id":true,"cancel_disabled":true/u);
-  assert.ok(!JSON.stringify({ message: wrapped.message, stack: wrapped.stack, cause: wrapped.cause }).includes(secret),
-    "the helper diagnostic envelope must omit query and response text");
-  return { state: "PASS" };
-}
-
 export async function verifyWorkerFetchDiagnosticRegression() {
   verifyPreservedWorkerFailureOutput();
-  verifyQ6DiagnosticContextPreservation();
-  await verifyQ6HelperDiagnosticContextPreservation();
   verifyD1FailureProvenanceRegression();
   const opaqueBearer = "opaque-bearer-transport";
   const opaqueUrl = "https://worker.invalid/private/path-secret#fragment-secret";
@@ -2034,12 +1945,10 @@ function preserveWorkerFailure(error, worker) {
   const diagnostics = workerDiagnosticSnapshot(worker);
   const d1Provenance = safeOwnerD1Provenance(error) ?? safeOwnerD1Provenance(error?.cause);
   const workerContext = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
-  const q6 = normalizeQ6DiagnosticContext(getQ6DiagnosticContext(error));
   const original = workerContext?.error_class ?? safeWorkerErrorClass(error);
   const sourceStack = workerContext?.source_stack ?? safeHarnessSourceStackFromError(error);
-  const catchAllContext = workerContext && !q6 ? workerContext : Object.freeze({
-    ...(workerContext ?? { error_class: original, ...(sourceStack ? { source_stack: sourceStack } : {}) }),
-    ...(q6 ?? {}),
+  const catchAllContext = workerContext ?? Object.freeze({
+    error_class: original, ...(sourceStack ? { source_stack: sourceStack } : {}),
   });
   const contextText = `; worker_diagnostic_context=${JSON.stringify(catchAllContext)}`;
   const provenanceText = d1Provenance ? `; d1_provenance=${JSON.stringify(d1Provenance)}` : "";
