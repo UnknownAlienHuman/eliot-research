@@ -170,10 +170,10 @@ export async function runBrowserResearchReadinessCanary({ fixture, cdp, evaluate
   const delayedQueryCount = fixture.queryCalls.length;
   assert.equal(delayedQueryCount, beforeBlocked + 1, "ready Search must send exactly one query POST");
   fixture.setHealthReady(false); await click('[data-refresh]');
-  await wait('document.querySelector("#app")?.dataset.healthReady === "false" && document.querySelector("#retrieval button[type=submit]")?.disabled === true && document.querySelector(".rail-status")?.textContent === "QUERY RESULT"', "Late query health loss clearing");
+  await wait('document.querySelector("#app")?.dataset.healthReady === "false" && document.querySelector("#retrieval button[type=submit]")?.disabled === true && document.querySelector(".rail-status")?.textContent === "No excerpt selected"', "Late query health loss clearing");
   fixture.releaseQuery();
   await new Promise((resolve) => setTimeout(resolve, 100));
-  assert.deepEqual(await evaluate('({ result: document.querySelector("#retrieval [data-result]").textContent, traceHidden: document.querySelector("#retrieval [data-trace-result]").hidden, rail: document.querySelector(".rail-status").textContent, detailHidden: document.querySelector("#evidence-detail").hidden })'), { result: "", traceHidden: true, rail: "QUERY RESULT", detailHidden: true });
+  assert.deepEqual(await evaluate('({ result: document.querySelector("#retrieval [data-result]").textContent, traceHidden: document.querySelector("#retrieval [data-trace-result]").hidden, rail: document.querySelector(".rail-status").textContent, detailHidden: document.querySelector("#evidence-detail").hidden })'), { result: "", traceHidden: true, rail: "No excerpt selected", detailHidden: true });
 
   fixture.setQueryMode("normal"); fixture.setHealthReady(true); await wait('document.querySelector("[data-refresh]")?.disabled === false', "Ready after late query"); await click('[data-refresh]');
   await wait('document.querySelector("#app")?.dataset.healthReady === "true"', "Ready health restored");

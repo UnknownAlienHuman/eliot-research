@@ -71,7 +71,7 @@ export function mountEvidenceRail(
     serial += 1;
     controller?.abort(); controller = undefined;
     empty.hidden = false; detail.hidden = true; detail.replaceChildren();
-    status.textContent = "QUERY RESULT";
+    status.textContent = "No excerpt selected";
   };
 
   const openHandle = (selectedScope: VersionedRef, handleRef: VersionedRef, expectedExcerptSha256?: string): void => {
