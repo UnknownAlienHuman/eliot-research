@@ -11,8 +11,9 @@ import type { LocatorCandidate, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { createExactPhraseVerifier, type ExactPhraseVerifierDependencies } from "../src/research-exact-search.js";
 
+const EXACT_EXCERPT = "Résumé (v2)! ";
 const CONTENT_DIGEST = "a".repeat(64);
-const EXCERPT_DIGEST = "b".repeat(64);
+const EXCERPT_DIGEST = "ee29d3efac6a8e824d3599fe33b47eaf219acd7ac6b7be3d50d4859178f058e0";
 const RESIDENCY_DIGEST = "c".repeat(64);
 
 function scope(): ScopeSnapshot {
@@ -60,7 +61,7 @@ function candidate(): LocatorCandidate {
       projection_generation: "generation-exact-1",
       content_sha256: EXCERPT_DIGEST,
       normalized_start_byte: 0,
-      normalized_end_byte: 18,
+      normalized_end_byte: 15,
     },
   };
 }
@@ -99,7 +100,7 @@ function grant(): ScopeAuthorization {
 
 function anchor(contentSha256 = EXCERPT_DIGEST): CandidateAnchorAuthority {
   return {
-    anchor: { kind: "normalized_byte_range", start: 0, end: 18 },
+    anchor: { kind: "normalized_byte_range", start: 0, end: 15 },
     item_key: "item-exact-1",
     content_sha256: contentSha256,
     projection_generation: "generation-exact-1",
@@ -158,12 +159,12 @@ function fixture(options: {
       state.contentReads += 1;
       options.onMaterialize?.();
       return {
-        exact_excerpt: options.excerpt ?? "Résumé (v2)! ",
+        exact_excerpt: options.excerpt ?? EXACT_EXCERPT,
         excerpt_sha256: EXCERPT_DIGEST,
-        excerpt_byte_length: 18,
+        excerpt_byte_length: 15,
         normalized_object_ref: "normalized-exact-1",
         normalized_object_ref_digest: RESIDENCY_DIGEST,
-        source_object_size: 18,
+        source_object_size: 15,
         source_object_sha256: options.sourceObjectDigest ?? CONTENT_DIGEST,
       };
     },

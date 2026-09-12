@@ -130,7 +130,9 @@ function requireMaterializedSourceBinding(
   source: EvidenceSourceAuthority,
 ): void {
   if (materialized.source_object_sha256 !== source.content_sha256) {
-    fail("EVIDENCE_OBJECT_INTEGRITY", "materialized evidence bytes differ from source authority");
+    fail("EVIDENCE_OBJECT_INTEGRITY", "materialized evidence bytes differ from source authority", {
+      invalidation_state: "BROKEN_INTEGRITY",
+    });
   }
 }
 
