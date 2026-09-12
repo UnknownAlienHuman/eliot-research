@@ -53,6 +53,20 @@ jobs:
               archive.extractall(directory, filter="data")
           PY
           python3 scripts/one-shot/federation/implement.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/eliotr-core/test/federation-runtime-http.test.ts")
+          source = path.read_text(encoding="utf-8")
+          anchor = "const encoder = new TextEncoder();\n"
+          deadline = 'const REQUEST_DEADLINE = new Date(Date.now() + 86_400_000).toISOString();\n'
+          old = "    deadline: new Date(Date.now() + 86_400_000).toISOString(),"
+          new = "    deadline: REQUEST_DEADLINE,"
+          if anchor not in source or old not in source:
+              raise SystemExit("federation replay fixture anchors missing")
+          source = source.replace(anchor, anchor + deadline, 1).replace(old, new, 1)
+          path.write_text(source, encoding="utf-8", newline="\n")
+          PY
           git rm .github/workflows/federation-runtime-once.yml \
             scripts/one-shot/federation/payload.tar.gz.b64 \
             scripts/one-shot/federation/payload-prefix.b64
