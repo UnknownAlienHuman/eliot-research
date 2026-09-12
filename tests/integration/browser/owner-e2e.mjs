@@ -1158,6 +1158,7 @@ function fetchErrorClass(error) {
 const OWNER_WORKER_DIAGNOSTIC_STAGES = new Set(["fetch", "body"]);
 const OWNER_WORKER_DIAGNOSTIC_PHASES = new Set([
   "authorized-library-catalog", "authorized-library-revisions", "bridge-after-cli", "catalog-probe-after-cli",
+  "bridge-artifact-import",
   "catalog-probe-before-cli", "direct-after-cli", "direct-before-cli", "duplicate-jwks-catalog", "duplicate-jwks-session",
   "failed-start-health", "failed-start-stopped-probe", "initial-owner-session",
   "initial-unauthenticated", "jwt-clock-skew-future", "jwt-clock-skew-valid", "jwt-email-claim",
@@ -1207,11 +1208,19 @@ function safeHarnessSourceStack(error) {
     const location = match[1].trim();
     const basename = location.split(/[\\/]/u).at(-1)?.split(/\s+/u).at(-1);
     const lineNumber = Number(match[2]);
-    if (!OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES.has(basename) ||
-        !Number.isSafeInteger(lineNumber) || lineNumber < 1 || lineNumber > 1_000_000_000) continue;
-    return Object.freeze({ basename, line: lineNumber });
+    const sourceStack = safeHarnessSourceStackValue({ basename, line: lineNumber });
+    if (sourceStack) return sourceStack;
   }
   return null;
+}
+
+function safeHarnessSourceStackValue(value) {
+  if (!value || typeof value !== "object") return null;
+  const basename = value.basename;
+  const line = value.line;
+  if (typeof basename !== "string" || !OWNER_WORKER_DIAGNOSTIC_STACK_BASENAMES.has(basename) ||
+      !Number.isSafeInteger(line) || line < 1 || line > 1_000_000_000) return null;
+  return Object.freeze({ basename, line });
 }
 
 function workerErrorCandidates(error) {
@@ -1232,6 +1241,18 @@ function safeWorkerErrorClass(error) {
   return Object.freeze({ name, code });
 }
 
+function safeWorkerErrorClassFromContext(error, candidate) {
+  const fallback = safeWorkerErrorClass(error);
+  if (!candidate || typeof candidate !== "object") return fallback;
+  const name = typeof candidate.name === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_NAMES.has(candidate.name) || candidate.name === "TimeoutError" || candidate.name === "UnknownError")
+    ? candidate.name : fallback.name;
+  const code = typeof candidate.code === "string" &&
+    (OWNER_BRIDGE_DIAGNOSTIC_ERROR_CODES.has(candidate.code) || candidate.code === "UNSPECIFIED")
+    ? candidate.code : fallback.code;
+  return Object.freeze({ name, code });
+}
+
 function safeWorkerErrorCause(error) {
   const { name, code } = safeWorkerErrorClass(error);
   return Object.freeze({ name, code });
@@ -1246,12 +1267,12 @@ function normalizeWorkerDiagnosticContext(error, context) {
     phase: workerDiagnosticPhase(context.phase),
     method: workerDiagnosticMethod(context.method),
     route_family: route,
-    error_class: safeWorkerErrorClass(error),
+    error_class: safeWorkerErrorClassFromContext(error, context.error_class),
   };
   if (Number.isSafeInteger(context.http_status) && context.http_status >= 100 && context.http_status <= 599) {
     safe.http_status = context.http_status;
   }
-  const sourceStack = safeHarnessSourceStack(error);
+  const sourceStack = safeHarnessSourceStackValue(context.source_stack) ?? safeHarnessSourceStack(error);
   if (sourceStack) safe.source_stack = sourceStack;
   return Object.freeze(safe);
 }
@@ -1264,6 +1285,41 @@ function safeWorkerDiagnosticError(error, diagnostic, context) {
   const safeContext = normalizeWorkerDiagnosticContext(error, context);
   if (safeContext) OWNER_WORKER_DIAGNOSTIC_CONTEXT.set(wrapped, safeContext);
   return wrapped;
+}
+
+function latestOwnerBridgeDiagnosticEvent(events) {
+  if (!Array.isArray(events)) return undefined;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (!event || typeof event !== "object") continue;
+    if (event.outcome === "response" || event.outcome === "error") return event;
+  }
+  return undefined;
+}
+
+function ownerBridgeBoundaryDiagnosticContext(error, events) {
+  const event = latestOwnerBridgeDiagnosticEvent(events);
+  const responseStatus = event?.outcome === "response" && Number.isSafeInteger(event.status) &&
+    event.status >= 100 && event.status <= 599 ? event.status : undefined;
+  return normalizeWorkerDiagnosticContext(error, {
+    stage: "fetch", phase: "bridge-artifact-import",
+    method: event === undefined ? "OTHER" : event.method,
+    route_family: event === undefined ? "unknown-api-route" : event.route_family,
+    ...(responseStatus === undefined ? {} : { http_status: responseStatus }),
+  });
+}
+
+function ownerCatalogDiagnosticContext(error) {
+  const inherited = OWNER_WORKER_DIAGNOSTIC_CONTEXT.get(error);
+  return normalizeWorkerDiagnosticContext(error, {
+    stage: inherited?.stage ?? "fetch",
+    phase: inherited?.phase ?? "catalog-probe-after-cli",
+    method: inherited?.method ?? "GET",
+    route_family: inherited?.route_family ?? "research-catalog",
+    ...(inherited?.error_class === undefined ? {} : { error_class: inherited.error_class }),
+    ...(inherited?.source_stack === undefined ? {} : { source_stack: inherited.source_stack }),
+    ...(inherited?.http_status === undefined ? {} : { http_status: inherited.http_status }),
+  });
 }
 
 function workerDiagnosticSnapshot(worker) {
@@ -1386,6 +1442,64 @@ function verifyPreservedWorkerFailureOutput() {
   for (const secret of [opaqueBearer, opaqueUrl, "fragment-secret", "ArbitraryErrorName", "ARBITRARY_ERROR_CODE", "stack-secret.mjs"]) {
     assert.ok(!serialized.includes(secret), `serialized diagnostic must omit ${secret}`);
   }
+
+  const bridgeBearer = "bridge-bearer-private";
+  const bridgeError = new Error(`bridge message ${bridgeBearer} https://worker.invalid/bridge-private`);
+  bridgeError.name = "ArbitraryBridgeError";
+  bridgeError.code = "ARBITRARY_BRIDGE_CODE";
+  bridgeError.stack = `ArbitraryBridgeError: bridge stack ${bridgeBearer}\n    at bridgeCase (owner-e2e.mjs:6100:7)\n    at bridgeCase (C:\\private\\bridge-secret.mjs:88:3)`;
+  const bridgeEvents = [{ outcome: "response", method: "POST", route_family: "bundle-complete",
+    stage: "bundle-complete", status: 503, typed_code: "INTERNAL_ERROR", elapsed_ms: 3 }];
+  const bridgeDiagnostic = safeWorkerDiagnosticError(bridgeError,
+    `browser artifact import failed; owner bridge diagnostic=${JSON.stringify({
+      protocol: "eliotr.owner-e2e.bridge-boundary-diagnostic.v1", problem_code: "INTERNAL_ERROR",
+      bridge_events: bridgeEvents, worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
+    })}`,
+    ownerBridgeBoundaryDiagnosticContext(bridgeError, bridgeEvents));
+  const bridgeOuter = preserveWorkerFailure(bridgeDiagnostic, worker);
+  assert.match(bridgeOuter.message,
+    /worker_diagnostic_context=\{"stage":"fetch","phase":"bridge-artifact-import","method":"POST","route_family":"bundle-complete","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"http_status":503,"source_stack":\{"basename":"owner-e2e\.mjs","line":6100\}\}/u,
+    "browser import wrapping must retain fixed request context and response status");
+  const bridgeSerialized = JSON.stringify({ message: bridgeOuter.message, stack: bridgeOuter.stack, cause: bridgeOuter.cause });
+  for (const secret of [bridgeBearer, "bridge-private", "ArbitraryBridgeError", "ARBITRARY_BRIDGE_CODE", "bridge-secret.mjs"]) {
+    assert.ok(!bridgeSerialized.includes(secret), `browser import diagnostic must omit ${secret}`);
+  }
+
+  const catalogBearer = "catalog-bearer-private";
+  const catalogError = new Error(`catalog message ${catalogBearer} https://worker.invalid/catalog-private`);
+  catalogError.name = "ArbitraryCatalogError";
+  catalogError.code = "ARBITRARY_CATALOG_CODE";
+  catalogError.stack = `ArbitraryCatalogError: catalog stack ${catalogBearer}\n    at catalogCase (owner-e2e.mjs:6200:9)\n    at catalogCase (C:\\private\\catalog-secret.mjs:99:4)`;
+  const directCatalogError = safeWorkerDiagnosticError(catalogError, "safe direct catalog transport failure",
+    normalizeWorkerDiagnosticContext(catalogError, {
+      stage: "fetch", phase: "catalog-probe-after-cli", method: "GET", route_family: "research-catalog",
+    }));
+  const catalogProbes = [
+    { phase: "catalog-probe-after-cli", elapsed_ms: 4, outcome: "error",
+      error_class: "UnknownError/UNSPECIFIED", worker: workerDiagnosticSnapshot(worker) },
+    { phase: "bridge-after-cli", elapsed_ms: 5, outcome: "http", status: 502 },
+  ];
+  const catalogDiagnostic = safeWorkerDiagnosticError(directCatalogError,
+    `owner-e2e catalog transport probe failed; error_class=UnknownError/UNSPECIFIED\n` +
+    `owner-e2e catalog transport probe=${JSON.stringify({
+      protocol: "eliotr.owner-e2e.catalog-transport-probe.v1", worker: workerDiagnosticSnapshot(worker), probes: catalogProbes,
+    })}`,
+    ownerCatalogDiagnosticContext(directCatalogError));
+  const catalogOuter = preserveWorkerFailure(catalogDiagnostic, worker);
+  assert.match(catalogOuter.message,
+    /worker_diagnostic_context=\{"stage":"fetch","phase":"catalog-probe-after-cli","method":"GET","route_family":"research-catalog","error_class":\{"name":"UnknownError","code":"UNSPECIFIED"\},"source_stack":\{"basename":"owner-e2e\.mjs","line":6200\}\}/u,
+    "catalog probe wrapping must retain inherited context without borrowing another response status");
+  assert.doesNotMatch(catalogOuter.message, /"http_status":502/u,
+    "catalog transport failure must not attribute bridge response status to the direct request");
+  const catalogSerialized = JSON.stringify({ message: catalogOuter.message, stack: catalogOuter.stack, cause: catalogOuter.cause });
+  for (const secret of [catalogBearer, "catalog-private", "ArbitraryCatalogError", "ARBITRARY_CATALOG_CODE", "catalog-secret.mjs"]) {
+    assert.ok(!catalogSerialized.includes(secret), `catalog probe diagnostic must omit ${secret}`);
+  }
+  const noResponseContext = ownerBridgeBoundaryDiagnosticContext(new Error("no response"), [
+    { outcome: "error", method: "GET", route_family: "research-query", stage: "research-query" },
+  ]);
+  assert.equal(Object.hasOwn(noResponseContext, "http_status"), false,
+    "transport-only bridge failures must omit unknown HTTP status");
   return { state: "PASS" };
 }
 
@@ -5767,7 +5881,8 @@ export async function runOwnerE2E() {
         bridge_events: ownerBridgeDiagnosticEvents.slice(),
         worker: ownerBridgeWorkerDiagnosticSnapshot(worker),
       };
-      throw safeWorkerDiagnosticError(error, `browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`);
+      throw safeWorkerDiagnosticError(error, `browser artifact import failed; owner bridge diagnostic=${JSON.stringify(diagnostic)}`,
+        ownerBridgeBoundaryDiagnosticContext(error, ownerBridgeDiagnosticEvents));
     }
     assert.equal(imported.receipt.decision, "ADMITTED");
     assert.equal(imported.receipt.source_revision_ref, revisionRef);
@@ -5943,8 +6058,10 @@ export async function runOwnerE2E() {
           worker: workerDiagnosticSnapshot(worker),
           probes: catalogTransportProbeRecords,
         };
-        throw new Error(`owner-e2e catalog transport probe failed; error_class=${fetchErrorClass(directAfterCli.error)}\n` +
-          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`);
+        throw safeWorkerDiagnosticError(directAfterCli.error,
+          `owner-e2e catalog transport probe failed; error_class=${fetchErrorClass(directAfterCli.error)}\n` +
+          `owner-e2e catalog transport probe=${JSON.stringify(diagnostic)}`,
+          ownerCatalogDiagnosticContext(directAfterCli.error));
       }
       catalog = directAfterCli.response;
       receipt.catalog_transport_probe = {
