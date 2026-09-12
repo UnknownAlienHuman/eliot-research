@@ -59,7 +59,7 @@ export function renderRetrievalTrace(view: RetrievalTraceView): string {
   ].join("\n");
 }
 
-export function mountRetrievalPanel(element: HTMLElement): (() => void) & { selectSource(id: string, context?: LibrarySelectionContext): void; clearPrivate(): void } {
+export function mountRetrievalPanel(element: HTMLElement, healthReady: () => boolean): (() => void) & { selectSource(id: string, context?: LibrarySelectionContext): void; clearPrivate(): void } {
   element.innerHTML = `<h2>Retrieval</h2>
     <p>Exact and lexical retrieval over admitted sources. Excerpts are citation evidence, pinned and verified.
     Coverage is sampled: a miss does not prove absence, and no model is called.</p>
@@ -71,9 +71,10 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
   const status = element.querySelector('[role="status"]');
   const result = element.querySelector("[data-result]");
   const traceResult = element.querySelector<HTMLPreElement>("[data-trace-result]");
+  const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]');
   const cancel = element.querySelector<HTMLButtonElement>("[data-cancel]");
   const sources = element.querySelector<HTMLInputElement>('input[name="sources"]');
-  if (!form || !status || !result || !traceResult || !cancel || !sources) throw new Error("Retrieval panel is incomplete");
+  if (!form || !status || !result || !traceResult || !submit || !cancel || !sources) throw new Error("Retrieval panel is incomplete");
 
   let controller: AbortController | undefined;
   let traceController: AbortController | undefined;
@@ -91,13 +92,33 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
       error.retryable ? " · Retry preserves the operation identity." : ""}`
     : "Unable to run retrieval. Check the inputs and session.";
 
+  const waitingStatus = "Owner API is not ready. Wait for the server check before searching.";
+  const readyStatus = "Owner API is ready. Search is available.";
+  const offlineStatus = "Offline. Reconnect before searching.";
   const stop = () => { active += 1; controller?.abort(); traceController?.abort(); controller = undefined; traceController = undefined; cancel.disabled = true; };
+  const refreshAvailability = (): void => {
+    const healthAvailable = healthReady();
+    const online = navigator.onLine;
+    const ready = healthAvailable && online;
+    const currentStatus = status.textContent ?? "";
+    submit.disabled = !ready;
+    if (!online) {
+      if (currentStatus === "" || currentStatus === waitingStatus || currentStatus === readyStatus) status.textContent = offlineStatus;
+    } else if (!healthAvailable) {
+      if (currentStatus === "" || currentStatus.startsWith("Private retrieval state cleared.")) status.textContent = waitingStatus;
+    } else if (currentStatus === waitingStatus || currentStatus === offlineStatus) {
+      status.textContent = readyStatus;
+    }
+  };
   const clearPrivate = (): void => {
     stop(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
     lastTrace = undefined; lastEvidence = []; lastTraceDeploymentGeneration = undefined;
     selectedContext = undefined; selectedHeads.clear(); sources.value = ""; previous = ""; key = "";
     status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
   };
+  const onHealthLost = (): void => { clearPrivate(); submit.disabled = true; };
+  const onHealthUpdated = (): void => { refreshAvailability(); };
+  const onConnectivityChanged = (): void => { refreshAvailability(); };
   cancel.onclick = () => {
     stop();
     status.textContent = "Request cancelled. Retry unchanged inputs to reconcile the same operation.";
@@ -105,6 +126,11 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
 
   form.onsubmit = (event) => {
     event.preventDefault();
+    if (!healthReady()) {
+      status.textContent = waitingStatus;
+      refreshAvailability();
+      return;
+    }
     stop();
     const serial = ++active;
     controller = new AbortController();
@@ -162,7 +188,7 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
         }
         status.textContent = errorText(error);
       })
-      .finally(() => { if (serial === active) cancel.disabled = true; });
+      .finally(() => { if (serial === active) { cancel.disabled = true; refreshAvailability(); } });
   };
 
   result.addEventListener("click", (event) => {
@@ -186,7 +212,19 @@ export function mountRetrievalPanel(element: HTMLElement): (() => void) & { sele
       .catch((error: unknown) => { if (serial === active) traceResult.textContent = errorText(error); });
   });
 
-  const cleanup = () => { stop(); };
+  const appRoot = element.closest<HTMLElement>("#app");
+  appRoot?.addEventListener("eliotr:health-lost", onHealthLost);
+  window.addEventListener("eliotr:health-updated", onHealthUpdated);
+  window.addEventListener("offline", onConnectivityChanged);
+  window.addEventListener("online", onConnectivityChanged);
+  refreshAvailability();
+  const cleanup = () => {
+    stop();
+    appRoot?.removeEventListener("eliotr:health-lost", onHealthLost);
+    window.removeEventListener("eliotr:health-updated", onHealthUpdated);
+    window.removeEventListener("offline", onConnectivityChanged);
+    window.removeEventListener("online", onConnectivityChanged);
+  };
   return Object.assign(cleanup, {
     clearPrivate,
     selectSource(id: string, context?: LibrarySelectionContext): void {

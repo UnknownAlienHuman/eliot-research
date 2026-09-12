@@ -127,6 +127,9 @@ export function mountExhaustiveWorkflowPanel(
     refresh.disabled = workflowId === undefined || busy;
     query.disabled = busy || (workflowId !== undefined && !terminalState);
     scope.disabled = busy || (workflowId !== undefined && !terminalState);
+    const recoveryBusy = busy || recoveryController !== undefined;
+    recoveryRefresh.disabled = !healthReady() || recoveryBusy || !navigator.onLine;
+    recoveryMore.disabled = !healthReady() || recoveryBusy || recoveryCursor === undefined || !navigator.onLine;
   };
   let terminalState = false;
   const refreshHealthState = (): void => {
@@ -240,15 +243,14 @@ export function mountExhaustiveWorkflowPanel(
     recoveryCursor = undefined;
     recoveryList.replaceChildren();
     recoveryMore.hidden = true;
-    recoveryRefresh.disabled = false;
-    recoveryMore.disabled = false;
     recoveryStatus.textContent = text;
+    buttons();
   };
 
   const refreshRecovery = async (cursor?: string, append = false): Promise<void> => {
-    if (!healthReady() || !navigator.onLine) return;
+    if (!healthReady() || !navigator.onLine) { buttons(); return; }
     const generation = deploymentGeneration();
-    if (generation === undefined) return;
+    if (generation === undefined) { buttons(); return; }
     const active = ++recoverySerial;
     recoveryController?.abort();
     const local = new AbortController();
@@ -274,7 +276,7 @@ export function mountExhaustiveWorkflowPanel(
         }
       }
     } finally {
-      if (active === recoverySerial) { recoveryController = undefined; recoveryRefresh.disabled = false; recoveryMore.disabled = false; }
+      if (active === recoverySerial) { recoveryController = undefined; buttons(); }
     }
   };
 

@@ -192,7 +192,7 @@ function render(health: SystemHealth | null): void {
   sourceChooserViewport.addEventListener("change", handleSourceChooserViewport);
   setSourceChooserExpanded(sourceChooserExpanded);
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
-  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   const researchRunHost = app.querySelector<HTMLElement>("#research-run");
   const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
