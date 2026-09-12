@@ -209,8 +209,10 @@ export function createResearchChangesCursorCodec(input: {
       }
       const bytes = unbase64url(pieces[0], "RESEARCH_CHANGES_CURSOR_INVALID");
       const signature = unbase64url(pieces[1], "RESEARCH_CHANGES_CURSOR_INVALID");
+      const ownedBytes = Uint8Array.from(bytes).buffer;
+      const ownedSignature = Uint8Array.from(signature).buffer;
       if (bytes.byteLength > MAX_CURSOR_BYTES || signature.byteLength !== 32 ||
-          !await crypto.subtle.verify("HMAC", await keyPromise, signature, bytes)) {
+          !await crypto.subtle.verify("HMAC", await keyPromise, ownedSignature, ownedBytes)) {
         fail("RESEARCH_CHANGES_CURSOR_INVALID", "changes cursor signature is invalid");
       }
       const payload = decodePayload(bytes);
