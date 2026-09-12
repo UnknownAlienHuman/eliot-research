@@ -400,6 +400,22 @@ async function decodeFederationJob(
   };
 }
 
+export async function readFederationJobById(
+  database: D1Database,
+  rawJobId: string,
+): Promise<DecodedFederationJob | null> {
+  const jobId = federationIdentifier(rawJobId, "job id");
+  let row: JobRow | null;
+  try {
+    row = await database.prepare(
+      `${FEDERATION_JOB_SELECT}WHERE job_id=?1 LIMIT 1`,
+    ).bind(jobId).first<JobRow>();
+  } catch (cause) {
+    return readFailed("federation job", cause);
+  }
+  return row === null ? null : decodeFederationJob(row);
+}
+
 export async function readFederationJob(
   database: D1Database,
   rawExchangeId: string,

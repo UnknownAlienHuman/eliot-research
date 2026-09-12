@@ -91,3 +91,7 @@ pnpm cf:dry-run
 
 Local D1 mocks and SQLite migration constraints are `IMPLEMENTED_NOT_LIVE`. Remote D1, deployed Access,
 Worker restart and real lost-ack receipts remain `NOT_EXECUTED`.
+
+## Local composition extension
+
+ER-24 now composes this D1 authority with immutable R2 bundle bytes and a signed change cursor that is bound to both peer generations, client fence, manifest revision, exact scope and deployment generation. Local tests exercise all seven API operations and negative fence/cursor boundaries. Remote D1/R2, deployed Access and an independently operated peer remain `NOT_EXECUTED`.

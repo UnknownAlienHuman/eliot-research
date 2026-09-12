@@ -1,3 +1,9 @@
+import {
+  FederationD1AuthorityError,
+  FederationRuntimeAuthorityError,
+} from "@eliotr/cloudflare-federation";
+import { FederationServiceError } from "./federation-service.js";
+import { FederationHttpError } from "./federation-http.js";
 import { NavigationError } from "@eliotr/retrieval";
 import { OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
@@ -158,6 +164,76 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
       return problemResponse(request, 400, error.code, "Exact evidence request is invalid", false);
     }
     return problemResponse(request, 409, error.code, "Exact evidence authority conflicts with current state", false);
+  }
+  if (error instanceof FederationHttpError) {
+    return problemResponse(
+      request,
+      error.status,
+      error.code,
+      error.message,
+      error.retryable,
+    );
+  }
+  if (error instanceof FederationRuntimeAuthorityError) {
+    const status = error.retryable || error.code === "FEDERATION_RUNTIME_CONFIG_INVALID"
+      ? 503
+      : error.code.includes("MISSING")
+        ? 404
+        : error.code.includes("TOO_LARGE")
+          ? 413
+          : error.code.includes("RANGE")
+            ? 416
+            : error.code.includes("EXPIRED")
+              ? 410
+              : error.code.includes("CURSOR_INVALID") ||
+                  error.code.includes("SCOPE_INVALID")
+                ? 400
+                : 409;
+    return problemResponse(
+      request,
+      status,
+      error.code,
+      error.message,
+      error.retryable || status === 503,
+    );
+  }
+  if (error instanceof FederationD1AuthorityError) {
+    const status = error.retryable || error.code === "FEDERATION_D1_READ_FAILED"
+      ? 503
+      : error.code === "FEDERATION_D1_BINDING_MISMATCH"
+        ? 403
+        : 409;
+    return problemResponse(
+      request,
+      status,
+      error.code,
+      error.message,
+      error.retryable || status === 503,
+    );
+  }
+  if (error instanceof FederationServiceError) {
+    const status = error.retryable
+      ? 503
+      : error.code.includes("NOT_FOUND")
+        ? 404
+        : error.code.includes("EXPIRED")
+          ? 410
+          : error.code.includes("AUTH") ||
+              error.code.includes("DENIED") ||
+              error.code.includes("IDENTITY_MISMATCH")
+            ? 403
+            : error.code.includes("TOO_LARGE") ||
+                error.code.includes("INVALID") ||
+                error.code.includes("RANGE")
+              ? 400
+              : 409;
+    return problemResponse(
+      request,
+      status,
+      error.code,
+      error.message,
+      error.retryable || status === 503,
+    );
   }
   if (error instanceof CatalogInputError) {
     return problemResponse(request, error.status, error.code, error.message, error.retryable);

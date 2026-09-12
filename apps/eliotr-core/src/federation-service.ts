@@ -468,7 +468,7 @@ function requestBindingMatches(
     request.bridge_generation === binding.bridge_generation;
 }
 
-// IMPLEMENTED_NOT_LIVE: ER-22 federation boundary requires ER-24 composition and retained boundary receipts.
+// IMPLEMENTED_NOT_LIVE: ER-22 federation boundary is locally composed and requires independent-peer deployed receipts.
 export function createFederationService(dependencies: FederationServiceDependencies): FederationApiV1 {
   const identity = validateIdentity(dependencies.identity);
   const now = dependencies.now ?? Date.now;

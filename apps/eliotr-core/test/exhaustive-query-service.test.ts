@@ -13,8 +13,8 @@ import {
   createExhaustiveQueryService,
   parseExhaustiveQueryRequest,
   type ExhaustiveQueryRuntime,
-} from "./exhaustive-query-service.js";
-import { parseResearchQueryRequest } from "./research-session.js";
+} from "../src/exhaustive-query-service.js";
+import { parseResearchQueryRequest } from "../src/research-session.js";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 

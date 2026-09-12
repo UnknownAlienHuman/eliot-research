@@ -68,6 +68,7 @@ const PACKAGE_RULES = new Map([
     "@eliotr/cloudflare-ai",
     "@eliotr/cloudflare-projection",
     "@eliotr/cloudflare-evidence",
+    "@eliotr/cloudflare-federation",
     "@eliotr/cloudflare-erasure",
     "@eliotr/contracts",
     "@eliotr/domain",

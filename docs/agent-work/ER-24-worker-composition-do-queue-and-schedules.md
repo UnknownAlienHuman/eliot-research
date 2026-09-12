@@ -44,7 +44,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/orientation-resilience.test.ts`
 - `apps/eliotr-core/vitest.config.ts`
 - `apps/eliotr-core/src/catalog-service.ts`
-- `apps/eliotr-core/src/catalog-service.test.ts`
+- `apps/eliotr-core/test/catalog-service.test.ts`
 - `apps/eliotr-core/src/catalog-queries.ts`
 - `apps/eliotr-core/test/catalog-http.test.ts`
 - `apps/eliotr-core/src/source-revisions.ts`
@@ -64,16 +64,18 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-q1-fixture.ts`
 - `apps/eliotr-core/test/raw-capture-http.test.ts`
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
-- `apps/eliotr-core/src/exhaustive-query-service.test.ts`
+- `apps/eliotr-core/test/exhaustive-query-service.test.ts`
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
 - `apps/eliotr-core/test/exhaustive-workflow-output.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-output.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-service.ts`
-
 - `apps/eliotr-core/src/bounded-json.ts`
 - `apps/eliotr-core/test/bounded-json.test.ts`
+- `apps/eliotr-core/src/federation-http.ts`
+- `apps/eliotr-core/test/federation-runtime-http.test.ts`
+
 ER-09 exclusively owns `apps/eliotr-core/src/research-workflow.ts`; ER-24 may compose its exported
 boundary but does not edit or reimplement that workflow authority.
 
@@ -92,6 +94,8 @@ underlying OAuth service and storage authority. ER-36 is also the canonical owne
 `composition-root.ts` and `index.test.ts` integration files; ER-24 contributes through the reviewed
 integration handoff without claiming those paths.
 
+- `apps/eliotr-core/src/federation-http.ts`
+- `apps/eliotr-core/test/federation-runtime-http.test.ts`
 ## Implemented HTTP contour
 
 ```text
@@ -157,8 +161,7 @@ must exercise the production R2 stream boundary; a fixture that buffers a stream
 prove that boundary. Already bounded projection bytes must retain their known length when converted
 to an R2 upload stream, while exact size, digest and immutable readback checks remain enforced.
 
-Full research/query execution, federation, Wiki, Drive and erasure remain
-typed unavailable or fail-closed.
+Federation is locally composed across all seven authenticated operations; independent-peer deployment receipts remain pending. Remaining external Drive, erasure and live-provider qualifications stay fail-closed.
 
 ## Q8 exhaustive query composition
 

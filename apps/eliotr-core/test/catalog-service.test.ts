@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import { readCatalog } from "./catalog-service.js";
+import { readCatalog } from "../src/catalog-service.js";
 const context: AuthenticatedRequestContext = { request: new Request("https://research.example/"),
   principal_ref: "owner", credential_generation: "credential-1", client_class: "owner_pwa", trace_id: "trace-1" };
 const noDatabase = { prepare() { throw new Error("Database must not be accessed"); } } as unknown as D1Database;

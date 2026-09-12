@@ -59,6 +59,9 @@ importers:
       '@eliotr/cloudflare-evidence':
         specifier: workspace:*
         version: link:../../packages/cloudflare-evidence
+      '@eliotr/cloudflare-federation':
+        specifier: workspace:*
+        version: link:../../packages/cloudflare-federation
       '@eliotr/cloudflare-markdown':
         specifier: workspace:*
         version: link:../../packages/cloudflare-markdown

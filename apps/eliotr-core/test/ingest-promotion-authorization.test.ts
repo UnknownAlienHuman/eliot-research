@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   authorizeIngestPromotion,
   stagedBundleInputFingerprint,
-} from "./ingest-promotion-authorization.js";
+} from "../src/ingest-promotion-authorization.js";
 
 const A = "a".repeat(64);
 const B = "b".repeat(64);

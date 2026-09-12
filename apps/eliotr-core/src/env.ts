@@ -16,6 +16,8 @@ export interface Env {
   readonly ASSETS: Fetcher;
   readonly ENVIRONMENT: "development" | "staging" | "production";
   readonly DEPLOYMENT_GENERATION: string;
+  readonly FEDERATION_SERVER_PRINCIPAL_REF?: string;
+  readonly FEDERATION_CURSOR_HMAC_KEY?: string;
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
   readonly ACCESS_TEAM_DOMAIN?: string;

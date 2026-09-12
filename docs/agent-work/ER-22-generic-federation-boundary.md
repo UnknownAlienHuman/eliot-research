@@ -74,3 +74,8 @@ API exposes no reverse canonical-write operation.
 
 Live receipts: `NOT EXECUTED`. ER-24 still owns Worker composition and route exposure for these durable
 job, manifest, bundle and change-authority ports.
+
+
+## Local Worker composition
+
+Local Worker composition now exposes all seven service operations through server-owned identity, immutable D1 job/manifest authority, bounded R2 bundle readback and peer-bound signed change cursors. Live receipts remain `NOT EXECUTED` until an independent deployed peer exercises Access, restart, range and cursor replay boundaries.

@@ -9,7 +9,7 @@ import type {
   PurgeTarget,
 } from "@eliotr/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { createErasureCoordinator } from "./erasure-coordinator.js";
+import { createErasureCoordinator } from "../src/erasure-coordinator.js";
 
 const request: ErasureRequest = {
   protocol: "erc.privacy.erasure.v1",

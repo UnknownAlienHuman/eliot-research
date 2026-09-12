@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConfiguredErasureCoordinator } from "./erasure-runtime.js";
-import type { Env } from "./env.js";
+import { createConfiguredErasureCoordinator } from "../src/erasure-runtime.js";
+import type { Env } from "../src/env.js";
 
 function environment(): Env {
   return {

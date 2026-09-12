@@ -50,4 +50,9 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/oauth/google/callback", operation: "google.oauth.callback", auth: "owner", maximum_request_bytes: 0, response_mode: "redirect" },
   { method: "POST", path: "/federation/v1/jobs", operation: "federation.submit", auth: "service", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/federation/v1/jobs/:exchange_id", operation: "federation.status", auth: "service", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/federation/v1/jobs/:exchange_id/result", operation: "federation.result", auth: "service", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/federation/v1/jobs/:exchange_id/cancel", operation: "federation.cancel", auth: "service", maximum_request_bytes: 8192, response_mode: "json" },
+  { method: "GET", path: "/federation/v1/bundles/:bundle_id/revisions/:revision/manifest", operation: "federation.bundle.manifest", auth: "service", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/federation/v1/bundles/:bundle_id/revisions/:revision", operation: "federation.bundle.read", auth: "service", maximum_request_bytes: 0, response_mode: "stream" },
+  { method: "POST", path: "/federation/v1/changes", operation: "federation.changes", auth: "service", maximum_request_bytes: 16384, response_mode: "json" },
 ] as const;

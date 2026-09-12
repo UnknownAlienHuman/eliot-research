@@ -1,3 +1,4 @@
+import { dispatchFederationHttp } from "./federation-http.js";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { OrientationError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
 import type {
@@ -424,6 +425,23 @@ async function dispatch(
         );
       }
       {
+        const federation = await dispatchFederationHttp(
+          request,
+          env,
+          context,
+          {
+            operation: match.route.operation,
+            maximum_request_bytes: match.route.maximum_request_bytes,
+            params: match.params,
+          },
+          url,
+          application.services.federation,
+        );
+        if (federation !== null) {
+          return federation.kind === "response"
+            ? federation.response
+            : apiResult(request, env, federation.body, federation.status);
+        }
         if (match.route.operation === "research.query") {
           if (match.route.path === "/api/v1/research/query/jobs") {
             return apiResult(request, env, await application.services.semantic.queryJobs(

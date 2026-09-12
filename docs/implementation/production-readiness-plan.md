@@ -256,7 +256,7 @@ D1, R2, Queue, Workflow, provider or model effect.
 
 ### 8.1 Federation — ER-22
 
-- [ ] Replace `FederationImplementationPendingError` with a durable service.
+- [x] Compose the durable federation service locally; remote independent-peer qualification remains pending.
 - [ ] Bind submission to principal, immutable scope, policy, generation, canonical request digest and
       idempotency key.
 - [ ] Persist request, job, attempts, cancellation, results and receipts in D1/R2 authority.

@@ -74,10 +74,12 @@
         "ER-24"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "required_for_transports": ["drive-exchange"],
+      "required_for_transports": [
+        "drive-exchange"
+      ],
       "behavior": "Day-0 ChatGPT Drive Exchange cursor reconciliation now executes: leased changes.list replay with bounded ID-column scans, R2 freeze, ContributionIntent admission and guarded cursor commit only after reconciliation, plus a read-only historical ID/hash audit by digest against the frozen envelope. Sheet/changes REST, contribution guards, encrypted D1 credentials, bounded refresh and internal initial OAuth admission now execute. Owner-only OAuth begin HTTP/PWA with server-owned configuration/Production attestation, verified-Access owner/session/currentness, same-origin/CSRF and stable operation retry now executes. Owner callback and reconnect/disconnect/status lifecycle now execute; provisioning, Doc publication/export and full runtime composition remain separate. Optional Gemini MCP does not replace this path.",
       "completion_evidence": [
-        "Implement ELIOT_RESEARCH v29.1 \u00a7\u00a712.3\u201312.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
+        "Implement ELIOT_RESEARCH v29.1 §§12.3–12.12 and ADR-0003 in small owned checkpoints; one active ChatGPT write transport.",
         "packages/google-drive-exchange/src/reconciler.test.ts: 10 cases over real node:sqlite D1 against the committed migration stream (import with cursor advance, duplicate resume without re-freeze/re-admit, admitted-but-unrecorded resume via ContributionIntent DUPLICATE, incomplete missing-parts with no cursor advance and failure counter, held-lease refusal before any Drive read, outrun-TTL commit refusal, edited-replay tamper without re-freeze under a preserved frozen authority, digest-against-frozen tamper audit, missing-not-tampered audit, lost-notification plus edited-row negative with no duplicate work); no new migration",
         "packages/google-drive-exchange/src/reconciler-store.ts: D1 cursor lease CAS (steal-on-expiry, extend-own, refuse-other, commit only under a live own lease) and frozen-observation ledger (IMPORTED/DUPLICATE_IGNORED/TRANSPORT_TAMPERED) with lost-ACK readback and no multi-statement transaction spanning I/O",
         "Exact atomic REQUESTS/PAYLOAD_PARTS append and leased cursor commit only after immutable freeze and idempotent reconciliation; local failure/tamper/reorder/lost-ACK fixtures.",
@@ -189,9 +191,13 @@
       "id": "workspace-candidate-admission",
       "path": "packages/cloudflare-workspace-mcp/src/gemini-mcp-google-sync.ts",
       "sentinel": "IN_PROGRESS: ER-36 Workspace candidate bytes admission and live connector readback remain unimplemented; durable v2 plans and observations do not admit sources.",
-      "owner_packets": ["ER-36"],
+      "owner_packets": [
+        "ER-36"
+      ],
       "state": "IN_PROGRESS",
-      "required_for_transports": ["gemini-mcp"],
+      "required_for_transports": [
+        "gemini-mcp"
+      ],
       "behavior": "The selected Workspace MCP profile preserves v1 behavior and adds strict v2 server-issued intent plans bound to the verified actor, deployment and auth profile. Append-only D1 plans and candidate observations use canonical digests, exact readback and same-key reconciliation. A committed UNKNOWN comparison is distinct from an uncertain D1 write. The ledger does not invoke Google or admit source/evidence bytes; external connector qualification and authenticated source admission remain incomplete.",
       "completion_evidence": [
         "packages/contracts/src/workspace-mcp.ts and workspace-mcp.test.ts: strict v2 candidate plans, external receipt input and separate comparison/write uncertainty",
@@ -211,7 +217,9 @@
         "ER-36"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "required_for_transports": ["gemini-mcp"],
+      "required_for_transports": [
+        "gemini-mcp"
+      ],
       "behavior": "Optional signed Gemini MCP exposes status, Workspace-only no-effect planning and bounded v1 self-reported observation checks through explicit service-token or managed-oauth profiles; managed actors use a domain-separated hashed verified subject, while service-token identity remains bound to the exact signed Client ID. Target ID, pinned read revision, time window, declared descriptors and digests are checked. This is not Google I/O, authenticated plan issuance or write-precondition proof. The separate unselected ChatGPT Drive Exchange profile remains independently tracked. Service catalog remains withheld pending explicit scope authority.",
       "completion_evidence": [
         "MCP version/body/principal negative tests, managed-oauth actor separation, mixed-profile and ordinary-audience rejection, and Workspace Cloud/gcloud rejection",
@@ -249,7 +257,7 @@
         "apps/eliotr-core/test/bundle-import-http.test.ts real D1/R2 recovery after discarded client state, lost completion receipt, changed file and foreign/unsigned denial",
         "scripts/test-library-browser.mjs built PWA reload/reselection and terminal recovery using controlled HTTP; full real-storage browser lifecycle remains open",
         "apps/eliotr-core/test/bundle-import-http.test.ts read-only exact-folder discovery after lost prepare/commit replies and PREPARING state; missing/foreign denial, altered metadata/bytes, expiry and policy withdrawal",
-        "apps/eliotr-core/src/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
+        "apps/eliotr-core/test/ingest-service.test.ts post-digest policy/identity recheck blocks discovery without staging or admission effects",
         "tests/bundle-recovery.test.ts exact discovery transport, bounded metadata, frozen input, cancellation and no fallback mutation",
         "scripts/test-library-browser.mjs built PWA reload without operation ID -> read-only discovery -> explicit continuation; controlled HTTP backend, not complete real-storage browser qualification"
       ]
@@ -288,7 +296,7 @@
         "packages/cloudflare-erasure/src/admission-policy.ts and additive migration 0039: separate operator-installed erasure permission, exact owner/principal/credential/legal-basis binding, canonical policy digest, immutable admission request and stable replay timestamp; admission rechecks current authority and expands to all required locations. This producer is not yet wired to a public erasure route or coordinator; ERASURE remains disabled.",
         "apps/eliotr-core/test/erasure-admission-policy.test.ts: five actual local D1 cases cover stable admission replay, normalized offset-time admission, actor/legal-basis/owner drift, revocation, expiry and corrupt policy digest refusal; production permission installation and deletion NOT_EXECUTED.",
         "scripts/check-erasure-closure.mjs blocked-backup and terminal-guard fixture",
-        "apps/eliotr-core/src/erasure-coordinator.test.ts exact completion and absence-negative cases",
+        "apps/eliotr-core/test/erasure-coordinator.test.ts exact completion and absence-negative cases",
         "packages/cloudflare-erasure location-adapter and authority tests",
         "remote R2, D1, AI Search and offsite backup absence receipts NOT EXECUTED"
       ]
@@ -296,16 +304,17 @@
     {
       "id": "pending-003",
       "path": "apps/eliotr-core/src/federation-service.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary requires ER-24 composition and retained boundary receipts.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-22 federation boundary is locally composed and requires independent-peer deployed receipts.",
       "owner_packets": [
         "ER-22"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "authenticated and manifest-fenced federation service validates strict requests, maps durable idempotent job reservations, exposes bounded bundle/range/change reads, and reconciles public completion dispositions to the observed internal result without client canonical-write authority",
+      "behavior": "All seven federation operations are composed locally through strict Access context, D1 job/manifest authority, immutable R2 bundle bytes and peer-bound change cursors; deployed independent-peer receipts remain pending.",
       "completion_evidence": [
         "apps/eliotr-core/test/federation-service.test.ts strict schema, identity/fence, manifest, idempotency, range and reverse-authority cases",
         "mandatory COMPLETED + INCONCLUSIVE disposition downgrade case",
-        "ER-24 composition wiring and retained mutually authenticated boundary receipt NOT EXECUTED"
+        "ER-24 composition wiring and retained mutually authenticated boundary receipt NOT EXECUTED",
+        "Local D1/R2/HTTP integration covers submit/replay/cancel/result, manifest/range read and signed change replay."
       ]
     },
     {
@@ -676,7 +685,12 @@
       "id": "implemented-raw-markdown-conversion",
       "path": "packages/cloudflare-markdown/src/raw-markdown-conversion.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-16 durable raw markdown conversion records one server-owned provider attempt; live Workers AI qualification remains separate.",
-      "owner_packets": ["ER-16", "ER-21", "ER-24", "ER-27"],
+      "owner_packets": [
+        "ER-16",
+        "ER-21",
+        "ER-24",
+        "ER-27"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "Owner-only conversion reads an immutable raw capture receipt and exact R2 bytes, reserves one D1 attempt before invoking the injected Workers AI adapter, stores immutable output and receipt readback, and returns candidate conversion metadata. Unknown provider effects are never retried.",
       "completion_evidence": [
@@ -690,7 +704,13 @@
       "id": "implemented-library-active-readiness",
       "path": "apps/eliotr-core/src/library-readiness.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.",
-      "owner_packets": ["ER-01", "ER-13", "ER-24", "ER-27", "ER-38"],
+      "owner_packets": [
+        "ER-01",
+        "ER-13",
+        "ER-24",
+        "ER-27",
+        "ER-38"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "Owner-only source_id readiness reads the admitted current head under the catalog policy/owner/epoch fence. Exact and lexical D1 Search channels are verified independently; managed semantic readiness uses durable registry/readback authority without provider calls. Complete verified snapshot currentness preserves the capture observation; missing full authority is explicitly NOT_VERIFIED and never receives an invented observation timestamp. The PWA binds readiness and FAST_SEARCH to its selected source/head/deployment, keeps recorded history separate and clears stale private results.",
       "completion_evidence": [
@@ -706,7 +726,18 @@
       "id": "implemented-raw-normalized-admission",
       "path": "apps/eliotr-core/src/raw-normalized-admission.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-37 owner raw conversion admission composes immutable capture and conversion readback with governed normalized ingest; deployed qualification remains separate.",
-      "owner_packets": ["ER-01", "ER-13", "ER-14", "ER-16", "ER-21", "ER-24", "ER-25", "ER-27", "ER-29", "ER-37"],
+      "owner_packets": [
+        "ER-01",
+        "ER-13",
+        "ER-14",
+        "ER-16",
+        "ER-21",
+        "ER-24",
+        "ER-25",
+        "ER-27",
+        "ER-29",
+        "ER-37"
+      ],
       "state": "IMPLEMENTED_NOT_LIVE",
       "behavior": "Owner POST binds a stable admission identity to one durable capture and COMPLETE conversion, verifies bounded immutable R2 output, records a historical snapshot-view witness, and composes the existing normalized staging, qualification, promotion and guarded D1 admission path. GET reads the owner-bound existing operation. The browser offers conversion, explicit Library admission and same-key outcome reconciliation. Conversion success remains candidate-only; source admission does not establish search readiness or source-map precision.",
       "completion_evidence": [

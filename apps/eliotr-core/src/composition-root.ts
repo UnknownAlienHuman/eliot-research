@@ -1,3 +1,10 @@
+import {
+  createD1FederationChangeAuthority,
+  createD1FederationJobAuthority,
+  createD1FederationManifestStore,
+  createD1R2FederationBundleAuthority,
+} from "@eliotr/cloudflare-federation";
+import { createFederationService } from "./federation-service.js";
 import { createWikiProposalService } from "./wiki-service.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
@@ -54,19 +61,18 @@ export class CapabilityUnavailableError extends Error {
     this.operation = operation;
   }
 }
-function unavailable(operation: string): Promise<never> {
-  return Promise.reject(new CapabilityUnavailableError(operation));
-}
 function capabilities(env: Env): Record<string, unknown> {
+  const federationConfigured = env.FEDERATION_SERVER_PRINCIPAL_REF !== undefined &&
+    env.FEDERATION_CURSOR_HMAC_KEY !== undefined;
   return {
     protocol: "eliotr.capabilities.v1",
     deployment_generation: env.DEPLOYMENT_GENERATION,
     google_external_transport: readGoogleExternalTransport(env.GOOGLE_EXTERNAL_TRANSPORT),
     enabled_slices: ["HEALTH", "ACCESS", "CATALOG", "INGEST", "EVIDENCE", "ORIENTATION_METADATA", "RESEARCH"],
-    partial_slices: ["WIKI"],
+    partial_slices: ["WIKI", ...(federationConfigured ? ["FEDERATION"] : [])],
     disabled_slices: [
       "RETRIEVAL",
-      "FEDERATION",
+      ...(federationConfigured ? [] : ["FEDERATION"]),
       "DRIVE_EXCHANGE",
       "ERASURE",
     ],
@@ -138,16 +144,43 @@ function semanticApi(env: Env): SemanticApi {
     changes: (context, request) => researchChanges(context, request),
   };
 }
-function federationApi(): FederationApi {
+function disabledFederationApi(): FederationApi {
+  const denied = (operation: string): Promise<never> =>
+    Promise.reject(new CapabilityUnavailableError(operation));
   return {
-    submit: () => unavailable("federation.submit"),
-    status: () => unavailable("federation.status"),
-    result: () => unavailable("federation.result"),
-    cancel: () => unavailable("federation.cancel"),
-    readBundle: () => unavailable("federation.bundle.read"),
-    readBundleManifest: () => unavailable("federation.bundle.manifest"),
-    changes: () => unavailable("federation.changes"),
+    submit: () => denied("federation.submit"),
+    status: () => denied("federation.status"),
+    result: () => denied("federation.result"),
+    cancel: () => denied("federation.cancel"),
+    readBundle: () => denied("federation.bundle.read"),
+    readBundleManifest: () => denied("federation.bundle.manifest"),
+    changes: () => denied("federation.changes"),
   };
+}
+
+function federationApi(env: Env): FederationApi {
+  const principal = env.FEDERATION_SERVER_PRINCIPAL_REF;
+  const cursorKey = env.FEDERATION_CURSOR_HMAC_KEY;
+  if (principal === undefined || cursorKey === undefined) {
+    return disabledFederationApi();
+  }
+  return createFederationService({
+    identity: {
+      principal_ref: principal,
+      credential_generation: env.DEPLOYMENT_GENERATION,
+      bridge_generation: env.DEPLOYMENT_GENERATION,
+    },
+    jobs: createD1FederationJobAuthority(env.CORE_DB),
+    manifests: createD1FederationManifestStore(env.CORE_DB),
+    bundles: createD1R2FederationBundleAuthority(
+      env.CORE_DB,
+      env.WORK_BUCKET,
+    ),
+    changes: createD1FederationChangeAuthority(env.CORE_DB, {
+      cursor_hmac_key: cursorKey,
+      deployment_generation: env.DEPLOYMENT_GENERATION,
+    }),
+  });
 }
 function ownerApi(env: Env): OwnerApi {
   const authority = createD1IngestAdmissionAuthority(env.CORE_DB);
@@ -221,7 +254,7 @@ function ownerApi(env: Env): OwnerApi {
 export function createApplication(input: CompositionRootInput): ApplicationLifecycle {
   const services = {
     semantic: semanticApi(input.env),
-    federation: federationApi(),
+    federation: federationApi(input.env),
     owner: ownerApi(input.env),
   };
   return {

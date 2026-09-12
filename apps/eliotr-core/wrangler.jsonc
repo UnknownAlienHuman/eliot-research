@@ -52,7 +52,9 @@
         "MCP_ACCESS_AUDIENCE": "replace-me",
         "MCP_ACCESS_AUTH_PROFILE": "service-token",
         "MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID": "replace-me.access",
-        "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp"
+        "GOOGLE_EXTERNAL_TRANSPORT": "gemini-mcp",
+        "FEDERATION_SERVER_PRINCIPAL_REF": "eliotr-research-test",
+        "FEDERATION_CURSOR_HMAC_KEY": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       },
       "d1_databases": [
         {

@@ -16,9 +16,9 @@ provider delete acceptance, Queue acknowledgement or mutation count can never pr
 - `packages/platform-cloudflare/src/erasure-backend.ts`
 - `packages/cloudflare-erasure/**`
 - `apps/eliotr-core/src/erasure-coordinator.ts`
-- `apps/eliotr-core/src/erasure-coordinator.test.ts`
+- `apps/eliotr-core/test/erasure-coordinator.test.ts`
 - `apps/eliotr-core/src/erasure-runtime.ts`
-- `apps/eliotr-core/src/erasure-runtime.test.ts`
+- `apps/eliotr-core/test/erasure-runtime.test.ts`
 - `infra/erasure/**`
 - `scripts/check-erasure-closure.mjs`
 
