@@ -6,3 +6,4 @@ export * from "./research-claim-audit-input.js";
 export * from "./research-claim-audit-policy.js";
 export * from "./research-claim-audit-result.js";
 export * from "./research-claim-audit-stage-handler.js";
+export * from "./research-citations-result.js";
