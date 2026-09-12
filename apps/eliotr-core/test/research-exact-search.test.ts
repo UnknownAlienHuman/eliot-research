@@ -204,20 +204,20 @@ describe("EXACT phrase verifier", () => {
   });
 
   it("refuses a source identity changed in place after materialization", async () => {
-    let mutateSource: ((contentSha256: string) => void) | undefined;
+    const sourceMutator: { current?: (contentSha256: string) => void } = {};
     const f = fixture({
       onCurrent: (call) => {
-        if (call === 2) mutateSource?.("f".repeat(64));
+        if (call === 2) sourceMutator.current?.("f".repeat(64));
       },
     });
-    mutateSource = f.mutateSource;
+    sourceMutator.current = f.mutateSource;
     const verify = createExactPhraseVerifier(f);
     await expect(verify(candidate(), request(f.navigation.scope), "Résumé")).rejects.toMatchObject({ code: "EVIDENCE_IDENTITY_CONFLICT" });
   });
 
   it("uses the validated candidate and frozen scope captured before awaited reads", async () => {
     const candidateInput = candidate();
-    let input: RetrievalRequest;
+    const input = request(scope());
     const f = fixture({
       onCurrent: (call) => {
         if (call !== 1) return;
@@ -227,7 +227,6 @@ describe("EXACT phrase verifier", () => {
         candidateInput.metadata.source_revision_ref = "rev-mutated";
       },
     });
-    input = request(JSON.parse(canonicalEvidenceJson(f.navigation.scope)) as ScopeSnapshot);
     const verify = createExactPhraseVerifier(f);
     await expect(verify(candidateInput, input, "Résumé")).resolves.toBe(true);
     expect(f.state.contentReads).toBe(1);

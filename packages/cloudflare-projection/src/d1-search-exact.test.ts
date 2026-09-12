@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import assert from "node:assert/strict";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { test } from "vitest";
 import type { LocatorCandidate } from "@eliotr/contracts";
 import type { RetrievalRequest } from "@eliotr/retrieval";
