@@ -41,34 +41,47 @@ jobs:
                   raise SystemExit(f"{label} anchor missing")
               file.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
 
+          old_capabilities = (
+              '    partial_slices: ["WIKI", ...(federationConfigured ? ["FEDERATION"] : [])],\n'
+              '    disabled_slices: [\n'
+              '      "RETRIEVAL",\n'
+              '      ...(federationConfigured ? [] : ["FEDERATION"]),\n'
+              '      "DRIVE_EXCHANGE",\n'
+              '      "ERASURE",\n'
+              '    ],'
+          )
+          new_capabilities = (
+              '    partial_slices: ["WIKI", "FEDERATION"],\n'
+              '    disabled_slices: ["RETRIEVAL", "DRIVE_EXCHANGE", "ERASURE"],\n'
+              '    federation_configured: federationConfigured,'
+          )
           replace_once(
               "apps/eliotr-core/src/composition-root.ts",
-              '''    partial_slices: ["WIKI", ...(federationConfigured ? ["FEDERATION"] : [])],
-    disabled_slices: [
-      "RETRIEVAL",
-      ...(federationConfigured ? [] : ["FEDERATION"]),
-      "DRIVE_EXCHANGE",
-      "ERASURE",
-    ],''',
-              '''    partial_slices: ["WIKI", "FEDERATION"],
-    disabled_slices: ["RETRIEVAL", "DRIVE_EXCHANGE", "ERASURE"],
-    federation_configured: federationConfigured,''',
+              old_capabilities,
+              new_capabilities,
               "static federation capability declaration",
+          )
+
+          old_fixture = (
+              '    expect(capabilities.disabled_slices).toEqual(\n'
+              '      expect.arrayContaining(["FEDERATION"]),\n'
+              '    );\n'
+              '    expect(capabilities.google_external_transport).toBe("gemini-mcp");'
+          )
+          new_fixture = (
+              '    expect(capabilities.partial_slices).toEqual(\n'
+              '      expect.arrayContaining(["FEDERATION"]),\n'
+              '    );\n'
+              '    expect(capabilities.disabled_slices).not.toEqual(\n'
+              '      expect.arrayContaining(["FEDERATION"]),\n'
+              '    );\n'
+              '    expect(capabilities.federation_configured).toBe(false);\n'
+              '    expect(capabilities.google_external_transport).toBe("gemini-mcp");'
           )
           replace_once(
               "apps/eliotr-core/test/index.test.ts",
-              '''    expect(capabilities.disabled_slices).toEqual(
-      expect.arrayContaining(["FEDERATION"]),
-    );
-    expect(capabilities.google_external_transport).toBe("gemini-mcp");''',
-              '''    expect(capabilities.partial_slices).toEqual(
-      expect.arrayContaining(["FEDERATION"]),
-    );
-    expect(capabilities.disabled_slices).not.toEqual(
-      expect.arrayContaining(["FEDERATION"]),
-    );
-    expect(capabilities.federation_configured).toBe(false);
-    expect(capabilities.google_external_transport).toBe("gemini-mcp");''',
+              old_fixture,
+              new_fixture,
               "federation capability contract fixture",
           )
           PY
