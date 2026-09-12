@@ -69,6 +69,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 - `apps/eliotr-core/test/retrieval-generation-fences.test.ts`
 - `apps/eliotr-core/test/exhaustive-query-service.test.ts`
 - `apps/eliotr-core/test/research-query-exhaustive.test.ts`
+- `apps/eliotr-core/test/research-exhaustive-sections.test.ts`
 - `apps/eliotr-core/test/exhaustive-workflow-output.test.ts`
 - `packages/cloudflare-navigation/src/exhaustive-query-service.ts`
 - `packages/cloudflare-navigation/src/exhaustive-workflow-binding.ts`
