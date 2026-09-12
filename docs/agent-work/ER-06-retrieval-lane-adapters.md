@@ -13,6 +13,11 @@ outside the paths below.
 
 - `packages/retrieval/src/ports.ts`
 - `packages/retrieval/src/lanes.ts`
+- `packages/retrieval/src/lanes.test.ts`
+
+ER-38 retains ownership of the D1 EXACT projection adapter and its tests through
+`packages/cloudflare-projection/**`. ER-06 contributes through the reviewed EXACT
+checkpoint handoff; ER-24 owns the canonical content verifier and Worker composition.
 
 ## Read only
 
