@@ -31,7 +31,7 @@ jobs:
         run: |
           corepack enable
           corepack prepare pnpm@11.23.0 --activate
-      - name: Inspect authenticated federation runtime
+      - name: Materialize authenticated federation runtime
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -40,41 +40,99 @@ jobs:
           directory = Path("scripts/one-shot/federation")
           prefix = (directory / "payload-prefix.b64").read_text(encoding="ascii")
           suffix = (directory / "payload.tar.gz.b64").read_text(encoding="ascii")
-          payload = base64.b64decode(prefix + suffix, validate=True)
+          encoded = prefix + suffix
+          payload = base64.b64decode(encoded, validate=True)
           expected = "ab74dfbca462ed4327386bce3752f2ebe19d1fc8d9b242688720a90f733cfa0c"
           if hashlib.sha256(payload).hexdigest() != expected:
               raise SystemExit("federation payload digest mismatch")
           with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+              for member in archive.getmembers():
+                  target = (directory / member.name).resolve()
+                  if directory.resolve() not in target.parents:
+                      raise SystemExit("federation payload path traversal denied")
               archive.extractall(directory, filter="data")
           PY
           python3 scripts/one-shot/federation/implement.py
           python3 - <<'PY'
           from pathlib import Path
 
-          path = Path("apps/eliotr-core/test/federation-runtime-http.test.ts")
-          source = path.read_text(encoding="utf-8")
-          anchor = "const encoder = new TextEncoder();\n"
-          deadline = 'const REQUEST_DEADLINE = new Date(Date.now() + 86_400_000).toISOString();\n'
-          old = "    deadline: new Date(Date.now() + 86_400_000).toISOString(),"
-          new = "    deadline: REQUEST_DEADLINE,"
-          if anchor not in source or old not in source:
-              raise SystemExit("federation replay fixture anchors missing")
-          path.write_text(source.replace(anchor, anchor + deadline, 1).replace(old, new, 1), encoding="utf-8", newline="\n")
+          def replace_once(path: str, old: str, new: str, label: str) -> None:
+              file = Path(path)
+              source = file.read_text(encoding="utf-8")
+              if old not in source:
+                  raise SystemExit(f"{label} anchor missing")
+              file.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
 
-          path = Path("packages/cloudflare-federation/src/federation-bundle-authority.ts")
-          source = path.read_text(encoding="utf-8")
-          old = "  return Object.freeze({\n    readAuthorizedManifest"
-          new = "  return Object.freeze<FederationBundleAuthorityLike>({\n    readAuthorizedManifest"
-          if old not in source:
-              raise SystemExit("federation bundle authority contextual typing anchor missing")
-          path.write_text(source.replace(old, new, 1), encoding="utf-8", newline="\n")
+          replace_once(
+              "apps/eliotr-core/test/federation-runtime-http.test.ts",
+              "const encoder = new TextEncoder();\n",
+              "const encoder = new TextEncoder();\nconst REQUEST_DEADLINE = new Date(Date.now() + 86_400_000).toISOString();\n",
+              "federation replay deadline declaration",
+          )
+          replace_once(
+              "apps/eliotr-core/test/federation-runtime-http.test.ts",
+              "    deadline: new Date(Date.now() + 86_400_000).toISOString(),",
+              "    deadline: REQUEST_DEADLINE,",
+              "federation replay deadline use",
+          )
+          replace_once(
+              "packages/cloudflare-federation/src/federation-bundle-authority.ts",
+              "  return Object.freeze({\n    readAuthorizedManifest",
+              "  return Object.freeze<FederationBundleAuthorityLike>({\n    readAuthorizedManifest",
+              "federation bundle authority contextual typing",
+          )
+          replace_once(
+              "apps/eliotr-core/src/composition-root.ts",
+              "function unavailable(operation: string): Promise<never> {\n  return Promise.reject(new CapabilityUnavailableError(operation));\n}\n",
+              "",
+              "unused federation unavailable helper",
+          )
+          replace_once(
+              "apps/eliotr-core/test/federation-runtime-http.test.ts",
+              "  principal,\n",
+              "",
+              "unused federation test principal import",
+          )
+          replace_once(
+              "packages/cloudflare-federation/src/federation-change-authority.ts",
+              "function sameRef(left: VersionedRef, right: VersionedRef): boolean {\n  return left.id === right.id && left.revision === right.revision;\n}\n\n",
+              "",
+              "unused federation ref comparator",
+          )
+          replace_once(
+              "packages/cloudflare-federation/src/federation-change-authority.ts",
+              "  let valid = false;\n  try {\n    valid = await crypto.subtle.verify(\n      \"HMAC\",\n      key,\n      Uint8Array.from(signature).buffer,\n      Uint8Array.from(body).buffer,\n    );\n  } catch {\n    valid = false;\n  }",
+              "  const valid = await crypto.subtle.verify(\n    \"HMAC\",\n    key,\n    Uint8Array.from(signature).buffer,\n    Uint8Array.from(body).buffer,\n  ).catch(() => false);",
+              "federation cursor signature settlement",
+          )
           PY
-          echo '--- composition-root.ts 50-80 ---'
-          nl -ba apps/eliotr-core/src/composition-root.ts | sed -n '50,80p'
-          echo '--- federation-runtime-http.test.ts 1-35 ---'
-          nl -ba apps/eliotr-core/test/federation-runtime-http.test.ts | sed -n '1,35p'
-          echo '--- federation-change-authority.ts 115-140 ---'
-          nl -ba packages/cloudflare-federation/src/federation-change-authority.ts | sed -n '115,140p'
-          echo '--- federation-change-authority.ts 280-315 ---'
-          nl -ba packages/cloudflare-federation/src/federation-change-authority.ts | sed -n '280,315p'
-          exit 1
+          git rm .github/workflows/federation-runtime-once.yml \
+            scripts/one-shot/federation/payload.tar.gz.b64 \
+            scripts/one-shot/federation/payload-prefix.b64
+          rm -rf scripts/one-shot/federation
+          git diff --check
+      - name: Install frozen dependency graph
+        run: pnpm install --frozen-lockfile
+      - name: Verify federation product locally
+        run: |
+          pnpm typecheck
+          pnpm --filter @eliotr/cloudflare-federation test
+          pnpm --filter @eliotr/core test
+          pnpm exec tsc -p apps/eliotr-core/test/tsconfig.json --pretty false
+      - name: Verify structural and documentation gates
+        run: |
+          pnpm lint
+          pnpm boundaries:check
+          pnpm budgets:check
+          pnpm work-packets:check
+          pnpm check:implementation-status
+          git diff --check
+      - name: Commit verified product code to main
+        run: |
+          git config user.name "Eliot Research Product"
+          git config user.email "eliot-product@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: compose authenticated federation runtime"
+          remote_head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          test "$remote_head" = "$GITHUB_SHA"
+          git push origin HEAD:main
