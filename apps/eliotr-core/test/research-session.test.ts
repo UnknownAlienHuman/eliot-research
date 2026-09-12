@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
-import { decodeProtocolScopeCheckpoint } from "@eliotr/cloudflare-research";
+import { decodeProtocolScopeCheckpoint, WorkflowCheckpointStore } from "@eliotr/cloudflare-research";
 import { retrievalRequestDigest } from "@eliotr/retrieval";
 import { body, count, db, principal, run, runtime, seedSource, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 import { importAndProject, prepareQ1Namespace, type Q1Namespace } from "./retrieval-q1-fixture.js";
@@ -225,6 +225,69 @@ describe("ResearchSession DO over real DO storage and D1/R2", () => {
     expect(second.status, JSON.stringify(secondJson)).toBe(200);
     expect(secondJson).toEqual(firstJson);
     expect(await workflowCounts()).toEqual(before);
+  }, 30_000);
+  it("executes exploratory.v1 DO checkpoints from a durably registered manifest and replays them", async () => {
+    const f = await workflowFixture("do-exploratory-valid", "exploratory");
+    expect(f.request.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+    const workflowStore = new WorkflowCheckpointStore(f.db);
+    await workflowStore.ensureRun(f.request, workflowPrincipal);
+    const manifestRow = await f.db.prepare("SELECT initial_manifest_json FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(f.request.operation_id).first<{ initial_manifest_json: string }>();
+    expect(manifestRow).not.toBeNull();
+    if (manifestRow === null) throw new Error("missing durably registered workflow manifest");
+    const durableManifest = JSON.parse(manifestRow.initial_manifest_json);
+    expect(durableManifest).toEqual(f.request.input_manifest);
+    expect(await workflowCounts()).toEqual({ attempts: 0, checkpoints: 0, outbox: 0, events: 0 });
+    const tag = "do-exploratory-valid";
+    const stub = doStub(`research-${tag}`);
+    const headers = {
+      "content-type": "application/json",
+      "x-research-principal": workflowPrincipal.principal_ref,
+      "x-research-credential": workflowPrincipal.credential_generation,
+      "x-research-deployment": workflowPrincipal.deployment_generation,
+    };
+    const sessionBody = {
+      session_id: `sess-${tag}`, investigation_id: f.request.investigation_ref.id, investigation_revision: 1,
+      operation_id: f.request.operation_id, idempotency_key: f.request.idempotency_key,
+      handler_generation: f.request.handler_generation, initial_input_manifest: durableManifest,
+      principal_ref: workflowPrincipal.principal_ref, credential_generation: workflowPrincipal.credential_generation,
+      deployment_generation: workflowPrincipal.deployment_generation,
+    };
+    const start = await stub.fetch(new Request("https://do/session/start", { method: "POST", headers, body: JSON.stringify(sessionBody) }));
+    const startJson = await start.json();
+    expect(start.status, JSON.stringify(startJson)).toBe(200);
+    const first = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+    const firstJson = await first.json() as { protocol?: string; state?: string; receipt_refs?: string[]; output_manifest_ref?: string; code?: string };
+    expect(first.status, JSON.stringify(firstJson)).toBe(200);
+    expect(firstJson.state, JSON.stringify(firstJson)).toBe("ENGINE_COMPLETED");
+    expect(Array.isArray(firstJson.receipt_refs), JSON.stringify(firstJson)).toBe(true);
+    if (first.status !== 200 || firstJson.state !== "ENGINE_COMPLETED" || !Array.isArray(firstJson.receipt_refs)) throw new Error(`unexpected exploratory.v1 DO response: ${JSON.stringify(firstJson)}`);
+    expect(firstJson.receipt_refs).toHaveLength(18);
+    const generation = await f.db.prepare("SELECT handler_generation FROM research_workflow_run WHERE operation_id = ?1")
+      .bind(f.request.operation_id).first<{ handler_generation: string }>();
+    expect(generation?.handler_generation).toBe(SERVER_OWNED_RESEARCH_HANDLER_GENERATION);
+    const stageZero = await f.db.prepare("SELECT receipt_json FROM research_workflow_checkpoint WHERE operation_id = ?1 AND stage_index = 0")
+      .bind(f.request.operation_id).first<{ receipt_json: string }>();
+    expect(stageZero).not.toBeNull();
+    if (stageZero === null) throw new Error("missing exploratory.v1 DO stage-0 checkpoint");
+    const receipt = JSON.parse(stageZero.receipt_json) as { output_manifest?: { object_ref?: string } };
+    const stageObjectRef = receipt.output_manifest?.object_ref;
+    expect(typeof stageObjectRef).toBe("string");
+    if (typeof stageObjectRef !== "string") throw new Error("missing exploratory.v1 DO stage-0 object ref");
+    const stageObject = await f.bucket.get(stageObjectRef);
+    expect(stageObject).not.toBeNull();
+    if (stageObject === null) throw new Error("missing exploratory.v1 DO stage-0 object");
+    const checkpoint = decodeProtocolScopeCheckpoint(new Uint8Array(await stageObject.arrayBuffer()));
+    expect(checkpoint.workflow_stage).toBe("FREEZE_PROTOCOL_AND_SCOPE");
+    expect(checkpoint.external_acquisition).toBe("none");
+    expect(checkpoint.protocol_profile.lane).toBe("exploratory");
+    const after = await workflowCounts();
+    expect(after).toEqual({ attempts: 18, checkpoints: 18, outbox: 18, events: 18 });
+    const second = await stub.fetch(new Request(`https://do/session/${sessionBody.session_id}/run`, { method: "POST", headers }));
+    const secondJson = await second.json();
+    expect(second.status, JSON.stringify(secondJson)).toBe(200);
+    expect(secondJson).toEqual(firstJson);
+    expect(await workflowCounts()).toEqual(after);
   }, 30_000);
   it("refuses DO execution when the durable workflow manifest is missing despite a present portfolio", async () => {
     const f = await workflowFixture("do-exploratory", "exploratory");
