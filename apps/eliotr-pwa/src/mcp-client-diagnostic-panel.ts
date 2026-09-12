@@ -93,15 +93,15 @@ export function mountMcpClientDiagnosticPanel(
         <div><span class="eyebrow">Client connection</span><h2>Client connection check</h2></div>
         <span class="connection-state connection-state--unknown" data-diagnostic-state>Not checked</span>
       </div>
-      <p class="diagnostic-copy" data-diagnostic-intro>Run a manual check when you want to confirm a real authenticated MCP client call.</p>
+      <p class="diagnostic-copy" data-diagnostic-intro>Start a check, copy the instruction to your agent, then check the result here.</p>
       <div class="diagnostic-actions">
         <button class="button" type="button" data-diagnostic-start>Start client check</button>
         <button class="button button--quiet" type="button" data-diagnostic-latest>Check result</button>
       </div>
-      <p class="diagnostic-status" role="status" aria-live="polite" data-diagnostic-status>Not checked. Start a client check when you are ready.</p>
-      <section class="diagnostic-instruction" data-diagnostic-instruction hidden aria-label="MCP client instruction">
-        <h3>Use this challenge in your MCP client</h3>
-        <p>Call <code>eliotr_confirm_client_diagnostic</code> with this exact JSON:</p>
+      <p class="diagnostic-status" role="status" aria-live="polite" data-diagnostic-status>Not checked. Start a check when you are ready.</p>
+      <section class="diagnostic-instruction" data-diagnostic-instruction hidden aria-label="Client instruction">
+        <h3>Send this instruction to your agent</h3>
+        <p>Use <code>eliotr_confirm_client_diagnostic</code> with the exact JSON below:</p>
         <textarea data-diagnostic-json readonly rows="3" spellcheck="false" aria-label="Client diagnostic JSON arguments"></textarea>
         <div class="diagnostic-actions"><button class="button button--quiet" type="button" data-diagnostic-copy>Copy instruction</button></div>
         <p class="diagnostic-note">Use the challenge before it expires, then return here and choose Check result. It is valid for five minutes.</p>
@@ -109,7 +109,7 @@ export function mountMcpClientDiagnosticPanel(
       </section>
       <section class="diagnostic-confirmation" data-diagnostic-confirmation hidden aria-label="Last confirmed client call">
         <div class="diagnostic-confirmed-time"><span class="eyebrow">Last confirmed call</span><h3 data-diagnostic-confirmed-time></h3></div>
-        <p class="diagnostic-copy" data-diagnostic-confirmed-copy>This is a historical confirmation from the selected deployment. It does not indicate current client presence.</p>
+        <p class="diagnostic-copy" data-diagnostic-confirmed-copy>This is a historical confirmation for the selected deployment. It does not show the client is connected now.</p>
         <details class="diagnostic-details"><summary>Details</summary><dl class="diagnostic-facts">
           <dt>Observed</dt><dd data-diagnostic-observed></dd>
           <dt>Profile</dt><dd data-diagnostic-profile></dd>
@@ -140,7 +140,7 @@ export function mountMcpClientDiagnosticPanel(
   }
 
   let state: PanelState = "not-checked";
-  let statusMessage = "Not checked. Start a client check when you are ready.";
+  let statusMessage = "Not checked. Start a check when you are ready.";
   let challenge: McpDiagnosticChallengeResult | undefined;
   let latest: McpDiagnosticLatestStatus | undefined;
   let controller: AbortController | undefined;
@@ -154,12 +154,12 @@ export function mountMcpClientDiagnosticPanel(
 
   const statePresentation = (): { readonly label: string; readonly className: string; readonly intro: string } => {
     switch (state) {
-      case "checking": return { label: "Checking", className: "pending", intro: "Contacting the owner API for a one-time client challenge." };
-      case "waiting": return { label: "Waiting", className: "pending", intro: "Send the challenge through your MCP client, then check the result here." };
-      case "confirmed": return { label: "Confirmed", className: "confirmed", intro: "A real authenticated MCP client call was confirmed for this deployment." };
+      case "checking": return { label: "Checking", className: "pending", intro: "Starting the client check." };
+      case "waiting": return { label: "Waiting", className: "pending", intro: "Copy the instruction to your agent, then check the result here." };
+      case "confirmed": return { label: "Confirmed", className: "confirmed", intro: "A client call was confirmed for this deployment." };
       case "expired": return { label: "Expired", className: "blocked", intro: "The instruction expired. Check result for a confirmed call, or start a new check." };
-      case "unavailable": return { label: "Unavailable", className: "blocked", intro: "The client check is unavailable until the owner API can be reached." };
-      case "not-checked": return { label: "Not checked", className: "unknown", intro: "Run a manual check when you want to confirm a real authenticated MCP client call." };
+      case "unavailable": return { label: "Unavailable", className: "blocked", intro: "The client check is unavailable. Check the server and try again." };
+      case "not-checked": return { label: "Not checked", className: "unknown", intro: "Start a check, copy the instruction to your agent, then check the result here." };
     }
   };
 
@@ -276,7 +276,7 @@ export function mountMcpClientDiagnosticPanel(
     const local = new AbortController();
     controller = local;
     state = "checking";
-    statusMessage = "Requesting a one-time client challenge…";
+    statusMessage = "Starting a client check…";
     render();
     void issueMcpClientDiagnostic(generation, local.signal)
       .then((result) => {
@@ -288,7 +288,7 @@ export function mountMcpClientDiagnosticPanel(
         challenge = result;
         latest = undefined;
         state = "waiting";
-        statusMessage = "Challenge issued. Send the exact JSON to your MCP client, then choose Check result.";
+        statusMessage = "Instruction ready. Copy it to your agent, then choose Check result.";
         scheduleExpiry(result);
         render();
       })
@@ -321,8 +321,8 @@ export function mountMcpClientDiagnosticPanel(
         }
         state = "waiting";
         statusMessage = challenge === undefined
-          ? "A challenge is waiting for this owner. Start a new client check to receive its JSON instruction."
-          : "Challenge is waiting for a real MCP client call. Return here and choose Check result after sending it.";
+          ? "A client check is waiting. Start a new check to receive its instruction."
+          : "Copy the instruction to your agent, then choose Check result.";
         break;
       case "EXPIRED":
         challenge = undefined;
@@ -331,7 +331,7 @@ export function mountMcpClientDiagnosticPanel(
           expiryTimer = undefined;
         }
         state = "expired";
-        statusMessage = "The client challenge expired without confirmation. Start a new client check.";
+        statusMessage = "The client check expired without confirmation. Start a new check.";
         break;
       case "CONFIRMED":
         challenge = undefined;
@@ -340,7 +340,7 @@ export function mountMcpClientDiagnosticPanel(
           expiryTimer = undefined;
         }
         state = "confirmed";
-        statusMessage = "Last confirmed call read back from the selected deployment. This is historical, not a current presence signal.";
+        statusMessage = "A historical client call was confirmed for this deployment. It does not show the client is connected now.";
         break;
     }
     render();
@@ -389,10 +389,10 @@ export function mountMcpClientDiagnosticPanel(
       render();
       return;
     }
-    statusMessage = "Copying the exact client instruction…";
+    statusMessage = "Copying the client instruction…";
     render();
     void navigator.clipboard.writeText(value)
-      .then(() => { if (active === serial && challenge !== undefined) { statusMessage = "JSON copied. Send it to your MCP client, then choose Check result."; render(); } })
+      .then(() => { if (active === serial && challenge !== undefined) { statusMessage = "Instruction copied. Send it to your agent, then choose Check result."; render(); } })
       .catch(() => { if (active === serial && challenge !== undefined) { statusMessage = "Copy was not completed. Select the JSON and copy it explicitly."; render(); } });
   };
 

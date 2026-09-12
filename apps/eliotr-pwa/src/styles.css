@@ -34,6 +34,8 @@ code, pre { font-family: var(--mono); }
 .health-dot--ready { background: var(--accent); box-shadow: 0 0 0 4px rgba(178, 205, 255, .14); }
 .health-dot--blocked { background: var(--danger); box-shadow: 0 0 0 4px rgba(255, 183, 194, .14); }
 .workspace { display: grid; height: auto; min-height: 0; grid-template-columns: 250px minmax(0, 1fr) 340px; overflow: hidden; background: var(--line); gap: 1px; }
+.workspace[data-active-view="connections"] .panel--investigation { grid-column: 2 / -1; }
+.workspace[data-active-view="connections"] .panel--evidence { display: none; }
 .panel { min-width: 0; min-height: 0; overflow: auto; background: var(--canvas); }
 .panel--corpus { display: flex; flex-direction: column; overflow: hidden; }
 .panel--corpus, .panel--evidence { padding: 24px 18px; } .panel--corpus { background: var(--navigation); } .panel--evidence { background: var(--surface); } .panel--investigation { padding: 42px clamp(24px, 4vw, 62px) 80px; }
