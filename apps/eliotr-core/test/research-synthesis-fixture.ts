@@ -32,6 +32,8 @@ export type SynthesisCandidateProtocol = "v1" | "v2";
 export interface CommittedFreezeSynthesisFixtureOptions {
   readonly candidate_protocol?: SynthesisCandidateProtocol;
   readonly synthesis_prompt?: string;
+  /** Optional manifest admission used by later committed-stage reader fixtures. */
+  readonly allowed_verifier_refs?: readonly string[];
 }
 
 function futureIso(): string {
@@ -287,8 +289,10 @@ function freezePrompt(
   deployment: ModelRouteDeployment,
   tag: string,
   synthesis_prompt: string,
+  allowed_verifier_refs: readonly string[] = [],
 ): ResearchModelPromptCompilerDependencies {
   const manifest_ref: VersionedRef = { id: `synthesis-prompt-${tag}`, revision: 1 };
+  const allowedVerifierRefs = [...allowed_verifier_refs];
   const manifest_service = createResearchReferenceManifestService({
     navigation: freeze.navigation, resolver: freeze.resolver,
     store: {
@@ -323,7 +327,7 @@ function freezePrompt(
       evidence_pack: input.evidence_pack, navigation: freeze.navigation,
       resolver: freeze.resolver,
       policy: {
-        allowed_tool_definition_refs: [], allowed_verifier_refs: [], permitted_anchor_and_precision_ceilings: [],
+        allowed_tool_definition_refs: [], allowed_verifier_refs: allowedVerifierRefs, permitted_anchor_and_precision_ceilings: [],
         provider_and_policy_generations: freeze.profile_definition.policy.provider_and_policy_generations, stale_or_revoked_entries: [],
         permitted_acquisition_or_expansion_routes: freeze.profile_definition.policy.permitted_acquisition_or_expansion_routes,
         disclosure_ceiling: freeze.profile_definition.policy.disclosure_ceiling, allowed_use: freeze.profile_definition.policy.allowed_use,
@@ -337,7 +341,9 @@ function freezePrompt(
 }
 
 export async function committedFreezeSynthesisFixture(options: CommittedFreezeSynthesisFixtureOptions = {}) {
-  const freeze = await committedEvidenceFreezeFixture();
+  const freeze = await committedEvidenceFreezeFixture(options.allowed_verifier_refs === undefined
+    ? {}
+    : { allowed_verifier_refs: options.allowed_verifier_refs });
   const base = await governedModelAttemptFixture("freeze-synthesis", {
     database: freeze.db, bucket: freeze.bucket, request: freeze.stage_zero, principal: freezePrincipal,
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
@@ -381,7 +387,7 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
         }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
       } };
     } } },
-    prompt: freezePrompt(freeze, stage_five, deployment, "freeze", synthesis_prompt), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
+    prompt: freezePrompt(freeze, stage_five, deployment, "freeze", synthesis_prompt, options.allowed_verifier_refs), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {
       if (prepared === null) throw new Error("spend authorization read before preparation");
       return {

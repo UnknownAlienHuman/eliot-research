@@ -5,8 +5,9 @@ import type { ResearchWorkflowStage, VersionedRef } from "@eliotr/contracts";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import {
   createWorkflowCheckpointExecutor, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowObjectSchema,
-  type MonotoneHandlerFactory, type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
+  type StageReceipt, type WorkflowExecutionPorts, type WorkflowObject, type WorkflowPrincipal,
 } from "@eliotr/cloudflare-research";
+import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import { createD1ScopePorts } from "@eliotr/retrieval";
 import { createD1InvestigationLedgerStore } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -15,7 +16,12 @@ import type { ExhaustiveQueryResult } from "@eliotr/interfaces";
 import { createExhaustiveQueryService, parseExhaustiveQueryRequest } from "./exhaustive-query-service.js";
 import type { ExhaustiveWorkflowPayload } from "./exhaustive-workflow-service.js";
 import { validateExhaustiveWorkflowPayload } from "@eliotr/cloudflare-navigation";
-import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION } from "./research-stage-handlers.js";
+import {
+  createResearchStageHandlerFactory,
+  SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
+  SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION,
+  type ResearchStageHandlerFactory,
+} from "./research-stage-handlers.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -106,7 +112,11 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
   };
 }
 
-function createServerPorts(database: D1Database, operationId: string): WorkflowExecutionPorts {
+function createServerPorts(
+  database: D1Database,
+  operationId: string,
+  recoverStartedAttempt?: WorkflowStartedAttemptRecovery,
+): WorkflowExecutionPorts {
   const grants = new Map<string, { receipt_ref: string; expires_at_ms: number }>();
   return {
     async authorizeResidency(request, principal): Promise<void> {
@@ -138,6 +148,7 @@ function createServerPorts(database: D1Database, operationId: string): WorkflowE
       grants.set(key, grant);
       return grant;
     },
+    ...(recoverStartedAttempt === undefined ? {} : { recoverStartedAttempt }),
   };
 }
 
@@ -185,8 +196,6 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       credential_generation: params.credential_generation,
       deployment_generation: params.deployment_generation,
     };
-    const ports = createServerPorts(this.env.CORE_DB, params.operation_id);
-    const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
     const ledger = createD1InvestigationLedgerStore(this.env.CORE_DB as unknown as LedgerD1Database);
     const investigation = await ledger.read(params.investigation_ref.id);
     if (investigation === null || investigation.head.principal_ref !== principal.principal_ref ||
@@ -196,7 +205,7 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
     const lane = investigation.head.lane;
     const serverOwned = params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
     const retrievalOwned = params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
-    let handlers: MonotoneHandlerFactory;
+    let handlers: ResearchStageHandlerFactory;
     if (lane === "confirmatory") {
       if (serverOwned) failWorkflow("WORKFLOW_AUTHORITY_STALE");
       handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
@@ -232,6 +241,8 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
     } else {
       failWorkflow("WORKFLOW_AUTHORITY_STALE");
     }
+    const ports = createServerPorts(this.env.CORE_DB, params.operation_id, handlers.recoverStartedAttempt);
+    const executor = createWorkflowCheckpointExecutor(this.env.CORE_DB, this.env.WORK_BUCKET, ports);
     let investigation_ref: VersionedRef = { ...params.investigation_ref };
     let input_manifest: WorkflowObject = params.initial_input_manifest;
     const receipt_refs: string[] = [];

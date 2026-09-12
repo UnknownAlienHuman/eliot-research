@@ -1,6 +1,7 @@
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
+import type { WorkflowStartedAttemptRecovery } from "@eliotr/cloudflare-workflows";
 import {
   createFreezeProtocolAndScopeStageHandler,
   deterministicWorkflowStageBytes,
@@ -15,6 +16,8 @@ import {
 } from "@eliotr/cloudflare-research";
 import {
   createResearchVerificationStageHandler,
+  createResearchClaimAuditStageHandler,
+  type ResearchClaimAuditStageDependencies,
   type ResearchVerificationStageDependencies,
 } from "@eliotr/cloudflare-research-stages";
 import {
@@ -53,8 +56,14 @@ export type ResearchStageHandlerFactoryMode =
       readonly materialize?: ResearchMaterializeStageDependencies;
       readonly report_materialize?: ResearchReportMaterializeStageDependencies;
       readonly verification?: ResearchVerificationStageDependencies;
+      /** Explicit Stage14 server-owned audit wiring; no default verifier is inferred. */
+      readonly audit_claims?: ResearchClaimAuditStageDependencies;
     }
   | { readonly kind: "legacy-deterministic" };
+
+export type ResearchStageHandlerFactory = MonotoneHandlerFactory & {
+  readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
+};
 
 /**
  * Selects the real protocol/scope producer only for its explicit generation.
@@ -63,7 +72,7 @@ export type ResearchStageHandlerFactoryMode =
  */
 export function createResearchStageHandlerFactory(
   mode: ResearchStageHandlerFactoryMode,
-): MonotoneHandlerFactory {
+): ResearchStageHandlerFactory {
   const protocolScopeHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory"
     ? createFreezeProtocolAndScopeStageHandler({ navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
@@ -103,7 +112,24 @@ export function createResearchStageHandlerFactory(
     }
   }
 
-  return (stage) => {
+  const explicitV3 = mode.kind === "server-owned-exploratory" &&
+    mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION;
+  let synthesisAdapter: ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined;
+  let auditAdapter: ReturnType<typeof createResearchClaimAuditStageHandler> | undefined;
+  function getSynthesisAdapter(): ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined {
+    if (mode.kind !== "server-owned-exploratory" ||
+        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.synthesis === undefined) return undefined;
+    synthesisAdapter ??= createEvidenceFreezeSynthesisHandler(mode.synthesis);
+    return synthesisAdapter;
+  }
+  function getAuditAdapter(): ReturnType<typeof createResearchClaimAuditStageHandler> | undefined {
+    if (mode.kind !== "server-owned-exploratory" ||
+        mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.audit_claims === undefined) return undefined;
+    auditAdapter ??= createResearchClaimAuditStageHandler(mode.audit_claims);
+    return auditAdapter;
+  }
+
+  const factory = ((stage) => {
     if (stage === "FREEZE_PROTOCOL_AND_SCOPE" && protocolScopeHandler !== undefined) {
       return protocolScopeHandler;
     }
@@ -120,15 +146,36 @@ export function createResearchStageHandlerFactory(
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
     }
     if (stage === "SYNTHESIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
-      return mode.synthesis === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createEvidenceFreezeSynthesisHandler(mode.synthesis).handler;
+      const adapter = getSynthesisAdapter();
+      return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
     if (stage === "VERIFY" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return mode.verification === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : createResearchVerificationStageHandler(mode.verification);
+    }
+    if (stage === "AUDIT_CLAIMS" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      const adapter = getAuditAdapter();
+      return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter.handler;
     }
     if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;
     }
     return ({ request, input_bytes, attempt_ref }) =>
       deterministicWorkflowStageBytes(request.operation_id, request.stage, input_bytes, attempt_ref);
-  };
+  }) as ResearchStageHandlerFactory;
+
+  if (explicitV3) {
+    const recoverStartedAttempt: WorkflowStartedAttemptRecovery = async (input) => {
+      if (input.request.handler_generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION) return null;
+      if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
+      if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
+      return null;
+    };
+    Object.defineProperty(factory, "recoverStartedAttempt", {
+      configurable: false,
+      enumerable: true,
+      value: recoverStartedAttempt,
+      writable: false,
+    });
+  }
+  return Object.freeze(factory);
 }

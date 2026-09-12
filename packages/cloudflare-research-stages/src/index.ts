@@ -2,3 +2,7 @@
 export * from "./research-verification-result.js";
 export * from "./research-verification-result-v2.js";
 export * from "./research-verification-stage-handler.js";
+export * from "./research-claim-audit-input.js";
+export * from "./research-claim-audit-policy.js";
+export * from "./research-claim-audit-result.js";
+export * from "./research-claim-audit-stage-handler.js";
