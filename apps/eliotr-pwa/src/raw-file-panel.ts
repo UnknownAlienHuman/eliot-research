@@ -39,8 +39,8 @@ function processingCopy(result: RawMarkdownConversionResult): string {
 function admissionCopy(result: RawNormalizedAdmissionResult): string {
   if (result.state === "COMMITTED") {
     return result.admission_receipt?.decision === "DUPLICATE"
-      ? "This source is already in Library. Search readiness is reported separately."
-      : "Added to Library. Search readiness is reported separately.";
+      ? "This source is already in Library. Search readiness is reported separately. If the document isn't visible, use All sources / refresh or Next page."
+      : "Added to Library. Search readiness is reported separately. If the document isn't visible, use All sources / refresh or Next page.";
   }
   if (result.state === "UNKNOWN") return "Library add status is unknown. Check Library status again.";
   return `Library add is ${result.state.toLowerCase()}. Check Library status again.`;
@@ -56,7 +56,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         <button class="button button--quiet" type="button" data-raw-recover disabled>Check upload status</button>
         <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
         <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
-        <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Find in Library</button>
+        <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Open Library</button>
         <button class="button button--quiet" type="button" data-raw-stop hidden>Stop</button></div>
     </form>
     <p class="raw-file-limit">Up to ${formatBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>

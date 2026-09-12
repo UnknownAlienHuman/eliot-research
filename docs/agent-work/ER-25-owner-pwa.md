@@ -226,13 +226,17 @@ canonical readback. Live Workers AI qualification remains separate.
 ## Explicit Library handoff
 
 After a COMMITTED admission with an ADMITTED or DUPLICATE receipt, the upload panel
-offers Find in Library. It navigates only on an explicit click and expands the existing
+offers Open Library. It navigates only on an explicit click and expands the existing
 mobile source list. The action does not select a source or derive its identity from a
 filename, candidate reference or revision string. The owner selects an authoritative
 Library row through the existing readiness path. A new file selection or private-state
-clear removes the previous handoff action.
+clear removes the previous handoff action. A short hint names the existing All sources /
+refresh and Next page controls when a project filter or pagination hides the document.
 
-The acceptance extension belongs to the real owner-browser admission scenario. It must
-verify visibility and focus after the explicit click, preserve selection before the click,
-and use the existing canonical Library/readiness readback. Its updated checkpoint is
-pending execution; the separate controlled raw-file fixture is not admission proof.
+The real owner-browser extension passed locally at `debc1a8`: after one COMMITTED
+admission, the same receipt drives both the desktop and 390x844 mobile handoffs. It checks
+visible/focused Sources and Library, preserves the existing selection/readiness identity,
+and restores the original viewport before the canonical projection/readiness scenario.
+All 23 owner-browser cases and the complete checkpoint gate passed on their first runs.
+The final label/hint change alters copy only and passed targeted lint; exact-candidate CI
+remains required. The separate controlled raw-file fixture is not admission proof.
