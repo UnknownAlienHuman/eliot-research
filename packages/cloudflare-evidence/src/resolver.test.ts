@@ -74,6 +74,7 @@ function fixture(options: {
 } = {}) {
   let storedHandle: EvidenceHandle | null = null;
   let currentSource: EvidenceSourceAuthority | null = source;
+  let currentSourceObjectDigest = options.sourceObjectDigest ?? A;
   const invalidations: string[] = [];
   const authority: EvidenceAuthorityPort = {
     async loadScope() { return scope; },
@@ -121,7 +122,7 @@ function fixture(options: {
           normalized_object_ref: "normalized/object/content.md",
           normalized_object_ref_digest: A,
           source_object_size: 100,
-          source_object_sha256: options.sourceObjectDigest ?? A,
+          source_object_sha256: currentSourceObjectDigest,
         };
       },
     },
@@ -131,6 +132,7 @@ function fixture(options: {
     resolver,
     invalidations,
     setSource(value: EvidenceSourceAuthority | null) { currentSource = value; },
+    setSourceObjectDigest(value: string) { currentSourceObjectDigest = value; },
     get handle() { return storedHandle; },
   };
 }
@@ -191,6 +193,25 @@ describe("exact evidence resolver", () => {
       access,
     })).rejects.toMatchObject({ code: "EVIDENCE_OBJECT_INTEGRITY" });
     expect(f.handle).toBeNull();
+  });
+
+  it("invalidates a live handle when the materialized full-object digest changes", async () => {
+    const f = fixture();
+    const first = await f.resolver.resolveCandidate({
+      candidate,
+      scope_snapshot_ref: { id: "scope-1", revision: 1 },
+      access,
+    });
+    f.setSourceObjectDigest(B);
+    await expect(f.resolver.resolveHandle({
+      handle_ref: first.handle.handle_ref,
+      access,
+    })).rejects.toMatchObject({
+      code: "EVIDENCE_OBJECT_INTEGRITY",
+      invalidation_state: "BROKEN_INTEGRITY",
+    });
+    expect(f.invalidations).toEqual(["BROKEN_INTEGRITY"]);
+    expect(f.handle?.terminal_state).toBe("BROKEN_INTEGRITY");
   });
 
   it("fails before materialization when the revision is outside frozen scope", async () => {
