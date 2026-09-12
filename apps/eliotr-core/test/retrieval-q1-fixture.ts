@@ -201,6 +201,7 @@ export async function prepareQ1Namespace(
 
 export interface Q1ImportOptions {
   readonly native_coordinate_map?: boolean;
+  readonly content_markdown?: string;
 }
 
 export async function importQ1Bundle(
@@ -223,7 +224,11 @@ export async function importQ1Bundle(
     capabilities: { ...fixture.manifest.capabilities, tables: native },
   };
   const { sha256Utf8 } = await import("@eliotr/platform-cloudflare");
-  const content = native ? nativeContent : fixture.files["content.md"];
+  const content = native
+    ? nativeContent
+    : options.content_markdown === undefined
+      ? fixture.files["content.md"]
+      : new TextEncoder().encode(options.content_markdown);
   if (content === undefined) throw new Error("Missing fixture content");
   const contentDigest = await sha256Hex(content);
   const normalizedManifest = {
@@ -395,9 +400,9 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
     }),
     search: createD1ProjectionSearchPort(world.searchDb),
     managed: {
-      index: async () => ({
+      index: async (_context, _generation, items) => ({
         state: "DEGRADED" as const,
-        item_count: 1,
+        item_count: items.length,
         instance_id: PROJECTION_EXECUTION_PROFILE.managed_instance_id,
         managed_generation: PROJECTION_EXECUTION_PROFILE.managed_generation,
         reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
