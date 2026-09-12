@@ -312,9 +312,13 @@ describe("federation application contract", () => {
     const capabilities = await application.services.owner.systemCapabilities(
       {} as never,
     );
-    expect(capabilities.disabled_slices).toEqual(
+    expect(capabilities.partial_slices).toEqual(
       expect.arrayContaining(["FEDERATION"]),
     );
+    expect(capabilities.disabled_slices).not.toEqual(
+      expect.arrayContaining(["FEDERATION"]),
+    );
+    expect(capabilities.federation_configured).toBe(false);
     expect(capabilities.google_external_transport).toBe("gemini-mcp");
     await expect(application.services.owner.systemHealth({} as never)).resolves.toMatchObject({
       google_external_transport: "gemini-mcp",
