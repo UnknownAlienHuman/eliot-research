@@ -19,8 +19,14 @@ export {
 } from "./gemini-mcp-protocol.js";
 export {
   readGoogleExternalTransport,
+  type McpClientDiagnosticConsume,
   type GoogleExternalTransport,
 } from "./gemini-mcp-tool-common.js";
+export {
+  confirmClientDiagnostic,
+  MCP_CLIENT_DIAGNOSTIC_TOOL_NAME,
+  type McpClientDiagnosticToolDependencies,
+} from "./gemini-mcp-client-diagnostics.js";
 export {
   type WorkspaceMcpCandidateStore,
   type WorkspaceMcpObservationStoreInput,

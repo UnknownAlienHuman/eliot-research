@@ -10,6 +10,7 @@ import {
   readGoogleExternalTransport as readGoogleExternalTransportValue,
   sha256,
   stable,
+  type McpClientDiagnosticConsume,
 } from "./gemini-mcp-tool-common.js";
 import {
   handleGeminiMcpProtocol,
@@ -35,6 +36,7 @@ export interface WorkspaceMcpRuntime {
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
   readonly ACCESS_AUDIENCE?: string | undefined;
+  readonly mcpClientDiagnosticConsume?: McpClientDiagnosticConsume;
   readonly workspaceCandidateStore?: WorkspaceMcpCandidateStore;
   readonly readReadiness: () => Promise<{
     readonly ready: boolean;
@@ -283,9 +285,11 @@ function serverDependencies(
   profile: McpAccessAuthProfile,
   now: () => number,
 ): GeminiMcpServerDependencies {
+  const diagnosticEnabled = typeof env.mcpClientDiagnosticConsume === "function";
   const toolDependencies = {
     google_transport: googleTransport(env),
     now,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
     async systemStatus(): Promise<Record<string, unknown>> {
       const readiness = await env.readReadiness();
       return {
@@ -297,6 +301,7 @@ function serverDependencies(
         enabled_surfaces: [
           "system_status",
           "google_sync_planning",
+          ...(diagnosticEnabled ? ["client_diagnostic_confirmation"] : []),
         ],
         disabled_surfaces: [{ surface: "catalog", reason: "MCP_CATALOG_SCOPE_REQUIRED" }],
         google_external_transport: googleTransport(env),
@@ -311,12 +316,16 @@ function serverDependencies(
       throw new GeminiMcpToolError("MCP_CATALOG_SCOPE_REQUIRED", "An explicit service catalog scope is required");
     },
     mcp_auth_profile: profile,
+    ...(diagnosticEnabled ? { mcpClientDiagnosticConsume: env.mcpClientDiagnosticConsume } : {}),
     ...(env.workspaceCandidateStore === undefined ? {} : { workspaceCandidateStore: env.workspaceCandidateStore }),
   } as const;
   return {
     server_version: "0.1.0",
     deployment_generation: env.DEPLOYMENT_GENERATION,
-    listTools: () => GEMINI_MCP_TOOLS.filter((tool) => tool.name !== "eliotr_catalog"),
+    listTools: () => GEMINI_MCP_TOOLS.filter((tool) =>
+      tool.name !== "eliotr_catalog" &&
+      (tool.name !== "eliotr_confirm_client_diagnostic" || diagnosticEnabled),
+    ),
     callTool: (name, input, context) =>
       callGeminiMcpTool(toolDependencies, name, input, context),
   };
