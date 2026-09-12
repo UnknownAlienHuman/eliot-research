@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/federation-runtime-once.yml
       - scripts/one-shot/federation/payload.tar.gz.b64
+      - scripts/one-shot/federation/payload-prefix.b64
 
 permissions:
   contents: write
@@ -37,7 +38,9 @@ jobs:
           import base64, hashlib, io, tarfile
 
           directory = Path("scripts/one-shot/federation")
-          encoded = (directory / "payload.tar.gz.b64").read_text(encoding="ascii")
+          prefix = (directory / "payload-prefix.b64").read_text(encoding="ascii")
+          suffix = (directory / "payload.tar.gz.b64").read_text(encoding="ascii")
+          encoded = prefix + suffix
           payload = base64.b64decode(encoded, validate=True)
           expected = "ab74dfbca462ed4327386bce3752f2ebe19d1fc8d9b242688720a90f733cfa0c"
           if hashlib.sha256(payload).hexdigest() != expected:
@@ -51,7 +54,8 @@ jobs:
           PY
           python3 scripts/one-shot/federation/implement.py
           git rm .github/workflows/federation-runtime-once.yml \
-            scripts/one-shot/federation/payload.tar.gz.b64
+            scripts/one-shot/federation/payload.tar.gz.b64 \
+            scripts/one-shot/federation/payload-prefix.b64
           rm -rf scripts/one-shot/federation
           git diff --check
       - name: Install frozen dependency graph
