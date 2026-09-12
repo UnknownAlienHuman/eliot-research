@@ -95,6 +95,7 @@ export function mountRetrievalPanel(element: HTMLElement, healthReady: () => boo
   const waitingStatus = "Owner API is not ready. Wait for the server check before searching.";
   const readyStatus = "Owner API is ready. Search is available.";
   const offlineStatus = "Offline. Reconnect before searching.";
+  const privateClearedPrefix = "Private retrieval state cleared.";
   const stop = () => { active += 1; controller?.abort(); traceController?.abort(); controller = undefined; traceController = undefined; cancel.disabled = true; };
   const refreshAvailability = (): void => {
     const healthAvailable = healthReady();
@@ -103,9 +104,9 @@ export function mountRetrievalPanel(element: HTMLElement, healthReady: () => boo
     const currentStatus = status.textContent ?? "";
     submit.disabled = !ready;
     if (!online) {
-      if (currentStatus === "" || currentStatus === waitingStatus || currentStatus === readyStatus) status.textContent = offlineStatus;
+      if (currentStatus === "" || currentStatus === waitingStatus || currentStatus === readyStatus || currentStatus.startsWith(privateClearedPrefix)) status.textContent = offlineStatus;
     } else if (!healthAvailable) {
-      if (currentStatus === "" || currentStatus.startsWith("Private retrieval state cleared.")) status.textContent = waitingStatus;
+      if (currentStatus === "" || currentStatus.startsWith(privateClearedPrefix)) status.textContent = waitingStatus;
     } else if (currentStatus === waitingStatus || currentStatus === offlineStatus) {
       status.textContent = readyStatus;
     }
@@ -115,6 +116,7 @@ export function mountRetrievalPanel(element: HTMLElement, healthReady: () => boo
     lastTrace = undefined; lastEvidence = []; lastTraceDeploymentGeneration = undefined;
     selectedContext = undefined; selectedHeads.clear(); sources.value = ""; previous = ""; key = "";
     status.textContent = "Private retrieval state cleared. Run a new query after reconnecting or renewing access.";
+    refreshAvailability();
   };
   const onHealthLost = (): void => { clearPrivate(); submit.disabled = true; };
   const onHealthUpdated = (): void => { refreshAvailability(); };
