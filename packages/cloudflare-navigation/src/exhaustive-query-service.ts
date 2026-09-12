@@ -265,7 +265,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
   const resolver = createCloudflareEvidenceResolver({ authority: evidence, content });
   let scopeForRequest: ScopeSnapshot | undefined;
   let pinnedInventory: readonly PinnedGeneration[] | undefined;
-  const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly item_key: string; readonly projection_generation: string; readonly start: number; readonly end: number }>();
+  const sections = new Map<string, { readonly source_revision_ref: string; readonly section_ref: string; readonly item_key: string; readonly content_sha256: string; readonly projection_generation: string; readonly start: number; readonly end: number }>();
   async function readPinned(scope: ScopeSnapshot): Promise<readonly PinnedGeneration[]> {
     const coverage = await pinReadyGenerations(
       env.SEARCH_DB,
@@ -371,7 +371,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
         }
         for (const row of result.results) {
           if (typeof row.item_key !== "string" || typeof row.canonical_section_id !== "string" ||
-              typeof row.content_sha256 !== "string" || row.content_sha256 !== source.authority.content_sha256 ||
+              typeof row.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.content_sha256) ||
               row.projection_generation !== pin.projection_generation || typeof row.normalized_start_byte !== "number" ||
               typeof row.normalized_end_byte !== "number" || !Number.isSafeInteger(row.normalized_start_byte) ||
               !Number.isSafeInteger(row.normalized_end_byte) || row.normalized_start_byte < 0 ||
@@ -387,7 +387,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
           const end = row.normalized_end_byte as number;
           const key = `${sourceRef}:${sectionRef}`;
           if (sections.has(key)) fail("RESEARCH_AUTHORITY_STALE", "admitted projection inventory repeats a section", 409);
-          sections.set(key, { source_revision_ref: sourceRef, section_ref: sectionRef, item_key: itemKey, projection_generation: projectionGeneration, start, end });
+          sections.set(key, { source_revision_ref: sourceRef, section_ref: sectionRef, item_key: itemKey, content_sha256: contentSha256, projection_generation: projectionGeneration, start, end });
           descriptors.push({
             section_ref: key,
             source_revision_ref: sourceRef,
@@ -416,7 +416,7 @@ function productionRuntime(env: ExhaustiveQueryEnvironment & {
           raw_score: 0,
           rank: 1,
           index_generation: selected.projection_generation,
-          metadata: { item_key: selected.item_key, content_sha256: "" },
+          metadata: { item_key: selected.item_key, content_sha256: selected.content_sha256 },
         },
         scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
         access,

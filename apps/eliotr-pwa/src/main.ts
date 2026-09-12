@@ -192,7 +192,7 @@ function render(health: SystemHealth | null): void {
   sourceChooserViewport.addEventListener("change", handleSourceChooserViewport);
   setSourceChooserExpanded(sourceChooserExpanded);
   const retrievalHost = app.querySelector<HTMLElement>("#retrieval");
-  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost) : undefined;
+  const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   const researchRunHost = app.querySelector<HTMLElement>("#research-run");
   const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
@@ -267,6 +267,11 @@ function render(health: SystemHealth | null): void {
     if (options.anchor === true) app.querySelector<HTMLElement>(view.anchorSelector)?.scrollIntoView({ behavior: "smooth", block: "start" });
     else resetWorkspaceScroll();
   };
+  const handleFindInLibrary = (): void => {
+    setSourceChooserExpanded(true);
+    setWorkspaceView("#library", { history: true, focus: true });
+  };
+  rawUploadHost?.addEventListener("eliotr:find-in-library", handleFindInLibrary);
   for (const button of app.querySelectorAll<HTMLButtonElement>('.workspace-nav [data-nav-target]')) {
     button.addEventListener("click", () => {
       const selector = button.dataset.navTarget;
@@ -342,18 +347,18 @@ function render(health: SystemHealth | null): void {
   });
   const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
     if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); return; }
-    retrieval?.selectSource(id, context);
-    researchRun?.selectSource(id, context);
-    exhaustive?.selectSource(id);
     if (!context?.sourceRevisionRef) {
       if (!orientation || !(await orientation.selectSource(id))) return false;
     }
+    retrieval?.selectSource(id, context);
+    researchRun?.selectSource(id, context);
+    exhaustive?.selectSource(id);
     return true;
   }) : undefined;
   const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth): void {
