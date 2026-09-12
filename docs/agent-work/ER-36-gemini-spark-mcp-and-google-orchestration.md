@@ -105,6 +105,8 @@ D1 fixture in `apps/eliotr-core/test/mcp-client-diagnostics.test.ts`. ER-13 allo
 ER-01 owns the strict public DTOs. The owner HTTP adapter and fixture are allocated
 `apps/eliotr-core/src/mcp-client-diagnostic-http.ts` and
 `apps/eliotr-core/test/mcp-client-diagnostic-http.test.ts`; ER-21 retains the route registry.
+The signed owner-to-MCP composition fixture is allocated
+`apps/eliotr-core/test/mcp-client-diagnostic-roundtrip.test.ts`.
 An authenticated owner issues a short-lived opaque challenge. A
 separately authenticated MCP client can confirm it once under the deployment-selected Access profile.
 The owner reads the latest challenge for the current owner credential and deployment generation.

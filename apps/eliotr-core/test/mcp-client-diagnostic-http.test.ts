@@ -156,7 +156,9 @@ describe("owner MCP client diagnostic HTTP routes", () => {
   it("requires an explicit selected MCP profile and keeps latest empty as typed 404", async () => {
     await prepareDatabase();
     const owner = `http-config-${crypto.randomUUID()}`;
-    const missing = await call("POST", owner, { csrf: "1", body: {} }, environment({ MCP_ACCESS_AUTH_PROFILE: undefined }));
+    const missingEnvironment = { ...environment() } as { -readonly [Key in keyof Env]?: Env[Key] } & Record<string, unknown>;
+    delete missingEnvironment.MCP_ACCESS_AUTH_PROFILE;
+    const missing = await call("POST", owner, { csrf: "1", body: {} }, missingEnvironment as unknown as Env);
     expect(missing.response.status).toBe(503);
     expect(missing.document).toMatchObject({ code: "MCP_DIAGNOSTIC_CONFIG_INVALID", retryable: true });
     expect(await diagnosticCount(owner)).toBe(0);
