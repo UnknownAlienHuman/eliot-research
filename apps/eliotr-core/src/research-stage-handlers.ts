@@ -183,6 +183,7 @@ export function createResearchStageHandlerFactory(
       if (input.request.handler_generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION) return null;
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
+      if (input.request.stage === "RESOLVE_CITATIONS") return getCitationsAdapter()?.recoverStartedAttempt(input) ?? null;
       return null;
     };
     Object.defineProperty(factory, "recoverStartedAttempt", {
