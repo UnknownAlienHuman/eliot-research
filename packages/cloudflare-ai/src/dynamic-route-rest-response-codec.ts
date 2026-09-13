@@ -14,6 +14,7 @@ import {
 const MAX_API_MESSAGES = 100;
 const MAX_API_MESSAGE_BYTES = 4 * 1024;
 const ENVELOPE_KEYS = new Set([
+  "data",
   "errors",
   "messages",
   "result",
@@ -138,18 +139,35 @@ export function decodeCloudflareApiEnvelope(
       },
     );
   }
-  if (root.success !== true || (root.errors as readonly unknown[]).length !== 0) {
+  if (
+    root.success !== true ||
+    (Array.isArray(root.errors) && root.errors.length !== 0)
+  ) {
     dynamicRouteRestFailure(
       "DYNAMIC_ROUTE_REST_API_FAILED",
       "Cloudflare control plane rejected the request",
       { ambiguous_effect: ambiguousEffect },
     );
   }
-  if (!("result" in root)) {
+  const hasResult = "result" in root;
+  const hasData = "data" in root;
+  if (hasResult === hasData) {
+    responseInvalid(
+      "Cloudflare API envelope must contain exactly one result or data payload",
+      ambiguousEffect,
+    );
+  }
+  if (hasData && "result_info" in root) {
+    responseInvalid(
+      "Cloudflare data envelope cannot contain result_info",
+      ambiguousEffect,
+    );
+  }
+  if (!hasResult && !hasData) {
     responseInvalid("Cloudflare API result is missing", ambiguousEffect);
   }
   return Object.freeze({
-    result: root.result,
+    result: hasResult ? root.result : root.data,
     result_info: root.result_info,
   });
 }
@@ -159,6 +177,7 @@ function decodeMessageArray(
   label: string,
   ambiguousEffect: DynamicRouteRestAmbiguousEffect,
 ): void {
+  if (raw === undefined) return;
   if (!Array.isArray(raw) || raw.length > MAX_API_MESSAGES) {
     responseInvalid(`Cloudflare API ${label} is malformed`, ambiguousEffect);
   }

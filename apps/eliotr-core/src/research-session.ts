@@ -4,9 +4,9 @@ import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, create
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
+import { createMonotoneStageExecutor, WorkflowCheckpointStore, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
 import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stages";
-import type { StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
+import type { StageReceipt, StageRequest, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
@@ -18,6 +18,7 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRu
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
+import type { ResearchWorkflowRunParams } from "./research-workflow.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
@@ -255,47 +256,50 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       }
       void skipCreate;
       const initialManifest: WorkflowObject = WorkflowObjectSchema.parse({ object_ref: payloadKey, sha256: payloadHash, byte_length: payloadBytes.byteLength, residency: { scope_domain_id: scopeRef.id, access_domain_id: context.principal_ref, confidentiality_domain_id: "private", encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1", content_digest: { algorithm: "sha256", digest: payloadHash } } });
-      let handlers: ReturnType<typeof createResearchStageHandlerFactory>;
-      if (lane === "exploratory") {
-        const evidence = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
-        const authority = await evidence.loadScope(scopeRef);
+      const initialStage: StageRequest = {
+        protocol: "eliotr.workflow-stage.v1",
+        operation_id,
+        investigation_ref: { id: investigation_id, revision: 1 },
+        stage: "FREEZE_PROTOCOL_AND_SCOPE",
+        idempotency_key: key,
+        handler_generation: handlerGeneration,
+        input_manifest: initialManifest,
+      };
+      if (lane === "exploratory" && (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || handlerGeneration === SERVER_OWNED_FREEZE_HANDLER_GENERATION)) {
+        const authority = await createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB }).loadScope(scopeRef);
         if (authority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
-        const access = { principal_ref: context.principal_ref, client_class: context.client_class, credential_generation: context.credential_generation } as const;
-        const scopePorts = createD1ScopePorts(db, access);
-        const navigation = createNavigationReadAuthority({
-          database: db,
-          scope_snapshot: authority.snapshot,
-          access,
-          require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
-        });
-        if (handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION || handlerGeneration === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
-          await createD1ScopeProfilePort(db).recordBinding(authority.snapshot, {
-            ...SERVER_RETRIEVAL_SCOPE_PROFILE,
-            max_results: request.max_results,
-          }).catch(mapRetrievalError);
-        }
-        handlers = handlerGeneration === SERVER_OWNED_FREEZE_HANDLER_GENERATION
-          ? await createResearchSemanticServerHandlers({ env, operation_id, investigation_id, principal,
-            navigation, ledger: store, initial_manifest: initialManifest })
-          : createResearchStageHandlerFactory({
-          kind: "server-owned-exploratory",
-          generation: handlerGeneration === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION
-            ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION
-            : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
-          navigation, ledger: store,
-          environment: env,
-        });
-      } else {
-        handlers = createResearchStageHandlerFactory({ kind: "legacy-deterministic" });
+        await createD1ScopeProfilePort(db).recordBinding(authority.snapshot, {
+          ...SERVER_RETRIEVAL_SCOPE_PROFILE,
+          max_results: request.max_results,
+        }).catch(mapRetrievalError);
       }
-      let receipts: StageReceipt[];
+      const workflowParams: ResearchWorkflowRunParams = {
+        operation_id,
+        investigation_ref: { id: investigation_id, revision: 1 },
+        idempotency_key: key,
+        handler_generation: handlerGeneration,
+        initial_input_manifest: initialManifest,
+        principal_ref: principal.principal_ref,
+        credential_generation: principal.credential_generation,
+        deployment_generation: principal.deployment_generation,
+      };
       try {
-        const driver = createMonotoneStageExecutor(db, bucket, {
-          ...portsFor(db, operation_id),
-          ...(handlers.recoverStartedAttempt === undefined ? {} : { recoverStartedAttempt: handlers.recoverStartedAttempt }),
-        });
-        receipts = await driver.executeOperation({ operation_id, investigation_id, initial_revision: 1, idempotency_key: key, handler_generation: handlerGeneration, initial_input_manifest: initialManifest }, principal, handlers);
+        // Reserve the first durable status before creating the Workflow instance so
+        // the owner can immediately poll ACTIVE/next_stage_index=0 after launch.
+        await new WorkflowCheckpointStore(db).ensureRun(initialStage, principal);
+        let instance: WorkflowInstance;
+        try {
+          instance = await env.RESEARCH_WORKFLOW.create({ id: operation_id, params: workflowParams });
+        } catch {
+          // A lost create ACK is reconciled against the deterministic instance ID;
+          // never create a second Workflow for the same idempotency identity.
+          instance = await env.RESEARCH_WORKFLOW.get(operation_id);
+        }
+        if (instance.id !== operation_id) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance readback is unavailable", 503, true);
+        const instanceStatus = await instance.status();
+        if (instanceStatus.status === "unknown") fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow instance status is unavailable", 503, true);
       } catch (error) {
+        if (error instanceof ResearchServiceError) throw error;
         const code = error instanceof Error && "code" in error ? String((error as { code: unknown }).code) : "WORKFLOW_EFFECT_UNCERTAIN";
         if (code === "RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", code, 400);
         if (code === "RESEARCH_PROTOCOL_FREEZE_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", code, 409);
@@ -306,10 +310,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         if (code === "WORKFLOW_BUDGET_STOP") fail("RESEARCH_BUDGET_STOP", code, 409);
         fail("RESEARCH_SETTLEMENT_UNCERTAIN", code, 503, true);
       }
-      for (const receipt of receipts as StageReceipt[]) { if (new TextEncoder().encode(JSON.stringify(receipt)).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("RESEARCH_INPUT_INVALID", "step receipt exceeds 64KiB"); if ("completion_disposition" in receipt) fail("RESEARCH_INPUT_INVALID", "step receipt must not carry a research disposition"); }
-      const last = (receipts as StageReceipt[]).at(-1);
-      if (!last) fail("RESEARCH_SETTLEMENT_UNCERTAIN", "workflow produced no receipts", 503, true);
-      return { investigation_ref: { ...last.investigation_ref }, workflow_instance_id: operation_id };
+      return { investigation_ref: { id: investigation_id, revision: 1 }, workflow_instance_id: operation_id };
     },
     runStatus: (context, workflowInstanceId) => readResearchRunStatus(env, context, workflowInstanceId),
   };

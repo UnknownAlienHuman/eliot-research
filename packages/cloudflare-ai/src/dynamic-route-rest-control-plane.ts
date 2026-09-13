@@ -19,7 +19,7 @@ import {
   cloudflareDynamicRouteBaseUrl,
   compileCloudflareDeploymentCreateBody,
   compileCloudflareRouteCreateBody,
-  decodeCloudflareDeployment,
+  decodeCloudflareDeploymentCreateResponse,
   decodeCloudflareRoute,
   decodeCloudflareRouteListPage,
   dynamicRouteRequestHeaders,
@@ -132,12 +132,7 @@ export function createCloudflareDynamicRouteRestControlPlane(
         accountId,
       );
       const route = await getRoute(client, baseUrl, routeId);
-      const deployment = await getDeployment(
-        client,
-        baseUrl,
-        routeId,
-        binding.provider_deployment_id,
-      );
+      const deployment = requireRouteDeployment(route, "NONE");
       await verifyRouteReadback(route, deployment, binding);
       return normalizedRouteSnapshot(route, binding);
     },
@@ -164,11 +159,37 @@ export function createCloudflareDynamicRouteRestControlPlane(
       const route = decodeCloudflareRoute(routeEnvelope.result);
       await verifyCreatedRoute(route, request, definitionSha256);
 
-      const deployment = await ensureDeployment(client, baseUrl, route);
+      await ensureDeployment(client, baseUrl, route);
+      const deployedRoute = await getRoute(
+        client,
+        baseUrl,
+        route.id,
+        "DEPLOYMENT_CREATE",
+      );
+      await verifyCreatedRoute(
+        deployedRoute,
+        request,
+        definitionSha256,
+        "DEPLOYMENT_CREATE",
+      );
+      const deployedRouteDeployment = requireRouteDeployment(
+        deployedRoute,
+        "DEPLOYMENT_CREATE",
+      );
+      if (
+        deployedRoute.version.id !== route.version.id ||
+        deployedRouteDeployment.version_id !== route.version.id
+      ) {
+        dynamicRouteRestFailure(
+          "DYNAMIC_ROUTE_REST_READBACK_MISMATCH",
+          "Cloudflare route readback differs from the requested deployment version",
+          { ambiguous_effect: "DEPLOYMENT_CREATE" },
+        );
+      }
       const binding = createBinding(
         accountId,
-        route,
-        deployment,
+        deployedRoute,
+        deployedRouteDeployment,
         request,
         definitionSha256,
       );
@@ -201,13 +222,7 @@ export function createCloudflareDynamicRouteRestControlPlane(
         route.id,
         "BINDING_WRITE",
       );
-      const exactDeployment = await getDeployment(
-        client,
-        baseUrl,
-        route.id,
-        deployment.id,
-        "BINDING_WRITE",
-      );
+      const exactDeployment = requireRouteDeployment(exactRoute, "BINDING_WRITE");
       await verifyRouteReadback(exactRoute, exactDeployment, readback);
       return Object.freeze({ provider_route_id: route.id });
     },
@@ -239,12 +254,12 @@ export function createCloudflareDynamicRouteRestControlPlane(
         dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_INPUT_INVALID", "Route adoption name does not bind the requested deployment identity");
       }
       const route = await getRoute(client, baseUrl, routeId);
-      if (route.id !== routeId || route.name !== request.name || route.deployment === null ||
+      if (route.name !== request.name || route.deployment === null ||
           route.version.route_id !== routeId || route.deployment.version_id !== route.version.id ||
           await modelGatewaySha256(canonicalModelGatewayJson(route.version.elements)) !== definitionSha256) {
         dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_READBACK_MISMATCH", "Existing route is not the exact requested deployed definition");
       }
-      const deployment = await getDeployment(client, baseUrl, routeId, route.deployment.id);
+      const deployment = requireRouteDeployment(route, "NONE");
       const binding = createBinding(accountId, route, deployment, request, definitionSha256);
       await verifyRouteReadback(route, deployment, binding);
       const bindingSha256 = await dynamicRouteRestBindingSha256(binding);
@@ -320,30 +335,40 @@ async function getRoute(
     undefined,
     ambiguousEffect,
   );
-  return decodeCloudflareRoute(envelope.result);
+  const route = decodeCloudflareRoute(envelope.result);
+  if (
+    route.id !== routeId ||
+    route.version.route_id !== routeId ||
+    (route.deployment !== null && route.deployment.route_id !== routeId)
+  ) {
+    dynamicRouteRestFailure(
+      "DYNAMIC_ROUTE_REST_READBACK_MISMATCH",
+      "Cloudflare route readback targets another requested route",
+      { ambiguous_effect: ambiguousEffect },
+    );
+  }
+  return route;
 }
 
-async function getDeployment(
-  client: RestClient,
-  baseUrl: string,
-  routeId: string,
-  deploymentId: string,
-  ambiguousEffect: DynamicRouteRestAmbiguousEffect = "NONE",
-): Promise<DecodedDynamicRouteDeployment> {
-  const envelope = await client.request(
-    "GET",
-    `${baseUrl}/${encodeURIComponent(routeId)}/deployments/${encodeURIComponent(deploymentId)}`,
-    undefined,
-    ambiguousEffect,
-  );
-  return decodeCloudflareDeployment(envelope.result);
+function requireRouteDeployment(
+  route: DecodedDynamicRoute,
+  ambiguousEffect: DynamicRouteRestAmbiguousEffect,
+): DecodedDynamicRouteDeployment {
+  if (route.deployment === null) {
+    dynamicRouteRestFailure(
+      "DYNAMIC_ROUTE_REST_READBACK_MISMATCH",
+      "Cloudflare route has no active deployment",
+      { ambiguous_effect: ambiguousEffect },
+    );
+  }
+  return route.deployment;
 }
 
 async function ensureDeployment(
   client: RestClient,
   baseUrl: string,
   route: DecodedDynamicRoute,
-): Promise<DecodedDynamicRouteDeployment> {
+): Promise<void> {
   if (route.deployment !== null) {
     if (route.deployment.version_id !== route.version.id) {
       dynamicRouteRestFailure(
@@ -352,7 +377,7 @@ async function ensureDeployment(
         { ambiguous_effect: "ROUTE_CREATE" },
       );
     }
-    return route.deployment;
+    return;
   }
   const envelope = await client.request(
     "POST",
@@ -360,24 +385,29 @@ async function ensureDeployment(
     compileCloudflareDeploymentCreateBody(route.version.id),
     "DEPLOYMENT_CREATE",
   );
-  const deployment = decodeCloudflareDeployment(envelope.result);
+  const acknowledgement = decodeCloudflareDeploymentCreateResponse(
+    envelope.result,
+    route.id,
+    route.version.elements,
+  );
   if (
-    deployment.route_id !== route.id ||
-    deployment.version_id !== route.version.id
+    acknowledgement.name !== route.name ||
+    canonicalModelGatewayJson(acknowledgement.elements) !==
+      canonicalModelGatewayJson(route.version.elements)
   ) {
     dynamicRouteRestFailure(
       "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
-      "Cloudflare deployment acknowledgement does not match the created route version",
+      "Cloudflare deployment acknowledgement does not match the created route graph",
       { ambiguous_effect: "DEPLOYMENT_CREATE" },
     );
   }
-  return deployment;
 }
 
 async function verifyCreatedRoute(
   route: DecodedDynamicRoute,
   request: DynamicRouteCreateRequest,
   definitionSha256: string,
+  ambiguousEffect: DynamicRouteRestAmbiguousEffect = "ROUTE_CREATE",
 ): Promise<void> {
   const observedSha256 = await modelGatewaySha256(
     canonicalModelGatewayJson(route.version.elements),
@@ -390,7 +420,7 @@ async function verifyCreatedRoute(
     dynamicRouteRestFailure(
       "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
       "Cloudflare route acknowledgement differs from the create request",
-      { ambiguous_effect: "ROUTE_CREATE" },
+      { ambiguous_effect: ambiguousEffect },
     );
   }
 }

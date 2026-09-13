@@ -13,6 +13,7 @@ import {
 } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
 import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
+import { GatewayBrowserOAuthError, readGatewayBrowserOAuthBearer } from "./lib/cloudflare-gateway-browser-oauth.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -21,12 +22,15 @@ const usage = [
   "Usage:",
   "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE]",
-  "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE]",
+  "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID]",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
   "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
   "Cloudflare account and CORE_DB are read from the generated Wrangler config; auth uses Wrangler browser OAuth.",
+  "If Wrangler lacks AI Gateway Read, adopt accepts a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
+  "Use account-private visibility, Authorization Code and token authentication None (PKCE); no client secret.",
+  "The optional gateway OAuth credential stays in memory; D1 still uses the existing Wrangler session.",
 ].join("\n");
 
 class InstallerCliError extends Error {
@@ -58,17 +62,19 @@ function parseArguments(argv) {
   }
   let inputPath;
   let providerRouteId;
+  let gatewayOAuthClientId;
   let configPath = "apps/eliotr-core/wrangler.deploy.jsonc";
   for (let index = 1; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === "--input" || option === "--config" || option === "--provider-route-id") {
+    if (option === "--input" || option === "--config" || option === "--provider-route-id" || option === "--gateway-oauth-client-id") {
       const value = argv[index + 1];
       if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
-        throw new InstallerCliError(`${option} requires a file path`);
+        throw new InstallerCliError(`${option} requires a value`);
       }
       if (option === "--input") inputPath = value;
       else if (option === "--config") configPath = value;
-      else providerRouteId = value;
+      else if (option === "--provider-route-id") providerRouteId = value;
+      else gatewayOAuthClientId = value;
       index += 1;
       continue;
     }
@@ -78,10 +84,14 @@ function parseArguments(argv) {
   if ((command === "adopt") !== (providerRouteId !== undefined)) {
     throw new InstallerCliError("--provider-route-id is required only for adopt");
   }
+  if (gatewayOAuthClientId !== undefined && command !== "adopt") {
+    throw new InstallerCliError("--gateway-oauth-client-id is supported only for read-only route adoption");
+  }
   return Object.freeze({
     help: false,
     command,
     providerRouteId,
+    gatewayOAuthClientId,
     inputPath: resolve(repositoryRoot, inputPath),
     configPath: resolve(repositoryRoot, configPath),
   });
@@ -151,12 +161,6 @@ function deploymentConfig(config) {
 
 async function readWranglerBearer(accountId) {
   const env = { ...process.env, ELIOTR_CLOUDFLARE_AUTH_MODE: WRANGLER_OAUTH_MODE };
-  let credential;
-  try {
-    credential = await loadWranglerOAuthCredential({ env, now: Date.now() });
-  } catch (error) {
-    throw new InstallerCliError(error?.message ?? LOGIN_INSTRUCTION, "WRANGLER_OAUTH_UNAVAILABLE");
-  }
   const scrubbed = scrubTokenEnv(env);
   const result = spawnSync(
     "pnpm",
@@ -181,7 +185,12 @@ async function readWranglerBearer(accountId) {
   } catch (error) {
     throw new InstallerCliError(error?.message ?? "Wrangler browser OAuth account mismatch", "WRANGLER_OAUTH_ACCOUNT_MISMATCH");
   }
-  return credential.bearer;
+  // whoami may refresh the official OAuth cache; load the resulting credential.
+  try {
+    return (await loadWranglerOAuthCredential({ env, now: Date.now() })).bearer;
+  } catch (error) {
+    throw new InstallerCliError(error?.message ?? LOGIN_INSTRUCTION, "WRANGLER_OAUTH_UNAVAILABLE");
+  }
 }
 
 function bindingStore(research, database) {
@@ -209,6 +218,9 @@ async function execute(options) {
     readJsonFile(options.configPath, "Wrangler config"),
   ]);
   const { accountId, databaseId } = deploymentConfig(config);
+  // Finish the optional browser handoff before taking the short-lived D1 bearer.
+  const gatewayOAuthBearer = options.gatewayOAuthClientId === undefined
+    ? undefined : await readGatewayBrowserOAuthBearer(options.gatewayOAuthClientId);
   const bearer = await readWranglerBearer(accountId);
   const database = createCloudflareD1HttpDatabase({
     account_id: accountId,
@@ -220,12 +232,13 @@ async function execute(options) {
     loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
   ]);
   const bindings = bindingStore(research, database);
+  const gatewayBearer = gatewayOAuthBearer ?? bearer;
   const controlPlane = cloudflareAi.createCloudflareDynamicRouteRestControlPlane({
     account_id: accountId,
     fetch: Object.freeze({
       fetch: (url, init) => globalThis.fetch(url, init),
     }),
-    credentials: Object.freeze({ readApiToken: async () => bearer }),
+    credentials: Object.freeze({ readApiToken: async () => gatewayBearer }),
     bindings,
   });
   const service = research.createResearchModelInstallationService({
@@ -249,7 +262,11 @@ function safeError(error) {
   const code = typeof error?.code === "string" && /^[A-Z][A-Z0-9_]{0,95}$/u.test(error.code)
     ? error.code
     : "MODEL_AUTHORITY_INSTALL_FAILED";
-  if (error instanceof InstallerCliError) return `${code}: ${error.message}`;
+  if (error instanceof InstallerCliError || error instanceof GatewayBrowserOAuthError) return `${code}: ${error.message}`;
+  if (code === "DYNAMIC_ROUTE_REST_HTTP_FAILED" &&
+      /^Cloudflare control plane returned HTTP [1-5][0-9]{2}$/u.test(error?.message ?? "")) {
+    return `${code}: ${error.message}`;
+  }
   return `${code}: model authority operation failed`;
 }
 
