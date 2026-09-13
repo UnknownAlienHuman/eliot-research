@@ -12,6 +12,14 @@ export const RESEARCH_RUNTIME_CONFIGURATION_KEYS = Object.freeze([
   "ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON",
   "ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON",
 ]);
+export const RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY = "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON";
+export const RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS = Object.freeze([
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0",
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1",
+]);
+export const RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES = 4_000;
+export const RESEARCH_RUNTIME_SEMANTIC_MAX_TRANSPORT_BYTES =
+  RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES * RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS.length;
 const allowed = new Set(RESEARCH_RUNTIME_CONFIGURATION_KEYS);
 const required = RESEARCH_RUNTIME_CONFIGURATION_KEYS.slice(0, 7);
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -35,6 +43,44 @@ function serialized(key, value) {
   }
   if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(value)) invalid(key);
   return value;
+}
+
+/**
+ * Encode one canonical semantic configuration into the two bounded Wrangler
+ * text vars. The installed runtime envelope remains the single canonical JSON
+ * object; these chunks are only a deployment transport representation.
+ */
+export function splitResearchSemanticConfiguration(value) {
+  const canonical = serialized(RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY, value);
+  const bytes = new TextEncoder().encode(canonical);
+  if (bytes.byteLength === 0 || bytes.byteLength > RESEARCH_RUNTIME_SEMANTIC_MAX_TRANSPORT_BYTES) {
+    invalid("semantic configuration transport size");
+  }
+
+  let boundary = bytes.byteLength;
+  if (bytes.byteLength > RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES) {
+    // Choose a UTF-8 boundary that leaves both chunks within the limit. A
+    // malformed multibyte boundary is rejected rather than repaired.
+    const minimumFirstBytes = bytes.byteLength - RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES;
+    boundary = RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES;
+    while (boundary > minimumFirstBytes && (bytes[boundary] & 0xc0) === 0x80) boundary -= 1;
+    if (boundary < minimumFirstBytes || (bytes[boundary] & 0xc0) === 0x80) {
+      invalid("semantic configuration UTF-8 chunk boundary");
+    }
+  }
+
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const first = decoder.decode(bytes.slice(0, boundary));
+  const second = decoder.decode(bytes.slice(boundary));
+  if (new TextEncoder().encode(first).byteLength > RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES ||
+      new TextEncoder().encode(second).byteLength > RESEARCH_RUNTIME_SEMANTIC_CHUNK_BYTES ||
+      first + second !== canonical) {
+    invalid("semantic configuration chunks");
+  }
+  return Object.freeze({
+    [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS[0]]: first,
+    [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS[1]]: second,
+  });
 }
 
 /** Explicit installed settings only. This loader neither chooses models nor grants approval. */

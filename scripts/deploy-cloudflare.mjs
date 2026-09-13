@@ -10,7 +10,9 @@ import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubT
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launch-code.mjs";
-import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./lib/research-runtime-config.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
+  RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
+  splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -31,7 +33,18 @@ function capture(command, args, cwd, env) {
 }
 
 function verifyGeneratedSemanticConfiguration(config, environment) {
-  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS) {
+  const semantic = Object.hasOwn(environment, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY) &&
+    typeof environment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY] === "string"
+    ? splitResearchSemanticConfiguration(environment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY]) : null;
+  const transportKeys = [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
+    ...RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS];
+  for (const key of transportKeys) {
+    const expected = key === RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY
+      ? undefined : semantic?.[key];
+    const actual = config?.vars && Object.hasOwn(config.vars, key) ? config.vars[key] : undefined;
+    if (actual !== expected) throw new Error(`Generated deployment semantic configuration drift (${key})`);
+  }
+  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => item !== RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY)) {
     const expected = Object.hasOwn(environment, key) && typeof environment[key] === "string"
       ? environment[key] : undefined;
     const actual = config?.vars && Object.hasOwn(config.vars, key) ? config.vars[key] : undefined;

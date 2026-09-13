@@ -21,7 +21,7 @@ import {
   parseResearchClaimAuditPolicy,
   type ResearchClaimAuditVerifierAuthority,
 } from "@eliotr/cloudflare-research-stages";
-import type { Env } from "./env.js";
+import { readResearchSemanticConfiguration, type Env } from "./env.js";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
 import { bindResearchOwnerReportPolicy } from "./research-owner-report-policy.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
@@ -86,7 +86,8 @@ function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig 
 export function researchSemanticConfigurationInstalled(env: Env): boolean {
   const hasGatewayToken = typeof env.ELIOTR_MODEL_GATEWAY_TOKEN === "string" && env.ELIOTR_MODEL_GATEWAY_TOKEN.trim() !== "";
   const hasNativeGateway = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function";
-  return [env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON, env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
+  const semantic = readResearchSemanticConfiguration(env);
+  return [semantic, env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
     env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
     env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
     env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
@@ -107,7 +108,7 @@ export interface ResearchSemanticServerInput {
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
-  const raw = installed(env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON);
+  const raw = installed(readResearchSemanticConfiguration(env));
   if (new TextEncoder().encode(raw).byteLength > 65536) configurationMissing();
   let decoded: unknown;
   try { decoded = JSON.parse(raw); } catch { configurationMissing(); }

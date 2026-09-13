@@ -7,7 +7,7 @@ import {
   readResearchModelSpendPolicy,
   type ResearchModelGatewayBinding,
 } from "@eliotr/cloudflare-research";
-import type { Env } from "./env.js";
+import { readResearchSemanticConfiguration, type Env } from "./env.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
 
@@ -138,7 +138,18 @@ export function readResearchConfigurationStatus(
     return value;
   };
 
-  const semantic = read("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+  const semantic = readResearchSemanticConfiguration(env);
+  const semanticHasChunks = env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0 !== undefined ||
+    env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_1 !== undefined;
+  if (semantic === undefined) {
+    if (env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON === undefined && !semanticHasChunks) {
+      missing.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+    } else {
+      invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+    }
+  } else if (!hasText(semantic)) {
+    (semanticHasChunks ? invalid : missing).add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
+  }
   const profile = read("ELIOTR_MODEL_PROFILE_DEFINITION_JSON");
   const profileProvenance = read("ELIOTR_MODEL_PROFILE_PROVENANCE_REF");
   const spend = read("ELIOTR_MODEL_SPEND_POLICY_JSON");
@@ -146,7 +157,7 @@ export function readResearchConfigurationStatus(
   const report = read("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
   const reportProvenance = read("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF");
 
-  if (semantic !== undefined && !validSemanticConfiguration(semantic)) {
+  if (hasText(semantic) && !validSemanticConfiguration(semantic)) {
     invalid.add("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON");
   }
 

@@ -13,17 +13,17 @@ guards remain in force, and this ordering does not qualify an untested provider 
 Launch state as observed on 2026-09-13: owner Access, README upload, admitted document reads and
 document search have run against the deployed Worker. New owner exploratory runs select v3.
 The current document model is Cloudflare `@cf/zai-org/glm-5.3-flash` with explicit low reasoning;
-both `owner-cloudflare-glm53-v2` routes and their pricing snapshots are prepared in Cloudflare/D1.
-Actual native model calls returned HTTP 200 in 23–27 seconds, but the responses lack the
-request-scoped Gateway log ID required for application qualification. No saved model answer or
-completed source-to-report run has been observed, and neither route is ACTIVE in D1.
-Main `cb4d6ae` deployed the existing HTTP `/compat` transport selected by Worker secret
-`ELIOTR_MODEL_GATEWAY_TOKEN`. The owner confirmed creation of the dedicated AI Gateway Run token;
-the Worker secret was installed and its presence read back on 2026-09-13. The first HTTP attempt
-failed before Gateway execution: workerd rejects the runtime's `redirect: "error"` option.
-The transport now uses manual redirects and rejects 3xx responses before consuming the body.
-The seven semantic/model/spend/report variables remain absent. Next steps are real synthesis/audit qualification, route
-activation and runtime configuration, then a document question with saved output readback.
+both `owner-cloudflare-glm53-v2` routes and their pricing snapshots are installed in Cloudflare/D1.
+The authenticated HTTP `/compat` path selected by Worker secret `ELIOTR_MODEL_GATEWAY_TOKEN`
+completed real synthesis and audit qualification on 2026-09-13 at 18:43 and 18:44 UTC.
+Both routes were promoted with their actual LIVE receipts and read back as ACTIVE in D1.
+The transport uses manual redirects because workerd rejects `redirect: "error"`, and rejects
+3xx responses before consuming the body. The dedicated AI Gateway Run token was authorized by
+the owner, installed as an encrypted Worker secret and independently read back by name.
+The first deployment of the seven semantic/model/spend/report settings hit Cloudflare's 5 KiB
+text-binding limit: the semantic configuration is 7,763 UTF-8 bytes. The transport now supports
+two bounded bindings, reconstructed before the existing strict parser. Next is deployment and an ordinary document question with saved output
+readback; qualification output alone is not a completed source-to-report run.
 See [the runtime configuration procedure](research-runtime-configuration.md). Prepared routes,
 provider HTTP success and compilation do not qualify the application model path.
 

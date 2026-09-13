@@ -8,7 +8,9 @@ import { applyAccessRuntimeVars, applyMcpRuntimeVars, resolveAccessRuntimeConfig
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
-import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./lib/research-runtime-config.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
+  RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
+  splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -291,7 +293,14 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
     AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning`,
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
   }, accessRuntime);
-  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS) {
+  for (const key of [RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY, ...RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS]) {
+    delete generated.vars[key];
+  }
+  if (typeof researchRuntimeEnvironment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY] === "string") {
+    Object.assign(generated.vars,
+      splitResearchSemanticConfiguration(researchRuntimeEnvironment[RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY]));
+  }
+  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS.filter((item) => item !== RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY)) {
     if (Object.hasOwn(researchRuntimeEnvironment, key) && typeof researchRuntimeEnvironment[key] === "string") {
       generated.vars[key] = researchRuntimeEnvironment[key];
     } else delete generated.vars[key];
