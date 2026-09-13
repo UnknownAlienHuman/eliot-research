@@ -14,6 +14,12 @@ exact and lexical retrieval available; semantic retrieval remains unavailable wi
 The Research screen separately reports missing model configuration. A healthy Worker does not mean
 research agents are configured or running.
 
+**Document search** uses the selected Library source without a model. The deployed owner path was
+used to import and read `README.md`, search for `Cloudflare`, return four resolved excerpts and reopen
+one with `Source excerpt verified`. The separate **Start full scan** workflow also completed for
+that selected document: nine sections scanned, four matches, complete coverage recorded. Neither
+operation is an AI-generated research report.
+
 ## Implemented owner loop
 
 `PWA Corpus Lens → POST /api/v1/research/orient → namespace read policy → admitted source heads →
@@ -30,7 +36,8 @@ are counted. Focus text is retained in the trace but **is not semantic filtering
 
 Cards come from admitted source metadata. Maps explicitly report missing structure. There are no
 fabricated headings, source excerpts, summaries, citation handles or completeness claims. The returned
-EvidencePack contains zero resolved evidence. Full Atlas/section expansion, query/research, independent-peer federation qualification,
+EvidencePack contains zero resolved evidence. The separate Document search path resolves excerpts.
+Full Atlas/section expansion, model-backed research, independent-peer federation qualification,
 Wiki/reports and Rust authority promotion remain mandatory unfinished launch work.
 
 ## Prepare and run

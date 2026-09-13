@@ -10,7 +10,7 @@ Text documents are processed locally in the Worker without model calls. Library 
 its quality checks. Corpus Lens opens admitted documents for reading and download; the background
 queue builds their structure and D1 exact/lexical index. The Research screen reports whether its
 model configuration is installed, separately from the server's health. Model configuration,
-AI Search, Google and MCP integrations are not connected; full research/query/Wiki, erasure,
+AI Search, Google and MCP integrations are not connected; model-backed research/Wiki, erasure,
 federation and production workload remain unavailable. [Local preparation and current launch
 limits](docs/implementation/local-launch.md).
 

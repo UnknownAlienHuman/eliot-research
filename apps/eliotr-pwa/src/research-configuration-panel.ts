@@ -130,7 +130,7 @@ export function mountResearchConfigurationPanel(
     badge.className = `connection-state connection-state--${stateClass(view)}`;
     badge.textContent = stateLabel(view);
     state.textContent = view.configuration === "present" ? "Installed" : view.configuration === "missing" ? "Not configured" : "Needs attention";
-    transport.textContent = view.model_transport === "available" ? "Configured" : "Unavailable";
+    transport.textContent = view.model_transport === "available" ? "Available" : "Unavailable";
     checked.textContent = view.checked_at;
     facts.hidden = false;
     if (view.configuration === "missing") {
