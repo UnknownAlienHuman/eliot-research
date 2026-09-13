@@ -8,6 +8,7 @@ import { applyAccessRuntimeVars, applyMcpRuntimeVars, resolveAccessRuntimeConfig
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./lib/research-runtime-config.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -24,6 +25,7 @@ if (showHelp) {
   process.exitCode = 0;
 }
 if (!showHelp) {
+const researchRuntimeEnvironment = await loadResearchRuntimeEnvironment(process.env, repositoryRoot);
 let authMode = "api-token";
 try {
   authMode = resolveAuthMode(process.env);
@@ -101,15 +103,7 @@ const receiptPath = resolve(repositoryRoot, desired.worker.receipt);
 const canonicalConfig = parseStrictJsonCompatibleJsonc(await readFile(canonicalPath, "utf8"), desired.worker.canonical_config);
 const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
 const enc = encodeURIComponent;
-const SEMANTIC_SERVER_CONFIGURATION_KEYS = Object.freeze([
-  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
-  "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
-  "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
-  "ELIOTR_MODEL_SPEND_POLICY_JSON",
-  "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
-  "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
-  "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
-]);
+const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
 
 function parseStrictJsonCompatibleJsonc(text, label) {
   try {
@@ -298,8 +292,8 @@ function buildGeneratedConfig(d1Results, publicRoute, accessRuntime, mcpAccessRu
     AI_GATEWAY_RETRIEVAL_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-retrieval`,
   }, accessRuntime);
   for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS) {
-    if (Object.hasOwn(process.env, key) && typeof process.env[key] === "string") {
-      generated.vars[key] = process.env[key];
+    if (Object.hasOwn(researchRuntimeEnvironment, key) && typeof researchRuntimeEnvironment[key] === "string") {
+      generated.vars[key] = researchRuntimeEnvironment[key];
     } else delete generated.vars[key];
   }
   if (mcpAccessRuntime !== null) {

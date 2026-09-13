@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { ErasureRequestSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
-import type { OwnerErasureRequest } from "@eliotr/interfaces";
+import { ErasureRequestSchema, IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
+import type { OwnerErasurePreparationInput, OwnerErasureRequest } from "@eliotr/interfaces";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { HttpRequestError } from "./http-errors.js";
 
@@ -9,6 +9,14 @@ const requestSchema = z.object({
   permission_ref: VersionedRefSchema,
   request: ErasureRequestSchema,
 }).strict();
+
+const preparationSchema = z.object({ source_id: IdentifierSchema, idempotency_key: IdentifierSchema }).strict();
+
+export async function readOwnerErasurePreparation(request: Request, maximumBytes: number): Promise<OwnerErasurePreparationInput> {
+  const parsed = preparationSchema.safeParse(await readJsonBodyWithinBytes(request, maximumBytes));
+  if (!parsed.success) throw new HttpRequestError("ERASURE_INPUT_INVALID", 400, "Erasure preparation is invalid");
+  return parsed.data;
+}
 
 export async function readOwnerErasureRequest(request: Request, maximumBytes: number): Promise<OwnerErasureRequest> {
   const parsed = requestSchema.safeParse(await readJsonBodyWithinBytes(request, maximumBytes));
