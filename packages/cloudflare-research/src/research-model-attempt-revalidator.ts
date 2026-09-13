@@ -131,10 +131,13 @@ interface ModelRow {
 }
 
 function stale(message: string, cause?: unknown): never {
+  // All messages and labels in this module are code-owned; never log cause or authority values.
+  console.error(JSON.stringify({ event: "research_model_revalidation_denied", reason: message }));
   throw new ModelAttemptError("MODEL_ATTEMPT_AUTHORITY_STALE", message, false, cause);
 }
 
 function budget(message: string): never {
+  console.error(JSON.stringify({ event: "research_model_revalidation_budget_denied", reason: message }));
   throw new ModelAttemptError("MODEL_ATTEMPT_BUDGET_EXPIRED", message);
 }
 
@@ -348,6 +351,8 @@ export function createD1ResearchModelAttemptRevalidator(
 ): ModelAttemptDeploymentRevalidator {
   const now = input.now ?? (() => Date.now());
   return async (context, prepared): Promise<ModelRouteDeployment> => {
+    let phase = "REQUEST";
+    try {
     const nowMs = now();
     if (!Number.isFinite(nowMs)) stale("model revalidation clock is invalid");
     let encoded: Awaited<ReturnType<typeof validatedRequest>>;
@@ -356,9 +361,13 @@ export function createD1ResearchModelAttemptRevalidator(
       if (cause instanceof ModelAttemptError) stale("prepared model request failed strict revalidation", cause);
       throw cause;
     }
+    phase = "WORKFLOW_READ";
     const workflow = await readWorkflow(input.database, context, prepared);
+    phase = "WORKFLOW_VERIFY";
     const workflowAuthorizationReceipt = verifyWorkflow(workflow, context, prepared, nowMs);
+    phase = "MODEL_READ";
     const model = await readModel(input.database, prepared);
+    phase = "MODEL_VERIFY";
     verifyModel(model, prepared, nowMs, encoded);
     const spendRequest: SpendAuthorizationReadRequest = {
       operation_id: prepared.intent.intent_ref.id,
@@ -371,23 +380,33 @@ export function createD1ResearchModelAttemptRevalidator(
       scope_snapshot_ref: prepared.authority.scope_snapshot_ref,
       workflow_authorization_receipt_ref: workflowAuthorizationReceipt,
     };
+    phase = "SPEND_READ";
     const authorization = await input.spendAuthorization.read(spendRequest);
     if (authorization === null) stale("trusted spend authorization is unavailable");
+    phase = "SPEND_VERIFY";
     const expectedDeployment = verifySpendAuthorization(authorization, spendRequest, prepared, nowMs);
+    phase = "ROUTE_READ";
     const currentRaw = await input.routeAuthority.resolve(prepared.call.route_ref);
     if (currentRaw === null) stale("active model deployment is unavailable");
     let currentDeployment: ModelRouteDeployment;
     try { currentDeployment = decodeModelRouteDeployment(currentRaw); }
     catch (cause) { stale("active model deployment is malformed", cause); }
     if (canonicalJson(currentDeployment) !== canonicalJson(expectedDeployment)) stale("active model deployment changed during revalidation");
+    phase = "FINAL_READ";
     const finalWorkflow = await readWorkflow(input.database, context, prepared);
     const finalModel = await readModel(input.database, prepared);
     const finalNowMs = now();
     if (!Number.isFinite(finalNowMs)) stale("model revalidation clock is invalid");
+    phase = "FINAL_VERIFY";
     const finalReceipt = verifyWorkflow(finalWorkflow, context, prepared, finalNowMs);
     verifyModel(finalModel, prepared, finalNowMs, encoded);
     if (finalReceipt !== spendRequest.workflow_authorization_receipt_ref) stale("workflow authorization changed during revalidation");
     verifySpendAuthorization(authorization, { ...spendRequest, workflow_authorization_receipt_ref: finalReceipt }, prepared, finalNowMs);
     return expectedDeployment;
+    } catch (cause) {
+      const code = cause instanceof ModelAttemptError ? cause.code : "UNCLASSIFIED";
+      console.error(JSON.stringify({ event: "research_model_revalidation_failed", phase, code }));
+      throw cause;
+    }
   };
 }

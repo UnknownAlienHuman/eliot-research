@@ -364,6 +364,8 @@ export function createGovernedModelAttemptHandler(
         residency_domains: residencyDomainsForRequest(preparation.request),
       });
     } catch (cause) {
+      console.error(JSON.stringify({ event: "research_model_output_binding_failed",
+        code: outputPreparationAuthorityCode(cause) ?? "UNCLASSIFIED" }));
       if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
       const preparationNowMs = dependencies.now?.() ?? Date.now();
       if (quoteExpired(prepared.quote.expires_at, preparationNowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
