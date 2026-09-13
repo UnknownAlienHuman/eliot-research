@@ -1,8 +1,31 @@
-import { IdentifierSchema } from "@eliotr/contracts";
+import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
 import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
+
+const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
+  FREEZE_PROTOCOL_AND_SCOPE: "Preparing the research plan",
+  ORIENT: "Understanding the question",
+  INTERPRET: "Interpreting the question",
+  COMPILE_OBLIGATIONS: "Defining what to check",
+  PLAN: "Planning the search",
+  RETRIEVE_BRANCHES: "Gathering sources",
+  ACQUIRE_AND_CAPTURE: "Capturing source material",
+  READ_AND_EXTRACT: "Reading source material",
+  ANALYZE_BRANCHES: "Analyzing findings",
+  COUNTER_SEARCH: "Checking for counterevidence",
+  RECONCILE: "Reconciling findings",
+  FREEZE_EVIDENCE: "Freezing verified evidence",
+  SYNTHESIZE: "Drafting the report",
+  VERIFY: "Verifying the draft",
+  AUDIT_CLAIMS: "Checking report claims",
+  RESOLVE_CITATIONS: "Resolving citations",
+  CALCULATE_COVERAGE: "Measuring coverage",
+  MATERIALIZE: "Saving the report",
+};
+const RESEARCH_STAGE_ORDER = ResearchWorkflowStageSchema.options;
+const RESEARCH_STATUS_REFRESH_MS = 2_000;
 
 function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
@@ -16,7 +39,11 @@ function message(error: unknown): string {
 
 function statusText(view: ResearchRunStatusView): string {
   switch (view.execution_state) {
-    case "ACTIVE": return "Research is still processing. Refresh status to check again.";
+    case "ACTIVE": {
+      const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
+      const label = stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
+      return `Research is processing. Current stage: ${label}. Status refreshes automatically.`;
+    }
     case "CANCELLED": return "Research was cancelled. Answer unavailable.";
     case "ENGINE_COMPLETED": return view.answer.availability === "draft" ? "A draft report is ready for review." : "Processing finished. No answer has been generated.";
   }
@@ -66,6 +93,16 @@ export function mountResearchRunPanel(
   let selectedSourceId: string | undefined;
   let previousBody = "";
   let idempotencyKey = "";
+  let progressTimer: number | undefined;
+  let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined;
+  let disposed = false;
+
+  const clearProgressTimer = (): void => {
+    if (progressTimer !== undefined) {
+      window.clearTimeout(progressTimer);
+      progressTimer = undefined;
+    }
+  };
 
   const updateButtons = (): void => {
     const available = healthReady();
@@ -74,7 +111,14 @@ export function mountResearchRunPanel(
     recover.disabled = !available || busy;
     refresh.disabled = !available || busy || workflowId === undefined;
   };
-  const stop = (): void => { serial += 1; controller?.abort(); controller = undefined; updateButtons(); };
+  const stop = (): void => {
+    serial += 1;
+    clearProgressTimer();
+    controller?.abort();
+    controller = undefined;
+    lastExecutionState = undefined;
+    updateButtons();
+  };
   const clearPrivate = (): void => {
     stop(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
@@ -83,11 +127,35 @@ export function mountResearchRunPanel(
   const onHealthUpdated = (): void => {
     const ready = healthReady();
     badge.textContent = ready ? "READY" : "WAITING";
-    if (!ready) clearPrivate(); else updateButtons();
+    if (!ready) clearPrivate(); else { updateButtons(); scheduleStatusRefresh(true); }
+  };
+  const onVisibilityChanged = (): void => {
+    if (document.visibilityState === "hidden") {
+      clearProgressTimer();
+      if (controller !== undefined) {
+        serial += 1;
+        controller.abort();
+        controller = undefined;
+        updateButtons();
+      }
+      return;
+    }
+    scheduleStatusRefresh(true);
   };
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
+  document.addEventListener("visibilitychange", onVisibilityChanged);
   updateButtons();
+  const scheduleStatusRefresh = (immediate = false): void => {
+    clearProgressTimer();
+    if (disposed || lastExecutionState !== "ACTIVE" || workflowId === undefined || controller !== undefined ||
+        !healthReady() || !navigator.onLine || document.visibilityState === "hidden") return;
+    progressTimer = window.setTimeout(() => {
+      progressTimer = undefined;
+      readStatus("automatic");
+    }, immediate ? 0 : RESEARCH_STATUS_REFRESH_MS);
+  };
   const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
+    lastExecutionState = view.execution_state;
     const text = statusText(view);
     result.replaceChildren();
     const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
@@ -194,24 +262,48 @@ export function mountResearchRunPanel(
       result.append(identity);
     }
     result.hidden = false;
-    status.textContent = text; refresh.disabled = false;
+    if (status.textContent !== text) status.textContent = text;
+    refresh.disabled = false;
+    if (view.execution_state === "ACTIVE") scheduleStatusRefresh(); else clearProgressTimer();
   };
-  const readStatus = (): void => {
-    const id = workflowInput.value.trim();
-    if (id.length === 0) { status.textContent = "Enter a known Run ID first."; return; }
+  const readStatus = (trigger: "manual" | "automatic" = "manual"): void => {
+    if (trigger === "automatic" && (lastExecutionState !== "ACTIVE" || controller !== undefined)) {
+      scheduleStatusRefresh();
+      return;
+    }
+    const automatic = trigger === "automatic";
+    const requestedId = automatic ? workflowId : workflowInput.value.trim();
+    if (requestedId === undefined || requestedId.length === 0) {
+      if (!automatic) status.textContent = "Enter a known Run ID first.";
+      return;
+    }
+    const id = requestedId;
     if (!healthReady() || !navigator.onLine || deploymentGeneration() === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before reading research."; return; }
+    clearProgressTimer();
     const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
-    result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
+    if (!automatic) {
+      result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
+    }
     const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
     void readResearchRunStatus(id, expectedGeneration, local.signal)
       .then(async (view) => {
         if (active !== serial) return;
         const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
         if (active !== serial) return;
-        workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; renderStatus(view, artifact);
+        workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation;
+        if (!automatic || workflowInput.value.trim() === id) workflowInput.value = view.workflow_instance_id;
+        renderStatus(view, artifact);
       })
-      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; result.replaceChildren(); result.hidden = true; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error); } else status.textContent = message(error); })
-      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
+      .catch((error: unknown) => {
+        if (active !== serial || (error instanceof Error && error.name === "AbortError")) return;
+        lastExecutionState = undefined; clearProgressTimer();
+        const privateFailure = error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED");
+        if (!automatic || privateFailure) { result.replaceChildren(); result.hidden = true; }
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) {
+          if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error);
+        } else status.textContent = message(error);
+      })
+      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
   form.onsubmit = (event) => {
     event.preventDefault();
@@ -221,18 +313,24 @@ export function mountResearchRunPanel(
     const ids = scope.value === "selected" ? [selectedSourceId as string] : [];
     let body: string;
     try { body = researchRunBody(query.value, ids); } catch (error: unknown) { status.textContent = message(error); return; }
+    clearProgressTimer(); lastExecutionState = undefined;
     const active = ++serial; controller?.abort(); const local = new AbortController(); controller = local;
     if (body !== previousBody) { previousBody = body; idempotencyKey = crypto.randomUUID(); }
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; refresh.disabled = false; status.textContent = "Research started. Refresh status when you want to read the persisted run."; })
+      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; })
       .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else status.textContent = message(error); })
-      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); } });
+      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
-  refresh.onclick = readStatus;
-  recover.onclick = readStatus;
-  const cleanup = (): void => { window.removeEventListener("eliotr:health-updated", onHealthUpdated); stop(); };
+  refresh.onclick = () => readStatus();
+  recover.onclick = () => readStatus();
+  const cleanup = (): void => {
+    disposed = true;
+    window.removeEventListener("eliotr:health-updated", onHealthUpdated);
+    document.removeEventListener("visibilitychange", onVisibilityChanged);
+    stop();
+  };
   return Object.assign(cleanup, {
     clearPrivate,
     selectSource(id: string, context?: LibrarySelectionContext): void {
