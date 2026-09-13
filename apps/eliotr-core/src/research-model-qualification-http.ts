@@ -115,9 +115,15 @@ export async function handleResearchModelQualification(
     const code = error instanceof ModelGatewayExecutionError && QUALIFICATION_ERROR_CODES.has(error.code)
       ? error.code : "RESEARCH_QUALIFICATION_DISPATCH_FAILED";
     const status = typedUpstreamStatus(error);
+    const cause = error instanceof ModelGatewayExecutionError ? error.cause : undefined;
+    const rawCodes = cause && typeof cause === "object" && "upstream_error_codes" in cause
+      ? cause.upstream_error_codes : undefined;
+    const codes = Array.isArray(rawCodes)
+      ? rawCodes.filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0).slice(0, 8) : [];
+    const codeSuffix = codes.length === 0 ? "" : `; provider codes ${codes.join(",")}`;
     // A failed response does not authorize another model invocation.
     throw new HttpRequestError(code, 409, status === undefined
       ? "Document model qualification could not complete"
-      : `Document model qualification could not complete (upstream HTTP ${status})`);
+      : `Document model qualification could not complete (upstream HTTP ${status}${codeSuffix})`);
   }
 }

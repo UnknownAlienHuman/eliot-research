@@ -30,6 +30,8 @@ function collectErrorCodes(raw: unknown): ReadonlySet<number> {
   if (root === null) return codes;
   const direct = possibleErrorCode(root.code);
   if (direct !== undefined) codes.add(direct);
+  const internal = possibleErrorCode(root.internalCode);
+  if (internal !== undefined) codes.add(internal);
   const error = plainObject(root.error);
   const errorCode = possibleErrorCode(error?.code);
   if (errorCode !== undefined) codes.add(errorCode);
@@ -62,6 +64,7 @@ export async function rejectModelGatewayHttpFailure(
     }
   }
   const codes = collectErrorCodes(raw);
+  const failureContext = { http_status: response.status, cause: { upstream_error_codes: [...codes] } };
   if (
     dlpAction !== undefined ||
     [...codes].some((code) => POLICY_ERROR_CODES.has(code))
@@ -69,14 +72,14 @@ export async function rejectModelGatewayHttpFailure(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_POLICY_REJECTED",
       "AI Gateway blocked the request or response under DLP or guardrail policy",
-      { http_status: response.status },
+      failureContext,
     );
   }
   if (response.status === 401 || response.status === 403) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_AUTH_REJECTED",
       "AI Gateway rejected the authenticated request",
-      { http_status: response.status },
+      failureContext,
     );
   }
   if (
@@ -86,12 +89,12 @@ export async function rejectModelGatewayHttpFailure(
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_LIMIT_REJECTED",
       "AI Gateway rejected the request because a rate or spend limit was reached",
-      { http_status: response.status },
+      failureContext,
     );
   }
   modelGatewayExecutionFailure(
     "MODEL_GATEWAY_UPSTREAM_REJECTED",
     "AI Gateway returned a non-success status",
-    { http_status: response.status },
+    failureContext,
   );
 }

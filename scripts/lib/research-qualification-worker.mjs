@@ -44,6 +44,12 @@ export function createResearchQualificationWorkerExecution({ workerUrl, prompt, 
       if (!result || typeof result !== "object" || !result.data || typeof result.data !== "object") {
         const code = /^[A-Z][A-Z0-9_]{0,95}$/u.test(result?.code ?? "")
           ? result.code : "RESEARCH_QUALIFICATION_WORKER_FAILED";
+        const title = typeof result?.title === "string" &&
+          /^Document model qualification could not complete(?: \(upstream HTTP [1-5][0-9]{2}(?:; provider codes [0-9]{1,16}(?:,[0-9]{1,16}){0,7})?\))?$/u.test(result.title)
+          ? result.title : "Worker qualification did not complete";
+        await writeFile(resolve(stateDirectory, "qualification-worker-error.json"), JSON.stringify({
+          code, title, status: Number.isInteger(result?.status) ? result.status : null,
+        }) + "\n", { encoding: "utf8", mode: 0o600 }).catch(() => undefined);
         throw Object.assign(new Error("Worker qualification did not complete"), { code });
       }
       return result.data;
