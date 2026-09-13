@@ -120,7 +120,7 @@ export interface ResearchSemanticCompositionDependencies {
     readonly verifier: ResearchClaimAuditVerifierSelection;
     readonly policy: ResearchClaimAuditPolicy;
   };
-  /** Citation recovery is optional until its durable W2 sidecar is wired. */
+  /** Optional server override for citation recovery storage; the run's durable stores are used by default. */
   readonly citations?: Pick<ResearchCitationsStageDependencies, "recovery">;
 }
 
@@ -403,7 +403,10 @@ export function createResearchSemanticComposition(
     navigation: input.navigation,
     evidence_resolver: evidenceResolver,
     context: citationContext,
-    ...(input.citations?.recovery === undefined ? {} : { recovery: input.citations.recovery }),
+    recovery: input.citations?.recovery ?? {
+      work_bucket: input.work_bucket,
+      evidence_content: evidenceContent,
+    },
   };
   return Object.freeze({
     navigation: input.navigation,
