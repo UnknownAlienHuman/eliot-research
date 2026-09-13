@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
 import { canonicalJson, decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
@@ -12,6 +13,7 @@ import {
   createResearchModelSpendPolicyService,
   readResearchModelSpendPolicy,
   type ResearchModelGatewayBinding,
+  type ResearchModelGatewayRuntimeConfig,
   type TrustedModelPromptParameters,
 } from "@eliotr/cloudflare-research";
 import {
@@ -68,12 +70,27 @@ function installed(value: string | undefined): string {
   return value;
 }
 
+function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
+  const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
+  if (typeof token === "string" && token.trim() !== "") {
+    try { validateModelGatewayToken(token); }
+    catch { configurationMissing(); }
+    return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token };
+  }
+  const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
+  if (typeof binding?.gateway !== "function") configurationMissing();
+  return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
+    ai_gateway_binding: binding as ResearchModelGatewayBinding };
+}
+
 export function researchSemanticConfigurationInstalled(env: Env): boolean {
+  const hasGatewayToken = typeof env.ELIOTR_MODEL_GATEWAY_TOKEN === "string" && env.ELIOTR_MODEL_GATEWAY_TOKEN.trim() !== "";
+  const hasNativeGateway = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function";
   return [env.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON, env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
     env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF, env.ELIOTR_MODEL_SPEND_POLICY_JSON,
     env.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF, env.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
     env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF].every((value) => typeof value === "string" && value.trim() !== "") &&
-    typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function";
+    (hasGatewayToken || hasNativeGateway);
 }
 
 export interface ResearchSemanticServerInput {
@@ -165,8 +182,7 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
       qualification_receipt_ref: receipt.data, qualification_expires_at: expires.data, qualified: true, current: true });
   }
   const verifier = await readVerifier();
-  const gateway = { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-    ai_gateway_binding: env.AI as unknown as ResearchModelGatewayBinding };
+  const gateway = modelGatewayConfiguration(env);
   return createResearchSemanticWorkflowHandlerFactory({
     database: env.CORE_DB, search_database: env.SEARCH_DB, work_bucket: env.WORK_BUCKET, evidence_bucket: env.EVIDENCE_BUCKET,
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,

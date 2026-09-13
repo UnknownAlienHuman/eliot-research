@@ -20,6 +20,8 @@ export interface Env {
   readonly FEDERATION_CURSOR_HMAC_KEY?: string;
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
+  /** Optional server-held Cloudflare AI Gateway credential; never exposed to callers. */
+  readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string;
   /** Installed server model definition and its provenance; no request may override either. */
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;

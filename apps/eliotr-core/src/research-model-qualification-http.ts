@@ -9,6 +9,7 @@ import {
   createResearchModelQualificationDispatch,
   parseResearchQualificationPromptConfig,
   type ResearchModelGatewayBinding,
+  type ResearchModelGatewayRuntimeConfig,
   type ResearchQualificationPromptConfig,
 } from "@eliotr/cloudflare-research";
 import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
@@ -194,8 +195,21 @@ export async function handleResearchModelQualification(
     throw new HttpRequestError("RESEARCH_QUALIFICATION_OWNER_REQUIRED", 403, "Owner access is required");
   }
   const ai = env.AI as unknown as Partial<ResearchModelGatewayBinding> | undefined;
-  if (typeof ai?.gateway !== "function") {
-    throw new HttpRequestError("RESEARCH_QUALIFICATION_AI_UNAVAILABLE", 503, "Workers AI binding is unavailable");
+  const configuredGatewayToken = env.ELIOTR_MODEL_GATEWAY_TOKEN;
+  let gateway: ResearchModelGatewayRuntimeConfig;
+  if (typeof configuredGatewayToken === "string" && configuredGatewayToken.trim() !== "") {
+    gateway = {
+      reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
+      gateway_token: configuredGatewayToken,
+    };
+  } else {
+    if (typeof ai?.gateway !== "function") {
+      throw new HttpRequestError("RESEARCH_QUALIFICATION_AI_UNAVAILABLE", 503, "Workers AI binding is unavailable");
+    }
+    gateway = {
+      reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
+      ai_gateway_binding: ai as ResearchModelGatewayBinding,
+    };
   }
   const raw: unknown = await readJsonBodyWithinBytes(request, maximumBytes);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) invalid();
@@ -216,10 +230,7 @@ export async function handleResearchModelQualification(
       search_database: env.SEARCH_DB,
       work_bucket: env.WORK_BUCKET,
       evidence_bucket: env.EVIDENCE_BUCKET,
-      gateway: {
-        reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-        ai_gateway_binding: ai as ResearchModelGatewayBinding,
-      },
+      gateway,
       now: () => new Date().toISOString(),
     });
     const observed = await service.execute({

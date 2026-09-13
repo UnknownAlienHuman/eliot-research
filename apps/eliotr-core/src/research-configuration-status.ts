@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
 import {
   createModelProfileBindingConfigSource,
@@ -73,6 +74,12 @@ function withinConfigurationLimit(value: string): boolean {
 
 function validProvenance(value: string): boolean {
   return IdentifierSchema.safeParse(value).success;
+}
+
+function validGatewayToken(value: string | undefined): boolean {
+  if (!hasText(value)) return false;
+  try { validateModelGatewayToken(value); return true; }
+  catch { return false; }
 }
 
 function validSemanticConfiguration(value: string): boolean {
@@ -223,9 +230,14 @@ export function readResearchConfigurationStatus(
     }
   }
 
-  const configuration = invalid.size > 0 ? "invalid" : missing.size > 0 ? "missing" : "present";
-  const modelTransport = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function" && hasText(env.AI_GATEWAY_REASONING_URL)
+  const configuredGatewayToken = env.ELIOTR_MODEL_GATEWAY_TOKEN;
+  const hasGatewayToken = hasText(configuredGatewayToken);
+  const gatewayTokenValid = hasGatewayToken && validGatewayToken(configuredGatewayToken);
+  if (hasGatewayToken && !gatewayTokenValid) invalid.add("ELIOTR_MODEL_GATEWAY_TOKEN");
+  const hasNativeGateway = typeof (env.AI as Partial<ResearchModelGatewayBinding> | undefined)?.gateway === "function" && hasText(env.AI_GATEWAY_REASONING_URL);
+  const modelTransport = (hasGatewayToken ? gatewayTokenValid : hasNativeGateway)
     ? "available" : "unavailable";
+  const configuration = invalid.size > 0 ? "invalid" : missing.size > 0 ? "missing" : "present";
   return Object.freeze({
     protocol: RESEARCH_CONFIGURATION_PROTOCOL,
     configuration,
