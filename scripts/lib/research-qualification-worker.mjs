@@ -6,6 +6,12 @@ import { promisify } from "node:util";
 
 const executeFile = promisify(execFile);
 
+const RESPONSE_REASON_PATTERN = "(?:FINGERPRINT_INVALID|LOG_ID_MISSING|LOG_ID_INVALID|CONTENT_TYPE_INVALID|BODY_TOO_LARGE|BODY_JSON_INVALID|BODY_SHAPE_INVALID|MODEL_ID_INVALID|CACHE_INVALID|UNCLASSIFIED)";
+const SAFE_QUALIFICATION_FAILURE_TITLE = new RegExp(
+  `^Document model qualification could not complete(?: \\((?:upstream HTTP [1-5][0-9]{2}(?:; provider codes [0-9]{1,16}(?:,[0-9]{1,16}){0,7})?(?:; response reason ${RESPONSE_REASON_PATTERN})?|response reason ${RESPONSE_REASON_PATTERN})\\))?$`,
+  "u",
+);
+
 export function researchQualificationWorkerOrigin(value) {
   const url = new URL(value);
   if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
@@ -45,7 +51,7 @@ export function createResearchQualificationWorkerExecution({ workerUrl, prompt, 
         const code = /^[A-Z][A-Z0-9_]{0,95}$/u.test(result?.code ?? "")
           ? result.code : "RESEARCH_QUALIFICATION_WORKER_FAILED";
         const title = typeof result?.title === "string" &&
-          /^Document model qualification could not complete(?: \(upstream HTTP [1-5][0-9]{2}(?:; provider codes [0-9]{1,16}(?:,[0-9]{1,16}){0,7})?\))?$/u.test(result.title)
+          SAFE_QUALIFICATION_FAILURE_TITLE.test(result.title)
           ? result.title : "Worker qualification did not complete";
         await writeFile(resolve(stateDirectory, "qualification-worker-error.json"), JSON.stringify({
           code, title, status: Number.isInteger(result?.status) ? result.status : null,

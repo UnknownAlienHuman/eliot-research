@@ -12,6 +12,10 @@ import {
   type ResearchOwnerOutputFormat,
 } from "@eliotr/cloudflare-research-stages";
 import {
+  parseResearchOwnerReasoningEffort,
+  type ResearchOwnerReasoningEffort,
+} from "./research-owner-semantic-config.js";
+import {
   APPLICATION_MODEL_ROUTES,
   type ApplicationModelRoute,
   type ModelRouteDeployment,
@@ -30,11 +34,13 @@ export interface ResearchOwnerRoutePlanInput {
   readonly max_tokens: number;
   readonly route_definition: unknown;
   readonly output_format?: ResearchOwnerOutputFormat;
+  readonly reasoning_effort?: ResearchOwnerReasoningEffort;
 }
 
 export interface ResearchOwnerRoutePlan {
   readonly stage: ResearchOwnerRoutePlanStage;
   readonly output_format: ResearchOwnerOutputFormat;
+  readonly reasoning_effort?: ResearchOwnerReasoningEffort;
   readonly deployment: ModelRouteDeployment;
   readonly provisioning: DynamicRouteProvisioningInput;
   readonly compiled: DynamicRouteCompiledDesired;
@@ -83,6 +89,12 @@ export async function createResearchOwnerRoutePlan(
   }
   assertRouteRef(routeRef);
   const outputFormat = parseResearchOwnerOutputFormat(input.output_format);
+  let reasoningEffort: ResearchOwnerReasoningEffort | undefined;
+  try {
+    reasoningEffort = parseResearchOwnerReasoningEffort(input.reasoning_effort);
+  } catch {
+    throw new Error("research owner reasoning_effort is invalid");
+  }
   const prompt = selectResearchOwnerPrompt(stage, outputFormat);
   const routeDefinition = snapshotJson(input.route_definition, "route definition");
   if (!Array.isArray(routeDefinition) || routeDefinition.length === 0) {
@@ -94,6 +106,7 @@ export async function createResearchOwnerRoutePlan(
       model: routeRef,
       messages: [],
       max_tokens: maxTokens,
+      ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
       ...(prompt.response_format === undefined ? {} : { response_format: prompt.response_format }),
       stream: false,
     }),
@@ -122,5 +135,12 @@ export async function createResearchOwnerRoutePlan(
     route_definition_sha256: routeDefinitionSha256,
   });
   const compiled = await compileDynamicRouteDesired(provisioning);
-  return Object.freeze({ stage, output_format: outputFormat, deployment, provisioning, compiled });
+  return Object.freeze({
+    stage,
+    output_format: outputFormat,
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
+    deployment,
+    provisioning,
+    compiled,
+  });
 }

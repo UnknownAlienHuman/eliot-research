@@ -140,10 +140,16 @@ export function createResearchOwnerDocumentPreset(
     synthesis: {
       max_tokens: input.synthesis.max_tokens,
       request_timeout_ms: input.synthesis.request_timeout_ms,
+      ...(input.synthesis.reasoning_effort === undefined ? {} : {
+        reasoning_effort: input.synthesis.reasoning_effort,
+      }),
     },
     audit: {
       max_tokens: input.audit.max_tokens,
       request_timeout_ms: input.audit.request_timeout_ms,
+      ...(input.audit.reasoning_effort === undefined ? {} : {
+        reasoning_effort: input.audit.reasoning_effort,
+      }),
       verifier_ref: input.audit.verifier_ref,
       verifier_schema_generation: input.audit.verifier_schema_generation,
       allowed_verifier_refs: [...input.audit.allowed_verifier_refs],

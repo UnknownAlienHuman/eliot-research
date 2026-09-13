@@ -14,9 +14,20 @@ const MAX_CONFIGURATION_BYTES = 65_536;
 const MAX_VERIFIER_REFS = 512;
 const MAX_REQUEST_TIMEOUT_MS = 300_000;
 
+export type ResearchOwnerReasoningEffort = "low" | "medium" | "high";
+
+export function parseResearchOwnerReasoningEffort(
+  value: unknown,
+): ResearchOwnerReasoningEffort | undefined {
+  if (value === undefined) return undefined;
+  if (value === "low" || value === "medium" || value === "high") return value;
+  throw new Error("research owner reasoning_effort is invalid");
+}
+
 export type ResearchOwnerPromptLimits = Readonly<{
   max_tokens: number;
   request_timeout_ms: number;
+  reasoning_effort?: ResearchOwnerReasoningEffort;
 }>;
 
 export type ResearchOwnerNormalizationInput = Readonly<{
@@ -43,6 +54,7 @@ export type ResearchSemanticPromptConfiguration = Readonly<{
   trusted_parameters: Readonly<{
     prompt: string;
     max_tokens: number;
+    reasoning_effort?: ResearchOwnerReasoningEffort;
     response_format?: ResearchOwnerJsonResponseFormat;
   }>;
   request_timeout_ms: number;
@@ -122,10 +134,17 @@ function positiveSafeInteger(value: unknown, label: string, maximum?: number): n
 
 function promptLimits(value: unknown, label: string): ResearchOwnerPromptLimits {
   const input = record(value, label);
-  exactKeys(input, ["max_tokens", "request_timeout_ms"], label);
+  exactKeys(input, ["max_tokens", "request_timeout_ms"], label, ["reasoning_effort"]);
+  let reasoningEffort: ResearchOwnerReasoningEffort | undefined;
+  try {
+    reasoningEffort = parseResearchOwnerReasoningEffort(input.reasoning_effort);
+  } catch {
+    invalid("reasoning_effort is invalid for " + label);
+  }
   return Object.freeze({
     max_tokens: positiveSafeInteger(input.max_tokens, `${label}.max_tokens`),
     request_timeout_ms: positiveSafeInteger(input.request_timeout_ms, `${label}.request_timeout_ms`, MAX_REQUEST_TIMEOUT_MS),
+    ...(reasoningEffort === undefined ? {} : { reasoning_effort: reasoningEffort }),
   });
 }
 
@@ -143,10 +162,11 @@ function auditInput(value: unknown): ResearchOwnerAuditConfigurationInput {
   exactKeys(input, [
     "max_tokens", "request_timeout_ms", "verifier_ref", "verifier_schema_generation",
     "allowed_verifier_refs", "policy",
-  ], "audit");
+  ], "audit", ["reasoning_effort"]);
   const limits = promptLimits({
     max_tokens: input.max_tokens,
     request_timeout_ms: input.request_timeout_ms,
+    ...(input.reasoning_effort === undefined ? {} : { reasoning_effort: input.reasoning_effort }),
   }, "audit");
   const verifierRef = identifier(input.verifier_ref, "audit.verifier_ref");
   const allowedVerifierRefs = verifierRefs(input.allowed_verifier_refs);
@@ -213,6 +233,9 @@ export function createResearchOwnerSemanticConfiguration(
       trusted_parameters: {
         prompt: synthesisPrompt.prompt,
         max_tokens: synthesisLimits.max_tokens,
+        ...(synthesisLimits.reasoning_effort === undefined ? {} : {
+          reasoning_effort: synthesisLimits.reasoning_effort,
+        }),
         ...(synthesisPrompt.response_format === undefined ? {} : { response_format: synthesisPrompt.response_format }),
       },
       request_timeout_ms: synthesisLimits.request_timeout_ms,
@@ -221,6 +244,9 @@ export function createResearchOwnerSemanticConfiguration(
       trusted_parameters: {
         prompt: auditPrompt.prompt,
         max_tokens: audit.max_tokens,
+        ...(audit.reasoning_effort === undefined ? {} : {
+          reasoning_effort: audit.reasoning_effort,
+        }),
         ...(auditPrompt.response_format === undefined ? {} : { response_format: auditPrompt.response_format }),
       },
       request_timeout_ms: audit.request_timeout_ms,

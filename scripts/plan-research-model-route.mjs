@@ -8,6 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const usage = "Usage: node scripts/plan-research-model-route.mjs INPUT.json [--output PATH]\n" +
   "Builds the exact route name, prompt/schema generations and hashes from production assets.\n" +
   "Optional output_format is json_schema (default) or prompt_json for providers without response_format support.\n" +
+  "Optional reasoning_effort is low, medium, or high; omitted preserves provider defaults.\n" +
   "Writes a local plan only. Does not provision, approve spending, qualify or call a model.";
 
 async function main() {
@@ -23,7 +24,7 @@ async function main() {
   if (bytes.byteLength > 262144) throw new Error("Route planning input exceeds 256 KiB");
   const input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
   const requiredKeys = ["max_tokens", "pricing_snapshot_ref", "route_definition", "route_ref", "route_version", "stage"];
-  const allowedKeys = new Set([...requiredKeys, "output_format"]);
+  const allowedKeys = new Set([...requiredKeys, "output_format", "reasoning_effort"]);
   if (input === null || typeof input !== "object" || Array.isArray(input) ||
       requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(input, key)) ||
       Object.keys(input).some((key) => !allowedKeys.has(key))) throw new Error("Route plan has missing or unknown fields");

@@ -27,6 +27,7 @@ import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 
 const PromptSchema = z.object({
   prompt: z.string().min(1), max_tokens: z.number().int().positive().safe(),
+  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
   response_format: z.unknown().optional(), seed: z.number().int().optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
   temperature: z.number().finite().optional(), top_p: z.number().finite().optional(),
@@ -42,6 +43,7 @@ const NormalizationSchema = z.object({
 }).strict();
 function promptParameters(value: z.infer<typeof PromptSchema>): TrustedModelPromptParameters {
   return { prompt: value.prompt, max_tokens: value.max_tokens,
+    ...(value.reasoning_effort === undefined ? {} : { reasoning_effort: value.reasoning_effort }),
     ...(value.response_format === undefined ? {} : { response_format: value.response_format }),
     ...(value.seed === undefined ? {} : { seed: value.seed }),
     ...(value.stop === undefined ? {} : { stop: value.stop }),

@@ -11,6 +11,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import {
   createResearchOwnerSemanticConfiguration,
+  type ResearchOwnerReasoningEffort,
   type ResearchOwnerSemanticConfigurationInput,
 } from "./research-owner-semantic-config.js";
 import { RESEARCH_OWNER_MODEL_PROFILE } from "./research-owner-profile.js";
@@ -53,12 +54,21 @@ function invalid(message: string): never {
 
 async function semanticParametersDigest(
   routeRef: string,
-  configured: { readonly trusted_parameters: { readonly max_tokens: number; readonly response_format?: unknown } },
+  configured: {
+    readonly trusted_parameters: {
+      readonly max_tokens: number;
+      readonly reasoning_effort?: ResearchOwnerReasoningEffort;
+      readonly response_format?: unknown;
+    };
+  },
 ): Promise<string> {
   return modelGatewayRequestParametersSha256({
     model: routeRef,
     messages: [],
     max_tokens: configured.trusted_parameters.max_tokens,
+    ...(configured.trusted_parameters.reasoning_effort === undefined ? {} : {
+      reasoning_effort: configured.trusted_parameters.reasoning_effort,
+    }),
     ...(configured.trusted_parameters.response_format === undefined ? {} : {
       response_format: configured.trusted_parameters.response_format,
     }),

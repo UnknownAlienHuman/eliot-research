@@ -47,6 +47,7 @@ const PolicySchema = z.object({
 const TrustedParametersSchema = z.object({
   prompt: z.string().min(1),
   max_tokens: z.number().int().positive().safe(),
+  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
   response_format: z.unknown().optional(),
   seed: z.number().int().safe().optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),
@@ -262,6 +263,7 @@ export async function createResearchQualificationPromptCompiler(
       return {
         prompt: params.prompt,
         max_tokens: params.max_tokens,
+        ...(params.reasoning_effort === undefined ? {} : { reasoning_effort: params.reasoning_effort }),
         ...(params.response_format === undefined ? {} : { response_format: params.response_format }),
         ...(params.seed === undefined ? {} : { seed: params.seed }),
         ...(params.stop === undefined ? {} : { stop: params.stop }),

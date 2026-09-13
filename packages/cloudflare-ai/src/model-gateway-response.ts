@@ -22,7 +22,7 @@ const RESPONSE_KEYS = new Set([
   "usage",
 ]);
 const CHOICE_KEYS = new Set(["finish_reason", "index", "logprobs", "message"]);
-const MESSAGE_KEYS = new Set(["annotations", "content", "refusal", "role"]);
+const MESSAGE_KEYS = new Set(["annotations", "content", "reasoning_content", "refusal", "role"]);
 const USAGE_KEYS = new Set([
   "completion_tokens",
   "completion_tokens_details",
@@ -103,6 +103,16 @@ function optionalBoundedString(
 ): string | undefined {
   if (value === undefined || value === null) return undefined;
   return boundedString(value, label, 1024);
+}
+
+function optionalReasoningContent(value: unknown): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > 256 * 1024) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response reasoning_content is invalid",
+    );
+  }
 }
 
 function nonnegativeInteger(value: unknown, label: string): number {
@@ -456,6 +466,7 @@ function decodeAssistantContent(rawChoices: unknown): string {
       "AI Gateway response contains unsupported annotations",
     );
   }
+  optionalReasoningContent(message.reasoning_content);
   return boundedString(message.content, "AI Gateway response assistant content");
 }
 

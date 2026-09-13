@@ -17,6 +17,7 @@ import type {
 export interface TrustedModelPromptParameters {
   readonly prompt: string;
   readonly max_tokens: number;
+  readonly reasoning_effort?: "low" | "medium" | "high";
   readonly response_format?: unknown;
   readonly seed?: number;
   readonly stop?: string | readonly string[];
@@ -137,6 +138,7 @@ export function createResearchModelPromptCompiler(
           { role: "user", content: userPayload(input, deployment, built.compiled, prompt) },
         ],
         max_tokens: prompt.max_tokens,
+        ...(prompt.reasoning_effort === undefined ? {} : { reasoning_effort: prompt.reasoning_effort }),
         stream: false,
         response_format: prompt.response_format,
         seed: prompt.seed,

@@ -16,6 +16,7 @@ const RESEARCH_CONFIGURATION_PROTOCOL = "eliotr.research-configuration-status.v1
 const PromptSchema = z.object({
   prompt: z.string().min(1),
   max_tokens: z.number().int().positive().safe(),
+  reasoning_effort: z.enum(["low", "medium", "high"]).optional(),
   response_format: z.unknown().optional(),
   seed: z.number().int().optional(),
   stop: z.union([z.string(), z.array(z.string())]).optional(),

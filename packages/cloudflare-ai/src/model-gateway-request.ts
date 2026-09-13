@@ -5,6 +5,7 @@ const JSON_BODY_KEYS = new Set([
   "max_tokens",
   "messages",
   "model",
+  "reasoning_effort",
   "response_format",
   "seed",
   "stop",
@@ -14,6 +15,7 @@ const JSON_BODY_KEYS = new Set([
 ]);
 const PARAMETER_KEYS = Object.freeze([
   "max_tokens",
+  "reasoning_effort",
   "response_format",
   "seed",
   "stop",
@@ -377,6 +379,10 @@ export async function modelGatewayDynamicRouteTarget(
 
 function validateRequestParameters(body: Record<string, unknown>): void {
   safeInteger(body.max_tokens, "model request max_tokens", 1, 1_000_000);
+  if (body.reasoning_effort !== undefined &&
+      body.reasoning_effort !== "low" && body.reasoning_effort !== "medium" && body.reasoning_effort !== "high") {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "model request reasoning_effort is invalid");
+  }
   if (body.stream !== false) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
