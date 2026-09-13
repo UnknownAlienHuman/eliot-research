@@ -15,9 +15,19 @@ The Research screen separately reports model configuration and actual run state.
 owner document path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
 `@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
 section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
-owner path without establishing full production readiness; historical reads remain bounded to the
-current owner session and deployment. Route qualification currently uses a 45-minute window and
-manual renewal, and remains WIP.
+owner path without establishing full production readiness. After two deployments on the same date, the
+owner reopened that saved draft from Research history, opened its Russian answer section, loaded seven
+claim checks and verified a fresh cited excerpt in Evidence Rail. Each historical read obtains fresh
+authorization for the current owner session, including reports saved by earlier deployments.
+Route qualification currently uses a 45-minute window and manual renewal. The observed model proofs
+expire at 23:03 UTC on September 13; installed policies expire at 00:00 UTC on September 14.
+Lazy renewal is not connected.
+
+Owner research steps: sign in through Access, choose the workspace, add and admit a TXT/Markdown
+document, select it in **Sources**, and ask the question in **Research**. When the run reaches **DRAFT**,
+open it from **Recent research**, open its answer section, then choose **Open sources** to reauthorize
+historical citations for the current session. Evidence Rail shows a source as verified only after its
+fresh readback succeeds.
 
 **Document search** uses the selected Library source without a model. The deployed owner path was
 used to import and read `README.md`, search for `Cloudflare`, return four resolved excerpts and reopen

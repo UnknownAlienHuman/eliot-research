@@ -12,10 +12,14 @@ queue builds their structure and D1 exact/lexical index. On 2026-09-13, the owne
 path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
 `@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
 section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
-owner path without establishing full production readiness. Historical research reads remain bounded
-to the current session and deployment; route qualification currently uses a 45-minute window and
-manual renewal, and remains WIP. AI Search, Google and MCP integrations, Wiki, erasure, federation
-and broader production workload remain unavailable. [Local preparation
+owner path without establishing full production readiness. On the same date, after two deployments,
+the owner reopened that saved draft from Research history, opened its Russian answer section, loaded
+seven claim checks and verified a fresh cited excerpt in Evidence Rail. Each historical read obtains
+fresh authorization for the current owner session, including reports saved by earlier deployments.
+Route qualification currently uses a 45-minute window and manual renewal. The observed model proofs
+expire at 23:03 UTC on September 13; installed policies expire at 00:00 UTC on September 14.
+Lazy renewal is not connected. AI Search, Google and MCP
+integrations, Wiki, erasure, federation and broader production workload remain unavailable. [Local preparation
 and current launch limits](docs/implementation/local-launch.md).
 
 **Pluggable external research federation for ELIOT Memory OS.**
