@@ -4,7 +4,8 @@ import { createOrientationApi, ORIENTATION_PROFILE, createD1ScopeService, create
 import { createD1ScopePorts, createD1ScopeProfilePort, createD1RetrievalResultStore, retrievalRequestDigest, RetrievalQueryError } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort, createNavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope, retrieveWithHeldScope } from "./research-retrieval-composition.js";
-import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, readCommittedResearchMaterializeOutput, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
+import { createMonotoneStageExecutor, digest, WorkflowObjectSchema, MAX_WORKFLOW_RECEIPT_BYTES, WorkflowCheckpointError, readResearchRunStatus as readStoredResearchRunStatus, ResearchMaterializeOutputError } from "@eliotr/cloudflare-research";
+import { readCommittedResearchRunResult } from "@eliotr/cloudflare-research-stages";
 import type { MonotoneHandlerFactory, StageReceipt, WorkflowExecutionPorts, WorkflowObject, WorkflowPrincipal } from "@eliotr/cloudflare-research";
 import { createD1InvestigationLedgerStore, createInvestigationLedgerService, LedgerError } from "@eliotr/research";
 import type { LedgerD1Database } from "@eliotr/research";
@@ -111,6 +112,7 @@ function mapRunStatusFailure(error: unknown): never {
   if (error instanceof ResearchServiceError) throw error;
   if (error instanceof WorkflowCheckpointError) {
     if (error.code === "WORKFLOW_AUTHORITY_STALE") fail("RESEARCH_AUTHORITY_STALE", "research run authority is no longer current", 409);
+    if (error.code === "WORKFLOW_OUTPUT_CORRUPT") fail("RESEARCH_RUN_STATUS_INVALID", "research result readback is inconsistent", 409);
     if (error.code === "WORKFLOW_INPUT_INVALID") fail("RESEARCH_INPUT_INVALID", "research run status input is invalid", 400);
     fail("RESEARCH_RUN_STATUS_UNAVAILABLE", "research run status readback is unavailable", 503, true);
   }
@@ -153,7 +155,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
   let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
   if (status.state === "ENGINE_COMPLETED") {
-    const materialized = await readCommittedResearchMaterializeOutput({
+    const completed = await readCommittedResearchRunResult({
       database: env.CORE_DB,
       work_bucket: env.WORK_BUCKET,
       operation_id: operationId,
@@ -161,7 +163,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
       materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
       recheck_authority: recheckAuthority,
     }).catch(mapRunStatusFailure);
-    if (materialized !== null) answer = { availability: "draft", artifact_ref: materialized.materialization.draft.artifact_ref };
+    if (completed !== null) answer = { availability: "draft", artifact_ref: completed.materialization.materialization.draft.artifact_ref };
   }
   return {
     protocol: "eliotr.research-run-status.v1",
