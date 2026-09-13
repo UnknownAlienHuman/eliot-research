@@ -15,6 +15,8 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.issue", auth: "owner", maximum_request_bytes: 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.latest", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/revisions", operation: "library.source.revisions", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/library/namespaces", operation: "library.namespaces.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/api/v1/library/namespaces", operation: "library.namespaces.initialize", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/readiness", operation: "library.active.readiness", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/library/erasure/prepare", operation: "library.erasure.prepare", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "POST", path: "/api/v1/library/erasure", operation: "library.erasure.execute", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },

@@ -52,7 +52,9 @@ function text(row: OwnerPolicyRow, key: keyof OwnerPolicyRow): string {
   return value;
 }
 
-async function currentBinding(database: D1Database, principalRef: string, expected?: RawOwnerBinding): Promise<RawOwnerBinding> {
+async function currentBinding(database: D1Database, principalRef: string, expected?: RawOwnerBinding,
+  namespaceId: string | undefined = expected?.source_namespace_id): Promise<RawOwnerBinding> {
+  if (namespaceId !== undefined && !IDENTIFIER.test(namespaceId)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "source namespace locator is invalid");
   let result: D1Result<OwnerPolicyRow>;
   try {
     result = await database.prepare(
@@ -62,8 +64,8 @@ async function currentBinding(database: D1Database, principalRef: string, expect
       "FROM source_namespace_ownership o JOIN source_admission_policy p " +
       "ON p.source_namespace_id=o.source_namespace_id AND p.revision=o.source_admission_policy_revision " +
       "WHERE o.status='ACTIVE' AND EXISTS (SELECT 1 FROM json_each(p.authorized_principal_refs_json) " +
-      "WHERE json_each.value=?1) ORDER BY o.ownership_record_revision DESC LIMIT 2",
-    ).bind(principalRef).all<OwnerPolicyRow>();
+      "WHERE json_each.value=?1) AND (?2 IS NULL OR o.source_namespace_id=?2) ORDER BY o.ownership_record_revision DESC LIMIT 2",
+    ).bind(principalRef, namespaceId ?? null).all<OwnerPolicyRow>();
   } catch (error) {
     fail("RAW_CAPTURE_SETTLEMENT_UNCERTAIN", "raw owner authority read is unavailable", true, error);
   }
@@ -149,7 +151,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
-          const binding = await currentBinding(env.CORE_DB, context.principal_ref);
+          const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });
@@ -157,7 +159,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
     },
     async captureRawFile(context: AuthenticatedRequestContext, request: RawFileCaptureRequest): Promise<RawFileCaptureResult> {
       if (context.client_class !== "owner_pwa") fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture requires an owner session");
-      const binding = await currentBinding(env.CORE_DB, context.principal_ref);
+      const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, request.source_namespace_id);
       const ids = await sourceIdentity(context.principal_ref, binding, request.idempotency_key);
       const rawResidency = residency(binding, context.principal_ref, request.content_sha256);
       const assertCurrent = async (input: RawCaptureAuthorityInput): Promise<void> => {
@@ -189,7 +191,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
-          const binding = await currentBinding(env.CORE_DB, context.principal_ref);
+          const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });
@@ -203,7 +205,7 @@ export function createRawCaptureService(env: RawCaptureOwnerEnvironment) {
         evidence_store: createR2EvidenceObjectStore(env.EVIDENCE_BUCKET),
         max_size_bytes: MAX_APPLICATION_UPLOAD_BYTES,
         assertCurrent: async (input) => {
-          const binding = await currentBinding(env.CORE_DB, context.principal_ref);
+          const binding = await currentBinding(env.CORE_DB, context.principal_ref, undefined, input.source_namespace_id);
           if (!authorityMatches(input, binding)) fail("RAW_CAPTURE_OWNER_NOT_CURRENT", "raw capture authority is no longer current");
         },
       });

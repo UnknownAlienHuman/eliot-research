@@ -34,7 +34,8 @@ authority/configuration source.
     ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: <spend policy provenance reference>,
     ELIOTR_RESEARCH_REPORT_CONFIG_JSON: <report configuration object>,
     ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: <report policy provenance reference>,
-    ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON: <optional installed binding object>
+    ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON: <optional installed binding object>,
+    ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON: <optional namespace creation profiles>
   }
 }
 ~~~
@@ -44,7 +45,12 @@ protocol is exactly eliotr.research-runtime.v1. The vars object may contain
 only the keys listed below. Do not add environment names, credentials, bearer
 tokens, cookies, URLs containing secrets, or ad-hoc approval fields.
 
-| Key | Required | Native validation and meaning |
+The seven research model/report variables form one group: supply all seven
+when configuring research. A file containing only Workspace bindings or
+namespace creation profiles is valid, so document setup does not require
+model configuration first. At least one supported variable is required.
+
+| Key | Required for research | Native validation and meaning |
 | --- | --- | --- |
 | ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON | Yes | Strictly parsed by ConfigurationSchema in apps/eliotr-core/src/research-semantic-server.ts, including the synthesis/audit configuration and normalization binding. |
 | ELIOTR_MODEL_PROFILE_DEFINITION_JSON | Yes | Parsed and bound through packages/cloudflare-research/src/research-model-profile-config.ts and its persisted profile authority. It must describe an installed profile; no model is supplied by a default. |
@@ -54,12 +60,13 @@ tokens, cookies, URLs containing secrets, or ad-hoc approval fields.
 | ELIOTR_RESEARCH_REPORT_CONFIG_JSON | Yes | Parsed through createResearchReportConfigSource in packages/cloudflare-research/src/research-report-config.ts; report policy and artifact rules remain server-owned. |
 | ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF | Yes | The exact report-policy provenance reference matched by the report configuration source. |
 | ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON | No | When present, parsed by parseWorkspaceOwnerBindings using protocol eliotr.workspace-owner-bindings.v1. Each cross-principal rule must carry its exact owner/MCP identities, credential and deployment generation, auth profile, source namespace, expiry, and provenance. There is no default binding; a request body, hash, or capture identity cannot replace an installed rule. |
+| ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON | No | Parsed by parseNamespaceBootstrapProfiles using protocol eliotr.namespace-bootstrap-profiles.v1. Installed profiles bind the current owner principal and credential to an expiring policy for new immutable-import namespaces. An explicit owner_read_scope supplies the initial read permission so admitted documents can appear in Library. Creation initializes ownership, admission policy, and that exact read scope atomically; document admission remains separate. |
 
 For keys ending in _JSON, the loader accepts an object or a JSON string that
 decodes to an object. It recursively canonicalizes object keys and rejects a
 canonical value over 65,536 bytes. Non-JSON references are non-empty strings
 of at most 256 characters using the loader's identifier character set. The
-whole file is limited to 1 MiB. Unknown keys, missing required keys, malformed
+whole file is limited to 1 MiB. Unknown keys, an incomplete research group, malformed
 JSON, and malformed references fail closed.
 
 If a listed key is already present in the process environment, its value must

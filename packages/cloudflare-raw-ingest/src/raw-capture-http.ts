@@ -60,7 +60,10 @@ export function parseRawFileCaptureRequest(request: Request, maximumBytes: numbe
   if (request.body === null) throw new RawCaptureHttpError("RAW_CAPTURE_BODY_MISSING", 400, "raw capture body is missing");
   const contentSha256 = requiredHeader(request, "x-eliotr-content-sha256");
   if (!SHA256.test(contentSha256)) throw new RawCaptureHttpError("RAW_CAPTURE_DIGEST_INVALID", 400, "x-eliotr-content-sha256 is invalid");
+  const namespace = request.headers.get("x-eliotr-source-namespace-id");
+  if (namespace !== null && !IDENTIFIER.test(namespace)) throw new RawCaptureHttpError("RAW_CAPTURE_HEADER_INVALID", 400, "source namespace locator is invalid");
   return { idempotency_key: idempotencyKey(request), original_file_name: originalFileName(request), content_sha256: contentSha256,
+    ...(namespace === null ? {} : { source_namespace_id: namespace }),
     size_bytes: contentLength(request, maximumBytes), content_type: requiredHeader(request, "content-type"), body: request.body };
 }
 

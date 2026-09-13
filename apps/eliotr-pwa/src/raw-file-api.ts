@@ -31,6 +31,7 @@ export interface RawUploadFile {
 }
 
 export interface RawFileSelection {
+  readonly source_namespace_id?: string;
   readonly file: RawUploadFile;
   readonly original_file_name: string;
   readonly content_sha256: string;
@@ -142,7 +143,10 @@ async function normalizedAdmissionIdempotencyKey(capture: RawFileCaptureReceipt,
   return `raw-admission-${await sha256(material.buffer)}`;
 }
 
-export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal): Promise<RawFileSelection> {
+export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal, sourceNamespaceId?: string): Promise<RawFileSelection> {
+  if (sourceNamespaceId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(sourceNamespaceId)) {
+    throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "Select a current workspace before adding a document." });
+  }
   if (!record(file) || typeof file.name !== "string" || file.name.length === 0 || file.name !== file.name.trim() ||
       new TextEncoder().encode(file.name).byteLength > 512 || /[\u0000-\u001f\u007f/\\]/u.test(file.name) ||
       file.name === "." || file.name === ".." ||
@@ -165,7 +169,10 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
   if (new TextEncoder().encode(contentType).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(contentType)) {
     throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "The selected file type is invalid." });
   }
-  const key = await idempotencyKey(file.name, contentSha256, contentType);
+  const originalKey = await idempotencyKey(file.name, contentSha256, contentType);
+  const key = sourceNamespaceId === undefined ? originalKey : `raw-upload-${await sha256(
+    new TextEncoder().encode(JSON.stringify(["eliotr.raw-file-upload.namespace.v1", sourceNamespaceId, originalKey])).buffer,
+  )}`;
   if (signal?.aborted) throw new ApiRequestError({ status: 499, code: "RAW_FILE_UPLOAD_CANCELLED", message: "File preparation was cancelled." });
   return {
     file,
@@ -174,6 +181,7 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
     size_bytes: file.size,
     content_type: contentType,
     idempotency_key: key,
+    ...(sourceNamespaceId === undefined ? {} : { source_namespace_id: sourceNamespaceId }),
   };
 }
 
@@ -244,6 +252,7 @@ export async function captureRawFile(selection: RawFileSelection, expectedGenera
       "idempotency-key": selection.idempotency_key,
       "x-eliotr-content-sha256": selection.content_sha256,
       "x-eliotr-original-file-name": encodeURIComponent(selection.original_file_name),
+      ...(selection.source_namespace_id === undefined ? {} : { "x-eliotr-source-namespace-id": selection.source_namespace_id }),
     },
   });
   return decodeRawFileCaptureEnvelope(value, expectedGeneration, selection);

@@ -17,6 +17,7 @@ import {
 interface RawFilePanelHost {
   readonly generation: () => string | undefined;
   readonly ready: () => boolean;
+  readonly sourceNamespace?: () => string | undefined;
 }
 
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
@@ -154,7 +155,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     return "Add document";
   };
   const renderButtons = (): void => {
-    const ready = host.ready() && host.generation() !== undefined;
+    const ready = host.ready() && host.generation() !== undefined && (host.sourceNamespace === undefined || host.sourceNamespace() !== undefined);
     submit.disabled = busy || !selection || hasSuccessfulAdmission() || !ready;
     submit.textContent = primaryActionText();
     recover.disabled = busy || !selection || !ready;
@@ -173,7 +174,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
           : "Add to Library";
     findLibrary.hidden = !hasSuccessfulAdmission();
     findLibrary.disabled = busy || !hasSuccessfulAdmission();
-    input.disabled = busy;
+    input.disabled = busy || (host.sourceNamespace !== undefined && host.sourceNamespace() === undefined);
     stopButton.hidden = !busy;
     stopButton.disabled = !busy;
   };
@@ -429,7 +430,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     busy = true;
     renderButtons();
     status.textContent = "Checking file size and digest…";
-    void prepareRawFileSelection(file, local.signal).then((prepared) => {
+    void prepareRawFileSelection(file, local.signal, host.sourceNamespace?.()).then((prepared) => {
       if (active !== serial || disposed) return;
       selection = prepared;
       status.textContent = "Ready to add this document. Re-selecting the same file can recover its saved upload.";
@@ -486,6 +487,10 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
   const clearOnAuth = () => clear("Authorization changed. Private upload state cleared. Choose the file again.");
   const clearOnOffline = () => clear("Offline. Private upload state cleared; choose the file again when online.");
   const app = element.closest("#app");
+  const namespaceSelected = (): void => clear(host.sourceNamespace?.() === undefined
+    ? "Select or create a workspace above before adding a document."
+    : "Workspace selected. Choose a file to add.");
+  app?.addEventListener("eliotr:namespace-selected", namespaceSelected);
   app?.addEventListener("eliotr:health-updated", healthUpdated);
   app?.addEventListener("eliotr:health-lost", clearOnHealthLost);
   window.addEventListener("eliotr:authorization-cleared", clearOnAuth);
@@ -497,6 +502,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     clear("Upload panel closed.");
     form.onsubmit = null; input.onchange = null; recover.onclick = null; process.onclick = null; admit.onclick = null; findLibrary.onclick = null; stopButton.onclick = null;
     app?.removeEventListener("eliotr:health-updated", healthUpdated);
+    app?.removeEventListener("eliotr:namespace-selected", namespaceSelected);
     app?.removeEventListener("eliotr:health-lost", clearOnHealthLost);
     window.removeEventListener("eliotr:authorization-cleared", clearOnAuth);
     window.removeEventListener("offline", clearOnOffline);

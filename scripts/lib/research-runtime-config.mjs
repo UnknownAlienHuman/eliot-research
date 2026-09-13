@@ -10,6 +10,7 @@ export const RESEARCH_RUNTIME_CONFIGURATION_KEYS = Object.freeze([
   "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
   "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
   "ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON",
+  "ELIOTR_NAMESPACE_BOOTSTRAP_PROFILES_JSON",
 ]);
 const allowed = new Set(RESEARCH_RUNTIME_CONFIGURATION_KEYS);
 const required = RESEARCH_RUNTIME_CONFIGURATION_KEYS.slice(0, 7);
@@ -56,7 +57,9 @@ export async function loadResearchRuntimeEnvironment(environment, root) {
   if (!object(config) || Object.keys(config).length !== 2 ||
       config.protocol !== "eliotr.research-runtime.v1" || !object(config.vars)) invalid("protocol");
   if (Object.keys(config.vars).some((key) => !allowed.has(key))) invalid("unknown variable");
-  if (required.some((key) => !Object.hasOwn(config.vars, key))) invalid("required variable missing");
+  if (Object.keys(config.vars).length === 0) invalid("no configuration supplied");
+  if (required.some((key) => Object.hasOwn(config.vars, key)) &&
+      required.some((key) => !Object.hasOwn(config.vars, key))) invalid("incomplete model configuration");
   const result = { ...environment };
   for (const [key, value] of Object.entries(config.vars)) {
     const text = serialized(key, value);
