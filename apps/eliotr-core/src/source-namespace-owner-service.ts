@@ -10,6 +10,17 @@ import type {
   NamespaceBootstrapProfile,
   NamespaceBootstrapProfileReader,
 } from "./source-namespace-bootstrap-profiles.js";
+import {
+  namespaceErasureAdmissionAt,
+  namespaceErasureAdmissionStatement,
+  prepareNamespaceErasureAdmissionPolicy,
+} from "./source-namespace-erasure-policy.js";
+import {
+  hasAnyNamespaceState,
+  namespaceStateMatches,
+  readNamespaceState,
+  type NamespaceState,
+} from "./source-namespace-state.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -116,90 +127,12 @@ interface InitializationTarget {
   readonly created_at: string;
 }
 
-interface InitializationRow extends Record<string, unknown> {
-  readonly source_namespace_id: unknown;
-  readonly principal_ref: unknown;
-  readonly credential_generation: unknown;
-  readonly profile_id: unknown;
-  readonly profile_revision: unknown;
-  readonly title: unknown;
-  readonly idempotency_key: unknown;
-  readonly owner_incarnation_ref: unknown;
-  readonly source_owner_generation: unknown;
-  readonly ownership_record_revision: unknown;
-  readonly source_admission_policy_revision: unknown;
-  readonly scope_policy_ref: unknown;
-  readonly scope_policy_generation: unknown;
-  readonly request_sha256: unknown;
-  readonly created_at: unknown;
-}
-
-interface OwnerRow extends Record<string, unknown> {
-  readonly source_namespace_id: unknown;
-  readonly ownership_record_revision: unknown;
-  readonly owner_system_id: unknown;
-  readonly owner_incarnation_ref: unknown;
-  readonly source_owner_generation: unknown;
-  readonly source_admission_policy_revision: unknown;
-  readonly status: unknown;
-  readonly cutover_receipt_ref: unknown;
-  readonly created_at: unknown;
-}
-
-interface PolicyRow extends Record<string, unknown> {
-  readonly source_namespace_id: unknown;
-  readonly revision: unknown;
-  readonly authorized_principal_refs_json: unknown;
-  readonly allowed_ownership_modes_json: unknown;
-  readonly source_class: unknown;
-  readonly assurance_ceiling: unknown;
-  readonly instruction_taint: unknown;
-  readonly allowed_effects: unknown;
-  readonly allowed_use_json: unknown;
-  readonly disclosure_ceiling: unknown;
-  readonly license_policy_ref: unknown;
-  readonly default_storage_policy: unknown;
-  readonly default_residency_profile_id: unknown;
-  readonly default_retention_policy_id: unknown;
-  readonly minimum_quality_state: unknown;
-  readonly created_at: unknown;
-}
-
-interface ScopeRow extends Record<string, unknown> {
-  readonly source_namespace_id: unknown;
-  readonly principal_ref: unknown;
-  readonly client_class: unknown;
-  readonly policy_ref: unknown;
-  readonly generation: unknown;
-  readonly allowed_use_json: unknown;
-  readonly disclosure_ceiling: unknown;
-  readonly state: unknown;
-  readonly expires_at: unknown;
-  readonly created_at: unknown;
-}
-
-interface NamespaceState {
-  readonly initialization: InitializationRow | null;
-  readonly owner: OwnerRow | null;
-  readonly policy: PolicyRow | null;
-  readonly scope: ScopeRow | null;
-  readonly counts: {
-    readonly initialization: number;
-    readonly owner: number;
-    readonly policy: number;
-    readonly scope: number;
-    readonly source: number;
-    readonly admission_decision: number;
-    readonly bundle: number;
-    readonly raw_capture: number;
-  };
-}
-
 interface NamespaceTargets {
   readonly initialization: InitializationTarget;
   readonly owner: OwnerTarget;
   readonly policy: PolicyTarget;
   readonly scope: ScopeTarget;
+  readonly erasure_admission_policy: Awaited<ReturnType<typeof prepareNamespaceErasureAdmissionPolicy>>;
 }
 
 function fail(code: SourceNamespaceOwnerErrorCode, status: number, message: string, retryable = false, cause?: unknown): never {
@@ -224,10 +157,6 @@ function canonicalTime(value: unknown, label: string): string {
     fail("NAMESPACE_PROFILE_CONFLICT", 503, `${label} is not canonical`, true);
   }
   return value;
-}
-
-function exactObject<T extends Record<string, unknown>>(row: T | null, target: T, keys: readonly (keyof T)[]): boolean {
-  return row !== null && keys.every((key) => row[key] === target[key]);
 }
 
 function policyTarget(namespace: string, principal: string, profile: NamespaceBootstrapProfile, createdAt: string): PolicyTarget {
@@ -260,6 +189,17 @@ function validateProfile(profile: NamespaceBootstrapProfile, principal: string, 
   if (profileExpiry <= nowMs || scopeExpiry <= nowMs) fail("NAMESPACE_PROFILE_EXPIRED", 409, "installed namespace profile has expired");
   if (scopeExpiry > profileExpiry || profile.owner_read_scope.disclosure_ceiling !== profile.policy.disclosure_ceiling) {
     fail("NAMESPACE_PROFILE_CONFLICT", 503, "installed namespace profile has inconsistent scope", true);
+  }
+  const erasure = profile.erasure_admission_policy;
+  if (erasure !== undefined) {
+    const startsAt = Date.parse(canonicalTime(erasure.valid_from, "erasure permission valid-from"));
+    const expiresAt = Date.parse(canonicalTime(erasure.expires_at, "erasure permission expiry"));
+    if (expiresAt > profileExpiry || expiresAt <= startsAt) {
+      fail("NAMESPACE_PROFILE_CONFLICT", 503, "erasure permission exceeds its installed profile validity", true);
+    }
+    if (startsAt > nowMs || expiresAt <= nowMs) {
+      fail("NAMESPACE_PROFILE_UNAVAILABLE", 409, "installed erasure permission is not current");
+    }
   }
   const policyUses = [...profile.policy.allowed_use];
   const scopeUses = [...profile.owner_read_scope.allowed_use];
@@ -324,138 +264,18 @@ function initializationTarget(
   };
 }
 
-async function readRows(database: D1Database, principal: string, idempotencyKey: string, namespace: string): Promise<{
-  readonly byKey: readonly InitializationRow[];
-  readonly byNamespace: NamespaceState;
-}> {
-  try {
-    const byKey = (await database.prepare(
-      "SELECT source_namespace_id,principal_ref,credential_generation,profile_id,profile_revision,title,idempotency_key," +
-      "owner_incarnation_ref,source_owner_generation,ownership_record_revision,source_admission_policy_revision,scope_policy_ref," +
-      "scope_policy_generation,request_sha256,created_at FROM source_namespace_initialization " +
-      "WHERE principal_ref=?1 AND idempotency_key=?2 ORDER BY source_namespace_id LIMIT 2",
-    ).bind(principal, idempotencyKey).all<InitializationRow>()).results ?? [];
-    const stateRow = await database.prepare(
-      "SELECT i.source_namespace_id AS init_namespace,i.principal_ref AS init_principal,i.credential_generation AS init_credential_generation," +
-      "i.profile_id AS init_profile_id,i.profile_revision AS init_profile_revision,i.title AS init_title,i.idempotency_key AS init_idempotency_key," +
-      "i.owner_incarnation_ref AS init_owner_incarnation,i.source_owner_generation AS init_owner_generation,i.ownership_record_revision AS init_owner_revision," +
-      "i.source_admission_policy_revision AS init_policy_revision,i.scope_policy_ref AS init_scope_ref,i.scope_policy_generation AS init_scope_generation," +
-      "i.request_sha256 AS init_request_sha256,i.created_at AS init_created_at," +
-      "o.source_namespace_id AS owner_namespace,o.ownership_record_revision AS owner_revision,o.owner_system_id,o.owner_incarnation_ref AS owner_incarnation," +
-      "o.source_owner_generation AS owner_generation,o.source_admission_policy_revision AS owner_policy_revision,o.status AS owner_status," +
-      "o.cutover_receipt_ref,o.created_at AS owner_created_at," +
-      "p.source_namespace_id AS policy_namespace,p.revision AS policy_revision,p.authorized_principal_refs_json,p.allowed_ownership_modes_json," +
-      "p.source_class,p.assurance_ceiling,p.instruction_taint,p.allowed_effects,p.allowed_use_json,p.disclosure_ceiling,p.license_policy_ref," +
-      "p.default_storage_policy,p.default_residency_profile_id,p.default_retention_policy_id,p.minimum_quality_state,p.created_at AS policy_created_at," +
-      "s.source_namespace_id AS scope_namespace,s.principal_ref AS scope_principal,s.client_class AS scope_client_class,s.policy_ref AS scope_policy_ref," +
-      "s.generation AS scope_generation,s.allowed_use_json AS scope_allowed_use_json,s.disclosure_ceiling AS scope_disclosure_ceiling,s.state AS scope_state," +
-      "s.expires_at AS scope_expires_at,s.created_at AS scope_created_at," +
-      "(SELECT COUNT(*) FROM source_namespace_initialization WHERE source_namespace_id=?1) AS init_count," +
-      "(SELECT COUNT(*) FROM source_namespace_ownership WHERE source_namespace_id=?1) AS owner_count," +
-      "(SELECT COUNT(*) FROM source_admission_policy WHERE source_namespace_id=?1) AS policy_count," +
-      "(SELECT COUNT(*) FROM scope_read_policy WHERE source_namespace_id=?1) AS scope_count," +
-      "(SELECT COUNT(*) FROM source WHERE source_namespace_id=?1) AS source_count," +
-      "(SELECT COUNT(*) FROM source_admission_decision WHERE source_namespace_id=?1) AS admission_decision_count," +
-      "(SELECT COUNT(*) FROM bundle_ingest_operation WHERE source_namespace_id=?1) AS bundle_count," +
-      "(SELECT COUNT(*) FROM raw_file_capture WHERE source_namespace_id=?1) AS raw_capture_count " +
-      "FROM (SELECT ?1 AS requested_namespace) requested " +
-      "LEFT JOIN source_namespace_initialization i ON i.source_namespace_id=requested.requested_namespace " +
-      "LEFT JOIN source_namespace_ownership o ON o.source_namespace_id=i.source_namespace_id AND o.ownership_record_revision=i.ownership_record_revision " +
-      "LEFT JOIN source_admission_policy p ON p.source_namespace_id=i.source_namespace_id AND p.revision=i.source_admission_policy_revision " +
-      "LEFT JOIN scope_read_policy s ON s.source_namespace_id=i.source_namespace_id AND s.principal_ref=i.principal_ref AND s.client_class='owner_pwa' " +
-      "LIMIT 1",
-    ).bind(namespace).first<Record<string, unknown>>();
-    if (stateRow === null) fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace state read is unavailable", true);
-    const byNamespace = {
-      initialization: stateRow.init_namespace === null ? null : {
-        source_namespace_id: stateRow.init_namespace, principal_ref: stateRow.init_principal,
-        credential_generation: stateRow.init_credential_generation, profile_id: stateRow.init_profile_id,
-        profile_revision: stateRow.init_profile_revision, title: stateRow.init_title, idempotency_key: stateRow.init_idempotency_key,
-        owner_incarnation_ref: stateRow.init_owner_incarnation, source_owner_generation: stateRow.init_owner_generation,
-        ownership_record_revision: stateRow.init_owner_revision, source_admission_policy_revision: stateRow.init_policy_revision,
-        scope_policy_ref: stateRow.init_scope_ref, scope_policy_generation: stateRow.init_scope_generation,
-        request_sha256: stateRow.init_request_sha256, created_at: stateRow.init_created_at,
-      } as InitializationRow,
-      owner: stateRow.owner_namespace === null ? null : {
-        source_namespace_id: stateRow.owner_namespace, ownership_record_revision: stateRow.owner_revision,
-        owner_system_id: stateRow.owner_system_id, owner_incarnation_ref: stateRow.owner_incarnation,
-        source_owner_generation: stateRow.owner_generation, source_admission_policy_revision: stateRow.owner_policy_revision,
-        status: stateRow.owner_status, cutover_receipt_ref: stateRow.cutover_receipt_ref, created_at: stateRow.owner_created_at,
-      } as OwnerRow,
-      policy: stateRow.policy_namespace === null ? null : {
-        source_namespace_id: stateRow.policy_namespace, revision: stateRow.policy_revision,
-        authorized_principal_refs_json: stateRow.authorized_principal_refs_json, allowed_ownership_modes_json: stateRow.allowed_ownership_modes_json,
-        source_class: stateRow.source_class, assurance_ceiling: stateRow.assurance_ceiling, instruction_taint: stateRow.instruction_taint,
-        allowed_effects: stateRow.allowed_effects, allowed_use_json: stateRow.allowed_use_json, disclosure_ceiling: stateRow.disclosure_ceiling,
-        license_policy_ref: stateRow.license_policy_ref, default_storage_policy: stateRow.default_storage_policy,
-        default_residency_profile_id: stateRow.default_residency_profile_id, default_retention_policy_id: stateRow.default_retention_policy_id,
-        minimum_quality_state: stateRow.minimum_quality_state, created_at: stateRow.policy_created_at,
-      } as PolicyRow,
-      scope: stateRow.scope_namespace === null ? null : {
-        source_namespace_id: stateRow.scope_namespace, principal_ref: stateRow.scope_principal, client_class: stateRow.scope_client_class,
-        policy_ref: stateRow.scope_policy_ref, generation: stateRow.scope_generation, allowed_use_json: stateRow.scope_allowed_use_json,
-        disclosure_ceiling: stateRow.scope_disclosure_ceiling, state: stateRow.scope_state, expires_at: stateRow.scope_expires_at,
-        created_at: stateRow.scope_created_at,
-      } as ScopeRow,
-      counts: {
-        initialization: Number(stateRow.init_count ?? 0), owner: Number(stateRow.owner_count ?? 0),
-        policy: Number(stateRow.policy_count ?? 0), scope: Number(stateRow.scope_count ?? 0),
-        source: Number(stateRow.source_count ?? 0), admission_decision: Number(stateRow.admission_decision_count ?? 0),
-        bundle: Number(stateRow.bundle_count ?? 0), raw_capture: Number(stateRow.raw_capture_count ?? 0),
-      },
-    } satisfies NamespaceState;
-    return { byKey, byNamespace };
-  } catch (cause) {
-    fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace authority read is unavailable", true, cause);
-  }
-}
-
-const INITIALIZATION_KEYS: readonly (keyof InitializationRow)[] = [
-  "source_namespace_id", "principal_ref", "credential_generation", "profile_id", "profile_revision", "title", "idempotency_key",
-  "owner_incarnation_ref", "source_owner_generation", "ownership_record_revision", "source_admission_policy_revision", "scope_policy_ref",
-  "scope_policy_generation", "request_sha256", "created_at",
-];
-const OWNER_KEYS: readonly (keyof OwnerRow)[] = [
-  "source_namespace_id", "ownership_record_revision", "owner_system_id", "owner_incarnation_ref", "source_owner_generation",
-  "source_admission_policy_revision", "status", "cutover_receipt_ref", "created_at",
-];
-const POLICY_KEYS: readonly (keyof PolicyRow)[] = [
-  "source_namespace_id", "revision", "authorized_principal_refs_json", "allowed_ownership_modes_json", "source_class", "assurance_ceiling",
-  "instruction_taint", "allowed_effects", "allowed_use_json", "disclosure_ceiling", "license_policy_ref", "default_storage_policy",
-  "default_residency_profile_id", "default_retention_policy_id", "minimum_quality_state", "created_at",
-];
-const SCOPE_KEYS: readonly (keyof ScopeRow)[] = [
-  "source_namespace_id", "principal_ref", "client_class", "policy_ref", "generation", "allowed_use_json", "disclosure_ceiling", "state", "expires_at", "created_at",
-];
-
-function compareState(state: NamespaceState, target: {
-  readonly initialization: InitializationTarget;
-  readonly owner: OwnerTarget;
-  readonly policy: PolicyTarget;
-  readonly scope: ScopeTarget;
-}): boolean {
-  return state.counts.initialization === 1 && state.counts.owner === 1 && state.counts.policy === 1 && state.counts.scope === 1 &&
-    exactObject(state.initialization, target.initialization as unknown as InitializationRow, INITIALIZATION_KEYS) &&
-    exactObject(state.owner, target.owner as unknown as OwnerRow, OWNER_KEYS) &&
-    exactObject(state.policy, target.policy as unknown as PolicyRow, POLICY_KEYS) &&
-    exactObject(state.scope, target.scope as unknown as ScopeRow, SCOPE_KEYS);
-}
-
-function hasAnyNamespaceState(state: NamespaceState): boolean {
-  return Object.values(state.counts).some((count) => count !== 0);
-}
-
 function targetsAt(target: NamespaceTargets, createdAt: string): NamespaceTargets {
   return {
     initialization: { ...target.initialization, created_at: createdAt },
     owner: { ...target.owner, created_at: createdAt },
     policy: { ...target.policy, created_at: createdAt },
     scope: { ...target.scope, created_at: createdAt },
+    erasure_admission_policy: namespaceErasureAdmissionAt(target.erasure_admission_policy, createdAt),
   };
 }
 
 function exactResult(state: NamespaceState, target: NamespaceTargets): OwnerNamespaceInitialization {
-  if (!compareState(state, target)) fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "namespace initialization did not read back exactly", true);
+  if (!namespaceStateMatches(state, target)) fail("NAMESPACE_SETTLEMENT_UNCERTAIN", 503, "namespace initialization did not read back exactly", true);
   return {
     protocol: "eliotr.owner-namespace.v1",
     source_namespace_id: target.initialization.source_namespace_id,
@@ -465,8 +285,15 @@ function exactResult(state: NamespaceState, target: NamespaceTargets): OwnerName
 }
 
 function validateExisting(state: NamespaceState, target: NamespaceTargets): OwnerNamespaceInitialization {
-  if (!compareState(state, target)) fail("NAMESPACE_IDEMPOTENCY_CONFLICT", 409, "namespace idempotency key is bound to different durable state");
+  if (!namespaceStateMatches(state, target)) fail("NAMESPACE_IDEMPOTENCY_CONFLICT", 409, "namespace idempotency key is bound to different durable state");
   return exactResult(state, target);
+}
+
+function readRows(database: D1Database, principal: string, idempotencyKey: string, namespace: string) {
+  return readNamespaceState(database, principal, idempotencyKey, namespace, (cause) => {
+    if (cause instanceof SourceNamespaceOwnerError) throw cause;
+    fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace state read is unavailable", true, cause);
+  });
 }
 
 function listNamespaceRow(row: Record<string, unknown>, nowMs: number): { readonly source_namespace_id: string; readonly title: string } | null {
@@ -539,6 +366,12 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
       policy_ref: readPolicyRef, generation: 1, allowed_use_json: JSON.stringify([...profile.owner_read_scope.allowed_use].sort()),
       disclosure_ceiling: profile.owner_read_scope.disclosure_ceiling, state: "ACTIVE", expires_at: profile.owner_read_scope.expires_at, created_at: clock.iso,
     };
+    const erasureAdmission = await prepareNamespaceErasureAdmissionPolicy(
+      profile.erasure_admission_policy,
+      identity,
+      context,
+      clock.iso,
+    );
     const requestSha = await canonicalDigest({
       protocol: "eliotr.owner-namespace.v1", principal_ref: context.principal_ref, credential_generation: context.credential_generation,
       profile_ref: profile.profile_ref, profile_expires_at: profile.expires_at, provenance_ref: profile.provenance_ref,
@@ -565,10 +398,17 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
         allowed_use_json: scope.allowed_use_json, disclosure_ceiling: scope.disclosure_ceiling,
         state: scope.state, expires_at: scope.expires_at,
       },
+      ...(erasureAdmission === undefined ? {} : {
+        erasure_admission_policy: {
+          ...erasureAdmission.input,
+          policy_json: erasureAdmission.policy_json,
+          policy_sha256: erasureAdmission.policy_sha256,
+        },
+      }),
     });
     if (!SHA256.test(requestSha)) fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace request fingerprint is invalid", true);
     const initialization = initializationTarget(identity, context, profile, input, readPolicyRef, requestSha, clock.iso);
-    const target = { initialization, owner, policy, scope };
+    const target = { initialization, owner, policy, scope, erasure_admission_policy: erasureAdmission };
     const before = await readRows(options.database, context.principal_ref, input.idempotency_key, identity.source_namespace_id);
     if (before.byKey.length > 1) fail("NAMESPACE_STORAGE_UNAVAILABLE", 503, "namespace idempotency ledger is ambiguous", true);
     if (before.byKey[0] !== undefined) {
@@ -586,7 +426,7 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
       fail("NAMESPACE_PROFILE_CONFLICT", 503, "installed namespace profile changed during initialization", true);
     }
     try {
-      await options.database.batch([
+      const statements: D1PreparedStatement[] = [
         options.database.prepare(
           "INSERT INTO source_admission_policy (source_namespace_id,revision,authorized_principal_refs_json,allowed_ownership_modes_json,source_class,assurance_ceiling,instruction_taint,allowed_effects,allowed_use_json,disclosure_ceiling,license_policy_ref,default_storage_policy,default_residency_profile_id,default_retention_policy_id,minimum_quality_state,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
         ).bind(policy.source_namespace_id, policy.revision, policy.authorized_principal_refs_json, policy.allowed_ownership_modes_json,
@@ -597,6 +437,7 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
           "INSERT INTO source_namespace_ownership (source_namespace_id,ownership_record_revision,owner_system_id,owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,cutover_receipt_ref,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         ).bind(owner.source_namespace_id, owner.ownership_record_revision, owner.owner_system_id, owner.owner_incarnation_ref,
           owner.source_owner_generation, owner.source_admission_policy_revision, owner.status, owner.cutover_receipt_ref, owner.created_at),
+        ...(erasureAdmission === undefined ? [] : [namespaceErasureAdmissionStatement(options.database, erasureAdmission)]),
         options.database.prepare(
           "INSERT INTO scope_read_policy (source_namespace_id,principal_ref,client_class,policy_ref,generation,allowed_use_json,disclosure_ceiling,state,expires_at,created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         ).bind(scope.source_namespace_id, scope.principal_ref, scope.client_class, scope.policy_ref, scope.generation, scope.allowed_use_json,
@@ -607,7 +448,8 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
           initialization.profile_revision, initialization.title, initialization.idempotency_key, initialization.owner_incarnation_ref,
           initialization.source_owner_generation, initialization.ownership_record_revision, initialization.source_admission_policy_revision,
           initialization.scope_policy_ref, initialization.scope_policy_generation, initialization.request_sha256, initialization.created_at),
-      ]);
+      ];
+      await options.database.batch(statements);
     } catch {
       const afterFailure = await readRows(options.database, context.principal_ref, input.idempotency_key, identity.source_namespace_id);
       if (afterFailure.byKey[0]?.request_sha256 === requestSha) {

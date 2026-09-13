@@ -3,7 +3,6 @@ import {
   assertErasureIdentifier,
   assertErasureInteger,
   assertErasureSha256,
-  assertErasureText,
   canonicalErasureJson,
   erasureFail,
   erasureSha256Utf8,
@@ -11,6 +10,13 @@ import {
   parseErasureSubject,
   validateErasureRequest,
 } from "./canonical.js";
+import {
+  canonicalErasureAdmissionPolicyDocument,
+  createErasureAdmissionPolicyInsertStatement,
+  normalizeErasurePermissionRef as permissionRef,
+  normalizeErasureTimestamp as timestamp,
+  prepareErasureAdmissionPolicyInstall,
+} from "./admission-policy-install.js";
 
 export interface ErasureAdmissionActor {
   readonly principal_ref: string;
@@ -118,39 +124,6 @@ interface AdmissionRow {
   readonly created_at: unknown;
 }
 
-function permissionRef(ref: VersionedRef): VersionedRef {
-  return {
-    id: assertErasureIdentifier(ref.id, "erasure permission ID"),
-    revision: assertErasureInteger(ref.revision, "erasure permission revision", 1, Number.MAX_SAFE_INTEGER),
-  };
-}
-
-function timestamp(value: string, label: string): string {
-  assertErasureText(value, label, 64);
-  const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed) || Math.abs(parsed) > 8_640_000_000_000_000) {
-    erasureFail("ERASURE_INPUT_INVALID", `${label} is invalid`);
-  }
-  return new Date(parsed).toISOString();
-}
-
-function policyDocument(input: ErasureAdmissionPolicyInput): Record<string, unknown> {
-  const ref = permissionRef(input.permission_ref);
-  return {
-    protocol: "erc.privacy.erasure-admission.v1",
-    permission_ref: ref,
-    source_namespace_id: assertErasureIdentifier(input.source_namespace_id, "erasure permission namespace"),
-    owner_system_id: assertErasureIdentifier(input.owner_system_id, "erasure permission owner"),
-    source_owner_generation: assertErasureIdentifier(input.source_owner_generation, "erasure permission owner generation"),
-    principal_ref: assertErasureIdentifier(input.principal_ref, "erasure permission principal"),
-    credential_generation: assertErasureIdentifier(input.credential_generation, "erasure permission credential generation"),
-    authorization_binding_ref: assertErasureIdentifier(input.authorization_binding_ref, "erasure permission authorization binding"),
-    legal_basis_ref: assertErasureIdentifier(input.legal_basis_ref, "erasure permission legal basis"),
-    valid_from: timestamp(input.valid_from, "erasure permission valid-from"),
-    expires_at: timestamp(input.expires_at, "erasure permission expiry"),
-  };
-}
-
 async function decodePolicy(row: PolicyRow): Promise<ErasureAdmissionPolicy> {
   const ref = permissionRef({
     id: assertErasureIdentifier(row.permission_ref, "stored erasure permission ID"),
@@ -168,7 +141,7 @@ async function decodePolicy(row: PolicyRow): Promise<ErasureAdmissionPolicy> {
     valid_from: timestamp(String(row.valid_from), "stored erasure permission valid-from"),
     expires_at: timestamp(String(row.expires_at), "stored erasure permission expiry"),
   };
-  const expectedJson = canonicalErasureJson(policyDocument(policy));
+  const expectedJson = canonicalErasureJson(canonicalErasureAdmissionPolicyDocument(policy));
   const storedSha = assertErasureSha256(row.policy_sha256, "stored erasure permission digest");
   if (row.policy_json !== expectedJson || storedSha !== await erasureSha256Utf8(expectedJson)) {
     erasureFail("ERASURE_IDENTITY_CONFLICT", "stored erasure permission bytes are not canonical");
@@ -197,12 +170,6 @@ function actor(actor: ErasureAdmissionActor): ErasureAdmissionActor {
     principal_ref: assertErasureIdentifier(actor.principal_ref, "erasure actor principal"),
     credential_generation: assertErasureIdentifier(actor.credential_generation, "erasure actor credential generation"),
   };
-}
-
-function ensureTimeOrder(validFrom: string, expiresAt: string): void {
-  if (Date.parse(expiresAt) <= Date.parse(validFrom)) {
-    erasureFail("ERASURE_INPUT_INVALID", "erasure permission expiry must follow valid-from");
-  }
 }
 
 function admissionIdentityDocument(
@@ -403,37 +370,27 @@ export function createErasureAdmissionPolicyStore(
   };
   return {
     async install(input) {
-      const policy = policyDocument(input);
-      ensureTimeOrder(policy.valid_from as string, policy.expires_at as string);
-      const namespaceOwner = await currentOwner(policy.source_namespace_id as string);
+      const createdAt = isoFromMs(clock());
+      const plan = await prepareErasureAdmissionPolicyInstall(input, createdAt);
+      const policy = plan.input;
+      const namespaceOwner = await currentOwner(policy.source_namespace_id);
       if (namespaceOwner === null || namespaceOwner.owner_system_id !== policy.owner_system_id ||
           namespaceOwner.source_owner_generation !== policy.source_owner_generation) {
         admissionFail("ERASURE_PERMISSION_DENIED", "erasure permission owner is not current");
       }
-      const policyJson = canonicalErasureJson(policy);
-      const policySha = await erasureSha256Utf8(policyJson);
-      const ref = policy.permission_ref as VersionedRef;
-      const createdAt = isoFromMs(clock());
+      const ref = policy.permission_ref;
       try {
-        await database.prepare(
-          "INSERT INTO erasure_admission_policy(permission_ref,revision,source_namespace_id,owner_system_id," +
-          "source_owner_generation,principal_ref,credential_generation,authorization_binding_ref,legal_basis_ref," +
-          "valid_from,expires_at,state,policy_json,policy_sha256,created_at,revoked_at) VALUES " +
-          "(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'ACTIVE',?12,?13,?14,NULL)",
-        ).bind(ref.id, ref.revision, policy.source_namespace_id, policy.owner_system_id,
-          policy.source_owner_generation, policy.principal_ref, policy.credential_generation,
-          policy.authorization_binding_ref, policy.legal_basis_ref, policy.valid_from, policy.expires_at,
-          policyJson, policySha, createdAt).run();
+        await createErasureAdmissionPolicyInsertStatement(database, plan).run();
       } catch (cause) {
         const existing = await readRow(ref);
         if (existing === null) erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure permission write acknowledgement was lost", true, cause);
-        if (existing.policy_sha256 !== policySha || existing.policy_json !== policyJson || existing.state !== "ACTIVE") {
+        if (existing.policy_sha256 !== plan.policy_sha256 || existing.policy_json !== plan.policy_json || existing.state !== "ACTIVE") {
           admissionFail("ERASURE_PERMISSION_CONFLICT", "erasure permission identity is already bound to different policy");
         }
         return existing;
       }
       const stored = await readRow(ref);
-      if (stored === null || stored.policy_sha256 !== policySha || stored.state !== "ACTIVE") {
+      if (stored === null || stored.policy_sha256 !== plan.policy_sha256 || stored.policy_json !== plan.policy_json || stored.state !== "ACTIVE") {
         erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "erasure permission readback is incomplete", true);
       }
       return stored;

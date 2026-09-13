@@ -52,6 +52,18 @@ const OwnerReadScopeSchema = z.object({
   expires_at: CanonicalTimeSchema,
 }).strict();
 
+const ErasureAdmissionPolicySchema = z.object({
+  permission_profile_ref: VersionedRefInputSchema,
+  authorization_binding_ref: Identifier,
+  legal_basis_ref: Identifier,
+  valid_from: CanonicalTimeSchema,
+  expires_at: CanonicalTimeSchema,
+}).strict().superRefine((value, ctx) => {
+  if (Date.parse(value.expires_at) <= Date.parse(value.valid_from)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "erasure permission expiry must follow valid-from" });
+  }
+});
+
 const ProfileSchema = z.object({
   profile_ref: VersionedRefInputSchema,
   title: TitleSchema,
@@ -61,7 +73,13 @@ const ProfileSchema = z.object({
   provenance_ref: Identifier,
   policy: SourceAdmissionPolicySchema,
   owner_read_scope: OwnerReadScopeSchema,
-}).strict();
+  erasure_admission_policy: ErasureAdmissionPolicySchema.optional(),
+}).strict().superRefine((profile, ctx) => {
+  if (profile.erasure_admission_policy !== undefined &&
+      Date.parse(profile.erasure_admission_policy.expires_at) > Date.parse(profile.expires_at)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "erasure permission must expire within its bootstrap profile" });
+  }
+});
 
 const DocumentSchema = z.object({
   protocol: z.literal(PROTOCOL),
@@ -70,6 +88,7 @@ const DocumentSchema = z.object({
 
 type ParsedPolicy = z.infer<typeof SourceAdmissionPolicySchema>;
 type ParsedOwnerReadScope = z.infer<typeof OwnerReadScopeSchema>;
+type ParsedErasureAdmissionPolicy = z.infer<typeof ErasureAdmissionPolicySchema>;
 
 export interface NamespaceBootstrapProfilePolicy {
   readonly allowed_ownership_modes: readonly ["immutable_import"];
@@ -92,6 +111,14 @@ export interface NamespaceBootstrapOwnerReadScope {
   readonly expires_at: string;
 }
 
+export interface NamespaceBootstrapErasureAdmissionPolicy {
+  readonly permission_profile_ref: VersionedRef;
+  readonly authorization_binding_ref: string;
+  readonly legal_basis_ref: string;
+  readonly valid_from: string;
+  readonly expires_at: string;
+}
+
 export interface NamespaceBootstrapProfile {
   readonly profile_ref: VersionedRef;
   readonly title: string;
@@ -101,6 +128,7 @@ export interface NamespaceBootstrapProfile {
   readonly provenance_ref: string;
   readonly policy: NamespaceBootstrapProfilePolicy;
   readonly owner_read_scope: NamespaceBootstrapOwnerReadScope;
+  readonly erasure_admission_policy?: NamespaceBootstrapErasureAdmissionPolicy;
 }
 
 export interface NamespaceBootstrapProfileContext {
@@ -263,6 +291,16 @@ function freezeOwnerReadScope(scope: ParsedOwnerReadScope): NamespaceBootstrapOw
   });
 }
 
+function freezeErasureAdmissionPolicy(policy: ParsedErasureAdmissionPolicy): NamespaceBootstrapErasureAdmissionPolicy {
+  return Object.freeze({
+    permission_profile_ref: Object.freeze({ id: policy.permission_profile_ref.id, revision: policy.permission_profile_ref.revision }),
+    authorization_binding_ref: policy.authorization_binding_ref,
+    legal_basis_ref: policy.legal_basis_ref,
+    valid_from: policy.valid_from,
+    expires_at: policy.expires_at,
+  });
+}
+
 function freezeProfile(profile: z.infer<typeof ProfileSchema>): NamespaceBootstrapProfile {
   return Object.freeze({
     profile_ref: Object.freeze({
@@ -276,7 +314,16 @@ function freezeProfile(profile: z.infer<typeof ProfileSchema>): NamespaceBootstr
     provenance_ref: profile.provenance_ref,
     policy: freezePolicy(profile.policy),
     owner_read_scope: freezeOwnerReadScope(profile.owner_read_scope),
+    ...(profile.erasure_admission_policy === undefined ? {} : {
+      erasure_admission_policy: freezeErasureAdmissionPolicy(profile.erasure_admission_policy),
+    }),
   });
+}
+
+function erasurePermissionCurrent(profile: NamespaceBootstrapProfile, nowMs: number): boolean {
+  const permission = profile.erasure_admission_policy;
+  return permission === undefined ||
+    (Date.parse(permission.valid_from) <= nowMs && Date.parse(permission.expires_at) > nowMs);
 }
 
 function readCurrentProfile(
@@ -287,7 +334,7 @@ function readCurrentProfile(
   if (profile.principal_ref !== context.principal_ref ||
       profile.credential_generation !== context.credential_generation) forbidden();
   if (Date.parse(profile.expires_at) <= nowMs ||
-      Date.parse(profile.owner_read_scope.expires_at) <= nowMs) expired();
+      Date.parse(profile.owner_read_scope.expires_at) <= nowMs || !erasurePermissionCurrent(profile, nowMs)) expired();
   return profile;
 }
 
@@ -302,7 +349,7 @@ function createReader(profiles: readonly NamespaceBootstrapProfile[]): Namespace
           profile.principal_ref === snapshot.principal_ref &&
           profile.credential_generation === snapshot.credential_generation &&
           Date.parse(profile.expires_at) > currentNow &&
-          Date.parse(profile.owner_read_scope.expires_at) > currentNow)
+          Date.parse(profile.owner_read_scope.expires_at) > currentNow && erasurePermissionCurrent(profile, currentNow))
         .map((profile) => Object.freeze({
           profile_ref: Object.freeze({
             id: profile.profile_ref.id,

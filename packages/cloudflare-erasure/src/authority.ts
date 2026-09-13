@@ -14,6 +14,7 @@ import {
   validateErasureRequest,
 } from "./canonical.js";
 import { resetErasureAttempt } from "./authority-reset.js";
+import { assertErasureLocatorsRetained, retainErasureLocatorsStatement } from "./closure-locators.js";
 import { appendPurgeLedger } from "./ledger.js";
 import type {
   ErasureAuthorityPort,
@@ -273,6 +274,15 @@ export function createD1ErasureAuthority(
     },
     async persistClosure(fence, closure) {
       await assertFence(fence);
+      const execution = await database.prepare(
+        "SELECT request_sha256 FROM erasure_execution WHERE erasure_id=?1 AND revision=?2 " +
+        "AND lease_owner=?3 AND lease_generation=?4 AND state='QUARANTINE_AND_REVOKE' LIMIT 1",
+      ).bind(fence.erasure_id, fence.revision, fence.lease_owner, fence.lease_generation)
+        .first<{ request_sha256: unknown }>();
+      if (closure.erasure_ref.id !== fence.erasure_id || closure.erasure_ref.revision !== fence.revision ||
+          execution?.request_sha256 !== closure.request_digest) {
+        erasureFail("ERASURE_IDENTITY_CONFLICT", "erasure closure does not match its current request");
+      }
       const now = isoFromMs(clock());
       const statements: D1PreparedStatement[] = closure.targets.map((target) => database.prepare(
         "INSERT INTO erasure_target(erasure_id,erasure_revision,target_id,target_kind," +
@@ -298,6 +308,7 @@ export function createD1ErasureAuthority(
         target.next_review_at ?? null,
         now,
       ));
+      statements.push(retainErasureLocatorsStatement(database, fence, now));
       statements.push(database.prepare(
         "UPDATE erasure_execution SET closure_digest=?5,updated_at=?6 WHERE erasure_id=?1 " +
         "AND revision=?2 AND lease_owner=?3 AND lease_generation=?4",
@@ -310,6 +321,7 @@ export function createD1ErasureAuthority(
         now,
       ));
       await database.batch(statements);
+      await assertErasureLocatorsRetained(database, fence, isoFromMs(clock()));
       const count = await database.prepare(
         "SELECT COUNT(*) AS count FROM erasure_target WHERE erasure_id=?1 AND erasure_revision=?2",
       ).bind(fence.erasure_id, fence.revision).first<{ count: number }>();

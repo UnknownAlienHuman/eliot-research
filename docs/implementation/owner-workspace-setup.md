@@ -23,6 +23,15 @@ Each profile has these exact fields:
 * expires_at: canonical UTC ISO-8601 with millisecond precision.
 * policy: the local namespace policy described below.
 * owner_read_scope: the explicit initial owner read grant described below.
+* erasure_admission_policy (optional): an operator-installed destructive
+  permission with explicit `permission_profile_ref`, `authorization_binding_ref`,
+  `legal_basis_ref`, `valid_from`, and `expires_at`. The permission profile is a
+  template identity: Core derives a separate stable permission ID for each new
+  namespace so the same installed profile can create multiple workspaces.
+  Its validity must be current and its expiry no later than the bootstrap
+  profile expiry. The namespace and owner
+  bindings are filled from the authenticated owner and newly created namespace;
+  no permission is created when this field is absent.
 The policy contains only the fields used by the native local namespace
 validator: allowed_ownership_modes must be exactly immutable_import;
 source_class is an identifier; assurance_ceiling is LOCATOR_ONLY, CAPTURED, or
@@ -44,8 +53,12 @@ Its canonical expires_at must be no later than the profile expiry.
 Both expiries are checked against the current authority clock on use.
 
 Bootstrap creates only a new namespace's ownership record, admission policy,
-and generation-one owner read scope in one authoritative operation. It does
-not create a source, source revision, admission receipt, or document content.
+generation-one owner read scope, and the optional erasure admission policy in
+one authoritative operation. It does not create a source, source revision,
+admission receipt, or document content. The optional erasure policy is inserted
+with the same native canonical policy bytes and digest used by erasure
+admission; its legal basis, binding, and validity window must be explicit in
+the installed profile.
 The installed profile and read grant are rechecked for current identity and
 expiry; an expired or differently assigned profile fails closed.
 
