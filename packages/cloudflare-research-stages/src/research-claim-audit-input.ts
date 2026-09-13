@@ -36,8 +36,10 @@ import {
 import {
   digest,
   fail,
+  MAX_WORKFLOW_OUTPUT_BYTES,
   parseRequest,
   snapshotPrincipal,
+  WorkflowCheckpointError,
   type StageRequest,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
@@ -69,6 +71,53 @@ import { z } from "zod";
 
 const PROTOCOL = "eliotr.research.audit-claims-input.v1" as const;
 const MAX_REFS = 512;
+
+type ResearchClaimAuditInputFailurePhase =
+  | "VERIFIER"
+  | "VERIFY_INPUT"
+  | "CONTEXT"
+  | "SYNTHESIS"
+  | "NORMALIZE"
+  | "SOURCES"
+  | "RESOLVE"
+  | "SOURCE_COMPARE"
+  | "FINAL_AUTHORITY"
+  | "MATERIAL";
+
+interface ResearchClaimAuditInputDiagnosticState {
+  phase: ResearchClaimAuditInputFailurePhase;
+  material_bytes?: number;
+  max_context_bytes?: number;
+}
+
+function logResearchClaimAuditInputFailure(
+  state: ResearchClaimAuditInputDiagnosticState,
+  error: unknown,
+): void {
+  console.error(JSON.stringify({
+    event: "research_claim_audit_input_failed",
+    phase: state.phase,
+    code: error instanceof WorkflowCheckpointError
+      ? error.code
+      : "UNCLASSIFIED",
+    ...(state.material_bytes === undefined ? {} : {
+      material_bytes: state.material_bytes,
+      max_context_bytes: state.max_context_bytes,
+    }),
+  }));
+}
+
+async function withResearchClaimAuditInputDiagnostics<T>(
+  state: ResearchClaimAuditInputDiagnosticState,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    logResearchClaimAuditInputFailure(state, error);
+    throw error;
+  }
+}
 
 const ModelDeploymentSchema = z.object({
   route_ref: IdentifierSchema,
@@ -381,6 +430,8 @@ export function createResearchClaimAuditInputReader(
       readonly principal: WorkflowPrincipal;
       readonly input_bytes: Uint8Array;
     }): Promise<ResearchClaimAuditInputSnapshot> {
+      const diagnostics: ResearchClaimAuditInputDiagnosticState = { phase: "VERIFY_INPUT" };
+      return withResearchClaimAuditInputDiagnostics(diagnostics, async () => {
       const request = parseRequest(input.request);
       const parsedPrincipal = snapshotPrincipal(input.principal);
       const principal = Object.freeze({
@@ -390,6 +441,7 @@ export function createResearchClaimAuditInputReader(
       });
       if (request.stage !== "AUDIT_CLAIMS" || !(input.input_bytes instanceof Uint8Array)) fail("WORKFLOW_INPUT_INVALID");
       const inputBytes = new Uint8Array(input.input_bytes);
+      diagnostics.phase = "VERIFIER";
       const initialNavigation = snapshotNavigationGrant(await dependencies.navigation.current());
       if (navigationAccess.principal_ref !== principal.principal_ref ||
           navigationAccess.credential_generation !== principal.credential_generation ||
@@ -408,11 +460,13 @@ export function createResearchClaimAuditInputReader(
       requireVerifierUsable(verifierBefore, principal, authorityNow(dependencies.navigation), "WORKFLOW_AUTHORITY_STALE");
       if (canonicalEvidenceJson(verifierBefore) !== canonicalEvidenceJson(verifierSelection.authority)) fail("WORKFLOW_AUTHORITY_STALE");
 
+      diagnostics.phase = "VERIFY_INPUT";
       if (inputBytes.byteLength !== request.input_manifest.byte_length ||
           await digest(inputBytes) !== request.input_manifest.sha256) fail("WORKFLOW_OUTPUT_CORRUPT");
       const verify = detached(await decodeResearchVerificationResultV2(inputBytes), "WORKFLOW_OUTPUT_CORRUPT");
       const verifyLineage = await readCommittedStageLineage(checkpoints, request.operation_id, "VERIFY");
       assertCommittedVerifyLineage(request, verify, verifyLineage);
+      diagnostics.phase = "CONTEXT";
       const w1Before = detached(await checkpoints.head(request.investigation_ref.id), "WORKFLOW_AUTHORITY_STALE");
       let context: EvidenceFreezeSynthesisContext;
       try { context = await dependencies.context.read({ request, principal: parsedPrincipal, input_bytes: inputBytes }); }
@@ -423,6 +477,7 @@ export function createResearchClaimAuditInputReader(
           context.stage_ten_input.model_profile_definition.max_context_bytes < 1 ||
           !Number.isSafeInteger(context.stage_ten_input.model_profile_definition.max_context_bytes)) fail("WORKFLOW_AUTHORITY_STALE");
 
+      diagnostics.phase = "SYNTHESIS";
       const synthesisReadback = await readCommittedResearchSynthesisOutput({
         database: dependencies.database,
         work_bucket: dependencies.work_bucket,
@@ -441,6 +496,7 @@ export function createResearchClaimAuditInputReader(
         output: detached(synthesisReadback.output, "WORKFLOW_OUTPUT_CORRUPT"),
         bytes: new Uint8Array(synthesisReadback.bytes),
       });
+      diagnostics.phase = "NORMALIZE";
       let normalized: NormalizedSynthesisClaims;
       try {
         const assistant = (await decodeModelGatewayBody(synthesis.bytes)).assistant_content;
@@ -460,6 +516,7 @@ export function createResearchClaimAuditInputReader(
       const expectedRows = new Map(verify.source_verification.resolved.map((row) => [refKey(row.handle_ref), row]));
       if (expectedRows.size !== cited.length || cited.some((ref) => !expectedRows.has(refKey(ref)))) fail("WORKFLOW_OUTPUT_CORRUPT");
       const sourceRevisionRefs = [...new Set(verify.source_verification.resolved.map((row) => row.source_revision_ref))].sort();
+      diagnostics.phase = "SOURCES";
       const resolutionNavigation = snapshotNavigationGrant(await dependencies.navigation.current());
       if (canonicalEvidenceJson(initialNavigation) !== canonicalEvidenceJson(resolutionNavigation) ||
           !resolutionNavigation.allowed_use.includes("research")) fail("WORKFLOW_AUTHORITY_STALE");
@@ -469,6 +526,7 @@ export function createResearchClaimAuditInputReader(
       const sourceByRef = new Map(sources.map((source) => [source.source_revision_ref, source]));
       if (sources.length !== sourceRevisionRefs.length || sourceByRef.size !== sourceRevisionRefs.length) fail("WORKFLOW_AUTHORITY_STALE");
 
+      diagnostics.phase = "RESOLVE";
       let resolved: readonly ResolvedEvidence[];
       try {
         const result = await dependencies.evidence_resolver.resolveCitationSet({
@@ -489,6 +547,7 @@ export function createResearchClaimAuditInputReader(
 
       const packedByRef = new Map(context.stage_five.evidence_pack.resolved_evidence.map((item) => [refKey(item.handle.handle_ref), item]));
       const frozenByRef = new Map(context.freeze.included_evidence.map((item) => [refKey(item.handle_ref), item]));
+      diagnostics.phase = "SOURCE_COMPARE";
       await Promise.all(resolved.map(async (item) => {
         const expected = expectedRows.get(refKey(item.handle.handle_ref));
         const source = sourceByRef.get(item.handle.source_revision_ref);
@@ -502,6 +561,7 @@ export function createResearchClaimAuditInputReader(
         assertCurrentSource(source, item, expected);
         await assertExactExcerpt(item);
       }));
+      diagnostics.phase = "FINAL_AUTHORITY";
       const finalNavigation = snapshotNavigationGrant(await dependencies.navigation.current());
       let finalSources: readonly EvidenceSourceAuthority[];
       try { finalSources = snapshotSourceAuthorities(await dependencies.navigation.sources(sourceRevisionRefs, finalNavigation)); }
@@ -518,6 +578,7 @@ export function createResearchClaimAuditInputReader(
           canonicalEvidenceJson(stableW1Head(w1Before)) !== canonicalEvidenceJson(stableW1Head(w1After)) ||
           canonicalEvidenceJson(stableW1Head(w1After)) !== canonicalEvidenceJson(stableW1Head(context.w1_head))) fail("WORKFLOW_AUTHORITY_STALE");
 
+      diagnostics.phase = "MATERIAL";
       const evidence = detached(resolved.map((item) => {
         const source = sourceByRef.get(item.handle.source_revision_ref);
         if (source === undefined) return fail("WORKFLOW_AUTHORITY_STALE");
@@ -532,13 +593,17 @@ export function createResearchClaimAuditInputReader(
         normalization, claims: normalized, evidence, verifier: verifierAfter, audit_policy: auditPolicy });
       const materialText = canonicalEvidenceJson(material);
       const materialBytes = evidenceUtf8Bytes(materialText);
+      diagnostics.material_bytes = materialBytes.byteLength;
+      diagnostics.max_context_bytes = context.stage_ten_input.model_profile_definition.max_context_bytes;
       if (new TextDecoder("utf-8", { fatal: true }).decode(materialBytes) !== materialText ||
-          materialBytes.byteLength > context.stage_ten_input.model_profile_definition.max_context_bytes) fail("WORKFLOW_OUTPUT_CORRUPT");
+          materialBytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_OUTPUT_CORRUPT");
       const evidenceInputSha256 = await evidenceSha256Bytes(materialBytes);
+      diagnostics.phase = "FINAL_AUTHORITY";
       const terminalNavigation = snapshotNavigationGrant(await dependencies.navigation.current());
       if (!terminalNavigation.allowed_use.includes("research") ||
           canonicalEvidenceJson(initialNavigation) !== canonicalEvidenceJson(terminalNavigation) ||
           canonicalEvidenceJson(finalNavigation) !== canonicalEvidenceJson(terminalNavigation)) fail("WORKFLOW_AUTHORITY_STALE");
+      diagnostics.phase = "MATERIAL";
       return detached({
         protocol: PROTOCOL,
         request,
@@ -554,6 +619,7 @@ export function createResearchClaimAuditInputReader(
         evidence_input_sha256: evidenceInputSha256,
         max_context_bytes: context.stage_ten_input.model_profile_definition.max_context_bytes,
       }, "WORKFLOW_AUTHORITY_STALE");
+      });
     },
   });
 }

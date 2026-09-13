@@ -92,6 +92,10 @@ function historyStageText(view: ResearchRunStatusView): string {
   return view.answer.availability === "draft" ? "Draft available" : "Finished without a report";
 }
 
+function historyNoteText(view: ResearchRunStatusView): string {
+  return `${historyStageText(view)} · ${view.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
+}
+
 function shouldPollEngine(status: ResearchEngineStatus | undefined): boolean {
   return status === undefined || status === "queued" || status === "running" || status === "paused" || status === "waiting" || status === "waitingForPause";
 }
@@ -172,6 +176,7 @@ export function mountResearchRunPanel(
   let historySerial = 0;
   let historyGeneration: string | undefined;
   let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
+  const historyRows = new Map<string, HTMLElement>();
   let disposed = false;
 
   const clearProgressTimer = (): void => {
@@ -218,6 +223,7 @@ export function mountResearchRunPanel(
   const clearHistory = (): void => {
     clearHistoryRequest();
     historyView = undefined;
+    historyRows.clear();
     historyList.replaceChildren();
     historyStatus.textContent = "Recent research appears after the current session is ready.";
   };
@@ -267,11 +273,13 @@ export function mountResearchRunPanel(
       readStatus("history", entry.status.workflow_instance_id);
     };
     const note = document.createElement("p"); note.className = "workflow-recovery-note";
-    note.textContent = `${historyStageText(entry.status)} · ${entry.status.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
+    note.textContent = historyNoteText(entry.status);
     row.append(open, note);
+    historyRows.set(entry.status.workflow_instance_id, row);
     return row;
   };
   const renderHistoryList = (view: Awaited<ReturnType<typeof readResearchRunHistory>>): void => {
+    historyRows.clear();
     historyList.replaceChildren();
     if (view.configuration_state === "MISSING") {
       historyStatus.textContent = "Research configuration is missing on the server. Install it before starting a research run.";
@@ -282,6 +290,15 @@ export function mountResearchRunPanel(
       historyStatus.textContent = "Configuration installed; run research to confirm execution.";
     }
     view.runs.forEach((entry) => historyList.append(renderHistory(entry)));
+  };
+  const updateHistoryStatus = (view: ResearchRunStatusView): void => {
+    if (historyView === undefined || historyView.deployment_generation !== view.deployment_generation) return;
+    const index = historyView.runs.findIndex((entry) => entry.status.workflow_instance_id === view.workflow_instance_id && entry.status.deployment_generation === view.deployment_generation);
+    if (index < 0) return;
+    historyView = { ...historyView, runs: historyView.runs.map((entry, entryIndex) => entryIndex === index ? { ...entry, status: view } : entry) };
+    const row = historyRows.get(view.workflow_instance_id);
+    const note = row?.querySelector<HTMLElement>(".workflow-recovery-note");
+    if (note !== null && note !== undefined) note.textContent = historyNoteText(view);
   };
   const loadHistory = (trigger: "automatic" | "manual" = "manual", force = false): void => {
     if (disposed) return;
@@ -310,6 +327,7 @@ export function mountResearchRunPanel(
     lastExecutionState = view.execution_state;
     lastEngineStatus = view.engine_status;
     lastAnswerAvailability = view.answer.availability;
+    updateHistoryStatus(view);
     const text = statusText(view);
     badge.textContent = badgeText(view);
     progress.textContent = text;

@@ -203,7 +203,7 @@ function assertAuditBinding(
 
 function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInputSnapshot): string {
   const verifiedAudit = {
-    audit_input_sha256: audit.evidence_input_sha256,
+    evidence_input_sha256: audit.evidence_input_sha256,
     synthesis: audit.synthesis,
     verifier: {
       verifier_ref: audit.verifier.verifier_ref,
@@ -223,7 +223,6 @@ function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInp
     })),
     evidence: audit.evidence.map((item) => ({
       handle: item.handle,
-      exact_excerpt: item.exact_excerpt,
       source_revision_content_sha256: item.source_revision_content_sha256,
       scope_snapshot_digest: item.scope_snapshot_digest,
       source_class: item.source_class,
@@ -234,7 +233,17 @@ function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInp
     source_verification: audit.verify.source_verification.resolved,
     audit_policy: audit.audit_policy,
   };
-  return `${installedPrompt}\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}`;
+  return `${installedPrompt}\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}\n\nExact evidence excerpts are supplied once in the outer quoted evidence blocks; use their evidence_handle_ref values when applying the verified claim bindings.`;
+}
+
+function stableAuditInput(audit: ResearchClaimAuditInputSnapshot): Record<string, unknown> {
+  return {
+    evidence_input_sha256: audit.evidence_input_sha256,
+    verifier: audit.verifier,
+    audit_policy: audit.audit_policy,
+    request: audit.request,
+    synthesis: audit.synthesis,
+  };
 }
 
 export function createResearchClaimAuditPromptDependencies(
@@ -324,7 +333,7 @@ export function createResearchClaimAuditPromptDependencies(
       const bound = pending.get(key) ?? await readBound(rawModelInput, deployment);
       pending.delete(key);
       assertAuditBinding(bound.input, bound.deployment, input.principal, input.operation_id, audit);
-      if (canonicalEvidenceJson(audit) !== canonicalEvidenceJson(bound.audit)) {
+      if (canonicalEvidenceJson(stableAuditInput(audit)) !== canonicalEvidenceJson(stableAuditInput(bound.audit))) {
         fail("audit input changed during prompt compilation", true);
       }
       return Object.freeze({
