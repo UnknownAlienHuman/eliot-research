@@ -232,8 +232,13 @@ runtime JSON envelope, Wrangler vars, source control or client settings. Without
 secret the Worker retains the native binding transport; it does not try both paths
 or replay an ambiguous model call through the other transport.
 
-As of main `cb4d6ae`, the HTTP selection is deployed but token creation awaits owner
-confirmation. Installing the token does not activate routes or install the seven
+The HTTP selection was deployed at main `cb4d6ae`; the owner subsequently confirmed
+token creation and the Worker secret was installed on 2026-09-13. Workerd supports
+`manual` and `follow` redirect modes; its Request constructor rejects `error` before
+network I/O. The Worker HTTP adapter translates the canonical no-redirect request
+to `manual` and rejects all 3xx responses without following them. See the
+[workerd Request implementation](https://github.com/cloudflare/workerd/blob/main/src/workerd/api/http.c++).
+Installing the token does not activate routes or install the seven
 semantic variables. Complete actual synthesis/audit qualification and promotion,
 then deploy the compiled runtime envelope and read back a saved document answer.
 

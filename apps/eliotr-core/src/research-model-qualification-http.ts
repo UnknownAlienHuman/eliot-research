@@ -169,6 +169,7 @@ function transportFailureReason(error: unknown): QualificationTransportReason | 
         break;
     }
   }
+  if (cause.name === "TypeError" && cause.message === 'Invalid redirect value, must be one of "follow" or "manual" ("error" won\'t be implemented since it does not make sense at the edge; use "manual" and check the response status code).') return "FETCH_NOT_SUPPORTED";
   if (cause.name === "TypeError" && ILLEGAL_INVOCATION_MESSAGES.has(cause.message)) return "ILLEGAL_INVOCATION";
   if (cause.name === "Error" && (cause.message === "Network connection lost." || cause.message === "Network connection lost")) return "NETWORK_CONNECTION_LOST";
   if (cause.name === "TypeError") return "FETCH_TYPE_ERROR";

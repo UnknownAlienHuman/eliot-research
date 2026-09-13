@@ -18,9 +18,11 @@ Actual native model calls returned HTTP 200 in 23–27 seconds, but the response
 request-scoped Gateway log ID required for application qualification. No saved model answer or
 completed source-to-report run has been observed, and neither route is ACTIVE in D1.
 Main `cb4d6ae` deployed the existing HTTP `/compat` transport selected by Worker secret
-`ELIOTR_MODEL_GATEWAY_TOKEN`. Creation of the dedicated AI Gateway Run token awaits owner
-confirmation; no token was created or installed. The seven semantic/model/spend/report variables
-remain absent. Next steps are token installation, real synthesis/audit qualification, route
+`ELIOTR_MODEL_GATEWAY_TOKEN`. The owner confirmed creation of the dedicated AI Gateway Run token;
+the Worker secret was installed and its presence read back on 2026-09-13. The first HTTP attempt
+failed before Gateway execution: workerd rejects the runtime's `redirect: "error"` option.
+The transport now uses manual redirects and rejects 3xx responses before consuming the body.
+The seven semantic/model/spend/report variables remain absent. Next steps are real synthesis/audit qualification, route
 activation and runtime configuration, then a document question with saved output readback.
 See [the runtime configuration procedure](research-runtime-configuration.md). Prepared routes,
 provider HTTP success and compilation do not qualify the application model path.

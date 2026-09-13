@@ -259,7 +259,7 @@ async function readResponseWithDeadline(
     response.url === "https://workers-binding.ai/ai-gateway/universal/run/eliotr-reasoning" ||
     response.url === "https://workers-binding.ai/ai-gateway/run?version=3"
   );
-  if (response.redirected || (response.url !== "" && response.url !== endpoint && !boundResponse)) {
+  if ((response.status >= 300 && response.status < 400) || response.redirected || (response.url !== "" && response.url !== endpoint && !boundResponse)) {
     const error = abortError("model gateway response was redirected");
     lifecycle.abort(error);
     cancelResponseBody(response, error);
@@ -314,7 +314,7 @@ export function createResearchModelGatewayRuntime(
         assertLifecycleActive(lifecycle);
         return fetchImpl(url, {
           ...init,
-          redirect: "error",
+          redirect: binding === undefined ? "manual" : "error",
           signal: lifecycle.signal,
         });
       });
