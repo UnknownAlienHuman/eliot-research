@@ -117,6 +117,49 @@ pricing references, quotes, approved spending, owner identity and policy expiry
 remain explicit operator decisions. Existing workspace and namespace settings
 are preserved. Compilation does not deploy the Worker or invoke a model.
 
+Before installation, plan each explicit model stage from the pinned production
+assets:
+
+    node scripts/plan-research-model-route.mjs INPUT.json [--output PATH]
+
+The input has exactly six fields: `route_ref`, `route_version`,
+`pricing_snapshot_ref`, `stage` (`SYNTHESIZE` or `AUDIT_CLAIMS`), `max_tokens`,
+and `route_definition` (the non-empty Cloudflare element array, without an
+`elements` wrapper). The local-only plan records the exact compiled provider
+route name, prompt/schema generations, parameter digest, and route-definition
+hash. It does not install pricing, approve spending, assert `LIVE` qualification,
+provision a route, or call a model. For the ordinary owner document preset,
+`createResearchOwnerDocumentPreset` supplies the pinned prompts and schemas and
+the neutral Russian report presentation (`Ответ по документам`) with an
+observation-only `UNRESOLVED` default until audit; authority inputs remain
+explicit.
+
+The configuration CLI also accepts `protocol:
+"eliotr.research-owner-document-setup.v1"` with exactly `document_preset`,
+`model_profile`, `spend_policy`, and `report_admission_policy` alongside that
+protocol. `document_preset` is the input to `createResearchOwnerDocumentPreset`.
+The CLI generates the ordinary Russian document report policy and semantic
+configuration, then validates them through the same full runtime compiler.
+
+If the exact route was already deployed from the Cloudflare dashboard, bind it
+to the generated plan before preparation:
+
+    node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID
+
+Adoption reads the actual route, element array and active deployment from the
+Cloudflare management API, persists their immutable D1 binding, then repeats
+the provider readback. It neither changes the provider route nor supplies LIVE
+qualification. Dashboard login alone does not give Wrangler OAuth the API
+permissions needed by this command.
+
+`qualifyDynamicRouteGeneration` obtains LIVE evidence only from an observed
+model response and exact provider readback. Migration `0054` and
+`createD1ResearchModelQualificationObservationStore` commit a claim before that
+call. A repeated request reads a completed receipt; an unfinished or uncertain
+claim never automatically invokes the provider again. Bootstrap output is
+bounded and stored immutably in the private work bucket, separately from
+workflow attempts and user reports.
+
 The setup input has this complete minimum shape. It is notation rather than a
 runnable file: every placeholder must be replaced by the corresponding
 operator-installed value, and the policy/quote objects must satisfy their

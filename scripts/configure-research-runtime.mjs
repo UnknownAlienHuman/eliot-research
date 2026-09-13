@@ -24,8 +24,20 @@ async function main() {
       (args.length === 3 && args[1] !== "--output")) throw new Error(usage);
   const inputPath = resolve(root, args[0]);
   const outputPath = resolve(root, args[2] ?? ".eliotr-state/research-runtime.json");
-  if (inputPath === outputPath) throw new Error("Input and installed configuration must be separate files");
-  const input = await jsonFile(inputPath);
+  if (inputPath.toLowerCase() === outputPath.toLowerCase()) throw new Error("Input and installed configuration must be separate files");
+  let input = await jsonFile(inputPath);
+  if (input?.protocol === "eliotr.research-owner-document-setup.v1") {
+    if (Object.keys(input).sort().join(",") !== "document_preset,model_profile,protocol,report_admission_policy,spend_policy") {
+      throw new Error("Document setup contains missing or unknown fields");
+    }
+    const { createResearchOwnerDocumentPreset } = await loadCompiledWorkspaceModule(
+      "apps/eliotr-core/dist/research-owner-document-preset.js",
+    );
+    const preset = createResearchOwnerDocumentPreset(input.document_preset);
+    input = { protocol: "eliotr.research-owner-setup.v1", semantic: preset.semantic,
+      model_profile: input.model_profile, spend_policy: input.spend_policy,
+      report: { admission_policy: input.report_admission_policy, artifact_policy: preset.artifact_policy } };
+  }
   const { createResearchOwnerRuntimeConfiguration } = await loadCompiledWorkspaceModule(
     "apps/eliotr-core/dist/research-owner-runtime-config.js",
   );

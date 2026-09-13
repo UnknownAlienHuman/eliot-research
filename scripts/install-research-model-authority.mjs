@@ -21,9 +21,11 @@ const usage = [
   "Usage:",
   "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE]",
+  "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE]",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
+  "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
   "Cloudflare account and CORE_DB are read from the generated Wrangler config; auth uses Wrangler browser OAuth.",
 ].join("\n");
 
@@ -51,29 +53,35 @@ function parseArguments(argv) {
     return Object.freeze({ help: true });
   }
   const command = argv[0];
-  if (command !== "prepare" && command !== "install") {
-    throw new InstallerCliError("command must be prepare or install; use --help");
+  if (command !== "prepare" && command !== "install" && command !== "adopt") {
+    throw new InstallerCliError("command must be prepare, install or adopt; use --help");
   }
   let inputPath;
+  let providerRouteId;
   let configPath = "apps/eliotr-core/wrangler.deploy.jsonc";
   for (let index = 1; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === "--input" || option === "--config") {
+    if (option === "--input" || option === "--config" || option === "--provider-route-id") {
       const value = argv[index + 1];
       if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
         throw new InstallerCliError(`${option} requires a file path`);
       }
       if (option === "--input") inputPath = value;
-      else configPath = value;
+      else if (option === "--config") configPath = value;
+      else providerRouteId = value;
       index += 1;
       continue;
     }
     throw new InstallerCliError(`unknown option ${option}`);
   }
   if (inputPath === undefined) throw new InstallerCliError("--input is required");
+  if ((command === "adopt") !== (providerRouteId !== undefined)) {
+    throw new InstallerCliError("--provider-route-id is required only for adopt");
+  }
   return Object.freeze({
     help: false,
     command,
+    providerRouteId,
     inputPath: resolve(repositoryRoot, inputPath),
     configPath: resolve(repositoryRoot, configPath),
   });
@@ -224,6 +232,13 @@ async function execute(options) {
     database,
     control_plane: controlPlane,
   });
+  if (options.command === "adopt") {
+    if (input.protocol !== "eliotr.research-model-route-plan.v1") throw new InstallerCliError("adopt requires a generated route plan");
+    const desired = await cloudflareAi.compileDynamicRouteDesired(input.provisioning);
+    const result = await controlPlane.adopt(options.providerRouteId, desired.create_request);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
   const result = options.command === "prepare"
     ? await service.prepare(input)
     : await service.install(input);

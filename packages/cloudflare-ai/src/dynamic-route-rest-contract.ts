@@ -116,6 +116,8 @@ export interface DynamicRouteRestControlPlaneDependencies {
 export interface DynamicRouteRestControlPlane
   extends DynamicRouteControlPlanePort {
   readonly gateway_id: "eliotr-reasoning";
+  /** Bind an already deployed dashboard route after exact provider readback. */
+  adopt(providerRouteId: string, request: DynamicRouteCreateRequest): Promise<unknown>;
 }
 
 export interface DecodedDynamicRouteVersion {

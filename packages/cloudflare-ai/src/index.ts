@@ -67,6 +67,7 @@ export * from "./dynamic-route-provisioning-contract.js";
 export * from "./dynamic-route-provisioning-codec.js";
 export * from "./dynamic-route-promotion-codec.js";
 export * from "./dynamic-route-provisioning.js";
+export * from "./dynamic-route-qualification.js";
 export * from "./dynamic-route-rest-contract.js";
 export {
   decodeDynamicRouteBindingWriteReceipt,

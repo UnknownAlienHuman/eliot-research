@@ -3,6 +3,7 @@ import type {
   DynamicRouteCreateRequest,
 } from "./dynamic-route-provisioning-contract.js";
 import { DYNAMIC_ROUTE_GATEWAY_ID } from "./dynamic-route-provisioning-contract.js";
+import { compileDynamicRouteDesired } from "./dynamic-route-provisioning-codec.js";
 import {
   canonicalModelGatewayJson,
   modelGatewaySha256,
@@ -212,7 +213,50 @@ export function createCloudflareDynamicRouteRestControlPlane(
     },
   });
 
-  return Object.freeze({ ...controlPlane, gateway_id: gatewayId });
+  return Object.freeze({
+    ...controlPlane,
+    gateway_id: gatewayId,
+    async adopt(providerRouteId: string, rawRequest: DynamicRouteCreateRequest) {
+      const routeId = requireProviderIdentifier(providerRouteId, "route ID");
+      const request = decodeDynamicRouteCreateRequest(rawRequest);
+      const definitionSha256 = await modelGatewaySha256(canonicalModelGatewayJson(request.route_definition));
+      if (definitionSha256 !== request.metadata.route_definition_sha256) {
+        dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_INPUT_INVALID", "Route adoption definition digest differs from requested metadata");
+      }
+      const desired = await compileDynamicRouteDesired({
+        deployment: {
+          route_ref: request.metadata.route_ref,
+          route_version: request.metadata.route_version,
+          prompt_generation: request.metadata.prompt_generation,
+          schema_generation: request.metadata.schema_generation,
+          parameters_digest: request.metadata.parameters_digest,
+          pricing_snapshot_ref: request.metadata.pricing_snapshot_ref,
+        },
+        route_definition: request.route_definition,
+        route_definition_sha256: definitionSha256,
+      });
+      if (request.name !== desired.provider_route_name) {
+        dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_INPUT_INVALID", "Route adoption name does not bind the requested deployment identity");
+      }
+      const route = await getRoute(client, baseUrl, routeId);
+      if (route.id !== routeId || route.name !== request.name || route.deployment === null ||
+          route.version.route_id !== routeId || route.deployment.version_id !== route.version.id ||
+          await modelGatewaySha256(canonicalModelGatewayJson(route.version.elements)) !== definitionSha256) {
+        dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_READBACK_MISMATCH", "Existing route is not the exact requested deployed definition");
+      }
+      const deployment = await getDeployment(client, baseUrl, routeId, route.deployment.id);
+      const binding = createBinding(accountId, route, deployment, request, definitionSha256);
+      await verifyRouteReadback(route, deployment, binding);
+      const bindingSha256 = await dynamicRouteRestBindingSha256(binding);
+      await putBinding(dependencies, binding, bindingSha256);
+      const readback = await loadBinding(dependencies, routeId, accountId, "BINDING_WRITE");
+      if (await dynamicRouteRestBindingSha256(readback) !== bindingSha256) {
+        dynamicRouteRestFailure("DYNAMIC_ROUTE_REST_BINDING_CONFLICT", "Existing route binding readback differs", { ambiguous_effect: "BINDING_WRITE" });
+      }
+      // get re-reads both provider route and deployment after the D1 write.
+      return controlPlane.get(gatewayId, routeId);
+    },
+  });
 }
 
 function createRestClient(
