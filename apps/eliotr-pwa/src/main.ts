@@ -1,5 +1,5 @@
 import "./styles.css";
-import { getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
+import { ApiRequestError, getSystemHealth, type GoogleExternalTransport, type SystemHealth } from "./api.js";
 import { mountBundleImportPanel } from "./bundle-import-panel.js";
 import { mountGoogleOAuthPanel } from "./google-oauth-panel.js";
 import { mountLibraryPanel } from "./library-panel.js";
@@ -22,6 +22,18 @@ const app: HTMLDivElement = root;
 let googleOAuthCleanup: (() => void) | undefined;
 let mountedGoogleTransport: GoogleExternalTransport | "unknown" | null = null;
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
+type HealthFailureKind = "network" | "access" | "server";
+interface HealthFailure { readonly kind: HealthFailureKind; readonly code: string; readonly status: number; }
+
+function classifyHealthFailure(error: unknown): HealthFailure {
+  if (!(error instanceof ApiRequestError)) return { kind: "network", code: "API_UNREACHABLE", status: 0 };
+  const code = /^[A-Z0-9_:-]{1,128}$/u.test(error.code) ? error.code : "API_REQUEST_FAILED";
+  const status = Number.isSafeInteger(error.status) && error.status >= 100 && error.status <= 599 ? error.status : 0;
+  const kind: HealthFailureKind = code === "API_UNREACHABLE" || code === "API_REQUEST_ABORTED"
+    ? "network"
+    : code.startsWith("ACCESS_") || status === 401 || status === 403 ? "access" : "server";
+  return { kind, code, status };
+}
 
 function healthBadge(health: SystemHealth | null): string {
   if (health === null) return '<span class="status status--pending">checking</span>';
@@ -56,8 +68,11 @@ function googleConnectorLabel(transport: GoogleExternalTransport | undefined): s
   }
 }
 
-function healthSummary(health: SystemHealth | null): string {
+function healthSummary(health: SystemHealth | null, failure?: HealthFailure): string {
   if (health === null) return "Checking current deployment…";
+  if (failure?.kind === "access") return "Sign-in verification unavailable. Retry the server check or sign in again.";
+  if (failure?.kind === "network") return "Server unavailable. Retry server check.";
+  if (failure !== undefined) return "Server check failed. Retry server check.";
   if (health.ready) return "Server ready. Workspace access is shown in Connections.";
   if (health.blocking_reason_codes.includes("HEALTH_ENDPOINT_UNREACHABLE")) return "Server unavailable. Retry server check.";
   return "Server responded. Workspace needs attention.";
@@ -78,12 +93,13 @@ function googleConnectionStateLabel(transport: GoogleExternalTransport | undefin
     default: return "Unknown";
   }
 }
-function healthDetails(health: SystemHealth | null): string {
+function healthDetails(health: SystemHealth | null, failure?: HealthFailure): string {
   if (health === null) return "Health check pending.";
   const reasons = health.blocking_reason_codes.length === 0
     ? "None"
     : health.blocking_reason_codes.map((code) => escapeHtml(code)).join(", ");
-  return `<span>Generation: ${displayText(health.deployment_generation, "Unknown")}</span><span>Codes: ${reasons}</span><span>Checked: ${displayText(health.checked_at, "Unknown")}</span>`;
+  const requestFailure = failure === undefined ? "" : `<span>Request: ${escapeHtml(failure.code)} (${failure.status === 0 ? "no response" : String(failure.status)})</span>`;
+  return `<span>Generation: ${displayText(health.deployment_generation, "Unknown")}</span><span>Codes: ${reasons}</span><span>Checked: ${displayText(health.checked_at, "Unknown")}</span>${requestFailure}`;
 }
 
 function renderGoogleConnector(health: SystemHealth | null): void {
@@ -332,7 +348,7 @@ function render(health: SystemHealth | null): void {
     void getSystemHealth().then((next) => {
       if (previousGeneration && previousGeneration !== "generation pending" && previousGeneration !== next.deployment_generation) clearPrivateEvidence();
       updateHealth(next);
-    }).catch(() => { clearPrivateEvidence(); updateHealth(unavailableHealth());
+    }).catch((error) => { clearPrivateEvidence(); updateHealth(unavailableHealth(), classifyHealthFailure(error));
     }).finally(() => { refreshButtons.forEach((button) => { button.disabled = false; }); });
   };
   app.querySelector<HTMLButtonElement>("[data-refresh]")?.addEventListener("click", refreshHealth);
@@ -387,7 +403,7 @@ function render(health: SystemHealth | null): void {
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
-function updateHealth(health: SystemHealth): void {
+function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
   const previousGeneration = app.dataset.healthGeneration;
   const previousReady = app.dataset.healthReady === "true";
   const healthObserved = app.dataset.healthObserved === "true";
@@ -408,9 +424,9 @@ function updateHealth(health: SystemHealth): void {
   const badge = app.querySelector("#health-badge");
   if (badge) badge.innerHTML = healthBadge(health);
   const summary = app.querySelector("#health-summary");
-  if (summary) summary.textContent = healthSummary(health);
+  if (summary) summary.textContent = healthSummary(health, failure);
   const details = app.querySelector("#health-details");
-  if (details) details.innerHTML = healthDetails(health);
+  if (details) details.innerHTML = healthDetails(health, failure);
   const refresh = app.querySelector<HTMLButtonElement>("[data-refresh]");
   if (refresh) refresh.textContent = health.ready ? "Refresh" : "Retry server check";
   const dot = app.querySelector(".health-dot");
@@ -441,7 +457,7 @@ function updateHealth(health: SystemHealth): void {
     const node = app.querySelector(selector); if (node) node.textContent = text;
   }
   const connectionHealthDetails = app.querySelector("#connection-health-details");
-  if (connectionHealthDetails) connectionHealthDetails.innerHTML = healthDetails(health);
+  if (connectionHealthDetails) connectionHealthDetails.innerHTML = healthDetails(health, failure);
   const connectionTransportState = app.querySelector<HTMLElement>("#connection-transport-state");
   if (connectionTransportState) {
     const transportState = health.google_external_transport === undefined
@@ -457,9 +473,7 @@ function updateHealth(health: SystemHealth): void {
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
 render(null);
-void getSystemHealth().then(updateHealth).catch(() => updateHealth({
-  ...unavailableHealth(),
-}));
+void getSystemHealth().then(updateHealth).catch((error) => updateHealth(unavailableHealth(), classifyHealthFailure(error)));
 
 if ("serviceWorker" in navigator) {
   void navigator.serviceWorker.register("/sw.js");

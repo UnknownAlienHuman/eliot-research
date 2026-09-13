@@ -87,6 +87,29 @@ const DEFAULTS = {
 function fail(code: AccessVerificationErrorCode, message: string, retryable = false, cause?: unknown): never {
   throw new AccessVerificationError(code, message, retryable, cause);
 }
+const MAX_JWKS_DIAGNOSTIC_TEXT = 160;
+function boundedJwksDiagnosticText(value: unknown, fallback: string): string {
+  if (typeof value !== "string" || value.length === 0) return fallback;
+  const safe = value
+    .replace(/https?:\/\/[^\s]+/gi, "[url]")
+    .replace(/(?:authorization|cookie|bearer|token|secret|password|nonce|api[-_]?key)\s*[:=]\s*[^\s,;]+/gi, "[redacted]")
+    .replace(/[^\x20-\x7e]/g, "?");
+  return safe.length > MAX_JWKS_DIAGNOSTIC_TEXT
+    ? `${safe.slice(0, MAX_JWKS_DIAGNOSTIC_TEXT - 3)}...`
+    : safe;
+}
+function warnJwksFailure(phase: "network" | "redirect" | "status", error?: unknown, status?: number): void {
+  const errorName = error instanceof Error ? boundedJwksDiagnosticText(error.name, "UnknownError") :
+    phase === "redirect" ? "ResponseRedirect" : phase === "status" ? "ResponseStatus" : "UnknownError";
+  const errorMessage = error instanceof Error ? boundedJwksDiagnosticText(error.message, "unknown") : "unknown";
+  console.warn("eliotr_access_jwks_fetch_failure", {
+    event: "eliotr_access_jwks_fetch_failure",
+    phase,
+    error_name: errorName,
+    error_message: errorMessage,
+    ...(status === undefined ? {} : { status }),
+  });
+}
 function ownedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
@@ -285,9 +308,19 @@ export function createCloudflareAccessVerifier(
   const load = async (): Promise<KeyCache> => {
     let response: Response;
     try {
-      response = await fetchFn(certsUrl, { method: "GET", headers: { accept: "application/json" }, redirect: "error" });
-    } catch (error) { fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS request failed", true, error); }
-    if (!response.ok) fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS returned non-success status", true);
+      response = await fetchFn(certsUrl, { method: "GET", headers: { accept: "application/json" }, redirect: "manual" });
+    } catch (error) {
+      warnJwksFailure("network", error);
+      fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS request failed", true, error);
+    }
+    if (response.status >= 300 && response.status < 400) {
+      warnJwksFailure("redirect", undefined, response.status);
+      fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS redirect rejected", true);
+    }
+    if (!response.ok) {
+      warnJwksFailure("status", undefined, response.status);
+      fail("ACCESS_JWKS_UNAVAILABLE", "Access JWKS returned non-success status", true);
+    }
     const media = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
     if (media !== undefined && media !== "application/json") {
       fail("ACCESS_JWKS_INVALID", "Access JWKS returned non-JSON content", true);
