@@ -119,9 +119,11 @@ export function mountLibraryPanel(element: HTMLElement, onSelectSource: (id: str
   const admissionCompleted = () => { void load(); };
   window.addEventListener("offline", offline); window.addEventListener("eliotr:authorization-cleared", denied);
   window.addEventListener("eliotr:raw-admission-completed", admissionCompleted);
+  window.addEventListener("eliotr:source-erased", admissionCompleted);
   void load();
   const cleanup = () => { disposed = true; clear("Library session closed."); first.onclick = null; next.onclick = null;
     window.removeEventListener("offline", offline); window.removeEventListener("eliotr:authorization-cleared", denied);
-    window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted); };
+    window.removeEventListener("eliotr:raw-admission-completed", admissionCompleted);
+    window.removeEventListener("eliotr:source-erased", admissionCompleted); };
   return Object.assign(cleanup, { clearPrivate: () => { clear("Library data cleared. Refresh to read permitted sources."); onSelectSource(""); } });
 }

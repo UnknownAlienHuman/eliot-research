@@ -17,6 +17,10 @@ import type {
 } from "@eliotr/cloudflare-workspace-mcp";
 import type { RawCaptureReceipt } from "@eliotr/cloudflare-raw-ingest";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
+import {
+  WorkspaceOwnerAuthorizationError,
+  type WorkspaceOwnerAuthorization,
+} from "./workspace-owner-authorization.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -59,6 +63,8 @@ export interface WorkspaceCandidateAdmissionDependencies {
   readonly expectedDeploymentGeneration: string;
   /** The server-selected MCP profile; it is never inferred from the ledger row. */
   readonly expectedAuthProfile: "service-token" | "managed-oauth";
+  /** Optional operator-installed grant for importing a different MCP principal's observation. */
+  readonly ownerAuthorization?: WorkspaceOwnerAuthorization;
   readonly now?: () => number;
 }
 
@@ -70,6 +76,7 @@ interface BindingRow {
   readonly google_transport: unknown;
   readonly idempotency_key: unknown;
   readonly plan_idempotency_key: unknown;
+  readonly observation_principal_ref: unknown;
   readonly plan_id: unknown;
   readonly plan_sha256: unknown;
   readonly observation_id: unknown;
@@ -89,6 +96,7 @@ interface BindingIdentity {
   readonly google_transport: typeof GOOGLE_TRANSPORT;
   readonly idempotency_key: string;
   readonly plan_idempotency_key: string;
+  readonly observation_principal_ref: string;
   readonly plan_id: string;
   readonly plan_sha256: string;
   readonly observation_id: string;
@@ -147,6 +155,16 @@ function clock(now: () => number): number {
   return value;
 }
 
+function ownerAuthorizationError(cause: unknown): never {
+  if (cause instanceof WorkspaceOwnerAuthorizationError) {
+    throw new WorkspaceCandidateAdmissionError(cause.code, cause.status, cause.message, cause.retryable, cause);
+  }
+  throw new WorkspaceCandidateAdmissionError(
+    "WORKSPACE_ADMISSION_OWNER_AUTHORIZATION_UNAVAILABLE", 503,
+    "workspace owner authorization is unavailable", true, cause,
+  );
+}
+
 function freezeRequest(request: WorkspaceCandidateAdmissionRequest): WorkspaceCandidateAdmissionRequest {
   const observation: WorkspaceMcpObservationLookup = Object.freeze({
     principal_ref: requiredIdentifier(request.observation.principal_ref, "observation.principal_ref"),
@@ -187,6 +205,7 @@ function bindingFromRow(row: BindingRow): Binding {
       : invalid("WORKSPACE_ADMISSION_STATE_INVALID", "workspace admission transport is invalid", true),
     idempotency_key: requiredIdentifier(row.idempotency_key, "idempotency_key"),
     plan_idempotency_key: requiredIdentifier(row.plan_idempotency_key, "plan_idempotency_key"),
+    observation_principal_ref: requiredIdentifier(row.observation_principal_ref, "observation_principal_ref"),
     plan_id: requiredIdentifier(row.plan_id, "plan_id"),
     plan_sha256: requiredSha(row.plan_sha256, "plan_sha256"),
     observation_id: requiredIdentifier(row.observation_id, "observation_id"),
@@ -206,6 +225,7 @@ function sameBinding(left: BindingIdentity, right: BindingIdentity): boolean {
     left.google_transport === right.google_transport &&
     left.idempotency_key === right.idempotency_key &&
     left.plan_idempotency_key === right.plan_idempotency_key &&
+    left.observation_principal_ref === right.observation_principal_ref &&
     left.plan_id === right.plan_id &&
     left.plan_sha256 === right.plan_sha256 &&
     left.observation_id === right.observation_id &&
@@ -217,7 +237,7 @@ function sameBinding(left: BindingIdentity, right: BindingIdentity): boolean {
 
 function observationLookup(binding: BindingIdentity): WorkspaceMcpObservationLookup {
   return Object.freeze({
-    principal_ref: binding.principal_ref,
+    principal_ref: binding.observation_principal_ref,
     deployment_generation: binding.deployment_generation,
     auth_profile: binding.auth_profile,
     google_transport: binding.google_transport,
@@ -310,7 +330,7 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     let row: BindingRow | null | undefined;
     try {
       row = await input.database.prepare(
-        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE binding_id=?1 LIMIT 1",
+        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,observation_principal_ref,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE binding_id=?1 LIMIT 1",
       ).bind(bindingId).first<BindingRow>();
     } catch (cause) {
       invalid("WORKSPACE_ADMISSION_BINDING_UNAVAILABLE", "workspace admission binding read is unavailable", true, cause);
@@ -322,7 +342,7 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     let row: BindingRow | null | undefined;
     try {
       row = await input.database.prepare(
-        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE principal_ref=?1 AND idempotency_key=?2 LIMIT 1",
+        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,observation_principal_ref,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE principal_ref=?1 AND idempotency_key=?2 LIMIT 1",
       ).bind(principalRef, idempotencyKey).first<BindingRow>();
     } catch (cause) {
       invalid("WORKSPACE_ADMISSION_BINDING_UNAVAILABLE", "workspace admission binding read is unavailable", true, cause);
@@ -334,7 +354,7 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     let row: BindingRow | null | undefined;
     try {
       row = await input.database.prepare(
-        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE principal_ref=?1 AND admission_operation_id=?2 LIMIT 1",
+        "SELECT binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,observation_principal_ref,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state FROM workspace_mcp_raw_normalized_admission WHERE principal_ref=?1 AND admission_operation_id=?2 LIMIT 1",
       ).bind(principalRef, operationId).first<BindingRow>();
     } catch (cause) {
       invalid("WORKSPACE_ADMISSION_BINDING_UNAVAILABLE", "workspace admission binding read is unavailable", true, cause);
@@ -346,8 +366,8 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     const createdAt = new Date(clock(now)).toISOString();
     try {
       await input.database.prepare(
-        "INSERT INTO workspace_mcp_raw_normalized_admission(binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,NULL,'RESERVED',?15,?15)",
-      ).bind(identity.binding_id, identity.principal_ref, identity.deployment_generation, identity.auth_profile, identity.google_transport, identity.idempotency_key, identity.plan_idempotency_key, identity.plan_id, identity.plan_sha256, identity.observation_id, identity.observation_receipt_sha256, identity.capture_id, identity.capture_content_sha256, identity.conversion_operation_id, createdAt).run();
+        "INSERT INTO workspace_mcp_raw_normalized_admission(binding_id,principal_ref,deployment_generation,auth_profile,google_transport,idempotency_key,plan_idempotency_key,observation_principal_ref,plan_id,plan_sha256,observation_id,observation_receipt_sha256,capture_id,capture_content_sha256,conversion_operation_id,admission_operation_id,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,NULL,'RESERVED',?16,?16)",
+      ).bind(identity.binding_id, identity.principal_ref, identity.deployment_generation, identity.auth_profile, identity.google_transport, identity.idempotency_key, identity.plan_idempotency_key, identity.observation_principal_ref, identity.plan_id, identity.plan_sha256, identity.observation_id, identity.observation_receipt_sha256, identity.capture_id, identity.capture_content_sha256, identity.conversion_operation_id, createdAt).run();
     } catch (cause) {
       const existing = await loadBindingByIdentity(identity.principal_ref, identity.idempotency_key);
       if (existing === null) invalid("WORKSPACE_ADMISSION_BINDING_UNKNOWN", "workspace admission binding outcome is uncertain", true, cause);
@@ -393,7 +413,38 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     return validateReadback(result, lookup, expectedDeploymentGeneration, expectedAuthProfile, currentNow, requireCurrent);
   }
 
-  async function captureForOwner(context: AuthenticatedRequestContext, captureId: string, expectedContentSha: string): Promise<RawCaptureReceipt> {
+  function assertCrossPrincipalAuthorization(
+    context: AuthenticatedRequestContext,
+    observation: WorkspaceMcpObservationLookup,
+    sourceNamespaceId: string,
+    currentNow: number,
+  ): void {
+    if (observation.principal_ref === context.principal_ref) return;
+    if (observation.deployment_generation !== expectedDeploymentGeneration || observation.auth_profile !== expectedAuthProfile) {
+      throw new WorkspaceCandidateAdmissionError(
+        "WORKSPACE_ADMISSION_AUTHORITY_STALE", 409,
+        "workspace observation authority is no longer current",
+      );
+    }
+    const authorization = input.ownerAuthorization;
+    if (authorization === undefined) {
+      invalid("WORKSPACE_ADMISSION_OWNER_AUTHORIZATION_UNAVAILABLE", "workspace owner authorization is not installed", true);
+    }
+    try {
+      authorization.assertCurrent({
+        owner_principal_ref: context.principal_ref,
+        owner_credential_generation: context.credential_generation,
+        mcp_principal_ref: observation.principal_ref,
+        deployment_generation: observation.deployment_generation,
+        auth_profile: observation.auth_profile,
+        source_namespace_id: sourceNamespaceId,
+      }, currentNow);
+    } catch (cause) {
+      ownerAuthorizationError(cause);
+    }
+  }
+
+  async function captureForOwner(context: AuthenticatedRequestContext, captureId: string, expectedContentSha?: string, expectedSourceNamespace?: string): Promise<RawCaptureReceipt> {
     let capture: RawCaptureReceipt | null;
     try {
       capture = await input.readCapture(context, captureId);
@@ -401,7 +452,9 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
       invalid("WORKSPACE_ADMISSION_CAPTURE_UNAVAILABLE", "owner raw capture read is unavailable", true, cause);
     }
     if (capture === null) throw new WorkspaceCandidateAdmissionError("WORKSPACE_ADMISSION_CAPTURE_NOT_FOUND", 404, "owner raw capture is not available");
-    if (capture.principal_ref !== context.principal_ref || capture.capture_id !== captureId || capture.content_sha256 !== expectedContentSha) {
+    if (capture.principal_ref !== context.principal_ref || capture.capture_id !== captureId ||
+        (expectedContentSha !== undefined && capture.content_sha256 !== expectedContentSha) ||
+        (expectedSourceNamespace !== undefined && capture.source_namespace_id !== expectedSourceNamespace)) {
       invalid("WORKSPACE_ADMISSION_CAPTURE_MISMATCH", "owner raw capture does not match the workspace observation", false);
     }
     return capture;
@@ -420,25 +473,35 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
     if (binding.state !== "BOUND" || binding.admission_operation_id === null) {
       invalid("WORKSPACE_ADMISSION_BINDING_UNKNOWN", "workspace admission operation is not bound", true);
     }
-    const observation = await readObservation(observationLookup(binding), clock(now), false);
+    const lookup = observationLookup(binding);
+    const crossPrincipal = lookup.principal_ref !== context.principal_ref;
+    let expectedSourceNamespace: string | undefined;
+    if (crossPrincipal) {
+      const firstCapture = await captureForOwner(context, binding.capture_id, binding.capture_content_sha256);
+      expectedSourceNamespace = firstCapture.source_namespace_id;
+      assertCrossPrincipalAuthorization(context, lookup, expectedSourceNamespace, clock(now));
+    }
+    const observation = await readObservation(lookup, clock(now), false);
+    const finalCapture = await captureForOwner(context, binding.capture_id, binding.capture_content_sha256, expectedSourceNamespace);
+    assertCrossPrincipalAuthorization(context, lookup, finalCapture.source_namespace_id, clock(now));
     if (observation.receiptSha !== binding.observation_receipt_sha256 ||
         observation.planId !== binding.plan_id || observation.observationId !== binding.observation_id ||
         observation.contentSha !== binding.capture_content_sha256) {
       invalid("WORKSPACE_ADMISSION_BINDING_CONFLICT", "workspace admission binding no longer matches its observation", false);
     }
-    await captureForOwner(context, binding.capture_id, binding.capture_content_sha256);
     return resultFor(binding, context);
   }
 
   async function admit(context: AuthenticatedRequestContext, request: WorkspaceCandidateAdmissionRequest): Promise<WorkspaceCandidateAdmissionResult> {
     if (context.client_class !== "owner_pwa") throw new WorkspaceCandidateAdmissionError("WORKSPACE_ADMISSION_OWNER_REQUIRED", 403, "workspace candidate admission requires an owner session");
     const frozen = freezeRequest(request);
-    if (frozen.observation.principal_ref !== context.principal_ref) throw new WorkspaceCandidateAdmissionError("WORKSPACE_ADMISSION_OWNER_MISMATCH", 403, "workspace observation is not owned by this session");
+    const crossPrincipal = frozen.observation.principal_ref !== context.principal_ref;
     const bindingId = await canonicalDigest([PROTOCOL, context.principal_ref, frozen.idempotency_key]);
     const existing = await loadBinding(bindingId);
     if (existing !== null && existing.state === "BOUND") {
       if (existing.principal_ref !== context.principal_ref || existing.deployment_generation !== expectedDeploymentGeneration ||
           existing.auth_profile !== expectedAuthProfile || existing.idempotency_key !== frozen.idempotency_key ||
+          existing.observation_principal_ref !== frozen.observation.principal_ref ||
           existing.plan_idempotency_key !== frozen.observation.idempotency_key || existing.plan_id !== frozen.observation.plan_id ||
           existing.plan_sha256 !== frozen.observation.plan_sha256 || existing.observation_id !== frozen.observation.observation_id ||
           existing.capture_id !== frozen.capture_id || existing.conversion_operation_id !== frozen.conversion_operation_id) {
@@ -446,9 +509,15 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
       }
       return resultForBound(existing, context);
     }
+    let preflightCapture: RawCaptureReceipt | undefined;
+    if (crossPrincipal) {
+      preflightCapture = await captureForOwner(context, frozen.capture_id);
+      assertCrossPrincipalAuthorization(context, frozen.observation, preflightCapture.source_namespace_id, clock(now));
+    }
     const currentNow = clock(now);
     const observation = await readObservation(frozen.observation, currentNow);
-    const capture = await captureForOwner(context, frozen.capture_id, observation.contentSha);
+    const capture = await captureForOwner(context, frozen.capture_id, observation.contentSha, preflightCapture?.source_namespace_id);
+    assertCrossPrincipalAuthorization(context, frozen.observation, capture.source_namespace_id, clock(now));
     const identity: BindingIdentity = {
       binding_id: bindingId,
       principal_ref: context.principal_ref,
@@ -457,6 +526,7 @@ export function createWorkspaceCandidateAdmissionService(input: WorkspaceCandida
       google_transport: GOOGLE_TRANSPORT,
       idempotency_key: frozen.idempotency_key,
       plan_idempotency_key: frozen.observation.idempotency_key,
+      observation_principal_ref: frozen.observation.principal_ref,
       plan_id: observation.planId,
       plan_sha256: frozen.observation.plan_sha256,
       observation_id: observation.observationId,

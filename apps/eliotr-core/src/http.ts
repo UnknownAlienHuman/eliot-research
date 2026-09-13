@@ -48,7 +48,7 @@ import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
 import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
-import { readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
+import { readOwnerErasurePreparation, readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
 export { HttpRequestError } from "./http-errors.js";
@@ -324,6 +324,11 @@ async function dispatch(
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
+    }
+    case "library.erasure.prepare": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.prepareErasure(context,
+        await readOwnerErasurePreparation(request, match.route.maximum_request_bytes)));
     }
     case "library.erasure.execute": {
       requireNoQuery(url);

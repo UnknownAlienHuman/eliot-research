@@ -25,6 +25,7 @@ import {
 import { EvidenceHttpInputError } from "./evidence-http.js";
 import { IngestHttpInputError } from "./ingest-http.js";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
+import { WorkspaceOwnerAuthorizationError } from "./workspace-owner-authorization.js";
 import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";
 import { IngestServiceError } from "./ingest-service.js";
 import {
@@ -143,7 +144,7 @@ export function mapError(request: Request, error: unknown, problemResponse: Prob
       : status === 503 ? "Artifact storage is temporarily unavailable"
       : "Artifact revision integrity could not be verified", retryable);
   }
-  if (error instanceof RawNormalizedAdmissionError) {
+  if (error instanceof RawNormalizedAdmissionError || error instanceof WorkspaceOwnerAuthorizationError) {
     return problemResponse(request, error.status, error.code, error.message, error.retryable);
   }
   if (error instanceof IngestServiceError) {

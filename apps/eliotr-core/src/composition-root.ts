@@ -49,8 +49,10 @@ import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCi
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
 import { createErasureOwnerService } from "./erasure-owner-service.js";
 import { readErasureOwnerStatus } from "./erasure-owner-status.js";
+import { prepareErasureForOwner } from "./erasure-owner-prepare.js";
 import { createWorkspaceCandidateAdmissionService } from "./workspace-candidate-admission.js";
 import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
+import { parseWorkspaceOwnerBindings } from "./workspace-owner-authorization.js";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -220,6 +222,7 @@ function ownerApi(env: Env): OwnerApi {
   });
   const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus" | "admitWorkspaceCandidate" | "workspaceCandidateStatus"> = {
     ...ingest,
+    prepareErasure: (context, input) => prepareErasureForOwner(env, context, input),
     erase: (context, input) => createErasureOwnerService({ env, permission_ref: input.permission_ref }).execute(context, input.request),
     erasureStatus: (context, erasureRef) => readErasureOwnerStatus(env, context, erasureRef),
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),
@@ -246,6 +249,7 @@ function ownerApi(env: Env): OwnerApi {
     owner: ownerBase,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
   });
+  const workspaceOwnerAuthorization = parseWorkspaceOwnerBindings(env.ELIOTR_WORKSPACE_OWNER_BINDINGS_JSON);
   const workspaceAdmission = createWorkspaceCandidateAdmissionService({
     database: env.CORE_DB,
     workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
@@ -253,6 +257,7 @@ function ownerApi(env: Env): OwnerApi {
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
     expectedDeploymentGeneration: env.DEPLOYMENT_GENERATION,
     expectedAuthProfile: env.MCP_ACCESS_AUTH_PROFILE ?? "service-token",
+    ...(workspaceOwnerAuthorization === undefined ? {} : { ownerAuthorization: workspaceOwnerAuthorization }),
   });
   return {
     ...ownerBase,

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHROMIUM_UNSAFE_PORTS } from "./local-owner-bridge.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./research-runtime-config.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const CORE = resolve(ROOT, "apps/eliotr-core");
@@ -18,15 +19,7 @@ const ASTRO = resolve(dirname(pwaRequire.resolve("astro/package.json")), "bin/as
 // local Wrangler config. It remains excluded from the child process
 // environment below, preserving local launch isolation and parent dotenv
 // protection.
-const LOCAL_SERVER_CONFIGURATION_KEYS = Object.freeze([
-  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
-  "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
-  "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
-  "ELIOTR_MODEL_SPEND_POLICY_JSON",
-  "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
-  "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
-  "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
-]);
+const LOCAL_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
 
 export function localEnvironment(environment = process.env) {
   const env = Object.fromEntries(Object.entries(environment).filter(([key]) =>
@@ -465,7 +458,7 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   const paths = localPaths(stateDirectory);
   const bytes = await readFile(resolve(CORE, "wrangler.jsonc"), "utf8");
   const config = localConfig(JSON.parse(bytes));
-  forwardExplicitServerConfiguration(config, environment);
+  forwardExplicitServerConfiguration(config, await loadResearchRuntimeEnvironment(environment, ROOT));
   config.vars.DEPLOYMENT_GENERATION = `local-${createHash("sha256").update(paths.directory).digest("hex").slice(0, 16)}`;
   await mkdir(paths.directory, { recursive: true });
   // An empty local-only vars file prevents accidentally loading a parent .env.

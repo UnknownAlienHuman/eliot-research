@@ -10,6 +10,7 @@ import { mountExhaustiveWorkflowPanel } from "./exhaustive-workflow-panel.js";
 import { mountResearchRunPanel } from "./research-run-panel.js";
 import { mountRawFilePanel } from "./raw-file-panel.js";
 import { mountMcpClientDiagnosticPanel } from "./mcp-client-diagnostic-panel.js";
+import { mountErasurePanel } from "./erasure-panel.js";
 import { escapeHtml } from "./html.js";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 
@@ -129,6 +130,7 @@ function render(health: SystemHealth | null): void {
           <div class="tool-stack">
             <section class="tool-card tool-card--import"><div id="raw-upload"></div><div class="tool-divider"></div><div id="bundle-import"></div></section>
             <section class="tool-card" id="corpus-lens-card"><div id="corpus-lens"></div></section>
+            <details class="tool-card"><summary>Delete selected document</summary><div id="erasure"></div></details>
           </div>
         </section>
         <section id="research-view" class="workspace-view" data-workspace-view="research" tabindex="-1" aria-label="Research" hidden>
@@ -198,6 +200,11 @@ function render(health: SystemHealth | null): void {
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
   const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const diagnosticHost = app.querySelector<HTMLElement>("#mcp-client-diagnostic");
+  const erasureHost = app.querySelector<HTMLElement>("#erasure");
+  const erasure = erasureHost ? mountErasurePanel(erasureHost, {
+    deploymentGeneration: () => app.dataset.healthGeneration,
+    healthReady: () => app.dataset.healthReady === "true",
+  }) : undefined;
   const diagnostic = diagnosticHost ? mountMcpClientDiagnosticPanel(diagnosticHost, {
     deploymentGeneration: () => app.dataset.healthGeneration,
     healthReady: () => app.dataset.healthReady === "true",
@@ -300,7 +307,9 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); libraryPanel?.clearPrivate(); };
+  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); };
+  const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); };
+  erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
   const refreshHealth = (): void => {
@@ -346,7 +355,8 @@ function render(health: SystemHealth | null): void {
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
   });
   const libraryPanel = library ? mountLibraryPanel(library, async (id, context) => {
-    if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); return; }
+    if (!id) { retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); return; }
+    erasure?.selectSource(id, context);
     if (!context?.sourceRevisionRef) {
       if (!orientation || !(await orientation.selectSource(id))) return false;
     }
@@ -355,7 +365,7 @@ function render(health: SystemHealth | null): void {
     exhaustive?.selectSource(id);
     return true;
   }) : undefined;
-  const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, importer ? mountBundleImportPanel(importer) : undefined,
+  const cleanups = [orientation, retrieval, researchRun, exhaustive, diagnostic, erasure, () => erasureHost?.removeEventListener("eliotr:source-erased", sourceErased), importer ? mountBundleImportPanel(importer) : undefined,
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true" }) : undefined,
     libraryPanel];
   window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });

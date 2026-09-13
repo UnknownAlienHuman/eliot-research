@@ -10,6 +10,7 @@ import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubT
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 
 import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launch-code.mjs";
+import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./lib/research-runtime-config.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -17,15 +18,7 @@ const deployConfig = "wrangler.deploy.jsonc";
 const receiptPath = resolve(root, ".eliotr-state/cloudflare-deployment-receipt.json");
 const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core", "provision-ai-search",
   "provision-ai-gateways"];
-const SEMANTIC_SERVER_CONFIGURATION_KEYS = Object.freeze([
-  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
-  "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
-  "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
-  "ELIOTR_MODEL_SPEND_POLICY_JSON",
-  "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
-  "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
-  "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
-]);
+const SEMANTIC_SERVER_CONFIGURATION_KEYS = RESEARCH_RUNTIME_CONFIGURATION_KEYS;
 
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
@@ -64,7 +57,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
   usageProviders = null, usageSnapshot = null } = {}) {
-  const env = { ...environment };
+  const env = await loadResearchRuntimeEnvironment(environment, root);
   // FIX9WC Layer 2 (defense in depth, child exec env only): strip ambient
   // module-loader tokens (--import/--loader/--experimental-loader/--require
   // plus values) from NODE_OPTIONS so a poisoned env can never auto-load test

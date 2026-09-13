@@ -16,6 +16,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.latest", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/revisions", operation: "library.source.revisions", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/readiness", operation: "library.active.readiness", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/api/v1/library/erasure/prepare", operation: "library.erasure.prepare", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },
   { method: "POST", path: "/api/v1/library/erasure", operation: "library.erasure.execute", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/erasure/:erasure_id/:revision", operation: "library.erasure.status", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/workspace/admission", operation: "workspace.admission", auth: "owner", maximum_request_bytes: 16384, response_mode: "json" },
