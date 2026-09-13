@@ -326,8 +326,13 @@ function assertCurrentSource(
       expected.source_revision_content_sha256 !== evidence.source_revision_content_sha256 ||
       expected.scope_snapshot_digest !== evidence.scope_snapshot_digest ||
       expected.authorization_receipt_ref !== evidence.authorization_receipt_ref ||
-      expected.credential_generation !== evidence.credential_generation ||
-      expected.verification_receipt_ref !== evidence.verification_receipt_ref) fail("WORKFLOW_AUTHORITY_STALE");
+      expected.credential_generation !== evidence.credential_generation) {
+    // VERIFY and the current AUDIT resolution are distinct observations. The
+    // resolver receipt is time-bound and may therefore have a fresh identity;
+    // the committed source, excerpt, scope, authorization, and credential
+    // bindings above establish the cross-stage authority instead.
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
 }
 
 async function assertExactExcerpt(evidence: ResolvedEvidence): Promise<void> {

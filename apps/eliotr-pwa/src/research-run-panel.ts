@@ -63,6 +63,22 @@ function statusText(view: ResearchRunStatusView): string {
   }
 }
 
+function badgeText(view: ResearchRunStatusView): string {
+  if (view.execution_state === "ACTIVE") {
+    return view.engine_status === "errored" || view.engine_status === "terminated" ? "FAILED" : "RUNNING";
+  }
+  if (view.execution_state === "CANCELLED") return "CANCELLED";
+  return view.answer.availability === "draft" ? "DRAFT" : "COMPLETE";
+}
+
+function idleBadgeText(ready: boolean): string {
+  return ready ? "READY" : "WAITING";
+}
+
+function idleProgressText(ready: boolean): string {
+  return ready ? "Ready to start a research run." : "Waiting for the current owner session.";
+}
+
 function historyStageText(view: ResearchRunStatusView): string {
   if (view.execution_state === "ACTIVE") {
     if (view.engine_status === "errored") return "Engine stopped before completion";
@@ -113,9 +129,10 @@ export function mountResearchRunPanel(
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
 ): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
-  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() && researchConfigurationReady() ? "READY" : "WAITING"}</span></div>
+  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${idleBadgeText(healthReady() && researchConfigurationReady())}</span></div>
+    <p class="workflow-status workflow-progress-summary" data-run-progress aria-live="polite">${idleProgressText(healthReady() && researchConfigurationReady())}</p>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
-    <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
+    <form><label>Question<textarea name="query" rows="5" maxlength="4096" autocomplete="off" required placeholder="Ask a research question" style="width:100%;min-height:120px;padding:10px 11px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;resize:vertical"></textarea></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
     <section class="workflow-recovery" aria-labelledby="research-history-title"><div class="workflow-recovery-head"><div><span class="eyebrow">Saved research</span><h3 id="research-history-title">Recent research</h3></div><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
@@ -125,7 +142,8 @@ export function mountResearchRunPanel(
     <section data-run-result hidden></section>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const badge = element.querySelector<HTMLElement>("[data-run-badge]");
-  const query = element.querySelector<HTMLInputElement>('input[name="query"]');
+  const progress = element.querySelector<HTMLElement>("[data-run-progress]");
+  const query = element.querySelector<HTMLTextAreaElement>('textarea[name="query"]');
   const scope = element.querySelector<HTMLSelectElement>('select[name="scope"]');
   const selectedOption = scope?.querySelector<HTMLOptionElement>('option[value="selected"]');
   const submit = element.querySelector<HTMLButtonElement>('button[type="submit"]');
@@ -137,7 +155,7 @@ export function mountResearchRunPanel(
   const historyRefresh = element.querySelector<HTMLButtonElement>("[data-research-history-refresh]");
   const historyStatus = element.querySelector<HTMLElement>("[data-research-history-status]");
   const historyList = element.querySelector<HTMLElement>("[data-research-history-list]");
-  if (!form || !badge || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
+  if (!form || !badge || !progress || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
 
   let serial = 0;
   let controller: AbortController | undefined;
@@ -149,6 +167,7 @@ export function mountResearchRunPanel(
   let progressTimer: number | undefined;
   let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined;
   let lastEngineStatus: ResearchEngineStatus | undefined;
+  let lastAnswerAvailability: ResearchRunStatusView["answer"]["availability"] | undefined;
   let historyController: AbortController | undefined;
   let historySerial = 0;
   let historyGeneration: string | undefined;
@@ -172,7 +191,12 @@ export function mountResearchRunPanel(
     historyRefresh.disabled = !available || historyController !== undefined;
   };
   const refreshAvailability = (): void => {
-    badge.textContent = healthReady() && researchConfigurationReady() ? "READY" : "WAITING";
+    badge.textContent = lastExecutionState === undefined
+      ? idleBadgeText(healthReady() && researchConfigurationReady())
+      : lastExecutionState === "ACTIVE"
+        ? (lastEngineStatus === "errored" || lastEngineStatus === "terminated" ? "FAILED" : "RUNNING")
+        : lastExecutionState === "CANCELLED" ? "CANCELLED" : lastAnswerAvailability === "draft" ? "DRAFT" : "COMPLETE";
+    if (lastExecutionState === undefined) progress.textContent = idleProgressText(healthReady() && researchConfigurationReady());
     updateButtons();
   };
   const stop = (): void => {
@@ -182,6 +206,7 @@ export function mountResearchRunPanel(
     controller = undefined;
     lastExecutionState = undefined;
     lastEngineStatus = undefined;
+    lastAnswerAvailability = undefined;
     updateButtons();
   };
   const clearHistoryRequest = (): void => {
@@ -199,12 +224,12 @@ export function mountResearchRunPanel(
   const clearPrivate = (notice = "Private research state cleared. Reconnect before starting or loading a run."): void => {
     stop(); clearHistory(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
+    badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = idleProgressText(healthReady() && researchConfigurationReady());
     updateButtons(); status.textContent = notice;
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();
-    badge.textContent = ready && researchConfigurationReady() ? "READY" : "WAITING";
-    if (!ready) clearPrivate(); else { updateButtons(); scheduleStatusRefresh(true); loadHistory("automatic"); }
+    if (!ready) clearPrivate(); else { refreshAvailability(); scheduleStatusRefresh(true); loadHistory("automatic"); }
   };
   const onVisibilityChanged = (): void => {
     if (document.visibilityState === "hidden") {
@@ -284,7 +309,10 @@ export function mountResearchRunPanel(
   const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
     lastExecutionState = view.execution_state;
     lastEngineStatus = view.engine_status;
+    lastAnswerAvailability = view.answer.availability;
     const text = statusText(view);
+    badge.textContent = badgeText(view);
+    progress.textContent = text;
     result.replaceChildren();
     const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
     const identity = document.createElement("p"); identity.append("Run ID ", codeRef(view.workflow_instance_id), " · investigation ", codeRef(view.investigation_ref.id));
@@ -479,8 +507,8 @@ export function mountResearchRunPanel(
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; lastEngineStatus = undefined; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
-      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else status.textContent = message(error); })
+      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; lastEngineStatus = undefined; lastAnswerAvailability = undefined; badge.textContent = "RUNNING"; progress.textContent = "Research started. Checking progress automatically."; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
+      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else { badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Research could not be started."; status.textContent = message(error); } })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
   refresh.onclick = () => readStatus("manual", workflowId);
