@@ -144,7 +144,13 @@ export interface DynamicRouteQualificationDependencies {
   /** This is the existing provider control-plane read capability, not a registry bypass. */
   readonly control_plane: Pick<DynamicRouteControlPlanePort, "get">;
   /** Must be an owner-approved exact deployment resolver; this module never creates an active registry. */
-  readonly execution: ModelGatewayExecutionDependencies;
+  readonly execution?: ModelGatewayExecutionDependencies;
+  /** Trusted execution may run in the Worker while this coordinator retains its one-shot claim. */
+  readonly execute_observed?: (input: {
+    readonly probe: DynamicRouteQualificationProbeInput;
+    readonly probe_input_sha256: string;
+    readonly claim_ref: string;
+  }) => Promise<ModelGatewayExecutionObservation>;
   readonly observation_store: DynamicRouteQualificationObservationStorePort;
   readonly now: () => string;
 }
@@ -293,7 +299,9 @@ function validateDependencies(dependencies: DynamicRouteQualificationDependencie
       typeof dependencies.observation_store?.readByIdempotencyKey !== "function" ||
       typeof dependencies.observation_store?.putImmutable !== "function" ||
       typeof dependencies.observation_store?.read !== "function" ||
-      typeof dependencies.execution !== "object" || dependencies.execution === null ||
+      ((dependencies.execution === undefined) === (dependencies.execute_observed === undefined)) ||
+      (dependencies.execution !== undefined && (typeof dependencies.execution !== "object" || dependencies.execution === null)) ||
+      (dependencies.execute_observed !== undefined && typeof dependencies.execute_observed !== "function") ||
       typeof dependencies.now !== "function") {
     fail("DYNAMIC_ROUTE_QUALIFICATION_INPUT_INVALID", "qualification dependencies are invalid");
   }
@@ -478,6 +486,20 @@ function qualificationFromObservation(
   }
 }
 
+export async function dynamicRouteQualificationProbeInputSha256(raw: DynamicRouteQualificationProbeInput): Promise<string> {
+  const input = parseDynamicRouteQualificationProbeInput(raw);
+  return modelGatewaySha256(canonicalModelGatewayJson({
+    deployment: input.provisioning.deployment,
+    expires_at: input.expires_at,
+    expected_model: input.expected_model,
+    expected_provider: input.expected_provider,
+    model_call: input.model_call,
+    probe_idempotency_key: input.probe_idempotency_key,
+    route_definition_sha256: input.provisioning.route_definition_sha256,
+    verified_at: input.verified_at,
+  }));
+}
+
 export async function qualifyDynamicRouteGeneration(
   dependencies: DynamicRouteQualificationDependencies,
   rawInput: DynamicRouteQualificationProbeInput,
@@ -508,16 +530,7 @@ export async function qualifyDynamicRouteGeneration(
   } catch (cause) {
     fail("DYNAMIC_ROUTE_QUALIFICATION_INPUT_INVALID", "qualification window is not currently valid", false, cause);
   }
-  const probeInputSha256 = await modelGatewaySha256(canonicalModelGatewayJson({
-    deployment: input.provisioning.deployment,
-    expires_at: input.expires_at,
-    expected_model: input.expected_model,
-    expected_provider: input.expected_provider,
-    model_call: input.model_call,
-    probe_idempotency_key: input.probe_idempotency_key,
-    route_definition_sha256: input.provisioning.route_definition_sha256,
-    verified_at: input.verified_at,
-  }));
+  const probeInputSha256 = await dynamicRouteQualificationProbeInputSha256(input);
   const before = await readControlPlane(dependencies, desired, input.provisioning, "before");
 
   const claimRef = crypto.randomUUID();
@@ -559,7 +572,11 @@ export async function qualifyDynamicRouteGeneration(
   }
 
   let observed: ModelGatewayExecutionObservation;
-  try { observed = await executeObservedModelGatewayCall(dependencies.execution, input.model_call); }
+  try {
+    observed = dependencies.execute_observed === undefined
+      ? await executeObservedModelGatewayCall(dependencies.execution!, input.model_call)
+      : await dependencies.execute_observed({ probe: input, probe_input_sha256: probeInputSha256, claim_ref: claimRef });
+  }
   catch (cause) { fail("DYNAMIC_ROUTE_QUALIFICATION_EXECUTION_FAILED", "observed qualification model call failed", false, cause); }
   await assertExecutionObservation(observed, input);
   const observationInput: DynamicRouteQualificationObservationWriteInput = Object.freeze({

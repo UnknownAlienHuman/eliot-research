@@ -14,6 +14,7 @@ import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import { createResearchChangesService } from "./research-changes.js";
 import { readReadiness } from "./readiness.js";
 import { readOwnerResearchRuns } from "./research-run-list.js";
+import { handleResearchModelQualification } from "./research-model-qualification-http.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
@@ -52,6 +53,10 @@ export async function dispatchHttpSpecialRoute(input: {
     requireDriveExchangeTransport(input.env);
   }
   switch (input.match.route.operation) {
+    case "system.research.model-qualification":
+      requireNoQuery(input.url);
+      return handleResearchModelQualification(input.request, input.env, input.context,
+        input.match.route.maximum_request_bytes);
     case "research.runs": {
       requireNoQuery(input.url);
       const readiness = await readReadiness(input.env);

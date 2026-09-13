@@ -12,6 +12,7 @@ import {
   WRANGLER_OAUTH_MODE,
 } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
+import { createResearchQualificationWorkerExecution, researchQualificationWorkerOrigin } from "./lib/research-qualification-worker.mjs";
 import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
 import { GatewayBrowserOAuthError, readGatewayBrowserOAuthBearer } from "./lib/cloudflare-gateway-browser-oauth.mjs";
 import {
@@ -27,12 +28,13 @@ const usage = [
   "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID]",
-  "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--gateway-oauth-client-id ID]",
+  "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--worker-url HTTPS_ORIGIN] [--gateway-oauth-client-id ID]",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
   "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
   "qualify performs one observed model qualification against the prepared route; it does not install or promote.",
+  "--worker-url executes qualification in the existing owner-authenticated Worker using its native bindings.",
   "Cloudflare account and CORE_DB are read from the generated Wrangler config; auth uses Wrangler browser OAuth.",
   "If Wrangler lacks AI Gateway Read, adopt and qualify accept a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
   "Use account-private visibility, Authorization Code and token authentication None (PKCE); no client secret.",
@@ -69,10 +71,11 @@ function parseArguments(argv) {
   let inputPath;
   let providerRouteId;
   let gatewayOAuthClientId;
+  let workerUrl;
   let configPath = "apps/eliotr-core/wrangler.deploy.jsonc";
   for (let index = 1; index < argv.length; index += 1) {
     const option = argv[index];
-    if (option === "--input" || option === "--config" || option === "--provider-route-id" || option === "--gateway-oauth-client-id") {
+    if (option === "--input" || option === "--config" || option === "--provider-route-id" || option === "--gateway-oauth-client-id" || option === "--worker-url") {
       const value = argv[index + 1];
       if (typeof value !== "string" || value.length === 0 || value.startsWith("--")) {
         throw new InstallerCliError(`${option} requires a value`);
@@ -80,6 +83,7 @@ function parseArguments(argv) {
       if (option === "--input") inputPath = value;
       else if (option === "--config") configPath = value;
       else if (option === "--provider-route-id") providerRouteId = value;
+      else if (option === "--worker-url") workerUrl = researchQualificationWorkerOrigin(value);
       else gatewayOAuthClientId = value;
       index += 1;
       continue;
@@ -87,6 +91,7 @@ function parseArguments(argv) {
     throw new InstallerCliError(`unknown option ${option}`);
   }
   if (inputPath === undefined) throw new InstallerCliError("--input is required");
+  if (workerUrl !== undefined && command !== "qualify") throw new InstallerCliError("--worker-url is supported only for qualification");
   if ((command === "adopt") !== (providerRouteId !== undefined)) {
     throw new InstallerCliError("--provider-route-id is required only for adopt");
   }
@@ -98,6 +103,7 @@ function parseArguments(argv) {
     command,
     providerRouteId,
     gatewayOAuthClientId,
+    workerUrl,
     inputPath: resolve(repositoryRoot, inputPath),
     configPath: resolve(repositoryRoot, configPath),
   });
@@ -292,6 +298,21 @@ async function execute(options) {
     bindings,
   });
   if (options.command === "qualify") {
+    if (options.workerUrl !== undefined) {
+      const service = research.createRemoteResearchModelQualification({
+        database,
+        control_plane: controlPlane,
+        execute_observed: createResearchQualificationWorkerExecution({
+          workerUrl: options.workerUrl,
+          prompt: qualification.promptConfig,
+          stateDirectory: resolve(repositoryRoot, ".eliotr-state"),
+        }),
+        now: () => new Date().toISOString(),
+      });
+      const result = await service.qualify(qualification.probe);
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    }
     const result = await withResearchQualificationRuntime({ config, accountId }, async (env) => {
       const compiler = await research.createResearchQualificationPromptCompiler({
         core_database: env.CORE_DB,
@@ -348,7 +369,13 @@ function safeError(error) {
       /^Cloudflare control plane returned HTTP [1-5][0-9]{2}$/u.test(error?.message ?? "")) {
     return `${code}: ${error.message}`;
   }
-  return `${code}: model authority operation failed`;
+  const causes = [];
+  let cause = error?.cause;
+  for (let depth = 0; depth < 4 && cause; depth += 1) {
+    if (typeof cause.code === "string" && /^[A-Z][A-Z0-9_]{0,95}$/u.test(cause.code)) causes.push(cause.code);
+    cause = cause.cause;
+  }
+  return `${[code, ...causes].join(" -> ")}: model authority operation failed`;
 }
 
 async function main() {

@@ -16,6 +16,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/system/mcp-diagnostics", operation: "system.mcp-diagnostic.latest", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/content", operation: "library.source.content", auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "GET", path: "/api/v1/system/research-configuration", operation: "system.research.configuration", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "POST", path: "/api/v1/system/research-model-qualification", operation: "system.research.model-qualification", auth: "owner", maximum_request_bytes: 1024 * 1024, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/revisions", operation: "library.source.revisions", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/library/namespaces", operation: "library.namespaces.list", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/library/namespaces", operation: "library.namespaces.initialize", auth: "owner", maximum_request_bytes: 2048, response_mode: "json" },

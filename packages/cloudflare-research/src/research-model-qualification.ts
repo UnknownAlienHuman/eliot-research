@@ -3,6 +3,7 @@ import {
   canonicalModelGatewayJson,
   qualifyDynamicRouteGeneration,
   type DynamicRouteControlPlanePort,
+  type DynamicRouteQualificationDependencies,
   type DynamicRouteQualificationEvidence,
   type DynamicRouteQualificationProbeInput,
   type ModelGatewayExecutionDependencies,
@@ -26,8 +27,7 @@ import {
   type ResearchModelGatewayRuntimeConfig,
 } from "./research-model-gateway-runtime.js";
 
-export interface ResearchModelQualificationDependencies {
-  readonly control_plane: Pick<DynamicRouteControlPlanePort, "get">;
+export interface ResearchModelQualificationNativeDependencies {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly gateway: ResearchModelGatewayRuntimeConfig;
@@ -35,8 +35,25 @@ export interface ResearchModelQualificationDependencies {
   readonly now: () => string;
 }
 
+export interface ResearchModelQualificationDependencies extends ResearchModelQualificationNativeDependencies {
+  readonly control_plane: Pick<DynamicRouteControlPlanePort, "get">;
+}
+
+/** Native provider dependencies shared by local and Worker-dispatched qualification. */
+export interface ResearchModelQualificationNativeExecution {
+  readonly assertPricingSnapshot: (input: DynamicRouteQualificationProbeInput) => Promise<void>;
+  readonly createExecution: (input: DynamicRouteQualificationProbeInput) => ModelGatewayExecutionDependencies;
+}
+
 export interface ResearchModelQualificationPort {
   qualify(input: DynamicRouteQualificationProbeInput): Promise<DynamicRouteQualificationEvidence>;
+}
+
+export interface RemoteResearchModelQualificationDependencies {
+  readonly database: D1Database;
+  readonly control_plane: Pick<DynamicRouteControlPlanePort, "get">;
+  readonly execute_observed: Exclude<DynamicRouteQualificationDependencies["execute_observed"], undefined>;
+  readonly now: () => string;
 }
 
 function pricingFailure(message: string, cause?: unknown, retryable = false): never {
@@ -104,22 +121,74 @@ async function assertPricingSnapshot(
 export function createResearchModelQualification(
   dependencies: ResearchModelQualificationDependencies,
 ): ResearchModelQualificationPort {
-  const pricingSnapshots = createD1ResearchModelPricingSnapshotStore(dependencies.database);
-  const fingerprints = createD1ModelGatewayFingerprintStore(dependencies.database, { now: dependencies.now });
+  const native = createResearchModelQualificationNativeExecution(dependencies);
   const observationStore = createD1ResearchModelQualificationObservationStore(
     dependencies.database,
     dependencies.now,
   );
+
+  return Object.freeze({
+    async qualify(input: DynamicRouteQualificationProbeInput): Promise<DynamicRouteQualificationEvidence> {
+      const probe = detachedProbe(input);
+      // A missing setup value must not consume the one-shot execution claim.
+      await native.assertPricingSnapshot(probe);
+      return qualifyDynamicRouteGeneration({
+        control_plane: dependencies.control_plane,
+        execution: native.createExecution(probe),
+        observation_store: observationStore,
+        now: dependencies.now,
+      }, probe);
+    },
+  });
+}
+
+/**
+ * CLI/remote-worker composition.  The caller retains the normal control-plane
+ * and D1 observation ledger while the Worker owns the single provider call.
+ * No local model credentials or W2/W3 records are needed for qualification.
+ */
+export function createRemoteResearchModelQualification(
+  dependencies: RemoteResearchModelQualificationDependencies,
+): ResearchModelQualificationPort {
+  if (dependencies === null || typeof dependencies !== "object" ||
+      typeof dependencies.database?.prepare !== "function" ||
+      typeof dependencies.control_plane?.get !== "function" ||
+      typeof dependencies.execute_observed !== "function" ||
+      typeof dependencies.now !== "function") {
+    throw new ModelGatewayExecutionError("MODEL_GATEWAY_REQUEST_INVALID", "remote qualification dependencies are invalid");
+  }
+  const observationStore = createD1ResearchModelQualificationObservationStore(
+    dependencies.database,
+    dependencies.now,
+  );
+  return Object.freeze({
+    async qualify(input: DynamicRouteQualificationProbeInput): Promise<DynamicRouteQualificationEvidence> {
+      return qualifyDynamicRouteGeneration({
+        control_plane: dependencies.control_plane,
+        execute_observed: dependencies.execute_observed,
+        observation_store: observationStore,
+        now: dependencies.now,
+      }, detachedProbe(input));
+    },
+  });
+}
+
+export function createResearchModelQualificationNativeExecution(
+  dependencies: ResearchModelQualificationNativeDependencies,
+): ResearchModelQualificationNativeExecution {
+  const pricingSnapshots = createD1ResearchModelPricingSnapshotStore(dependencies.database);
+  const fingerprints = createD1ModelGatewayFingerprintStore(dependencies.database, { now: dependencies.now });
   const pricing = createD1ResearchModelPricingQuotePort(dependencies.database, {
     now: () => currentMilliseconds(dependencies.now),
   });
   const runtime = createResearchModelGatewayRuntime(dependencies.gateway);
 
   return Object.freeze({
-    async qualify(input: DynamicRouteQualificationProbeInput): Promise<DynamicRouteQualificationEvidence> {
+    async assertPricingSnapshot(input: DynamicRouteQualificationProbeInput): Promise<void> {
+      await assertPricingSnapshot(pricingSnapshots, input, dependencies.now);
+    },
+    createExecution(input: DynamicRouteQualificationProbeInput): ModelGatewayExecutionDependencies {
       const probe = detachedProbe(input);
-      // A missing setup value must not consume the one-shot execution claim.
-      await assertPricingSnapshot(pricingSnapshots, probe, dependencies.now);
       const outputs = createR2ResearchModelQualificationOutputStore(dependencies.work_bucket, {
         object_ref: probe.model_call.output_object_ref,
         max_output_bytes: probe.model_call.max_output_bytes,
@@ -133,7 +202,7 @@ export function createResearchModelQualification(
           return probe.provisioning.deployment;
         },
       });
-      const execution: ModelGatewayExecutionDependencies = {
+      return Object.freeze({
         reasoning_gateway_base_url: dependencies.gateway.reasoning_gateway_base_url,
         deployments,
         prompts: dependencies.prompt_compiler,
@@ -141,13 +210,7 @@ export function createResearchModelQualification(
         fingerprints,
         pricing,
         ...runtime,
-      };
-      return qualifyDynamicRouteGeneration({
-        control_plane: dependencies.control_plane,
-        execution,
-        observation_store: observationStore,
-        now: dependencies.now,
-      }, probe);
+      });
     },
   });
 }

@@ -188,6 +188,18 @@ after disposal; the production Worker configuration is not rewritten. The tempor
 remote preview has a unique name so it does not reuse the application's Access
 hostname. Account-wide preview Access policies still apply.
 
+When a local remote preview cannot start, use the deployed Worker bindings:
+
+    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --worker-url https://eliotr-core.kleymor-metal.workers.dev
+
+This mode uses the existing Cloudflare Access session through `cloudflared access curl`.
+The operator still performs both actual Gateway control-plane reads and stores the
+qualification result in D1. The owner-only Worker endpoint pins the server's document
+prompt and deployment, validates current evidence access, and consumes a separate
+one-shot dispatch claim (migration `0055`) before invoking its native AI binding.
+Neither an ambiguous HTTP response nor a repeated dispatch authorizes another call.
+The endpoint returns execution observations; it does not install an ACTIVE profile.
+
 On 2026-09-13 the owner selected OpenRouter `thinkingmachines/inkling:free` and
 installed its BYOK key under alias `default` in `eliotr-reasoning`. The synthesis
 and audit routes for `owner-inkling-free-v1` were created and their active versions
