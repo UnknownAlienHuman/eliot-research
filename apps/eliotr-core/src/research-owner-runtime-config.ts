@@ -15,11 +15,27 @@ import {
 } from "./research-owner-semantic-config.js";
 import { RESEARCH_OWNER_MODEL_PROFILE } from "./research-owner-profile.js";
 
+type ResearchOwnerDeploymentInput = Omit<ModelProfileDefinitionInput["deployment"], "parameters_digest"> & {
+  readonly parameters_digest?: string;
+};
+
+export type ResearchOwnerModelProfileDefinitionInput = Omit<ModelProfileDefinitionInput, "deployment"> & {
+  readonly deployment: ResearchOwnerDeploymentInput;
+};
+
+type ResearchOwnerSpendRuleInput = Omit<ResearchModelSpendPolicy["rules"][number], "deployment"> & {
+  readonly deployment: ResearchOwnerDeploymentInput;
+};
+
+export type ResearchOwnerSpendPolicyInput = Omit<ResearchModelSpendPolicy, "rules"> & {
+  readonly rules: readonly ResearchOwnerSpendRuleInput[];
+};
+
 export interface ResearchOwnerRuntimeConfigurationInput {
   readonly protocol: "eliotr.research-owner-setup.v1";
   readonly semantic: ResearchOwnerSemanticConfigurationInput;
-  readonly model_profile: ModelProfileDefinitionInput;
-  readonly spend_policy: ResearchModelSpendPolicy;
+  readonly model_profile: ResearchOwnerModelProfileDefinitionInput;
+  readonly spend_policy: ResearchOwnerSpendPolicyInput;
   readonly report: {
     readonly admission_policy: ResearchReportAdmissionPolicy;
     readonly artifact_policy: ResearchArtifactReportPolicy;
@@ -35,6 +51,30 @@ function invalid(message: string): never {
   throw new Error(`Research owner setup is invalid: ${message}`);
 }
 
+async function semanticParametersDigest(
+  routeRef: string,
+  configured: { readonly trusted_parameters: { readonly max_tokens: number; readonly response_format: unknown } },
+): Promise<string> {
+  return modelGatewayRequestParametersSha256({
+    model: routeRef,
+    messages: [],
+    max_tokens: configured.trusted_parameters.max_tokens,
+    response_format: configured.trusted_parameters.response_format,
+    stream: false,
+  });
+}
+
+function fillParametersDigest(
+  deployment: ResearchOwnerDeploymentInput,
+  expected: string,
+  label: string,
+): ModelProfileDefinitionInput["deployment"] {
+  if (deployment.parameters_digest !== undefined && deployment.parameters_digest !== expected) {
+    invalid(`${label} parameters differ from the configured prompt`);
+  }
+  return Object.freeze({ ...deployment, parameters_digest: expected });
+}
+
 /**
  * Compile explicit operator decisions into the seven installed Worker values.
  * This does not authorize a call, install a route, or assert live qualification.
@@ -47,11 +87,31 @@ export async function createResearchOwnerRuntimeConfiguration(
     invalid("unsupported setup document");
   }
   const semantic = createResearchOwnerSemanticConfiguration(input.semantic);
-  const profile = await createModelProfileDefinition(input.model_profile);
+  const synthesisParametersDigest = await semanticParametersDigest(
+    input.model_profile.deployment.route_ref,
+    semantic.synthesis,
+  );
+  const profile = await createModelProfileDefinition({
+    ...input.model_profile,
+    deployment: fillParametersDigest(
+      input.model_profile.deployment,
+      synthesisParametersDigest,
+      "SYNTHESIZE deployment",
+    ),
+  });
   if (profile.model_profile_ref !== RESEARCH_OWNER_MODEL_PROFILE) {
     invalid(`owner research requires profile ${RESEARCH_OWNER_MODEL_PROFILE}`);
   }
-  const spend = readResearchModelSpendPolicy(canonicalJson(input.spend_policy), input.spend_policy.config_provenance_ref);
+  const spendRules: Array<ResearchModelSpendPolicy["rules"][number]> = [];
+  for (const rule of input.spend_policy.rules) {
+    const configured = rule.stage === "SYNTHESIZE" ? semantic.synthesis : semantic.audit;
+    const parametersDigest = await semanticParametersDigest(rule.deployment.route_ref, configured);
+    spendRules.push({
+      ...rule,
+      deployment: fillParametersDigest(rule.deployment, parametersDigest, `${rule.stage} deployment`),
+    });
+  }
+  const spend = readResearchModelSpendPolicy(canonicalJson({ ...input.spend_policy, rules: spendRules }), input.spend_policy.config_provenance_ref);
   const reportJson = canonicalJson({ schema: "eliotr.research.report-config.v1", ...input.report });
   const report = createResearchReportConfigSource({
     raw: reportJson, provenance_ref: input.report.admission_policy.config_provenance_ref,
@@ -66,19 +126,6 @@ export async function createResearchOwnerRuntimeConfiguration(
   const synthesis = spend.rules.find((rule) => rule.stage === "SYNTHESIZE");
   if (!synthesis || canonicalJson(synthesis.deployment) !== canonicalJson(profile.deployment)) {
     invalid("model profile and synthesis spend route differ");
-  }
-  for (const rule of spend.rules) {
-    const configured = rule.stage === "SYNTHESIZE" ? semantic.synthesis : semantic.audit;
-    const parametersDigest = await modelGatewayRequestParametersSha256({
-      model: rule.deployment.route_ref,
-      messages: [],
-      max_tokens: configured.trusted_parameters.max_tokens,
-      response_format: configured.trusted_parameters.response_format,
-      stream: false,
-    });
-    if (rule.deployment.parameters_digest !== parametersDigest) {
-      invalid(`${rule.stage} deployment parameters differ from the configured prompt`);
-    }
   }
   if (!profile.policy.allowed_use.includes("research") || !admission.allowed_use.includes("research") ||
       profile.policy.disclosure_ceiling !== admission.disclosure_ceiling) {

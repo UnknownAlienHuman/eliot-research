@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { IdentifierSchema, VersionedRefSchema } from "@eliotr/contracts";
+import { IdentifierSchema, IsoDateTimeSchema, VersionedRefSchema } from "@eliotr/contracts";
 import {
   createModelProfileBindingConfigSource,
   createResearchReportConfigSource,
@@ -7,6 +7,8 @@ import {
   type ResearchModelGatewayBinding,
 } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import { parseResearchClaimAuditPolicy } from "@eliotr/cloudflare-research-stages";
 
 const MAX_CONFIGURATION_BYTES = 65_536;
 const RESEARCH_CONFIGURATION_PROTOCOL = "eliotr.research-configuration-status.v1" as const;
@@ -75,7 +77,10 @@ function validProvenance(value: string): boolean {
 function validSemanticConfiguration(value: string): boolean {
   if (!withinConfigurationLimit(value)) return false;
   try {
-    return SemanticConfigurationSchema.safeParse(JSON.parse(value)).success;
+    const parsed = SemanticConfigurationSchema.safeParse(JSON.parse(value));
+    if (!parsed.success || !parsed.data.audit.allowed_verifier_refs.includes(parsed.data.audit.verifier_ref)) return false;
+    parseResearchClaimAuditPolicy(parsed.data.audit.policy);
+    return true;
   } catch {
     return false;
   }
@@ -106,10 +111,14 @@ function embeddedProvenance(value: string, report: boolean): string | undefined 
 }
 
 /**
- * Reports only installed configuration syntax and binding presence. It does
+ * Reports installed configuration syntax, expiry, owner binding and transport presence. It does
  * not read D1/R2, contact a provider, or assert model qualification/readiness.
  */
-export function readResearchConfigurationStatus(env: Env): ResearchConfigurationStatus {
+export function readResearchConfigurationStatus(
+  env: Env,
+  owner?: Pick<AuthenticatedRequestContext, "principal_ref" | "credential_generation" | "client_class">,
+): ResearchConfigurationStatus {
+  const now = Date.now();
   const missing = new Set<string>();
   const invalid = new Set<string>();
   const read = (field: RequiredField): string | undefined => {
@@ -148,9 +157,12 @@ export function readResearchConfigurationStatus(env: Env): ResearchConfiguration
     ? profileProvenance : profileEmbeddedProvenance;
   if (profile !== undefined && profileJsonValid && profileParserProvenance !== undefined && validProvenance(profileParserProvenance)) {
     try {
-      // The factory parses the installed object synchronously; its returned
-      // source is intentionally not read because that source is lazy.
+      // The source checks the JSON envelope. Full definition digest validation
+      // remains in the runtime profile producer.
       createModelProfileBindingConfigSource({ raw: profile, provenance_ref: profileParserProvenance });
+      const definition = JSON.parse(profile) as { expires_at?: unknown };
+      const expires = IsoDateTimeSchema.safeParse(definition.expires_at);
+      if (!expires.success || Date.parse(expires.data) <= now) invalid.add("ELIOTR_MODEL_PROFILE_DEFINITION_JSON");
     } catch {
       invalid.add("ELIOTR_MODEL_PROFILE_DEFINITION_JSON");
     }
@@ -170,7 +182,12 @@ export function readResearchConfigurationStatus(env: Env): ResearchConfiguration
       try {
         // With no installed companion, the embedded provenance is used only
         // to exercise the existing strict parser; it grants no authority.
-        readResearchModelSpendPolicy(spend, parserProvenance);
+        const policy = readResearchModelSpendPolicy(spend, parserProvenance);
+        if (Date.parse(policy.expires_at) <= now || policy.deployment_generation !== env.DEPLOYMENT_GENERATION ||
+            (owner !== undefined && (policy.principal_ref !== owner.principal_ref ||
+              policy.credential_generation !== owner.credential_generation || policy.client_class !== owner.client_class))) {
+          invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
+        }
       } catch {
         invalid.add("ELIOTR_MODEL_SPEND_POLICY_JSON");
       }
@@ -192,6 +209,13 @@ export function readResearchConfigurationStatus(env: Env): ResearchConfiguration
         // As above, report config parsing is synchronous; readArtifactPolicy
         // would only decode the already parsed local snapshot.
         createResearchReportConfigSource({ raw: report, provenance_ref: parserProvenance });
+        const { admission_policy: admission } = JSON.parse(report) as {
+          admission_policy: { expires_at: string; principal_ref: string; client_class: string };
+        };
+        if (Date.parse(admission.expires_at) <= now || (owner !== undefined &&
+            (admission.principal_ref !== owner.principal_ref || admission.client_class !== owner.client_class))) {
+          invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
+        }
       } catch {
         invalid.add("ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
       }
@@ -207,6 +231,6 @@ export function readResearchConfigurationStatus(env: Env): ResearchConfiguration
     model_transport: modelTransport,
     missing_fields: Object.freeze([...missing]),
     invalid_fields: Object.freeze([...invalid]),
-    checked_at: new Date().toISOString(),
+    checked_at: new Date(now).toISOString(),
   });
 }

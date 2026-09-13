@@ -327,7 +327,7 @@ async function dispatch(
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "system.research.configuration":
       requireNoQuery(url);
-      return apiResult(request, env, readResearchConfigurationStatus(env));
+      return apiResult(request, env, readResearchConfigurationStatus(env, context));
     case "library.source.content": {
       for (const key of url.searchParams.keys()) {
         if (key !== "source_revision_ref") {

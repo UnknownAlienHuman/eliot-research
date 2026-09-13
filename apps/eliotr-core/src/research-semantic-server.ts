@@ -21,6 +21,7 @@ import {
 } from "@eliotr/cloudflare-research-stages";
 import type { Env } from "./env.js";
 import { loadHeldResearchScope } from "./research-retrieval-composition.js";
+import { bindResearchOwnerReportPolicy } from "./research-owner-report-policy.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { ResearchStageHandlerFactory } from "./research-stage-handlers.js";
 
@@ -112,6 +113,19 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
     provenance_ref: installed(env.ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF) });
   const reportPolicy = await reportSource.readArtifactPolicy();
   if (!reportPolicy) configurationMissing();
+  try { await navigation.current(); }
+  catch { configurationMissing(); }
+  const boundReportPolicy = (() => {
+    try {
+      return bindResearchOwnerReportPolicy(reportPolicy, {
+        current_scope_snapshot_id: navigation.scope.snapshot_id,
+        current_owner_principal_ref: principal.principal_ref,
+        frozen_manifest_residency: input.initial_manifest.residency,
+      });
+    } catch {
+      configurationMissing();
+    }
+  })();
   const retrievalProfile = await createD1ScopeProfilePort(env.CORE_DB).loadBinding(navigation.scope);
   const { content_digest: _contentDigest, ...residency } = input.initial_manifest.residency;
   void _contentDigest;
@@ -181,6 +195,6 @@ export async function createResearchSemanticServerHandlers(input: ResearchSemant
         await recheckAuthority();
         return readVerifier();
       } } },
-    report: { policy_source: reportSource, report_policy: reportPolicy, expected_draft_head_revision: null },
+    report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null },
   });
 }

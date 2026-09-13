@@ -42,4 +42,5 @@ export * from "./research-report-config.js";
 export * from "./research-artifact-metadata.js";
 export * from "./research-materialize-output-reader.js";
 export * from "./research-synthesis-output-reader.js";
+export * from "./research-materialize-recovery.js";
 export { decodeSynthesisSectionCandidate, sameEvidence } from "./research-artifact-draft.js";

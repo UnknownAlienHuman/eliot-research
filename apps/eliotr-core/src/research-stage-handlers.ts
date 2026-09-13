@@ -13,6 +13,7 @@ import {
   type ResearchMaterializeStageDependencies,
   createResearchReportMaterializeStageHandler,
   type ResearchReportMaterializeStageDependencies,
+  createResearchMaterializeRecovery,
 } from "@eliotr/cloudflare-research";
 import {
   createResearchVerificationStageHandler,
@@ -129,6 +130,15 @@ export function createResearchStageHandlerFactory(
   let synthesisAdapter: ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined;
   let auditAdapter: ReturnType<typeof createResearchClaimAuditStageHandler> | undefined;
   let citationsAdapter: ReturnType<typeof createResearchCitationsStageHandler> | undefined;
+  let materializeRecovery: WorkflowStartedAttemptRecovery | undefined;
+  if (explicitV3 && materializeHandler !== undefined && mode.kind === "server-owned-exploratory" && mode.environment !== undefined) {
+    materializeRecovery = createResearchMaterializeRecovery({
+      database: mode.environment.CORE_DB,
+      work_bucket: mode.environment.WORK_BUCKET,
+      navigation: mode.navigation,
+      materialize_handler_generation: SERVER_OWNED_FREEZE_HANDLER_GENERATION,
+    });
+  }
   function getSynthesisAdapter(): ReturnType<typeof createEvidenceFreezeSynthesisHandler> | undefined {
     if (mode.kind !== "server-owned-exploratory" ||
         mode.generation !== SERVER_OWNED_FREEZE_HANDLER_GENERATION || mode.synthesis === undefined) return undefined;
@@ -195,6 +205,7 @@ export function createResearchStageHandlerFactory(
       if (input.request.stage === "SYNTHESIZE") return getSynthesisAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "AUDIT_CLAIMS") return getAuditAdapter()?.recoverStartedAttempt(input) ?? null;
       if (input.request.stage === "RESOLVE_CITATIONS") return getCitationsAdapter()?.recoverStartedAttempt(input) ?? null;
+      if (input.request.stage === "MATERIALIZE") return materializeRecovery?.(input) ?? null;
       return null;
     };
     Object.defineProperty(factory, "recoverStartedAttempt", {
