@@ -77,10 +77,10 @@ CREATE TABLE artifact_draft_object (
 CREATE TRIGGER artifact_draft_binding_status_guard
 BEFORE INSERT ON artifact_draft_binding
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_revision r
     WHERE r.artifact_id = NEW.artifact_id AND r.revision = NEW.revision AND r.status = 'DRAFT'
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_STATUS_CONFLICT') END;
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_STATUS_CONFLICT') END);
 END;
 
 CREATE TRIGGER artifact_draft_binding_head_cas
@@ -111,14 +111,14 @@ BEGIN
     intent_revision = excluded.intent_revision,
     updated_at = excluded.updated_at
   WHERE artifact_draft_head.head_revision = NEW.expected_head_revision;
-  SELECT CASE WHEN changes() <> 1 THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_CONFLICT') END;
+  SELECT (CASE WHEN changes() <> 1 THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_CONFLICT') END);
 END;
 
 CREATE TRIGGER artifact_draft_reservation_finalize_guard
 AFTER UPDATE OF state ON artifact_draft_reservation
 WHEN NEW.state = 'FINALIZED'
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM operation_intent i
     WHERE i.intent_id = NEW.intent_id AND i.revision = NEW.intent_revision
       AND i.operation_kind = 'REPORT'
@@ -137,22 +137,22 @@ BEGIN
       AND ((json_extract(NEW.intent_json, '$.cancellation_ref') = i.cancellation_ref)
         OR (json_extract(NEW.intent_json, '$.cancellation_ref') IS NULL AND i.cancellation_ref IS NULL))
       AND json_extract(NEW.intent_json, '$.created_at') = i.created_at
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_INTENT_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_INTENT_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM outbox o
     WHERE o.intent_id = NEW.intent_id AND o.intent_revision = NEW.intent_revision
       AND o.topic = NEW.topic
       AND o.payload_ref = NEW.payload_ref
       AND o.payload_sha256 = json_extract(NEW.planned_objects_json, '$[0].sha256')
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_OUTBOX_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_OUTBOX_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_revision r
     WHERE r.artifact_id = NEW.artifact_id AND r.revision = NEW.artifact_revision
       AND r.status = 'DRAFT'
       AND r.manifest_r2_key = NEW.manifest_r2_key
       AND r.spec_digest = NEW.spec_digest
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_REVISION_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_REVISION_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_draft_binding b
     WHERE b.artifact_id = NEW.artifact_id AND b.revision = NEW.artifact_revision
       AND b.intent_id = NEW.intent_id AND b.intent_revision = NEW.intent_revision
@@ -165,8 +165,8 @@ BEGIN
       AND b.manifest_r2_key = NEW.manifest_r2_key
       AND b.manifest_sha256 = json_extract(NEW.planned_objects_json, '$[0].sha256')
       AND b.manifest_size_bytes = json_extract(NEW.planned_objects_json, '$[0].size_bytes')
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_BINDING_GUARD') END;
-  SELECT CASE WHEN NOT EXISTS (
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_BINDING_GUARD') END);
+  SELECT (CASE WHEN NOT EXISTS (
     SELECT 1 FROM artifact_draft_head h
     WHERE h.artifact_id = NEW.artifact_id
       AND h.head_revision = NEW.artifact_revision
@@ -174,8 +174,8 @@ BEGIN
       AND h.intent_id = NEW.intent_id
       AND h.intent_revision = NEW.intent_revision
       AND h.updated_at = NEW.updated_at
-  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_GUARD') END;
-  SELECT CASE WHEN (SELECT COUNT(*) FROM artifact_draft_object WHERE artifact_id = NEW.artifact_id AND revision = NEW.artifact_revision)
+  ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_HEAD_GUARD') END);
+  SELECT (CASE WHEN (SELECT COUNT(*) FROM artifact_draft_object WHERE artifact_id = NEW.artifact_id AND revision = NEW.artifact_revision)
       <> json_array_length(NEW.planned_objects_json)
     OR EXISTS (
       SELECT 1 FROM json_each(NEW.planned_objects_json) p
@@ -192,7 +192,7 @@ BEGIN
           AND json_extract(o.receipt_json, '$.readback_sha256') = json_extract(p.value, '$.sha256')
           AND json_extract(o.receipt_json, '$.size_bytes') = json_extract(p.value, '$.size_bytes')
       )
-    ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_OBJECT_GUARD') END;
+    ) THEN RAISE(ABORT, 'ARTIFACT_DRAFT_OBJECT_GUARD') END);
 END;
 
 CREATE INDEX artifact_draft_object_ref_idx ON artifact_draft_object(object_ref);
