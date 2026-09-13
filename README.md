@@ -5,22 +5,14 @@
 > boundaries are in [AGENTS.md](AGENTS.md).
 
 **Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
-Owner sign-in, workspace selection, file capture and TXT/Markdown processing are live.
-Text documents are processed locally in the Worker before admission, and Library admission keeps
-its quality checks. Corpus Lens opens admitted documents for reading and download; the background
-queue builds their structure and D1 exact/lexical index. On 2026-09-13, the owner document research
-path completed a real 17-stage SYNTHESIZE and AUDIT run with Cloudflare
-`@cf/zai-org/glm-5.3-flash` and saved a DRAFT in R2. The PWA displayed the draft, opened its answer
-section, loaded seven claim checks and verified a cited excerpt in Evidence Rail. This confirms the
-owner path without establishing full production readiness. On the same date, after two deployments,
-the owner reopened that saved draft from Research history, opened its Russian answer section, loaded
-seven claim checks and verified a fresh cited excerpt in Evidence Rail. Each historical read obtains
-fresh authorization for the current owner session, including reports saved by earlier deployments.
-Route qualification currently uses a 45-minute window and manual renewal. The observed model proofs
-expire at 23:03 UTC on September 13; installed policies expire at 00:00 UTC on September 14.
-Lazy renewal is not connected. AI Search, Google and MCP
-integrations, Wiki, erasure, federation and broader production workload remain unavailable. [Local preparation
-and current launch limits](docs/implementation/local-launch.md).
+The live owner path imports and reads TXT/Markdown documents, supports exact and lexical search,
+and runs a full scan of the selected scope. Owner research can execute all 17 stages with Cloudflare
+`@cf/zai-org/glm-5.3-flash`, save a DRAFT, reopen it from Research history, and verify its citations
+against current owner evidence readback. This demonstrates the deployed owner path without
+establishing full production readiness. Qualification renewal and policy/pricing expiry constraints
+are documented in [the local launch checkpoint](docs/implementation/local-launch.md). AI Search,
+Google and MCP integrations, Wiki, erasure, federation and broader production workloads remain
+unavailable.
 
 **Pluggable external research federation for ELIOT Memory OS.**
 

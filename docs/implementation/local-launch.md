@@ -19,9 +19,30 @@ owner path without establishing full production readiness. After two deployments
 owner reopened that saved draft from Research history, opened its Russian answer section, loaded seven
 claim checks and verified a fresh cited excerpt in Evidence Rail. Each historical read obtains fresh
 authorization for the current owner session, including reports saved by earlier deployments.
-Route qualification currently uses a 45-minute window and manual renewal. The observed model proofs
-expire at 23:03 UTC on September 13; installed policies expire at 00:00 UTC on September 14.
-Lazy renewal is not connected.
+After migration `0057_model_spend_renewed_qualification.sql`, a second real run completed all 17 stages
+at 23:12 UTC on September 13 using renewed qualification proofs. Its Russian guide to LIBRARY, LENS
+and RESEARCH was opened in the PWA and downloaded from R2; the section's SHA-256 matched
+`9b29105cba039c1257227ebd78d6365d949883b534c29e4d97bb9664209e0a52` (3,444 bytes).
+The run is `run-a3e16ed5a246754e0a2a1f51c145727bc43242b2e5ac31e5` on deployment `git-ce08f3f`.
+
+Route qualification uses a 45-minute window. Version `owner-cloudflare-glm53-v6` was qualified through
+real synthesis and audit calls at 23:44 UTC on September 13, with initial proofs valid until 00:29 UTC
+on September 14. Its new immutable pricing snapshots and owner configuration run until October 12;
+the model and rates are unchanged. These timestamps describe the release configuration, not continuing
+readiness. Lazy renewal is implemented as the first durable Workflow step, with no automatic retries.
+Current proofs need neither a route-read credential nor another model call. Renewal still needs the
+credential described below; it has not been verified live in the Worker while that secret is absent.
+
+The required credential is the Worker secret `ELIOTR_MODEL_GATEWAY_READ_TOKEN`, with **Account →
+AI Gateway → Read** for the workspace's Cloudflare account. It is separate from the existing model
+Run credential and is used only for route readback. Cloudflare's Read permission applies to all gateways
+in that account; it cannot be scoped to one route. Enter the credential through the `eliotr-core`
+Worker's **Settings → Variables and Secrets**; do not put its value in source, runtime JSON, or chat.
+This secret does not extend pricing snapshots or owner policy validity. Those authorities require fresh
+configuration when their actual expiration is reached. Permission behavior was checked against the
+[route GET API](https://developers.cloudflare.com/api/resources/ai_gateway/subresources/dynamic_routing/methods/get/)
+and [gateway authentication documentation](https://developers.cloudflare.com/ai-gateway/configuration/authentication/)
+on 2026-09-13.
 
 Owner research steps: sign in through Access, choose the workspace, add and admit a TXT/Markdown
 document, select it in **Sources**, and ask the question in **Research**. When the run reaches **DRAFT**,

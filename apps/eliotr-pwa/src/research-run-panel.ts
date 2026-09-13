@@ -1,6 +1,6 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readResearchArtifactSection, readReauthorizedResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readReauthorizedResearchArtifact, readReauthorizedResearchArtifactSection, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunHistoryView, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { readReauthorizedResearchArtifactSectionCitations } from "./research-run-reauthorization-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
@@ -219,7 +219,7 @@ export function mountResearchRunPanel(
     clearPrivate();
     progress.textContent = "Saved research is unavailable.";
     status.textContent = `Saved research is unavailable. ${message(error)}`;
-    console.warn("research_run_read_failed", { code: error.code, status: error.status });
+    console.warn("research_run_read_failed", JSON.stringify({ code: error.code, status: error.status }));
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();
@@ -378,9 +378,7 @@ export function mountResearchRunPanel(
       open.onclick = () => {
         if (options.renderSerial !== serial || controller !== undefined) return;
         const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading report section…";
-        const read = options.historical
-          ? readReauthorizedResearchArtifactSection(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal)
-          : readResearchArtifactSection(artifact.artifact_ref, section, local.signal);
+        const read = readReauthorizedResearchArtifactSection(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal);
         void read
           .then((readback) => {
             if (options.renderSerial !== serial || deploymentGeneration() !== options.deploymentGeneration) return;
@@ -402,9 +400,7 @@ export function mountResearchRunPanel(
         if (options.renderSerial !== serial || controller !== undefined) return;
         const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading cited sources…";
         item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
-        const read = options.historical
-          ? readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref)
-          : readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
+        const read = readReauthorizedResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, options.deploymentGeneration, local.signal, section.verification_receipt_ref);
         void read
           .then((citations) => {
             if (options.renderSerial !== serial) return;
@@ -413,9 +409,9 @@ export function mountResearchRunPanel(
             state.textContent = citations.semantic_verification === "EXECUTED"
               ? `Claim check complete: ${citations.audit.claims.length} claims checked. The verdicts describe the saved evidence; they do not mean every claim is true.`
               : options.historical ? "Saved citations were reauthorized for this session; no claim check is recorded." : "Draft claims have not been checked. Opening a source checks its current bytes.";
-            list.append(state); const aliases = "original_scope_snapshot_ref" in citations ? citations.cited_evidence : citations.cited_evidence.map((citation) => ({ original_handle_ref: citation.handle_ref, handle_ref: citation.handle_ref, excerpt_sha256: citation.excerpt_sha256 }));
+            list.append(state); const aliases = citations.cited_evidence;
             const citationByRef = new Map(aliases.map((citation) => [citationRefKey(citation.original_handle_ref), citation]));
-            const citationScope = "authorization_scope_snapshot_ref" in citations ? citations.authorization_scope_snapshot_ref : citations.scope_snapshot_ref;
+            const citationScope = citations.authorization_scope_snapshot_ref;
             const selectCitation = (citation: typeof aliases[number]): void => {
               if (options.renderSerial !== serial || controller !== undefined) return;
               element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citationScope, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
@@ -540,7 +536,8 @@ export function mountResearchRunPanel(
       result.replaceChildren(); result.hidden = true; submit.disabled = true; recover.disabled = true; refresh.disabled = true; status.textContent = "Reading research status…";
     }
     const expectedGeneration = id === workflowId ? (workflowGeneration ?? deploymentGeneration()) : deploymentGeneration();
-    void readResearchRunStatus(id, expectedGeneration, local.signal)
+    const canRetryAuthority = (error: unknown): boolean => shouldRetryResearchAuthority(error, { automatic, requestedId: id, workflowId, expectedGeneration, isCurrent: () => active === serial, currentGeneration: deploymentGeneration, healthReady, online: () => navigator.onLine, visible: () => document.visibilityState !== "hidden" });
+    void readResearchStatusWithAuthorityRetry(() => readResearchRunStatus(id, expectedGeneration, local.signal), canRetryAuthority, () => { status.textContent = "Refreshing research status…"; })
       .then(async (view) => {
         if (active !== serial) return;
         const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
@@ -558,7 +555,7 @@ export function mountResearchRunPanel(
           if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") showUnavailableRun(error); else status.textContent = message(error);
         } else status.textContent = message(error);
       })
-      .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); scheduleStatusRefresh(); } });
+      .finally(() => finishResearchStatusRead(active === serial, () => { controller = undefined; }, disposed, () => setReportActionsDisabled(false), updateButtons, scheduleStatusRefresh));
   };
   form.onsubmit = (event) => {
     event.preventDefault();

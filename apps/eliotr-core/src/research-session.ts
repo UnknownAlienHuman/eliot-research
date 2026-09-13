@@ -11,6 +11,7 @@ import { createD1InvestigationLedgerStore, createInvestigationLedgerService, Led
 import type { LedgerD1Database } from "@eliotr/research";
 import { createResearchStageHandlerFactory, SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers, researchSemanticConfigurationInstalled } from "./research-semantic-server.js";
+import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
@@ -291,20 +292,23 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           max_results: request.max_results,
         }).catch(mapRetrievalError);
       }
-      const workflowParams: ResearchWorkflowRunParams = {
-        operation_id,
-        investigation_ref: { id: investigation_id, revision: 1 },
-        idempotency_key: key,
-        handler_generation: handlerGeneration,
-        initial_input_manifest: initialManifest,
-        principal_ref: principal.principal_ref,
-        credential_generation: principal.credential_generation,
-        deployment_generation: principal.deployment_generation,
-      };
       try {
         // Reserve the first durable status before creating the Workflow instance so
         // the owner can immediately poll ACTIVE/next_stage_index=0 after launch.
         await new WorkflowCheckpointStore(db).ensureRun(initialStage, principal);
+        const workflowParams: ResearchWorkflowRunParams = {
+          operation_id,
+          investigation_ref: { id: investigation_id, revision: 1 },
+          idempotency_key: key,
+          handler_generation: handlerGeneration,
+          initial_input_manifest: initialManifest,
+          principal_ref: principal.principal_ref,
+          credential_generation: principal.credential_generation,
+          deployment_generation: principal.deployment_generation,
+          ...(handlerGeneration === SERVER_OWNED_FREEZE_HANDLER_GENERATION
+            ? { qualification_renewal: RESEARCH_QUALIFICATION_RENEWAL_MARKER }
+            : {}),
+        };
         let instance: WorkflowInstance;
         try {
           instance = await env.RESEARCH_WORKFLOW.create({ id: operation_id, params: workflowParams });

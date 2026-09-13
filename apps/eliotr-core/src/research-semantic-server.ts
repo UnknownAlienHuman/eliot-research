@@ -68,6 +68,26 @@ const ConfigurationSchema = z.object({
   normalization: NormalizationSchema,
 }).strict();
 
+export type ResearchSemanticConfiguration = z.infer<typeof ConfigurationSchema>;
+
+export function parseResearchSemanticConfiguration(raw: string): ResearchSemanticConfiguration {
+  if (typeof raw !== "string" || raw.trim() === "" || new TextEncoder().encode(raw).byteLength > 65536) {
+    configurationMissing();
+  }
+  let decoded: unknown;
+  try { decoded = JSON.parse(raw); }
+  catch { configurationMissing(); }
+  const parsed = ConfigurationSchema.safeParse(decoded);
+  if (!parsed.success) configurationMissing();
+  return parsed.data;
+}
+
+export function researchSemanticPromptParameters(
+  value: ResearchSemanticConfiguration["synthesis"]["trusted_parameters"],
+): TrustedModelPromptParameters {
+  return promptParameters(value);
+}
+
 function configurationMissing(): never { return fail("WORKFLOW_AUTHORITY_STALE"); }
 function installed(value: string | undefined): string {
   if (value === undefined || value.trim() === "") configurationMissing();
@@ -118,13 +138,7 @@ export interface ResearchSemanticServerInput {
 export async function createResearchSemanticServerHandlers(input: ResearchSemanticServerInput): Promise<ResearchStageHandlerFactory> {
   const { env, navigation, principal } = input;
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
-  const raw = installed(readResearchSemanticConfiguration(env));
-  if (new TextEncoder().encode(raw).byteLength > 65536) configurationMissing();
-  let decoded: unknown;
-  try { decoded = JSON.parse(raw); } catch { configurationMissing(); }
-  const parsed = ConfigurationSchema.safeParse(decoded);
-  if (!parsed.success) configurationMissing();
-  const config = parsed.data;
+  const config = parseResearchSemanticConfiguration(installed(readResearchSemanticConfiguration(env)));
   let policy: ResearchModelSpendPolicy;
   try {
     if (navigation.access.principal_ref !== principal.principal_ref ||

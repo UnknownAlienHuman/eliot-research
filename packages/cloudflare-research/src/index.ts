@@ -47,6 +47,7 @@ export * from "./research-model-installation.js";
 export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
 export * from "./research-model-qualification-renewal.js";
+export * from "./research-owner-qualification-renewal.js";
 export * from "./research-model-qualification-dispatch.js";
 export * from "./research-qualification-prompt.js";
 export * from "./dynamic-route-rest-binding-store-d1.js";

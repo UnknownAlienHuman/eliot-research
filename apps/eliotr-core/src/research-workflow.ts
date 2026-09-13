@@ -24,6 +24,11 @@ import {
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
 import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
+import {
+  RESEARCH_QUALIFICATION_RENEWAL_MARKER,
+  renewResearchQualifications,
+  type ResearchQualificationRenewalMarker,
+} from "./research-qualification-renewal.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -36,6 +41,7 @@ export interface ResearchWorkflowRunParams {
   readonly credential_generation: string;
   readonly deployment_generation: string;
   readonly requested_by_principal_ref?: string;
+  readonly qualification_renewal?: ResearchQualificationRenewalMarker;
 }
 export type ResearchWorkflowParams = ResearchWorkflowRunParams | ExhaustiveWorkflowPayload;
 
@@ -99,8 +105,13 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
   if (!manifest.success) failWorkflow("WORKFLOW_INPUT_INVALID");
   const requested = value.requested_by_principal_ref;
   if (requested !== undefined && requested !== principal_ref) failWorkflow("WORKFLOW_CONFLICT");
+  const qualificationRenewal = value.qualification_renewal;
+  if (qualificationRenewal !== undefined && qualificationRenewal !== RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
+    failWorkflow("WORKFLOW_INPUT_INVALID");
+  }
   const allowed = new Set(["operation_id", "investigation_ref", "idempotency_key", "handler_generation",
-    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref"]);
+    "initial_input_manifest", "principal_ref", "credential_generation", "deployment_generation", "requested_by_principal_ref",
+    "qualification_renewal"]);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) failWorkflow("WORKFLOW_INPUT_INVALID");
   }
@@ -111,6 +122,7 @@ function parseParams(raw: unknown): ResearchWorkflowParams {
     principal_ref: principal_ref as string, credential_generation: credential_generation as string,
     deployment_generation: deployment_generation as string,
     ...(value.requested_by_principal_ref === undefined ? {} : { requested_by_principal_ref: value.requested_by_principal_ref as string }),
+    ...(qualificationRenewal === undefined ? {} : { qualification_renewal: qualificationRenewal }),
   };
 }
 
@@ -235,6 +247,31 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         access,
         require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
       });
+      if (params.qualification_renewal !== undefined && !semanticOwned) {
+        failWorkflow("WORKFLOW_AUTHORITY_STALE");
+      }
+      if (semanticOwned && params.qualification_renewal === RESEARCH_QUALIFICATION_RENEWAL_MARKER) {
+        await step.do("research-qualification-renewal", {
+          retries: { limit: 0, delay: 0 },
+          timeout: 600_000,
+        }, async () => {
+          try {
+            await renewResearchQualifications(this.env, {
+              operation_id: params.operation_id,
+              investigation,
+              principal,
+              navigation,
+              initial_manifest: params.initial_input_manifest,
+            });
+          } catch (error) {
+            const code = error instanceof Error && "code" in error
+              ? String((error as { code: unknown }).code)
+              : "RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE";
+            failWorkflow(code);
+          }
+          return { protocol: "eliotr.research-qualification-renewal.v1", state: "CURRENT" as const };
+        });
+      }
       handlers = semanticOwned
         ? await createResearchSemanticServerHandlers({ env: this.env, operation_id: params.operation_id,
           investigation_id: params.investigation_ref.id, principal, navigation, ledger,
