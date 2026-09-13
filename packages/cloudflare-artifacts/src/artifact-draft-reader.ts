@@ -20,7 +20,16 @@ export {
   ArtifactDraftSectionCitationsError,
   type ArtifactDraftSectionCitationsContext,
 } from "./artifact-draft-citations-reader.js";
-export type { ArtifactDraftVerificationCitation, ArtifactDraftVerificationEncoded, ArtifactDraftVerificationRecord } from "./artifact-draft-verification.js";
+export type {
+  ArtifactDraftSemanticAudit,
+  ArtifactDraftSemanticAuditClaim,
+  ArtifactDraftVerificationAnyEncoded,
+  ArtifactDraftVerificationCitation,
+  ArtifactDraftVerificationEncoded,
+  ArtifactDraftVerificationRecord,
+  ArtifactDraftVerificationV2Encoded,
+  ArtifactDraftVerificationV2Record,
+} from "./artifact-draft-verification.js";
 
 function validRef(value: unknown, label: string): VersionedRef {
   try { return VersionedRefSchema.parse(value); }

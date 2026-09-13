@@ -98,6 +98,12 @@ h2 { margin-bottom: 12px; font-size: 18px; letter-spacing: -.03em; } h3 { margin
 .research-report-actions .button, .research-citation-actions .button { margin: 0; }
 .research-citations { margin-top: 12px; padding: 10px 12px; border-left: 2px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.55; }
 .research-citation-state { color: var(--dim); }
+.research-audit-details { min-width: 0; max-width: 100%; margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); }
+.research-audit-details summary { cursor: pointer; color: var(--ink); }
+.research-audit-claims { display: grid; min-width: 0; max-width: 100%; gap: 14px; margin: 10px 0 0; padding-left: 22px; color: var(--ink); font-size: 14px; line-height: 1.65; }
+.research-audit-claims li { min-width: 0; padding-top: 10px; border-top: 1px solid var(--line); overflow-wrap: anywhere; word-break: break-word; }
+.research-audit-claims li:first-child { padding-top: 0; border-top: 0; }
+.research-audit-claims p { margin: 0 0 8px; overflow-wrap: anywhere; word-break: break-word; }
 .research-citation-error { color: var(--danger); }
 .workflow-progress { height: 5px; margin-top: 15px; overflow: hidden; border-radius: 99px; background: var(--line); } .workflow-progress-bar { width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
 .workflow-recovery { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }

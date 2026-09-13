@@ -1,6 +1,7 @@
 export * from "@eliotr/cloudflare-workflows";
 export * from "./artifact-draft.js";
 export * from "./artifact-draft-reader.js";
+export type { ArtifactDraftSemanticAudit } from "@eliotr/cloudflare-artifacts";
 export * from "./model-attempt-types.js";
 export { createModelAttemptStore, validatedRequest } from "./model-attempt-store.js";
 export * from "./model-attempt-handler.js";
@@ -38,6 +39,7 @@ export * from "./research-held-scope.js";
 export * from "./research-run-status.js";
 export * from "./research-materialize-result.js";
 export * from "./research-materialize-stage-handler.js";
+export type { ResearchV2MaterializationCandidate } from "./research-v2-materialize-adapter.js";
 export * from "./research-report-admission.js";
 export * from "./research-report-materialize-stage-handler.js";
 export * from "./research-report-config.js";

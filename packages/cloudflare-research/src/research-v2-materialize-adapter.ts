@@ -85,6 +85,8 @@ type VerificationResult = z.infer<typeof VerificationResultSchema>;
 export interface ResearchV2MaterializationCandidate {
   readonly section_text: string;
   readonly cited_handle_refs: readonly VersionedRef[];
+  readonly claims: NormalizedSynthesisClaims["claims"];
+  readonly normalization_binding_sha256: string;
 }
 
 function failCorrupt(): never {
@@ -293,5 +295,7 @@ export async function readCommittedResearchV2MaterializationCandidate(input: {
   return Object.freeze({
     section_text: normalized.section_text,
     cited_handle_refs: Object.freeze(normalized.cited_handle_refs.map((ref) => Object.freeze({ ...ref }))),
+    claims: normalized.claims,
+    normalization_binding_sha256: result.normalization.binding_sha256,
   });
 }

@@ -1,6 +1,6 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitation, type ResearchArtifactSectionCitationAuditClaim, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
@@ -26,6 +26,13 @@ const RESEARCH_STAGE_LABELS: Record<ResearchWorkflowStage, string> = {
 };
 const RESEARCH_STAGE_ORDER = ResearchWorkflowStageSchema.options;
 const RESEARCH_STATUS_REFRESH_MS = 2_000;
+const AUDIT_DISPOSITION_LABELS: Record<ResearchArtifactSectionCitationAuditClaim["disposition"], string> = {
+  SUPPORTED: "Supported",
+  PARTIALLY_SUPPORTED: "Partially supported",
+  UNSUPPORTED: "Unsupported",
+  CONTRADICTED: "Contradicted",
+  NOT_VERIFIABLE_IN_SCOPE: "Could not be verified in this scope",
+};
 
 function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
@@ -80,6 +87,10 @@ function codeRef(value: string): HTMLElement {
   const code = document.createElement("code");
   code.textContent = value;
   return code;
+}
+
+function citationRefKey(ref: { readonly id: string; readonly revision: number }): string {
+  return `${ref.id}:${ref.revision}`;
 }
 
 export function mountResearchRunPanel(
@@ -326,8 +337,41 @@ export function mountResearchRunPanel(
               if (renderSerial !== serial) return;
               const list = document.createElement("div"); list.className = "research-citations";
               const state = document.createElement("p"); state.className = "research-citation-state";
-              state.textContent = "Draft claims have not been checked. Opening a source checks its current bytes.";
+              state.textContent = citations.semantic_verification === "EXECUTED"
+                ? `Claim check complete: ${citations.audit.claims.length} claims checked. The verdicts describe the saved evidence; they do not mean every claim is true.`
+                : "Draft claims have not been checked. Opening a source checks its current bytes.";
               list.append(state);
+              const citationByRef = new Map(citations.cited_evidence.map((citation) => [citationRefKey(citation.handle_ref), citation]));
+              const selectCitation = (citation: ResearchArtifactSectionCitation): void => {
+                if (renderSerial !== serial || controller !== undefined) return;
+                element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citations.scope_snapshot_ref, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
+                status.textContent = "Source selected. Verify it in the Evidence rail.";
+              };
+              const appendClaimEvidenceButton = (container: HTMLElement, kind: "Support" | "Counterevidence", ref: ResearchArtifactSectionCitationAuditClaim["support_handle_refs"][number], ordinal: number): void => {
+                const citation = citationByRef.get(citationRefKey(ref));
+                const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
+                button.textContent = citation === undefined ? `${kind} evidence unavailable` : `${kind} evidence ${ordinal + 1}`;
+                if (citation === undefined) button.disabled = true;
+                else button.onclick = () => selectCitation(citation);
+                container.append(button);
+              };
+              if (citations.semantic_verification === "EXECUTED") {
+                const auditDetails = document.createElement("details"); auditDetails.className = "research-audit-details";
+                const auditSummary = document.createElement("summary"); auditSummary.textContent = "Claim check details";
+                const claimList = document.createElement("ol"); claimList.className = "research-audit-claims";
+                citations.audit.claims.forEach((claim) => {
+                  const claimItem = document.createElement("li");
+                  const claimText = document.createElement("p"); claimText.textContent = claim.claim_text;
+                  const verdict = document.createElement("p"); verdict.textContent = `Verdict: ${AUDIT_DISPOSITION_LABELS[claim.disposition]}`;
+                  claimItem.append(claimText, verdict);
+                  const claimActions = document.createElement("div"); claimActions.className = "research-citation-actions";
+                  claim.support_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Support", ref, index));
+                  claim.counterevidence_handle_refs.forEach((ref, index) => appendClaimEvidenceButton(claimActions, "Counterevidence", ref, index));
+                  if (claimActions.childElementCount > 0) claimItem.append(claimActions);
+                  claimList.append(claimItem);
+                });
+                auditDetails.append(auditSummary, claimList); list.append(auditDetails);
+              }
               if (citations.cited_evidence.length === 0) {
                 const empty = document.createElement("p"); empty.textContent = "No cited source handles are available."; list.append(empty);
               } else {
@@ -335,16 +379,14 @@ export function mountResearchRunPanel(
                 const actions = document.createElement("div"); actions.className = "research-citation-actions";
                 citations.cited_evidence.forEach((citation, citationOrdinal) => {
                   const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal);
-                  button.onclick = () => {
-                    if (renderSerial !== serial || controller !== undefined) return;
-                    element.dispatchEvent(new CustomEvent("research:evidence-selected", { bubbles: true, detail: { scopeSnapshotRef: citations.scope_snapshot_ref, handleRef: citation.handle_ref, excerptSha256: citation.excerpt_sha256 } }));
-                    status.textContent = "Source selected. Verify it in the Evidence rail.";
-                  };
+                  button.onclick = () => selectCitation(citation);
                   actions.append(button);
                 });
                 list.append(actions);
               }
-              item.append(list); status.textContent = "Cited sources loaded; fresh verification is still required.";
+              item.append(list); status.textContent = citations.semantic_verification === "EXECUTED"
+                ? "Claim check loaded. Review each verdict and its evidence."
+                : "Cited sources loaded; fresh verification is still required.";
             })
             .catch((error: unknown) => {
               if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;

@@ -46,15 +46,64 @@ export interface ResearchArtifactSectionCitation {
   readonly excerpt_sha256: string;
 }
 
-export interface ResearchArtifactSectionCitationsView {
+export type ResearchArtifactSectionCitationAuditDisposition =
+  | "SUPPORTED"
+  | "PARTIALLY_SUPPORTED"
+  | "UNSUPPORTED"
+  | "CONTRADICTED"
+  | "NOT_VERIFIABLE_IN_SCOPE";
+
+export interface ResearchArtifactSectionCitationAuditClaim {
+  readonly claim_ref: VersionedRef;
+  readonly claim_text: string;
+  readonly claim_text_digest: string;
+  readonly disposition: ResearchArtifactSectionCitationAuditDisposition;
+  readonly support_handle_refs: readonly VersionedRef[];
+  readonly counterevidence_handle_refs: readonly VersionedRef[];
+}
+
+export interface ResearchArtifactSectionCitationAudit {
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+  readonly output_sha256: string;
+  readonly synthesis_output_sha256: string;
+  readonly normalization_binding_sha256: string;
+  readonly verifier_ref: string;
+  readonly verifier_schema_generation: string;
+  readonly model_receipt_ref: string;
+  readonly claims: readonly ResearchArtifactSectionCitationAuditClaim[];
+}
+
+interface ResearchArtifactSectionCitationsBase {
   readonly artifact_ref: VersionedRef;
   readonly section_ref: VersionedRef;
   readonly scope_snapshot_ref: VersionedRef;
   readonly verification_receipt_ref: string;
-  readonly semantic_verification: "NOT_EXECUTED";
   readonly cited_evidence: readonly ResearchArtifactSectionCitation[];
+}
+
+export interface ResearchArtifactSectionCitationsNotExecuted extends ResearchArtifactSectionCitationsBase {
+  readonly protocol: "eliotr.artifact-section-citations.v1";
+  readonly semantic_verification: "NOT_EXECUTED";
+}
+
+export interface ResearchArtifactSectionCitationsExecuted extends ResearchArtifactSectionCitationsBase {
+  readonly protocol: "eliotr.artifact-section-citations.v2";
+  readonly semantic_verification: "EXECUTED";
+  readonly audit: ResearchArtifactSectionCitationAudit;
+}
+
+export interface ResearchArtifactSectionCitationsNotExecutedView extends ResearchArtifactSectionCitationsNotExecuted {
   readonly deployment_generation: string;
 }
+
+export interface ResearchArtifactSectionCitationsExecutedView extends ResearchArtifactSectionCitationsExecuted {
+  readonly deployment_generation: string;
+}
+
+export type ResearchArtifactSectionCitationsView =
+  | ResearchArtifactSectionCitationsNotExecutedView
+  | ResearchArtifactSectionCitationsExecutedView;
 
 const MAX_RESULTS = 16;
 const MAX_WORKFLOW_STAGE_INDEX = 18;
@@ -117,6 +166,69 @@ function checkWorkflowId(value: unknown): string {
   const id = identifier(value, "workflow_instance_id");
   if (!SAFE_IDENTIFIER.test(id)) invalid("workflow_instance_id is invalid");
   return id;
+}
+
+const AUDIT_DISPOSITIONS: readonly ResearchArtifactSectionCitationAuditDisposition[] = [
+  "SUPPORTED", "PARTIALLY_SUPPORTED", "UNSUPPORTED", "CONTRADICTED", "NOT_VERIFIABLE_IN_SCOPE",
+];
+const MAX_AUDIT_CLAIMS = 512;
+const MAX_AUDIT_REFS = 512;
+
+function sha256Digest(value: unknown, label: string): string {
+  const digest = boundedString(value, label, 64);
+  if (!Sha256Schema.safeParse(digest).success) invalid(`${label} is invalid`);
+  return digest;
+}
+
+function claimText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 16_384) invalid(`${label} is invalid`);
+  return value;
+}
+
+function auditDisposition(value: unknown, label: string): ResearchArtifactSectionCitationAuditDisposition {
+  if (typeof value !== "string" || !AUDIT_DISPOSITIONS.includes(value as ResearchArtifactSectionCitationAuditDisposition)) invalid(`${label} is invalid`);
+  return value as ResearchArtifactSectionCitationAuditDisposition;
+}
+
+function versionedRefList(value: unknown, label: string): VersionedRef[] {
+  if (!Array.isArray(value) || value.length > MAX_AUDIT_REFS) invalid(`${label} is invalid`);
+  const refs = value.map((item, index) => versionedRef(item, `${label}[${index}]`));
+  if (new Set(refs.map((ref) => `${ref.id}:${ref.revision}`)).size !== refs.length) invalid(`${label} contains duplicate references`);
+  return refs;
+}
+
+function decodeCitationAuditClaim(value: unknown, index: number): ResearchArtifactSectionCitationAuditClaim {
+  const claim = record(value, ["claim_ref", "claim_text", "claim_text_digest", "disposition", "support_handle_refs", "counterevidence_handle_refs"]);
+  const support = versionedRefList(claim.support_handle_refs, `audit.claims[${index}].support_handle_refs`);
+  const counter = versionedRefList(claim.counterevidence_handle_refs, `audit.claims[${index}].counterevidence_handle_refs`);
+  const allRefs = [...support, ...counter];
+  if (new Set(allRefs.map((ref) => `${ref.id}:${ref.revision}`)).size !== allRefs.length) invalid(`audit.claims[${index}] contains duplicate evidence references`);
+  return {
+    claim_ref: versionedRef(claim.claim_ref, `audit.claims[${index}].claim_ref`),
+    claim_text: claimText(claim.claim_text, `audit.claims[${index}].claim_text`),
+    claim_text_digest: sha256Digest(claim.claim_text_digest, `audit.claims[${index}].claim_text_digest`),
+    disposition: auditDisposition(claim.disposition, `audit.claims[${index}].disposition`),
+    support_handle_refs: support,
+    counterevidence_handle_refs: counter,
+  };
+}
+
+function decodeCitationAudit(value: unknown): ResearchArtifactSectionCitationAudit {
+  const audit = record(value, ["stage_attempt_ref", "stage_request_sha256", "output_sha256", "synthesis_output_sha256", "normalization_binding_sha256", "verifier_ref", "verifier_schema_generation", "model_receipt_ref", "claims"]);
+  if (!Array.isArray(audit.claims) || audit.claims.length < 1 || audit.claims.length > MAX_AUDIT_CLAIMS) invalid("audit claims are invalid");
+  const claims = audit.claims.map((claim, index) => decodeCitationAuditClaim(claim, index));
+  if (new Set(claims.map((claim) => `${claim.claim_ref.id}:${claim.claim_ref.revision}`)).size !== claims.length) invalid("audit claims contain duplicate references");
+  return {
+    stage_attempt_ref: identifier(audit.stage_attempt_ref, "audit.stage_attempt_ref"),
+    stage_request_sha256: sha256Digest(audit.stage_request_sha256, "audit.stage_request_sha256"),
+    output_sha256: sha256Digest(audit.output_sha256, "audit.output_sha256"),
+    synthesis_output_sha256: sha256Digest(audit.synthesis_output_sha256, "audit.synthesis_output_sha256"),
+    normalization_binding_sha256: sha256Digest(audit.normalization_binding_sha256, "audit.normalization_binding_sha256"),
+    verifier_ref: identifier(audit.verifier_ref, "audit.verifier_ref"),
+    verifier_schema_generation: identifier(audit.verifier_schema_generation, "audit.verifier_schema_generation"),
+    model_receipt_ref: identifier(audit.model_receipt_ref, "audit.model_receipt_ref"),
+    claims,
+  };
 }
 
 function artifactRevision(value: unknown): ArtifactRevision {
@@ -239,8 +351,7 @@ export async function readResearchArtifactSection(
 
 export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArtifact: VersionedRef, expectedSection: VersionedRef, expectedDeploymentGeneration?: string, expectedVerificationReceiptRef?: string): ResearchArtifactSectionCitationsView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const data = record(parsed.data, ["protocol", "artifact_ref", "section_ref", "scope_snapshot_ref", "verification_receipt_ref", "semantic_verification", "cited_evidence"]);
-  if (data.protocol !== "eliotr.artifact-section-citations.v1" || data.semantic_verification !== "NOT_EXECUTED") invalid("research citation protocol is invalid");
+  const data = record(parsed.data, ["protocol", "artifact_ref", "section_ref", "scope_snapshot_ref", "verification_receipt_ref", "semantic_verification", "cited_evidence"], ["audit"]);
   const artifact = versionedRef(data.artifact_ref, "artifact_ref");
   const section = versionedRef(data.section_ref, "section_ref");
   const scope = versionedRef(data.scope_snapshot_ref, "scope_snapshot_ref");
@@ -253,14 +364,26 @@ export function decodeResearchArtifactSectionCitations(raw: unknown, expectedArt
   const citedEvidence = data.cited_evidence.map((value, index) => {
     const citation = record(value, ["handle_ref", "excerpt_sha256"]);
     const handle = versionedRef(citation.handle_ref, `cited_evidence[${index}].handle_ref`);
-    const digest = boundedString(citation.excerpt_sha256, `cited_evidence[${index}].excerpt_sha256`, 64);
-    if (!Sha256Schema.safeParse(digest).success) invalid("cited evidence digest is invalid");
+    const digest = sha256Digest(citation.excerpt_sha256, `cited_evidence[${index}].excerpt_sha256`);
     const key = `${handle.id}:${handle.revision}`;
     if (seen.has(key)) invalid("cited evidence contains a duplicate handle");
     seen.add(key);
     return { handle_ref: handle, excerpt_sha256: digest };
   });
-  return { artifact_ref: artifact, section_ref: section, scope_snapshot_ref: scope, verification_receipt_ref: receipt, semantic_verification: "NOT_EXECUTED", cited_evidence: citedEvidence, deployment_generation: parsed.deployment_generation };
+  const base = { artifact_ref: artifact, section_ref: section, scope_snapshot_ref: scope, verification_receipt_ref: receipt, cited_evidence: citedEvidence, deployment_generation: parsed.deployment_generation };
+  if (data.protocol === "eliotr.artifact-section-citations.v1" && data.semantic_verification === "NOT_EXECUTED" && !Object.hasOwn(data, "audit")) {
+    return { ...base, protocol: "eliotr.artifact-section-citations.v1", semantic_verification: "NOT_EXECUTED" };
+  }
+  if (data.protocol === "eliotr.artifact-section-citations.v2" && data.semantic_verification === "EXECUTED" && Object.hasOwn(data, "audit")) {
+    const audit = decodeCitationAudit(data.audit);
+    for (const claim of audit.claims) {
+      for (const ref of [...claim.support_handle_refs, ...claim.counterevidence_handle_refs]) {
+        if (!seen.has(`${ref.id}:${ref.revision}`)) invalid("audit evidence is not present in cited_evidence");
+      }
+    }
+    return { ...base, protocol: "eliotr.artifact-section-citations.v2", semantic_verification: "EXECUTED", audit };
+  }
+  invalid("research citation protocol is invalid");
 }
 
 export async function readResearchArtifactSectionCitations(

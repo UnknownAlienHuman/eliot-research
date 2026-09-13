@@ -142,18 +142,59 @@ export interface ResearchChangesResult {
   readonly has_more: boolean;
 }
 
-export interface ResearchArtifactSectionCitations {
-  readonly protocol: "eliotr.artifact-section-citations.v1";
+export type ResearchArtifactSectionCitationAuditDisposition =
+  | "SUPPORTED"
+  | "PARTIALLY_SUPPORTED"
+  | "UNSUPPORTED"
+  | "CONTRADICTED"
+  | "NOT_VERIFIABLE_IN_SCOPE";
+
+export interface ResearchArtifactSectionCitationAuditClaim {
+  readonly claim_ref: VersionedRef;
+  readonly claim_text: string;
+  readonly claim_text_digest: string;
+  readonly disposition: ResearchArtifactSectionCitationAuditDisposition;
+  readonly support_handle_refs: readonly VersionedRef[];
+  readonly counterevidence_handle_refs: readonly VersionedRef[];
+}
+
+export interface ResearchArtifactSectionCitationAudit {
+  readonly stage_attempt_ref: string;
+  readonly stage_request_sha256: string;
+  readonly output_sha256: string;
+  readonly synthesis_output_sha256: string;
+  readonly normalization_binding_sha256: string;
+  readonly verifier_ref: string;
+  readonly verifier_schema_generation: string;
+  readonly model_receipt_ref: string;
+  readonly claims: readonly ResearchArtifactSectionCitationAuditClaim[];
+}
+
+interface ResearchArtifactSectionCitationsBase {
   readonly artifact_ref: VersionedRef;
   readonly section_ref: VersionedRef;
   readonly scope_snapshot_ref: VersionedRef;
   readonly verification_receipt_ref: string;
-  readonly semantic_verification: "NOT_EXECUTED";
   readonly cited_evidence: readonly {
     readonly handle_ref: VersionedRef;
     readonly excerpt_sha256: string;
   }[];
 }
+
+export interface ResearchArtifactSectionCitationsNotExecuted extends ResearchArtifactSectionCitationsBase {
+  readonly protocol: "eliotr.artifact-section-citations.v1";
+  readonly semantic_verification: "NOT_EXECUTED";
+}
+
+export interface ResearchArtifactSectionCitationsExecuted extends ResearchArtifactSectionCitationsBase {
+  readonly protocol: "eliotr.artifact-section-citations.v2";
+  readonly semantic_verification: "EXECUTED";
+  readonly audit: ResearchArtifactSectionCitationAudit;
+}
+
+export type ResearchArtifactSectionCitations =
+  | ResearchArtifactSectionCitationsNotExecuted
+  | ResearchArtifactSectionCitationsExecuted;
 
 export type ExhaustiveWorkflowPageStatus = ExhaustiveWorkflowResult["workflow_status"];
 export type ExhaustiveWorkflowJobState = "PENDING" | "COMPLETE" | "INVALIDATED";

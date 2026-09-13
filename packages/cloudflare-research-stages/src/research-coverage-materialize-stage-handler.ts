@@ -21,6 +21,7 @@ import {
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-workflows";
 import { decodeResearchCoverageResult, type ResearchCoverageResult } from "./research-coverage-result.js";
+import { readCommittedResearchMaterializeAudit } from "./research-materialize-audit-reader.js";
 
 const COVERAGE_STAGE = "CALCULATE_COVERAGE" as const;
 const CITATIONS_STAGE = "RESOLVE_CITATIONS" as const;
@@ -28,7 +29,7 @@ const CITATIONS_STAGE = "RESOLVE_CITATIONS" as const;
 /** REPORT materialization with a mandatory server-owned Stage16 readback. */
 export type ResearchCoverageMaterializeStageDependencies = Omit<
   ResearchReportMaterializeStageDependencies,
-  "context" | "read_coverage_receipt"
+  "context" | "read_coverage_receipt" | "read_claim_audit"
 > & {
   readonly context: EvidenceFreezeMaterializeContextReader;
 };
@@ -160,6 +161,11 @@ export function createResearchCoverageMaterializeStageHandler(
       principal: input.principal,
       context: input.context,
       input_bytes: input.input_bytes,
+    }),
+    read_claim_audit: (input) => readCommittedResearchMaterializeAudit({
+      database: dependencies.database,
+      work_bucket: dependencies.work_bucket,
+      ...input,
     }),
   });
   return handler;

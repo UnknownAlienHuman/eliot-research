@@ -141,6 +141,7 @@ function semanticApi(env: Env): SemanticApi {
         ...artifactInput(context, artifactRef), section_ref: sectionRef,
       });
       if (citations === null) throw new ArtifactReadNotFoundError("artifact section citations do not exist");
+      if (citations.semantic_verification === "EXECUTED") return { protocol: "eliotr.artifact-section-citations.v2", ...citations };
       return { protocol: "eliotr.artifact-section-citations.v1", ...citations };
     },
     proposeWiki: createWikiProposalService(env),

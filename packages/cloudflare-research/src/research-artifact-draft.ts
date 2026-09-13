@@ -23,7 +23,7 @@ import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eli
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
-import { encodeArtifactDraftVerification } from "@eliotr/cloudflare-artifacts";
+import { encodeArtifactDraftVerification, type ArtifactDraftSemanticAudit } from "@eliotr/cloudflare-artifacts";
 import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1 } from "@eliotr/research";
 import { validateCoverageReceipt as validateDomainCoverageReceipt } from "@eliotr/domain";
 import {
@@ -64,6 +64,8 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly manifest_residency: ObjectResidencyTemplate;
   /** Optional server-owned Stage16 coverage accounting; never accepted from a report client. */
   readonly coverage_receipt?: CoverageReceipt;
+  /** Committed Stage14 readback supplied by the semantic workflow composition. */
+  readonly claim_audit?: ArtifactDraftSemanticAudit;
   /** Optional server-only REPORT admission appended to the draft store's final batch. */
   readonly admission?: ArtifactDraftAdmissionPort;
   readonly created_at: string;
@@ -237,10 +239,17 @@ async function derivedVerificationObject(input: {
   readonly cited: readonly ResearchEvidencePack["resolved_evidence"][number][];
   readonly section_sha256: string;
   readonly residency_template: ObjectResidencyTemplate;
+  readonly claim_audit?: ArtifactDraftSemanticAudit;
 }): Promise<{ readonly section_verification_ref: string; readonly object: ArtifactDraftReferencedObjectInput }> {
   const verification = await encodeArtifactDraftVerification({
-    schema: "eliotr.research.draft-verification.v1",
-    semantic_verification: "NOT_EXECUTED",
+    ...(input.claim_audit === undefined ? {
+      schema: "eliotr.research.draft-verification.v1" as const,
+      semantic_verification: "NOT_EXECUTED" as const,
+    } : {
+      schema: "eliotr.research.draft-verification.v2" as const,
+      semantic_verification: "EXECUTED" as const,
+      audit: input.claim_audit,
+    }),
     source_readback: "AUTHORITATIVE_RESOLVED",
     operation_id: input.operation_id,
     investigation_ref: input.investigation_ref,
@@ -310,6 +319,8 @@ function requireCurrentEvidenceAuthority(
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
   /* Snapshot the optional server-owned receipt before any awaited readback. */
   const coverageReceipt = snapshotCoverageReceipt(input.coverage_receipt);
+  const claimAudit = input.claim_audit === undefined ? undefined
+    : JSON.parse(canonicalEvidenceJson(input.claim_audit)) as ArtifactDraftSemanticAudit;
   const readback = input.synthesis_readback;
   if (typeof input.operation_id !== "string" || input.operation_id.length < 1 || readback.operation_id !== input.operation_id || readback.stage !== "SYNTHESIZE" ||
       readback.workflow_receipt.operation_id !== input.operation_id || readback.workflow_receipt.stage !== "SYNTHESIZE" ||
@@ -331,6 +342,10 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "V2 synthesis readback is required for this workflow");
   }
   const candidate = input.normalized_synthesis ?? decodeSynthesisSectionCandidate(assistantContent);
+  if (claimAudit !== undefined && (input.normalized_synthesis === undefined ||
+      claimAudit.synthesis_output_sha256 !== readback.output.output_sha256)) {
+    fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit is not bound to normalized synthesis");
+  }
   try {
     OperationIntentSchema.parse(input.intent);
     ArtifactSpecSchema.parse(input.spec);
@@ -369,6 +384,15 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     citedKeys.add(key);
   }
   parseEvidencePack(input.evidence_pack, scope, candidate.cited_handle_refs);
+  if (claimAudit !== undefined) {
+    for (const claim of claimAudit.claims) {
+      for (const ref of [...claim.support_handle_refs, ...claim.counterevidence_handle_refs]) {
+        if (!citedKeys.has(refKey(ref))) {
+          fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", "Claim audit cites evidence outside the saved synthesis");
+        }
+      }
+    }
+  }
   if (Object.values(input.section.statement_labels).some((label) => label !== "UNRESOLVED")) {
     fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "DRAFT section labels require semantic verification before promotion");
   }
@@ -427,6 +451,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
     cited: authoritativeEvidence,
     section_sha256: sectionSha256,
     residency_template: input.section_residency,
+    ...(claimAudit === undefined ? {} : { claim_audit: claimAudit }),
   });
   const draftSection: ArtifactSectionRevision = {
     ...input.section,
