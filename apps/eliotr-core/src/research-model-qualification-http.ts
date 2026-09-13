@@ -30,6 +30,8 @@ const QUALIFICATION_ERROR_CODES = new Set<ModelGatewayExecutionErrorCode>([
 
 type QualificationResponseInvalidReason =
   | "FINGERPRINT_INVALID"
+  | "LOG_READBACK_UNAVAILABLE"
+  | "LOG_CORRELATION_INVALID"
   | "LOG_ID_MISSING"
   | "LOG_ID_INVALID"
   | "CONTENT_TYPE_INVALID"
@@ -93,6 +95,12 @@ function responseInvalidReason(error: unknown): QualificationResponseInvalidReas
   }
   switch (error.message) {
     case "AI Gateway response does not contain a valid dynamic-route fingerprint":
+      if (error.cause instanceof Error) {
+        if (error.cause.message === "AI Gateway response is missing its response-scoped log id") return "LOG_ID_MISSING";
+        if (error.cause.message === "AI Gateway log readback is unavailable") return "LOG_READBACK_UNAVAILABLE";
+        if (error.cause.message === "AI Gateway log readback does not match the response" ||
+            error.cause.message === "AI Gateway log metadata does not match the request") return "LOG_CORRELATION_INVALID";
+      }
       return "FINGERPRINT_INVALID";
     case "AI Gateway response is missing cf-aig-log-id":
       return "LOG_ID_MISSING";

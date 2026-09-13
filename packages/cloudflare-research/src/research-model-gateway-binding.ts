@@ -63,6 +63,21 @@ function sameMetadata(left: Record<string, string>, right: Record<string, string
   return true;
 }
 
+async function readGatewayLog(gateway: Pick<AiGateway, "getLog">, logId: string): Promise<unknown> {
+  // Gateway logs are indexed after inference. Retry only a missing readback;
+  // the model request above is never repeated.
+  const delays = [500, 1500, 3000, 5000];
+  for (let attempt = 0; ; attempt += 1) {
+    try { return await gateway.getLog(logId); }
+    catch (cause) {
+      const missing = cause instanceof Error && cause.name === "AiGatewayLogNotFound";
+      const delay = delays[attempt];
+      if (!missing || delay === undefined) invalid("AI Gateway log readback is unavailable");
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
 async function normalizeFingerprintHeaders(
   response: Response,
   gateway: Pick<AiGateway, "getLog">,
@@ -75,9 +90,7 @@ async function normalizeFingerprintHeaders(
   if (logId === null) invalid("AI Gateway response is missing its response-scoped log id");
   const boundedLogId = identifier(logId, "AI Gateway response log id");
   const metadata = exactMetadata(requestHeaders.get("cf-aig-metadata"), "AI Gateway request metadata");
-  let log: unknown;
-  try { log = await gateway.getLog(boundedLogId); }
-  catch { invalid("AI Gateway log readback is unavailable"); }
+  const log = await readGatewayLog(gateway, boundedLogId);
   const record = plainRecord(log, "AI Gateway log readback");
   if (identifier(record.id, "AI Gateway log id") !== boundedLogId ||
       record.status_code !== response.status ||

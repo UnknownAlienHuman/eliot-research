@@ -7,6 +7,7 @@ import {
   type RouteFingerprint,
 } from "@eliotr/platform-cloudflare";
 import {
+  ModelGatewayExecutionError,
   modelGatewayExecutionFailure,
   type CompiledModelGatewayPrompt,
   type ModelCallInput,
@@ -463,6 +464,7 @@ async function executeObservedModelGatewayCall(
       redirect: "error",
     });
   } catch (cause) {
+    if (cause instanceof ModelGatewayExecutionError) throw cause;
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_TRANSPORT_FAILED",
       "AI Gateway transport failed with an unknown upstream execution outcome",
