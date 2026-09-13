@@ -343,11 +343,14 @@ function render(health: SystemHealth | null): void {
       if (coverageNote) coverageNote.textContent = "Run Research to measure sampled resolution.";
     }
   };
-  const clearPrivateEvidence = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); };
+  const clearPrivateEvidence = (researchNotice?: string): void => { clearEvidenceRail(); retrieval?.clearPrivate(); exhaustive?.clearPrivate(); erasure?.clearPrivate(); libraryPanel?.clearPrivate(); researchRun?.clearPrivate(researchNotice); };
   const sourceErased = (): void => { clearEvidenceRail(); retrieval?.clearPrivate(); researchRun?.clearPrivate(); exhaustive?.clearPrivate(); };
   erasureHost?.addEventListener("eliotr:source-erased", sourceErased);
   erasureHost?.addEventListener("eliotr:source-erasure-requested", sourceErased);
   const clearEvidenceOnEvent = (): void => clearPrivateEvidence();
+  const clearEvidenceOnAuthorization = (): void => clearPrivateEvidence("Authorization changed. Sign in again or renew the read policy, then try again.");
+  const clearEvidenceOnHealthLost = (): void => clearPrivateEvidence();
+  const clearEvidenceOnScopeChange = (): void => clearPrivateEvidence();
   const clearResearchConfiguration = (): void => researchConfiguration?.clearPrivate();
   const refreshResearchConfiguration = (): void => researchConfiguration?.refresh();
   const clearEvidenceOnQueryStart = (): void => clearEvidenceRail();
@@ -385,12 +388,12 @@ function render(health: SystemHealth | null): void {
     const coverageNote = app.querySelector("#coverage-note");
     if (coverageNote) coverageNote.textContent = `${detail.matches} exact match${detail.matches === 1 ? "" : "es"} in the reconciled scope.`;
   });
-  app.addEventListener("eliotr:health-lost", clearPrivateEvidence);
+  app.addEventListener("eliotr:health-lost", clearEvidenceOnHealthLost);
   app.addEventListener("eliotr:health-lost", clearResearchConfiguration);
   app.addEventListener("eliotr:health-updated", refreshResearchConfiguration);
-  app.addEventListener("library:scope-changed", clearPrivateEvidence);
+  app.addEventListener("library:scope-changed", clearEvidenceOnScopeChange);
   window.addEventListener("offline", clearEvidenceOnEvent);
-  window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent);
+  window.addEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization);
   retrievalHost?.addEventListener("retrieval:evidence-selected", (event) => {
     const evidence = (event as CustomEvent<{ evidence: ResolvedEvidence }>).detail.evidence;
     evidenceRail?.select(evidence, evidence.handle.scope_snapshot_ref);
@@ -412,7 +415,7 @@ function render(health: SystemHealth | null): void {
     namespacePanel, () => app.removeEventListener("eliotr:namespace-selected", namespaceSelected),
     rawUploadHost ? mountRawFilePanel(rawUploadHost, { generation: () => app.dataset.healthGeneration, ready: () => app.dataset.healthReady === "true", sourceNamespace: () => selectedNamespace }) : undefined,
     libraryPanel];
-  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearPrivateEvidence); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnEvent); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearPrivateEvidence); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
+  window.addEventListener("pagehide", () => { cleanups.forEach((cleanup) => cleanup?.()); googleOAuthCleanup?.(); googleOAuthCleanup = undefined; mountedGoogleTransport = null; evidenceRail?.dispose(); sourceChooserToggle?.removeEventListener("click", toggleSourceChooser); sourceChooserViewport.removeEventListener("change", handleSourceChooserViewport); rawUploadHost?.removeEventListener("eliotr:find-in-library", handleFindInLibrary); app.removeEventListener("library:scope-changed", clearEvidenceOnScopeChange); window.removeEventListener("offline", clearEvidenceOnEvent); window.removeEventListener("eliotr:authorization-cleared", clearEvidenceOnAuthorization); retrievalHost?.removeEventListener("retrieval:started", clearEvidenceOnQueryStart); researchRunHost?.removeEventListener("research:started", clearEvidenceOnQueryStart); exhaustiveHost?.removeEventListener("exhaustive:started", clearEvidenceOnQueryStart); app.removeEventListener("eliotr:health-lost", clearEvidenceOnHealthLost); app.removeEventListener("eliotr:health-lost", clearResearchConfiguration); app.removeEventListener("eliotr:health-updated", refreshResearchConfiguration); window.removeEventListener("popstate", handleLocationChange); window.removeEventListener("hashchange", handleLocationChange); researchRunHost?.removeEventListener("research:evidence-selected", selectResearchEvidence); }, { once: true });
 }
 
 function updateHealth(health: SystemHealth, failure?: HealthFailure): void {

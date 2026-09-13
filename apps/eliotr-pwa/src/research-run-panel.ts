@@ -98,7 +98,7 @@ export function mountResearchRunPanel(
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
-): (() => void) & { clearPrivate(): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
+): (() => void) & { clearPrivate(notice?: string): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
   element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() && researchConfigurationReady() ? "READY" : "WAITING"}</span></div>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
@@ -180,10 +180,10 @@ export function mountResearchRunPanel(
     historyList.replaceChildren();
     historyStatus.textContent = "Recent research appears after the current session is ready.";
   };
-  const clearPrivate = (): void => {
+  const clearPrivate = (notice = "Private research state cleared. Reconnect before starting or loading a run."): void => {
     stop(); clearHistory(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
-    updateButtons(); status.textContent = "Private research state cleared. Reconnect before starting or loading a run.";
+    updateButtons(); status.textContent = notice;
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();

@@ -196,7 +196,7 @@ This mode uses the existing Cloudflare Access session through `cloudflared acces
 The operator still performs both actual Gateway control-plane reads and stores the
 qualification result in D1. The owner-only Worker endpoint pins the server's document
 prompt and deployment, validates current evidence access, and consumes a separate
-one-shot dispatch claim (migration `0055`) before invoking its native AI binding.
+one-shot dispatch claim (migration `0055`) before invoking its configured model transport.
 Neither an ambiguous HTTP response nor a repeated dispatch authorizes another call.
 The endpoint returns execution observations; it does not install an ACTIVE profile.
 
@@ -210,8 +210,8 @@ for model improvement and prohibits confidential or personal data on this free
 endpoint. Initial qualification uses the public project README. Published routes
 are configuration evidence, not proof of a completed model response or report.
 
-The owner subsequently selected Cloudflare `@cf/zai-org/glm-5.3-flash` for current
-document work, replacing Inkling and rejecting `gpt-oss-120b` for this integration.
+The current owner-authorized fallback is Cloudflare `@cf/zai-org/glm-5.3-flash` for
+document work; the owner rejected `gpt-oss-120b` for this integration.
 Both `owner-cloudflare-glm53-v2` routes and their published token pricing have been
 prepared with explicit `reasoning_effort: "low"`. The parameter is included in the
 deployment digest; omission preserves provider defaults. GLM defaults to maximum
@@ -220,6 +220,22 @@ A native Worker request on 2026-09-13 returned HTTP 200 with 1,240 output tokens
 26.584 seconds. Application qualification remains incomplete until response
 provenance and immutable output persistence succeed; HTTP 200 alone does not
 authorize ACTIVE promotion.
+
+The native response also lacks `cf-aig-log-id`, so the application cannot bind that
+response to its Gateway record. The Worker supports the existing HTTP transport when
+the non-empty secret `ELIOTR_MODEL_GATEWAY_TOKEN` is installed. Set this secret on
+`eliotr-core` through Cloudflare Workers **Settings → Variables and Secrets**, with
+type **Secret**, using a dedicated account token with **AI Gateway Run** permission.
+The request goes to the configured reasoning Gateway's `/compat/chat/completions`
+endpoint with `cf-aig-authorization: Bearer …`. Do not put this credential in the
+runtime JSON envelope, Wrangler vars, source control or client settings. Without the
+secret the Worker retains the native binding transport; it does not try both paths
+or replay an ambiguous model call through the other transport.
+
+As of main `cb4d6ae`, the HTTP selection is deployed but token creation awaits owner
+confirmation. Installing the token does not activate routes or install the seven
+semantic variables. Complete actual synthesis/audit qualification and promotion,
+then deploy the compiled runtime envelope and read back a saved document answer.
 
 The setup input has this complete minimum shape. It is notation rather than a
 runnable file: every placeholder must be replaced by the corresponding

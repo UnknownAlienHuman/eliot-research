@@ -10,21 +10,20 @@ sources, the Astro interface and Cloudflare delivery. New financial budget, pric
 features are deferred; they must not displace that product work. Existing authorization and replay
 guards remain in force, and this ordering does not qualify an untested provider or deployment.
 
-Launch state: owner Access, README upload, admitted document reads and document search have run
-against the deployed Worker. New owner exploratory runs select v3. Both reasoning Dynamic Routes
-are published in Cloudflare, but no real model answer or completed source-to-report run has been
-observed. The owner selected OpenRouter `thinkingmachines/inkling:free` and installed
-the Gateway BYOK key. Both corresponding routes are published and read back through
-Cloudflare MCP. Both passed the real adoption/preparation code: immutable route
-bindings and exact zero-token-price snapshots were written and read back in D1.
-Wrangler OAuth still receives HTTP 403 for Gateway management.
-The first-call qualification factory now has an operator CLI and an evidence-backed
-prompt compiler independent of W2/ACTIVE profile setup. A live Wrangler remote-binding
-startup remains unresolved: reusing the application name hit Access; a unique temporary
-preview then stalled before the callback. The seven semantic/model/spend/report
-configuration values are not installed. These are launch blockers,
-not completed model capabilities. The route REST adapter must follow the current Cloudflare
-wire schema and embedded deployment readback; compilation alone does not qualify that adapter.
+Launch state as observed on 2026-09-13: owner Access, README upload, admitted document reads and
+document search have run against the deployed Worker. New owner exploratory runs select v3.
+The current document model is Cloudflare `@cf/zai-org/glm-5.3-flash` with explicit low reasoning;
+both `owner-cloudflare-glm53-v2` routes and their pricing snapshots are prepared in Cloudflare/D1.
+Actual native model calls returned HTTP 200 in 23–27 seconds, but the responses lack the
+request-scoped Gateway log ID required for application qualification. No saved model answer or
+completed source-to-report run has been observed, and neither route is ACTIVE in D1.
+Main `cb4d6ae` deployed the existing HTTP `/compat` transport selected by Worker secret
+`ELIOTR_MODEL_GATEWAY_TOKEN`. Creation of the dedicated AI Gateway Run token awaits owner
+confirmation; no token was created or installed. The seven semantic/model/spend/report variables
+remain absent. Next steps are token installation, real synthesis/audit qualification, route
+activation and runtime configuration, then a document question with saved output readback.
+See [the runtime configuration procedure](research-runtime-configuration.md). Prepared routes,
+provider HTTP success and compilation do not qualify the application model path.
 
 Stage17 now reads the committed Stage14 audit through its Stage15/16 lineage and checks the stored
 model attempt plus the exact normalized synthesis claims. Saved claim checks have a versioned
