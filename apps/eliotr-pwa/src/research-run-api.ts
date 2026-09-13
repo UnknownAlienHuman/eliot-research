@@ -7,10 +7,22 @@ export interface ResearchRunLaunchView {
   readonly deployment_generation: string;
 }
 
+export type ResearchEngineStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "errored"
+  | "terminated"
+  | "complete"
+  | "waiting"
+  | "waitingForPause"
+  | "unknown";
+
 export interface ResearchRunStatusView {
   readonly workflow_instance_id: string;
   readonly investigation_ref: { readonly id: string; readonly revision: number };
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
+  readonly engine_status: ResearchEngineStatus;
   readonly next_stage_index: number;
   readonly answer:
     | { readonly availability: "unavailable" }
@@ -109,6 +121,9 @@ const MAX_RESULTS = 16;
 const MAX_WORKFLOW_STAGE_INDEX = 18;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const RESEARCH_ENGINE_STATUSES: readonly ResearchEngineStatus[] = [
+  "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
+];
 
 function invalid(message = "Research run response is invalid; try again"): never {
   throw new ApiRequestError({ status: 502, code: "RESEARCH_RUN_RESPONSE_INVALID", message });
@@ -166,6 +181,11 @@ function checkWorkflowId(value: unknown): string {
   const id = identifier(value, "workflow_instance_id");
   if (!SAFE_IDENTIFIER.test(id)) invalid("workflow_instance_id is invalid");
   return id;
+}
+
+function engineStatus(value: unknown): ResearchEngineStatus {
+  if (typeof value !== "string" || !RESEARCH_ENGINE_STATUSES.includes(value as ResearchEngineStatus)) invalid("research engine status is invalid");
+  return value as ResearchEngineStatus;
 }
 
 const AUDIT_DISPOSITIONS: readonly ResearchArtifactSectionCitationAuditDisposition[] = [
@@ -277,7 +297,7 @@ export function decodeResearchRunLaunch(raw: unknown, expectedDeploymentGenerati
 
 export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunStatusView {
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const data = record(parsed.data, ["protocol", "workflow_instance_id", "investigation_ref", "execution_state", "next_stage_index", "answer"], ["cancellation_receipt_ref"]);
+  const data = record(parsed.data, ["protocol", "workflow_instance_id", "investigation_ref", "execution_state", "next_stage_index", "answer"], ["cancellation_receipt_ref", "engine_status"]);
   if (data.protocol !== "eliotr.research-run-status.v1") invalid("research run protocol is invalid");
   const state = data.execution_state;
   if (state !== "ACTIVE" && state !== "CANCELLED" && state !== "ENGINE_COMPLETED") invalid("research run state is invalid");
@@ -294,9 +314,10 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
     versionedRef(answer.artifact_ref, "answer artifact_ref");
   } else invalid("research run answer availability is invalid");
   const cancellation = Object.hasOwn(data, "cancellation_receipt_ref") ? boundedString(data.cancellation_receipt_ref, "cancellation_receipt_ref") : undefined;
+  const observedEngineStatus = Object.hasOwn(data, "engine_status") ? engineStatus(data.engine_status) : "unknown";
   if (state === "CANCELLED" && cancellation !== `workflow-cancelled:${workflowId}`) invalid("cancelled run receipt does not match the workflow");
   if (state !== "CANCELLED" && cancellation !== undefined) invalid("non-cancelled run cannot carry a cancellation receipt");
-  return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, next_stage_index: stageIndex, answer: answer.availability === "draft" ? { availability: "draft", artifact_ref: versionedRef(answer.artifact_ref, "answer artifact_ref") } : { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
+  return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, engine_status: observedEngineStatus, next_stage_index: stageIndex, answer: answer.availability === "draft" ? { availability: "draft", artifact_ref: versionedRef(answer.artifact_ref, "answer artifact_ref") } : { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
 }
 
 export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView {

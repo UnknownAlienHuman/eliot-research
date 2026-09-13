@@ -1,6 +1,6 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitation, type ResearchArtifactSectionCitationAuditClaim, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitation, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
@@ -50,6 +50,12 @@ function statusText(view: ResearchRunStatusView): string {
     case "ACTIVE": {
       const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
       const label = stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
+      if (view.engine_status === "errored") return "The research engine stopped before finishing. No answer is available.";
+      if (view.engine_status === "terminated") return "The research engine was stopped. No answer is available.";
+      if (view.engine_status === "complete") return "The research engine finished. The saved run is still being finalized.";
+      if (view.engine_status === "unknown") return "Research execution status is unavailable. Refresh to check again.";
+      if (view.engine_status === "paused") return `Research is paused. Current stage: ${label}. Refresh to check again.`;
+      if (view.engine_status === "waiting" || view.engine_status === "waitingForPause") return `Research is waiting to continue. Current stage: ${label}. Status refreshes automatically.`;
       return `Research is processing. Current stage: ${label}. Status refreshes automatically.`;
     }
     case "CANCELLED": return "Research was cancelled. Answer unavailable.";
@@ -59,11 +65,19 @@ function statusText(view: ResearchRunStatusView): string {
 
 function historyStageText(view: ResearchRunStatusView): string {
   if (view.execution_state === "ACTIVE") {
+    if (view.engine_status === "errored") return "Engine stopped before completion";
+    if (view.engine_status === "terminated") return "Engine stopped";
+    if (view.engine_status === "complete") return "Engine finished; saved state pending";
+    if (view.engine_status === "unknown") return "Execution status unavailable";
     const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
     return stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
   }
   if (view.execution_state === "CANCELLED") return "Cancelled";
   return view.answer.availability === "draft" ? "Draft available" : "Finished without a report";
+}
+
+function shouldPollEngine(status: ResearchEngineStatus | undefined): boolean {
+  return status === undefined || status === "queued" || status === "running" || status === "paused" || status === "waiting" || status === "waitingForPause";
 }
 
 function historyDate(value: string): string {
@@ -134,6 +148,7 @@ export function mountResearchRunPanel(
   let idempotencyKey = "";
   let progressTimer: number | undefined;
   let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined;
+  let lastEngineStatus: ResearchEngineStatus | undefined;
   let historyController: AbortController | undefined;
   let historySerial = 0;
   let historyGeneration: string | undefined;
@@ -166,6 +181,7 @@ export function mountResearchRunPanel(
     controller?.abort();
     controller = undefined;
     lastExecutionState = undefined;
+    lastEngineStatus = undefined;
     updateButtons();
   };
   const clearHistoryRequest = (): void => {
@@ -211,7 +227,7 @@ export function mountResearchRunPanel(
   const scheduleStatusRefresh = (immediate = false): void => {
     clearProgressTimer();
     if (disposed || lastExecutionState !== "ACTIVE" || workflowId === undefined || controller !== undefined ||
-        !healthReady() || !navigator.onLine || document.visibilityState === "hidden") return;
+        !shouldPollEngine(lastEngineStatus) || !healthReady() || !navigator.onLine || document.visibilityState === "hidden") return;
     progressTimer = window.setTimeout(() => {
       progressTimer = undefined;
       readStatus("automatic");
@@ -267,6 +283,7 @@ export function mountResearchRunPanel(
   };
   const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
     lastExecutionState = view.execution_state;
+    lastEngineStatus = view.engine_status;
     const text = statusText(view);
     result.replaceChildren();
     const heading = document.createElement("p"); const strong = document.createElement("strong"); strong.textContent = text; heading.append(strong);
@@ -406,10 +423,10 @@ export function mountResearchRunPanel(
     result.hidden = false;
     if (status.textContent !== text) status.textContent = text;
     refresh.disabled = false;
-    if (view.execution_state === "ACTIVE") scheduleStatusRefresh(); else clearProgressTimer();
+    if (view.execution_state === "ACTIVE" && shouldPollEngine(view.engine_status)) scheduleStatusRefresh(); else clearProgressTimer();
   };
   const readStatus = (trigger: "manual" | "automatic" | "history" = "manual", requestedWorkflowId?: string): void => {
-    if (trigger === "automatic" && (lastExecutionState !== "ACTIVE" || controller !== undefined)) {
+    if (trigger === "automatic" && (lastExecutionState !== "ACTIVE" || controller !== undefined || !shouldPollEngine(lastEngineStatus))) {
       scheduleStatusRefresh();
       return;
     }
@@ -438,7 +455,7 @@ export function mountResearchRunPanel(
       })
       .catch((error: unknown) => {
         if (active !== serial || (error instanceof Error && error.name === "AbortError")) return;
-        lastExecutionState = undefined; clearProgressTimer();
+        lastExecutionState = undefined; lastEngineStatus = undefined; clearProgressTimer();
         const privateFailure = error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED");
         if (!automatic || privateFailure) { result.replaceChildren(); result.hidden = true; }
         if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) {
@@ -462,7 +479,7 @@ export function mountResearchRunPanel(
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
+      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; lastEngineStatus = undefined; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
       .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else status.textContent = message(error); })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };

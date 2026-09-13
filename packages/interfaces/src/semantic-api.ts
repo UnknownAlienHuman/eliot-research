@@ -72,15 +72,28 @@ export interface ExhaustiveWorkflowResult {
   readonly protocol: "eliotr.exhaustive-query.v1";
   /** Present while the canonical Workflow instance is queued or running. */
   readonly workflow_instance_id: string;
-  readonly workflow_status: "queued" | "running" | "paused" | "errored" | "terminated" | "complete" | "waiting" | "waitingForPause" | "unknown";
+  readonly workflow_status: ResearchEngineStatus;
   readonly job?: ExhaustiveReconcileStatus;
 }
+
+export type ResearchEngineStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "errored"
+  | "terminated"
+  | "complete"
+  | "waiting"
+  | "waitingForPause"
+  | "unknown";
 
 export interface ResearchRunStatus {
   readonly protocol: "eliotr.research-run-status.v1";
   readonly workflow_instance_id: string;
   readonly investigation_ref: VersionedRef;
   readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
+  /** Native Workflow observation for an active run; execution_state remains the canonical D1 state. */
+  readonly engine_status?: ResearchEngineStatus;
   readonly next_stage_index: number;
   readonly answer:
     | { readonly availability: "unavailable" }

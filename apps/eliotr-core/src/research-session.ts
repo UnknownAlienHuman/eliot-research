@@ -14,7 +14,7 @@ import { createResearchSemanticServerHandlers, researchSemanticConfigurationInst
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
 import { inspectScopeExpression } from "@eliotr/domain";
-import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRunStatus } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
 import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
@@ -36,6 +36,22 @@ export function parseResearchQueryRequest(raw: unknown): QueryRequest { if (type
 export function parseResearchRunRequest(raw: unknown): QueryRequest { if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object"); const r = raw as Record<string, unknown>; exactKeys(r); if (r.product !== "RESEARCH") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires product RESEARCH", 422); if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422); if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422); return { query: checkQuery(r.query), product: "RESEARCH", scope_expression: checkScope(r.scope_expression), literals: [], evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r) }; }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 function requireOwner(context: AuthenticatedRequestContext): void { if (context.client_class !== "owner_pwa") fail("RESEARCH_OWNER_REQUIRED", "research query/run requires the owner profile", 403); }
+const RESEARCH_ENGINE_STATUSES = new Set<ResearchEngineStatus>([
+  "queued", "running", "paused", "errored", "terminated", "complete", "waiting", "waitingForPause", "unknown",
+]);
+function readResearchEngineStatusValue(value: unknown): ResearchEngineStatus {
+  return typeof value === "string" && RESEARCH_ENGINE_STATUSES.has(value as ResearchEngineStatus) ? value as ResearchEngineStatus : "unknown";
+}
+async function readResearchEngineStatus(env: Env, operationId: string): Promise<ResearchEngineStatus> {
+  try {
+    const instance = await env.RESEARCH_WORKFLOW.get(operationId);
+    if (instance.id !== operationId) return "unknown";
+    const observed = await instance.status();
+    return readResearchEngineStatusValue(observed.status);
+  } catch {
+    return "unknown";
+  }
+}
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
 export const RETRIEVAL_SCOPE_PROFILE_VERSION = SERVER_RETRIEVAL_SCOPE_PROFILE.version;
 export const RETRIEVAL_SCOPE_MAX_SOURCES = SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources;
@@ -155,6 +171,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     database: env.CORE_DB, operation_id: operationId, principal, recheck_authority: recheckAuthority,
   }).catch(mapRunStatusFailure);
   if (status === null) fail("RESEARCH_RUN_NOT_FOUND", "research run does not exist", 404);
+  const engineStatus = status.state === "ACTIVE" ? await readResearchEngineStatus(env, operationId) : undefined;
   let answer: ResearchRunStatus["answer"] = { availability: "unavailable" };
   if (status.state === "ENGINE_COMPLETED") {
     const completed = await readCommittedResearchRunResult({
@@ -172,6 +189,7 @@ async function readResearchRunStatus(env: Env, context: AuthenticatedRequestCont
     workflow_instance_id: status.operation_id,
     investigation_ref: { id: status.investigation_id, revision: status.current_revision },
     execution_state: status.state,
+    ...(engineStatus === undefined ? {} : { engine_status: engineStatus }),
     next_stage_index: status.next_stage_index,
     answer,
     ...(status.cancellation_receipt_ref === null ? {} : { cancellation_receipt_ref: status.cancellation_receipt_ref }),
