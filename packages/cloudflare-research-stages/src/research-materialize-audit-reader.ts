@@ -105,7 +105,7 @@ function requireWorkflowLineage(
       lineage.receipt.operation_id !== request.operation_id ||
       lineage.receipt.stage !== stage ||
       lineage.receipt.investigation_ref.id !== lineage.request.investigation_ref.id ||
-      lineage.receipt.investigation_ref.revision !== lineage.request.investigation_ref.revision ||
+      lineage.receipt.investigation_ref.revision !== lineage.request.investigation_ref.revision + 1 ||
       lineage.receipt.input_manifest_ref !== lineage.request.input_manifest.object_ref ||
       lineage.receipt.attempt_ref !== lineage.attempt_ref ||
       lineage.receipt.request_sha256 !== lineage.request_sha256) {

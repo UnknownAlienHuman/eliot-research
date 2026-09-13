@@ -49,6 +49,16 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** Resource and policy denials use 403 too; only an explicit Access failure clears the session. */
+export function isAuthorizationLoss(error: unknown): boolean {
+  return error instanceof ApiRequestError &&
+    (error.status === 401 || (error.status === 403 && error.code.startsWith("ACCESS_")));
+}
+
+function notifyAuthorizationCleared(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("eliotr:authorization-cleared"));
+}
+
 type JsonRecord = Record<string, unknown>;
 
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -342,9 +352,7 @@ export async function requestApiWithStatuses(
     const response = await bounded(fetch(path, { ...init, signal: controller.signal, redirect: "manual",
       credentials: "same-origin", cache: "no-store", headers: { accept: "application/json", ...init.headers } }));
     const redirected = response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400);
-    if ((redirected || response.status === 401 || response.status === 403) && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("eliotr:authorization-cleared"));
-    }
+    if (redirected || response.status === 401) notifyAuthorizationCleared();
     if (redirected) {
       throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
     }
@@ -371,7 +379,9 @@ export async function requestApiWithStatuses(
     try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
     catch { throw new ApiRequestError({ status: 502, code: "MALFORMED_JSON_RESPONSE", message: "API response is not valid UTF-8 JSON" }); }
     if (!response.ok) {
-      throw decodeApiProblem(value, response.status);
+      const error = decodeApiProblem(value, response.status);
+      if (response.status === 403 && isAuthorizationLoss(error)) notifyAuthorizationCleared();
+      throw error;
     }
     if (!acceptedStatuses.includes(response.status)) throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected API completion status" });
     completed = true;
@@ -418,9 +428,7 @@ export async function requestApiBytes(path: string, signal?: AbortSignal,
       cache: "no-store", headers: { accept: expectedContentType },
     }));
     const redirected = response.type === "opaqueredirect" || response.redirected || (response.status >= 300 && response.status < 400);
-    if ((redirected || response.status === 401 || response.status === 403) && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("eliotr:authorization-cleared"));
-    }
+    if (redirected || response.status === 401) notifyAuthorizationCleared();
     if (redirected) throw new ApiRequestError({ status: 401, code: "ACCESS_SESSION_REQUIRED", message: "Sign in to Cloudflare Access and reload this page" });
     if (!response.body) throw new ApiRequestError({ status: 502, code: "API_RESPONSE_SCHEMA_MISMATCH", message: "Expected a bounded API response body" });
     reader = response.body.getReader();
@@ -439,7 +447,9 @@ export async function requestApiBytes(path: string, signal?: AbortSignal,
       let value: unknown;
       try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
       catch { throw new ApiRequestError({ status: response.status, code: "MALFORMED_API_PROBLEM", message: "API returned an invalid error response" }); }
-      throw decodeApiProblem(value, response.status);
+      const error = decodeApiProblem(value, response.status);
+      if (response.status === 403 && isAuthorizationLoss(error)) notifyAuthorizationCleared();
+      throw error;
     }
     if (response.status !== 200 && response.status !== 206) {
       throw new ApiRequestError({ status: 502, code: "API_STATUS_INVALID", message: "Unexpected bounded response completion status" });

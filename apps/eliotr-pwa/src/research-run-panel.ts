@@ -1,5 +1,5 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
-import { ApiRequestError } from "./api.js";
+import { ApiRequestError, isAuthorizationLoss } from "./api.js";
 import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchArtifactSectionCitation, type ResearchArtifactSectionCitationAuditClaim, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
@@ -195,6 +195,9 @@ export function mountResearchRunPanel(
     refresh.disabled = !available || busy || workflowId === undefined;
     historyRefresh.disabled = !available || historyController !== undefined;
   };
+  const setReportActionsDisabled = (disabled: boolean): void => {
+    result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button").forEach((button) => { button.disabled = disabled; });
+  };
   const refreshAvailability = (): void => {
     badge.textContent = lastExecutionState === undefined
       ? idleBadgeText(healthReady() && researchConfigurationReady())
@@ -241,12 +244,13 @@ export function mountResearchRunPanel(
     if (document.visibilityState === "hidden") {
       clearProgressTimer();
       if (historyController !== undefined) clearHistoryRequest();
-      if (controller !== undefined) {
-        serial += 1;
-        controller.abort();
-        controller = undefined;
-        updateButtons();
-      }
+        if (controller !== undefined) {
+          serial += 1;
+          controller.abort();
+          controller = undefined;
+          setReportActionsDisabled(false);
+          updateButtons();
+        }
       return;
     }
     scheduleStatusRefresh(true);
@@ -316,7 +320,12 @@ export function mountResearchRunPanel(
       .then((view) => { if (active !== historySerial || disposed) return; historyGeneration = view.deployment_generation; historyView = view; renderHistoryList(view); })
       .catch((error: unknown) => {
         if (active !== historySerial || (error instanceof Error && error.name === "AbortError")) return;
-        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { clearPrivate(); return; }
+        if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { clearPrivate(); return; }
+        if (error instanceof ApiRequestError && error.status === 403) {
+          historyView = undefined;
+          historyRows.clear();
+          historyList.replaceChildren();
+        }
         historyGeneration = undefined;
         if (historyView !== undefined) renderHistoryList(historyView);
         historyStatus.textContent = historyErrorMessage(error);
@@ -375,7 +384,7 @@ export function mountResearchRunPanel(
         const open = document.createElement("button"); open.type = "button"; open.className = "button button--quiet"; open.textContent = "Open section";
         open.onclick = () => {
           if (renderSerial !== serial || controller !== undefined) return;
-          const local = new AbortController(); controller = local; open.disabled = true; status.textContent = "Reading report section…";
+          const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading report section…";
           void readResearchArtifactSection(artifact.artifact_ref, section, local.signal)
             .then((readback) => {
               if (renderSerial !== serial) return;
@@ -384,16 +393,17 @@ export function mountResearchRunPanel(
             })
             .catch((error: unknown) => {
               if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-section-body")?.remove();
               const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
               status.textContent = "The report section could not be opened.";
             })
-            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; updateButtons(); } });
+            .finally(() => { if (controller === local) { controller = undefined; if (!disposed && renderSerial === serial) { setReportActionsDisabled(false); updateButtons(); } } });
         };
         const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
         sources.onclick = () => {
           if (renderSerial !== serial || controller !== undefined) return;
-          const local = new AbortController(); controller = local; open.disabled = true; sources.disabled = true; status.textContent = "Reading cited sources…";
+          const local = new AbortController(); controller = local; setReportActionsDisabled(true); status.textContent = "Reading cited sources…";
           item.querySelector(".research-citations")?.remove(); item.querySelector(".research-citation-error")?.remove();
           void readResearchArtifactSectionCitations(artifact.artifact_ref, section.section_ref, view.deployment_generation, local.signal, section.verification_receipt_ref)
             .then((citations) => {
@@ -453,11 +463,12 @@ export function mountResearchRunPanel(
             })
             .catch((error: unknown) => {
               if (renderSerial !== serial || (error instanceof Error && error.name === "AbortError")) return;
-              if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.status === 409 || error.status === 410)) { clearPrivate(); return; }
+              if (error instanceof ApiRequestError && error.status === 403) item.querySelector(".research-citations")?.remove();
               const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
               status.textContent = "Cited sources could not be read.";
             })
-            .finally(() => { if (controller === local) { controller = undefined; open.disabled = false; sources.disabled = false; updateButtons(); } });
+            .finally(() => { if (controller === local) { controller = undefined; if (!disposed && renderSerial === serial) { setReportActionsDisabled(false); updateButtons(); } } });
         };
         const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
         item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
@@ -467,6 +478,7 @@ export function mountResearchRunPanel(
       result.append(identity);
     }
     result.hidden = false;
+    setReportActionsDisabled(controller !== undefined);
     if (status.textContent !== text) status.textContent = text;
     refresh.disabled = false;
     if (view.execution_state === "ACTIVE" && shouldPollEngine(view.engine_status)) scheduleStatusRefresh(); else clearProgressTimer();
@@ -508,7 +520,7 @@ export function mountResearchRunPanel(
           if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error);
         } else status.textContent = message(error);
       })
-      .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
+      .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); scheduleStatusRefresh(); } });
   };
   form.onsubmit = (event) => {
     event.preventDefault();
@@ -526,7 +538,7 @@ export function mountResearchRunPanel(
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
       .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; lastEngineStatus = undefined; lastAnswerAvailability = undefined; badge.textContent = "RUNNING"; progress.textContent = "Research started. Checking progress automatically."; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
-      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else { badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Research could not be started."; status.textContent = message(error); } })
+      .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (isAuthorizationLoss(error) || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else { badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = "Research could not be started."; status.textContent = message(error); } })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
   refresh.onclick = () => readStatus("manual", workflowId);
