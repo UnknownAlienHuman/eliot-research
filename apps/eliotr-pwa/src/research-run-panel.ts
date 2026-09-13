@@ -196,7 +196,16 @@ export function mountResearchRunPanel(
     historyRefresh.disabled = !available || historyController !== undefined;
   };
   const setReportActionsDisabled = (disabled: boolean): void => {
-    result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button").forEach((button) => { button.disabled = disabled; });
+    result.querySelectorAll<HTMLButtonElement>(".research-report-actions > button, .research-citation-actions > button").forEach((button) => {
+      button.disabled = disabled || button.dataset.reportActionUnavailable === "true";
+    });
+  };
+  const finishReportAction = (local: AbortController, renderSerial: number): void => {
+    if (controller !== local) return;
+    controller = undefined;
+    if (disposed || renderSerial !== serial) return;
+    setReportActionsDisabled(false);
+    updateButtons();
   };
   const refreshAvailability = (): void => {
     badge.textContent = lastExecutionState === undefined
@@ -235,6 +244,12 @@ export function mountResearchRunPanel(
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
     badge.textContent = idleBadgeText(healthReady() && researchConfigurationReady()); progress.textContent = idleProgressText(healthReady() && researchConfigurationReady());
     updateButtons(); status.textContent = notice;
+  };
+  const showUnavailableRun = (error: ApiRequestError): void => {
+    clearPrivate();
+    progress.textContent = "Saved research is unavailable.";
+    status.textContent = `Saved research is unavailable. ${message(error)}`;
+    console.warn("research_run_read_failed", { code: error.code, status: error.status });
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();
@@ -398,7 +413,7 @@ export function mountResearchRunPanel(
               const failure = document.createElement("p"); failure.className = "research-section-error"; failure.textContent = message(error); item.querySelector(".research-section-error")?.remove(); item.append(failure);
               status.textContent = "The report section could not be opened.";
             })
-            .finally(() => { if (controller === local) { controller = undefined; if (!disposed && renderSerial === serial) { setReportActionsDisabled(false); updateButtons(); } } });
+            .finally(() => finishReportAction(local, renderSerial));
         };
         const sources = document.createElement("button"); sources.type = "button"; sources.className = "button button--quiet"; sources.textContent = "Open sources"; sources.dataset.openSources = String(ordinal);
         sources.onclick = () => {
@@ -424,7 +439,7 @@ export function mountResearchRunPanel(
                 const citation = citationByRef.get(citationRefKey(ref));
                 const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet";
                 button.textContent = citation === undefined ? `${kind} evidence unavailable` : `${kind} evidence ${ordinal + 1}`;
-                if (citation === undefined) button.disabled = true;
+                if (citation === undefined) { button.disabled = true; button.dataset.reportActionUnavailable = "true"; }
                 else button.onclick = () => selectCitation(citation);
                 container.append(button);
               };
@@ -451,7 +466,7 @@ export function mountResearchRunPanel(
                 const heading = document.createElement("p"); heading.textContent = "Open a cited source in the Evidence rail:"; list.append(heading);
                 const actions = document.createElement("div"); actions.className = "research-citation-actions";
                 citations.cited_evidence.forEach((citation, citationOrdinal) => {
-                  const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal);
+                  const button = document.createElement("button"); button.type = "button"; button.className = "button button--quiet"; button.textContent = `Open source ${citationOrdinal + 1}`; button.dataset.openCitation = String(citationOrdinal); button.disabled = controller !== undefined;
                   button.onclick = () => selectCitation(citation);
                   actions.append(button);
                 });
@@ -468,7 +483,7 @@ export function mountResearchRunPanel(
               const failure = document.createElement("p"); failure.className = "research-citation-error"; failure.textContent = message(error); item.querySelector(".research-citation-error")?.remove(); item.append(failure);
               status.textContent = "Cited sources could not be read.";
             })
-            .finally(() => { if (controller === local) { controller = undefined; if (!disposed && renderSerial === serial) { setReportActionsDisabled(false); updateButtons(); } } });
+            .finally(() => finishReportAction(local, renderSerial));
         };
         const actions = document.createElement("div"); actions.className = "research-report-actions"; actions.append(open, sources);
         item.append(sectionHeading, sectionTechnical, actions); sections.append(item);
@@ -517,7 +532,7 @@ export function mountResearchRunPanel(
         const privateFailure = error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED");
         if (!automatic || privateFailure) { result.replaceChildren(); result.hidden = true; }
         if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.status === 404 || error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) {
-          if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") clearPrivate(); else status.textContent = message(error);
+          if (error.status === 409 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") showUnavailableRun(error); else status.textContent = message(error);
         } else status.textContent = message(error);
       })
       .finally(() => { if (active === serial) { controller = undefined; if (!disposed) setReportActionsDisabled(false); updateButtons(); scheduleStatusRefresh(); } });

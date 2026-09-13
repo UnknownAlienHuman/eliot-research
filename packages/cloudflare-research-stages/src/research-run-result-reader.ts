@@ -287,7 +287,7 @@ export async function readCommittedResearchRunResult(
   );
   if (!sameRef(materialize.request.investigation_ref, stageSixteen.receipt.investigation_ref) ||
       !sameRef(stageSixteen.receipt.investigation_ref, materialize.request.investigation_ref) ||
-      stageSixteen.receipt.investigation_ref.revision !== materialization.workflow_receipt.investigation_ref.revision ||
+      stageSixteen.receipt.investigation_ref.revision + 1 !== materialization.workflow_receipt.investigation_ref.revision ||
       stageSixteen.request.investigation_ref.revision + 1 !== stageSixteen.receipt.investigation_ref.revision ||
       stageFifteen.receipt.investigation_ref.revision !== stageSixteen.request.investigation_ref.revision ||
       stageFifteen.request.investigation_ref.revision + 1 !== stageFifteen.receipt.investigation_ref.revision ||
