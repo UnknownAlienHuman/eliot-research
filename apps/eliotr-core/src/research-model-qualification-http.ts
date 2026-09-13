@@ -127,14 +127,65 @@ function responseInvalidReason(error: unknown): QualificationResponseInvalidReas
   }
 }
 
+type QualificationTransportReason =
+  | "CANCELLED"
+  | "DEADLINE_EXCEEDED"
+  | "REDIRECTED"
+  | "BODY_TOO_LARGE"
+  | "BODY_READ_FAILED"
+  | "NETWORK_CONNECTION_LOST"
+  | "FETCH_TYPE_ERROR"
+  | "FETCH_ERROR"
+  | "ILLEGAL_INVOCATION"
+  | "FETCH_NOT_SUPPORTED"
+  | "UNCLASSIFIED";
+
+const ILLEGAL_INVOCATION_MESSAGES = new Set([
+  "Illegal invocation",
+  "Illegal invocation: function called with incorrect `this` reference. See https://developers.cloudflare.com/workers/observability/errors/#illegal-invocation-errors for details.",
+]);
+
+function transportFailureReason(error: unknown): QualificationTransportReason | undefined {
+  if (!(error instanceof ModelGatewayExecutionError) || error.code !== "MODEL_GATEWAY_TRANSPORT_FAILED") {
+    return undefined;
+  }
+  const cause = error.cause;
+  if (!(cause instanceof Error)) return "UNCLASSIFIED";
+  if (cause.name === "AbortError") {
+    switch (cause.message) {
+      case "model gateway call was cancelled":
+      case "model gateway response consumption was cancelled":
+        return "CANCELLED";
+      case "model gateway response deadline exceeded":
+        return "DEADLINE_EXCEEDED";
+      case "model gateway response was redirected":
+        return "REDIRECTED";
+      case "model gateway response exceeds its bounded byte budget":
+        return "BODY_TOO_LARGE";
+      case "model gateway response body cannot be read":
+      case "model gateway response body could not be read":
+        return "BODY_READ_FAILED";
+      default:
+        break;
+    }
+  }
+  if (cause.name === "TypeError" && ILLEGAL_INVOCATION_MESSAGES.has(cause.message)) return "ILLEGAL_INVOCATION";
+  if (cause.name === "Error" && (cause.message === "Network connection lost." || cause.message === "Network connection lost")) return "NETWORK_CONNECTION_LOST";
+  if (cause.name === "TypeError") return "FETCH_TYPE_ERROR";
+  if (cause.name === "Error") return "FETCH_ERROR";
+  return "UNCLASSIFIED";
+}
+
 function qualificationFailureTitle(
   status: number | undefined,
   providerCodes: readonly number[],
   reason: QualificationResponseInvalidReason | undefined,
+  transportReason: QualificationTransportReason | undefined,
 ): string {
   const details: string[] = [];
   if (status !== undefined) details.push(`upstream HTTP ${status}`);
   if (providerCodes.length > 0) details.push(`provider codes ${providerCodes.join(",")}`);
+  if (transportReason !== undefined) details.push(`transport reason ${transportReason}`);
   if (reason !== undefined) details.push(`response reason ${reason}`);
   return details.length === 0
     ? "Document model qualification could not complete"
@@ -248,7 +299,8 @@ export async function handleResearchModelQualification(
     const codes = Array.isArray(rawCodes)
       ? rawCodes.filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0).slice(0, 8) : [];
     const reason = responseInvalidReason(error);
+    const transportReason = transportFailureReason(error);
     // A failed response does not authorize another model invocation.
-    throw new HttpRequestError(code, 409, qualificationFailureTitle(status, codes, reason));
+    throw new HttpRequestError(code, 409, qualificationFailureTitle(status, codes, reason, transportReason));
   }
 }
