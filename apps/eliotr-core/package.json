@@ -33,7 +33,8 @@
     "@eliotr/cloudflare-raw-ingest": "workspace:*",
     "@eliotr/cloudflare-markdown": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
-    "@eliotr/cloudflare-federation": "workspace:*"
+    "@eliotr/cloudflare-federation": "workspace:*",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "wrangler": "4.127.1",

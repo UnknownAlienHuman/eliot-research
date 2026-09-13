@@ -14,6 +14,20 @@ export const WRANGLER = resolve(dirname(require.resolve("wrangler/package.json")
 const pwaRequire = createRequire(resolve(ROOT, "apps/eliotr-pwa/package.json"));
 const ASTRO = resolve(dirname(pwaRequire.resolve("astro/package.json")), "bin/astro.mjs");
 
+// Server-owned semantic configuration is forwarded only through the generated
+// local Wrangler config. It remains excluded from the child process
+// environment below, preserving local launch isolation and parent dotenv
+// protection.
+const LOCAL_SERVER_CONFIGURATION_KEYS = Object.freeze([
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
+  "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
+  "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
+  "ELIOTR_MODEL_SPEND_POLICY_JSON",
+  "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
+  "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
+  "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
+]);
+
 export function localEnvironment(environment = process.env) {
   const env = Object.fromEntries(Object.entries(environment).filter(([key]) =>
     !/^(?:CLOUDFLARE|CF_|WRANGLER|ELIOTR_|ACCESS_|AI_GATEWAY_|MCP_|GOOGLE_)/iu.test(key)));
@@ -59,6 +73,14 @@ export function localConfig(canonical, root = ROOT) {
         ...options, queue: `${queue}-local`, dead_letter_queue: `${dead_letter_queue}-local` })) },
     analytics_engine_datasets: canonical.analytics_engine_datasets.map(({ binding, dataset }) => ({ binding, dataset: `${dataset}_local` })),
   };
+}
+
+function forwardExplicitServerConfiguration(config, environment) {
+  for (const key of LOCAL_SERVER_CONFIGURATION_KEYS) {
+    if (Object.hasOwn(environment, key) && typeof environment[key] === "string") {
+      config.vars[key] = environment[key];
+    }
+  }
 }
 
 export async function validateLocalVars(path) {
@@ -438,10 +460,12 @@ export function signalLocalProcess(child, signal = "SIGTERM", {
   if (result.error || result.status !== 0) throw new Error("Local Worker process-tree shutdown failed");
 }
 
-export async function prepareLocal({ stateDirectory, execute = executeLocal, log = console.log } = {}) {
+export async function prepareLocal({ stateDirectory, execute = executeLocal, log = console.log,
+  environment = process.env } = {}) {
   const paths = localPaths(stateDirectory);
   const bytes = await readFile(resolve(CORE, "wrangler.jsonc"), "utf8");
   const config = localConfig(JSON.parse(bytes));
+  forwardExplicitServerConfiguration(config, environment);
   config.vars.DEPLOYMENT_GENERATION = `local-${createHash("sha256").update(paths.directory).digest("hex").slice(0, 16)}`;
   await mkdir(paths.directory, { recursive: true });
   // An empty local-only vars file prevents accidentally loading a parent .env.

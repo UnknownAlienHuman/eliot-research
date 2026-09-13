@@ -2,7 +2,7 @@ export * from "@eliotr/cloudflare-workflows";
 export * from "./artifact-draft.js";
 export * from "./artifact-draft-reader.js";
 export * from "./model-attempt-types.js";
-export { createModelAttemptStore } from "./model-attempt-store.js";
+export { createModelAttemptStore, validatedRequest } from "./model-attempt-store.js";
 export * from "./model-attempt-handler.js";
 export {
   createD1DynamicRouteRegistry,
@@ -26,6 +26,10 @@ export * from "./research-model-profile-config.js";
 export * from "./research-model-pricing-store.js";
 export * from "./research-model-pricing-quote.js";
 export * from "./research-model-attempt-revalidator.js";
+export type { ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
+export * from "./research-model-spend-admission.js";
+export * from "./research-model-spend-policy.js";
+export * from "./research-synthesis-preparation.js";
 export * from "./research-held-scope.js";
 export * from "./research-run-status.js";
 export * from "./research-materialize-result.js";

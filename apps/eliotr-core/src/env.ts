@@ -23,6 +23,12 @@ export interface Env {
   /** Installed server model definition and its provenance; no request may override either. */
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
+  /** Installed synthesis/audit prompts and normalization contract. */
+  readonly ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON?: string;
+  /** Explicit approved model spend policy; no browser field selects it. */
+  readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string;
+  readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string;
+  readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string;
   /** Explicit owner-bound policy authorizing private report materialization. */
   readonly ELIOTR_RESEARCH_REPORT_POLICY_JSON?: string;
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;

@@ -29,6 +29,7 @@ const RESEARCH_STATUS_REFRESH_MS = 2_000;
 
 function message(error: unknown): string {
   if (error instanceof ApiRequestError) {
+    if (error.code === "RESEARCH_AGENT_NOT_CONFIGURED") return "Research agents are not configured on the server yet.";
     if (error.status === 401 || error.status === 403) return "This research run is no longer available for the current session.";
     if (error.status === 409) return "The Research run belongs to another deployment or its authority changed. Refresh the workspace.";
     if (error.retryable) return "The Research service is unavailable. Refresh to try again.";
