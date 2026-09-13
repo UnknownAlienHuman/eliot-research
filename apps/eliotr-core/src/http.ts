@@ -14,6 +14,7 @@ import type {
 import { ROUTES } from "@eliotr/interfaces";
 import {
   RUNTIME_LIMITS,
+  readRequestBodyWithinBytes,
   serializeJsonWithinBytes,
 } from "@eliotr/platform-cloudflare";
 import {
@@ -244,6 +245,15 @@ export function requireNoQuery(url: URL): void {
     );
   }
 }
+async function requireEmptyRequestBody(request: Request, message: string): Promise<void> {
+  if (request.body === null) return;
+  const bytes = await readRequestBodyWithinBytes(request, {
+    label: "http.request.empty",
+    max_bytes: 1,
+    max_chunks: 4096,
+  });
+  if (bytes.byteLength !== 0) throw new ArtifactHttpInputError(message);
+}
 function singleQueryValue(url: URL, key: string): string | undefined {
   const values = url.searchParams.getAll(key);
   if (values.length > 1) {
@@ -409,7 +419,7 @@ async function dispatch(
     case "research.artifact.reauthorize":
     case "research.artifact.section.reauthorize": {
       requireNoQuery(url);
-      if (request.body !== null) throw new ArtifactHttpInputError("Report reauthorization does not accept a request body");
+      await requireEmptyRequestBody(request, "Report reauthorization does not accept a request body");
       const ref = match.params.ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
       const artifactRef = parseArtifactRef(ref);
@@ -422,7 +432,7 @@ async function dispatch(
     }
     case "research.artifact.section.citations.reauthorize": {
       requireNoQuery(url);
-      if (request.body !== null) throw new ArtifactHttpInputError("Citation reauthorization does not accept a request body");
+      await requireEmptyRequestBody(request, "Citation reauthorization does not accept a request body");
       const ref = match.params.ref;
       const sectionRef = match.params.section_ref;
       if (ref === undefined) throw new ArtifactHttpInputError("artifact reference path parameter is missing");
