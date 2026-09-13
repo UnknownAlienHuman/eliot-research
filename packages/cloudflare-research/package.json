@@ -21,6 +21,7 @@
     "@eliotr/platform-cloudflare": "workspace:*",
     "@eliotr/policy": "workspace:*",
     "@eliotr/research": "workspace:*",
+    "@eliotr/retrieval": "workspace:*",
     "zod": "4.4.3",
     "@eliotr/cloudflare-workflows": "workspace:*"
   }

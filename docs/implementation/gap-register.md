@@ -13,9 +13,16 @@ guards remain in force, and this ordering does not qualify an untested provider 
 Launch state: owner Access, README upload, admitted document reads and document search have run
 against the deployed Worker. New owner exploratory runs select v3. Both reasoning Dynamic Routes
 are published in Cloudflare, but no real model answer or completed source-to-report run has been
-observed. Route readback currently receives HTTP 403 with the existing Wrangler OAuth grant;
-the first-call qualification factory still needs an operator invocation path, and the seven
-semantic/model/spend/report configuration values are not installed. These are launch blockers,
+observed. The owner selected OpenRouter `thinkingmachines/inkling:free` and installed
+the Gateway BYOK key. Both corresponding routes are published and read back through
+Cloudflare MCP. Both passed the real adoption/preparation code: immutable route
+bindings and exact zero-token-price snapshots were written and read back in D1.
+Wrangler OAuth still receives HTTP 403 for Gateway management.
+The first-call qualification factory now has an operator CLI and an evidence-backed
+prompt compiler independent of W2/ACTIVE profile setup. A live Wrangler remote-binding
+startup remains unresolved: reusing the application name hit Access; a unique temporary
+preview then stalled before the callback. The seven semantic/model/spend/report
+configuration values are not installed. These are launch blockers,
 not completed model capabilities. The route REST adapter must follow the current Cloudflare
 wire schema and embedded deployment readback; compilation alone does not qualify that adapter.
 

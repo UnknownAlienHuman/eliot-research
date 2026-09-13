@@ -1,4 +1,5 @@
 import { toJSONSchema, type ZodType } from "zod";
+import { canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 import {
   SemanticVerifierBatchSchema,
   SynthesisClaimsCandidateV2Schema,
@@ -16,9 +17,18 @@ export interface ResearchOwnerJsonResponseFormat {
   };
 }
 
+export type ResearchOwnerOutputFormat = "json_schema" | "prompt_json";
+export type ResearchOwnerPromptStage = "SYNTHESIZE" | "AUDIT_CLAIMS";
+
 export interface ResearchOwnerPromptDefinition {
   readonly prompt: string;
   readonly response_format: ResearchOwnerJsonResponseFormat;
+  readonly output_schema: ResearchOwnerJsonSchema;
+}
+
+export interface ResearchOwnerSelectedPromptDefinition {
+  readonly prompt: string;
+  readonly response_format?: ResearchOwnerJsonResponseFormat;
   readonly output_schema: ResearchOwnerJsonSchema;
 }
 
@@ -83,6 +93,9 @@ const auditSchema = outputSchema(SemanticVerifierBatchSchema);
 const synthesisResponseFormat = responseFormat("research_synthesis_claims_candidate_v2", synthesisSchema);
 const auditResponseFormat = responseFormat("research_semantic_verifier_observation_v1", auditSchema);
 
+const PROMPT_JSON_SCHEMA_INSTRUCTION =
+  "The complete trusted output schema is appended below as canonical JSON. Conform to it exactly, including every required property, enum, array bound, and additional-property rule. Output only the JSON object described by this schema. Schema: ";
+
 export const RESEARCH_OWNER_SYNTHESIS_OUTPUT_SCHEMA = synthesisSchema;
 export const RESEARCH_OWNER_AUDIT_OUTPUT_SCHEMA = auditSchema;
 export const RESEARCH_OWNER_SYNTHESIS_RESPONSE_FORMAT = synthesisResponseFormat;
@@ -100,3 +113,29 @@ export const RESEARCH_OWNER_PROMPTS: ResearchOwnerPromptConfiguration = deepFree
     output_schema: auditSchema,
   },
 });
+
+export function parseResearchOwnerOutputFormat(value: unknown): ResearchOwnerOutputFormat {
+  if (value === undefined || value === "json_schema") return "json_schema";
+  if (value === "prompt_json") return value;
+  throw new Error("research owner output_format is invalid");
+}
+
+/**
+ * Select the provider output mode without changing the trusted schema or
+ * stage parser. Providers without response_format support receive the same
+ * schema in the trusted prompt and omit the unsupported wire parameter.
+ */
+export function selectResearchOwnerPrompt(
+  stage: ResearchOwnerPromptStage,
+  outputFormat: ResearchOwnerOutputFormat,
+): ResearchOwnerSelectedPromptDefinition {
+  const base = stage === "SYNTHESIZE" ? RESEARCH_OWNER_PROMPTS.synthesis :
+    stage === "AUDIT_CLAIMS" ? RESEARCH_OWNER_PROMPTS.audit : undefined;
+  if (base === undefined) throw new Error("research owner prompt stage is invalid");
+  if (outputFormat === "json_schema") return base;
+  if (outputFormat !== "prompt_json") throw new Error("research owner output_format is invalid");
+  return deepFreeze({
+    prompt: `${base.prompt} ${PROMPT_JSON_SCHEMA_INSTRUCTION}${canonicalModelGatewayJson(base.output_schema)}`,
+    output_schema: base.output_schema,
+  });
+}

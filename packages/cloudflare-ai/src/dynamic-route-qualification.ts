@@ -252,7 +252,7 @@ function currentTime(dependencies: DynamicRouteQualificationDependencies): strin
   return timestamp(raw, "qualification clock");
 }
 
-function parseInput(raw: unknown): ParsedInput {
+export function parseDynamicRouteQualificationProbeInput(raw: unknown): ParsedInput {
   const value = exactObject(raw, new Set([
     "expires_at",
     "expected_model",
@@ -483,7 +483,7 @@ export async function qualifyDynamicRouteGeneration(
   rawInput: DynamicRouteQualificationProbeInput,
 ): Promise<DynamicRouteQualificationEvidence> {
   validateDependencies(dependencies);
-  const input = parseInput(rawInput);
+  const input = parseDynamicRouteQualificationProbeInput(rawInput);
   const desired = await compileDesired(input);
   const nowBefore = currentTime(dependencies);
   const pending = {

@@ -122,10 +122,15 @@ assets:
 
     node scripts/plan-research-model-route.mjs INPUT.json [--output PATH]
 
-The input has exactly six fields: `route_ref`, `route_version`,
+The input has six required fields: `route_ref`, `route_version`,
 `pricing_snapshot_ref`, `stage` (`SYNTHESIZE` or `AUDIT_CLAIMS`), `max_tokens`,
 and `route_definition` (the non-empty Cloudflare element array, without an
-`elements` wrapper). The local-only plan records the exact compiled provider
+`elements` wrapper). Optional `output_format` selects `json_schema` (the existing
+default) or `prompt_json`. The latter omits provider `response_format` and adds the
+complete canonical output schema to the trusted prompt. Both prompt and parameter
+digests describe that actual request; server-side synthesis and audit decoders
+remain strict. The owner document preset and semantic setup accept the same mode.
+The local-only plan records the exact compiled provider
 route name, prompt/schema generations, parameter digest, and route-definition
 hash. It does not install pricing, approve spending, assert `LIVE` qualification,
 provision a route, or call a model. For the ordinary owner document preset,
@@ -159,6 +164,39 @@ call. A repeated request reads a completed receipt; an unfinished or uncertain
 claim never automatically invokes the provider again. Bootstrap output is
 bounded and stored immutably in the private work bucket, separately from
 workflow attempts and user reports.
+
+The operator command connects that mechanism to the existing production resources:
+
+    node scripts/install-research-model-authority.mjs qualify --input qualification-request.json --gateway-oauth-client-id CLIENT_ID
+
+Its strict input is `{ "protocol": "eliotr.research-model-qualification-request.v1",
+"probe": <DynamicRouteQualificationProbeInput>, "prompt": <ResearchQualificationPromptConfig> }`.
+The probe contains the actual preparation receipt, exact route definition, selected provider/model,
+real EvidencePack, explicit request bounds, one idempotency identity and the qualification window.
+The prompt configuration contains the owner access identity, reference policy, manifest reference,
+manifest residency domains, trusted prompt parameters and request timeout. These values are explicit
+operator input; neither an empty ORIENT pack nor a fabricated workflow receipt supplies evidence.
+
+`qualify` validates its local input before OAuth. Wrangler remote bindings connect the configured
+CORE_DB, SEARCH_DB, EVIDENCE_BUCKET, WORK_BUCKET and AI. The command reuses current scope/grant
+checks, the D1/R2 evidence resolver and the ordinary evidence-context prompt compiler. Its private
+immutable qualification manifest has no W2 attempt dependency, which allows the first provider call
+before a model profile becomes ACTIVE. The existing pricing approval and one-call claim remain
+required. The command prints only the actual qualification result; installation/promotion is a
+separate operation. Temporary runtime configuration contains resource identities only and is removed
+after disposal; the production Worker configuration is not rewritten. The temporary
+remote preview has a unique name so it does not reuse the application's Access
+hostname. Account-wide preview Access policies still apply.
+
+On 2026-09-13 the owner selected OpenRouter `thinkingmachines/inkling:free` and
+installed its BYOK key under alias `default` in `eliotr-reasoning`. The synthesis
+and audit routes for `owner-inkling-free-v1` were created and their active versions
+read back through Cloudflare MCP. This provider requires `prompt_json`: its
+[official model page](https://openrouter.ai/thinkingmachines/inkling:free) lists
+no `response_format` support. The same page says prompts and outputs are logged
+for model improvement and prohibits confidential or personal data on this free
+endpoint. Initial qualification uses the public project README. Published routes
+are configuration evidence, not proof of a completed model response or report.
 
 The setup input has this complete minimum shape. It is notation rather than a
 runnable file: every placeholder must be replaced by the corresponding
@@ -248,8 +286,9 @@ principal, credential generation and deployment still match the installed
 spend policy; a changed policy closure or a normal login with a new credential
 generation requires a fresh explicit configuration.
 
-The operator installer uses the generated Wrangler configuration only for the
-Cloudflare account and `CORE_DB` identity. It reads the bearer from the official
+The prepare/install/adopt commands use the generated Wrangler configuration for the
+Cloudflare account and `CORE_DB` identity; qualification also reads the five resource bindings
+listed above and the reasoning gateway URL. The installer reads the bearer from the official
 Wrangler browser OAuth profile and never accepts or prints a token:
 
     node scripts/install-research-model-authority.mjs prepare --input model-prepare.json --config apps/eliotr-core/wrangler.deploy.jsonc

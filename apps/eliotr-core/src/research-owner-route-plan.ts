@@ -6,7 +6,11 @@ import {
   type DynamicRouteCompiledDesired,
   type DynamicRouteProvisioningInput,
 } from "@eliotr/cloudflare-ai";
-import { RESEARCH_OWNER_PROMPTS } from "@eliotr/cloudflare-research-stages";
+import {
+  parseResearchOwnerOutputFormat,
+  selectResearchOwnerPrompt,
+  type ResearchOwnerOutputFormat,
+} from "@eliotr/cloudflare-research-stages";
 import {
   APPLICATION_MODEL_ROUTES,
   type ApplicationModelRoute,
@@ -25,10 +29,12 @@ export interface ResearchOwnerRoutePlanInput {
   readonly stage: ResearchOwnerRoutePlanStage;
   readonly max_tokens: number;
   readonly route_definition: unknown;
+  readonly output_format?: ResearchOwnerOutputFormat;
 }
 
 export interface ResearchOwnerRoutePlan {
   readonly stage: ResearchOwnerRoutePlanStage;
+  readonly output_format: ResearchOwnerOutputFormat;
   readonly deployment: ModelRouteDeployment;
   readonly provisioning: DynamicRouteProvisioningInput;
   readonly compiled: DynamicRouteCompiledDesired;
@@ -48,12 +54,6 @@ function snapshotJson<T>(value: T, label: string): T {
   } catch (cause) {
     throw new Error(`${label} is not canonical JSON`, { cause });
   }
-}
-
-function stagePrompt(stage: ResearchOwnerRoutePlanStage) {
-  if (stage === "SYNTHESIZE") return RESEARCH_OWNER_PROMPTS.synthesis;
-  if (stage === "AUDIT_CLAIMS") return RESEARCH_OWNER_PROMPTS.audit;
-  throw new Error("research owner route stage is invalid");
 }
 
 function assertRouteRef(value: ApplicationModelRoute): void {
@@ -82,7 +82,8 @@ export async function createResearchOwnerRoutePlan(
     throw new Error("research owner route max_tokens must be a positive safe integer");
   }
   assertRouteRef(routeRef);
-  const prompt = stagePrompt(stage);
+  const outputFormat = parseResearchOwnerOutputFormat(input.output_format);
+  const prompt = selectResearchOwnerPrompt(stage, outputFormat);
   const routeDefinition = snapshotJson(input.route_definition, "route definition");
   if (!Array.isArray(routeDefinition) || routeDefinition.length === 0) {
     throw new Error("Cloudflare route_definition must be a non-empty element array");
@@ -93,7 +94,7 @@ export async function createResearchOwnerRoutePlan(
       model: routeRef,
       messages: [],
       max_tokens: maxTokens,
-      response_format: prompt.response_format,
+      ...(prompt.response_format === undefined ? {} : { response_format: prompt.response_format }),
       stream: false,
     }),
     modelGatewaySha256(canonicalModelGatewayJson({
@@ -121,5 +122,5 @@ export async function createResearchOwnerRoutePlan(
     route_definition_sha256: routeDefinitionSha256,
   });
   const compiled = await compileDynamicRouteDesired(provisioning);
-  return Object.freeze({ stage, deployment, provisioning, compiled });
+  return Object.freeze({ stage, output_format: outputFormat, deployment, provisioning, compiled });
 }

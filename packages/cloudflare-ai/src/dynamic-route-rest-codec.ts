@@ -41,6 +41,17 @@ const ROUTE_KEYS = new Set([
   "name",
   "version",
 ]);
+const ROUTE_LIST_ITEM_KEYS = new Set([
+  "account_tag",
+  "created_at",
+  "deployment",
+  "elements",
+  "gateway_id",
+  "id",
+  "modified_at",
+  "name",
+  "version",
+]);
 const NESTED_VERSION_KEYS = new Set([
   "active",
   "created_at",
@@ -164,7 +175,6 @@ export function compileCloudflareRouteCreateBody(
   request: DynamicRouteCreateRequest,
 ): Readonly<{
   name: string;
-  description: string;
   elements: readonly unknown[];
 }> {
   requireDynamicRouteGatewayId(request.gateway_id);
@@ -174,7 +184,7 @@ export function compileCloudflareRouteCreateBody(
       "Provider route name is outside the admitted grammar",
     );
   }
-  const metadata = decodeProviderMetadata(
+  decodeProviderMetadata(
     request.metadata,
     "DYNAMIC_ROUTE_REST_INPUT_INVALID",
   );
@@ -197,21 +207,8 @@ export function compileCloudflareRouteCreateBody(
       "Cloudflare Dynamic Route definition exceeds the byte envelope",
     );
   }
-  const description = [
-    "ELIOT immutable route",
-    metadata.route_ref,
-    metadata.route_version,
-    metadata.route_definition_sha256,
-  ].join(" ");
-  if (encoder.encode(description).byteLength > 1024) {
-    dynamicRouteRestFailure(
-      "DYNAMIC_ROUTE_REST_INPUT_INVALID",
-      "Cloudflare Dynamic Route description exceeds its bound",
-    );
-  }
   return Object.freeze({
     name: request.name,
-    description,
     elements: Object.freeze([...request.route_definition]),
   });
 }
@@ -245,10 +242,16 @@ export function decodeCloudflareRoute(
   if (record.account_tag !== undefined) {
     requireProviderIdentifier(record.account_tag, "route account tag");
   }
-  const elements = decodeRouteElements(record.elements, "route elements");
-  const version = decodeCloudflareVersion(record.version, id, elements);
+  const rootElements = Object.hasOwn(record, "elements")
+    ? decodeRouteElements(record.elements, "route elements")
+    : undefined;
+  const version = decodeCloudflareVersion(record.version, id, rootElements);
   const versionState = record.version as Record<string, unknown>;
-  if (record.deployment !== null && (versionState.active !== "true" || versionState.is_valid === false)) {
+  if (
+    record.deployment !== null &&
+    (!requireActiveFlag(versionState.active, "version active") ||
+      versionState.is_valid === false)
+  ) {
     responseInvalid("Cloudflare deployed route version is inactive or invalid", "NONE");
   }
   const deployment =
@@ -288,20 +291,18 @@ export function decodeCloudflareVersion(
   decodeTimestamp(record.created_at, "version created_at");
   requireActiveFlag(record.active, "version active");
   validateOptionalVersionValidity(record);
-  if (typeof record.data !== "string") {
-    responseInvalid("Cloudflare version data is malformed", "NONE");
-  }
-  if (encoder.encode(record.data).byteLength > DYNAMIC_ROUTE_DEFINITION_MAX_BYTES) {
-    responseInvalid("Cloudflare version data exceeds the byte envelope", "NONE");
-  }
-  if (expectedElements === undefined) {
+  const elements = Object.hasOwn(record, "data")
+    ? decodeVersionElements(record.data)
+    : expectedElements;
+  if (elements === undefined) {
     responseInvalid(
       "Cloudflare nested version is missing its checked route graph context",
       "NONE",
     );
   }
-  const elements = decodeRouteElements(expectedElements, "route version elements");
-  assertExpectedElements(elements, expectedElements);
+  if (Object.hasOwn(record, "data")) {
+    assertExpectedElements(elements, expectedElements);
+  }
   return Object.freeze({
     id,
     route_id: trustedRouteId,
@@ -392,14 +393,99 @@ export function decodeCloudflareRouteListPage(
   }
   const bounds = dataPageBounds(data, data.routes.length, "route-list");
   const routes = data.routes.map((value) => {
-    const route = decodeCloudflareRoute(value, true);
-    return Object.freeze({ id: route.id, name: route.name });
+    return decodeCloudflareRouteListItem(value);
   });
   return Object.freeze({
     routes: Object.freeze(routes),
     page: bounds.page,
     total_pages: bounds.total_pages,
   });
+}
+
+function decodeCloudflareRouteListItem(raw: unknown): Readonly<{
+  id: string;
+  name: string;
+}> {
+  const record = exactObject(
+    raw,
+    ROUTE_LIST_ITEM_KEYS,
+    "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
+    "Cloudflare Dynamic Route list item",
+    "NONE",
+  );
+  const id = requireProviderIdentifier(record.id, "route list ID");
+  const name = requireProviderRouteName(record.name, "route list name");
+  requireDynamicRouteGatewayId(record.gateway_id);
+  if (!Object.hasOwn(record, "account_tag")) {
+    responseInvalid("Cloudflare route list item has no account tag", "NONE");
+  }
+  requireProviderIdentifier(record.account_tag, "route list account tag");
+  decodeTimestamp(record.created_at, "route list created_at");
+  decodeTimestamp(record.modified_at, "route list modified_at");
+  const versionRecord = optionalRecord(record.version, "route list version");
+  const hasRootGraph = Object.hasOwn(record, "elements");
+  const hasVersionGraph =
+    versionRecord !== undefined && Object.hasOwn(versionRecord, "data");
+  if (hasRootGraph || hasVersionGraph) {
+    const route = decodeCloudflareRoute(record, true);
+    return Object.freeze({ id: route.id, name: route.name });
+  }
+  if (versionRecord !== undefined) {
+    validateLightweightVersion(versionRecord);
+  }
+  if (record.deployment !== undefined && record.deployment !== null) {
+    const deployment = decodeCloudflareDeployment(record.deployment, id);
+    if (
+      versionRecord !== undefined &&
+      deployment.version_id !== versionRecord.version_id
+    ) {
+      responseInvalid(
+        "Cloudflare route list deployment does not match its version metadata",
+        "NONE",
+      );
+    }
+  }
+  return Object.freeze({ id, name });
+}
+
+function optionalRecord(
+  raw: unknown,
+  label: string,
+): Record<string, unknown> | undefined {
+  if (raw === undefined) return undefined;
+  return exactObject(
+    raw,
+    NESTED_VERSION_KEYS,
+    "DYNAMIC_ROUTE_REST_RESPONSE_INVALID",
+    label,
+    "NONE",
+  );
+}
+
+function validateLightweightVersion(record: Record<string, unknown>): void {
+  requireProviderIdentifier(record.version_id, "route list version ID");
+  decodeTimestamp(record.created_at, "route list version created_at");
+  requireActiveFlag(record.active, "route list version active");
+  validateOptionalVersionValidity(record);
+}
+
+function decodeVersionElements(raw: unknown): readonly unknown[] {
+  if (Array.isArray(raw)) {
+    return decodeRouteElements(raw, "version data");
+  }
+  if (typeof raw !== "string") {
+    responseInvalid("Cloudflare version data is malformed", "NONE");
+  }
+  if (encoder.encode(raw).byteLength > DYNAMIC_ROUTE_DEFINITION_MAX_BYTES) {
+    responseInvalid("Cloudflare version data exceeds the byte envelope", "NONE");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    responseInvalid("Cloudflare version data is not valid route graph JSON", "NONE");
+  }
+  return decodeRouteElements(parsed, "version data");
 }
 
 function decodeRouteElements(raw: unknown, label: string): readonly unknown[] {
@@ -450,11 +536,11 @@ function requireProviderText(raw: unknown, label: string): string {
   return raw;
 }
 
-function requireActiveFlag(raw: unknown, label: string): "true" | "false" {
-  if (raw !== "true" && raw !== "false") {
-    responseInvalid(`${label} must be the documented string enum`, "NONE");
+function requireActiveFlag(raw: unknown, label: string): boolean {
+  if (raw !== true && raw !== false && raw !== "true" && raw !== "false") {
+    responseInvalid(`${label} must be a boolean or documented string enum`, "NONE");
   }
-  return raw;
+  return raw === true || raw === "true";
 }
 function validateOptionalVersionValidity(record: Record<string, unknown>): void {
   if (Object.hasOwn(record, "is_valid") && typeof record.is_valid !== "boolean") {

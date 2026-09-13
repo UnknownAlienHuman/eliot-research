@@ -53,13 +53,15 @@ function invalid(message: string): never {
 
 async function semanticParametersDigest(
   routeRef: string,
-  configured: { readonly trusted_parameters: { readonly max_tokens: number; readonly response_format: unknown } },
+  configured: { readonly trusted_parameters: { readonly max_tokens: number; readonly response_format?: unknown } },
 ): Promise<string> {
   return modelGatewayRequestParametersSha256({
     model: routeRef,
     messages: [],
     max_tokens: configured.trusted_parameters.max_tokens,
-    response_format: configured.trusted_parameters.response_format,
+    ...(configured.trusted_parameters.response_format === undefined ? {} : {
+      response_format: configured.trusted_parameters.response_format,
+    }),
     stream: false,
   });
 }

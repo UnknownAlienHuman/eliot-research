@@ -7,6 +7,7 @@ import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const usage = "Usage: node scripts/plan-research-model-route.mjs INPUT.json [--output PATH]\n" +
   "Builds the exact route name, prompt/schema generations and hashes from production assets.\n" +
+  "Optional output_format is json_schema (default) or prompt_json for providers without response_format support.\n" +
   "Writes a local plan only. Does not provision, approve spending, qualify or call a model.";
 
 async function main() {
@@ -21,9 +22,11 @@ async function main() {
   const bytes = await readFile(inputPath);
   if (bytes.byteLength > 262144) throw new Error("Route planning input exceeds 256 KiB");
   const input = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  const keys = ["max_tokens", "pricing_snapshot_ref", "route_definition", "route_ref", "route_version", "stage"];
+  const requiredKeys = ["max_tokens", "pricing_snapshot_ref", "route_definition", "route_ref", "route_version", "stage"];
+  const allowedKeys = new Set([...requiredKeys, "output_format"]);
   if (input === null || typeof input !== "object" || Array.isArray(input) ||
-      Object.keys(input).sort().join(",") !== keys.join(",")) throw new Error("Route plan has missing or unknown fields");
+      requiredKeys.some((key) => !Object.prototype.hasOwnProperty.call(input, key)) ||
+      Object.keys(input).some((key) => !allowedKeys.has(key))) throw new Error("Route plan has missing or unknown fields");
   const { createResearchOwnerRoutePlan } = await loadCompiledWorkspaceModule(
     "apps/eliotr-core/dist/research-owner-route-plan.js",
   );
@@ -38,6 +41,7 @@ async function main() {
     await unlink(temporary).catch((error) => { if (error.code !== "ENOENT") throw error; });
   }
   console.log(JSON.stringify({ plan_file: outputPath, stage: plan.stage,
+    output_format: plan.output_format,
     provider_route_name: plan.compiled.provider_route_name,
     route_definition_sha256: plan.provisioning.route_definition_sha256,
     remote_effects: false }, null, 2));

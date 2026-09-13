@@ -2,9 +2,11 @@ import { IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr
 import { canonicalJson } from "@eliotr/platform-cloudflare";
 import {
   parseResearchClaimAuditPolicy,
-  RESEARCH_OWNER_PROMPTS,
+  parseResearchOwnerOutputFormat,
+  selectResearchOwnerPrompt,
   type ResearchClaimAuditPolicy,
   type ResearchOwnerJsonResponseFormat,
+  type ResearchOwnerOutputFormat,
 } from "@eliotr/cloudflare-research-stages";
 
 const PROTOCOL = "eliotr.research-semantic-config.v1" as const;
@@ -31,6 +33,7 @@ export type ResearchOwnerAuditConfigurationInput = ResearchOwnerPromptLimits & R
 }>;
 
 export type ResearchOwnerSemanticConfigurationInput = Readonly<{
+  readonly output_format?: ResearchOwnerOutputFormat;
   synthesis: ResearchOwnerPromptLimits;
   audit: ResearchOwnerAuditConfigurationInput;
   normalization: ResearchOwnerNormalizationInput;
@@ -40,7 +43,7 @@ export type ResearchSemanticPromptConfiguration = Readonly<{
   trusted_parameters: Readonly<{
     prompt: string;
     max_tokens: number;
-    response_format: ResearchOwnerJsonResponseFormat;
+    response_format?: ResearchOwnerJsonResponseFormat;
   }>;
   request_timeout_ms: number;
 }>;
@@ -83,10 +86,16 @@ function record(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function exactKeys(value: Record<string, unknown>, expected: readonly string[], label: string): void {
-  const allowed = new Set(expected);
+function exactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+  optional: readonly string[] = [],
+): void {
+  const allowed = new Set([...expected, ...optional]);
   const keys = Object.keys(value);
-  if (keys.length !== expected.length || keys.some((key) => !allowed.has(key))) {
+  if (keys.length < expected.length || keys.some((key) => !allowed.has(key)) ||
+      expected.some((key) => !keys.includes(key))) {
     invalid(`${label} contains unsupported fields`);
   }
 }
@@ -186,25 +195,33 @@ export function createResearchOwnerSemanticConfiguration(
   input: ResearchOwnerSemanticConfigurationInput,
 ): ResearchSemanticServerConfiguration {
   const setup = record(input, "semantic configuration");
-  exactKeys(setup, ["synthesis", "audit", "normalization"], "semantic configuration");
+  exactKeys(setup, ["synthesis", "audit", "normalization"], "semantic configuration", ["output_format"]);
+  let outputFormat: ResearchOwnerOutputFormat;
+  try {
+    outputFormat = parseResearchOwnerOutputFormat(setup.output_format);
+  } catch {
+    invalid("output_format is invalid");
+  }
   const synthesisLimits = promptLimits(setup.synthesis, "synthesis");
   const audit = auditInput(setup.audit);
   const normalization = normalizationInput(setup.normalization);
+  const synthesisPrompt = selectResearchOwnerPrompt("SYNTHESIZE", outputFormat);
+  const auditPrompt = selectResearchOwnerPrompt("AUDIT_CLAIMS", outputFormat);
   const configuration = {
     protocol: PROTOCOL,
     synthesis: {
       trusted_parameters: {
-        prompt: RESEARCH_OWNER_PROMPTS.synthesis.prompt,
+        prompt: synthesisPrompt.prompt,
         max_tokens: synthesisLimits.max_tokens,
-        response_format: RESEARCH_OWNER_PROMPTS.synthesis.response_format,
+        ...(synthesisPrompt.response_format === undefined ? {} : { response_format: synthesisPrompt.response_format }),
       },
       request_timeout_ms: synthesisLimits.request_timeout_ms,
     },
     audit: {
       trusted_parameters: {
-        prompt: RESEARCH_OWNER_PROMPTS.audit.prompt,
+        prompt: auditPrompt.prompt,
         max_tokens: audit.max_tokens,
-        response_format: RESEARCH_OWNER_PROMPTS.audit.response_format,
+        ...(auditPrompt.response_format === undefined ? {} : { response_format: auditPrompt.response_format }),
       },
       request_timeout_ms: audit.request_timeout_ms,
       verifier_ref: audit.verifier_ref,

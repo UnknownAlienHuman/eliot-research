@@ -12,6 +12,7 @@ import type { ResearchArtifactReportPolicy } from "@eliotr/cloudflare-research";
 import { RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
 import {
   parseResearchClaimAuditPolicy,
+  type ResearchOwnerOutputFormat,
   type ResearchClaimAuditPolicy,
 } from "@eliotr/cloudflare-research-stages";
 import {
@@ -47,6 +48,8 @@ export interface ResearchOwnerDocumentPresetReportInput {
 
 export interface ResearchOwnerDocumentPresetInput {
   readonly owner: ResearchOwnerDocumentPresetOwnerInput;
+  /** Explicit provider output compatibility mode; omitted preserves JSON Schema requests. */
+  readonly output_format?: ResearchOwnerOutputFormat;
   /** Explicit token and timeout choices; no quota or model default is inferred. */
   readonly synthesis: ResearchOwnerPromptLimits;
   readonly audit: ResearchOwnerAuditConfigurationInput;
@@ -133,6 +136,7 @@ export function createResearchOwnerDocumentPreset(
     invalid("audit policy is invalid");
   }
   const semantic: ResearchOwnerSemanticConfigurationInput = {
+    ...(input.output_format === undefined ? {} : { output_format: input.output_format }),
     synthesis: {
       max_tokens: input.synthesis.max_tokens,
       request_timeout_ms: input.synthesis.request_timeout_ms,

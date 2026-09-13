@@ -29,6 +29,7 @@ export * from "./research-model-pricing-quote.js";
 export * from "./research-model-installation.js";
 export * from "./research-model-qualification-store.js";
 export * from "./research-model-qualification.js";
+export * from "./research-qualification-prompt.js";
 export * from "./dynamic-route-rest-binding-store-d1.js";
 export * from "./research-model-attempt-revalidator.js";
 export type { ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";

@@ -14,6 +14,10 @@ import {
 import { createCloudflareD1HttpDatabase } from "./lib/cloudflare-d1-http.mjs";
 import { loadCompiledWorkspaceModule } from "./lib/compiled-workspace-module.mjs";
 import { GatewayBrowserOAuthError, readGatewayBrowserOAuthBearer } from "./lib/cloudflare-gateway-browser-oauth.mjs";
+import {
+  ResearchQualificationRuntimeError,
+  withResearchQualificationRuntime,
+} from "./lib/research-qualification-runtime.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const MAX_INPUT_BYTES = 1024 * 1024;
@@ -23,12 +27,14 @@ const usage = [
   "  node scripts/install-research-model-authority.mjs prepare --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs install --input FILE [--config FILE]",
   "  node scripts/install-research-model-authority.mjs adopt --input PLAN.json --provider-route-id ID [--config FILE] [--gateway-oauth-client-id ID]",
+  "  node scripts/install-research-model-authority.mjs qualify --input REQUEST.json [--config FILE] [--gateway-oauth-client-id ID]",
   "",
   "prepare provisions the explicit route and pricing snapshot, without promotion.",
   "install requires the same explicit request plus independently verified LIVE qualification.",
   "adopt binds an already deployed dashboard route by live API readback; it does not call a model or approve pricing.",
+  "qualify performs one observed model qualification against the prepared route; it does not install or promote.",
   "Cloudflare account and CORE_DB are read from the generated Wrangler config; auth uses Wrangler browser OAuth.",
-  "If Wrangler lacks AI Gateway Read, adopt accepts a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
+  "If Wrangler lacks AI Gateway Read, adopt and qualify accept a private PKCE client ID; its callback is http://127.0.0.1:8977/oauth/callback.",
   "Use account-private visibility, Authorization Code and token authentication None (PKCE); no client secret.",
   "The optional gateway OAuth credential stays in memory; D1 still uses the existing Wrangler session.",
 ].join("\n");
@@ -57,8 +63,8 @@ function parseArguments(argv) {
     return Object.freeze({ help: true });
   }
   const command = argv[0];
-  if (command !== "prepare" && command !== "install" && command !== "adopt") {
-    throw new InstallerCliError("command must be prepare, install or adopt; use --help");
+  if (command !== "prepare" && command !== "install" && command !== "adopt" && command !== "qualify") {
+    throw new InstallerCliError("command must be prepare, install, adopt or qualify; use --help");
   }
   let inputPath;
   let providerRouteId;
@@ -84,8 +90,8 @@ function parseArguments(argv) {
   if ((command === "adopt") !== (providerRouteId !== undefined)) {
     throw new InstallerCliError("--provider-route-id is required only for adopt");
   }
-  if (gatewayOAuthClientId !== undefined && command !== "adopt") {
-    throw new InstallerCliError("--gateway-oauth-client-id is supported only for read-only route adoption");
+  if (gatewayOAuthClientId !== undefined && command !== "adopt" && command !== "qualify") {
+    throw new InstallerCliError("--gateway-oauth-client-id is supported only for read-only route adoption or qualification");
   }
   return Object.freeze({
     help: false,
@@ -119,6 +125,40 @@ async function readJsonFile(path, label) {
     if (error instanceof InstallerCliError) throw error;
     throw new InstallerCliError(`${label} is not valid JSON`);
   }
+}
+
+function qualificationRequest(input, cloudflareAi, research) {
+  const keys = Object.keys(input).sort().join(",");
+  if (keys !== "probe,prompt,protocol" || input.protocol !== "eliotr.research-model-qualification-request.v1") {
+    throw new InstallerCliError(
+      "qualification input must contain exactly protocol, probe and prompt",
+      "RESEARCH_QUALIFICATION_INPUT_INVALID",
+    );
+  }
+  if (typeof cloudflareAi.parseDynamicRouteQualificationProbeInput !== "function") {
+    throw new InstallerCliError(
+      "qualification probe decoder is unavailable",
+      "RESEARCH_QUALIFICATION_INPUT_VALIDATOR_UNAVAILABLE",
+    );
+  }
+  if (typeof research.parseResearchQualificationPromptConfig !== "function") {
+    throw new InstallerCliError(
+      "qualification prompt decoder is unavailable",
+      "RESEARCH_QUALIFICATION_INPUT_VALIDATOR_UNAVAILABLE",
+    );
+  }
+  let probe;
+  let promptConfig;
+  try {
+    probe = cloudflareAi.parseDynamicRouteQualificationProbeInput(input.probe);
+    promptConfig = research.parseResearchQualificationPromptConfig(input.prompt);
+  } catch {
+    throw new InstallerCliError(
+      "qualification input failed its strict probe or prompt schema",
+      "RESEARCH_QUALIFICATION_INPUT_INVALID",
+    );
+  }
+  return Object.freeze({ protocol: input.protocol, probe, promptConfig });
 }
 
 function accountFromGatewayUrl(value) {
@@ -213,10 +253,18 @@ function bindingStore(research, database) {
 }
 
 async function execute(options) {
-  const [input, config] = await Promise.all([
-    readJsonFile(options.inputPath, "installer input"),
-    readJsonFile(options.configPath, "Wrangler config"),
-  ]);
+  const input = await readJsonFile(options.inputPath, "installer input");
+  let cloudflareAi;
+  let research;
+  let qualification;
+  if (options.command === "qualify") {
+    [cloudflareAi, research] = await Promise.all([
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
+    ]);
+    qualification = qualificationRequest(input, cloudflareAi, research);
+  }
+  const config = await readJsonFile(options.configPath, "Wrangler config");
   const { accountId, databaseId } = deploymentConfig(config);
   // Finish the optional browser handoff before taking the short-lived D1 bearer.
   const gatewayOAuthBearer = options.gatewayOAuthClientId === undefined
@@ -227,10 +275,12 @@ async function execute(options) {
     database_id: databaseId,
     api_token: bearer,
   });
-  const [cloudflareAi, research] = await Promise.all([
-    loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
-    loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
-  ]);
+  if (cloudflareAi === undefined || research === undefined) {
+    [cloudflareAi, research] = await Promise.all([
+      loadCompiledWorkspaceModule("packages/cloudflare-ai/dist/index.js"),
+      loadCompiledWorkspaceModule("packages/cloudflare-research/dist/index.js"),
+    ]);
+  }
   const bindings = bindingStore(research, database);
   const gatewayBearer = gatewayOAuthBearer ?? bearer;
   const controlPlane = cloudflareAi.createCloudflareDynamicRouteRestControlPlane({
@@ -241,6 +291,36 @@ async function execute(options) {
     credentials: Object.freeze({ readApiToken: async () => gatewayBearer }),
     bindings,
   });
+  if (options.command === "qualify") {
+    const result = await withResearchQualificationRuntime({ config, accountId }, async (env) => {
+      const compiler = await research.createResearchQualificationPromptCompiler({
+        core_database: env.CORE_DB,
+        search_database: env.SEARCH_DB,
+        evidence_bucket: env.EVIDENCE_BUCKET,
+        work_bucket: env.WORK_BUCKET,
+        probe: qualification.probe,
+        config: qualification.promptConfig,
+      });
+      const service = research.createResearchModelQualification({
+        database: env.CORE_DB,
+        work_bucket: env.WORK_BUCKET,
+        control_plane: controlPlane,
+        gateway: {
+          reasoning_gateway_base_url: config.vars.AI_GATEWAY_REASONING_URL,
+          ai_gateway_binding: env.AI,
+        },
+        prompt_compiler: compiler,
+        now: () => new Date().toISOString(),
+      });
+      await compiler.compile(
+        qualification.probe.model_call,
+        qualification.probe.provisioning.deployment,
+      );
+      return service.qualify(qualification.probe);
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
   const service = research.createResearchModelInstallationService({
     database,
     control_plane: controlPlane,
@@ -263,6 +343,7 @@ function safeError(error) {
     ? error.code
     : "MODEL_AUTHORITY_INSTALL_FAILED";
   if (error instanceof InstallerCliError || error instanceof GatewayBrowserOAuthError) return `${code}: ${error.message}`;
+  if (error instanceof ResearchQualificationRuntimeError) return `${code}: qualification runtime operation failed`;
   if (code === "DYNAMIC_ROUTE_REST_HTTP_FAILED" &&
       /^Cloudflare control plane returned HTTP [1-5][0-9]{2}$/u.test(error?.message ?? "")) {
     return `${code}: ${error.message}`;

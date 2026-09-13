@@ -37,6 +37,9 @@
       "path": "../research"
     },
     {
+      "path": "../retrieval"
+    },
+    {
       "path": "../cloudflare-workflows"
     }
   ]
