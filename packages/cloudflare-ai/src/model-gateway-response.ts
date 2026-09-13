@@ -26,6 +26,7 @@ const MESSAGE_KEYS = new Set(["annotations", "content", "refusal", "role"]);
 const USAGE_KEYS = new Set([
   "completion_tokens",
   "completion_tokens_details",
+  "neurons",
   "prompt_tokens",
   "prompt_tokens_details",
   "total_tokens",
@@ -116,6 +117,18 @@ function nonnegativeInteger(value: unknown, label: string): number {
     );
   }
   return value;
+}
+
+function optionalNonnegativeFiniteNumber(value: unknown, label: string): void {
+  if (
+    value !== undefined &&
+    (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+  ) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      `${label} must be an optional finite non-negative number`,
+    );
+  }
 }
 
 function header(
@@ -333,6 +346,10 @@ export function decodeDlpAction(headers: Headers): "FLAG" | "BLOCK" | undefined 
 
 function decodeUsage(raw: unknown): ModelGatewayUsageObservation {
   const usage = exactObject(raw, USAGE_KEYS, "AI Gateway response usage");
+  optionalNonnegativeFiniteNumber(
+    usage.neurons,
+    "AI Gateway response usage.neurons",
+  );
   const inputTokens = nonnegativeInteger(
     usage.prompt_tokens,
     "AI Gateway response usage.prompt_tokens",
