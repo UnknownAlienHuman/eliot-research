@@ -152,7 +152,7 @@ export interface EvidenceFreezeCompositionDependencies {
   readonly manifest_store_factory: EvidenceFreezeManifestStoreFactory;
   readonly manifest_residency_template: EvidenceFreezeResidencyTemplate;
   readonly max_context_bytes: number;
-  readonly manifest_store: ReferenceManifestStore;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
 }
 
 export interface EvidenceFreezeComposition { readonly reconcile: WorkflowStageHandler; readonly freeze: WorkflowStageHandler; }
@@ -219,7 +219,7 @@ export interface EvidenceFreezeSynthesisContextReader {
 export interface EvidenceFreezeSynthesisReaderEnvironment {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
-  readonly manifest_store: ReferenceManifestStore;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<EvidenceFreezeStageFiveLineage>;
 }
 

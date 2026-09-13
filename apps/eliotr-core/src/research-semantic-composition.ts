@@ -18,6 +18,9 @@ import {
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1ResearchModelPricingQuotePort,
+  createResearchReferenceManifestReader,
+  createResearchReferenceManifestStore,
+  createFrozenResearchReferenceManifestService,
   createEvidenceFreezePostSynthesisContextReader,
   createEvidenceFreezeSynthesisContextReader,
   createEvidenceFreezeVerificationContextReader,
@@ -33,6 +36,7 @@ import {
   type ResearchModelGatewayRuntimeConfig,
   type ResearchModelPromptCompilerDependencies,
   type SpendAuthorizationReader,
+  type TrustedModelPromptParameters,
 } from "@eliotr/cloudflare-research";
 import {
   createResearchClaimAuditInputReaderFromFreeze,
@@ -53,6 +57,8 @@ import {
   createEvidenceFreezePredecessorReader,
   createEvidenceFreezeWorkflowReaders,
 } from "./research-evidence-freeze-composition.js";
+import { createResearchClaimAuditPromptDependencies } from "./research-claim-audit-prompt.js";
+import { createResearchSynthesisPromptDependencies } from "./research-synthesis-prompt.js";
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
 import {
   createResearchStageHandlerFactory,
@@ -71,9 +77,48 @@ type SemanticPrincipal = Pick<
  * spend decisions; those values must come from the current D1/qualification
  * readback and the installed Worker policy.
  */
+type ResearchSemanticSynthesisPromptOverrides = Omit<ResearchModelPromptCompilerDependencies, "manifest_service"> & {
+  readonly manifest_service?: ResearchModelPromptCompilerDependencies["manifest_service"];
+  readonly trusted_parameters?: never;
+};
+
+export interface ResearchSemanticInstalledSynthesisPrompt {
+  readonly trusted_parameters: TrustedModelPromptParameters;
+  readonly request_timeout_ms: number;
+  readonly manifest_service?: never;
+  readonly build_manifest_input?: never;
+  readonly resolve_trusted_parameters?: never;
+}
+
+export type ResearchSemanticSynthesisPrompt =
+  | ResearchSemanticInstalledSynthesisPrompt
+  | ResearchSemanticSynthesisPromptOverrides;
+
+type ResearchSemanticAuditPromptOverrides = Omit<ResearchClaimAuditPromptDependencies, "manifest_service"> & {
+  readonly manifest_service?: ResearchClaimAuditPromptDependencies["manifest_service"];
+  readonly trusted_parameters?: never;
+};
+
+export interface ResearchSemanticInstalledAuditPrompt {
+  readonly trusted_parameters: TrustedModelPromptParameters;
+  readonly request_timeout_ms: number;
+  readonly manifest_service?: never;
+  readonly build_manifest_input?: never;
+  readonly resolve_trusted_parameters?: never;
+}
+
+export type ResearchSemanticAuditPrompt =
+  | ResearchSemanticInstalledAuditPrompt
+  | ResearchSemanticAuditPromptOverrides;
+
 export interface ResearchSemanticSynthesisModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
-  readonly prompt: ResearchModelPromptCompilerDependencies;
+  /**
+   * Server-owned prompt mode. Installed parameters use the composition's
+   * frozen context/navigation/resolver; legacy callers may provide all
+   * explicit compiler callbacks, but the two modes cannot be mixed.
+   */
+  readonly prompt: ResearchSemanticSynthesisPrompt;
   readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: EvidenceFreezeSynthesisModelDependencies["prepare"];
@@ -81,7 +126,8 @@ export interface ResearchSemanticSynthesisModelDependencies {
 
 export interface ResearchSemanticAuditModelDependencies {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
-  readonly prompt: ResearchClaimAuditPromptDependencies;
+  /** Installed parameters use the native Stage14 audit reader; legacy callers may provide explicit callbacks. */
+  readonly prompt: ResearchSemanticAuditPrompt;
   readonly pricing?: ModelGatewayPricingPort;
   readonly spend_authorization: SpendAuthorizationReader;
   readonly prepare: ResearchClaimAuditStageDependencies["prepare"];
@@ -110,8 +156,8 @@ export interface ResearchSemanticCompositionDependencies {
   /** Current run/status authority used around committed synthesis reads. */
   readonly recheck_authority: ResearchVerificationStageDependencies["recheck_authority"];
   readonly manifest: {
-    readonly store: ReferenceManifestStore;
-    readonly store_factory: EvidenceFreezeManifestStoreFactory;
+    readonly store?: Pick<ReferenceManifestStore, "get">;
+    readonly store_factory?: EvidenceFreezeManifestStoreFactory;
     readonly residency_template: EvidenceFreezeResidencyTemplate;
     /** Must equal the installed model profile's explicit context bound. */
     readonly max_context_bytes: number;
@@ -150,6 +196,7 @@ export interface ResearchSemanticComposition {
   readonly evidence_content: EvidenceContentPort;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly readers: EvidenceFreezeCommittedReaders;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
   readonly deployment_registry: ReturnType<typeof createD1ModelGatewayDeploymentRegistry>;
   readonly model_profile: ReturnType<typeof createPersistedModelProfileBindingProducer>;
   readonly freeze: EvidenceFreezeCompositionDependencies;
@@ -175,6 +222,44 @@ function requireObject(value: unknown, label: string): void {
 
 function requireFunction(value: unknown, label: string): void {
   if (typeof value !== "function") configurationMissing(label);
+}
+
+function validateSynthesisPrompt(prompt: ResearchSemanticSynthesisPrompt): void {
+  const hasInstalledParameters = prompt.trusted_parameters !== undefined;
+  const hasManifestOverride = prompt.manifest_service !== undefined;
+  const hasManifestInputOverride = prompt.build_manifest_input !== undefined;
+  const hasParametersOverride = prompt.resolve_trusted_parameters !== undefined;
+  if (hasInstalledParameters) {
+    if (hasManifestOverride || hasManifestInputOverride || hasParametersOverride) {
+      inputInvalid("model.synthesis.prompt mixes installed parameters with explicit compiler overrides");
+    }
+    requireObject(prompt.trusted_parameters, "model.synthesis.prompt.trusted_parameters");
+    return;
+  }
+  requireFunction(prompt.build_manifest_input, "model.synthesis.prompt.build_manifest_input");
+  requireFunction(prompt.resolve_trusted_parameters, "model.synthesis.prompt.resolve_trusted_parameters");
+  if (prompt.manifest_service !== undefined) {
+    requireFunction(prompt.manifest_service.buildAndPersist, "model.synthesis.prompt.manifest_service.buildAndPersist");
+  }
+}
+
+function validateAuditPrompt(prompt: ResearchSemanticAuditPrompt): void {
+  const hasInstalledParameters = prompt.trusted_parameters !== undefined;
+  const hasManifestOverride = prompt.manifest_service !== undefined;
+  const hasManifestInputOverride = prompt.build_manifest_input !== undefined;
+  const hasParametersOverride = prompt.resolve_trusted_parameters !== undefined;
+  if (hasInstalledParameters) {
+    if (hasManifestOverride || hasManifestInputOverride || hasParametersOverride) {
+      inputInvalid("model.audit.prompt mixes installed parameters with explicit compiler overrides");
+    }
+    requireObject(prompt.trusted_parameters, "model.audit.prompt.trusted_parameters");
+    return;
+  }
+  requireFunction(prompt.build_manifest_input, "model.audit.prompt.build_manifest_input");
+  requireFunction(prompt.resolve_trusted_parameters, "model.audit.prompt.resolve_trusted_parameters");
+  if (prompt.manifest_service !== undefined) {
+    requireFunction(prompt.manifest_service.buildAndPersist, "model.audit.prompt.manifest_service.buildAndPersist");
+  }
 }
 
 function requireGateway(value: ResearchModelGatewayRuntimeConfig, label: string): void {
@@ -204,10 +289,10 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   requireObject(input.model, "model");
   requireObject(input.model.synthesis, "model.synthesis");
   requireObject(input.model.synthesis.prompt, "model.synthesis.prompt");
-  requireObject(input.model.synthesis.prompt.manifest_service, "model.synthesis.prompt.manifest_service");
+  validateSynthesisPrompt(input.model.synthesis.prompt);
   requireObject(input.model.audit, "model.audit");
   requireObject(input.model.audit.prompt, "model.audit.prompt");
-  requireObject(input.model.audit.prompt.manifest_service, "model.audit.prompt.manifest_service");
+  validateAuditPrompt(input.model.audit.prompt);
   requireObject(input.verification, "verification");
   requireObject(input.verification.config, "verification.config");
   requireObject(input.audit, "audit");
@@ -218,9 +303,8 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   requireFunction(input.navigation?.sources, "navigation.sources");
   requireFunction(input.ledger?.read, "ledger.read");
   requireFunction(input.recheck_authority, "recheck_authority");
-  requireFunction(input.manifest?.store?.get, "manifest.store.get");
-  requireFunction(input.manifest?.store?.put, "manifest.store.put");
-  requireFunction(input.manifest?.store_factory?.create, "manifest.store_factory.create");
+  if (input.manifest?.store !== undefined) requireFunction(input.manifest.store.get, "manifest.store.get");
+  if (input.manifest?.store_factory !== undefined) requireFunction(input.manifest.store_factory.create, "manifest.store_factory.create");
   if (input.manifest.residency_template.scope_domain_id !== input.navigation.scope.snapshot_id ||
       input.manifest.residency_template.access_domain_id !== input.principal.principal_ref) {
     inputInvalid("manifest residency is outside the pinned scope or principal");
@@ -246,17 +330,11 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
 
   requireGateway(input.model.synthesis.gateway, "model.synthesis.gateway");
   requireGateway(input.model.audit.gateway, "model.audit.gateway");
-  requireFunction(input.model.synthesis.prompt.manifest_service?.buildAndPersist, "model.synthesis.prompt.manifest_service.buildAndPersist");
-  requireFunction(input.model.synthesis.prompt.build_manifest_input, "model.synthesis.prompt.build_manifest_input");
-  requireFunction(input.model.synthesis.prompt.resolve_trusted_parameters, "model.synthesis.prompt.resolve_trusted_parameters");
   if (input.model.synthesis.pricing !== undefined) {
     requireFunction(input.model.synthesis.pricing.quote, "model.synthesis.pricing.quote");
   }
   requireFunction(input.model.synthesis.spend_authorization?.read, "model.synthesis.spend_authorization.read");
   requireFunction(input.model.synthesis.prepare, "model.synthesis.prepare");
-  requireFunction(input.model.audit.prompt.manifest_service?.buildAndPersist, "model.audit.prompt.manifest_service.buildAndPersist");
-  requireFunction(input.model.audit.prompt.build_manifest_input, "model.audit.prompt.build_manifest_input");
-  requireFunction(input.model.audit.prompt.resolve_trusted_parameters, "model.audit.prompt.resolve_trusted_parameters");
   if (input.model.audit.pricing !== undefined) {
     requireFunction(input.model.audit.pricing.quote, "model.audit.pricing.quote");
   }
@@ -276,6 +354,64 @@ function snapshotAccess(navigation: NavigationReadAuthority): RetrievalQueryAcce
   });
 }
 
+function composeSynthesisPrompt(
+  input: ResearchSemanticCompositionDependencies,
+  context: EvidenceFreezeSynthesisContextReader,
+  evidenceResolver: CloudflareEvidenceResolver,
+  manifestService: ResearchModelPromptCompilerDependencies["manifest_service"],
+): ResearchModelPromptCompilerDependencies {
+  const prompt = input.model.synthesis.prompt;
+  if (prompt.trusted_parameters !== undefined) {
+    return createResearchSynthesisPromptDependencies({
+      database: input.database,
+      work_bucket: input.work_bucket,
+      operation_id: input.operation_id,
+      principal: input.principal,
+      context,
+      navigation: input.navigation,
+      evidence_resolver: evidenceResolver,
+      trusted_parameters: prompt.trusted_parameters,
+      request_timeout_ms: prompt.request_timeout_ms,
+    });
+  }
+  return Object.freeze({
+    manifest_service: prompt.manifest_service ?? manifestService,
+    build_manifest_input: prompt.build_manifest_input,
+    resolve_trusted_parameters: prompt.resolve_trusted_parameters,
+    request_timeout_ms: prompt.request_timeout_ms,
+  });
+}
+
+function composeAuditPrompt(
+  input: ResearchSemanticCompositionDependencies,
+  auditInput: ResearchClaimAuditInputReader,
+  evidenceResolver: CloudflareEvidenceResolver,
+  manifestStore: Pick<ReferenceManifestStore, "get">,
+  manifestService: ResearchModelPromptCompilerDependencies["manifest_service"],
+): ResearchClaimAuditPromptDependencies {
+  const prompt = input.model.audit.prompt;
+  if (prompt.trusted_parameters !== undefined) {
+    return createResearchClaimAuditPromptDependencies({
+      database: input.database,
+      work_bucket: input.work_bucket,
+      operation_id: input.operation_id,
+      principal: input.principal,
+      audit_input: auditInput,
+      navigation: input.navigation,
+      evidence_resolver: evidenceResolver,
+      manifest_store: manifestStore,
+      trusted_parameters: prompt.trusted_parameters,
+      request_timeout_ms: prompt.request_timeout_ms,
+    });
+  }
+  return Object.freeze({
+    manifest_service: prompt.manifest_service ?? manifestService,
+    build_manifest_input: prompt.build_manifest_input,
+    resolve_trusted_parameters: prompt.resolve_trusted_parameters,
+    request_timeout_ms: prompt.request_timeout_ms,
+  });
+}
+
 /**
  * Builds one server-owned semantic graph for a single workflow run. The run
  * identity is captured before any asynchronous stage read; profile and route
@@ -287,6 +423,15 @@ export function createResearchSemanticComposition(
   validateDependencies(input);
   const now = input.now ?? (() => Date.now());
   const pricing = createD1ResearchModelPricingQuotePort(input.database, { now });
+  const manifestStore = input.manifest.store ?? createResearchReferenceManifestReader({
+    database: input.database, work_bucket: input.work_bucket, navigation: input.navigation,
+  });
+  const manifestService = createFrozenResearchReferenceManifestService(manifestStore);
+  const manifestFactory: EvidenceFreezeManifestStoreFactory = input.manifest.store_factory ?? {
+    create: (context) => createResearchReferenceManifestStore({
+      database: input.database, work_bucket: input.work_bucket, navigation: input.navigation, context,
+    }),
+  };
   const navigationAccess = snapshotAccess(input.navigation);
   const routeNow = (): string => new Date(now()).toISOString();
   const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(input.database, {
@@ -342,26 +487,31 @@ export function createResearchSemanticComposition(
       scope_snapshot_ref: protocol_scope.scope_snapshot_ref,
       scope_snapshot_digest: input.navigation.scope.digest,
     })).binding,
-    manifest_store_factory: input.manifest.store_factory,
+    manifest_store_factory: manifestFactory,
     manifest_residency_template: input.manifest.residency_template,
     max_context_bytes: input.manifest.max_context_bytes,
-    manifest_store: input.manifest.store,
+    manifest_store: manifestStore,
   };
   const readerEnvironment = {
     database: input.database,
     work_bucket: input.work_bucket,
-    manifest_store: input.manifest.store,
+    manifest_store: manifestStore,
     read_stage_five: readers.read_stage_five,
   };
+  const synthesisContext = createEvidenceFreezeSynthesisContextReader(
+    readerEnvironment,
+    input.navigation,
+    readers,
+  );
   const synthesis: ResearchSemanticSynthesisDependencies = {
-    context: createEvidenceFreezeSynthesisContextReader(readerEnvironment, input.navigation, readers),
+    context: synthesisContext,
     model: {
       database: input.database,
       work_bucket: input.work_bucket,
       operation_kind: "REPORT",
       deployment_environment: input.deployment_environment,
       gateway: input.model.synthesis.gateway,
-      prompt: input.model.synthesis.prompt,
+      prompt: composeSynthesisPrompt(input, synthesisContext, evidenceResolver, manifestService),
       pricing: input.model.synthesis.pricing ?? pricing,
       spend_authorization: input.model.synthesis.spend_authorization,
       prepare: input.model.synthesis.prepare,
@@ -400,7 +550,7 @@ export function createResearchSemanticComposition(
     work_bucket: input.work_bucket,
     deployment_environment: input.deployment_environment,
     gateway: input.model.audit.gateway,
-    prompt: input.model.audit.prompt,
+    prompt: composeAuditPrompt(input, auditInput, evidenceResolver, manifestStore, manifestService),
     pricing: input.model.audit.pricing ?? pricing,
     spend_authorization: input.model.audit.spend_authorization,
     input: auditInput,
@@ -429,6 +579,7 @@ export function createResearchSemanticComposition(
     evidence_content: evidenceContent,
     evidence_resolver: evidenceResolver,
     readers,
+    manifest_store: manifestStore,
     deployment_registry: deploymentRegistry,
     model_profile: modelProfile,
     freeze,
@@ -452,7 +603,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
   const environment = {
     database: input.database,
     work_bucket: input.work_bucket,
-    manifest_store: input.manifest.store,
+    manifest_store: semantic.manifest_store,
     read_stage_five: semantic.readers.read_stage_five,
   };
   return createResearchStageHandlerFactory({

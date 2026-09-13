@@ -20,8 +20,10 @@ import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
   SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION,
+  SERVER_OWNED_FREEZE_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
 } from "./research-stage-handlers.js";
+import { createResearchSemanticServerHandlers } from "./research-semantic-server.js";
 
 export interface ResearchWorkflowRunParams {
   readonly workflow_kind?: "RESEARCH";
@@ -203,7 +205,8 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
       failWorkflow("WORKFLOW_AUTHORITY_STALE");
     }
     const lane = investigation.head.lane;
-    const serverOwned = params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
+    const semanticOwned = params.handler_generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION;
+    const serverOwned = semanticOwned || params.handler_generation === SERVER_OWNED_RESEARCH_HANDLER_GENERATION || params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
     const retrievalOwned = params.handler_generation === SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION;
     let handlers: ResearchStageHandlerFactory;
     if (lane === "confirmatory") {
@@ -232,7 +235,11 @@ export class ResearchWorkflow extends WorkflowEntrypoint<Env, ResearchWorkflowPa
         access,
         require_current: async (scope) => { await scopePorts.requireCurrentScope(scope); return scope; },
       });
-      handlers = createResearchStageHandlerFactory({
+      handlers = semanticOwned
+        ? await createResearchSemanticServerHandlers({ env: this.env, operation_id: params.operation_id,
+          investigation_id: params.investigation_ref.id, principal, navigation, ledger,
+          initial_manifest: params.initial_input_manifest })
+        : createResearchStageHandlerFactory({
         kind: "server-owned-exploratory",
         generation: retrievalOwned ? SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION : SERVER_OWNED_RESEARCH_HANDLER_GENERATION,
         navigation, ledger,

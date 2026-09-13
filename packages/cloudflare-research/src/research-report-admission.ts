@@ -53,6 +53,42 @@ export interface ResearchReportAdmissionPolicySource {
   read(): Promise<ResearchReportAdmissionPolicy | null>;
 }
 
+export interface ResearchReportAdmissionPolicyConfig {
+  /** Explicit installed Worker configuration; never forwarded from request bodies. */
+  readonly raw?: string;
+  readonly provenance_ref: string;
+}
+
+/** Decode the installed REPORT policy while retaining per-request current-authority checks. */
+export function createResearchReportAdmissionPolicyConfigSource(
+  config: ResearchReportAdmissionPolicyConfig,
+): ResearchReportAdmissionPolicySource {
+  if (config === null || typeof config !== "object") {
+    fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT policy configuration is invalid");
+  }
+  const provenanceRef = text(config.provenance_ref, "REPORT policy source provenance");
+  if (config.raw === undefined || config.raw === "") {
+    return Object.freeze({ provenance_ref: provenanceRef, read: async () => null });
+  }
+  if (typeof config.raw !== "string" || new TextEncoder().encode(config.raw).byteLength > 65536) {
+    fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT policy configuration must be bounded JSON");
+  }
+  let decoded: unknown;
+  try { decoded = JSON.parse(config.raw) as unknown; }
+  catch (cause) { fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT policy configuration is not JSON", false, cause); }
+  if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) {
+    fail("REPORT_ADMISSION_INPUT_INVALID", "REPORT policy configuration must contain one policy");
+  }
+  const policy = validatePolicy(decoded as ResearchReportAdmissionPolicy);
+  if (policy.config_provenance_ref !== provenanceRef) {
+    fail("REPORT_ADMISSION_DENIED", "REPORT policy provenance differs from the installed server source");
+  }
+  return Object.freeze({
+    provenance_ref: provenanceRef,
+    read: async () => snapshot(policy, "installed REPORT policy"),
+  });
+}
+
 export interface ResearchReportAdmissionPreparation {
   readonly decision: PolicyDecision;
   readonly decision_sha256: string;

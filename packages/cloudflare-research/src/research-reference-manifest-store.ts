@@ -55,6 +55,49 @@ export interface ResearchReferenceManifestStore extends ReferenceManifestStore {
   readReceipt(ref: VersionedRef): Promise<ReferenceManifestReceipt | null>;
 }
 
+/** Read a saved manifest with its persisted storage binding and current owner authority. */
+export function createResearchReferenceManifestReader(input: {
+  readonly database: D1Database;
+  readonly work_bucket: R2Bucket;
+  readonly navigation: NavigationReadAuthority;
+}): Pick<ReferenceManifestStore, "get"> {
+  return Object.freeze({
+    async get(rawRef: VersionedRef): Promise<AllowedReferenceManifest | null> {
+      const ref = VersionedRefSchema.safeParse(rawRef);
+      if (!ref.success) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest reference is invalid");
+      const access = input.navigation.access;
+      const scope = input.navigation.scope;
+      let found: ManifestRow | null;
+      try {
+        found = await input.database.prepare(
+          "SELECT * FROM research_reference_manifest WHERE manifest_id=?1 AND manifest_revision=?2 " +
+          "AND principal_ref=?3 AND credential_generation=?4 AND scope_snapshot_id=?5 AND scope_snapshot_revision=?6",
+        ).bind(ref.data.id, ref.data.revision, access.principal_ref, access.credential_generation,
+          scope.snapshot_id, scope.revision).first<ManifestRow>();
+      } catch (cause) {
+        fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "manifest storage binding is unavailable", true, cause);
+      }
+      if (found === null || found.state !== "COMMITTED") return null;
+      const row = validateRow(found);
+      const context: ReferenceManifestStorageContext = {
+        principal_ref: row.principal_ref,
+        credential_generation: row.credential_generation,
+        scope_snapshot_ref: { id: row.scope_snapshot_id, revision: row.scope_snapshot_revision },
+        manifest_residency_key: ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)),
+        policy_authority_ref: row.policy_authority_ref,
+        authorization_receipt_ref: row.authorization_receipt_ref,
+        scope_snapshot_digest: row.scope_snapshot_digest,
+        pack_ref: { id: row.pack_ref_id, revision: row.pack_ref_revision },
+        trace_ref: { id: row.trace_ref_id, revision: row.trace_ref_revision },
+        stage_attempt_ref: row.stage_attempt_ref,
+        stage_request_sha256: row.stage_request_sha256,
+        created_at: row.created_at,
+      };
+      return createResearchReferenceManifestStore({ ...input, context }).get(ref.data);
+    },
+  });
+}
+
 interface ManifestRow {
   readonly manifest_id: unknown;
   readonly manifest_revision: unknown;
