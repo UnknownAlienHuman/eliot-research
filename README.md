@@ -5,7 +5,9 @@
 > boundaries are in [AGENTS.md](AGENTS.md).
 
 **Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
-The deployment is limited to owner-only metadata Corpus Lens and durable trace; model configuration,
+Owner sign-in, workspace selection, file capture and TXT/Markdown processing are live.
+Text documents are processed locally in the Worker without model calls. Library admission keeps
+its quality checks; Corpus Lens and durable trace expose owner-permitted metadata. Model configuration,
 AI Search, Google and MCP integrations are not connected; full research/query/Wiki, erasure,
 federation and production workload remain unavailable. [Local preparation and current launch
 limits](docs/implementation/local-launch.md).

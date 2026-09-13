@@ -23,6 +23,8 @@ interface RawFilePanelHost {
 type HealthLossReason = "initial-unavailable" | "connection-lost" | "generation-changed";
 
 function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
@@ -44,6 +46,8 @@ function admissionCopy(result: RawNormalizedAdmissionResult): string {
       : "Added to Library. Search readiness is reported separately.";
   }
   if (result.state === "UNKNOWN") return "Library add status is unknown. Continue to check this step.";
+  if (result.state === "QUARANTINED") return "Library did not accept this document after its quality checks. See Import details for the recorded reasons.";
+  if (result.state === "REJECTED") return "Library rejected this document. See Import details for the recorded reasons.";
   return `Library add is ${result.state.toLowerCase()}. Continue when it is ready.`;
 }
 

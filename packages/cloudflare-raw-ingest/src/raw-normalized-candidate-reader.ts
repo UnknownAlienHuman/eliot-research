@@ -108,6 +108,33 @@ function validatePolicy(policy: RawNormalizedCandidatePolicy): void {
   if (policy.ownership_mode !== "ownership_cutover" && policy.ownership_cutover_receipt_ref !== undefined) fail("RAW_NORMALIZED_INVALID", "ownership cutover receipt is not allowed");
 }
 
+function mediaType(value: string): string {
+  return value.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+}
+
+function isIdentityTextCapture(capture: RawNormalizedCapture): boolean {
+  const type = mediaType(capture.content_type);
+  if (type === "text/plain" || type === "text/markdown") return true;
+  if (type !== "" && type !== "application/octet-stream") return false;
+  const name = capture.original_file_name.toLowerCase();
+  return name.endsWith(".md") || name.endsWith(".txt");
+}
+
+function isIdentityTextCandidate(
+  capture: RawNormalizedCapture,
+  conversion: RawNormalizedConversion,
+  output: RawNormalizedOutputReadback,
+  checkedOutputSha256: string,
+): boolean {
+  const detectedMime = mediaType(conversion.detected_mime);
+  const stringOutput = detectedMime === "text/plain"
+    ? conversion.format === "text" || conversion.format === "markdown"
+    : detectedMime === "text/markdown" && conversion.format === "markdown";
+  return isIdentityTextCapture(capture) &&
+    stringOutput &&
+    checkedOutputSha256 === capture.content_sha256 && output.size_bytes === capture.size_bytes;
+}
+
 export async function readRawNormalizedCandidate(input: {
   readonly capture: RawNormalizedCapture;
   readonly conversion: RawNormalizedConversion;
@@ -134,6 +161,7 @@ export async function readRawNormalizedCandidate(input: {
   const rawDigest = await crypto.subtle.digest("SHA-256", bytes.buffer as ArrayBuffer);
   const markdownSha = [...new Uint8Array(rawDigest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
   if (markdownSha !== input.output.sha256) fail("RAW_NORMALIZED_OUTPUT_MISMATCH", "normalized output bytes have a different digest");
+  const identityText = isIdentityTextCandidate(input.capture, input.conversion, input.output, markdownSha);
   const manifest = NormalizedBundleManifestSchema.parse({
     protocol: "eliotr.normalized.v1",
     origin: {
@@ -163,7 +191,9 @@ export async function readRawNormalizedCandidate(input: {
     },
     content: { markdown: "content.md", markdown_sha256: input.output.sha256 },
     capabilities: { text_ranges: true, pages: false, bounding_boxes: false, tables: false, figures: false },
-    quality: { state: "degraded", assurance_ceiling: "CAPTURED", warnings: ["RAW_MARKDOWN_CANDIDATE_NO_SOURCE_MAP"] },
+    quality: identityText
+      ? { state: "standard", assurance_ceiling: "CAPTURED", warnings: [] }
+      : { state: "degraded", assurance_ceiling: "CAPTURED", warnings: ["RAW_MARKDOWN_CANDIDATE_NO_SOURCE_MAP"] },
     export: { purpose: input.policy.purpose, receipt_ref: `raw-conversion:${input.conversion.operation_id}` },
   });
   const manifestBytes = new TextEncoder().encode(canonicalJson(manifest));
