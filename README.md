@@ -7,7 +7,9 @@
 **Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
 Owner sign-in, workspace selection, file capture and TXT/Markdown processing are live.
 Text documents are processed locally in the Worker without model calls. Library admission keeps
-its quality checks; Corpus Lens and durable trace expose owner-permitted metadata. Model configuration,
+its quality checks. Corpus Lens opens admitted documents for reading and download; the background
+queue builds their structure and D1 exact/lexical index. The Research screen reports whether its
+model configuration is installed, separately from the server's health. Model configuration,
 AI Search, Google and MCP integrations are not connected; full research/query/Wiki, erasure,
 federation and production workload remain unavailable. [Local preparation and current launch
 limits](docs/implementation/local-launch.md).

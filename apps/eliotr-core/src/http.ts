@@ -52,6 +52,7 @@ import { readOwnerErasurePreparation, readOwnerErasureRequest, readOwnerErasureR
 import { readOwnerNamespaceInitialization } from "./source-namespace-owner-http.js";
 import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
+import { readResearchConfigurationStatus } from "./research-configuration-status.js";
 export { HttpRequestError } from "./http-errors.js";
 export interface HttpDependencies {
   readonly accessVerifier?: AccessVerifier;
@@ -311,7 +312,8 @@ async function dispatch(
   url: URL,
 ): Promise<Response> {
   const requiresReadiness = match.route.operation !== "system.health" &&
-    match.route.operation !== "system.capabilities";
+    match.route.operation !== "system.capabilities" &&
+    match.route.operation !== "system.research.configuration";
   if (requiresReadiness) {
     const blocked = await requireApplicationReady(request, application);
     if (blocked !== null) return blocked;
@@ -323,6 +325,19 @@ async function dispatch(
     case "system.capabilities":
       requireNoQuery(url);
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
+    case "system.research.configuration":
+      requireNoQuery(url);
+      return apiResult(request, env, readResearchConfigurationStatus(env));
+    case "library.source.content": {
+      for (const key of url.searchParams.keys()) {
+        if (key !== "source_revision_ref") {
+          throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400, "Document query contains an unknown parameter");
+        }
+      }
+      const revision = singleQueryValue(url, "source_revision_ref");
+      if (revision === undefined) throw new HttpRequestError("DOCUMENT_INPUT_INVALID", 400, "A source revision is required");
+      return application.services.owner.sourceContent(context, revision);
+    }
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
     }

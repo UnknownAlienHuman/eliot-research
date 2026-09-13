@@ -395,7 +395,7 @@ export async function requestApiBytes(path: string, signal?: AbortSignal,
   try { unchangedPath = new URL(path, "https://local.invalid").pathname === path.split("?")[0]; }
   catch { /* The typed rejection below covers malformed URLs. */ }
   if (!path.startsWith("/api/v1/") || /[\\#\u0000-\u0020\u007f]/u.test(path) || !unchangedPath ||
-      !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 1024 * 1024) {
+      !Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 2 * 1024 * 1024) {
     throw new ApiRequestError({ status: 400, code: "API_PATH_INVALID", message: "Invalid API path" });
   }
   const controller = new AbortController();

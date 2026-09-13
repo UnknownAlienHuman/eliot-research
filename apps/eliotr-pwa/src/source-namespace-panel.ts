@@ -67,9 +67,10 @@ export function mountSourceNamespacePanel(
         <dt>Profile</dt><dd><code data-namespace-profile-ref></code></dd>
       </dl></details>
     </section>
-    <section class="readiness-card" aria-labelledby="namespace-create-title">
+    <section class="readiness-card" aria-labelledby="namespace-create-title" data-namespace-create-section>
       <span class="eyebrow">New workspace</span><h3 id="namespace-create-title">Create a workspace</h3>
       <p class="field-hint" data-namespace-create-copy>Use a clear name so you can find this workspace when adding documents.</p>
+      <details data-namespace-create-unavailable hidden><summary>Additional workspace</summary><p data-namespace-create-unavailable-copy>Additional workspace creation is unavailable on this server.</p></details>
       <form data-namespace-form>
         <label>Workspace name<input data-namespace-title name="workspace-title" maxlength="120" autocomplete="off" required placeholder="For example, Policy research"></label>
         <label data-namespace-profile-field>Profile<select data-namespace-profile name="profile" aria-label="Workspace profile"></select></label>
@@ -91,10 +92,13 @@ export function mountSourceNamespacePanel(
   const profileField = element.querySelector<HTMLElement>("[data-namespace-profile-field]");
   const profileSelect = element.querySelector<HTMLSelectElement>("[data-namespace-profile]");
   const createCopy = element.querySelector<HTMLElement>("[data-namespace-create-copy]");
+  const createUnavailable = element.querySelector<HTMLDetailsElement>("[data-namespace-create-unavailable]");
+  const createUnavailableCopy = element.querySelector<HTMLElement>("[data-namespace-create-unavailable-copy]");
   const createButton = element.querySelector<HTMLButtonElement>("[data-namespace-create]");
   const statusNode = element.querySelector<HTMLElement>("[data-namespace-status]");
   if (!stateNode || !introNode || !refreshButton || !select || !listCopy || !details || !namespaceIdNode ||
-      !profileRefNode || !form || !titleInput || !profileField || !profileSelect || !createCopy || !createButton || !statusNode) {
+      !profileRefNode || !form || !titleInput || !profileField || !profileSelect || !createCopy || !createUnavailable ||
+      !createUnavailableCopy || !createButton || !statusNode) {
     throw new Error("Source namespace panel is incomplete");
   }
 
@@ -139,8 +143,14 @@ export function mountSourceNamespacePanel(
 
   const render = (): void => {
     const ready = canRequest();
-    stateNode.textContent = operation === "loading" ? "Refreshing" : operation === "creating" ? "Creating" : ready ? "Ready" : "Waiting";
-    introNode.textContent = ready
+    const namespaces = catalog?.namespaces ?? [];
+    const profiles = catalog?.profiles ?? [];
+    const setupMissing = catalog !== undefined && namespaces.length === 0 && profiles.length === 0;
+    const existingWorkspaceWithoutProfile = catalog !== undefined && namespaces.length > 0 && profiles.length === 0;
+    stateNode.textContent = operation === "loading" ? "Refreshing" : operation === "creating" ? "Creating" : setupMissing ? "Setup required" : ready ? "Ready" : "Waiting";
+    introNode.textContent = setupMissing
+      ? "No workspace is available yet. Server setup is required before adding documents."
+      : ready
       ? "Choose where new documents should be added."
       : "The owner workspace is not ready yet. Check the server before choosing a workspace.";
     refreshButton.disabled = !ready || operation !== "idle";
@@ -148,7 +158,9 @@ export function mountSourceNamespacePanel(
     titleInput.disabled = !ready || operation !== "idle";
     profileSelect.disabled = !ready || operation !== "idle" || catalog?.profiles.length === 0;
     createButton.disabled = !ready || operation !== "idle" || catalog?.profiles.length === 0 || titleInput.value.trim().length === 0;
-    const namespaces = catalog?.namespaces ?? [];
+    form.hidden = existingWorkspaceWithoutProfile;
+    createCopy.hidden = existingWorkspaceWithoutProfile;
+    createUnavailable.hidden = !existingWorkspaceWithoutProfile;
     select.replaceChildren();
     if (namespaces.length === 0) {
       const option = document.createElement("option");
@@ -169,7 +181,6 @@ export function mountSourceNamespacePanel(
       select.value = selectedId ?? "";
     }
     profileSelect.replaceChildren();
-    const profiles = catalog?.profiles ?? [];
     for (const profile of profiles) {
       const option = document.createElement("option");
       option.value = profileRefText(profile);
@@ -180,7 +191,7 @@ export function mountSourceNamespacePanel(
     if (profileKey !== undefined && profiles.some((profile) => profileRefText(profile) === profileKey)) {
       profileSelect.value = profileKey;
     }
-    profileField.hidden = (catalog?.profiles.length ?? 0) <= 1;
+    profileField.hidden = profiles.length <= 1;
     const chosen = selectedNamespace(namespaces, selectedId);
     details.hidden = chosen === undefined;
     namespaceIdNode.textContent = chosen?.source_namespace_id ?? "";
@@ -188,9 +199,12 @@ export function mountSourceNamespacePanel(
     if (catalog === undefined) {
       listCopy.textContent = ready ? "Loading workspaces…" : "Workspaces appear after the owner service is ready.";
       createCopy.textContent = "Workspace creation options appear when the owner service is ready.";
-    } else if (catalog.profiles.length === 0) {
-      listCopy.textContent = namespaces.length === 0 ? "No workspaces are available yet." : "Choose an existing workspace above.";
-      createCopy.textContent = "Workspace creation is not configured on this server.";
+    } else if (profiles.length === 0) {
+      listCopy.textContent = namespaces.length === 0 ? "Setup is required: no workspace is available." : "Choose an existing workspace above.";
+      createCopy.textContent = namespaces.length === 0
+        ? "No server-installed profile is available to create a workspace."
+        : "Additional workspace creation is unavailable on this server.";
+      createUnavailableCopy.textContent = "Additional workspace creation is unavailable on this server. Use the existing workspace above.";
     } else {
       listCopy.textContent = namespaces.length === 0 ? "No workspaces have been created yet." : "Choose a workspace before adding a document.";
       createCopy.textContent = "Use a clear name so you can find this workspace when adding documents.";
@@ -251,7 +265,9 @@ export function mountSourceNamespacePanel(
         }
       }
       statusMessage = received.profiles.length === 0
-        ? "Workspace creation is not configured on this server."
+        ? received.namespaces.length === 0
+          ? "Setup required: no workspace is available and no server-installed profile is configured."
+          : "Existing workspace available. Choose it or import a document."
         : "Choose a workspace or create one before adding a document.";
       render();
     } catch (error) {

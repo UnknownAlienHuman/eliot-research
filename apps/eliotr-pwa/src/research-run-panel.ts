@@ -86,8 +86,9 @@ export function mountResearchRunPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
   healthReady: () => boolean = () => false,
-): (() => void) & { clearPrivate(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
-  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() ? "READY" : "WAITING"}</span></div>
+  researchConfigurationReady: () => boolean = () => true,
+): (() => void) & { clearPrivate(): void; refreshAvailability(): void; selectSource(id: string, context?: LibrarySelectionContext): void } {
+  element.innerHTML = `<div class="workflow-head"><div><span class="eyebrow">Research run</span><h2>Prepare a research run</h2></div><span class="workflow-badge" data-run-badge>${healthReady() && researchConfigurationReady() ? "READY" : "WAITING"}</span></div>
     <p class="workflow-copy">Start research and open a saved draft when one is available.</p>
     <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
@@ -137,11 +138,16 @@ export function mountResearchRunPanel(
 
   const updateButtons = (): void => {
     const available = healthReady();
+    const startAvailable = available && researchConfigurationReady();
     const busy = controller !== undefined;
-    submit.disabled = !available || busy;
+    submit.disabled = !startAvailable || busy;
     recover.disabled = !available || busy;
     refresh.disabled = !available || busy || workflowId === undefined;
     historyRefresh.disabled = !available || historyController !== undefined;
+  };
+  const refreshAvailability = (): void => {
+    badge.textContent = healthReady() && researchConfigurationReady() ? "READY" : "WAITING";
+    updateButtons();
   };
   const stop = (): void => {
     serial += 1;
@@ -170,7 +176,7 @@ export function mountResearchRunPanel(
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();
-    badge.textContent = ready ? "READY" : "WAITING";
+    badge.textContent = ready && researchConfigurationReady() ? "READY" : "WAITING";
     if (!ready) clearPrivate(); else { updateButtons(); scheduleStatusRefresh(true); loadHistory("automatic"); }
   };
   const onVisibilityChanged = (): void => {
@@ -403,6 +409,7 @@ export function mountResearchRunPanel(
     event.preventDefault();
     const generation = deploymentGeneration();
     if (!healthReady() || !navigator.onLine || generation === undefined) { status.textContent = "Owner workspace is unavailable. Reconnect before starting research."; return; }
+    if (!researchConfigurationReady()) { status.textContent = "Research configuration is not ready. Check the Research configuration card before starting a run."; return; }
     if (scope.value === "selected" && selectedSourceId === undefined) { status.textContent = "Select a source before starting research."; return; }
     const ids = scope.value === "selected" ? [selectedSourceId as string] : [];
     let body: string;
@@ -429,6 +436,7 @@ export function mountResearchRunPanel(
   if (healthReady()) loadHistory("automatic");
   return Object.assign(cleanup, {
     clearPrivate,
+    refreshAvailability,
     selectSource(id: string, context?: LibrarySelectionContext): void {
       IdentifierSchema.parse(id); stop(); workflowId = undefined; workflowGeneration = undefined; previousBody = ""; idempotencyKey = ""; result.replaceChildren(); result.hidden = true;
       selectedSourceId = id; workflowInput.value = ""; updateButtons(); selectedOption.disabled = false; scope.value = "selected"; status.textContent = context?.sourceRevisionRef ? "Selected source ready for a research run." : "Selected source loaded; refresh the Library before starting.";

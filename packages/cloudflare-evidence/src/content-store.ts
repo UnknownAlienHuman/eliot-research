@@ -222,6 +222,8 @@ export interface R2EvidenceContentDependencies {
 
 export interface AdmittedNormalizedMarkdown {
   readonly markdown: string;
+  /** Original verified UTF-8 bytes, including any BOM, for exact document downloads. */
+  readonly bytes: Uint8Array;
   readonly normalized_object_ref: string;
   readonly readback_sha256: string;
   readonly size_bytes: number;
@@ -270,7 +272,7 @@ export async function readAdmittedNormalizedMarkdown(
   const settled = await bucket.head(key);
   requireSameObject(settled, head);
   if (settled !== null) requireObjectMetadata(settled, source);
-  return { markdown, normalized_object_ref: key, readback_sha256: digest, size_bytes: bytes.byteLength };
+  return { markdown, bytes, normalized_object_ref: key, readback_sha256: digest, size_bytes: bytes.byteLength };
 }
 
 export function createR2EvidenceContentPort(

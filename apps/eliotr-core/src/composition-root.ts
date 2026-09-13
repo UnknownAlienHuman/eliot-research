@@ -26,6 +26,7 @@ import {
   type PreparedIngestOperation,
 } from "@eliotr/platform-cloudflare";
 import { readSourceRevisions } from "./source-revisions.js";
+import { readSourceContent } from "./source-content.js";
 import { readCatalog } from "./catalog-service.js";
 import { createEvidenceService } from "./evidence-service.js";
 import { createResearchQueryService, createResearchRunService } from "./research-session.js";
@@ -237,6 +238,7 @@ function ownerApi(env: Env): OwnerApi {
     readRawFile: (context, captureId) => rawCapture.readRawFile(context, captureId),
     readRawFileByIdempotency: (context, idempotencyKey) => rawCapture.readRawFileByIdempotency(context, idempotencyKey),
     convertRawFileToMarkdown: (context, captureId, request) => convertRawMarkdown(context, captureId, request),
+    sourceContent: (context, sourceRevisionRef) => readSourceContent(env, context, sourceRevisionRef),
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     libraryReadiness: (context, request) => readLibraryReadiness(
       env.CORE_DB, env.SEARCH_DB, context, request, env.DEPLOYMENT_GENERATION,

@@ -1,5 +1,19 @@
 # Local launch checkpoint
 
+## Deployed owner workspace
+
+The private Cloudflare workspace is available at
+[eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+Choose the existing workspace, add a document, select it in Sources and press **Read document**.
+Reading and downloading use the exact admitted normalized bytes, require the current owner read
+policy, and do not depend on a search index or model. This reader is bounded to 2 MiB per document;
+it does not create citation evidence. Private content is not cached by the PWA.
+
+The minute scheduler dispatches admitted-source jobs to the queue. A completed D1 projection makes
+exact and lexical retrieval available; semantic retrieval remains unavailable without AI Search.
+The Research screen separately reports missing model configuration. A healthy Worker does not mean
+research agents are configured or running.
+
 ## Implemented owner loop
 
 `PWA Corpus Lens → POST /api/v1/research/orient → namespace read policy → admitted source heads →

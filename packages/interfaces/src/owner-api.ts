@@ -253,6 +253,7 @@ export interface GoogleConnectionStatusResult {
 }
 
 export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi, SourceNamespaceOwnerApi {
+  sourceContent(context: AuthenticatedRequestContext, sourceRevisionRef: string): Promise<Response>;
   sourceRevisions(context: AuthenticatedRequestContext, request: SourceRevisionsRequest): Promise<SourceRevisionsResult>;
   libraryReadiness(context: AuthenticatedRequestContext, request: LibraryReadinessRequest): Promise<LibraryReadinessResult>;
   discoverBundle(context: AuthenticatedRequestContext, request: DiscoverBundleUploadRequest): Promise<BundleIngestRecovery>;

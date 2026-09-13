@@ -1,13 +1,15 @@
 import { ApiRequestError } from "./api.js";
+import { readAdmittedDocument, type AdmittedDocument } from "./document-reader-api.js";
 import { escapeHtml } from "./html.js";
 import { orientSources, orientationBody, readOrientationTrace, type OrientationView } from "./orientation-api.js";
 
 export function renderOrientation(view: OrientationView): string {
   return `<p><strong>Navigation only — not citation evidence.</strong> ${view.cards.length} represented; ${view.omitted} omitted.</p>
     <p>Selection uses frozen source order. Semantic ranking, full document structure and research synthesis are not enabled.</p>
-    ${view.cards.map((card) => `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
+    ${view.cards.map((card, index) => `<article class="source-card"><h3>${escapeHtml(card.title)}</h3>
       <code>${escapeHtml(card.source_revision_ref)}</code><p>${escapeHtml(card.source_kind)} · ${escapeHtml(card.quality_status)}</p>
-      <p>${escapeHtml(view.maps.find((map) => map.source_revision_ref === card.source_revision_ref)?.unresolved_structure.join(", ") ?? "DOCUMENT_MAP_MISSING")}</p></article>`).join("")}
+      <p>${escapeHtml(view.maps.find((map) => map.source_revision_ref === card.source_revision_ref)?.unresolved_structure.join(", ") ?? "DOCUMENT_MAP_MISSING")}</p>
+      <button class="button button--quiet" type="button" data-read-document="${index}">Read document</button></article>`).join("")}
     <p>Scope: <code>${escapeHtml(view.scope.id)}</code></p><button type="button" data-trace>Inspect trace</button>`;
 }
 export function mountOrientationPanel(element: HTMLElement): (() => void) & { selectSource(id: string): Promise<boolean> } {
@@ -15,17 +17,90 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
     <form><label>Source IDs (optional, separated by commas)<input name="sources" maxlength="16000" autocomplete="off" placeholder="Blank: authorized library, at most 64 sources"></label>
     <label>Focus (metadata only)<input name="focus" maxlength="256" autocomplete="off"></label>
     <button type="submit">Load sources</button><button type="button" data-cancel disabled>Cancel</button></form>
-    <p role="status" aria-live="polite"></p><section data-result></section><pre data-trace-result hidden></pre>`;
+    <p role="status" aria-live="polite"></p><section data-result></section>
+    <section class="document-reader" data-document-reader hidden aria-labelledby="document-reader-title">
+      <div class="document-reader-heading"><div><span class="eyebrow">Admitted document</span><h3 id="document-reader-title">Document</h3></div><span data-document-reader-size></span></div>
+      <p data-document-reader-status role="status" aria-live="polite"></p>
+      <pre class="document-reader-body" data-document-reader-body tabindex="0"></pre>
+      <div class="document-reader-actions"><button class="button button--quiet" type="button" data-close-document>Close</button><button class="button button--quiet" type="button" data-download-document hidden>Download</button></div>
+    </section><pre data-trace-result hidden></pre>`;
   const form = element.querySelector("form"); const status = element.querySelector('[role="status"]');
   const result = element.querySelector("[data-result]"); const traceResult = element.querySelector<HTMLPreElement>("[data-trace-result]");
   const cancel = element.querySelector<HTMLButtonElement>("[data-cancel]");
-  if (!form || !status || !result || !traceResult || !cancel) throw new Error("Corpus Lens panel is incomplete");
+  const documentReader = element.querySelector<HTMLElement>("[data-document-reader]");
+  const documentTitle = element.querySelector<HTMLElement>("#document-reader-title");
+  const documentSize = element.querySelector<HTMLElement>("[data-document-reader-size]");
+  const documentStatus = element.querySelector<HTMLElement>("[data-document-reader-status]");
+  const documentBody = element.querySelector<HTMLPreElement>("[data-document-reader-body]");
+  const closeDocument = element.querySelector<HTMLButtonElement>("[data-close-document]");
+  const downloadDocument = element.querySelector<HTMLButtonElement>("[data-download-document]");
+  if (!form || !status || !result || !traceResult || !cancel || !documentReader || !documentTitle || !documentSize ||
+      !documentStatus || !documentBody || !closeDocument || !downloadDocument) throw new Error("Corpus Lens panel is incomplete");
   let controller: AbortController | undefined; let active = 0; let key = ""; let previous = "";
+  let readerController: AbortController | undefined; let readerSerial = 0;
+  let openedDocument: AdmittedDocument | undefined; let downloadUrl: string | undefined;
+  let lastReadButton: HTMLButtonElement | undefined;
   let pendingSelection: Promise<boolean> = Promise.resolve(true);
   const errorText = (error: unknown) => error instanceof ApiRequestError
     ? `${error.code}: ${error.message}${error.traceId ? ` · trace ${error.traceId}` : ""}${error.retryable ? " · Retry preserves the operation identity." : ""}`
     : "Unable to read Corpus Lens. Check the inputs and session.";
-  const stop = () => { active += 1; controller?.abort(); cancel.disabled = true; };
+  const documentErrorText = (error: unknown): string => {
+    if (error instanceof ApiRequestError) {
+      if (error.status === 401 || error.status === 403) return "Document access changed. Refresh the Library.";
+      if (error.status === 404) return "This document is no longer available in the Library.";
+      if (error.status === 409) return "The selected document changed. Refresh the Library.";
+    }
+    return "The document could not be read right now. Try again.";
+  };
+  const formatBytes = (bytes: number): string => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  const downloadName = (title: string): string => {
+    const safe = title.replace(/[^A-Za-z0-9._ -]/gu, "_").trim().slice(0, 80);
+    const extension = /\.txt$/iu.test(safe) ? ".txt" : ".md";
+    let stem = safe;
+    while (/\.(?:md|markdown|txt)$/iu.test(stem)) stem = stem.replace(/\.(?:md|markdown|txt)$/iu, "").trim();
+    return `${stem || "admitted-document"}${extension}`;
+  };
+  const clearReader = (message = ""): void => {
+    readerSerial += 1; readerController?.abort(); readerController = undefined; openedDocument = undefined;
+    const button = lastReadButton; lastReadButton = undefined; if (button) button.disabled = false;
+    if (downloadUrl !== undefined) { URL.revokeObjectURL(downloadUrl); downloadUrl = undefined; }
+    documentReader.hidden = true; documentTitle.textContent = "Document"; documentSize.textContent = "";
+    documentStatus.textContent = message; documentBody.textContent = ""; downloadDocument.hidden = true;
+  };
+  const stop = () => { active += 1; controller?.abort(); controller = undefined; clearReader(); cancel.disabled = true; };
+  const readDocument = (view: OrientationView, cardIndex: number, button: HTMLButtonElement): void => {
+    const card = view.cards[cardIndex];
+    if (card === undefined || readerController !== undefined || active < 1 || disposed) return;
+    clearReader();
+    const local = new AbortController(); readerController = local; const mine = readerSerial;
+    lastReadButton = button; button.disabled = true; documentReader.hidden = false;
+    documentTitle.textContent = card.title; documentStatus.textContent = "Reading admitted document…";
+    void readAdmittedDocument(card.source_revision_ref, view.generation, local.signal)
+      .then((document) => {
+        if (mine !== readerSerial || local.signal.aborted || disposed) return;
+        openedDocument = document; documentBody.textContent = document.text;
+        documentSize.textContent = formatBytes(document.sizeBytes);
+        documentStatus.textContent = "Normalized text loaded from the admitted document.";
+        downloadDocument.hidden = false; documentBody.focus({ preventScroll: true });
+      })
+      .catch((error: unknown) => {
+        if (mine !== readerSerial || disposed) return;
+        documentBody.textContent = ""; documentSize.textContent = ""; downloadDocument.hidden = true;
+        documentStatus.textContent = documentErrorText(error);
+      })
+      .finally(() => {
+        if (mine === readerSerial) { readerController = undefined; button.disabled = false; }
+      });
+  };
+  closeDocument.onclick = () => { const button = lastReadButton; clearReader(); button?.focus(); };
+  downloadDocument.onclick = () => {
+    if (openedDocument === undefined) return;
+    if (downloadUrl !== undefined) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(new Blob([openedDocument.bytes.slice()], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = downloadUrl; link.download = downloadName(documentTitle.textContent ?? "");
+    link.click();
+  };
   cancel.onclick = () => { stop(); status.textContent = "Request cancelled. Retry unchanged inputs to reconcile the same operation."; };
   const submitSelection = (): Promise<boolean> => {
     stop(); const serial = ++active; controller = new AbortController();
@@ -42,6 +117,10 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
         if (serial !== active) return false;
         status.textContent = `Loaded from ${view.generation}. No resolved citations; coverage is not a completeness claim.`;
         result.innerHTML = renderOrientation(view);
+        for (const button of result.querySelectorAll<HTMLButtonElement>("[data-read-document]")) {
+          const cardIndex = Number(button.dataset.readDocument);
+          button.onclick = () => readDocument(view, cardIndex, button);
+        }
         const traceButton = result.querySelector<HTMLButtonElement>("[data-trace]");
         if (traceButton) traceButton.onclick = () => {
           traceButton.disabled = true;
@@ -50,7 +129,17 @@ export function mountOrientationPanel(element: HTMLElement): (() => void) & { se
           }).catch((error: unknown) => { if (serial === active) { result.replaceChildren(); status.textContent = errorText(error); } });
         };
         return true;
-      }).catch((error: unknown) => { if (serial === active) status.textContent = errorText(error); return false; })
+      }).catch((error: unknown) => {
+        if (serial === active) {
+          const expired = error instanceof ApiRequestError &&
+            ["ORIENTATION_OPERATION_EXPIRED", "ORIENTATION_SCOPE_EXPIRED", "EXPIRED_SCOPE"].includes(error.code);
+          if (expired) {
+            key = ""; previous = ""; clearReader(); result.replaceChildren(); traceResult.textContent = ""; traceResult.hidden = true;
+            status.textContent = "Source view expired. Load sources to refresh.";
+          } else status.textContent = errorText(error);
+        }
+        return false;
+      })
         .finally(() => { if (serial === active) cancel.disabled = true; });
     } catch (error) { status.textContent = errorText(error); request = Promise.resolve(false); }
     pendingSelection = request;
