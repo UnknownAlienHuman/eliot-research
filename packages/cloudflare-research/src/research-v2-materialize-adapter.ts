@@ -18,8 +18,8 @@ import {
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
 import {
-  decodeSynthesisClaimsCandidateV2,
-  normalizeSynthesisClaimsCandidateV2,
+  decodeSynthesisClaimsCandidateAny,
+  normalizeSynthesisClaimsCandidateAny,
   type NormalizedSynthesisClaims,
 } from "@eliotr/research";
 import { z } from "zod";
@@ -276,8 +276,8 @@ export async function readCommittedResearchV2MaterializationCandidate(input: {
   }
   let normalized: NormalizedSynthesisClaims;
   try {
-    normalized = await normalizeSynthesisClaimsCandidateV2({
-      candidate: decodeSynthesisClaimsCandidateV2(assistantContent),
+    normalized = await normalizeSynthesisClaimsCandidateAny({
+      candidate: decodeSynthesisClaimsCandidateAny(assistantContent),
       operation_id: input.request.operation_id,
       section_ref: result.normalization.section_ref,
       allowed_handle_refs: input.context.freeze.included_evidence.map((item) => item.handle_ref),

@@ -4,6 +4,7 @@ import type { MaterialClaim } from "./claim-audit.js";
 
 const SECTION_PROTOCOL = "eliotr.research.synthesis-section-candidate.v1" as const;
 const PROTOCOL = "eliotr.research.synthesis-claims-candidate.v2" as const;
+const PROTOCOL_V3 = "eliotr.research.synthesis-claims-candidate.v3" as const;
 const MAX_SECTION_TEXT_CHARS = 128 * 1024;
 const MAX_CLAIM_TEXT_CHARS = 16 * 1024;
 const MAX_HANDLES_PER_CLAIM = 512;
@@ -37,6 +38,20 @@ export const SynthesisClaimsCandidateV2Schema = z.object({
 
 export type SynthesisClaimsCandidateV2 = z.infer<typeof SynthesisClaimsCandidateV2Schema>;
 export type MaterialClaimCandidateV2 = z.infer<typeof MaterialClaimCandidateSchema>;
+
+/**
+ * V3 keeps only model-authored claim text, kind, and frozen evidence refs.
+ * section_text and UTF-16 spans are server-derived during normalization.
+ */
+const MaterialClaimCandidateV3Schema = MaterialClaimCandidateSchema.omit({ span: true });
+export const SynthesisClaimsCandidateV3Schema = z.object({
+  schema: z.literal(PROTOCOL_V3),
+  material_claims: z.array(MaterialClaimCandidateV3Schema).min(1).max(MAX_HANDLES_PER_CLAIM),
+}).strict();
+
+export type SynthesisClaimsCandidateV3 = z.infer<typeof SynthesisClaimsCandidateV3Schema>;
+export type MaterialClaimCandidateV3 = z.infer<typeof MaterialClaimCandidateV3Schema>;
+export type SynthesisClaimsCandidate = SynthesisClaimsCandidateV2 | SynthesisClaimsCandidateV3;
 
 export type SynthesisClaimsCandidateErrorCode =
   | "SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID"
@@ -125,8 +140,55 @@ export function decodeSynthesisClaimsCandidateV2(content: string): SynthesisClai
   return parseCandidate(value);
 }
 
+function parseCandidateV3(value: unknown): SynthesisClaimsCandidateV3 {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is invalid");
+  }
+  const parsed = SynthesisClaimsCandidateV3Schema.safeParse(value);
+  if (!parsed.success) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is invalid", parsed.error);
+  parsed.data.material_claims.forEach((claim, index) => assertWellFormedUtf16(claim.text, `material claim ${index}.text`));
+  return parsed.data;
+}
+
+export function decodeSynthesisClaimsCandidateV3(content: string): SynthesisClaimsCandidateV3 {
+  let value: unknown;
+  try { value = JSON.parse(content) as unknown; }
+  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
+  return parseCandidateV3(value);
+}
+
+/** Decodes either the legacy v2 candidate or the server-span v3 candidate. */
+export function decodeSynthesisClaimsCandidate(content: string): SynthesisClaimsCandidate {
+  let value: unknown;
+  try { value = JSON.parse(content) as unknown; }
+  catch (error) { return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate is not JSON", error); }
+  if (typeof value === "object" && value !== null && !Array.isArray(value) &&
+      (value as Record<string, unknown>).schema === PROTOCOL_V3) return parseCandidateV3(value);
+  return parseCandidate(value);
+}
+
 export interface SynthesisClaimsNormalizationInput {
   readonly candidate: SynthesisClaimsCandidateV2;
+  readonly operation_id: string;
+  readonly section_ref: VersionedRef;
+  readonly allowed_handle_refs: readonly VersionedRef[];
+  /** Server-owned section contract values; the model cannot supply these. */
+  readonly required_precision: string;
+  readonly required_source_class: string;
+}
+
+export interface SynthesisClaimsNormalizationInputV3 {
+  readonly candidate: SynthesisClaimsCandidateV3;
+  readonly operation_id: string;
+  readonly section_ref: VersionedRef;
+  readonly allowed_handle_refs: readonly VersionedRef[];
+  /** Server-owned section contract values; the model cannot supply these. */
+  readonly required_precision: string;
+  readonly required_source_class: string;
+}
+
+export interface SynthesisClaimsNormalizationInputAny {
+  readonly candidate: SynthesisClaimsCandidate;
   readonly operation_id: string;
   readonly section_ref: VersionedRef;
   readonly allowed_handle_refs: readonly VersionedRef[];
@@ -140,7 +202,7 @@ export interface NormalizedMaterialClaim extends MaterialClaim {
 }
 
 export interface NormalizedSynthesisClaims {
-  readonly schema: typeof PROTOCOL;
+  readonly schema: typeof PROTOCOL | typeof PROTOCOL_V3;
   readonly operation_id: string;
   readonly section_ref: VersionedRef;
   readonly section_text: string;
@@ -161,7 +223,15 @@ async function sha256Utf8(value: string): Promise<string> {
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function validateTrustedInput(input: SynthesisClaimsNormalizationInput): void {
+interface SynthesisClaimsNormalizationTrustedInput {
+  readonly operation_id: string;
+  readonly section_ref: VersionedRef;
+  readonly allowed_handle_refs: readonly VersionedRef[];
+  readonly required_precision: string;
+  readonly required_source_class: string;
+}
+
+function validateTrustedInput(input: SynthesisClaimsNormalizationTrustedInput): void {
   if (!IdentifierSchema.safeParse(input.operation_id).success || !VersionedRefSchema.safeParse(input.section_ref).success ||
       input.allowed_handle_refs.some((ref) => !VersionedRefSchema.safeParse(ref).success) ||
       !IdentifierSchema.safeParse(input.required_precision).success || !IdentifierSchema.safeParse(input.required_source_class).success) {
@@ -225,3 +295,102 @@ export async function normalizeSynthesisClaimsCandidateV2(
   return Object.freeze({ schema: PROTOCOL, operation_id: trusted.operation_id, section_ref: trusted.section_ref,
     section_text: candidate.section_text, claims: Object.freeze(claims), cited_handle_refs: Object.freeze([...cited.values()].map(freezeRef).sort((left, right) => compareUtf16(refKey(left), refKey(right)))) });
 }
+
+function composeV3Section(candidate: SynthesisClaimsCandidateV3): { section_text: string; spans: readonly Readonly<{ start: number; end: number }>[] } {
+  const spans: Readonly<{ start: number; end: number }>[] = [];
+  let offset = 0;
+  for (const [index, claim] of candidate.material_claims.entries()) {
+    if (index > 0) offset += 2;
+    const start = offset;
+    offset += claim.text.length;
+    spans.push(Object.freeze({ start, end: offset }));
+  }
+  const section_text = candidate.material_claims.map((claim) => claim.text).join("\n\n");
+  if (section_text.length > MAX_SECTION_TEXT_CHARS) {
+    fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "server-derived synthesis section is too large");
+  }
+  return { section_text, spans: Object.freeze(spans) };
+}
+
+export async function normalizeSynthesisClaimsCandidateV3(
+  input: SynthesisClaimsNormalizationInputV3,
+): Promise<NormalizedSynthesisClaims> {
+  validateTrustedInput(input);
+  const candidate = parseCandidateV3(input.candidate);
+  const trusted = Object.freeze({
+    operation_id: input.operation_id,
+    section_ref: freezeRef(input.section_ref),
+    allowed_handle_refs: Object.freeze(input.allowed_handle_refs.map(freezeRef)),
+    required_precision: input.required_precision,
+    required_source_class: input.required_source_class,
+  });
+  const allowed = new Set(trusted.allowed_handle_refs.map(refKey));
+  const cited = new Map<string, VersionedRef>();
+  const claims: NormalizedMaterialClaim[] = [];
+  const composed = composeV3Section(candidate);
+
+  for (const [index, material] of candidate.material_claims.entries()) {
+    const span = composed.spans[index];
+    if (span === undefined || span.end <= span.start || composed.section_text.slice(span.start, span.end) !== material.text) {
+      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `claim ${index} does not fit the server-derived section`);
+    }
+    const refs = [...material.support_handle_refs, ...material.counterevidence_handle_refs];
+    const keys = refs.map(refKey);
+    if (new Set(keys).size !== keys.length || keys.some((key) => !allowed.has(key))) {
+      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `claim ${index} has duplicate or non-frozen evidence refs`);
+    }
+    for (const ref of refs) cited.set(refKey(ref), ref);
+
+    const support = Object.freeze([...material.support_handle_refs.map(freezeRef)].sort((left, right) => compareUtf16(refKey(left), refKey(right))));
+    const counter = Object.freeze([...material.counterevidence_handle_refs.map(freezeRef)].sort((left, right) => compareUtf16(refKey(left), refKey(right))));
+    const textDigest = await sha256Utf8(material.text);
+    const claimDigest = await sha256Json({ protocol: PROTOCOL_V3, operation_id: trusted.operation_id, section_ref: trusted.section_ref,
+      text: material.text, kind: material.kind, span, support_handle_refs: support, counterevidence_handle_refs: counter });
+    claims.push(Object.freeze({
+      claim_ref: Object.freeze({ id: `research-claim:${claimDigest}`, revision: 1 }),
+      text: material.text,
+      text_digest: textDigest,
+      kind: material.kind,
+      support_handle_refs: support,
+      counterevidence_handle_refs: counter,
+      required_precision: trusted.required_precision,
+      required_source_class: trusted.required_source_class,
+      span: Object.freeze({ ...span }),
+    }));
+  }
+
+  return Object.freeze({ schema: PROTOCOL_V3, operation_id: trusted.operation_id, section_ref: trusted.section_ref,
+    section_text: composed.section_text, claims: Object.freeze(claims), cited_handle_refs: Object.freeze([...cited.values()].map(freezeRef).sort((left, right) => compareUtf16(refKey(left), refKey(right)))) });
+}
+
+/** Normalizes either candidate version into server-owned claim identities. */
+export function normalizeSynthesisClaimsCandidate(
+  input: SynthesisClaimsNormalizationInputAny,
+): Promise<NormalizedSynthesisClaims> {
+  const candidate = input?.candidate;
+  if (candidate?.schema === PROTOCOL_V3) {
+    return normalizeSynthesisClaimsCandidateV3({
+      candidate,
+      operation_id: input.operation_id,
+      section_ref: input.section_ref,
+      allowed_handle_refs: input.allowed_handle_refs,
+      required_precision: input.required_precision,
+      required_source_class: input.required_source_class,
+    });
+  }
+  if (candidate?.schema === PROTOCOL) {
+    return normalizeSynthesisClaimsCandidateV2({
+      candidate,
+      operation_id: input.operation_id,
+      section_ref: input.section_ref,
+      allowed_handle_refs: input.allowed_handle_refs,
+      required_precision: input.required_precision,
+      required_source_class: input.required_source_class,
+    });
+  }
+  return fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", "synthesis claims candidate protocol is unsupported");
+}
+
+/** Explicit any-version aliases used by callers that accept both wire versions. */
+export const decodeSynthesisClaimsCandidateAny = decodeSynthesisClaimsCandidate;
+export const normalizeSynthesisClaimsCandidateAny = normalizeSynthesisClaimsCandidate;

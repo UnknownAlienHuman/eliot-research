@@ -129,7 +129,12 @@ export function createWorkflowCheckpointExecutor(
             budget_receipt_ref: attempt.budget_receipt_ref,
             ...(principal.signal === undefined ? {} : { signal: principal.signal }),
           });
-        } catch {
+        } catch (error) {
+          console.error(JSON.stringify({
+            event: "research_workflow_handler_failed",
+            stage: request.stage,
+            code: error instanceof WorkflowCheckpointError ? error.code : "UNCLASSIFIED",
+          }));
           if (principal.signal?.aborted) {
             await store.cancel(request.operation_id, principal);
             fail("WORKFLOW_CANCELLED");

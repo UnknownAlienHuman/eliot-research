@@ -20,8 +20,8 @@ import {
   type VersionedRef,
 } from "@eliotr/contracts";
 import {
-  decodeSynthesisClaimsCandidateV2,
-  normalizeSynthesisClaimsCandidateV2,
+  decodeSynthesisClaimsCandidateAny,
+  normalizeSynthesisClaimsCandidateAny,
   type NormalizedSynthesisClaims,
 } from "@eliotr/research";
 import {
@@ -439,8 +439,8 @@ export function createResearchClaimAuditInputReader(
       let normalized: NormalizedSynthesisClaims;
       try {
         const assistant = (await decodeModelGatewayBody(synthesis.bytes)).assistant_content;
-        normalized = await normalizeSynthesisClaimsCandidateV2({
-          candidate: decodeSynthesisClaimsCandidateV2(assistant),
+        normalized = await normalizeSynthesisClaimsCandidateAny({
+          candidate: decodeSynthesisClaimsCandidateAny(assistant),
           operation_id: request.operation_id,
           section_ref: normalization.section_ref,
           allowed_handle_refs: context.freeze.included_evidence.map((item) => item.handle_ref),
