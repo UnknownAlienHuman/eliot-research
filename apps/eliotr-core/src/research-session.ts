@@ -17,11 +17,11 @@ import { inspectScopeExpression } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "./catalog-service.js";
 import type { Env } from "./env.js";
+import { RESEARCH_OWNER_MODEL_PROFILE as MODEL_PROFILE } from "./research-owner-profile.js";
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 const RUN_BUDGET = "research-budget-v1";
 const POLICY_GEN = "research-policy-v1";
 const HANDLER_GEN = "research-handlers.v1";
-const MODEL_PROFILE = "research-model-v1";
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 export class ResearchServiceError extends CatalogInputError {}
 function fail(code: string, message: string, status = 400, retryable = false): never { throw new ResearchServiceError(code, message, status, retryable); }

@@ -98,6 +98,38 @@ environment. Treat a loader error, Core schema error, provenance mismatch, or
 generated-config drift as a failed configuration step. Do not work around it by
 copying values into another env file or by adding an unrecognized variable.
 
+## Install a model authority
+
+Compile the explicit owner setup into the seven Worker variables first:
+
+    node scripts/configure-research-runtime.mjs .eliotr-state/owner-setup.json
+
+The input uses `protocol: "eliotr.research-owner-setup.v1"` and the typed
+`semantic`, `model_profile`, `spend_policy`, and `report` fields from
+`apps/eliotr-core/src/research-owner-runtime-config.ts`. The compiler supplies
+the production prompts, output schemas, and canonical profile identity. The
+owner entrypoint selects `model_profile_ref: "research-model-v1"`. Routes,
+prices, approved spending, owner identity and policy expiry remain explicit
+operator decisions. Existing workspace and namespace settings are preserved.
+Compilation does not deploy the Worker or invoke a model.
+
+The operator installer uses the generated Wrangler configuration only for the
+Cloudflare account and `CORE_DB` identity. It reads the bearer from the official
+Wrangler browser OAuth profile and never accepts or prints a token:
+
+    node scripts/install-research-model-authority.mjs prepare --input model-prepare.json --config apps/eliotr-core/wrangler.deploy.jsonc
+
+`prepare` installs the explicit pricing snapshot and provisions the exact route,
+then prints a preparation receipt containing the provider route identity. After
+an independent provider probe produces real `tier: "LIVE"` evidence, run:
+
+    node scripts/install-research-model-authority.mjs install --input model-install.json --config apps/eliotr-core/wrangler.deploy.jsonc
+
+The install input must carry the same reviewed provisioning/pricing values plus
+that LIVE qualification and `environment: "PRODUCTION"` promotion options. No
+model, price, limit, qualification, or spend authority is inferred from the
+Wrangler file.
+
 ## Installed versus live
 
 Installed configuration means the loader accepted the envelope and the Core

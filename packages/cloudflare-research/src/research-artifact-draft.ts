@@ -50,6 +50,13 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly synthesis_readback: ResearchSynthesisOutputReadback;
+  /** Server-normalized V2 synthesis candidate; absent for legacy V1 callers. */
+  readonly normalized_synthesis?: {
+    readonly section_text: string;
+    readonly cited_handle_refs: readonly VersionedRef[];
+  };
+  /** V3 materialization must fail closed when its normalized V2 readback is absent. */
+  readonly require_v2_synthesis?: boolean;
   /** Server-selected section identity and labels; body and verification identity are derived below. */
   readonly section: ArtifactSectionMaterializationTemplate;
   readonly section_residency: ObjectResidencyTemplate;
@@ -320,7 +327,10 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   } catch (cause) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `SYNTHESIZE gateway output is invalid: ${cause instanceof Error ? cause.message : "decode failed"}`);
   }
-  const candidate = decodeSynthesisSectionCandidate(assistantContent);
+  if (input.require_v2_synthesis === true && input.normalized_synthesis === undefined) {
+    fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "V2 synthesis readback is required for this workflow");
+  }
+  const candidate = input.normalized_synthesis ?? decodeSynthesisSectionCandidate(assistantContent);
   try {
     OperationIntentSchema.parse(input.intent);
     ArtifactSpecSchema.parse(input.spec);

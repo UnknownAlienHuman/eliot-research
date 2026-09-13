@@ -1,5 +1,6 @@
 import {
   canonicalModelGatewayJson,
+  modelGatewayDynamicRouteTarget,
   modelGatewaySha256,
   ModelGatewayExecutionError,
   validateModelGatewayRequestBody,
@@ -128,8 +129,9 @@ export function createResearchModelPromptCompiler(
       }
       const prompt = await dependencies.resolve_trusted_parameters(input, deployment);
       assertTrustedParameters(prompt);
+      const target = await modelGatewayDynamicRouteTarget(deployment);
       const body = {
-        model: deployment.route_ref,
+        model: target.model,
         messages: [
           { role: "system", content: built.compiled.system_instructions.join("\n") },
           { role: "user", content: userPayload(input, deployment, built.compiled, prompt) },

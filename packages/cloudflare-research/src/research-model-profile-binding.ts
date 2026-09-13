@@ -80,6 +80,20 @@ export interface ModelProfileDefinition {
   readonly policy: ReferenceManifestPolicyProfile;
 }
 
+/** Explicit operator choices; identity fields are computed from their canonical bytes. */
+export type ModelProfileDefinitionInput = Omit<ModelProfileDefinition,
+  "schema" | "definition_ref" | "definition_sha256">;
+
+export async function createModelProfileDefinition(input: ModelProfileDefinitionInput): Promise<ModelProfileDefinition> {
+  const material = definitionMaterial({ ...input, schema: DEFINITION_SCHEMA });
+  const sha256 = await modelGatewaySha256(canonicalModelGatewayJson(material));
+  return decodeDefinition({
+    ...material,
+    definition_sha256: sha256,
+    definition_ref: { id: `eliotr.research.model-profile-definition-${sha256}`, revision: 1 },
+  }, input.config_provenance_ref);
+}
+
 export interface ModelProfileBindingSource {
   /** This reader returns stable server-owned profile definitions, never request data. */
   readonly provenance_ref: string;

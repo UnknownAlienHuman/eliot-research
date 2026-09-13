@@ -52,9 +52,11 @@ export { prepareModelGatewayHttpRequest, prepareModelGatewayBindingRequest, reas
 export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
+  modelGatewayDynamicRouteTarget,
   modelGatewayRequestParametersSha256,
   modelGatewaySha256,
   validateModelGatewayRequestBody,
+  type ModelGatewayDynamicRouteTarget,
 } from "./model-gateway-request.js";
 export { decodeModelGatewayBody, decodeModelGatewayResponse } from "./model-gateway-response.js";
 export {
@@ -66,5 +68,10 @@ export * from "./dynamic-route-provisioning-codec.js";
 export * from "./dynamic-route-promotion-codec.js";
 export * from "./dynamic-route-provisioning.js";
 export * from "./dynamic-route-rest-contract.js";
+export {
+  decodeDynamicRouteBindingWriteReceipt,
+  decodeDynamicRouteRestBinding,
+  dynamicRouteRestBindingSha256,
+} from "./dynamic-route-rest-binding-codec.js";
 export * from "./dynamic-route-rest-control-plane.js";
 export * from "./ai-search-managed-read.js";

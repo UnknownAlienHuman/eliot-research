@@ -356,6 +356,25 @@ export async function modelGatewaySha256(
     .join("");
 }
 
+export interface ModelGatewayDynamicRouteTarget {
+  readonly provider_route_name: string;
+  readonly model: string;
+}
+
+export async function modelGatewayDynamicRouteTarget(
+  deployment: ModelRouteDeployment,
+): Promise<ModelGatewayDynamicRouteTarget> {
+  const stem = deployment.route_ref.slice("dynamic/".length);
+  const deploymentIdentity = await modelGatewaySha256(
+    canonicalModelGatewayJson(deployment),
+  );
+  const provider_route_name = `${stem}--${deploymentIdentity.slice(0, 24)}`;
+  return Object.freeze({
+    provider_route_name,
+    model: `dynamic/${provider_route_name}`,
+  });
+}
+
 function validateRequestParameters(body: Record<string, unknown>): void {
   safeInteger(body.max_tokens, "model request max_tokens", 1, 1_000_000);
   if (body.stream !== false) {
@@ -408,7 +427,8 @@ export async function validateModelGatewayRequestBody(
   readonly parameters_sha256: string;
 }> {
   const body = exactObject(raw, JSON_BODY_KEYS, "model request body");
-  if (body.model !== deployment.route_ref) {
+  const target = await modelGatewayDynamicRouteTarget(deployment);
+  if (body.model !== target.model) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "model request must address the deployed dynamic route",

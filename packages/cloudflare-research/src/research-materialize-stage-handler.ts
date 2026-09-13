@@ -9,6 +9,7 @@ import {
   materializeResearchResult,
   type ResearchMaterializeResultWriterInput,
 } from "./research-materialize-result.js";
+import { readCommittedResearchV2MaterializationCandidate } from "./research-v2-materialize-adapter.js";
 
 /**
  * Raw's reader owns all fresh W2/freeze/current-authority reads.  It returns
@@ -77,6 +78,16 @@ export function createResearchMaterializeStageHandler(
       recheck_authority: dependencies.recheck_authority,
     });
     if (synthesis === null) fail("WORKFLOW_OUTPUT_CORRUPT");
+    const normalizedSynthesis = dependencies.read_coverage_receipt === undefined
+      ? undefined
+      : await readCommittedResearchV2MaterializationCandidate({
+        database: dependencies.database,
+        work_bucket: dependencies.work_bucket,
+        request,
+        principal,
+        context,
+        synthesis_readback: synthesis,
+      });
     const metadata = await dependencies.metadata({ request, principal, context });
     const stageRequestSha256 = await requestDigest(new TextEncoder().encode(JSON.stringify(request)));
     return materializeResearchResult({
@@ -93,6 +104,10 @@ export function createResearchMaterializeStageHandler(
       evidence_resolver: dependencies.evidence_resolver,
       ...(dependencies.admission === undefined ? {} : { admission: dependencies.admission }),
       ...(coverageReceipt === undefined ? {} : { coverage_receipt: coverageReceipt }),
+      ...(normalizedSynthesis === undefined ? {} : {
+        normalized_synthesis: normalizedSynthesis,
+        require_v2_synthesis: true,
+      }),
       synthesis_readback: synthesis,
     });
   };

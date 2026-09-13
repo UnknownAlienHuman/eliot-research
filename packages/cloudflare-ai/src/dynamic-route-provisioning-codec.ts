@@ -1,6 +1,7 @@
 import { decodeModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import {
   canonicalModelGatewayJson,
+  modelGatewayDynamicRouteTarget,
   modelGatewaySha256,
 } from "./model-gateway-request.js";
 import {
@@ -299,11 +300,9 @@ export async function compileDynamicRouteDesired(
       "dynamic route reference cannot produce a provider-safe name",
     );
   }
-  const deploymentIdentity = await modelGatewaySha256(
-    canonicalModelGatewayJson(deployment),
-  );
+  const target = await modelGatewayDynamicRouteTarget(deployment);
   const name = providerDynamicRouteName(
-    `${stem}--${deploymentIdentity.slice(0, 24)}`,
+    target.provider_route_name,
     "derived provider route name",
     "DYNAMIC_ROUTE_INPUT_INVALID",
   );
