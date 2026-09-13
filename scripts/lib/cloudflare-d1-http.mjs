@@ -93,6 +93,13 @@ function exactObject(value, label) {
   return value;
 }
 
+function nonnegativeInteger(value, label) {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    fail("D1_HTTP_RESPONSE_INVALID", `${label} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
 async function boundedResponseText(response) {
   let text;
   try {
@@ -147,7 +154,13 @@ function decodeRows(response, payload) {
       status: response.status,
     });
   }
-  return result.results.map((row, index) => exactObject(row, `Cloudflare D1 row ${index}`));
+  const metadata = exactObject(result.meta, "Cloudflare D1 query metadata");
+  const changes = nonnegativeInteger(metadata.changes, "Cloudflare D1 metadata.changes");
+  return Object.freeze({
+    results: Object.freeze(result.results.map((row, index) => exactObject(row, `Cloudflare D1 row ${index}`))),
+    success: true,
+    meta: Object.freeze({ ...metadata, changes }),
+  });
 }
 
 export function createCloudflareD1HttpDatabase(options) {
@@ -207,8 +220,16 @@ export function createCloudflareD1HttpDatabase(options) {
         return preparedStatement(sql, values);
       },
       async first() {
-        const rows = await query(sql, params);
-        return rows[0] ?? null;
+        const result = await query(sql, params);
+        return result.results[0] ?? null;
+      },
+      async all() {
+        const result = await query(sql, params);
+        return result;
+      },
+      async run() {
+        const result = await query(sql, params);
+        return result;
       },
     });
   }
