@@ -4,9 +4,11 @@
 > authority map, how to claim work, verification gates and branch discipline. The non-negotiable
 > boundaries are in [AGENTS.md](AGENTS.md).
 
-**Current runnable slice:** owner metadata Corpus Lens and durable trace via the PWA/API.
-[Local preparation and current launch limits](docs/implementation/local-launch.md).
-Full research/query/Wiki launch remains blocked; do not deploy unfinished slices to Cloudflare.
+**Private owner workspace is deployed:** [eliotr-core.kleymor-metal.workers.dev](https://eliotr-core.kleymor-metal.workers.dev).
+The deployment is limited to owner-only metadata Corpus Lens and durable trace; model configuration,
+AI Search, Google and MCP integrations are not connected; full research/query/Wiki, erasure,
+federation and production workload remain unavailable. [Local preparation and current launch
+limits](docs/implementation/local-launch.md).
 
 **Pluggable external research federation for ELIOT Memory OS.**
 

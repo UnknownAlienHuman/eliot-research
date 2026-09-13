@@ -11,6 +11,7 @@ import {
   type MarkdownConversionContext,
   type MarkdownConversionDispatchState,
   type MarkdownConversionFailure,
+  type MarkdownConversionFormat,
   type MarkdownConversionInput,
   type MarkdownConversionOptions,
   type MarkdownConversionObservation,
@@ -139,6 +140,82 @@ function failure(
 
 type MarkdownConversionFailureCode = MarkdownConversionFailure["code"];
 
+interface LocalTextDescriptor {
+  readonly detected_mime: "text/markdown" | "text/plain";
+  readonly inferred_format: MarkdownConversionFormat;
+}
+
+function localTextDescriptor(name: string, mime: string): LocalTextDescriptor | undefined {
+  const mediaType = mime.split(";", 1)[0]?.trim().toLowerCase();
+  if (mediaType === "text/markdown") return { detected_mime: "text/markdown", inferred_format: "markdown" };
+  if (mediaType === "text/plain") return { detected_mime: "text/plain", inferred_format: "text" };
+  if (mediaType !== "" && mediaType !== "application/octet-stream") return undefined;
+  const lowerName = name.toLowerCase();
+  if (lowerName.endsWith(".md")) return { detected_mime: "text/markdown", inferred_format: "markdown" };
+  if (lowerName.endsWith(".txt")) return { detected_mime: "text/plain", inferred_format: "text" };
+  return undefined;
+}
+
+function hasForbiddenTextControls(value: string): boolean {
+  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u.test(value);
+}
+
+/** Deterministic local estimate; no model tokenizer is available on this path. */
+function localTextTokenEstimate(bytes: number): number {
+  return Math.max(1, Math.ceil(bytes / 4));
+}
+
+async function convertLocalText(
+  name: string,
+  blob: Blob,
+  context: MarkdownConversionContext,
+  bounds: MarkdownConversionBounds,
+  conversion_options: MarkdownConversionOptions | undefined,
+  signal: AbortSignal | undefined,
+): Promise<MarkdownConversionOutcome | undefined> {
+  const descriptor = localTextDescriptor(name, blob.type);
+  if (descriptor === undefined) return undefined;
+  // This path preserves text; it does not strip Markdown syntax.
+  if (descriptor.inferred_format === "markdown" && conversion_options?.output?.format === "text") {
+    return failure("INPUT_INVALID", context);
+  }
+  if (signal?.aborted) return failure("ABORTED", context);
+  let sourceBytes: Uint8Array;
+  try {
+    sourceBytes = new Uint8Array(await blob.arrayBuffer());
+  } catch {
+    return failure("RESPONSE_INVALID", context);
+  }
+  if (signal?.aborted) return failure("ABORTED", context);
+  let data: string;
+  try {
+    data = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(sourceBytes);
+  } catch {
+    return failure("RESPONSE_INVALID", context);
+  }
+  if (signal?.aborted) return failure("ABORTED", context);
+  if (hasForbiddenTextControls(data)) return failure("RESPONSE_INVALID", context);
+  const outputBytes = new TextEncoder().encode(data);
+  if (outputBytes.byteLength === 0 || data.trim().length === 0) return failure("EMPTY_OUTPUT", context);
+  if (outputBytes.byteLength > bounds.max_output_bytes) return failure("OUTPUT_LIMIT_EXCEEDED", context);
+  const tokens = localTextTokenEstimate(outputBytes.byteLength);
+  if (tokens > bounds.max_tokens) return failure("TOKEN_LIMIT_EXCEEDED", context);
+  const outputSha = await sha256(data);
+  if (signal?.aborted) return failure("ABORTED", context);
+  return {
+    disposition: "CONVERTED",
+    context,
+    provider_result_id: `local-text-v1:${outputSha}`,
+    name,
+    detected_mime: descriptor.detected_mime,
+    format: conversion_options?.output?.format ?? descriptor.inferred_format,
+    tokens,
+    data,
+    data_sha256: outputSha,
+    data_bytes: outputBytes.byteLength,
+  };
+}
+
 function decodeProviderResult(raw: unknown, input: MarkdownConversionInput):
   | { readonly kind: "success"; readonly result: ProviderSuccess }
   | { readonly kind: "provider-error" }
@@ -227,6 +304,8 @@ export function createWorkersAiMarkdownConversionAdapter(ai: WorkersAiMarkdownBi
       const conversion_options = snapshotOptions(candidate.conversion_options);
       const signal = candidate.signal as AbortSignal | undefined;
       if (signal?.aborted) return failure("ABORTED", context);
+      const local = await convertLocalText(name, blob, context, bounds, conversion_options, signal);
+      if (local !== undefined) return local;
       if (ai === undefined) return failure("PROVIDER_UNAVAILABLE", context, "NOT_STARTED");
       let raw: unknown;
       let dispatched = false;

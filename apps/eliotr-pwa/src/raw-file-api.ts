@@ -143,6 +143,13 @@ async function normalizedAdmissionIdempotencyKey(capture: RawFileCaptureReceipt,
   return `raw-admission-${await sha256(material.buffer)}`;
 }
 
+function fallbackContentType(fileName: string): string | undefined {
+  const extension = fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
+  if (extension === ".md") return "text/markdown";
+  if (extension === ".txt") return "text/plain";
+  return undefined;
+}
+
 export async function prepareRawFileSelection(file: RawUploadFile, signal?: AbortSignal, sourceNamespaceId?: string): Promise<RawFileSelection> {
   if (sourceNamespaceId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,255}$/u.test(sourceNamespaceId)) {
     throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "Select a current workspace before adding a document." });
@@ -165,7 +172,7 @@ export async function prepareRawFileSelection(file: RawUploadFile, signal?: Abor
   }
   const contentSha256 = await sha256(bytes);
   if (signal?.aborted) throw new ApiRequestError({ status: 499, code: "RAW_FILE_UPLOAD_CANCELLED", message: "File preparation was cancelled." });
-  const contentType = file.type.trim() || "application/octet-stream";
+  const contentType = file.type.trim() || fallbackContentType(file.name) || "application/octet-stream";
   if (new TextEncoder().encode(contentType).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(contentType)) {
     throw new ApiRequestError({ status: 400, code: "RAW_FILE_INPUT_INVALID", message: "The selected file type is invalid." });
   }

@@ -153,9 +153,9 @@ function policyInput(policy: IngestAdmissionPolicySnapshot, principalRef: string
       disclosure_ceiling: policy.disclosure_ceiling,
       allowed_use: policy.allowed_use,
     },
-    analyzer: "workers-ai-markdown",
-    analyzer_version: "raw-markdown-v1",
-    profile: "raw-markdown-v1",
+    analyzer: "eliotr-document-normalizer",
+    analyzer_version: "v2",
+    profile: "document-normalizer-v2",
     config_hash: policySha,
     purpose: "library-import",
   };
