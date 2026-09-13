@@ -13,6 +13,7 @@ import { assertLaunchCodeComplete, readConfiguredTransport } from "./check-launc
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_CHUNK_KEYS, RESEARCH_RUNTIME_SEMANTIC_CONFIGURATION_KEY,
   splitResearchSemanticConfiguration } from "./lib/research-runtime-config.mjs";
+import { synchronizeResearchDeploymentAuthority } from "./lib/research-deployment-authority.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const core = resolve(root, "apps/eliotr-core");
@@ -199,6 +200,19 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   await requireUnchangedConfig();
   const worker = await readDeploymentWorker(env, input, config, { fetchImpl });
   const remoteHttpSmoke = await verifyDeploymentSmoke(env, input, { fetchImpl, now });
+  const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
+  if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
+    throw new Error("Generated deployment is missing CORE_DB identity");
+  }
+  const deploymentAuthority = await synchronizeResearchDeploymentAuthority({
+    account_id: env.CLOUDFLARE_ACCOUNT_ID,
+    database_id: coreDatabase.database_id,
+    api_token: env.CLOUDFLARE_API_TOKEN,
+    api_base_url: input.apiBase,
+    deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
+    fetch_impl: fetchImpl,
+    now,
+  });
   const receipt = {
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
@@ -206,6 +220,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
     worker,
     generated_config_sha256: digest,
     remote_http_smoke: remoteHttpSmoke,
+    deployment_authority_sync: deploymentAuthority,
     live_conformance: {
       d1_write_readback: "NOT_EXECUTED", r2_immutable_put_readback: "NOT_EXECUTED",
       queue_duplicate_delivery: "NOT_EXECUTED", durable_object_hibernation: "NOT_EXECUTED",
