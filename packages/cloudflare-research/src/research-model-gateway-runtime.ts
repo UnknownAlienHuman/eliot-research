@@ -253,7 +253,11 @@ async function readResponseWithDeadline(
     cancelResponseBody(response, error);
     throw error;
   }
-  const boundResponse = bindingBase !== undefined && (response.url === bindingBase || response.url === `${bindingBase}/`);
+  const boundResponse = bindingBase !== undefined && (
+    response.url === bindingBase ||
+    response.url === `${bindingBase}/` ||
+    response.url === "https://workers-binding.ai/ai-gateway/universal/run/eliotr-reasoning"
+  );
   if (response.redirected || (response.url !== "" && response.url !== endpoint && !boundResponse)) {
     const error = abortError("model gateway response was redirected");
     lifecycle.abort(error);

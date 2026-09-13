@@ -210,6 +210,12 @@ for model improvement and prohibits confidential or personal data on this free
 endpoint. Initial qualification uses the public project README. Published routes
 are configuration evidence, not proof of a completed model response or report.
 
+The owner subsequently selected Cloudflare `@cf/zai-org/glm-5.3-flash` for current
+document work, replacing Inkling and rejecting `gpt-oss-120b` for this integration.
+Both `owner-cloudflare-glm53-v1` routes and their published token pricing have been
+prepared. A direct Workers AI request reached GLM, while qualification through the
+application Gateway remains incomplete; preparation does not authorize ACTIVE promotion.
+
 The setup input has this complete minimum shape. It is notation rather than a
 runnable file: every placeholder must be replaced by the corresponding
 operator-installed value, and the policy/quote objects must satisfy their
