@@ -18,6 +18,8 @@ import {
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1ResearchModelPricingQuotePort,
+  createResearchReferenceManifestReader,
+  createResearchReferenceManifestStore,
   createEvidenceFreezePostSynthesisContextReader,
   createEvidenceFreezeSynthesisContextReader,
   createEvidenceFreezeVerificationContextReader,
@@ -110,8 +112,8 @@ export interface ResearchSemanticCompositionDependencies {
   /** Current run/status authority used around committed synthesis reads. */
   readonly recheck_authority: ResearchVerificationStageDependencies["recheck_authority"];
   readonly manifest: {
-    readonly store: ReferenceManifestStore;
-    readonly store_factory: EvidenceFreezeManifestStoreFactory;
+    readonly store?: Pick<ReferenceManifestStore, "get">;
+    readonly store_factory?: EvidenceFreezeManifestStoreFactory;
     readonly residency_template: EvidenceFreezeResidencyTemplate;
     /** Must equal the installed model profile's explicit context bound. */
     readonly max_context_bytes: number;
@@ -150,6 +152,7 @@ export interface ResearchSemanticComposition {
   readonly evidence_content: EvidenceContentPort;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly readers: EvidenceFreezeCommittedReaders;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
   readonly deployment_registry: ReturnType<typeof createD1ModelGatewayDeploymentRegistry>;
   readonly model_profile: ReturnType<typeof createPersistedModelProfileBindingProducer>;
   readonly freeze: EvidenceFreezeCompositionDependencies;
@@ -218,9 +221,8 @@ function validateDependencies(input: ResearchSemanticCompositionDependencies): v
   requireFunction(input.navigation?.sources, "navigation.sources");
   requireFunction(input.ledger?.read, "ledger.read");
   requireFunction(input.recheck_authority, "recheck_authority");
-  requireFunction(input.manifest?.store?.get, "manifest.store.get");
-  requireFunction(input.manifest?.store?.put, "manifest.store.put");
-  requireFunction(input.manifest?.store_factory?.create, "manifest.store_factory.create");
+  if (input.manifest?.store !== undefined) requireFunction(input.manifest.store.get, "manifest.store.get");
+  if (input.manifest?.store_factory !== undefined) requireFunction(input.manifest.store_factory.create, "manifest.store_factory.create");
   if (input.manifest.residency_template.scope_domain_id !== input.navigation.scope.snapshot_id ||
       input.manifest.residency_template.access_domain_id !== input.principal.principal_ref) {
     inputInvalid("manifest residency is outside the pinned scope or principal");
@@ -287,6 +289,14 @@ export function createResearchSemanticComposition(
   validateDependencies(input);
   const now = input.now ?? (() => Date.now());
   const pricing = createD1ResearchModelPricingQuotePort(input.database, { now });
+  const manifestStore = input.manifest.store ?? createResearchReferenceManifestReader({
+    database: input.database, work_bucket: input.work_bucket, navigation: input.navigation,
+  });
+  const manifestFactory: EvidenceFreezeManifestStoreFactory = input.manifest.store_factory ?? {
+    create: (context) => createResearchReferenceManifestStore({
+      database: input.database, work_bucket: input.work_bucket, navigation: input.navigation, context,
+    }),
+  };
   const navigationAccess = snapshotAccess(input.navigation);
   const routeNow = (): string => new Date(now()).toISOString();
   const deploymentRegistry = createD1ModelGatewayDeploymentRegistry(input.database, {
@@ -342,15 +352,15 @@ export function createResearchSemanticComposition(
       scope_snapshot_ref: protocol_scope.scope_snapshot_ref,
       scope_snapshot_digest: input.navigation.scope.digest,
     })).binding,
-    manifest_store_factory: input.manifest.store_factory,
+    manifest_store_factory: manifestFactory,
     manifest_residency_template: input.manifest.residency_template,
     max_context_bytes: input.manifest.max_context_bytes,
-    manifest_store: input.manifest.store,
+    manifest_store: manifestStore,
   };
   const readerEnvironment = {
     database: input.database,
     work_bucket: input.work_bucket,
-    manifest_store: input.manifest.store,
+    manifest_store: manifestStore,
     read_stage_five: readers.read_stage_five,
   };
   const synthesis: ResearchSemanticSynthesisDependencies = {
@@ -429,6 +439,7 @@ export function createResearchSemanticComposition(
     evidence_content: evidenceContent,
     evidence_resolver: evidenceResolver,
     readers,
+    manifest_store: manifestStore,
     deployment_registry: deploymentRegistry,
     model_profile: modelProfile,
     freeze,
@@ -452,7 +463,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
   const environment = {
     database: input.database,
     work_bucket: input.work_bucket,
-    manifest_store: input.manifest.store,
+    manifest_store: semantic.manifest_store,
     read_stage_five: semantic.readers.read_stage_five,
   };
   return createResearchStageHandlerFactory({

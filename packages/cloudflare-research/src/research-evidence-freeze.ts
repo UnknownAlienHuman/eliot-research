@@ -86,7 +86,7 @@ export interface EvidenceFreezeAuthorityPort {
 
 export interface EvidenceFreezeStageDependencies {
   readonly navigation: NavigationReadAuthority;
-  readonly manifest_store: ReferenceManifestStore;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
   readonly resolver: CloudflareEvidenceResolver;
   readonly authority: EvidenceFreezeAuthorityPort;
 }
