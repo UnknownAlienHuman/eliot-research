@@ -47,6 +47,10 @@ import { createRawNormalizedAdmissionService } from "./raw-normalized-admission.
 import { readLibraryReadiness } from "./library-readiness.js";
 import { readArtifactDraft, readArtifactDraftSection, readArtifactDraftSectionCitations } from "@eliotr/cloudflare-research";
 import { ArtifactReadNotFoundError } from "./artifact-draft-http.js";
+import { createErasureOwnerService } from "./erasure-owner-service.js";
+import { readErasureOwnerStatus } from "./erasure-owner-status.js";
+import { createWorkspaceCandidateAdmissionService } from "./workspace-candidate-admission.js";
+import { createD1WorkspaceMcpCandidateStore } from "./workspace-mcp-candidate-store.js";
 export interface CompositionRootInput {
   readonly env: Env;
   readonly executionContext: ExecutionContext;
@@ -214,8 +218,10 @@ function ownerApi(env: Env): OwnerApi {
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
   });
-  const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus"> = {
+  const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus" | "admitWorkspaceCandidate" | "workspaceCandidateStatus"> = {
     ...ingest,
+    erase: (context, input) => createErasureOwnerService({ env, permission_ref: input.permission_ref }).execute(context, input.request),
+    erasureStatus: (context, erasureRef) => readErasureOwnerStatus(env, context, erasureRef),
     captureRawFile: (context, request: RawFileCaptureRequest) => rawCapture.captureRawFile(context, request),
     readRawFile: (context, captureId) => rawCapture.readRawFile(context, captureId),
     readRawFileByIdempotency: (context, idempotencyKey) => rawCapture.readRawFileByIdempotency(context, idempotencyKey),
@@ -240,10 +246,20 @@ function ownerApi(env: Env): OwnerApi {
     owner: ownerBase,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
   });
+  const workspaceAdmission = createWorkspaceCandidateAdmissionService({
+    database: env.CORE_DB,
+    workspaceCandidateStore: createD1WorkspaceMcpCandidateStore(env.CORE_DB),
+    rawNormalized,
+    readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
+    expectedDeploymentGeneration: env.DEPLOYMENT_GENERATION,
+    expectedAuthProfile: env.MCP_ACCESS_AUTH_PROFILE ?? "service-token",
+  });
   return {
     ...ownerBase,
     admitRawFileToNormalized: rawNormalized.admit,
     getRawNormalizedAdmissionStatus: rawNormalized.getStatus,
+    admitWorkspaceCandidate: workspaceAdmission.admit,
+    workspaceCandidateStatus: workspaceAdmission.getStatus,
   };
 }
 // IMPLEMENTED_NOT_LIVE: ER-24 Worker composition requires live Access and remote D1 receipts.

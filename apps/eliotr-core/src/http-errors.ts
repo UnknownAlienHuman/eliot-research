@@ -25,6 +25,7 @@ import {
 import { EvidenceHttpInputError } from "./evidence-http.js";
 import { IngestHttpInputError } from "./ingest-http.js";
 import { RawNormalizedAdmissionError } from "./raw-normalized-admission.js";
+import { ErasureAdmissionError, ErasureRuntimeError } from "@eliotr/cloudflare-erasure";
 import { IngestServiceError } from "./ingest-service.js";
 import {
   RawCaptureError,
@@ -93,6 +94,14 @@ function mapIngestStorageError(request: Request, error: IngestStorageError, prob
 }
 
 export function mapError(request: Request, error: unknown, problemResponse: ProblemResponse): Response {
+  if (error instanceof ErasureAdmissionError) {
+    return problemResponse(request, error.code === "ERASURE_PERMISSION_DENIED" ? 403 : 409,
+      error.code, error.message, false);
+  }
+  if (error instanceof ErasureRuntimeError) {
+    return problemResponse(request, error.retryable ? 503 : error.code === "ERASURE_INPUT_INVALID" ? 400 : 409,
+      error.code, error.message, error.retryable);
+  }
   if (error instanceof OrientationError) return problemResponse(request, error.status, error.code, "Orientation request cannot be completed", error.retryable);
   if (error instanceof ScopeServiceError) return problemResponse(request, 409, error.code, "Current scope authority could not be established", false);
   if (error instanceof NavigationError) return problemResponse(request, error.code === "NAVIGATION_LIMIT_EXCEEDED" ? 413 : 409,

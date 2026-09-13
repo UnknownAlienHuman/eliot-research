@@ -26,44 +26,48 @@ function formatBytes(bytes: number): string {
 }
 
 function receiptCopy(recovered: boolean): string {
-  return `${recovered ? "Existing upload found" : "File saved"}. Process it when ready; this does not admit or index the source.`;
+  return `${recovered ? "Existing upload found" : "File uploaded"}. Continue to process it before adding it to Library.`;
 }
 
 function processingCopy(result: RawMarkdownConversionResult): string {
-  if (result.state === "COMPLETE") return "Processed. The conversion is ready for the next Library step; admission and search readiness are separate.";
-  if (result.state === "STARTED") return "Processing started. Check processing status again.";
-  if (result.state === "UNKNOWN") return `Processing status is unknown (${result.failure_code}). Check processing status again.`;
-  return `Processing failed (${result.failure_code}). The captured source is still available for another check.`;
+  if (result.state === "COMPLETE") return "Processing complete. Ready to add to Library.";
+  if (result.state === "STARTED") return "Processing started. Continue when processing is ready.";
+  if (result.state === "UNKNOWN") return `Processing status is unknown (${result.failure_code}). Continue to check this step.`;
+  return `Processing failed (${result.failure_code}). Retry processing to continue.`;
 }
 
 function admissionCopy(result: RawNormalizedAdmissionResult): string {
   if (result.state === "COMMITTED") {
     return result.admission_receipt?.decision === "DUPLICATE"
-      ? "This source is already in Library. Search readiness is reported separately. If the document isn't visible, use All sources / refresh or Next page."
-      : "Added to Library. Search readiness is reported separately. If the document isn't visible, use All sources / refresh or Next page.";
+      ? "This document is already in Library. Search readiness is reported separately."
+      : "Added to Library. Search readiness is reported separately.";
   }
-  if (result.state === "UNKNOWN") return "Library add status is unknown. Check Library status again.";
-  return `Library add is ${result.state.toLowerCase()}. Check Library status again.`;
+  if (result.state === "UNKNOWN") return "Library add status is unknown. Continue to check this step.";
+  return `Library add is ${result.state.toLowerCase()}. Continue when it is ready.`;
 }
 
 export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost): () => void {
-  element.innerHTML = `<section class="raw-file-panel" aria-label="Upload and process a source file">
-    <div class="tool-heading"><div><span class="eyebrow">Source intake</span><h2>Upload a source file</h2></div><span class="tool-badge">PRIVATE</span></div>
-    <p>Select a PDF, document, image or text file to save in this workspace. Upload, processing, admission and search readiness are separate states.</p>
+  element.innerHTML = `<section class="raw-file-panel" aria-label="Add a document">
+    <div class="tool-heading"><div><span class="eyebrow">Library</span><h2>Add a document</h2></div><span class="tool-badge">PRIVATE</span></div>
+    <p>Select a PDF, document, image or text file. Add document uploads it, processes it, and adds it to your Library; search readiness is reported separately.</p>
     <form>
       <label>Source file<input type="file" data-raw-file accept=".pdf,.doc,.docx,.html,.htm,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.webp,.svg,.gif,.bmp,application/pdf,text/plain,text/markdown,text/html,image/*" /></label>
-      <div class="raw-file-actions"><button class="button button--primary" type="submit" data-raw-submit disabled>Upload file</button>
-        <button class="button button--quiet" type="button" data-raw-recover disabled>Check upload status</button>
-        <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
-        <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
+      <div class="raw-file-actions"><button class="button button--primary" type="submit" data-raw-submit disabled>Add document</button>
         <button class="button button--quiet" type="button" data-raw-find-library hidden disabled>Open Library</button>
         <button class="button button--quiet" type="button" data-raw-stop hidden>Stop</button></div>
     </form>
     <p class="raw-file-limit">Up to ${formatBytes(RAW_FILE_MAX_BYTES)} per file in this browser session; processing accepts up to 8.0 MiB.</p>
     <p role="status" aria-live="polite" data-raw-status>Choose a file to begin.</p>
+    <details><summary>Import details and recovery</summary>
+    <div class="raw-file-actions">
+      <button class="button button--quiet" type="button" data-raw-recover disabled>Check upload status</button>
+      <button class="button button--quiet" type="button" data-raw-process hidden disabled>Process file</button>
+      <button class="button button--quiet" type="button" data-raw-admit hidden disabled>Add to Library</button>
+    </div>
     <dl class="raw-file-receipt" data-raw-receipt hidden></dl>
     <dl class="raw-file-processing" data-raw-processing hidden></dl>
     <dl class="raw-file-admission" data-raw-admission hidden></dl>
+    </details>
   </section>`;
   const form = element.querySelector<HTMLFormElement>("form");
   const input = element.querySelector<HTMLInputElement>("[data-raw-file]");
@@ -135,9 +139,24 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
       <dt>Reason</dt><dd>${escapeHtml(value.reason_codes.join(", ") || "None recorded")}</dd>
       <dt>Readiness</dt><dd>Search readiness is not established by admission.</dd>`;
   };
+  const primaryActionText = (): string => {
+    if (hasSuccessfulAdmission()) return "Ready";
+    if (receipt === undefined) return "Add document";
+    if (conversion?.state !== "COMPLETE") {
+      if (processingOutcomeUnknown || conversion?.state === "STARTED" || conversion?.state === "UNKNOWN") {
+        return "Continue processing";
+      }
+      if (conversion?.state === "FAILED") return "Retry processing";
+      return "Add document";
+    }
+    if (admissionNeedsResume || admissionOutcomeUnknown || admission?.state === "UNKNOWN") return "Continue adding";
+    if (admission?.admission_operation_id !== undefined) return "Check Library add";
+    return "Add document";
+  };
   const renderButtons = (): void => {
     const ready = host.ready() && host.generation() !== undefined;
-    submit.disabled = busy || !selection || receipt !== undefined || !ready;
+    submit.disabled = busy || !selection || hasSuccessfulAdmission() || !ready;
+    submit.textContent = primaryActionText();
     recover.disabled = busy || !selection || !ready;
     process.hidden = receipt === undefined;
     process.disabled = busy || receipt === undefined || !ready;
@@ -200,7 +219,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     status.textContent = receiptCopy(true);
     return true;
   };
-  const runCapture = (recoverOnly: boolean): void => {
+  const runCapture = (recoverOnly: boolean, continueAfter?: () => void): void => {
     if (busy || !selection || !host.ready()) return;
     const generation = host.generation();
     if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
@@ -210,12 +229,14 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     controller = local;
     busy = true;
     renderButtons();
-    status.textContent = recoverOnly ? "Checking the selected file's previous capture…" : "Capturing the selected file…";
+    status.textContent = recoverOnly ? "Checking the selected file's previous capture…" : "Uploading the selected file…";
+    let stepComplete = false;
     void (async () => {
       if (recoverOnly) {
         try {
           const currentRequest = () => active === serial && !disposed && !local.signal.aborted;
           const found = await readback(current, generation, local.signal, currentRequest);
+          stepComplete = found;
           if (currentRequest() && !found) status.textContent = "No upload is recorded for this file yet. Uploading it will keep this same identity.";
         } catch (error) {
           if (active === serial && !disposed && !local.signal.aborted) {
@@ -230,6 +251,7 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
         const captured = await captureRawFile(current, generation, local.signal);
         if (active !== serial || disposed) return;
         receipt = captured;
+        stepComplete = true;
         conversion = undefined;
         processingOutcomeUnknown = false;
         admission = undefined;
@@ -251,15 +273,21 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
           try {
             const currentRequest = () => active === serial && !disposed && !local.signal.aborted;
             const found = await readback(current, generation, local.signal, currentRequest);
+            stepComplete = found;
             if (currentRequest() && !found) status.textContent = "No receipt is available yet. Keep this file selected and check again; no replacement upload was created.";
           } catch (readError) {
             if (active === serial && !disposed) showError(readError);
           }
         } else showError(error);
       }
-    })().finally(() => { if (active === serial && !disposed) finish(local); });
+    })().finally(() => {
+      if (active === serial && !disposed) {
+        finish(local);
+        if (stepComplete && continueAfter !== undefined) continueAfter();
+      }
+    });
   };
-  const runProcess = (): void => {
+  const runProcess = (continueAfter?: () => void): void => {
     if (busy || !receipt || !host.ready()) return;
     const generation = host.generation();
     if (!generation) { status.textContent = "The current deployment is still being checked."; return; }
@@ -279,11 +307,13 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     busy = true;
     renderButtons();
     status.textContent = processingOutcomeUnknown ? "Checking processing status…" : "Processing the captured file…";
+    let stepComplete = false;
     void (async () => {
       try {
         const result = await convertRawFileToMarkdown(current, generation, local.signal);
         if (active !== serial || disposed) return;
         conversion = result;
+        stepComplete = result.state === "COMPLETE";
         processingOutcomeUnknown = false;
         admission = undefined;
         admissionOutcomeUnknown = false;
@@ -306,7 +336,12 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
           status.textContent = "Processing status is unknown. Check processing status again.";
         } else showError(error);
       }
-    })().finally(() => { if (active === serial && !disposed) finish(local); });
+    })().finally(() => {
+      if (active === serial && !disposed) {
+        finish(local);
+        if (stepComplete && continueAfter !== undefined) continueAfter();
+      }
+    });
   };
   const runAdmission = (): void => {
     if (busy || !receipt || !conversion || conversion.state !== "COMPLETE" || !host.ready()) return;
@@ -353,6 +388,22 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
       }
     })().finally(() => { if (active === serial && !disposed) finish(local); });
   };
+  const runAddDocument = (): void => {
+    if (busy || !selection || !host.ready()) return;
+    if (hasSuccessfulAdmission()) {
+      status.textContent = "Ready. This document is in Library; search readiness is reported separately.";
+      return;
+    }
+    if (receipt === undefined) {
+      runCapture(false, runAddDocument);
+      return;
+    }
+    if (conversion?.state !== "COMPLETE") {
+      runProcess(runAddDocument);
+      return;
+    }
+    runAdmission();
+  };
 
   input.onchange = () => {
     serial++;
@@ -381,11 +432,11 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     void prepareRawFileSelection(file, local.signal).then((prepared) => {
       if (active !== serial || disposed) return;
       selection = prepared;
-      status.textContent = "Ready to capture. Re-selecting this same file can recover its saved capture.";
+      status.textContent = "Ready to add this document. Re-selecting the same file can recover its saved upload.";
     }).catch((error: unknown) => { if (active === serial && !disposed) showError(error); })
       .finally(() => { if (active === serial && !disposed) finish(local); });
   };
-  form.onsubmit = (event) => { event.preventDefault(); runCapture(false); };
+  form.onsubmit = (event) => { event.preventDefault(); runAddDocument(); };
   recover.onclick = () => runCapture(true);
   process.onclick = () => runProcess();
   admit.onclick = () => runAdmission();
@@ -399,10 +450,14 @@ export function mountRawFilePanel(element: HTMLElement, host: RawFilePanelHost):
     controller?.abort();
     controller = undefined;
     busy = false;
+    const libraryAddInFlight = receipt !== undefined && conversion?.state === "COMPLETE";
     status.textContent = receipt === undefined
-      ? "Capture stopped. Check the previous outcome before trying again."
-      : "Processing stopped. Check processing status again before starting another request.";
-    if (receipt !== undefined) processingOutcomeUnknown = true;
+      ? "Upload stopped. Continue to check the previous outcome before trying again."
+      : libraryAddInFlight
+        ? "Library add stopped. Continue to check the previous outcome before trying again."
+        : "Processing stopped. Continue to check the previous outcome before trying again.";
+    if (libraryAddInFlight) admissionOutcomeUnknown = true;
+    else if (receipt !== undefined) processingOutcomeUnknown = true;
     renderButtons();
   };
   const healthUpdated = () => {

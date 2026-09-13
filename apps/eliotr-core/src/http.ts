@@ -48,6 +48,8 @@ import { dispatchHttpSpecialRoute } from "./http-special-routes.js";
 import { readRawMarkdownConversionRequest } from "@eliotr/cloudflare-markdown";
 import { parseExhaustiveWorkflowJobsRequest } from "./research-query-http.js";
 import { readReadiness } from "./readiness.js";
+import { readOwnerErasureRequest, readOwnerErasureRef } from "./erasure-owner-http.js";
+import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./workspace-owner-http.js";
 import { HttpRequestError, mapError } from "./http-errors.js";
 export { HttpRequestError } from "./http-errors.js";
 export interface HttpDependencies {
@@ -322,6 +324,27 @@ async function dispatch(
       return apiResult(request, env, await application.services.owner.systemCapabilities(context));
     case "library.source.revisions": {
       return apiResult(request, env, await application.services.owner.sourceRevisions(context, parseSourceRevisionsRequest(url)));
+    }
+    case "library.erasure.execute": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.erase(context,
+        await readOwnerErasureRequest(request, match.route.maximum_request_bytes)));
+    }
+    case "workspace.admission": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.admitWorkspaceCandidate(context,
+        await readWorkspaceCandidateRequest(request, match.route.maximum_request_bytes)));
+    }
+    case "workspace.admission.status": {
+      requireNoQuery(url);
+      return apiResult(request, env, await application.services.owner.workspaceCandidateStatus(context,
+        readWorkspaceAdmissionId(match.params.capture_id), readWorkspaceAdmissionId(match.params.admission_operation_id)));
+    }
+    case "library.erasure.status": {
+      requireNoQuery(url);
+      const status = await application.services.owner.erasureStatus(context, readOwnerErasureRef(match.params));
+      if (status === null) throw new HttpRequestError("ERASURE_NOT_FOUND", 404, "Erasure operation is not available");
+      return apiResult(request, env, status);
     }
     case "library.active.readiness": {
       const sourceId = singleQueryValue(url, "source_id");

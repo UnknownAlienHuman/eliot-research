@@ -16,6 +16,10 @@ import type {
   WorkspaceMcpPlanStoreResult,
 } from "@eliotr/cloudflare-workspace-mcp";
 
+type WorkspaceMcpObservationLookup = Parameters<NonNullable<WorkspaceMcpCandidateStore["loadObservation"]>>[0];
+type WorkspaceMcpObservationLookupResult = Awaited<ReturnType<NonNullable<WorkspaceMcpCandidateStore["loadObservation"]>>>;
+type WorkspaceMcpObservationReadback = Extract<WorkspaceMcpObservationLookupResult, { readonly state: "FOUND" }>["readback"];
+
 interface PlanRow {
   readonly plan_id: string;
   readonly principal_ref: string;
@@ -43,6 +47,36 @@ interface ObservationRow {
   readonly receipt_json: string;
   readonly disposition: string;
   readonly reason_codes_json: string;
+  readonly observed_at?: string;
+}
+
+interface ObservationReadbackRow {
+  readonly plan_id: string;
+  readonly plan_principal_ref: string;
+  readonly plan_deployment_generation: string;
+  readonly plan_auth_profile: string;
+  readonly plan_google_transport: string;
+  readonly plan_idempotency_key: string;
+  readonly plan_input_fingerprint: string;
+  readonly plan_sha256: string;
+  readonly plan_json: string;
+  readonly plan_issued_at: string;
+  readonly plan_expires_at: string;
+  readonly plan_state: string;
+  readonly observation_id: string;
+  readonly observation_plan_id: string;
+  readonly observation_principal_ref: string;
+  readonly observation_deployment_generation: string;
+  readonly observation_auth_profile: string;
+  readonly observation_google_transport: string;
+  readonly observation_idempotency_key: string;
+  readonly receipt_sha256: string;
+  readonly observation_sha256: string;
+  readonly observation_json: string;
+  readonly receipt_json: string;
+  readonly disposition: string;
+  readonly reason_codes_json: string;
+  readonly observed_at: string;
 }
 
 function decodeJson(raw: string): unknown | undefined {
@@ -127,6 +161,7 @@ async function readObservation(row: ObservationRow, input: WorkspaceMcpObservati
       checkedObservation.data.idempotency_key !== row.idempotency_key ||
       checkedObservation.data.plan_sha256 !== input.plan_sha256 ||
       checkedObservation.data.receipt_sha256 !== row.receipt_sha256 ||
+      (row.observed_at !== undefined && row.observed_at !== checkedReceipt.data.observed_at) ||
       !sameJson(reasonCodes, checkedObservation.data.reason_codes) ||
       !sameJson(receipt, checkedReceipt.data) || !sameJson(receipt, input.receipt) ||
       await canonicalDigest(checkedReceipt.data) !== row.receipt_sha256 ||
@@ -135,6 +170,101 @@ async function readObservation(row: ObservationRow, input: WorkspaceMcpObservati
     return { state: "UNKNOWN" };
   }
   return { state, observation: checkedObservation.data };
+}
+
+function freezeDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    for (const item of value) freezeDeep(item);
+    return Object.freeze(value) as T;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const child of Object.values(value)) freezeDeep(child);
+    return Object.freeze(value) as T;
+  }
+  return value;
+}
+
+async function readObservationReadback(
+  row: ObservationReadbackRow,
+  lookup: WorkspaceMcpObservationLookup,
+): Promise<WorkspaceMcpObservationLookupResult> {
+  if (row.plan_state !== "ISSUED" || row.plan_id !== lookup.plan_id ||
+      row.plan_principal_ref !== lookup.principal_ref ||
+      row.plan_deployment_generation !== lookup.deployment_generation ||
+      row.plan_auth_profile !== lookup.auth_profile || row.plan_google_transport !== lookup.google_transport ||
+      row.plan_idempotency_key !== lookup.idempotency_key || row.plan_sha256 !== lookup.plan_sha256 ||
+      row.observation_id !== lookup.observation_id || row.observation_plan_id !== row.plan_id ||
+      row.observation_principal_ref !== row.plan_principal_ref ||
+      row.observation_deployment_generation !== row.plan_deployment_generation ||
+      row.observation_auth_profile !== row.plan_auth_profile ||
+      row.observation_google_transport !== row.plan_google_transport ||
+      row.observation_idempotency_key !== row.plan_idempotency_key) {
+    return { state: "UNKNOWN" };
+  }
+  const planResult = await readPlan({
+    plan_id: row.plan_id,
+    principal_ref: row.plan_principal_ref,
+    deployment_generation: row.plan_deployment_generation,
+    auth_profile: row.plan_auth_profile,
+    google_transport: row.plan_google_transport,
+    idempotency_key: row.plan_idempotency_key,
+    input_fingerprint: row.plan_input_fingerprint,
+    plan_sha256: row.plan_sha256,
+    plan_json: row.plan_json,
+    expires_at: row.plan_expires_at,
+  });
+  if (planResult.state !== "COMMITTED" && planResult.state !== "REPLAY") return { state: "UNKNOWN" };
+  const checkedPlan = WorkspaceMcpPlanV2Schema.safeParse(planResult.plan);
+  const observation = decodeJson(row.observation_json);
+  const receipt = decodeJson(row.receipt_json);
+  const reasonCodes = decodeJson(row.reason_codes_json);
+  const checkedObservation = WorkspaceMcpObservationV2Schema.safeParse(observation);
+  const checkedReceipt = WorkspaceMcpReceiptV2Schema.safeParse(receipt);
+  if (!checkedPlan.success || !checkedObservation.success || !checkedReceipt.success ||
+      !Array.isArray(reasonCodes) || checkedObservation.data.state !== "OBSERVED" ||
+      row.plan_issued_at !== checkedPlan.data.issued_at || row.plan_expires_at !== checkedPlan.data.expires_at ||
+      row.plan_input_fingerprint !== checkedPlan.data.input_fingerprint ||
+      row.disposition !== checkedObservation.data.disposition ||
+      checkedObservation.data.observation_id !== row.observation_id ||
+      checkedObservation.data.plan_id !== row.plan_id ||
+      checkedObservation.data.idempotency_key !== row.plan_idempotency_key ||
+      checkedObservation.data.plan_sha256 !== row.plan_sha256 ||
+      checkedObservation.data.receipt_sha256 !== row.receipt_sha256 ||
+      checkedObservation.data.reconciliation.idempotency_key !== row.plan_idempotency_key ||
+      checkedObservation.data.reconciliation.plan_id !== row.plan_id ||
+      checkedObservation.data.reconciliation.plan_sha256 !== row.plan_sha256 ||
+      checkedObservation.data.reconciliation.write_state !== "COMMITTED" ||
+      checkedObservation.data.reconciliation.retry !== "SAME_KEY" ||
+      row.observed_at !== checkedReceipt.data.observed_at ||
+      !sameJson(reasonCodes, checkedObservation.data.reason_codes) ||
+      !sameJson(observation, checkedObservation.data) || !sameJson(receipt, checkedReceipt.data) ||
+      await canonicalDigest(checkedReceipt.data) !== row.receipt_sha256 ||
+      await canonicalDigest(checkedObservation.data) !== row.observation_sha256 ||
+      `workspace-mcp-observation-${await canonicalDigest(["eliotr.workspace-mcp.observation-id.v2", row.plan_id, row.receipt_sha256])}` !== row.observation_id) {
+    return { state: "UNKNOWN" };
+  }
+  const readback: WorkspaceMcpObservationReadback = {
+    plan: checkedPlan.data,
+    observation: checkedObservation.data,
+    receipt: checkedReceipt.data,
+    provenance: {
+      principal_ref: row.plan_principal_ref,
+      deployment_generation: row.plan_deployment_generation,
+      auth_profile: row.plan_auth_profile as "service-token" | "managed-oauth",
+      google_transport: row.plan_google_transport as "gemini-mcp",
+      idempotency_key: row.plan_idempotency_key,
+      plan_id: row.plan_id,
+      plan_sha256: row.plan_sha256,
+      input_fingerprint: row.plan_input_fingerprint,
+      observation_id: row.observation_id,
+      observation_sha256: row.observation_sha256,
+      receipt_sha256: row.receipt_sha256,
+      issued_at: row.plan_issued_at,
+      expires_at: row.plan_expires_at,
+      observed_at: row.observed_at,
+    },
+  };
+  return { state: "FOUND", readback: freezeDeep(readback) };
 }
 
 export function createD1WorkspaceMcpCandidateStore(database: D1Database): WorkspaceMcpCandidateStore {
@@ -187,6 +317,26 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
     } catch { return { state: "UNKNOWN" }; }
   }
 
+  async function loadObservation(input: WorkspaceMcpObservationLookup): Promise<WorkspaceMcpObservationLookupResult> {
+    const lookup = Object.freeze({ ...input });
+    try {
+      const row = await database.prepare(
+        "SELECT p.plan_id AS plan_id,p.principal_ref AS plan_principal_ref,p.deployment_generation AS plan_deployment_generation,p.auth_profile AS plan_auth_profile,p.google_transport AS plan_google_transport,p.idempotency_key AS plan_idempotency_key,p.input_fingerprint AS plan_input_fingerprint,p.plan_sha256 AS plan_sha256,p.plan_json AS plan_json,p.issued_at AS plan_issued_at,p.expires_at AS plan_expires_at,p.state AS plan_state,o.observation_id AS observation_id,o.plan_id AS observation_plan_id,o.principal_ref AS observation_principal_ref,o.deployment_generation AS observation_deployment_generation,o.auth_profile AS observation_auth_profile,o.google_transport AS observation_google_transport,o.idempotency_key AS observation_idempotency_key,o.receipt_sha256 AS receipt_sha256,o.observation_sha256 AS observation_sha256,o.observation_json AS observation_json,o.receipt_json AS receipt_json,o.disposition AS disposition,o.reason_codes_json AS reason_codes_json,o.observed_at AS observed_at FROM workspace_mcp_plan AS p INNER JOIN workspace_mcp_observation AS o ON o.plan_id=p.plan_id WHERE p.plan_id=?1 AND p.principal_ref=?2 AND p.deployment_generation=?3 AND p.auth_profile=?4 AND p.google_transport=?5 AND p.idempotency_key=?6 AND p.plan_sha256=?7 AND p.state='ISSUED' AND o.observation_id=?8 LIMIT 1",
+      ).bind(
+        lookup.plan_id,
+        lookup.principal_ref,
+        lookup.deployment_generation,
+        lookup.auth_profile,
+        lookup.google_transport,
+        lookup.idempotency_key,
+        lookup.plan_sha256,
+        lookup.observation_id,
+      ).first<ObservationReadbackRow>();
+      if (row === null || row === undefined) return { state: "NOT_FOUND" };
+      return await readObservationReadback(row, lookup);
+    } catch { return { state: "UNKNOWN" }; }
+  }
+
   async function recordObservation(input: WorkspaceMcpObservationStoreInput): Promise<WorkspaceMcpObservationStoreResult> {
     try {
       const owner = await database.prepare(
@@ -212,5 +362,5 @@ export function createD1WorkspaceMcpCandidateStore(database: D1Database): Worksp
     }
   }
 
-  return { issuePlan, loadPlan, recordObservation };
+  return { issuePlan, loadPlan, loadObservation, recordObservation };
 }

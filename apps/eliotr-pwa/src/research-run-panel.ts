@@ -1,6 +1,6 @@
 import { IdentifierSchema, ResearchWorkflowStageSchema, type ResearchWorkflowStage } from "@eliotr/contracts";
 import { ApiRequestError } from "./api.js";
-import { researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunStatusView } from "./research-run-api.js";
+import { readResearchRunHistory, researchRunBody, readResearchArtifact, readResearchArtifactSection, readResearchArtifactSectionCitations, readResearchRunStatus, startResearchRun, type ResearchRunHistoryEntry, type ResearchRunStatusView } from "./research-run-api.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "./library-readiness-api.js";
 
@@ -50,6 +50,27 @@ function statusText(view: ResearchRunStatusView): string {
   }
 }
 
+function historyStageText(view: ResearchRunStatusView): string {
+  if (view.execution_state === "ACTIVE") {
+    const stage = RESEARCH_STAGE_ORDER[view.next_stage_index];
+    return stage === undefined ? "Continuing through the research workflow" : RESEARCH_STAGE_LABELS[stage];
+  }
+  if (view.execution_state === "CANCELLED") return "Cancelled";
+  return view.answer.availability === "draft" ? "Draft available" : "Finished without a report";
+}
+
+function historyDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function historyErrorMessage(error: unknown): string {
+  if (error instanceof ApiRequestError) {
+    if (error.status === 401 || error.status === 403) return "Saved research is no longer available for this session.";
+    if (error.retryable) return "Saved research is temporarily unavailable. Refresh to try again.";
+  }
+  return "Saved research could not be loaded. Refresh to try again.";
+}
+
 function decodeSectionBody(bytes: Uint8Array): string {
   try { return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
   catch { throw new ApiRequestError({ status: 502, code: "RESEARCH_ARTIFACT_SECTION_INVALID", message: "The report section is not valid UTF-8" }); }
@@ -71,6 +92,8 @@ export function mountResearchRunPanel(
     <form><label>Question<input name="query" maxlength="4096" autocomplete="off" required placeholder="Ask a research question"></label>
     <label>Scope<select name="scope"><option value="library">Entire authorized Library</option><option value="selected" disabled>Selected source</option></select></label>
     <div class="workflow-actions"><button type="submit" class="button">Start research</button><button type="button" class="button button--quiet" data-run-refresh disabled>Refresh status</button></div></form>
+    <section class="workflow-recovery" aria-labelledby="research-history-title"><div class="workflow-recovery-head"><div><span class="eyebrow">Saved research</span><h3 id="research-history-title">Recent research</h3></div><button type="button" class="button button--quiet" data-research-history-refresh disabled>Refresh</button></div>
+      <p class="workflow-recovery-status" data-research-history-status>Recent research appears after the current session is ready.</p><div class="workflow-recovery-list" data-research-history-list></div></section>
     <div class="workflow-recovery"><label>Run ID<input data-workflow-id maxlength="128" autocomplete="off" placeholder="Paste a known run ID"></label><button type="button" class="button button--quiet" data-recover>Load status</button></div>
     <p class="workflow-status" role="status" aria-live="polite">${healthReady() ? "Ready when the current owner session is available." : "Waiting for the current owner session."}</p>
     <section data-run-result hidden></section>`;
@@ -85,7 +108,10 @@ export function mountResearchRunPanel(
   const recover = element.querySelector<HTMLButtonElement>("[data-recover]");
   const status = element.querySelector<HTMLElement>('[role="status"]');
   const result = element.querySelector<HTMLElement>("[data-run-result]");
-  if (!form || !badge || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result) throw new Error("Research run panel is incomplete");
+  const historyRefresh = element.querySelector<HTMLButtonElement>("[data-research-history-refresh]");
+  const historyStatus = element.querySelector<HTMLElement>("[data-research-history-status]");
+  const historyList = element.querySelector<HTMLElement>("[data-research-history-list]");
+  if (!form || !badge || !query || !scope || !selectedOption || !submit || !refresh || !workflowInput || !recover || !status || !result || !historyRefresh || !historyStatus || !historyList) throw new Error("Research run panel is incomplete");
 
   let serial = 0;
   let controller: AbortController | undefined;
@@ -96,6 +122,10 @@ export function mountResearchRunPanel(
   let idempotencyKey = "";
   let progressTimer: number | undefined;
   let lastExecutionState: ResearchRunStatusView["execution_state"] | undefined;
+  let historyController: AbortController | undefined;
+  let historySerial = 0;
+  let historyGeneration: string | undefined;
+  let historyView: Awaited<ReturnType<typeof readResearchRunHistory>> | undefined;
   let disposed = false;
 
   const clearProgressTimer = (): void => {
@@ -111,6 +141,7 @@ export function mountResearchRunPanel(
     submit.disabled = !available || busy;
     recover.disabled = !available || busy;
     refresh.disabled = !available || busy || workflowId === undefined;
+    historyRefresh.disabled = !available || historyController !== undefined;
   };
   const stop = (): void => {
     serial += 1;
@@ -120,19 +151,32 @@ export function mountResearchRunPanel(
     lastExecutionState = undefined;
     updateButtons();
   };
+  const clearHistoryRequest = (): void => {
+    historySerial += 1;
+    historyController?.abort();
+    historyController = undefined;
+    historyGeneration = undefined;
+  };
+  const clearHistory = (): void => {
+    clearHistoryRequest();
+    historyView = undefined;
+    historyList.replaceChildren();
+    historyStatus.textContent = "Recent research appears after the current session is ready.";
+  };
   const clearPrivate = (): void => {
-    stop(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
+    stop(); clearHistory(); workflowId = undefined; workflowGeneration = undefined; selectedSourceId = undefined; previousBody = ""; idempotencyKey = "";
     workflowInput.value = ""; result.replaceChildren(); result.hidden = true; query.value = ""; scope.value = "library"; selectedOption.disabled = true;
     updateButtons(); status.textContent = "Private research state cleared. Reconnect before starting or loading a run.";
   };
   const onHealthUpdated = (): void => {
     const ready = healthReady();
     badge.textContent = ready ? "READY" : "WAITING";
-    if (!ready) clearPrivate(); else { updateButtons(); scheduleStatusRefresh(true); }
+    if (!ready) clearPrivate(); else { updateButtons(); scheduleStatusRefresh(true); loadHistory("automatic"); }
   };
   const onVisibilityChanged = (): void => {
     if (document.visibilityState === "hidden") {
       clearProgressTimer();
+      if (historyController !== undefined) clearHistoryRequest();
       if (controller !== undefined) {
         serial += 1;
         controller.abort();
@@ -142,6 +186,7 @@ export function mountResearchRunPanel(
       return;
     }
     scheduleStatusRefresh(true);
+    if (healthReady()) loadHistory("automatic");
   };
   window.addEventListener("eliotr:health-updated", onHealthUpdated);
   document.addEventListener("visibilitychange", onVisibilityChanged);
@@ -154,6 +199,54 @@ export function mountResearchRunPanel(
       progressTimer = undefined;
       readStatus("automatic");
     }, immediate ? 0 : RESEARCH_STATUS_REFRESH_MS);
+  };
+  const renderHistory = (entry: ResearchRunHistoryEntry): HTMLElement => {
+    const row = document.createElement("div"); row.className = "workflow-recovery-row";
+    const open = document.createElement("button"); open.type = "button"; open.className = "workflow-recovery-item";
+    const date = historyDate(entry.created_at); open.textContent = `Open research · ${date}`; open.setAttribute("aria-label", `Open saved research from ${date}`);
+    open.onclick = () => {
+      if (disposed || !open.isConnected || open.closest("[data-research-history-list]") !== historyList || !healthReady() || !navigator.onLine || historyView?.deployment_generation !== entry.status.deployment_generation) return;
+      readStatus("history", entry.status.workflow_instance_id);
+    };
+    const note = document.createElement("p"); note.className = "workflow-recovery-note";
+    note.textContent = `${historyStageText(entry.status)} · ${entry.status.answer.availability === "draft" ? "Draft available" : "No draft available"}`;
+    row.append(open, note);
+    return row;
+  };
+  const renderHistoryList = (view: Awaited<ReturnType<typeof readResearchRunHistory>>): void => {
+    historyList.replaceChildren();
+    if (view.configuration_state === "MISSING") {
+      historyStatus.textContent = "Research configuration is missing on the server. Install it before starting a research run.";
+    } else if (view.runs.length === 0) {
+      historyStatus.textContent = "Configuration installed; run research to confirm execution. No saved runs are available yet.";
+      return;
+    } else {
+      historyStatus.textContent = "Configuration installed; run research to confirm execution.";
+    }
+    view.runs.forEach((entry) => historyList.append(renderHistory(entry)));
+  };
+  const loadHistory = (trigger: "automatic" | "manual" = "manual", force = false): void => {
+    if (disposed) return;
+    const generation = deploymentGeneration();
+    if (!healthReady() || !navigator.onLine || generation === undefined || document.visibilityState === "hidden") {
+      if (trigger === "manual") historyStatus.textContent = "Reconnect before loading saved research.";
+      return;
+    }
+    if (historyController !== undefined) { if (!force) return; clearHistoryRequest(); }
+    if (!force && trigger === "automatic" && historyGeneration === generation) return;
+    const active = ++historySerial; const local = new AbortController(); historyController = local; historyGeneration = generation;
+    historyRefresh.disabled = true;
+    if (trigger === "manual" || historyList.childElementCount === 0) historyStatus.textContent = "Loading saved research…";
+    void readResearchRunHistory(generation, local.signal)
+      .then((view) => { if (active !== historySerial || disposed) return; historyGeneration = view.deployment_generation; historyView = view; renderHistoryList(view); })
+      .catch((error: unknown) => {
+        if (active !== historySerial || (error instanceof Error && error.name === "AbortError")) return;
+        if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) { clearPrivate(); return; }
+        historyGeneration = undefined;
+        if (historyView !== undefined) renderHistoryList(historyView);
+        historyStatus.textContent = historyErrorMessage(error);
+      })
+      .finally(() => { if (active === historySerial) { historyController = undefined; updateButtons(); } });
   };
   const renderStatus = (view: ResearchRunStatusView, artifact?: ArtifactRevision, renderSerial = serial): void => {
     lastExecutionState = view.execution_state;
@@ -267,13 +360,13 @@ export function mountResearchRunPanel(
     refresh.disabled = false;
     if (view.execution_state === "ACTIVE") scheduleStatusRefresh(); else clearProgressTimer();
   };
-  const readStatus = (trigger: "manual" | "automatic" = "manual"): void => {
+  const readStatus = (trigger: "manual" | "automatic" | "history" = "manual", requestedWorkflowId?: string): void => {
     if (trigger === "automatic" && (lastExecutionState !== "ACTIVE" || controller !== undefined)) {
       scheduleStatusRefresh();
       return;
     }
     const automatic = trigger === "automatic";
-    const requestedId = automatic ? workflowId : workflowInput.value.trim();
+    const requestedId = requestedWorkflowId ?? (automatic ? workflowId : workflowInput.value.trim());
     if (requestedId === undefined || requestedId.length === 0) {
       if (!automatic) status.textContent = "Enter a known Run ID first.";
       return;
@@ -292,7 +385,7 @@ export function mountResearchRunPanel(
         const artifact = view.answer.availability === "draft" ? await readResearchArtifact(view.answer.artifact_ref, view.deployment_generation, local.signal) : undefined;
         if (active !== serial) return;
         workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation;
-        if (!automatic || workflowInput.value.trim() === id) workflowInput.value = view.workflow_instance_id;
+        if (trigger !== "history" && (!automatic || workflowInput.value.trim() === id)) workflowInput.value = view.workflow_instance_id;
         renderStatus(view, artifact);
       })
       .catch((error: unknown) => {
@@ -320,18 +413,20 @@ export function mountResearchRunPanel(
     submit.disabled = true; refresh.disabled = true; recover.disabled = true; result.replaceChildren(); result.hidden = true; status.textContent = "Starting the research run…";
     element.dispatchEvent(new CustomEvent("research:started", { bubbles: true }));
     void startResearchRun(body, idempotencyKey, generation, local.signal)
-      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; })
+      .then((view) => { if (active !== serial) return; workflowId = view.workflow_instance_id; workflowGeneration = view.deployment_generation; workflowInput.value = view.workflow_instance_id; lastExecutionState = "ACTIVE"; refresh.disabled = false; status.textContent = "Research started. Checking progress automatically."; loadHistory("manual", true); })
       .catch((error: unknown) => { if (active !== serial || (error instanceof Error && error.name === "AbortError")) return; if (error instanceof ApiRequestError && (error.status === 401 || error.status === 403 || error.code === "RESEARCH_RUN_DEPLOYMENT_CHANGED")) clearPrivate(); else status.textContent = message(error); })
       .finally(() => { if (active === serial) { controller = undefined; updateButtons(); scheduleStatusRefresh(); } });
   };
-  refresh.onclick = () => readStatus();
+  refresh.onclick = () => readStatus("manual", workflowId);
   recover.onclick = () => readStatus();
+  historyRefresh.onclick = () => loadHistory("manual", true);
   const cleanup = (): void => {
     disposed = true;
     window.removeEventListener("eliotr:health-updated", onHealthUpdated);
     document.removeEventListener("visibilitychange", onVisibilityChanged);
-    stop();
+    stop(); clearHistory();
   };
+  if (healthReady()) loadHistory("automatic");
   return Object.assign(cleanup, {
     clearPrivate,
     selectSource(id: string, context?: LibrarySelectionContext): void {

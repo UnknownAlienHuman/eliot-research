@@ -17,6 +17,15 @@ const deployConfig = "wrangler.deploy.jsonc";
 const receiptPath = resolve(root, ".eliotr-state/cloudflare-deployment-receipt.json");
 const provisioners = ["provision-cloudflare-access", "provision-cloudflare-core", "provision-ai-search",
   "provision-ai-gateways"];
+const SEMANTIC_SERVER_CONFIGURATION_KEYS = Object.freeze([
+  "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
+  "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
+  "ELIOTR_MODEL_PROFILE_PROVENANCE_REF",
+  "ELIOTR_MODEL_SPEND_POLICY_JSON",
+  "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF",
+  "ELIOTR_RESEARCH_REPORT_CONFIG_JSON",
+  "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
+]);
 
 function run(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
@@ -26,6 +35,15 @@ function run(command, args, cwd, env) {
 function capture(command, args, cwd, env) {
   const result = spawnSync(command, args, { cwd, env, encoding: "utf8", shell: process.platform === "win32" });
   return !result.error && result.status === 0 ? result.stdout.trim() || null : null;
+}
+
+function verifyGeneratedSemanticConfiguration(config, environment) {
+  for (const key of SEMANTIC_SERVER_CONFIGURATION_KEYS) {
+    const expected = Object.hasOwn(environment, key) && typeof environment[key] === "string"
+      ? environment[key] : undefined;
+    const actual = config?.vars && Object.hasOwn(config.vars, key) ? config.vars[key] : undefined;
+    if (actual !== expected) throw new Error(`Generated deployment semantic configuration drift (${key})`);
+  }
 }
 
 async function archiveReceipt() {
@@ -156,6 +174,7 @@ export async function deployCloudflare({ confirmLive = false, environment = proc
   const configPath = resolve(core, deployConfig);
   const bytes = await read(configPath);
   const config = validateGeneratedDeployment(bytes, env, input);
+  verifyGeneratedSemanticConfiguration(config, env);
   const digest = createHash("sha256").update(bytes).digest("hex");
   const requireUnchangedConfig = async () => {
     if (createHash("sha256").update(await read(configPath)).digest("hex") !== digest) {
