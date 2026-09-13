@@ -57,11 +57,15 @@ export type ResearchStageHandlerFactoryMode =
       readonly synthesis?: Parameters<typeof createEvidenceFreezeSynthesisHandler>[0];
       readonly materialize?: ResearchMaterializeStageDependencies;
       readonly report_materialize?: ResearchReportMaterializeStageDependencies;
+      /** Server-composed finalizer that carries the committed coverage into the saved report. */
+      readonly materialize_handler?: WorkflowStageHandler;
       readonly verification?: ResearchVerificationStageDependencies;
       /** Explicit Stage14 server-owned audit wiring; no default verifier is inferred. */
       readonly audit_claims?: ResearchClaimAuditStageDependencies;
       /** Explicit Stage15 server-owned citation wiring; no default resolver is inferred. */
       readonly resolve_citations?: ResearchCitationsStageDependencies;
+      /** Server-composed deterministic coverage calculation over the frozen sources. */
+      readonly calculate_coverage?: WorkflowStageHandler;
     }
   | { readonly kind: "legacy-deterministic" };
 
@@ -109,9 +113,13 @@ export function createResearchStageHandlerFactory(
     : undefined;
   let materializeHandler: WorkflowStageHandler | undefined;
   if (mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
-    if (mode.report_materialize !== undefined && mode.materialize === undefined) {
+    const materializerCount = [mode.materialize, mode.report_materialize, mode.materialize_handler]
+      .filter((value) => value !== undefined).length;
+    if (materializerCount === 1 && mode.materialize_handler !== undefined) {
+      materializeHandler = mode.materialize_handler;
+    } else if (materializerCount === 1 && mode.report_materialize !== undefined) {
       materializeHandler = createResearchReportMaterializeStageHandler(mode.report_materialize);
-    } else if (mode.materialize !== undefined && mode.report_materialize === undefined) {
+    } else if (materializerCount === 1 && mode.materialize !== undefined) {
       materializeHandler = createResearchMaterializeStageHandler(mode.materialize);
     }
   }
@@ -170,6 +178,9 @@ export function createResearchStageHandlerFactory(
     if (stage === "RESOLVE_CITATIONS" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       const adapter = getCitationsAdapter();
       return adapter === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : adapter;
+    }
+    if (stage === "CALCULATE_COVERAGE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
+      return mode.calculate_coverage ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
     if (stage === "MATERIALIZE" && mode.kind === "server-owned-exploratory" && mode.generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION) {
       return materializeHandler === undefined ? async () => fail("WORKFLOW_AUTHORITY_STALE") : materializeHandler;

@@ -1,5 +1,6 @@
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ArtifactDraftAdmissionPort } from "@eliotr/cloudflare-artifacts";
+import type { CoverageReceipt } from "@eliotr/contracts";
 import { readCommittedResearchSynthesisOutput } from "./research-synthesis-output-reader.js";
 import type { RunStatusAuthoritySnapshot } from "./research-run-status.js";
 import type { EvidenceFreezeMaterializeContext } from "./research-evidence-freeze-composition.js";
@@ -25,6 +26,15 @@ export interface ResearchMaterializeContextReader {
   }): Promise<ResearchMaterializeContext>;
 }
 
+export interface ResearchMaterializeCoverageReader {
+  (input: {
+    readonly request: StageRequest;
+    readonly principal: WorkflowPrincipal;
+    readonly context: ResearchMaterializeContext;
+    readonly input_bytes: Uint8Array;
+  }): CoverageReceipt | Promise<CoverageReceipt>;
+}
+
 export type ResearchMaterializeTrustedMetadata = Pick<ResearchMaterializeResultWriterInput,
   "intent" | "expected_draft_head_revision" | "artifact_ref" | "spec" | "section" |
   "section_residency" | "referenced_objects" | "manifest_residency" | "created_at">;
@@ -38,6 +48,8 @@ export interface ResearchMaterializeStageDependencies {
   readonly admission?: ArtifactDraftAdmissionPort;
   readonly recheck_authority: () => Promise<RunStatusAuthoritySnapshot>;
   readonly context: ResearchMaterializeContextReader;
+  /** Optional server-owned Stage16 coverage readback; absent keeps legacy materialization unchanged. */
+  readonly read_coverage_receipt?: ResearchMaterializeCoverageReader;
   /** Server-owned artifact metadata only; it cannot supply lineage or output identity. */
   readonly metadata: (input: {
     readonly request: StageRequest;
@@ -54,6 +66,9 @@ export function createResearchMaterializeStageHandler(
     if (request.stage !== "MATERIALIZE") fail("WORKFLOW_INPUT_INVALID");
     const context = await dependencies.context.read({ request, principal, input_bytes });
     if (context.operation_id !== request.operation_id) fail("WORKFLOW_AUTHORITY_STALE");
+    const coverageReceipt = dependencies.read_coverage_receipt === undefined
+      ? undefined
+      : await dependencies.read_coverage_receipt({ request, principal, context, input_bytes: new Uint8Array(input_bytes) });
     const synthesis = await readCommittedResearchSynthesisOutput({
       database: dependencies.database,
       work_bucket: dependencies.work_bucket,
@@ -77,6 +92,7 @@ export function createResearchMaterializeStageHandler(
       navigation: dependencies.navigation,
       evidence_resolver: dependencies.evidence_resolver,
       ...(dependencies.admission === undefined ? {} : { admission: dependencies.admission }),
+      ...(coverageReceipt === undefined ? {} : { coverage_receipt: coverageReceipt }),
       synthesis_readback: synthesis,
     });
   };

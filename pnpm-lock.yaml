@@ -307,6 +307,9 @@ importers:
       '@eliotr/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@eliotr/domain':
+        specifier: workspace:*
+        version: link:../domain
       '@eliotr/research':
         specifier: workspace:*
         version: link:../research

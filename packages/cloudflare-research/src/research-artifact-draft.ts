@@ -3,6 +3,7 @@ import {
   ArtifactRevisionSchema,
   ArtifactSectionRevisionSchema,
   ArtifactSpecSchema,
+  CoverageReceiptSchema,
   EvidenceFreezeSchema,
   ObjectResidencyKeySchema,
   OperationIntentSchema,
@@ -12,6 +13,7 @@ import {
   type ArtifactRevision,
   type ArtifactSectionRevision,
   type ArtifactSpec,
+  type CoverageReceipt,
   type EvidenceFreeze,
   type ObjectResidencyKey,
   type OperationIntent,
@@ -23,6 +25,7 @@ import { canonicalDigest } from "@eliotr/platform-cloudflare";
 import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
 import { encodeArtifactDraftVerification } from "@eliotr/cloudflare-artifacts";
 import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1 } from "@eliotr/research";
+import { validateCoverageReceipt as validateDomainCoverageReceipt } from "@eliotr/domain";
 import {
   createArtifactDraftStore,
   type ArtifactDraftReferencedObjectInput,
@@ -52,6 +55,8 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly section_residency: ObjectResidencyTemplate;
   readonly referenced_objects: readonly ArtifactDraftReferencedObjectInput[];
   readonly manifest_residency: ObjectResidencyTemplate;
+  /** Optional server-owned Stage16 coverage accounting; never accepted from a report client. */
+  readonly coverage_receipt?: CoverageReceipt;
   /** Optional server-only REPORT admission appended to the draft store's final batch. */
   readonly admission?: ArtifactDraftAdmissionPort;
   readonly created_at: string;
@@ -95,6 +100,106 @@ function sameRef(left: VersionedRef, right: VersionedRef): boolean {
 
 function refKey(ref: VersionedRef): string {
   return `${ref.id}:${ref.revision}`;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child);
+  }
+  return value;
+}
+
+function snapshotCoverageReceipt(value: CoverageReceipt | undefined): CoverageReceipt | undefined {
+  if (value === undefined) return undefined;
+  const parsed = CoverageReceiptSchema.safeParse(value);
+  if (!parsed.success) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "coverage receipt is malformed");
+  if (!validateDomainCoverageReceipt(parsed.data).ok) {
+    fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "coverage receipt violates coverage rules");
+  }
+  try {
+    return deepFreeze(JSON.parse(canonicalEvidenceJson(parsed.data)) as CoverageReceipt);
+  } catch {
+    fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "coverage receipt is not canonicalizable");
+  }
+}
+
+function coverageList(values: readonly string[]): string {
+  return values.length === 0 ? "none recorded" : values.join(", ");
+}
+
+function coverageCount(values: readonly string[]): string {
+  return `${values.length} (${coverageList(values)})`;
+}
+
+function describeDenominator(kind: CoverageReceipt["denominator_kind"]): string {
+  switch (kind) {
+    case "complete_scope": return "a complete frozen scope was used as the denominator";
+    case "sampled_with_method": return "a sampled scope with a declared method was used";
+    case "unknown": return "the available coverage completeness is unknown";
+  }
+}
+
+function describeDisposition(disposition: CoverageReceipt["terminal_disposition"]): string {
+  switch (disposition) {
+    case "ANSWERED_WITH_SUPPORTED_RESULT": return "a supported result was recorded";
+    case "NO_MATCH_IN_COMPLETE_SCOPE": return "no match was found in the recorded complete scope";
+    case "NO_NEW_USEFUL_EVIDENCE": return "no new useful evidence was recorded";
+    case "SOURCE_UNAVAILABLE": return "a source needed for the request was unavailable";
+    case "STALE_SOURCE_OR_INDEX": return "a source or index became stale";
+    case "POLICY_OR_DISCLOSURE_DENIED": return "policy or disclosure rules prevented the result";
+    case "INCOMPLETE_COVERAGE": return "coverage remained incomplete";
+    case "INCONCLUSIVE": return "the recorded evidence was inconclusive";
+    case "CANCELLED": return "the coverage run was cancelled";
+  }
+}
+
+function describeCounterSearch(status: CoverageReceipt["counter_search_status"]): string {
+  switch (status) {
+    case "NOT_REQUIRED": return "not required";
+    case "NOT_RUN": return "not run";
+    case "PARTIAL": return "partially completed";
+    case "COMPLETE": return "completed for the recorded method";
+  }
+}
+
+function describeOmissionReason(reason: string): string {
+  return reason === "NOT_REPRESENTED_IN_EVIDENCE_PACK"
+    ? "this source was not represented in the evidence pack"
+    : `recorded reason ${reason}`;
+}
+
+function describeUnknownReason(reason: string | undefined): string {
+  if (reason === undefined) return "none recorded";
+  return reason === "EXPLORATORY_MEMBERSHIP_OBSERVATION_DOES_NOT_PROVE_COMPLETE_SCOPE"
+    ? "the exploratory membership observation does not prove complete scope"
+    : reason;
+}
+
+function coverageMethodologyBlock(receipt: CoverageReceipt): string {
+  const omitted = receipt.omitted_sources.length === 0
+    ? "none recorded"
+    : receipt.omitted_sources.map((item) => `${item.source_ref} (${describeOmissionReason(item.reason)})`).join(", ");
+  const missing = [
+    ...receipt.stale_or_skipped_lanes.map((value) => `lane ${value}`),
+    ...receipt.failed_acquisition_refs.map((value) => `acquisition ${value}`),
+    ...receipt.provider_degradation_refs.map((value) => `provider ${value}`),
+    ...receipt.parser_degradation_refs.map((value) => `parser ${value}`),
+    ...receipt.redacted_dependency_refs.map((value) => `redacted dependency ${value}`),
+    ...receipt.budget_limitations.map((value) => `budget: ${value}`),
+  ];
+  return [
+    "## Coverage and method",
+    "This report is a DRAFT. The coverage receipt records the inspected scope and limits; it does not establish completion.",
+    `Coverage basis: ${describeDenominator(receipt.denominator_kind)}.`,
+    `Represented sources: ${coverageCount(receipt.represented_source_refs)}.`,
+    `Cited sources: ${coverageCount(receipt.cited_source_refs)}.`,
+    `Omitted sources: ${receipt.omitted_sources.length} (${omitted}).`,
+    `Recorded limits or gaps: ${missing.length === 0 ? "none recorded" : `${missing.length} (${missing.join(", ")})`}.`,
+    `Counter-search: ${describeCounterSearch(receipt.counter_search_status)}.`,
+    `Recorded outcome: ${describeDisposition(receipt.terminal_disposition)}.`,
+    `Why coverage may be unknown: ${describeUnknownReason(receipt.unknown_coverage_reason)}.`,
+  ].join("\n");
 }
 
 function parseEvidencePack(pack: ResearchEvidencePack, expectedScope: VersionedRef, cited: readonly VersionedRef[]): void {
@@ -196,6 +301,8 @@ function requireCurrentEvidenceAuthority(
 
 /** Converts one committed SYNTHESIZE output into one DRAFT section. */
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
+  /* Snapshot the optional server-owned receipt before any awaited readback. */
+  const coverageReceipt = snapshotCoverageReceipt(input.coverage_receipt);
   const readback = input.synthesis_readback;
   if (typeof input.operation_id !== "string" || input.operation_id.length < 1 || readback.operation_id !== input.operation_id || readback.stage !== "SYNTHESIZE" ||
       readback.workflow_receipt.operation_id !== input.operation_id || readback.workflow_receipt.stage !== "SYNTHESIZE" ||
@@ -229,6 +336,11 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   const now = input.now?.() ?? Date.now();
   if (!Number.isSafeInteger(now)) fail("RESEARCH_ARTIFACT_DRAFT_INPUT_INVALID", "materialization clock is invalid");
   const scope = input.spec.scope_snapshot_ref;
+  if (coverageReceipt !== undefined &&
+      (!sameRef(coverageReceipt.frozen_scope_snapshot_ref, input.evidence_freeze.scope_snapshot_ref) ||
+       !sameRef(coverageReceipt.coverage_denominator_ref, input.evidence_freeze.coverage_denominator_ref))) {
+    fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "coverage receipt is not bound to the evidence freeze");
+  }
   const navigationScope = { id: input.navigation.scope.snapshot_id, revision: input.navigation.scope.revision };
   if (!sameRef(scope, input.evidence_freeze.scope_snapshot_ref) || !sameRef(scope, input.reference_manifest.scope_snapshot_ref) || !sameRef(scope, input.evidence_pack.scope_snapshot_ref) ||
       !sameRef(scope, navigationScope) || readback.workflow_receipt.investigation_ref.id !== readback.investigation_ref.id || readback.model_attempt.authority.principal_ref !== input.intent.principal_ref ||
@@ -279,7 +391,10 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   try { finalGrant = await input.navigation.current(input.navigation.scope); }
   catch { fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "current scope authority changed during evidence readback"); }
   if (canonicalEvidenceJson(initialGrant) !== canonicalEvidenceJson(finalGrant)) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "scope authority changed during evidence readback");
-  const sectionBytes = new TextEncoder().encode(candidate.section_text);
+  const sectionText = coverageReceipt === undefined
+    ? candidate.section_text
+    : `${candidate.section_text}\n\n${coverageMethodologyBlock(coverageReceipt)}`;
+  const sectionBytes = new TextEncoder().encode(sectionText);
   for (const evidence of input.evidence_pack.resolved_evidence) {
     if (candidate.cited_handle_refs.some((ref) => sameRef(ref, evidence.handle.handle_ref)) && evidence.handle.expires_at !== undefined && Date.parse(evidence.handle.expires_at) <= now) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "cited evidence handle is expired");
   }

@@ -8,3 +8,6 @@ export * from "./research-claim-audit-result.js";
 export * from "./research-claim-audit-stage-handler.js";
 export * from "./research-citations-result.js";
 export * from "./research-citations-stage-handler.js";
+export * from "./research-coverage-result.js";
+export * from "./research-coverage-stage-handler.js";
+export * from "./research-coverage-materialize-stage-handler.js";
