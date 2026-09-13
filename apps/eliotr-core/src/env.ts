@@ -20,6 +20,12 @@ export interface Env {
   readonly FEDERATION_CURSOR_HMAC_KEY?: string;
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
+  /** Installed server model definition and its provenance; no request may override either. */
+  readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string;
+  readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string;
+  /** Explicit owner-bound policy authorizing private report materialization. */
+  readonly ELIOTR_RESEARCH_REPORT_POLICY_JSON?: string;
+  readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
   readonly ACCESS_TEAM_DOMAIN?: string;
   readonly ACCESS_AUDIENCE?: string;
   readonly ACCESS_SERVICE_PRINCIPALS?: string;
